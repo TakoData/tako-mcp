@@ -54,6 +54,6 @@ async def generate_search_tako_prompt(text: str) -> str:
 
 if __name__ == "__main__":
     if ENVIRONMENT == "remote":
-        mcp.run(transport="sse")
+        mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")

@@ -41,3 +41,29 @@ Add additional instructions to the chat prompt
 ### 4. Checkout the result
   * [Claude Response](https://claude.ai/share/0c39e0c3-0811-486e-8f0b-92c8d5e05bc8)
   * [Generated Report](https://docs.trytako.com/documentation/integrations-and-examples/claude-generated-report)
+
+
+## Environment Variables
+### `ENVIRONMENT` 
+Options:
+- `remote` - If you're running a remote MCP server
+- `local` - If you're running a local MCP server
+
+### `TAKO_API_KEY`
+- Your Tako API key, access it from [Tako Dashboard](https://trytako.com/dashboard)
+
+## Testing Remote MCP
+Start inspector and access the console
+```
+npx -y npx @modelcontextprotocol/inspector@latest
+```
+
+Start Tako MCP Server on remote mode
+```
+ENVIRONMENT=remote TAKO_API_KEY=<your_tako_api_key> uv run main.py
+```
+In inspector console, add the url `https://0.0.0.0:<port>/mcp/` and click connect
+
+Select the `Tools` tab, and click `ListTools`. 
+
+Select `search_tako` and test a query
