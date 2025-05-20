@@ -1,4 +1,6 @@
 # Tako MCP
+[![smithery badge](https://smithery.ai/badge/@TakoData/tako-mcp)](https://smithery.ai/server/@TakoData/tako-mcp)
+
 Tako MCP is a simple MCP server that queries Tako and returns real-time data and visualization
 
 Check out [Tako](https://trytako.com) and our [documentation](https://docs.trytako.com)
@@ -7,6 +9,14 @@ Check out [Tako](https://trytako.com) and our [documentation](https://docs.tryta
 ## Quickstart
 ###  Get your API key
 Access [Tako Dashboard](https://trytako.com/dashboard) and get your API key. 
+
+### Installing via Smithery
+
+To install tako-mcp for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@TakoData/tako-mcp):
+
+```bash
+npx -y @smithery/cli install @TakoData/tako-mcp --client claude
+```
 
 ### Add Tako MCP to Claude Desktop
 Add the following to your `.cursor/mcp.json` or `claude_desktop_config.json` (MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`)
