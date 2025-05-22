@@ -5,6 +5,6 @@ description = "Tako MCP Server"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastmcp>=2.4.0",
+    "mcp[cli]>=1.9.1",
     "tako-sdk>=0.1.12",
 ]

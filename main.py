@@ -5,7 +5,7 @@ from typing import Any
 
 from tako.client import TakoClient, KnowledgeSearchSourceIndex
 from tako.types.visualize.types import TakoDataFormatDataset
-from fastmcp.server.server import FastMCP 
+from mcp.server.fastmcp import FastMCP 
 
 TAKO_API_KEY = os.getenv("TAKO_API_KEY")
 X_TAKO_URL = os.getenv("X_TAKO_URL", "https://trytako.com")
@@ -13,7 +13,7 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
 
 
 # Initialize MCP Server and Tako Client
-mcp = FastMCP("tako")
+mcp = FastMCP("tako", port=8001)
 tako_client = TakoClient(api_key=TAKO_API_KEY, server_url=X_TAKO_URL)
 
 @mcp.tool()
@@ -78,6 +78,6 @@ async def visualize_dataset(dataset: dict[str, Any]) -> str:
 
 if __name__ == "__main__":
     if ENVIRONMENT == "remote":
-        mcp.run(transport="streamable-http", port=8001)
+        mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
