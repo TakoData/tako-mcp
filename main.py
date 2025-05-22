@@ -1,15 +1,20 @@
+import logging
 import os
+import traceback
+from typing import Any
 
 from tako.client import TakoClient, KnowledgeSearchSourceIndex
-from mcp.server.fastmcp import FastMCP
+from tako.types.visualize.types import TakoDataFormatDataset
+from mcp.server.fastmcp import FastMCP 
 
 TAKO_API_KEY = os.getenv("TAKO_API_KEY")
+X_TAKO_URL = os.getenv("X_TAKO_URL", "https://trytako.com")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
 
 
 # Initialize MCP Server and Tako Client
-mcp = FastMCP("tako", port=8001)
-tako_client = TakoClient(api_key=TAKO_API_KEY)
+mcp = FastMCP("tako")
+tako_client = TakoClient(api_key=TAKO_API_KEY, server_url=X_TAKO_URL)
 
 @mcp.tool()
 async def search_tako(text: str) -> str:
@@ -23,6 +28,7 @@ async def search_tako(text: str) -> str:
             ]
         )
     except Exception:
+        logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
         return "No card found"
     return response.model_dump()
 
@@ -52,8 +58,26 @@ async def generate_search_tako_prompt(text: str) -> str:
     </UserInputText>
     """
 
+@mcp.tool()
+async def visualize_dataset(dataset: dict[str, Any]) -> str:
+    """Given a structured dataset in Tako Data Format, return a visualization."""
+    try:
+        tako_dataset = TakoDataFormatDataset.model_validate(dataset)
+    except Exception:
+        logging.error(f"Invalid dataset format: {dataset}, {traceback.format_exc()}")
+        # If a dataset is invalid, return the traceback to the client so it can retry with the correct format
+        return f"Invalid dataset format: {dataset}, {traceback.format_exc()}"
+    
+    try:
+        response = tako_client.beta_visualize(tako_dataset)
+    except Exception:
+        logging.error(f"Failed to generate visualization: {dataset}, {traceback.format_exc()}")
+        return f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
+    return response.model_dump()
+    
+
 if __name__ == "__main__":
     if ENVIRONMENT == "remote":
-        mcp.run(transport="streamable-http")
+        mcp.run(transport="streamable-http", port=8001)
     else:
         mcp.run(transport="stdio")
