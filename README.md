@@ -77,3 +77,10 @@ In inspector console, add the url `https://0.0.0.0:<port>/mcp/` and click connec
 Select the `Tools` tab, and click `ListTools`. 
 
 Select `search_tako` and test a query
+
+
+## Deploying it on render
+Since we use uv Render uses pip, we have to build a requirements.txt
+```
+uv pip compile pyproject.toml > requirements.txt 
+```

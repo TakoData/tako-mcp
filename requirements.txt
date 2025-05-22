@@ -19,6 +19,10 @@ click==8.1.8
     # via
     #   typer
     #   uvicorn
+exceptiongroup==1.3.0
+    # via fastmcp
+fastmcp==2.4.0
+    # via tako-mcp (pyproject.toml)
 h11==0.16.0
     # via
     #   httpcore
@@ -26,7 +30,10 @@ h11==0.16.0
 httpcore==1.0.9
     # via httpx
 httpx==0.28.1
-    # via mcp
+    # via
+    #   fastmcp
+    #   mcp
+    #   tako-sdk
 httpx-sse==0.4.0
     # via mcp
 idna==3.10
@@ -38,37 +45,46 @@ iniconfig==2.1.0
     # via pytest
 markdown-it-py==3.0.0
     # via rich
-mcp==1.8.1
-    # via tako-mcp (pyproject.toml)
+mcp==1.9.1
+    # via fastmcp
 mdurl==0.1.2
     # via markdown-it-py
+openapi-pydantic==0.5.1
+    # via fastmcp
 packaging==25.0
     # via pytest
-pluggy==1.5.0
+pluggy==1.6.0
     # via pytest
-pydantic==2.8.2
+pydantic==2.11.4
     # via
     #   mcp
+    #   openapi-pydantic
     #   pydantic-settings
     #   tako-sdk
-pydantic-core==2.20.1
+pydantic-core==2.33.2
     # via pydantic
 pydantic-settings==2.9.1
     # via mcp
 pygments==2.19.1
     # via rich
-pytest==7.4.3
+pytest==8.3.5
+    # via
+    #   pytest-asyncio
+    #   tako-sdk
+pytest-asyncio==0.26.0
     # via tako-sdk
 python-dotenv==1.1.0
     # via
-    #   mcp
+    #   fastmcp
     #   pydantic-settings
 python-multipart==0.0.20
     # via mcp
 requests==2.32.3
     # via tako-sdk
 rich==14.0.0
-    # via typer
+    # via
+    #   fastmcp
+    #   typer
 shellingham==1.5.4
     # via typer
 sniffio==1.3.1
@@ -82,17 +98,22 @@ starlette==0.46.2
 tako-sdk==0.1.12
     # via tako-mcp (pyproject.toml)
 typer==0.15.4
-    # via mcp
+    # via fastmcp
 typing-extensions==4.13.2
     # via
     #   anyio
+    #   exceptiongroup
     #   pydantic
     #   pydantic-core
     #   typer
     #   typing-inspection
-typing-inspection==0.4.0
-    # via pydantic-settings
+typing-inspection==0.4.1
+    # via
+    #   pydantic
+    #   pydantic-settings
 urllib3==2.4.0
     # via requests
 uvicorn==0.34.2
     # via mcp
+websockets==15.0.1
+    # via fastmcp
