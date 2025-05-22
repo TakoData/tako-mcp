@@ -13,7 +13,7 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
 
 
 # Initialize MCP Server and Tako Client
-mcp = FastMCP("tako", port=8001)
+mcp = FastMCP("tako", port=8001, host="0.0.0.0")
 tako_client = TakoClient(api_key=TAKO_API_KEY, server_url=X_TAKO_URL)
 
 @mcp.tool()
