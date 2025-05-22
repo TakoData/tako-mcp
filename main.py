@@ -5,7 +5,7 @@ from typing import Any
 
 from tako.client import TakoClient, KnowledgeSearchSourceIndex
 from tako.types.visualize.types import TakoDataFormatDataset
-from fastmcp import FastMCP 
+from fastmcp.server.server import FastMCP 
 
 TAKO_API_KEY = os.getenv("TAKO_API_KEY")
 X_TAKO_URL = os.getenv("X_TAKO_URL", "https://trytako.com")
