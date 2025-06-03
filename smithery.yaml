@@ -8,7 +8,7 @@ startCommand:
     (config) => ({
       command: 'python',
       args: ['main.py'],
-      env: { TAKO_API_KEY: config.takoApiKey, ENVIRONMENT: 'remote' }
+      env: { TAKO_API_KEY: config.takoApiKey }
     })
   configSchema:
     # JSON Schema defining the configuration options for the MCP.
@@ -21,3 +21,5 @@ startCommand:
         description: Tako API key
   exampleConfig:
     takoApiKey: YOUR_TAKO_API_KEY
+env:
+  ENVIRONMENT: remote
