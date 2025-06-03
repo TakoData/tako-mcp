@@ -21,5 +21,3 @@ startCommand:
         description: Tako API key
   exampleConfig:
     takoApiKey: YOUR_TAKO_API_KEY
-env:
-  ENVIRONMENT: remote

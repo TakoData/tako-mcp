@@ -14,6 +14,6 @@ RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir .
 
 # Default to local env
-ENV ENVIRONMENT=local
+ENV ENVIRONMENT=remote
 
 CMD ["python", "main.py"]
