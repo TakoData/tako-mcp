@@ -5,6 +5,30 @@ Tako MCP is a simple MCP server that queries Tako and returns real-time data and
 
 Check out [Tako](https://trytako.com) and our [documentation](https://docs.trytako.com)
 
+## Available Tools
+### search_tako
+Takes a query to search Tako and the web to get real-time data and visualization. Returns embed, webpage, and image url of the visualization with relevant metadata such as source, methodology, and description.
+
+### upload_file_to_visualize
+Takes a base64 encoded file as an input and uploads it to Tako to use for visualization
+
+*If you call this tool with a big file, it may consume a large number of tokens and will be very slow. If you want to test visualizing bigger files though Tako, visit our [playground](https://trytako.com/playground)
+
+### visualize_file
+Use the file_id from `upload_file_to_visualize` and visualize the file. Returns embed, webpage, and image url of the visualization
+
+### visualize_dataset
+Takes a Tako Data Format data and visualize. Returns embed, webpage, and image url of the visualization
+
+## Available Prompts
+### generate_search_tako_prompt
+Prompt to assist the client to format query and search Tako using `search_tako` tool
+
+### generate_visualization_prompt
+Prompt to assist the client to transform the data into Tako Data Format and visualize using `visualize_dataset` tool
+
+
+
 
 ## Quickstart
 ###  Get your API key
