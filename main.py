@@ -1,7 +1,9 @@
+import base64
 import logging
 import os
+import tempfile
 import traceback
-from typing import Any, Optional
+from typing import Any
 
 from tako.client import TakoClient, KnowledgeSearchSourceIndex
 from tako.types.visualize.types import TakoDataFormatDataset
@@ -31,6 +33,67 @@ async def search_tako(text: str) -> str:
     except Exception:
         logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
         return "No card found"
+    return response.model_dump()
+
+
+@mcp.tool()
+async def upload_file_to_visualize(filename: str, content: str, encoding: str = "base64") -> str:
+    """Upload a file in base64 format to Tako to visualize. Returns the file_id of the uploaded file that can call visualize_file with.
+    
+    Response: 
+        file_id: <file_id>
+    """
+    if encoding == "base64":
+        file_data = base64.b64decode(content)
+        
+        # Use tempfile to create a temporary file in the system's temp directory
+        with tempfile.NamedTemporaryFile(prefix="temp_", suffix="_" + filename, delete=False) as temp_file:
+            temp_file.write(file_data)
+            temp_file_path = temp_file.name
+        
+        try:
+            file_id = tako_client.beta_upload_file(temp_file_path)
+        except Exception:
+            logging.error(f"Failed to upload file: {temp_file_path}, {traceback.format_exc()}")
+            return f"Failed to upload file: {temp_file_path}, {traceback.format_exc()}"
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+    else:
+        raise ValueError(f"Unsupported encoding: {encoding}, supported encoding is base64")
+
+    return f"{file_id}"
+
+
+@mcp.tool()
+async def visualize_file(file_id: str) -> str:
+    """Visualize a file in Tako using the file_id returned from upload_file_to_visualize. Returns the visualization."""
+    try:   
+        response = tako_client.beta_visualize(file_id=file_id)
+    except Exception:
+        logging.error(f"Failed to visualize file: {file_id}, {traceback.format_exc()}")
+        return f"Failed to visualize file: {file_id}, {traceback.format_exc()}"
+    return response.model_dump()
+
+
+@mcp.tool()
+async def visualize_dataset(dataset: dict[str, Any]) -> str:
+    """Given a structured dataset in Tako Data Format, return a visualization."""
+    try:
+        tako_dataset = TakoDataFormatDataset.model_validate(dataset)
+    except Exception:
+        logging.error(f"Invalid dataset format: {dataset}, {traceback.format_exc()}")
+        # If a dataset is invalid, return the traceback to the client so it can retry with the correct format
+        return f"Invalid dataset format: {dataset}, {traceback.format_exc()}"
+
+    try:
+        response = tako_client.beta_visualize(tako_dataset)
+    except Exception:
+        logging.error(
+            f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
+        )
+        return f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
     return response.model_dump()
 
 
@@ -81,7 +144,7 @@ There are two common problems you find in data that are ingested that make them 
 1. A variable might be spread across multiple columns.
 2. An observation might be scattered across multiple rows.
 
-For 1., we need to “melt” the wide data, with multiple columns, into long data.
+For 1., we need to "melt" the wide data, with multiple columns, into long data.
 For 2., we need to unstack or pivot the multiple rows into columns (ie go from long to wide.)
 
 Example 1 (needs melting):
@@ -132,26 +195,6 @@ Make the metadata consistent, rich, and useful for visualizations.
 {text}
 </UserInputText>
 """
-
-
-@mcp.tool()
-async def visualize_dataset(dataset: dict[str, Any]) -> str:
-    """Given a structured dataset in Tako Data Format, return a visualization."""
-    try:
-        tako_dataset = TakoDataFormatDataset.model_validate(dataset)
-    except Exception:
-        logging.error(f"Invalid dataset format: {dataset}, {traceback.format_exc()}")
-        # If a dataset is invalid, return the traceback to the client so it can retry with the correct format
-        return f"Invalid dataset format: {dataset}, {traceback.format_exc()}"
-
-    try:
-        response = tako_client.beta_visualize(tako_dataset)
-    except Exception:
-        logging.error(
-            f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
-        )
-        return f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
-    return response.model_dump()
 
 
 if __name__ == "__main__":
