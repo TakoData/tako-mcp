@@ -427,12 +427,12 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = "==1.9.1" },
-    { name = "tako-sdk", specifier = ">=0.1.17" },
+    { name = "tako-sdk", specifier = ">=0.1.18" },
 ]
 
 [[package]]
 name = "tako-sdk"
-version = "0.1.17"
+version = "0.1.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -441,9 +441,9 @@ dependencies = [
     { name = "pytest-asyncio" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/18/c7/8d29a74790fa99c469bf52b1a5d73adf02e67e582015c0bb61ae14710780/tako_sdk-0.1.17.tar.gz", hash = "sha256:d421bb64522a090caf77f3cf58efa3b2f83211f83921afe9e0580fa809826bf8", size = 8124 }
+sdist = { url = "https://files.pythonhosted.org/packages/c5/84/5ef75e0354497f7c4e8ca88f9fd399b3c353b067e8306726170e7dfe3326/tako_sdk-0.1.18.tar.gz", hash = "sha256:15f3bb48930650db4d8a8a915797056fc49310c06222780241b7bb05cb567158", size = 8896 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/6a/4a334a71c6161db048b6334eed826dc54c07ef545c167c8aa719bf6df432/tako_sdk-0.1.17-py3-none-any.whl", hash = "sha256:1b9363fe38f087150a10709c5189509c626c508ef2ab0fb67c9cfb1ca5e6a92b", size = 9188 },
+    { url = "https://files.pythonhosted.org/packages/c3/19/fe296f2725d9c10feb553899ee2aedb933974443a3d5e64922d8ee894fc5/tako_sdk-0.1.18-py3-none-any.whl", hash = "sha256:8261404386e8a810e759ba9e7430a8a4a286095dce7ed65b30cf03beeacd29a4", size = 9928 },
 ]
 
 [[package]]

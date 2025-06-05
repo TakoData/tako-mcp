@@ -85,7 +85,7 @@ sse-starlette==2.3.6
     # via mcp
 starlette==0.47.0
     # via mcp
-tako-sdk==0.1.17
+tako-sdk==0.1.18
     # via tako-mcp (pyproject.toml)
 typer==0.16.0
     # via mcp
