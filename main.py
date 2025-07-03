@@ -40,6 +40,12 @@ async def search_tako(text: str) -> str:
 async def upload_file_to_visualize(filename: str, content: str, encoding: str = "base64") -> str:
     """Upload a file in base64 format to Tako to visualize. Returns the file_id of the uploaded file that can call visualize_file with.
     
+    Supported file type extensions:
+    - .csv
+    - .xlsx
+    - .xls
+    - .parquet
+    
     Response: 
         file_id: <file_id>
     """
@@ -67,10 +73,30 @@ async def upload_file_to_visualize(filename: str, content: str, encoding: str = 
 
 
 @mcp.tool()
-async def visualize_file(file_id: str) -> str:
-    """Visualize a file in Tako using the file_id returned from upload_file_to_visualize. Returns the visualization."""
+async def visualize_file(file_id: str, query: str | None = None) -> str:
+    """
+    Visualize a file in Tako using the file_id returned from upload_file_to_visualize. 
+    Optionally, provide a query that includes an analytical question and visualization types to visualize the file. 
+    
+    Query Examples:
+    - Show me a timeseries graph of X and Y over the last 10 years.
+    - Show me a bar chart comparing the top 10 companies by revenue in 2024.
+    - Show me a map of which state ordered the most pizza in 2024.
+    - Show me a box plot of the distribution of math scores by gender.
+    - Show me a heatmap of the correlation between revenue and profit for the divisions of a company.
+    - Compare the revenue of the top 10 companies by revenue in 2024.
+    - Show me a pie chart of the categories of products sold in 2023.
+    - Histogram of the distribution of salary in the marketing department.
+    
+    Args:
+        file_id: The file_id of the file to visualize.
+        query: The query to visualize the file.
+        
+    Returns:
+        Tako Card with Visualization Embed and Image Link.
+    """
     try:   
-        response = tako_client.beta_visualize(file_id=file_id)
+        response = tako_client.beta_visualize(file_id=file_id, query=query)
     except Exception:
         logging.error(f"Failed to visualize file: {file_id}, {traceback.format_exc()}")
         return f"Failed to visualize file: {file_id}, {traceback.format_exc()}"
@@ -78,8 +104,28 @@ async def visualize_file(file_id: str) -> str:
 
 
 @mcp.tool()
-async def visualize_dataset(dataset: dict[str, Any]) -> str:
-    """Given a structured dataset in Tako Data Format, return a visualization."""
+async def visualize_dataset(dataset: dict[str, Any], query: str | None = None) -> str:
+    """
+    Visualize a dataset in Tako Data Format. 
+    Optionally, provide a query that includes an analytical question and visualization types to visualize the dataset. 
+    
+    Query Examples:
+    - Show me a timeseries graph of X and Y over the last 10 years.
+    - Show me a bar chart comparing the top 10 companies by revenue in 2024.
+    - Show me a map of which state ordered the most pizza in 2024.
+    - Show me a box plot of the distribution of math scores by gender.
+    - Show me a heatmap of the correlation between revenue and profit for the divisions of a company.
+    - Compare the revenue of the top 10 companies by revenue in 2024.
+    - Show me a pie chart of the categories of products sold in 2023.
+    - Histogram of the distribution of salary in the marketing department.
+    
+    Args:
+        dataset: The dataset to visualize in Tako Data Format (Tidy data).
+        query: The query to visualize the dataset.
+        
+    Returns:
+        Tako Card with Visualization Embed and Image Link.
+    """
     try:
         tako_dataset = TakoDataFormatDataset.model_validate(dataset)
     except Exception:
@@ -88,7 +134,7 @@ async def visualize_dataset(dataset: dict[str, Any]) -> str:
         return f"Invalid dataset format: {dataset}, {traceback.format_exc()}"
 
     try:
-        response = tako_client.beta_visualize(tako_dataset)
+        response = tako_client.beta_visualize(tako_dataset, query=query)
     except Exception:
         logging.error(
             f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
