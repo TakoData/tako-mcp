@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/takodata-tako-mcp-badge.png)](https://mseep.ai/app/takodata-tako-mcp)
+
 # Tako MCP
 [![smithery badge](https://smithery.ai/badge/@TakoData/tako-mcp)](https://smithery.ai/server/@TakoData/tako-mcp)
 
