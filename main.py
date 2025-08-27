@@ -32,6 +32,7 @@ async def search_tako(text: str) -> dict[str, Any] | str:
             source_indexes=[
                 KnowledgeSearchSourceIndex.TAKO,
             ],
+            extra_params="include_data_url=true",
         )
     except Exception:
         logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
@@ -51,6 +52,7 @@ async def web_search_tako(text: str) -> dict[str, Any] | str:
             source_indexes=[
                 KnowledgeSearchSourceIndex.WEB,
             ],
+            extra_params="include_data_url=true",
         )
     except Exception:
         logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
@@ -70,6 +72,7 @@ async def deep_search_tako(text: str) -> dict[str, Any] | str:
             source_indexes=[
                 "tako_deep",
             ],
+            extra_params="include_data_url=true",
         )
     except Exception as e:
         logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
