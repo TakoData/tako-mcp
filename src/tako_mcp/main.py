@@ -6,8 +6,6 @@ import tempfile
 import traceback
 from typing import Any
 import requests
-import uvicorn
-from starlette.middleware.cors import CORSMiddleware
 
 from tako.client import TakoClient, KnowledgeSearchSourceIndex
 from tako.types.knowledge_search.types import KnowledgeSearchResults
@@ -53,7 +51,7 @@ def _add_insight_to_knowledge_response(response: KnowledgeSearchResults, ctx: Co
     return resp_dict
            
 def _get_tako_client_from_context(ctx: Context) -> TakoClient:
-    if ENVIRONMENT == "smithery":
+    if "takoApiKey" in ctx.session_config:
         return TakoClient(api_key=ctx.session_config.takoApiKey, server_url=X_TAKO_URL)
     else:
         return TakoClient(api_key=TAKO_API_KEY, server_url=X_TAKO_URL)
