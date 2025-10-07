@@ -17,7 +17,7 @@ from tako.types.visualize.types import TakoDataFormatDataset
 
 TAKO_API_KEY = os.getenv("TAKO_API_KEY")
 X_TAKO_URL = os.getenv("X_TAKO_URL", "https://trytako.com/")
-ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
+ENVIRONMENT = os.getenv("ENVIRONMENT")
 PORT = os.getenv("PORT", 8001)
 HOST = os.getenv("HOST", "0.0.0.0")
 
