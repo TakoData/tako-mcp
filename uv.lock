@@ -575,13 +575,22 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+<<<<<<< HEAD
     { name = "mcp", extras = ["cli"], specifier = "==1.12.3" },
     { name = "tako-sdk", specifier = ">=0.1.35" },
+=======
+    { name = "mcp", extras = ["cli"], specifier = "==1.9.1" },
+    { name = "tako-sdk", specifier = ">=0.1.39" },
+>>>>>>> 7769ee9 (add insights to results and better file upload)
 ]
 
 [[package]]
 name = "tako-sdk"
+<<<<<<< HEAD
 version = "0.1.34"
+=======
+version = "0.1.39"
+>>>>>>> 7769ee9 (add insights to results and better file upload)
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -590,9 +599,15 @@ dependencies = [
     { name = "pytest-asyncio" },
     { name = "requests" },
 ]
+<<<<<<< HEAD
 sdist = { url = "https://files.pythonhosted.org/packages/10/da/b0f2c104764697bc6ce9a681ff3f7fa45774f5bdbf63488f8843db351882/tako_sdk-0.1.35.tar.gz", hash = "sha256:28c45869c032f041fcfcb0fd57d4ce46154b1c0608675d84b438747371049a4e", size = 10419, upload-time = "2025-08-27T00:57:30.087Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b0/b9/3bd871c515fb2e2f5334d0c7997a2ad5ba69b34c10e81608f34f7d1cd2db/tako_sdk-0.1.35-py3-none-any.whl", hash = "sha256:0a3c3bf9d2e8b4bcbb135f9438c51681419785a0f7d944177052490e302efc29", size = 11551, upload-time = "2025-08-27T00:57:28.888Z" },
+=======
+sdist = { url = "https://files.pythonhosted.org/packages/41/f2/043ee843ffa03768c3996e17c4b3475f4b4cfb356c50fc0ba3fab757344c/tako_sdk-0.1.39.tar.gz", hash = "sha256:37108df0eae2916c61a2a563d2dffc6251493fbceac3dc14fac9d37a457b6a13", size = 10663 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/45/23ec01d856f5c8e41f983bb0f70bc2cc7422a61cbf3beb608662ebdf929a/tako_sdk-0.1.39-py3-none-any.whl", hash = "sha256:1a05318cbb99f7fd80583661a53594534fceeb415f3fed8ca433e459d4ec7f52", size = 11808 },
+>>>>>>> 7769ee9 (add insights to results and better file upload)
 ]
 
 [[package]]
