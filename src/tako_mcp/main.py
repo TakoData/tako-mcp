@@ -51,10 +51,10 @@ def _add_insight_to_knowledge_response(response: KnowledgeSearchResults, ctx: Co
     return resp_dict
            
 def _get_tako_client_from_context(ctx: Context) -> TakoClient:
-    if "takoApiKey" in ctx.session_config:
-        return TakoClient(api_key=ctx.session_config.takoApiKey, server_url=X_TAKO_URL)
-    else:
+    if ENVIRONMENT == "local":
         return TakoClient(api_key=TAKO_API_KEY, server_url=X_TAKO_URL)
+    else:
+        return TakoClient(api_key=ctx.session_config.takoApiKey, server_url=X_TAKO_URL)
 
 @mcp.tool()
 async def search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
