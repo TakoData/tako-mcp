@@ -1,4 +1,5 @@
 import base64
+import concurrent
 import logging
 import os
 import tempfile
@@ -6,13 +7,16 @@ import traceback
 from typing import Any
 import requests
 
+from tako.client import TakoClient, KnowledgeSearchSourceIndex
+from tako.types.knowledge_search.types import KnowledgeSearchResults
+from tako.types.visualize.types import TakoDataFormatDataset
 from mcp.server.fastmcp import FastMCP
 from tako.client import TakoClient
 from tako.types.knowledge_search.types import KnowledgeSearchSourceIndex, KnowledgeSearchResults
 from tako.types.visualize.types import TakoDataFormatDataset
 
 TAKO_API_KEY = os.getenv("TAKO_API_KEY")
-X_TAKO_URL = os.getenv("X_TAKO_URL", "https://trytako.com")
+X_TAKO_URL = os.getenv("X_TAKO_URL", "https://trytako.com/")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
 
 
@@ -20,7 +24,32 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
 mcp = FastMCP("tako", port=8001, host="0.0.0.0")
 tako_client = TakoClient(api_key=TAKO_API_KEY, server_url=X_TAKO_URL)
 
+def _get_insight_for_chart(card_id: str) -> str:
+    """Get insight for a card."""
+    try:
+        response = tako_client.beta_chart_insights(card_id)
+    except Exception:
+        logging.error(f"Failed to get insight for card: {card_id}, {traceback.format_exc()}")
+        return "No insight found"
+    return response
 
+def _add_insight_to_knowledge_response(response: KnowledgeSearchResults) -> dict[str, Any]:
+    resp_dict = response.model_dump()
+    def get_insights_for_per_card(card_id: str) -> str:
+        return card_id, _get_insight_for_chart(card_id)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = []
+        if "outputs" in resp_dict and "knowledge_cards" in resp_dict["outputs"]:
+            for card in resp_dict["outputs"]["knowledge_cards"]:
+                futures.append(executor.submit(get_insights_for_per_card, card["card_id"]))
+        card_id_to_insight = {}
+        for future in concurrent.futures.as_completed(futures):
+            card_id, insight = future.result()
+            card_id_to_insight[card_id] = insight
+        for card in resp_dict["outputs"]["knowledge_cards"]:
+            card["insight"] = card_id_to_insight[card["card_id"]]
+    return resp_dict
+            
 @mcp.tool()
 async def search_tako(text: str) -> dict[str, Any] | str:
     """Search the Tako knowledge index for any knowledge you want and get data and visualizations.
@@ -53,10 +82,11 @@ async def web_search_tako(text: str) -> dict[str, Any] | str:
                 KnowledgeSearchSourceIndex.WEB,
             ],
         )
+        resp_dict = _add_insight_to_knowledge_response(response)
     except Exception:
         logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
         return "No card found"
-    return response.model_dump()
+    return resp_dict
 
 
 @mcp.tool()
@@ -155,7 +185,36 @@ async def upload_file_to_visualize(
 
     return f"{file_id}"
 
+@mcp.tool()
+async def upload_file_from_local_path(local_path: str) -> str:
+    """Upload a file from a local path to Tako to visualize. Returns the file_id of the uploaded file that can call visualize_file with.
+    
+    Response: 
+        file_id: <file_id>
+    """
+    try:
+        file_id = tako_client.beta_upload_file(local_path)
+    except Exception:
+        logging.error(f"Failed to upload file: {local_path}, {traceback.format_exc()}")
+        return f"Failed to upload file: {local_path}, {traceback.format_exc()}"
+    return f"{file_id}"
 
+
+@mcp.tool()
+async def upload_file_from_url(url: str) -> str:
+    """Upload a file from an external url to Tako to visualize. Returns the file_id of the uploaded file that can call visualize_file with.
+    
+    Response: 
+        file_id: <file_id>
+    """
+    try:
+        file_id = tako_client.beta_file_connector(url)
+    except Exception:
+        logging.error(f"Failed to upload file: {url}, {traceback.format_exc()}")
+        return f"Failed to upload file: {url}, {traceback.format_exc()}"
+    return f"{file_id}"
+    
+    
 @mcp.tool()
 async def visualize_file(file_id: str, query: str | None = None) -> str:
     """
@@ -181,10 +240,11 @@ async def visualize_file(file_id: str, query: str | None = None) -> str:
     """
     try:
         response = tako_client.beta_visualize(file_id=file_id, query=query)
+        resp_dict = _add_insight_to_knowledge_response(response)
     except Exception:
         logging.error(f"Failed to visualize file: {file_id}, {traceback.format_exc()}")
         return f"Failed to visualize file: {file_id}, {traceback.format_exc()}"
-    return response.model_dump()
+    return resp_dict
 
 
 @mcp.tool()
@@ -219,12 +279,13 @@ async def visualize_dataset(dataset: dict[str, Any], query: str | None = None) -
 
     try:
         response = tako_client.beta_visualize(tako_dataset, query=query)
+        resp_dict = _add_insight_to_knowledge_response(response)
     except Exception:
         logging.error(
             f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
         )
         return f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
-    return response.model_dump()
+    return resp_dict
 
 
 @mcp.prompt()
