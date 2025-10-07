@@ -2,25 +2,20 @@ import base64
 import concurrent
 import logging
 import os
-import requests
 import tempfile
 import traceback
+from typing import Any
+import requests
 import uvicorn
-
-from mcp.server.fastmcp import FastMCP, Context
-from mcp.server.fastmcp.context import get_http_request
-from mcp.server.fastmcp.middleware import Middleware, MiddlewareContext
-from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
-from tako.client import TakoClient
+
 from tako.client import TakoClient, KnowledgeSearchSourceIndex
 from tako.types.knowledge_search.types import KnowledgeSearchResults
+from tako.types.visualize.types import TakoDataFormatDataset
+from mcp.server.fastmcp import Context, FastMCP
+from tako.client import TakoClient
 from tako.types.knowledge_search.types import KnowledgeSearchSourceIndex, KnowledgeSearchResults
 from tako.types.visualize.types import TakoDataFormatDataset
-from tako.types.visualize.types import TakoDataFormatDataset
-from typing import Any
-
 
 TAKO_API_KEY = os.getenv("TAKO_API_KEY")
 X_TAKO_URL = os.getenv("X_TAKO_URL", "https://trytako.com/")
@@ -31,36 +26,10 @@ HOST = os.getenv("HOST", "0.0.0.0")
 # Initialize MCP Server
 mcp = FastMCP("tako", port=PORT, host=HOST)
 
-class Config(BaseModel):
-    takoApiKey: str
-    
-SESSION_CONFIG = dict[str, Config] = {}
-
-def parse_dot_bracket(qs: str) -> dict[str, Any]:
-    req: Request = get_http_request()
-    flat = dict(req.query_params)
-    return flat
-
-class ConfigMiddleware(Middleware):
-    async def on_initialize(self, context: MiddlewareContext, call_next):
-        req: Request = get_http_request()
-        cfg_raw = parse_dot_bracket(req.url.query)
-        cfg = Config(**cfg_raw)  # validate/convert
-        sid = context.fastmcp_context.session_id or ""
-        SESSION_CONFIG[sid] = cfg
-        return await call_next()
-
-def _get_tako_client_from_context_or_envvar(ctx: Context) -> TakoClient:
-    cfg = SESSION_CONFIG.get(ctx.session_id or "")
-    if cfg:
-        return TakoClient(api_key=cfg.takoApiKey, server_url=X_TAKO_URL)
-    else:
-        return TakoClient(api_key=TAKO_API_KEY, server_url=X_TAKO_URL)
-
 def _get_insight_for_chart(card_id: str, ctx: Context) -> str:
     """Get insight for a card."""
     try:
-        response = _get_tako_client_from_context_or_envvar(ctx).beta_chart_insights(card_id)
+        response = _get_tako_client_from_context(ctx).beta_chart_insights(card_id)
     except Exception:
         logging.error(f"Failed to get insight for card: {card_id}, {traceback.format_exc()}")
         return "No insight found"
@@ -82,7 +51,13 @@ def _add_insight_to_knowledge_response(response: KnowledgeSearchResults, ctx: Co
         for card in resp_dict["outputs"]["knowledge_cards"]:
             card["insight"] = card_id_to_insight[card["card_id"]]
     return resp_dict
-            
+           
+def _get_tako_client_from_context(ctx: Context) -> TakoClient:
+    if ENVIRONMENT == "smithery":
+        return TakoClient(api_key=ctx.session_config.takoApiKey, server_url=X_TAKO_URL)
+    else:
+        return TakoClient(api_key=TAKO_API_KEY, server_url=X_TAKO_URL)
+
 @mcp.tool()
 async def search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
     """Search the Tako knowledge index for any knowledge you want and get data and visualizations.
@@ -90,7 +65,7 @@ async def search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
     as well as the data used to generate the visualization.
     """
     try:
-        response = _get_tako_client_from_context_or_envvar(ctx).knowledge_search(
+        response = _get_tako_client_from_context(ctx).knowledge_search(
             text=text,
             source_indexes=[
                 KnowledgeSearchSourceIndex.TAKO,
@@ -109,13 +84,13 @@ async def web_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
     as well as the data used to generate the visualization.
     """
     try:
-        response = _get_tako_client_from_context_or_envvar(ctx).knowledge_search(
+        response = _get_tako_client_from_context(ctx).knowledge_search(
             text=text,
             source_indexes=[
                 KnowledgeSearchSourceIndex.WEB,
             ],
         )
-        resp_dict = _add_insight_to_knowledge_response(response)
+        resp_dict = _add_insight_to_knowledge_response(response, ctx)
     except Exception:
         logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
         return "No card found"
@@ -129,7 +104,7 @@ async def deep_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
     as well as the data used to generate the visualization.
     """
     try:
-        response = _get_tako_client_from_context_or_envvar(ctx).knowledge_search(
+        response = _get_tako_client_from_context(ctx).knowledge_search(
             text=text,
             source_indexes=[
                 "tako_deep",
@@ -147,7 +122,7 @@ async def data_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
     as well as the data used to generate the visualization.
     """
     try:
-        response = _get_tako_client_from_context_or_envvar(ctx).knowledge_search(
+        response = _get_tako_client_from_context(ctx).knowledge_search(
             text=text,
             source_indexes=[
                 KnowledgeSearchSourceIndex.TAKO.value,
@@ -177,7 +152,7 @@ async def data_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
 
 @mcp.tool()
 async def upload_file_to_visualize(
-    filename: str, content: str, ctx: Context, encoding: str = "base64", 
+    filename: str, content: str, encoding: str = "base64", ctx: Context
 ) -> str:
     """Upload a file in base64 format to Tako to visualize. Returns the file_id of the uploaded file that can call visualize_file with.
 
@@ -201,7 +176,7 @@ async def upload_file_to_visualize(
             temp_file_path = temp_file.name
 
         try:
-            file_id = _get_tako_client_from_context_or_envvar(ctx).beta_upload_file(temp_file_path)
+            file_id = _get_tako_client_from_context(ctx).beta_upload_file(temp_file_path)
         except Exception:
             logging.error(
                 f"Failed to upload file: {temp_file_path}, {traceback.format_exc()}"
@@ -226,7 +201,7 @@ async def upload_file_from_local_path(local_path: str, ctx: Context) -> str:
         file_id: <file_id>
     """
     try:
-        file_id = _get_tako_client_from_context_or_envvar(ctx).beta_upload_file(local_path)
+        file_id = _get_tako_client_from_context(ctx).beta_upload_file(local_path)
     except Exception:
         logging.error(f"Failed to upload file: {local_path}, {traceback.format_exc()}")
         return f"Failed to upload file: {local_path}, {traceback.format_exc()}"
@@ -241,7 +216,7 @@ async def upload_file_from_url(url: str, ctx: Context) -> str:
         file_id: <file_id>
     """
     try:
-        file_id = _get_tako_client_from_context_or_envvar(ctx).beta_file_connector(url)
+        file_id = _get_tako_client_from_context(ctx).beta_file_connector(url)
     except Exception:
         logging.error(f"Failed to upload file: {url}, {traceback.format_exc()}")
         return f"Failed to upload file: {url}, {traceback.format_exc()}"
@@ -249,7 +224,7 @@ async def upload_file_from_url(url: str, ctx: Context) -> str:
     
     
 @mcp.tool()
-async def visualize_file(file_id: str, ctx: Context, query: str | None = None) -> str:
+async def visualize_file(file_id: str, query: str | None = None, ctx: Context) -> str:
     """
     Visualize a file in Tako using the file_id returned from upload_file_to_visualize.
     Optionally, provide a query that includes an analytical question and visualization types to visualize the file.
@@ -272,7 +247,7 @@ async def visualize_file(file_id: str, ctx: Context, query: str | None = None) -
         Tako Card with Visualization Embed and Image Link.
     """
     try:
-        response = _get_tako_client_from_context_or_envvar(ctx).beta_visualize(file_id=file_id, query=query)
+        response = _get_tako_client_from_context(ctx).beta_visualize(file_id=file_id, query=query)
         resp_dict = _add_insight_to_knowledge_response(response)
     except Exception:
         logging.error(f"Failed to visualize file: {file_id}, {traceback.format_exc()}")
@@ -281,7 +256,7 @@ async def visualize_file(file_id: str, ctx: Context, query: str | None = None) -
 
 
 @mcp.tool()
-async def visualize_dataset(dataset: dict[str, Any], ctx: Context, query: str | None = None) -> str:
+async def visualize_dataset(dataset: dict[str, Any], query: str | None = None, ctx: Context) -> str:
     """
     Visualize a dataset in Tako Data Format.
     Optionally, provide a query that includes an analytical question and visualization types to visualize the dataset.
@@ -311,7 +286,7 @@ async def visualize_dataset(dataset: dict[str, Any], ctx: Context, query: str | 
         return f"Invalid dataset format: {dataset}, {traceback.format_exc()}"
 
     try:
-        response = _get_tako_client_from_context_or_envvar(ctx).beta_visualize(tako_dataset, query=query)
+        response = _get_tako_client_from_context(ctx).beta_visualize(tako_dataset, query=query)
         resp_dict = _add_insight_to_knowledge_response(response)
     except Exception:
         logging.error(
@@ -424,18 +399,5 @@ Make the metadata consistent, rich, and useful for visualizations.
 if __name__ == "__main__":
     if ENVIRONMENT == "remote":
         mcp.run(transport="streamable-http")
-    elif ENVIRONMENT == "smithery":
-        app = mcp.streamable_http_app()
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["*"],
-            expose_headers=["mcp-session-id", "mcp-protocol-version"],
-            max_age=86400,
-        )
-        app.add_middleware(ConfigMiddleware)
-        uvicorn.run(app, host=HOST, port=PORT)
-    else:
+    elif ENVIRONMENT == "local":
         mcp.run(transport="stdio")
