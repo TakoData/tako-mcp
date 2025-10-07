@@ -152,7 +152,7 @@ async def data_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
 
 @mcp.tool()
 async def upload_file_to_visualize(
-    filename: str, content: str, encoding: str = "base64", ctx: Context
+    filename: str, content: str, ctx: Context, encoding: str = "base64", 
 ) -> str:
     """Upload a file in base64 format to Tako to visualize. Returns the file_id of the uploaded file that can call visualize_file with.
 
@@ -224,7 +224,7 @@ async def upload_file_from_url(url: str, ctx: Context) -> str:
     
     
 @mcp.tool()
-async def visualize_file(file_id: str, query: str | None = None, ctx: Context) -> str:
+async def visualize_file(file_id: str, ctx: Context, query: str | None = None) -> str:
     """
     Visualize a file in Tako using the file_id returned from upload_file_to_visualize.
     Optionally, provide a query that includes an analytical question and visualization types to visualize the file.
@@ -256,7 +256,7 @@ async def visualize_file(file_id: str, query: str | None = None, ctx: Context) -
 
 
 @mcp.tool()
-async def visualize_dataset(dataset: dict[str, Any], query: str | None = None, ctx: Context) -> str:
+async def visualize_dataset(dataset: dict[str, Any], ctx: Context, query: str | None = None) -> str:
     """
     Visualize a dataset in Tako Data Format.
     Optionally, provide a query that includes an analytical question and visualization types to visualize the dataset.
