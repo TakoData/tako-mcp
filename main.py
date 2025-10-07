@@ -6,6 +6,8 @@ import tempfile
 import traceback
 from typing import Any
 import requests
+import uvicorn
+from starlette.middleware.cors import CORSMiddleware
 
 from tako.client import TakoClient, KnowledgeSearchSourceIndex
 from tako.types.knowledge_search.types import KnowledgeSearchResults
@@ -18,10 +20,11 @@ from tako.types.visualize.types import TakoDataFormatDataset
 TAKO_API_KEY = os.getenv("TAKO_API_KEY")
 X_TAKO_URL = os.getenv("X_TAKO_URL", "https://trytako.com/")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
-
+PORT = os.getenv("PORT", 8001)
+HOST = os.getenv("HOST", "0.0.0.0")
 
 # Initialize MCP Server and Tako Client
-mcp = FastMCP("tako", port=8001, host="0.0.0.0")
+mcp = FastMCP("tako", port=PORT, host=HOST)
 tako_client = TakoClient(api_key=TAKO_API_KEY, server_url=X_TAKO_URL)
 
 def _get_insight_for_chart(card_id: str) -> str:
@@ -391,5 +394,17 @@ Make the metadata consistent, rich, and useful for visualizations.
 if __name__ == "__main__":
     if ENVIRONMENT == "remote":
         mcp.run(transport="streamable-http")
+    elif ENVIRONMENT == "smithery":
+        app = mcp.streamable_http_app()
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["*"],
+            expose_headers=["mcp-session-id", "mcp-protocol-version"],
+            max_age=86400,
+        )
+        uvicorn.run(app, host=HOST, port=PORT)
     else:
         mcp.run(transport="stdio")

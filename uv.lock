@@ -600,13 +600,17 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "mcp", extra = ["cli"] },
+    { name = "starlette" },
     { name = "tako-sdk" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = "==1.12.3" },
+    { name = "starlette", specifier = ">=0.48.0" },
     { name = "tako-sdk", specifier = ">=0.1.39" },
+    { name = "uvicorn", specifier = ">=0.37.0" },
 ]
 
 [[package]]
