@@ -246,7 +246,7 @@ async def visualize_file(file_id: str, ctx: Context, query: str | None = None) -
     """
     try:
         response = _get_tako_client_from_context(ctx).beta_visualize(file_id=file_id, query=query)
-        resp_dict = _add_insight_to_knowledge_response(response)
+        resp_dict = _add_insight_to_knowledge_response(response, ctx)
     except Exception:
         logging.error(f"Failed to visualize file: {file_id}, {traceback.format_exc()}")
         return f"Failed to visualize file: {file_id}, {traceback.format_exc()}"
@@ -285,7 +285,7 @@ async def visualize_dataset(dataset: dict[str, Any], ctx: Context, query: str | 
 
     try:
         response = _get_tako_client_from_context(ctx).beta_visualize(tako_dataset, query=query)
-        resp_dict = _add_insight_to_knowledge_response(response)
+        resp_dict = _add_insight_to_knowledge_response(response, ctx)
     except Exception:
         logging.error(
             f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
