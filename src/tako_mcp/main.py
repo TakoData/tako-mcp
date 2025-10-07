@@ -57,7 +57,7 @@ def _get_tako_client_from_context(ctx: Context) -> TakoClient:
         return TakoClient(api_key=ctx.session_config.takoApiKey, server_url=X_TAKO_URL)
 
 @mcp.tool()
-async def search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
+async def search_tako(text: str, ctx: Context) -> dict[str, Any]:
     """Search the Tako knowledge index for any knowledge you want and get data and visualizations.
     Returns embed, webpage, and image url of the visualization with relevant metadata such as source, methodology, and description
     as well as the data used to generate the visualization.
@@ -71,12 +71,12 @@ async def search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
         )
     except Exception as e:
         logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
-        return f"No card found {e}: {traceback.format_exc()}"
+        return {"error": f"No card found {e}: {traceback.format_exc()}"}
     return response.model_dump()
 
 
 @mcp.tool()
-async def web_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
+async def web_search_tako(text: str, ctx: Context) -> dict[str, Any]:
     """Search the general web using Parallel Web Search to get data and visualizations.
     Returns embed, webpage, and image url of the visualization with relevant metadata such as source, methodology, and description
     as well as the data used to generate the visualization.
@@ -91,12 +91,12 @@ async def web_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
         resp_dict = _add_insight_to_knowledge_response(response, ctx)
     except Exception:
         logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
-        return "No card found"
+        return {"error": "No card found"}
     return resp_dict
 
 
 @mcp.tool()
-async def deep_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
+async def deep_search_tako(text: str, ctx: Context) -> dict[str, Any]:
     """Perform a deep or analytical search of Tako for any knowledge you want and get data and visualizations.
     Returns embed, webpage, and image url of the visualization with relevant metadata such as source, methodology, and description
     as well as the data used to generate the visualization.
@@ -110,11 +110,11 @@ async def deep_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
         )
     except Exception as e:
         logging.error(f"Failed to search Tako: {text}, {traceback.format_exc()}")
-        return f"No card found {e}: {traceback.format_exc()}"
+        return {"error": f"No card found {e}: {traceback.format_exc()}"}
     return response.model_dump()
 
 @mcp.tool()
-async def data_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
+async def data_search_tako(text: str, ctx: Context) -> dict[str, Any]:
     """Search the Tako knowledge index for any knowledge you want and get data and visualizations.
     Returns embed, webpage, and image url of the visualization with relevant metadata such as source, methodology, and description
     as well as the data used to generate the visualization.
@@ -130,7 +130,7 @@ async def data_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
         )
     except Exception:
         logging.error(f"Failed to get file data: {text}, {traceback.format_exc()}")
-        return f"Failed to get file data: {text}, {traceback.format_exc()}"
+        return {"error": f"Failed to get file data: {text}, {traceback.format_exc()}"}
     
 
     assert isinstance(response, KnowledgeSearchResults), f"Response is not a KnowledgeSearchResults: {response}"
@@ -150,8 +150,8 @@ async def data_search_tako(text: str, ctx: Context) -> dict[str, Any] | str:
 
 @mcp.tool()
 async def upload_file_to_visualize(
-    filename: str, content: str, ctx: Context, encoding: str = "base64", 
-) -> str:
+    filename: str, content: str, ctx: Context, encoding: str = "base64",
+) -> dict[str, Any]:
     """Upload a file in base64 format to Tako to visualize. Returns the file_id of the uploaded file that can call visualize_file with.
 
     Supported file type extensions:
@@ -179,7 +179,7 @@ async def upload_file_to_visualize(
             logging.error(
                 f"Failed to upload file: {temp_file_path}, {traceback.format_exc()}"
             )
-            return f"Failed to upload file: {temp_file_path}, {traceback.format_exc()}"
+            return {"error": f"Failed to upload file: {temp_file_path}, {traceback.format_exc()}"}
         finally:
             # Clean up the temporary file
             if os.path.exists(temp_file_path):
@@ -189,10 +189,10 @@ async def upload_file_to_visualize(
             f"Unsupported encoding: {encoding}, supported encoding is base64"
         )
 
-    return f"{file_id}"
+    return {"file_id": file_id}
 
 @mcp.tool()
-async def upload_file_from_local_path(local_path: str, ctx: Context) -> str:
+async def upload_file_from_local_path(local_path: str, ctx: Context) -> dict[str, Any]:
     """Upload a file from a local path to Tako to visualize. Returns the file_id of the uploaded file that can call visualize_file with.
     
     Response: 
@@ -202,12 +202,12 @@ async def upload_file_from_local_path(local_path: str, ctx: Context) -> str:
         file_id = _get_tako_client_from_context(ctx).beta_upload_file(local_path)
     except Exception:
         logging.error(f"Failed to upload file: {local_path}, {traceback.format_exc()}")
-        return f"Failed to upload file: {local_path}, {traceback.format_exc()}"
-    return f"{file_id}"
+        return {"error": f"Failed to upload file: {local_path}, {traceback.format_exc()}"}
+    return {"file_id": file_id}
 
 
 @mcp.tool()
-async def upload_file_from_url(url: str, ctx: Context) -> str:
+async def upload_file_from_url(url: str, ctx: Context) -> dict[str, Any]:
     """Upload a file from an external url to Tako to visualize. Returns the file_id of the uploaded file that can call visualize_file with.
     
     Response: 
@@ -217,12 +217,12 @@ async def upload_file_from_url(url: str, ctx: Context) -> str:
         file_id = _get_tako_client_from_context(ctx).beta_file_connector(url)
     except Exception:
         logging.error(f"Failed to upload file: {url}, {traceback.format_exc()}")
-        return f"Failed to upload file: {url}, {traceback.format_exc()}"
-    return f"{file_id}"
+        return {"error": f"Failed to upload file: {url}, {traceback.format_exc()}"}
+    return {"file_id": file_id}
     
     
 @mcp.tool()
-async def visualize_file(file_id: str, ctx: Context, query: str | None = None) -> str:
+async def visualize_file(file_id: str, ctx: Context, query: str | None = None) -> dict[str, Any]:
     """
     Visualize a file in Tako using the file_id returned from upload_file_to_visualize.
     Optionally, provide a query that includes an analytical question and visualization types to visualize the file.
@@ -249,12 +249,12 @@ async def visualize_file(file_id: str, ctx: Context, query: str | None = None) -
         resp_dict = _add_insight_to_knowledge_response(response, ctx)
     except Exception:
         logging.error(f"Failed to visualize file: {file_id}, {traceback.format_exc()}")
-        return f"Failed to visualize file: {file_id}, {traceback.format_exc()}"
+        return {"error": f"Failed to visualize file: {file_id}, {traceback.format_exc()}"}
     return resp_dict
 
 
 @mcp.tool()
-async def visualize_dataset(dataset: dict[str, Any], ctx: Context, query: str | None = None) -> str:
+async def visualize_dataset(dataset: dict[str, Any], ctx: Context, query: str | None = None) -> dict[str, Any]:
     """
     Visualize a dataset in Tako Data Format.
     Optionally, provide a query that includes an analytical question and visualization types to visualize the dataset.
@@ -281,7 +281,7 @@ async def visualize_dataset(dataset: dict[str, Any], ctx: Context, query: str | 
     except Exception:
         logging.error(f"Invalid dataset format: {dataset}, {traceback.format_exc()}")
         # If a dataset is invalid, return the traceback to the client so it can retry with the correct format
-        return f"Invalid dataset format: {dataset}, {traceback.format_exc()}"
+        return {"error": f"Invalid dataset format: {dataset}, {traceback.format_exc()}"}
 
     try:
         response = _get_tako_client_from_context(ctx).beta_visualize(tako_dataset, query=query)
@@ -290,7 +290,7 @@ async def visualize_dataset(dataset: dict[str, Any], ctx: Context, query: str | 
         logging.error(
             f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
         )
-        return f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"
+        return {"error": f"Failed to generate visualization: {dataset}, {traceback.format_exc()}"}
     return resp_dict
 
 
