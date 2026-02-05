@@ -1,26 +1,63 @@
 [build-system]
-requires = ["uv_build>=0.8.15,<0.9.0"]
-build-backend = "uv_build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "tako-mcp"
 version = "0.1.0"
-description = "Tako MCP Server"
+description = "MCP server for Tako's knowledge base and data visualizations"
 readme = "README.md"
-requires-python = ">=3.12"
-dependencies = [
-    "mcp>=1.15.0",
-    "pydantic>=2.12.0",
-    "requests>=2.32.5",
-    "smithery>=0.4.2",
-    "tako-sdk>=0.1.39",
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Tako", email = "hello@trytako.com" }
+]
+keywords = ["mcp", "model-context-protocol", "data-visualization", "charts", "knowledge-base"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Visualization",
 ]
 
-[project.scripts]
-dev = "smithery.cli.dev:main" # Run the MCP server in development mode
-start = "smithery.cli.start:main" # Run the MCP server in production mode
-playground = "smithery.cli.playground:main" # Run server with interactive testing playground
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.0.0",
+    "starlette>=0.50.0",
+    "mcp-ui-server>=0.1.0",
+]
 
-[tool.smithery]
-server = "tako_mcp.smithery.server:create_server" # Function that returns a patched FastMCP server
-log_level = "warning" # Production log level (optional, defaults to "warning")
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/TakoData/tako-mcp"
+Documentation = "https://github.com/TakoData/tako-mcp#readme"
+Repository = "https://github.com/TakoData/tako-mcp"
+Issues = "https://github.com/TakoData/tako-mcp/issues"
+
+[project.scripts]
+tako-mcp = "tako_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tako_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

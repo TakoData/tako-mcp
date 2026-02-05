@@ -1,110 +1,265 @@
-# Tako MCP
-[![smithery badge](https://smithery.ai/badge/@TakoData/tako-mcp)](https://smithery.ai/server/@TakoData/tako-mcp)
+# Tako MCP Server
 
-Tako MCP is a simple MCP server that queries Tako and returns real-time data and visualization
+An MCP (Model Context Protocol) server that provides access to Tako's knowledge base and interactive data visualizations.
 
-Check out [Tako](https://trytako.com) and our [documentation](https://docs.trytako.com)
+## What is this?
 
-## Available Tools
-### search_tako
-Takes a query to search Tako and the web to get real-time data and visualization. Returns embed, webpage, and image url of the visualization with relevant metadata such as source, methodology, and description.
+This MCP server enables AI agents to:
 
-### upload_file_to_visualize
-Takes a base64 encoded file as an input and uploads it to Tako to use for visualization
+- **Search** Tako's knowledge base for charts and data visualizations
+- **Fetch** chart preview images and AI-generated insights
+- **Render** fully interactive Tako charts via MCP-UI
 
-*If you call this tool with a big file, it may consume a large number of tokens and will be very slow. If you want to test visualizing bigger files though Tako, visit our [playground](https://trytako.com/playground)
-
-### visualize_file
-Use the file_id from `upload_file_to_visualize` and visualize the file. Returns embed, webpage, and image url of the visualization
-
-### visualize_dataset
-Takes a Tako Data Format data and visualize. Returns embed, webpage, and image url of the visualization
-
-## Available Prompts
-### generate_search_tako_prompt
-Prompt to assist the client to format query and search Tako using `search_tako` tool
-
-### generate_visualization_prompt
-Prompt to assist the client to transform the data into Tako Data Format and visualize using `visualize_dataset` tool
-
-
-
-
-## Quickstart
-###  Get your API key
-Access [Tako Dashboard](https://trytako.com/dashboard) and get your API key. 
-
-### Installing via Smithery
-
-To install tako-mcp for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@TakoData/tako-mcp):
+## Installation
 
 ```bash
-npx -y @smithery/cli install @TakoData/tako-mcp --client claude
+pip install tako-mcp
 ```
 
-### Add Tako MCP to Claude Desktop
-Add the following to your `.cursor/mcp.json` or `claude_desktop_config.json` (MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`)
-```json Python
+Or install from source:
+
+```bash
+git clone https://github.com/anthropics/tako-mcp.git
+cd tako-mcp
+pip install -e .
+```
+
+## Quick Start
+
+### Get an API Token
+
+Sign up at [trytako.com](https://trytako.com) and create an API token in your account settings.
+
+### Run the Server
+
+```bash
+tako-mcp
+```
+
+Or with Docker:
+
+```bash
+docker build -t tako-mcp .
+docker run -p 8001:8001 tako-mcp
+```
+
+### Connect Your Agent
+
+Point your MCP client to `http://localhost:8001`.
+
+## Available Tools
+
+### `knowledge_search`
+
+Search Tako's knowledge base for charts and data visualizations.
+
+```json
 {
-    "mcpServers": {
-        "takoApi": {
-            "command": "uv",
-            "args": [
-                "--directory",
-                "/path/to/tako/mcp",
-                "run",
-                "main.py"
-            ],
-            "env": {
-                "TAKO_API_KEY": "<TAKO_API_KEY>"
-            }
-        }
-    }
+  "query": "Intel vs Nvidia headcount",
+  "api_token": "your-api-token",
+  "count": 5,
+  "search_effort": "deep"
 }
 ```
 
-## Example:
-### 1. Use the prompt from Tako MCP Server `generate_search_tako_prompt`
-The prompt will guide the model to generate optimized query to search Tako
-### 2. Add your text input 
-Add an input text to generate the prompt
-> "Compare Magnificent 7 stock companies on relevant metrics."
-### 3. Add a prompt to the chat 
-Add additional instructions to the chat prompt
-> Write me a research report on the magnificent 7 companies. Embed the result in an iframe whenever necessary
-### 4. Checkout the result
-  * [Claude Response](https://claude.ai/share/0c39e0c3-0811-486e-8f0b-92c8d5e05bc8)
-  * [Generated Report](https://docs.trytako.com/documentation/integrations-and-examples/claude-generated-report)
+Returns matching charts with IDs, titles, descriptions, and URLs.
 
+### `get_chart_image`
 
-## Environment Variables
-### `ENVIRONMENT` 
-Options:
-- `remote` - If you're running a remote MCP server
-- `local` - If you're running a local MCP server
+Get a preview image URL for a chart.
 
-### `TAKO_API_KEY`
-- Your Tako API key, access it from [Tako Dashboard](https://trytako.com/dashboard)
-
-## Testing Remote MCP
-Start inspector and access the console
-```
-npx -y npx @modelcontextprotocol/inspector@latest
+```json
+{
+  "pub_id": "chart-id",
+  "api_token": "your-api-token",
+  "dark_mode": true
+}
 ```
 
-Start Tako MCP Server on remote mode
-```
-ENVIRONMENT=remote TAKO_API_KEY=<your_tako_api_key> uv run main.py
-```
-In inspector console, add the url `https://0.0.0.0:<port>/mcp/` and click connect
+### `get_card_insights`
 
-Select the `Tools` tab, and click `ListTools`. 
+Get AI-generated insights for a chart.
 
-Select `search_tako` and test a query
-
-
-## Deploying it on render
-Since we use uv Render uses pip, we have to build a requirements.txt
+```json
+{
+  "pub_id": "chart-id",
+  "api_token": "your-api-token",
+  "effort": "medium"
+}
 ```
-uv pip compile pyproject.toml > requirements.txt 
+
+Returns bullet-point insights and a natural language description.
+
+### `explore_knowledge_graph`
+
+Discover available entities, metrics, and cohorts.
+
+```json
+{
+  "query": "tech companies",
+  "api_token": "your-api-token",
+  "limit": 20
+}
 ```
+
+## ThinViz API - Create Custom Charts
+
+ThinViz lets you create charts with your own data using pre-configured templates.
+
+### `list_chart_schemas`
+
+List available chart templates.
+
+```json
+{
+  "api_token": "your-api-token"
+}
+```
+
+Returns schemas like `stock_card`, `bar_chart`, `grouped_bar_chart`.
+
+### `get_chart_schema`
+
+Get detailed info about a schema including required components.
+
+```json
+{
+  "schema_name": "bar_chart",
+  "api_token": "your-api-token"
+}
+```
+
+### `create_chart`
+
+Create a chart from a template with your data.
+
+```json
+{
+  "schema_name": "bar_chart",
+  "api_token": "your-api-token",
+  "source": "Company Reports",
+  "components": [
+    {
+      "component_type": "header",
+      "config": {
+        "title": "Revenue by Region",
+        "subtitle": "Q4 2024"
+      }
+    },
+    {
+      "component_type": "categorical_bar",
+      "config": {
+        "datasets": [{
+          "label": "Revenue",
+          "data": [
+            {"x": "North America", "y": 120},
+            {"x": "Europe", "y": 98},
+            {"x": "Asia", "y": 156}
+          ],
+          "units": "$M"
+        }],
+        "title": "Revenue by Region"
+      }
+    }
+  ]
+}
+```
+
+Returns the new chart's `card_id`, `embed_url`, and `image_url`.
+
+## MCP-UI - Interactive Charts
+
+### `open_chart_ui`
+
+Open an interactive chart in the UI (MCP-UI).
+
+```json
+{
+  "pub_id": "chart-id",
+  "dark_mode": true,
+  "width": 900,
+  "height": 600
+}
+```
+
+Returns a UIResource for rendering an interactive iframe.
+
+## Configuration
+
+Environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TAKO_API_URL` | Tako API endpoint | `https://api.trytako.com` |
+| `PUBLIC_BASE_URL` | Public URL for chart embeds | `https://trytako.com` |
+| `PORT` | Server port | `8001` |
+| `HOST` | Server host | `0.0.0.0` |
+| `MCP_ALLOWED_HOSTS` | Additional allowed hosts (comma-separated) | |
+| `MCP_ENABLE_DNS_REBINDING` | Enable DNS rebinding protection | `true` |
+
+## Testing
+
+Run the test client:
+
+```bash
+python -m tests.test_client --api-token YOUR_API_TOKEN
+```
+
+This verifies:
+- MCP handshake and initialization
+- Tool discovery
+- Search, images, and insights
+- MCP-UI resource generation
+
+## Example Flow
+
+1. User asks: "Show me a chart about Intel vs Nvidia headcount"
+2. Agent calls `knowledge_search` with the query
+3. Agent receives chart results with IDs
+4. Agent can:
+   - Call `get_card_insights` to summarize the data
+   - Call `get_chart_image` for a preview
+   - Call `open_chart_ui` to render an interactive chart
+
+## Health Checks
+
+- `GET /health` - Simple "ok" response
+- `GET /health/detailed` - JSON with status and timestamp
+
+## Architecture
+
+```
+AI Agent (LangGraph, CopilotKit, etc.)
+    ↓
+  MCP Protocol (SSE)
+    ↓
+Tako MCP Server
+    ↓
+Tako API
+```
+
+The server acts as a thin proxy that:
+1. Authenticates requests with your API token
+2. Translates MCP tool calls to Tako API requests
+3. Returns formatted results and UI resources
+
+## MCP-UI Support
+
+The `open_chart_ui` tool returns an MCP-UI resource that clients can render as an interactive iframe. The embedded chart supports:
+
+- Zooming and panning
+- Hover interactions
+- Responsive resizing via `postMessage`
+- Light and dark themes
+
+Clients that support MCP-UI (like CopilotKit) will automatically render these resources.
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Links
+
+- [Tako](https://trytako.com) - Data visualization platform
+- [MCP Specification](https://spec.modelcontextprotocol.io/) - Model Context Protocol
+- [MCP-UI](https://mcpui.dev/) - MCP UI rendering standard
