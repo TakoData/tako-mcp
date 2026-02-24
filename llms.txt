@@ -1,0 +1,23 @@
+# Tako
+
+> Tako is a data visualization platform that helps you create, discover, and share interactive charts. The Tako MCP server enables AI agents to search for existing charts and create new visualizations from raw data.
+
+## Documentation
+
+- [MCP Server Setup](https://github.com/TakoData/tako-mcp): Install and configure the Tako MCP server for AI agents
+- [API Reference](https://tako.com/docs/): Full REST API documentation
+- [Chart Gallery](https://tako.com/gallery): Browse example charts and visualizations
+- [ThinViz API](https://github.com/TakoData/tako-mcp#thinviz-api---create-custom-charts): Create charts from raw data using 15+ chart types
+- [OpenAPI Spec](https://tako.com/openapi.yaml): Machine-readable API specification
+
+## Quick Start
+
+Connect your MCP client to `https://mcp.tako.com/sse`
+
+## Capabilities
+
+- Search 100K+ curated charts on economics, finance, demographics, technology
+- Create custom charts: timeseries, bar charts, scatter plots, pie charts, maps, heatmaps, treemaps, and more
+- Get AI-generated insights and analysis for any chart
+- Explore a knowledge graph of entities, metrics, and cohorts
+- Render fully interactive charts via MCP-UI

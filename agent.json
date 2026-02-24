@@ -1,0 +1,66 @@
+{
+  "name": "Tako",
+  "description": "Data visualization agent that creates, discovers, and analyzes interactive charts. Searches a knowledge base of 100K+ charts and creates custom visualizations from raw data using 15+ chart types.",
+  "url": "https://mcp.tako.com",
+  "version": "0.1.0",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false
+  },
+  "authentication": {
+    "schemes": ["apiKey"],
+    "credentials": {
+      "apiKey": {
+        "description": "Tako API token from tako.com"
+      }
+    }
+  },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text", "image"],
+  "skills": [
+    {
+      "id": "search-charts",
+      "name": "Search Charts",
+      "description": "Search Tako's knowledge base for existing charts and data visualizations on any topic including economics, finance, demographics, and technology.",
+      "tags": ["search", "charts", "data", "visualization"],
+      "examples": [
+        "Find charts about US GDP growth",
+        "Search for Intel vs Nvidia revenue comparison",
+        "Show me climate change data"
+      ]
+    },
+    {
+      "id": "create-chart",
+      "name": "Create Chart",
+      "description": "Create a new interactive chart from raw data. Supports timeseries, bar charts, scatter plots, pie charts, maps, heatmaps, treemaps, and more.",
+      "tags": ["create", "chart", "visualization", "data"],
+      "examples": [
+        "Create a bar chart of revenue by region",
+        "Make a timeseries chart of stock prices",
+        "Build a choropleth map of population by state"
+      ]
+    },
+    {
+      "id": "analyze-chart",
+      "name": "Analyze Chart",
+      "description": "Get AI-generated insights and analysis for any chart, including trend identification, outlier detection, and key takeaways.",
+      "tags": ["analyze", "insights", "ai", "data"],
+      "examples": [
+        "What are the key trends in this chart?",
+        "Analyze this revenue data",
+        "Summarize the insights from this visualization"
+      ]
+    },
+    {
+      "id": "explore-data",
+      "name": "Explore Data",
+      "description": "Discover available entities, metrics, cohorts, and time periods in Tako's knowledge graph to understand what data is available.",
+      "tags": ["explore", "discover", "entities", "metrics"],
+      "examples": [
+        "What tech company data is available?",
+        "Show me available GDP metrics",
+        "What cohorts like S&P 500 are available?"
+      ]
+    }
+  ]
+}

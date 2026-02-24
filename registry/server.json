@@ -1,0 +1,183 @@
+{
+  "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
+  "namespace": "com.tako",
+  "name": "tako-mcp",
+  "version": "0.1.0",
+  "title": "Tako MCP Server",
+  "description": "Create and discover data visualizations. Search Tako's knowledge base of 100K+ charts covering economics, finance, demographics, and technology. Create custom charts from raw data using 15+ chart types including timeseries, bar charts, scatter plots, pie charts, maps, heatmaps, treemaps, and more.",
+  "repository": {
+    "url": "https://github.com/TakoData/tako-mcp",
+    "source": "github"
+  },
+  "license": "MIT",
+  "runtime": "python",
+  "categories": [
+    "Data Visualization",
+    "Charts",
+    "Data Analysis"
+  ],
+  "tags": [
+    "charts",
+    "data-visualization",
+    "knowledge-base",
+    "thinviz",
+    "interactive-charts",
+    "mcp-ui"
+  ],
+  "authors": [
+    {
+      "name": "Tako",
+      "email": "hello@tako.com",
+      "url": "https://tako.com"
+    }
+  ],
+  "package": {
+    "type": "pip",
+    "name": "tako-mcp"
+  },
+  "installation": {
+    "pip": {
+      "command": "pip install tako-mcp",
+      "entrypoint": "tako-mcp"
+    },
+    "docker": {
+      "image": "ghcr.io/takodata/tako-mcp:latest",
+      "ports": ["8001:8001"],
+      "environment": {
+        "PUBLIC_BASE_URL": "https://tako.com"
+      }
+    }
+  },
+  "transport": {
+    "type": "sse",
+    "endpoint": "/sse",
+    "port": 8001
+  },
+  "authentication": {
+    "type": "api_key",
+    "description": "Tako API token. Sign up at tako.com and create a token in account settings.",
+    "setup_url": "https://tako.com"
+  },
+  "tools": [
+    {
+      "name": "knowledge_search",
+      "description": "Search Tako's knowledge base for charts and data visualizations on any topic. Use when a user asks about data trends, comparisons, or statistics.",
+      "parameters": {
+        "query": {"type": "string", "description": "Natural language search query", "required": true},
+        "api_token": {"type": "string", "description": "Tako API token", "required": true},
+        "count": {"type": "integer", "description": "Number of results (1-20)", "default": 5},
+        "search_effort": {"type": "string", "description": "Search depth: 'fast' or 'deep'", "default": "deep"}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "explore_knowledge_graph",
+      "description": "Discover available entities, metrics, cohorts, and time periods. Use to understand what data is available before searching.",
+      "parameters": {
+        "query": {"type": "string", "description": "Natural language query", "required": true},
+        "api_token": {"type": "string", "description": "Tako API token", "required": true},
+        "node_types": {"type": "array", "description": "Filter by node type", "required": false},
+        "limit": {"type": "integer", "description": "Max results per type (1-50)", "default": 20}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_chart_image",
+      "description": "Get a static PNG preview image URL for a chart.",
+      "parameters": {
+        "pub_id": {"type": "string", "description": "Chart ID", "required": true},
+        "api_token": {"type": "string", "description": "Tako API token", "required": true},
+        "dark_mode": {"type": "boolean", "description": "Dark mode theme", "default": true}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_card_insights",
+      "description": "Get AI-generated insights and analysis for a chart.",
+      "parameters": {
+        "pub_id": {"type": "string", "description": "Chart ID", "required": true},
+        "api_token": {"type": "string", "description": "Tako API token", "required": true},
+        "effort": {"type": "string", "description": "Analysis depth: 'low', 'medium', 'high'", "default": "medium"}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_chart_schemas",
+      "description": "List all available chart templates for creating custom visualizations.",
+      "parameters": {
+        "api_token": {"type": "string", "description": "Tako API token", "required": true}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_chart_schema",
+      "description": "Get the detailed schema and data format for a specific chart type.",
+      "parameters": {
+        "schema_name": {"type": "string", "description": "Schema name", "required": true},
+        "api_token": {"type": "string", "description": "Tako API token", "required": true}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "create_chart",
+      "description": "Create a new interactive chart from raw data using 15+ chart types including timeseries, bar charts, scatter plots, pie charts, maps, and more.",
+      "parameters": {
+        "schema_name": {"type": "string", "description": "Schema to use", "required": true},
+        "components": {"type": "array", "description": "Chart component configurations", "required": true},
+        "api_token": {"type": "string", "description": "Tako API token", "required": true},
+        "source": {"type": "string", "description": "Data attribution", "required": false}
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "open_chart_ui",
+      "description": "Open a fully interactive chart with zooming, panning, and hover interactions via MCP-UI.",
+      "parameters": {
+        "pub_id": {"type": "string", "description": "Chart ID", "required": true},
+        "dark_mode": {"type": "boolean", "description": "Dark mode theme", "default": true},
+        "width": {"type": "integer", "description": "Width in pixels", "default": 900},
+        "height": {"type": "integer", "description": "Height in pixels", "default": 600}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    }
+  ],
+  "links": {
+    "homepage": "https://tako.com",
+    "documentation": "https://github.com/TakoData/tako-mcp#readme",
+    "repository": "https://github.com/TakoData/tako-mcp",
+    "issues": "https://github.com/TakoData/tako-mcp/issues",
+    "mcp_server": "https://mcp.tako.com"
+  }
+}

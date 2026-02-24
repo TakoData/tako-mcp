@@ -1,0 +1,171 @@
+# Tako
+
+> Tako is a data visualization platform that helps you create, discover, and share interactive charts. The Tako MCP server enables AI agents to search for existing charts and create new visualizations from raw data.
+
+## Documentation
+
+- [MCP Server Setup](https://github.com/TakoData/tako-mcp): Install and configure the Tako MCP server for AI agents
+- [API Reference](https://tako.com/docs/): Full REST API documentation
+- [Chart Gallery](https://tako.com/gallery): Browse example charts and visualizations
+- [ThinViz API](https://github.com/TakoData/tako-mcp#thinviz-api---create-custom-charts): Create charts from raw data using 15+ chart types
+- [OpenAPI Spec](https://tako.com/openapi.yaml): Machine-readable API specification
+
+## Quick Start
+
+Connect your MCP client to `https://mcp.tako.com/sse`.
+
+### Claude Desktop Configuration
+
+Add to your Claude Desktop config (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "tako": {
+      "url": "https://mcp.tako.com/sse"
+    }
+  }
+}
+```
+
+### Cursor Configuration
+
+Add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "tako": {
+      "url": "https://mcp.tako.com/sse"
+    }
+  }
+}
+```
+
+## Available Tools
+
+### knowledge_search
+Search Tako's knowledge base for charts and data visualizations on any topic. Use this when a user asks about data trends, comparisons, or statistics.
+
+Parameters:
+- `query` (string, required): Natural language search query
+- `api_token` (string, required): Tako API token
+- `count` (integer, 1-20, default 5): Number of results
+- `search_effort` (string, "fast"|"deep", default "deep"): Search depth
+
+### explore_knowledge_graph
+Discover available entities, metrics, cohorts, and time periods. Use this to understand what data is available before searching.
+
+Parameters:
+- `query` (string, required): Natural language query
+- `api_token` (string, required): Tako API token
+- `node_types` (array, optional): Filter by type: "entity", "metric", "cohort", "db", "units", "time_period", "property"
+- `limit` (integer, 1-50, default 20): Max results per type
+
+### get_chart_image
+Get a static PNG preview image URL for a chart.
+
+Parameters:
+- `pub_id` (string, required): Chart ID
+- `api_token` (string, required): Tako API token
+- `dark_mode` (boolean, default true): Dark mode theme
+
+### get_card_insights
+Get AI-generated insights and analysis for a chart. Returns bullet-point takeaways.
+
+Parameters:
+- `pub_id` (string, required): Chart ID
+- `api_token` (string, required): Tako API token
+- `effort` (string, "low"|"medium"|"high", default "medium"): Analysis depth
+
+### list_chart_schemas
+List all available chart templates. Call this before create_chart to see options.
+
+Parameters:
+- `api_token` (string, required): Tako API token
+
+### get_chart_schema
+Get the detailed data format for a specific chart type. Call this before create_chart.
+
+Parameters:
+- `schema_name` (string, required): Schema name (e.g., "bar_chart", "stock_card")
+- `api_token` (string, required): Tako API token
+
+### create_chart
+Create a new interactive chart from raw data. Supports 15+ chart types.
+
+Parameters:
+- `schema_name` (string, required): Schema to use
+- `components` (array, required): Chart component configurations
+- `api_token` (string, required): Tako API token
+- `source` (string, optional): Data attribution
+
+### open_chart_ui
+Open a fully interactive chart with zooming, panning, and hover interactions.
+
+Parameters:
+- `pub_id` (string, required): Chart ID
+- `dark_mode` (boolean, default true): Dark mode theme
+- `width` (integer, default 900): Width in pixels
+- `height` (integer, default 600): Height in pixels
+
+## Chart Types
+
+Tako ThinViz supports these chart types:
+
+| Type | Schema Name | Use Case |
+|------|------------|----------|
+| Line/Area Chart | `timeseries_card` | Time-based trends |
+| Stock Chart | `stock_card` | Financial data with ticker boxes |
+| Bar Chart | `bar_chart` | Categorical comparisons |
+| Grouped Bar | `grouped_bar_chart` | Multi-series comparisons |
+| Data Table Chart | `data_table_chart` | Bar chart with data table |
+| Pie Chart | `pie_chart` | Proportional data |
+| Scatter Plot | `scatter_chart` | 2-variable correlations |
+| Bubble Chart | `bubble_chart` | 3-variable data |
+| Histogram | `histogram` | Frequency distributions |
+| Box Plot | `boxplot` | Statistical distributions |
+| Choropleth Map | `choropleth` | Geographic data (US/World) |
+| Treemap | `treemap` | Hierarchical data |
+| Heatmap | `heatmap` | 2D correlation matrices |
+| Waterfall | `waterfall` | Sequential changes |
+| Financial Boxes | `financial_boxes` | Metric KPIs |
+| Data Table | `table` | Tabular data display |
+
+## Example: Create a Bar Chart
+
+```json
+{
+  "schema_name": "bar_chart",
+  "api_token": "your-token",
+  "source": "Company Reports",
+  "components": [
+    {
+      "component_type": "header",
+      "config": {
+        "title": "Revenue by Region",
+        "subtitle": "Q4 2024"
+      }
+    },
+    {
+      "component_type": "categorical_bar",
+      "config": {
+        "datasets": [{
+          "label": "Revenue",
+          "data": [
+            {"x": "North America", "y": 120},
+            {"x": "Europe", "y": 98},
+            {"x": "Asia", "y": 156}
+          ],
+          "units": "$M"
+        }],
+        "title": "Revenue by Region"
+      }
+    }
+  ]
+}
+```
+
+## Authentication
+
+All API calls require a Tako API token passed as `api_token` parameter in tool calls. Get your token at [tako.com](https://tako.com) in account settings.
