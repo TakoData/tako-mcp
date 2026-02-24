@@ -6,6 +6,7 @@ Exposes Tako's knowledge base and interactive charts via the Model Context Proto
 This server allows AI agents to:
 - Search for relevant charts and datasets
 - Fetch chart preview images and AI-generated insights
+- Create custom charts from raw data using 15+ chart types
 - Render fully interactive Tako visualizations via MCP-UI
 """
 
@@ -32,8 +33,13 @@ logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 logging.getLogger("starlette.middleware").setLevel(logging.WARNING)
 
 # Configuration from environment
-TAKO_API_URL = os.environ.get("TAKO_API_URL", "https://api.trytako.com").rstrip("/")
-PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://trytako.com").rstrip("/")
+TAKO_API_URL = os.environ.get("TAKO_API_URL", "https://api.tako.com").rstrip("/")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://tako.com").rstrip("/")
+# Public-facing API URL for external consumers (image URLs, etc.)
+# Falls back to TAKO_API_URL if not set separately
+PUBLIC_API_URL = os.environ.get("PUBLIC_API_URL", TAKO_API_URL).rstrip("/")
+
+SERVER_VERSION = "0.1.0"
 
 # Build allowed hosts list for DNS rebinding protection
 allowed_hosts_list = [
@@ -56,7 +62,7 @@ mcp = FastMCP(
         allowed_hosts=allowed_hosts_list,
         allowed_origins=[
             "http://localhost:*",
-            "https://trytako.com",
+            "https://tako.com",
         ],
     ),
 )
@@ -70,7 +76,12 @@ def _get_auth_header(api_token: str | None) -> dict:
     return headers
 
 
-@mcp.tool()
+@mcp.tool(annotations={
+    "title": "Tako: Search Charts",
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "openWorldHint": False,
+})
 async def knowledge_search(
     query: str,
     api_token: str,
@@ -80,10 +91,14 @@ async def knowledge_search(
     locale: str = "en-US",
 ) -> str:
     """
-    Search Tako's knowledge base for charts and data visualizations.
+    Use this when you need to find existing charts and data visualizations on any topic.
+    This searches Tako's curated knowledge base of charts covering economics, finance,
+    demographics, technology, and more. Start here when a user asks about data trends,
+    comparisons, or statistics — Tako likely already has a relevant visualization.
 
     Args:
-        query: Natural language search query for charts and data
+        query: Natural language search query for charts and data (e.g., "US GDP growth",
+            "Intel vs Nvidia revenue", "climate change temperature data")
         api_token: Your Tako API token for authentication
         count: Number of results to return (1-20), defaults to 5
         search_effort: Search depth - "fast" for quick results, "deep" for comprehensive search
@@ -91,7 +106,8 @@ async def knowledge_search(
         locale: Locale for results (e.g., "en-US", "en-GB")
 
     Returns:
-        JSON response containing matching charts with URLs, titles, descriptions, and metadata
+        JSON with matching charts including card_id, title, description, url, and source.
+        Each result includes open_ui_args for rendering the chart interactively.
     """
     start_time = time.time()
     try:
@@ -145,20 +161,37 @@ async def knowledge_search(
         return json.dumps(
             {
                 "error": "Request timed out",
-                "message": "The search request took too long. Try using search_effort='fast' for quicker results.",
+                "message": "The search request took too long.",
+                "suggestion": "Try using search_effort='fast' for quicker results, or use a more specific query.",
+            },
+            indent=2,
+        )
+    except httpx.HTTPStatusError as e:
+        return json.dumps(
+            {
+                "error": f"HTTP {e.response.status_code}",
+                "message": str(e),
+                "suggestion": "Check your API token is valid and try again.",
             },
             indent=2,
         )
 
 
-@mcp.tool()
+@mcp.tool(annotations={
+    "title": "Tako: Get Chart Image",
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "openWorldHint": False,
+})
 async def get_chart_image(
     pub_id: str,
     api_token: str,
     dark_mode: bool = True,
 ) -> str:
     """
-    Get the preview image URL for a chart.
+    Use this when you need a static preview image of a chart to display or embed.
+    Returns a direct URL to a PNG image of the chart. Useful for including chart
+    previews in responses or documents.
 
     Args:
         pub_id: The unique identifier (pub_id/card_id) of the chart
@@ -166,7 +199,7 @@ async def get_chart_image(
         dark_mode: Whether to return dark mode version of the image (default: True)
 
     Returns:
-        URL to the chart's preview image that can be displayed or embedded
+        JSON with image_url (public PNG URL), pub_id, and dark_mode setting
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.get(
@@ -176,7 +209,7 @@ async def get_chart_image(
         )
 
         if resp.status_code == 200:
-            image_url = f"{TAKO_API_URL}/api/v1/image/{pub_id}/?dark_mode={str(dark_mode).lower()}"
+            image_url = f"{PUBLIC_API_URL}/api/v1/image/{pub_id}/?dark_mode={str(dark_mode).lower()}"
             return json.dumps(
                 {
                     "image_url": image_url,
@@ -186,32 +219,49 @@ async def get_chart_image(
                 indent=2,
             )
         elif resp.status_code == 404:
-            return json.dumps({"error": "Chart image not found", "pub_id": pub_id})
+            return json.dumps({
+                "error": "Chart image not found",
+                "pub_id": pub_id,
+                "suggestion": "Verify the pub_id/card_id is correct. Use knowledge_search to find valid chart IDs.",
+            })
         elif resp.status_code == 408:
-            return json.dumps(
-                {"error": "Image generation timed out, try again", "pub_id": pub_id}
-            )
+            return json.dumps({
+                "error": "Image generation timed out",
+                "pub_id": pub_id,
+                "suggestion": "The image is still rendering. Wait a few seconds and try again.",
+            })
         else:
             resp.raise_for_status()
-            return json.dumps({"error": "Unexpected error"})
+            return json.dumps({
+                "error": "Unexpected error",
+                "suggestion": "Check your API token and try again. If the issue persists, the Tako API may be temporarily unavailable.",
+            })
 
 
-@mcp.tool()
+@mcp.tool(annotations={
+    "title": "Tako: Get AI Insights",
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "openWorldHint": False,
+})
 async def get_card_insights(
     pub_id: str,
     api_token: str,
     effort: str = "medium",
 ) -> str:
     """
-    Get AI-generated insights for a chart.
+    Use this when you want AI-generated analysis of a chart's data. Returns bullet-point
+    insights and a natural language description that summarizes trends, outliers, and key
+    takeaways from the chart.
 
     Args:
         pub_id: The unique identifier (pub_id/card_id) of the chart
         api_token: Your Tako API token for authentication
-        effort: Reasoning effort level - "low", "medium", or "high" (default: "medium")
+        effort: Reasoning effort level - "low" for quick summary, "medium" for balanced
+            analysis, "high" for deep analysis (default: "medium")
 
     Returns:
-        JSON with bullet-point insights and a description analyzing the chart's data
+        JSON with pub_id, insights (bullet-point analysis), and description (narrative summary)
     """
     async with httpx.AsyncClient(timeout=90.0) as client:
         resp = await client.get(
@@ -221,7 +271,11 @@ async def get_card_insights(
         )
 
         if resp.status_code == 404:
-            return json.dumps({"error": "Chart not found", "pub_id": pub_id})
+            return json.dumps({
+                "error": "Chart not found",
+                "pub_id": pub_id,
+                "suggestion": "Verify the pub_id/card_id is correct. Use knowledge_search to find valid chart IDs.",
+            })
 
         resp.raise_for_status()
         data = resp.json()
@@ -236,7 +290,12 @@ async def get_card_insights(
         )
 
 
-@mcp.tool()
+@mcp.tool(annotations={
+    "title": "Tako: Explore Knowledge Graph",
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "openWorldHint": False,
+})
 async def explore_knowledge_graph(
     query: str,
     api_token: str,
@@ -244,16 +303,14 @@ async def explore_knowledge_graph(
     limit: int = 20,
 ) -> str:
     """
-    Explore Tako's knowledge graph to discover available entities, metrics, cohorts, and other data.
-
-    Use this tool to:
-    - Find what entities are available (companies, countries, people, etc.)
-    - Discover metrics and measurements that can be queried
-    - Check which data is available before constructing a search query
-    - Disambiguate ambiguous entity names (e.g., "Apple" could be the company or the fruit)
+    Use this when you need to discover what data is available before searching.
+    Helps find entities (companies, countries), metrics (revenue, GDP), cohorts
+    (S&P 500, G7), and time periods. Use this to disambiguate queries or understand
+    what data Tako has before calling knowledge_search.
 
     Args:
-        query: Natural language query to explore the knowledge graph (e.g., "tech companies", "GDP metrics")
+        query: Natural language query to explore (e.g., "tech companies", "GDP metrics",
+            "automotive industry")
         api_token: Your Tako API token for authentication
         node_types: Optional filter for specific node types. Can include:
             - "entity": Companies, countries, people, organizations
@@ -266,7 +323,7 @@ async def explore_knowledge_graph(
         limit: Maximum number of results per type (1-50), defaults to 20
 
     Returns:
-        JSON response with discovered entities, metrics, cohorts, and time periods
+        JSON with entities, metrics, cohorts, time_periods, and total_matches
     """
     start_time = time.time()
     try:
@@ -338,7 +395,8 @@ async def explore_knowledge_graph(
         return json.dumps(
             {
                 "error": "Request timed out",
-                "message": "The explore request took too long. Try a more specific query.",
+                "message": "The explore request took too long.",
+                "suggestion": "Try a more specific query or filter by node_types to narrow results.",
             },
             indent=2,
         )
@@ -347,6 +405,7 @@ async def explore_knowledge_graph(
             {
                 "error": f"HTTP {e.response.status_code}",
                 "message": str(e),
+                "suggestion": "Check your API token is valid and try again.",
             },
             indent=2,
         )
@@ -356,6 +415,7 @@ async def explore_knowledge_graph(
             {
                 "error": "Unexpected error",
                 "message": str(e),
+                "suggestion": "Check your API token and try again. If the issue persists, the Tako API may be temporarily unavailable.",
             },
             indent=2,
         )
@@ -366,58 +426,84 @@ async def explore_knowledge_graph(
 # =============================================================================
 
 
-@mcp.tool()
+@mcp.tool(annotations={
+    "title": "Tako: List Chart Types",
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "openWorldHint": False,
+})
 async def list_chart_schemas(
     api_token: str,
 ) -> str:
     """
-    List available chart schemas (templates) for creating visualizations.
+    Use this when you want to see all available chart templates before creating a custom
+    chart. Returns the full list of ThinViz schemas including timeseries, bar charts, pie
+    charts, scatter plots, maps, and more. Call this first when the user wants to create
+    a new visualization.
 
-    ThinViz schemas are pre-configured templates that simplify chart creation.
-    Each schema defines what components are needed (e.g., timeseries, bar chart, header).
+    Available schemas include: stock_card, timeseries_card, bar_chart, grouped_bar_chart,
+    data_table_chart, histogram, pie_chart, table, header, financial_boxes, choropleth,
+    treemap, heatmap, boxplot, waterfall, scatter_chart, bubble_chart.
 
     Args:
         api_token: Your Tako API token for authentication
 
     Returns:
-        JSON list of available schemas with their names, descriptions, and required components
+        JSON with schemas array (name, description, components) and count
     """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
-            f"{TAKO_API_URL}/api/v1/thin_viz/default_schema/",
-            headers=_get_auth_header(api_token),
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAKO_API_URL}/api/v1/thin_viz/default_schema/",
+                headers=_get_auth_header(api_token),
+            )
+            resp.raise_for_status()
+            schemas = resp.json()
+
+            # Simplify response for readability
+            result = []
+            for schema in schemas:
+                result.append({
+                    "name": schema.get("name"),
+                    "description": schema.get("description"),
+                    "components": schema.get("components", []),
+                })
+
+            return json.dumps({"schemas": result, "count": len(result)}, indent=2)
+    except httpx.HTTPStatusError as e:
+        return json.dumps(
+            {
+                "error": f"HTTP {e.response.status_code}",
+                "message": str(e),
+                "suggestion": "Check your API token is valid and try again.",
+            },
+            indent=2,
         )
-        resp.raise_for_status()
-        schemas = resp.json()
-
-        # Simplify response for readability
-        result = []
-        for schema in schemas:
-            result.append({
-                "name": schema.get("name"),
-                "description": schema.get("description"),
-                "components": schema.get("components", []),
-            })
-
-        return json.dumps({"schemas": result, "count": len(result)}, indent=2)
 
 
-@mcp.tool()
+@mcp.tool(annotations={
+    "title": "Tako: Get Chart Schema",
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "openWorldHint": False,
+})
 async def get_chart_schema(
     schema_name: str,
     api_token: str,
 ) -> str:
     """
-    Get detailed information about a chart schema including required component configurations.
-
-    Use this to understand what data format is needed before calling create_chart.
+    Use this when you need to understand the exact data format required for a specific
+    chart type. Returns the schema definition including required fields, data structure,
+    and configuration options. Always call this before create_chart to understand what
+    data is needed.
 
     Args:
-        schema_name: Name of the schema (e.g., "stock_card", "bar_chart", "grouped_bar_chart")
+        schema_name: Name of the schema (e.g., "stock_card", "bar_chart", "grouped_bar_chart",
+            "pie_chart", "scatter_chart", "choropleth", "timeseries_card")
         api_token: Your Tako API token for authentication
 
     Returns:
-        JSON with schema details including component types and their configuration options
+        JSON with schema name, description, components array, and template details
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(
@@ -426,7 +512,10 @@ async def get_chart_schema(
         )
 
         if resp.status_code == 404:
-            return json.dumps({"error": f"Schema '{schema_name}' not found"})
+            return json.dumps({
+                "error": f"Schema '{schema_name}' not found",
+                "suggestion": "Use list_chart_schemas to see all available schema names.",
+            })
 
         resp.raise_for_status()
         schema = resp.json()
@@ -439,7 +528,12 @@ async def get_chart_schema(
         }, indent=2)
 
 
-@mcp.tool()
+@mcp.tool(annotations={
+    "title": "Tako: Create Chart",
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "openWorldHint": True,
+})
 async def create_chart(
     schema_name: str,
     components: list[dict],
@@ -447,20 +541,25 @@ async def create_chart(
     source: str | None = None,
 ) -> str:
     """
-    Create a new chart using a schema template and your own data.
+    Use this when you need to create a new chart from raw data. This is the primary chart
+    creation tool — pass a schema name and your data components to generate an interactive
+    Tako visualization. The chart will be hosted and shareable. Supports 15+ chart types
+    including timeseries, bar charts, scatter plots, maps, and more.
 
-    This is the primary way to create custom visualizations with Tako.
-    Use list_chart_schemas and get_chart_schema to understand available options.
+    Workflow: call list_chart_schemas to see options, then get_chart_schema for the data
+    format, then this tool to create the chart.
 
     Args:
-        schema_name: Name of the schema to use (e.g., "stock_card", "bar_chart", "grouped_bar_chart")
+        schema_name: Name of the schema to use (e.g., "stock_card", "bar_chart",
+            "grouped_bar_chart", "pie_chart", "scatter_chart", "choropleth")
         components: List of component configurations matching the schema requirements.
             Each component needs "component_type" and "config" fields.
         api_token: Your Tako API token for authentication
         source: Optional attribution text (e.g., "Yahoo Finance", "Company Reports")
 
     Returns:
-        JSON with the created chart's card_id, embed_url, image_url, and other metadata
+        JSON with card_id, title, description, webpage_url, embed_url, image_url,
+        and open_ui_args for rendering the chart interactively.
 
     Example components for "bar_chart" schema:
         [
@@ -531,12 +630,16 @@ async def create_chart(
             )
 
             if resp.status_code == 404:
-                return json.dumps({"error": f"Schema '{schema_name}' not found"})
+                return json.dumps({
+                    "error": f"Schema '{schema_name}' not found",
+                    "suggestion": "Use list_chart_schemas to see all available schema names.",
+                })
             if resp.status_code == 400:
                 error_data = resp.json()
                 return json.dumps({
                     "error": "Invalid component configuration",
                     "details": error_data,
+                    "suggestion": "Use get_chart_schema to see the required data format for this schema.",
                 })
 
             resp.raise_for_status()
@@ -563,12 +666,14 @@ async def create_chart(
         return json.dumps({
             "error": f"HTTP {e.response.status_code}",
             "message": str(e),
+            "suggestion": "Check your API token and component configuration. Use get_chart_schema to verify the expected format.",
         }, indent=2)
     except Exception as e:
         logging.error(f"create_chart error: {e}", exc_info=True)
         return json.dumps({
             "error": "Unexpected error",
             "message": str(e),
+            "suggestion": "Check your API token and try again. If the issue persists, the Tako API may be temporarily unavailable.",
         }, indent=2)
 
 
@@ -577,7 +682,12 @@ async def create_chart(
 # =============================================================================
 
 
-@mcp.tool()
+@mcp.tool(annotations={
+    "title": "Tako: Open Interactive Chart",
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "openWorldHint": True,
+})
 async def open_chart_ui(
     pub_id: str,
     dark_mode: bool = True,
@@ -585,10 +695,10 @@ async def open_chart_ui(
     height: int = 600,
 ) -> list[UIResource]:
     """
-    Open an interactive chart in the UI.
-
-    Returns an MCP-UI resource that renders a fully interactive Tako chart
-    with zooming, filtering, hover interactions, and responsive resizing.
+    Use this when you want to display a fully interactive chart to the user.
+    Returns an MCP-UI resource that renders the chart with zooming, panning, hover
+    interactions, and responsive resizing. Prefer this over get_chart_image when
+    the user wants to explore the data interactively.
 
     Args:
         pub_id: The unique identifier (pub_id/card_id) of the chart
@@ -677,8 +787,82 @@ async def open_chart_ui(
     return [ui_resource]
 
 
+# =============================================================================
 # ASGI application setup
+# =============================================================================
+
 _mcp_app = mcp.sse_app()
+
+# MCP Server Card (SEP-1649) for /.well-known/mcp
+_SERVER_CARD = {
+    "protocolVersion": "2025-06-18",
+    "serverInfo": {
+        "name": "tako-mcp",
+        "title": "Tako MCP Server",
+        "version": SERVER_VERSION,
+        "description": (
+            "Create and discover data visualizations. Search Tako's knowledge base of "
+            "charts covering economics, finance, demographics, technology, and more. "
+            "Create custom charts from raw data using 15+ chart types including timeseries, "
+            "bar charts, scatter plots, maps, and more."
+        ),
+        "iconUrl": "https://tako.com/favicon.ico",
+        "documentationUrl": "https://github.com/TakoData/tako-mcp",
+    },
+    "transport": {
+        "type": "sse",
+        "endpoint": "/sse",
+    },
+    "capabilities": {
+        "tools": {"listChanged": True},
+    },
+    "authentication": {
+        "required": True,
+        "schemes": ["bearer"],
+    },
+    "tools": [
+        {
+            "name": "knowledge_search",
+            "description": "Search Tako's knowledge base for charts and data visualizations on any topic.",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+        },
+        {
+            "name": "explore_knowledge_graph",
+            "description": "Discover available entities, metrics, cohorts, and time periods in Tako's knowledge graph.",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+        },
+        {
+            "name": "get_chart_image",
+            "description": "Get a static PNG preview image URL for a chart.",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+        },
+        {
+            "name": "get_card_insights",
+            "description": "Get AI-generated analysis and insights for a chart.",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+        },
+        {
+            "name": "list_chart_schemas",
+            "description": "List all available chart templates for creating custom visualizations.",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+        },
+        {
+            "name": "get_chart_schema",
+            "description": "Get the detailed schema and data format for a specific chart type.",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+        },
+        {
+            "name": "create_chart",
+            "description": "Create a new interactive chart from raw data using 15+ chart types.",
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
+        },
+        {
+            "name": "open_chart_ui",
+            "description": "Open a fully interactive chart with zooming, panning, and hover interactions.",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True},
+        },
+    ],
+}
 
 
 def _wrap_send(send, response_started_ref=None):
@@ -720,9 +904,16 @@ async def app(scope, receive, send):
             health_data = {
                 "status": "ok",
                 "service": "tako-mcp-server",
+                "version": SERVER_VERSION,
                 "timestamp": time.time(),
             }
             response = JSONResponse(health_data)
+            wrapped_send = _wrap_send(send, response_started)
+            await response(scope, receive, wrapped_send)
+            return
+
+        if scope["path"] == "/.well-known/mcp":
+            response = JSONResponse(_SERVER_CARD)
             wrapped_send = _wrap_send(send, response_started)
             await response(scope, receive, wrapped_send)
             return

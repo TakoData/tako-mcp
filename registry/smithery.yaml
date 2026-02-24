@@ -1,0 +1,112 @@
+# Smithery Marketplace Configuration for Tako MCP Server
+# https://smithery.ai
+
+name: tako-mcp
+title: Tako MCP Server
+description: |
+  Create and discover data visualizations with Tako. Search a knowledge base
+  of 100K+ charts covering economics, finance, demographics, and technology.
+  Create custom charts from raw data using 15+ chart types.
+
+version: "0.1.0"
+license: MIT
+
+author:
+  name: Tako
+  email: hello@tako.com
+  url: https://tako.com
+
+repository: https://github.com/TakoData/tako-mcp
+
+categories:
+  - Data Visualization
+  - Charts
+  - Data Analysis
+  - Knowledge Base
+
+tags:
+  - charts
+  - data-visualization
+  - thinviz
+  - interactive-charts
+  - mcp-ui
+  - knowledge-base
+
+# Server configuration
+server:
+  transport: sse
+  command: tako-mcp
+  port: 8001
+
+# Configuration schema (what users need to provide)
+configSchema:
+  type: object
+  required:
+    - takoApiKey
+  properties:
+    takoApiKey:
+      type: string
+      title: Tako API Key
+      description: >
+        Your Tako API token for authentication. Sign up at tako.com
+        and create a token in your account settings.
+
+# Docker support
+docker:
+  image: ghcr.io/takodata/tako-mcp:latest
+  ports:
+    - "8001:8001"
+  environment:
+    PUBLIC_BASE_URL: https://tako.com
+
+# Installation methods
+installation:
+  pip:
+    package: tako-mcp
+    command: tako-mcp
+  docker:
+    image: ghcr.io/takodata/tako-mcp:latest
+
+# Tool summary for marketplace listing
+tools:
+  - name: knowledge_search
+    description: Search charts and data visualizations on any topic
+  - name: explore_knowledge_graph
+    description: Discover available entities, metrics, and cohorts
+  - name: get_chart_image
+    description: Get static PNG preview of a chart
+  - name: get_card_insights
+    description: Get AI-generated chart analysis
+  - name: list_chart_schemas
+    description: List available chart templates
+  - name: get_chart_schema
+    description: Get chart type data format details
+  - name: create_chart
+    description: Create new chart from raw data
+  - name: open_chart_ui
+    description: Open interactive chart via MCP-UI
+
+# Screenshots / examples for marketplace
+examples:
+  - title: Search for Charts
+    description: Find existing visualizations on any topic
+    input: |
+      {"query": "US GDP growth rate", "api_token": "your-token"}
+  - title: Create a Bar Chart
+    description: Create a custom bar chart from your data
+    input: |
+      {
+        "schema_name": "bar_chart",
+        "api_token": "your-token",
+        "components": [
+          {"component_type": "header", "config": {"title": "Revenue by Region"}},
+          {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Revenue", "data": [{"x": "NA", "y": 120}, {"x": "EU", "y": 98}], "units": "$M"}]}}
+        ]
+      }
+
+# Links
+links:
+  homepage: https://tako.com
+  documentation: https://github.com/TakoData/tako-mcp#readme
+  api_reference: https://tako.com/docs/
+  changelog: https://github.com/TakoData/tako-mcp/releases
