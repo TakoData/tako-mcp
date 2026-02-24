@@ -1,0 +1,99 @@
+{
+  "name": "tako-mcp",
+  "title": "Tako MCP Server",
+  "description": "Create and discover data visualizations. Search Tako's knowledge base of 100K+ charts covering economics, finance, demographics, and technology. Create custom charts from raw data using 15+ chart types including timeseries, bar charts, scatter plots, pie charts, maps, heatmaps, treemaps, and more.",
+  "version": "0.1.0",
+  "repository": "https://github.com/TakoData/tako-mcp",
+  "homepage": "https://tako.com",
+  "license": "MIT",
+  "author": {
+    "name": "Tako",
+    "email": "hello@tako.com",
+    "url": "https://tako.com"
+  },
+  "categories": [
+    "Data Visualization",
+    "Charts",
+    "Analytics",
+    "Knowledge Base"
+  ],
+  "tags": [
+    "charts",
+    "data-visualization",
+    "thinviz",
+    "interactive-charts",
+    "mcp-ui",
+    "knowledge-base",
+    "analytics"
+  ],
+  "tools": [
+    {
+      "name": "knowledge_search",
+      "description": "Search Tako's knowledge base for charts and data visualizations on any topic. Use when a user asks about data trends, comparisons, or statistics."
+    },
+    {
+      "name": "explore_knowledge_graph",
+      "description": "Discover available entities, metrics, cohorts, and time periods. Use to understand what data is available before searching."
+    },
+    {
+      "name": "get_chart_image",
+      "description": "Get a static PNG preview image URL for a chart."
+    },
+    {
+      "name": "get_card_insights",
+      "description": "Get AI-generated insights and analysis for a chart."
+    },
+    {
+      "name": "list_chart_schemas",
+      "description": "List all available chart templates for creating custom visualizations."
+    },
+    {
+      "name": "get_chart_schema",
+      "description": "Get the detailed schema and data format for a specific chart type."
+    },
+    {
+      "name": "create_chart",
+      "description": "Create a new interactive chart from raw data using 15+ chart types including timeseries, bar charts, scatter plots, pie charts, maps, and more."
+    },
+    {
+      "name": "open_chart_ui",
+      "description": "Open a fully interactive chart with zooming, panning, and hover interactions via MCP-UI."
+    }
+  ],
+  "installation": {
+    "pip": {
+      "command": "pip install tako-mcp",
+      "entrypoint": "tako-mcp"
+    },
+    "docker": {
+      "image": "ghcr.io/takodata/tako-mcp:latest",
+      "ports": ["8001:8001"],
+      "environment": {
+        "PUBLIC_BASE_URL": "https://tako.com"
+      }
+    },
+    "hosted": {
+      "url": "https://mcp.tako.com/sse",
+      "description": "Connect directly to Tako's hosted MCP server without local installation."
+    }
+  },
+  "transport": {
+    "supported": ["sse", "streamable-http"],
+    "default": "sse",
+    "endpoint": "/sse",
+    "port": 8001
+  },
+  "authentication": {
+    "type": "api_key",
+    "description": "Tako API token. Sign up at tako.com and create a token in your account settings.",
+    "setup_url": "https://tako.com"
+  },
+  "links": {
+    "homepage": "https://tako.com",
+    "documentation": "https://github.com/TakoData/tako-mcp#readme",
+    "repository": "https://github.com/TakoData/tako-mcp",
+    "issues": "https://github.com/TakoData/tako-mcp/issues",
+    "changelog": "https://github.com/TakoData/tako-mcp/releases",
+    "mcp_server": "https://mcp.tako.com"
+  }
+}

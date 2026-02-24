@@ -1,0 +1,2434 @@
+openapi: 3.1.0
+
+info:
+  title: Tako MCP Server
+  version: 0.1.0
+  summary: Data visualization agent — create, discover, and analyze interactive charts via MCP
+  description: |
+    ## Overview
+
+    The Tako MCP Server exposes Tako's knowledge base and interactive chart creation
+    capabilities through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
+    It allows AI agents to search 100,000+ curated charts covering economics, finance,
+    demographics, technology, and more, as well as create custom visualizations from
+    raw data using 15+ chart types.
+
+    ## Transports
+
+    The server supports two MCP transport mechanisms:
+
+    | Transport        | Endpoint       | Description                                      |
+    |------------------|----------------|--------------------------------------------------|
+    | Streamable HTTP  | `POST /mcp`    | Preferred. Single-endpoint bidirectional JSON-RPC |
+    | SSE              | `GET /sse`     | Legacy. Server-Sent Events with `/messages/` POST |
+
+    Agents should prefer the **Streamable HTTP** transport (`POST /mcp`). The SSE
+    transport is provided for backward compatibility with older MCP clients.
+
+    ## MCP Tools
+
+    The server registers **8 MCP tools** that agents invoke through the MCP protocol
+    (not as REST endpoints). They are documented in this spec under the
+    `x-mcp-tools` extension and also as virtual paths under `/x-mcp/tools/*` for
+    agent-readable reference.
+
+    ### Tool Categories
+
+    - **Discovery** — `knowledge_search`, `explore_knowledge_graph`
+    - **Retrieval** — `get_chart_image`, `get_card_insights`
+    - **Schema** — `list_chart_schemas`, `get_chart_schema`
+    - **Creation** — `create_chart`
+    - **Rendering** — `open_chart_ui`
+
+    ## Authentication
+
+    All MCP tool calls require a Tako API token passed as the `api_token` parameter.
+    REST endpoints accept either the `X-API-Key` header or a Bearer token in the
+    `Authorization` header. Obtain a token at [tako.com](https://tako.com).
+
+    ## Chart Types
+
+    Available chart schemas for `create_chart`:
+
+    `timeseries_card` | `stock_card` | `bar_chart` | `grouped_bar_chart` |
+    `pie_chart` | `scatter_chart` | `bubble_chart` | `histogram` | `boxplot` |
+    `choropleth` | `treemap` | `heatmap` | `waterfall` | `financial_boxes` |
+    `table` | `data_table_chart` | `header`
+
+  contact:
+    name: Tako
+    url: https://tako.com
+    email: hello@tako.com
+  license:
+    name: MIT
+    identifier: MIT
+    url: https://opensource.org/licenses/MIT
+  x-logo:
+    url: https://tako.com/favicon.ico
+    altText: Tako Logo
+
+servers:
+  - url: https://mcp.tako.com
+    description: Tako MCP Server — Production
+    x-agent-hints:
+      transport: streamable-http
+      preferred_endpoint: /mcp
+
+tags:
+  - name: Health
+    description: Service health and readiness checks
+  - name: Discovery
+    description: MCP server discovery and capability negotiation
+  - name: MCP Transport
+    description: Model Context Protocol transport endpoints
+  - name: MCP Tools — Search
+    description: Tools for searching and exploring Tako's knowledge base
+    x-semantic-tags:
+      - search
+      - discovery
+      - knowledge-base
+  - name: MCP Tools — Retrieval
+    description: Tools for retrieving chart images and AI-generated insights
+    x-semantic-tags:
+      - retrieval
+      - image
+      - insights
+      - analysis
+  - name: MCP Tools — Schema
+    description: Tools for listing and inspecting chart creation templates
+    x-semantic-tags:
+      - schema
+      - template
+      - chart-types
+  - name: MCP Tools — Creation
+    description: Tools for creating new charts from raw data
+    x-semantic-tags:
+      - create
+      - chart
+      - visualization
+  - name: MCP Tools — Rendering
+    description: Tools for rendering interactive chart UIs via MCP-UI
+    x-semantic-tags:
+      - render
+      - interactive
+      - mcp-ui
+      - embed
+
+paths:
+  # ---------------------------------------------------------------------------
+  # REST Endpoints
+  # ---------------------------------------------------------------------------
+
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Basic health check
+      description: |
+        Returns a plain-text `"ok"` response when the server is running.
+        Use this for simple liveness probes.
+      tags:
+        - Health
+      x-agent-hints:
+        usage: Use for liveness checks. A 200 response means the server process is alive.
+        caching: Safe to cache for 30 seconds.
+      x-semantic-tags:
+        - health
+        - liveness
+        - probe
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                const: ok
+              examples:
+                healthy:
+                  summary: Healthy response
+                  value: ok
+
+  /health/detailed:
+    get:
+      operationId: healthCheckDetailed
+      summary: Detailed health check
+      description: |
+        Returns a JSON object with service status, name, version, and current
+        server timestamp. Use this for readiness probes and monitoring dashboards.
+      tags:
+        - Health
+      x-agent-hints:
+        usage: Use for readiness checks and monitoring. Includes version and timestamp for diagnostics.
+        caching: Safe to cache for 10 seconds.
+      x-semantic-tags:
+        - health
+        - readiness
+        - monitoring
+        - version
+      responses:
+        "200":
+          description: Detailed health information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DetailedHealth"
+              examples:
+                healthy:
+                  summary: Healthy detailed response
+                  value:
+                    status: ok
+                    service: tako-mcp-server
+                    version: "0.1.0"
+                    timestamp: 1708790400.123
+
+  /.well-known/mcp:
+    get:
+      operationId: getMcpServerCard
+      summary: MCP Server Card
+      description: |
+        Returns the MCP Server Card (per the MCP discovery specification). This
+        describes the server's capabilities, available transports, authentication
+        requirements, and a summary of registered tools.
+
+        Agents and MCP clients use this endpoint for automatic server discovery
+        and capability negotiation.
+      tags:
+        - Discovery
+      x-agent-hints:
+        usage: >
+          Fetch this first when connecting to the Tako MCP server.
+          It tells you which transports are available, what tools are registered,
+          and how to authenticate.
+        caching: Safe to cache for 5 minutes. Tool list changes infrequently.
+      x-semantic-tags:
+        - discovery
+        - server-card
+        - capabilities
+        - mcp
+      responses:
+        "200":
+          description: MCP Server Card
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpServerCard"
+              examples:
+                serverCard:
+                  summary: Full server card
+                  value:
+                    protocolVersion: "2025-06-18"
+                    serverInfo:
+                      name: tako-mcp
+                      title: Tako MCP Server
+                      version: "0.1.0"
+                      description: >-
+                        Create and discover data visualizations. Search Tako's
+                        knowledge base of charts covering economics, finance,
+                        demographics, technology, and more. Create custom charts
+                        from raw data using 15+ chart types.
+                      iconUrl: https://tako.com/favicon.ico
+                      documentationUrl: https://github.com/TakoData/tako-mcp
+                    transport:
+                      - type: streamable-http
+                        endpoint: /mcp
+                      - type: sse
+                        endpoint: /sse
+                    capabilities:
+                      tools:
+                        listChanged: true
+                    authentication:
+                      required: true
+                      schemes:
+                        - bearer
+                    tools:
+                      - name: knowledge_search
+                        description: Search Tako's knowledge base for charts and data visualizations on any topic.
+                        annotations:
+                          readOnlyHint: true
+                          destructiveHint: false
+                          openWorldHint: false
+                      - name: explore_knowledge_graph
+                        description: Discover available entities, metrics, cohorts, and time periods.
+                        annotations:
+                          readOnlyHint: true
+                          destructiveHint: false
+                          openWorldHint: false
+                      - name: get_chart_image
+                        description: Get a static PNG preview image URL for a chart.
+                        annotations:
+                          readOnlyHint: true
+                          destructiveHint: false
+                          openWorldHint: false
+                      - name: get_card_insights
+                        description: Get AI-generated analysis and insights for a chart.
+                        annotations:
+                          readOnlyHint: true
+                          destructiveHint: false
+                          openWorldHint: false
+                      - name: list_chart_schemas
+                        description: List all available chart templates for creating custom visualizations.
+                        annotations:
+                          readOnlyHint: true
+                          destructiveHint: false
+                          openWorldHint: false
+                      - name: get_chart_schema
+                        description: Get the detailed schema and data format for a specific chart type.
+                        annotations:
+                          readOnlyHint: true
+                          destructiveHint: false
+                          openWorldHint: false
+                      - name: create_chart
+                        description: Create a new interactive chart from raw data using 15+ chart types.
+                        annotations:
+                          readOnlyHint: false
+                          destructiveHint: false
+                          openWorldHint: true
+                      - name: open_chart_ui
+                        description: Open a fully interactive chart with zooming, panning, and hover interactions.
+                        annotations:
+                          readOnlyHint: true
+                          destructiveHint: false
+                          openWorldHint: true
+
+  /mcp:
+    post:
+      operationId: mcpStreamableHttp
+      summary: Streamable HTTP transport for MCP
+      description: |
+        Primary MCP transport endpoint. Accepts JSON-RPC 2.0 messages and returns
+        responses via streaming HTTP. Supports all MCP protocol methods including
+        `tools/list`, `tools/call`, `initialize`, and `ping`.
+
+        This is the **preferred** transport. Use this endpoint for new integrations.
+      tags:
+        - MCP Transport
+      x-agent-hints:
+        usage: >
+          Send MCP JSON-RPC messages here. Supports initialize, tools/list,
+          tools/call, and other MCP methods. Responses are streamed.
+          Prefer this over the SSE transport for new integrations.
+        content_type: application/json
+        response_streaming: true
+      x-semantic-tags:
+        - mcp
+        - transport
+        - json-rpc
+        - streamable-http
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonRpcRequest"
+            examples:
+              initialize:
+                summary: Initialize MCP session
+                value:
+                  jsonrpc: "2.0"
+                  id: 1
+                  method: initialize
+                  params:
+                    protocolVersion: "2025-06-18"
+                    capabilities: {}
+                    clientInfo:
+                      name: my-agent
+                      version: "1.0.0"
+              listTools:
+                summary: List available tools
+                value:
+                  jsonrpc: "2.0"
+                  id: 2
+                  method: tools/list
+                  params: {}
+              callKnowledgeSearch:
+                summary: Call the knowledge_search tool
+                value:
+                  jsonrpc: "2.0"
+                  id: 3
+                  method: tools/call
+                  params:
+                    name: knowledge_search
+                    arguments:
+                      query: US GDP growth rate
+                      api_token: tak_your_api_token_here
+                      count: 5
+                      search_effort: deep
+      responses:
+        "200":
+          description: JSON-RPC response (may be streamed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonRpcResponse"
+              examples:
+                initializeResponse:
+                  summary: Successful initialization
+                  value:
+                    jsonrpc: "2.0"
+                    id: 1
+                    result:
+                      protocolVersion: "2025-06-18"
+                      capabilities:
+                        tools:
+                          listChanged: true
+                      serverInfo:
+                        name: tako-knowledge
+                        version: "0.1.0"
+        "400":
+          description: Malformed JSON-RPC request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonRpcError"
+        "410":
+          description: Session expired or not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionExpiredError"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonRpcError"
+
+  /sse:
+    get:
+      operationId: mcpSseConnect
+      summary: SSE transport — establish connection
+      description: |
+        Opens a Server-Sent Events stream for the legacy MCP SSE transport.
+        The server sends a `session_id` in the initial event. Subsequent
+        JSON-RPC messages must be POSTed to `/messages/?session_id={id}`.
+
+        **Note:** Prefer the Streamable HTTP transport (`POST /mcp`) for new
+        integrations. The SSE transport is maintained for backward compatibility.
+      tags:
+        - MCP Transport
+      x-agent-hints:
+        usage: >
+          Legacy transport. Connect here to receive an SSE stream with a session_id,
+          then POST JSON-RPC messages to /messages/?session_id=<id>.
+          Prefer POST /mcp for new integrations.
+        deprecated_in_favor_of: POST /mcp
+      x-semantic-tags:
+        - mcp
+        - transport
+        - sse
+        - legacy
+      responses:
+        "200":
+          description: SSE stream established
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-Sent Events stream carrying JSON-RPC messages
+              examples:
+                sseConnection:
+                  summary: Initial SSE connection event
+                  value: "event: endpoint\ndata: /messages/?session_id=abc-123-def\n\n"
+
+  /messages/:
+    post:
+      operationId: mcpSseMessage
+      summary: SSE transport — send JSON-RPC message
+      description: |
+        Sends a JSON-RPC 2.0 message to an active SSE session. The `session_id`
+        query parameter must match a session established via `GET /sse`.
+
+        Responses are delivered through the SSE stream, not in the HTTP response body.
+      tags:
+        - MCP Transport
+      x-agent-hints:
+        usage: >
+          POST JSON-RPC messages here with a session_id from GET /sse.
+          Responses arrive via the SSE stream, not in the HTTP response.
+      x-semantic-tags:
+        - mcp
+        - transport
+        - sse
+        - json-rpc
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          description: Session ID obtained from the SSE endpoint
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonRpcRequest"
+            examples:
+              toolCall:
+                summary: Call knowledge_search via SSE transport
+                value:
+                  jsonrpc: "2.0"
+                  id: 1
+                  method: tools/call
+                  params:
+                    name: knowledge_search
+                    arguments:
+                      query: "S&P 500 performance"
+                      api_token: tak_your_api_token_here
+      responses:
+        "202":
+          description: Message accepted — response will arrive on the SSE stream
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionExpiredError"
+              examples:
+                sessionNotFound:
+                  summary: Session not found
+                  value:
+                    error: Session expired or not found
+                    code: -32001
+                    message: Please reconnect to /sse to establish a new session
+                    reconnect: true
+        "410":
+          description: Session expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionExpiredError"
+
+  # ---------------------------------------------------------------------------
+  # Virtual paths documenting MCP Tools for agent consumption
+  # ---------------------------------------------------------------------------
+
+  /x-mcp/tools/knowledge_search:
+    post:
+      operationId: mcpTool_knowledgeSearch
+      summary: "MCP Tool: knowledge_search"
+      description: |
+        **Invoked via MCP protocol, not as a REST endpoint.**
+
+        Search Tako's curated knowledge base of 100,000+ charts covering economics,
+        finance, demographics, technology, and more. Use when a user asks about data
+        trends, comparisons, or statistics — Tako likely already has a relevant
+        visualization.
+
+        Each result includes `open_ui_args` with the `pub_id` needed to render the
+        chart interactively via `open_chart_ui`.
+      tags:
+        - MCP Tools — Search
+      x-agent-hints:
+        usage: >
+          Start here when a user asks about data trends, comparisons, or statistics.
+          Use search_effort="deep" for comprehensive results or "fast" for speed.
+          Each result includes a card_id you can pass to get_chart_image,
+          get_card_insights, or open_chart_ui.
+        when_to_use:
+          - User asks about data trends or statistics
+          - User wants to find existing charts on a topic
+          - User asks to compare metrics across entities
+        when_not_to_use:
+          - User wants to create a chart from their own data (use create_chart)
+          - User wants to explore what data is available (use explore_knowledge_graph)
+        workflow: >
+          knowledge_search -> (optional) get_card_insights -> open_chart_ui
+      x-semantic-tags:
+        - search
+        - charts
+        - knowledge-base
+        - discovery
+        - data
+      x-tool-annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        openWorldHint: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeSearchParams"
+            examples:
+              gdpSearch:
+                summary: Search for GDP charts
+                value:
+                  query: US GDP growth rate over the last 10 years
+                  api_token: tak_your_api_token_here
+                  count: 5
+                  search_effort: deep
+                  country_code: US
+                  locale: en-US
+              stockComparison:
+                summary: Compare tech stocks
+                value:
+                  query: Intel vs Nvidia revenue comparison
+                  api_token: tak_your_api_token_here
+                  count: 10
+                  search_effort: deep
+              climateData:
+                summary: Climate data search
+                value:
+                  query: global temperature change since 1900
+                  api_token: tak_your_api_token_here
+                  count: 3
+                  search_effort: fast
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeSearchResponse"
+              examples:
+                success:
+                  summary: Successful search with results
+                  value:
+                    results:
+                      - card_id: abc123
+                        title: "US GDP Growth Rate (2014-2024)"
+                        description: "Annual GDP growth rate of the United States over the last decade"
+                        url: https://tako.com/c/abc123
+                        source: World Bank
+                        open_ui_tool: open_chart_ui
+                        open_ui_args:
+                          pub_id: abc123
+                      - card_id: def456
+                        title: "US Real GDP Quarterly"
+                        description: "Quarterly real GDP data for the United States"
+                        url: https://tako.com/c/def456
+                        source: Bureau of Economic Analysis
+                        open_ui_tool: open_chart_ui
+                        open_ui_args:
+                          pub_id: def456
+                    count: 2
+                noResults:
+                  summary: No matching charts
+                  value:
+                    results: []
+                    count: 0
+
+  /x-mcp/tools/explore_knowledge_graph:
+    post:
+      operationId: mcpTool_exploreKnowledgeGraph
+      summary: "MCP Tool: explore_knowledge_graph"
+      description: |
+        **Invoked via MCP protocol, not as a REST endpoint.**
+
+        Discover available entities (companies, countries), metrics (revenue, GDP),
+        cohorts (S&P 500, G7), and time periods in Tako's knowledge graph. Use this
+        to understand what data is available before searching, or to disambiguate
+        vague queries.
+      tags:
+        - MCP Tools — Search
+      x-agent-hints:
+        usage: >
+          Use before knowledge_search when the user's query is vague or you need
+          to understand what entities, metrics, or cohorts are available. Filter by
+          node_types to narrow results. Good for discovery and disambiguation.
+        when_to_use:
+          - User asks what data is available on a topic
+          - You need to disambiguate between similar entities
+          - You want to discover related metrics or cohorts
+        when_not_to_use:
+          - User already knows what chart they want (use knowledge_search)
+          - User wants to create a chart (use create_chart)
+        workflow: >
+          explore_knowledge_graph -> knowledge_search -> open_chart_ui
+      x-semantic-tags:
+        - explore
+        - knowledge-graph
+        - entities
+        - metrics
+        - cohorts
+        - discovery
+      x-tool-annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        openWorldHint: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExploreKnowledgeGraphParams"
+            examples:
+              techCompanies:
+                summary: Explore tech company data
+                value:
+                  query: technology companies
+                  api_token: tak_your_api_token_here
+                  node_types:
+                    - entity
+                    - metric
+                  limit: 20
+              gdpMetrics:
+                summary: Explore GDP-related metrics
+                value:
+                  query: GDP
+                  api_token: tak_your_api_token_here
+                  node_types:
+                    - metric
+                    - cohort
+                  limit: 10
+      responses:
+        "200":
+          description: Knowledge graph exploration results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExploreKnowledgeGraphResponse"
+              examples:
+                success:
+                  summary: Successful exploration
+                  value:
+                    query: technology companies
+                    total_matches: 45
+                    entities:
+                      - name: Apple Inc.
+                        type: company
+                        description: American multinational technology company
+                        aliases:
+                          - AAPL
+                          - Apple
+                        available_tables:
+                          - financial_data
+                          - stock_prices
+                        node_id: entity_apple
+                      - name: NVIDIA Corporation
+                        type: company
+                        description: American multinational technology company specializing in GPUs
+                        aliases:
+                          - NVDA
+                          - Nvidia
+                        available_tables:
+                          - financial_data
+                          - stock_prices
+                        node_id: entity_nvidia
+                    metrics:
+                      - name: Revenue
+                        description: Total revenue / net sales
+                        units:
+                          - USD
+                          - EUR
+                        time_periods:
+                          - yearly
+                          - quarterly
+                        compatible_tables:
+                          - financial_data
+                        node_id: metric_revenue
+                    cohorts:
+                      - name: Magnificent 7
+                        description: Seven largest US technology companies by market cap
+                        member_count: 7
+                        sample_members:
+                          - Apple
+                          - Microsoft
+                          - Google
+                        node_id: cohort_mag7
+                    time_periods:
+                      - yearly
+                      - quarterly
+                      - monthly
+                    execution_time_ms: 142
+
+  /x-mcp/tools/get_chart_image:
+    post:
+      operationId: mcpTool_getChartImage
+      summary: "MCP Tool: get_chart_image"
+      description: |
+        **Invoked via MCP protocol, not as a REST endpoint.**
+
+        Get a direct URL to a static PNG preview image of a chart. Useful for
+        embedding chart previews in responses, documents, or messages where
+        interactive rendering is not available.
+      tags:
+        - MCP Tools — Retrieval
+      x-agent-hints:
+        usage: >
+          Use when you need a static image URL for a chart (e.g., to embed in
+          a message or document). The URL points to a public PNG image. For
+          interactive rendering, prefer open_chart_ui instead.
+        when_to_use:
+          - You need a static image URL for embedding
+          - The client does not support MCP-UI interactive rendering
+          - You want a thumbnail preview
+        when_not_to_use:
+          - User wants interactive chart exploration (use open_chart_ui)
+        workflow: >
+          knowledge_search -> get_chart_image (for static preview)
+      x-semantic-tags:
+        - image
+        - preview
+        - png
+        - static
+        - embed
+      x-tool-annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        openWorldHint: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GetChartImageParams"
+            examples:
+              darkMode:
+                summary: Get dark mode chart image
+                value:
+                  pub_id: abc123
+                  api_token: tak_your_api_token_here
+                  dark_mode: true
+              lightMode:
+                summary: Get light mode chart image
+                value:
+                  pub_id: abc123
+                  api_token: tak_your_api_token_here
+                  dark_mode: false
+      responses:
+        "200":
+          description: Chart image URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetChartImageResponse"
+              examples:
+                success:
+                  summary: Image URL returned
+                  value:
+                    image_url: https://api.tako.com/api/v1/image/abc123/?dark_mode=true
+                    pub_id: abc123
+                    dark_mode: true
+
+  /x-mcp/tools/get_card_insights:
+    post:
+      operationId: mcpTool_getCardInsights
+      summary: "MCP Tool: get_card_insights"
+      description: |
+        **Invoked via MCP protocol, not as a REST endpoint.**
+
+        Get AI-generated analysis of a chart's data. Returns bullet-point insights
+        identifying trends, outliers, and key takeaways, plus a natural language
+        description summarizing the chart.
+      tags:
+        - MCP Tools — Retrieval
+      x-agent-hints:
+        usage: >
+          Use after knowledge_search or create_chart to get AI-generated analysis
+          of a chart. The "medium" effort level balances speed and depth. Use "high"
+          for detailed analysis of complex charts.
+        when_to_use:
+          - User asks what a chart shows or means
+          - You need to summarize chart data in text
+          - User asks for trends or key takeaways
+        when_not_to_use:
+          - You just need the chart image (use get_chart_image)
+          - You need raw data (not available via this tool)
+        workflow: >
+          knowledge_search -> get_card_insights -> present summary to user
+      x-semantic-tags:
+        - insights
+        - analysis
+        - ai
+        - trends
+        - summary
+      x-tool-annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        openWorldHint: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GetCardInsightsParams"
+            examples:
+              medium:
+                summary: Medium-effort analysis
+                value:
+                  pub_id: abc123
+                  api_token: tak_your_api_token_here
+                  effort: medium
+              deep:
+                summary: Deep analysis
+                value:
+                  pub_id: abc123
+                  api_token: tak_your_api_token_here
+                  effort: high
+      responses:
+        "200":
+          description: AI-generated insights
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetCardInsightsResponse"
+              examples:
+                success:
+                  summary: Insights for a GDP chart
+                  value:
+                    pub_id: abc123
+                    insights: |
+                      - US GDP grew at an average rate of 2.3% annually over the last decade
+                      - The sharpest decline occurred in Q2 2020 (-31.2%) due to COVID-19
+                      - Recovery was rapid, with 33.8% growth in Q3 2020
+                      - Growth has normalized to 2-3% range since 2022
+                    description: >-
+                      This chart shows the annual GDP growth rate of the United States
+                      from 2014 to 2024. The data reveals a generally stable growth
+                      pattern interrupted by the COVID-19 pandemic, with a strong
+                      V-shaped recovery.
+
+  /x-mcp/tools/list_chart_schemas:
+    post:
+      operationId: mcpTool_listChartSchemas
+      summary: "MCP Tool: list_chart_schemas"
+      description: |
+        **Invoked via MCP protocol, not as a REST endpoint.**
+
+        List all available chart templates (schemas) for creating custom
+        visualizations. Returns schema names, descriptions, use cases, and
+        component structures. Call this first when the user wants to create
+        a new chart to understand what options are available.
+      tags:
+        - MCP Tools — Schema
+      x-agent-hints:
+        usage: >
+          Call this first when the user wants to create a chart. It returns all
+          available chart types with descriptions and use cases. Then call
+          get_chart_schema for the specific schema you want to use.
+        when_to_use:
+          - User wants to create a new chart
+          - You need to pick the right chart type for the user's data
+        when_not_to_use:
+          - You already know which chart type to use (go straight to get_chart_schema)
+        workflow: >
+          list_chart_schemas -> get_chart_schema -> create_chart -> open_chart_ui
+      x-semantic-tags:
+        - schema
+        - templates
+        - chart-types
+        - list
+      x-tool-annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        openWorldHint: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListChartSchemasParams"
+            examples:
+              listAll:
+                summary: List all chart schemas
+                value:
+                  api_token: tak_your_api_token_here
+      responses:
+        "200":
+          description: Available chart schemas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListChartSchemasResponse"
+              examples:
+                success:
+                  summary: Chart schemas list
+                  value:
+                    schemas:
+                      - name: bar_chart
+                        description: Simple categorical bar chart
+                        use_case: "Single-series categorical comparisons — revenue by region, top 10 lists"
+                        components:
+                          - header
+                          - categorical_bar
+                      - name: timeseries_card
+                        description: Time series line or area chart
+                        use_case: "Any time-based data — trends, growth rates, historical comparisons"
+                        components:
+                          - header
+                          - generic_timeseries
+                      - name: pie_chart
+                        description: Pie or donut chart
+                        use_case: "Proportional/percentage data — market share, budget allocation"
+                        components:
+                          - header
+                          - pie
+                      - name: choropleth
+                        description: Geographic map with shaded regions
+                        use_case: "Geographic map data — by US state or world country"
+                        components:
+                          - header
+                          - choropleth_map
+                    count: 4
+
+  /x-mcp/tools/get_chart_schema:
+    post:
+      operationId: mcpTool_getChartSchema
+      summary: "MCP Tool: get_chart_schema"
+      description: |
+        **Invoked via MCP protocol, not as a REST endpoint.**
+
+        Get the detailed schema definition for a specific chart type. Returns
+        the required fields, data structure, component configuration, and
+        template details. Always call this before `create_chart` to understand
+        the exact data format needed.
+      tags:
+        - MCP Tools — Schema
+      x-agent-hints:
+        usage: >
+          Call this after list_chart_schemas to get the exact data format for a
+          chart type. The response tells you what components are needed and
+          their configuration schema. Use this to build the components array
+          for create_chart.
+        when_to_use:
+          - You've chosen a chart type and need to know the data format
+          - You need to validate data before calling create_chart
+        when_not_to_use:
+          - You don't know which chart type to use yet (use list_chart_schemas first)
+        workflow: >
+          list_chart_schemas -> get_chart_schema -> create_chart
+      x-semantic-tags:
+        - schema
+        - template
+        - data-format
+        - components
+      x-tool-annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        openWorldHint: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GetChartSchemaParams"
+            examples:
+              barChart:
+                summary: Get bar chart schema
+                value:
+                  schema_name: bar_chart
+                  api_token: tak_your_api_token_here
+              timeseries:
+                summary: Get timeseries schema
+                value:
+                  schema_name: timeseries_card
+                  api_token: tak_your_api_token_here
+      responses:
+        "200":
+          description: Chart schema details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetChartSchemaResponse"
+              examples:
+                barChartSchema:
+                  summary: Bar chart schema
+                  value:
+                    name: bar_chart
+                    description: Simple categorical bar chart
+                    components:
+                      - component_type: header
+                        required: true
+                        config:
+                          title:
+                            type: string
+                            required: true
+                          subtitle:
+                            type: string
+                            required: false
+                      - component_type: categorical_bar
+                        required: true
+                        config:
+                          datasets:
+                            type: array
+                            required: true
+                            items:
+                              label:
+                                type: string
+                              data:
+                                type: array
+                                items:
+                                  x:
+                                    type: string
+                                    description: Category label
+                                  "y":
+                                    type: number
+                                    description: Value
+                              units:
+                                type: string
+                          title:
+                            type: string
+                    template: {}
+
+  /x-mcp/tools/create_chart:
+    post:
+      operationId: mcpTool_createChart
+      summary: "MCP Tool: create_chart"
+      description: |
+        **Invoked via MCP protocol, not as a REST endpoint.**
+
+        Create a new interactive chart from raw data. This is the primary chart
+        creation tool. Pass a schema name and your data as component configurations
+        to generate a hosted, shareable Tako visualization. Supports 15+ chart types.
+
+        **Recommended workflow:** `list_chart_schemas` -> `get_chart_schema` -> `create_chart`
+
+        The created chart gets a permanent URL and can be rendered interactively
+        via `open_chart_ui`.
+      tags:
+        - MCP Tools — Creation
+      x-agent-hints:
+        usage: >
+          Use this to create a new chart from user-provided or computed data.
+          Always call get_chart_schema first to understand the required data format.
+          The response includes a card_id, webpage_url (for sharing), image_url
+          (for preview), and open_ui_args (for interactive rendering).
+        when_to_use:
+          - User provides data and wants a visualization
+          - You have computed data that should be charted
+          - User asks to create, build, or make a chart
+        when_not_to_use:
+          - User is looking for an existing chart (use knowledge_search)
+          - You don't know the data format yet (use get_chart_schema first)
+        workflow: >
+          list_chart_schemas -> get_chart_schema -> create_chart -> open_chart_ui
+        important_notes:
+          - Always call get_chart_schema before create_chart to know the data format
+          - The components array must match the schema's expected structure
+          - Include a source attribution when the data origin is known
+      x-semantic-tags:
+        - create
+        - chart
+        - visualization
+        - data
+        - thinviz
+      x-tool-annotations:
+        readOnlyHint: false
+        destructiveHint: false
+        openWorldHint: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChartParams"
+            examples:
+              barChart:
+                summary: Create a bar chart
+                value:
+                  schema_name: bar_chart
+                  components:
+                    - component_type: header
+                      config:
+                        title: Revenue by Region
+                        subtitle: Q4 2024
+                    - component_type: categorical_bar
+                      config:
+                        datasets:
+                          - label: Revenue
+                            data:
+                              - x: North America
+                                "y": 120
+                              - x: Europe
+                                "y": 98
+                              - x: Asia
+                                "y": 156
+                            units: "$M"
+                        title: Revenue by Region
+                  api_token: tak_your_api_token_here
+                  source: Company Reports
+              stockChart:
+                summary: Create a stock price chart
+                value:
+                  schema_name: stock_card
+                  components:
+                    - component_type: stock_boxes
+                      config:
+                        items:
+                          - labelPrimary: AAPL
+                            labelSecondary: NASDAQ
+                            valuePrimary: "$195.20"
+                            valueSecondary: USD
+                            subValue: "+$9.70 (+5.24%)"
+                    - component_type: generic_timeseries
+                      config:
+                        datasets:
+                          - label: AAPL
+                            data:
+                              - x: "2024-01-01"
+                                "y": 185.50
+                              - x: "2024-01-02"
+                                "y": 190.25
+                              - x: "2024-01-03"
+                                "y": 195.20
+                            type: line
+                            units: "$"
+                        chart_type: line
+                        title: AAPL Stock Price
+                  api_token: tak_your_api_token_here
+                  source: Yahoo Finance
+      responses:
+        "200":
+          description: Created chart
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateChartResponse"
+              examples:
+                success:
+                  summary: Chart created successfully
+                  value:
+                    card_id: xyz789
+                    title: Revenue by Region
+                    description: Q4 2024 revenue comparison across regions
+                    webpage_url: https://tako.com/c/xyz789
+                    embed_url: https://tako.com/embed/xyz789/
+                    image_url: https://api.tako.com/api/v1/image/xyz789/?dark_mode=true
+                    open_ui_tool: open_chart_ui
+                    open_ui_args:
+                      pub_id: xyz789
+
+  /x-mcp/tools/open_chart_ui:
+    post:
+      operationId: mcpTool_openChartUi
+      summary: "MCP Tool: open_chart_ui"
+      description: |
+        **Invoked via MCP protocol, not as a REST endpoint.**
+
+        Render a fully interactive chart with zooming, panning, hover interactions,
+        and responsive resizing via MCP-UI. Returns a `UIResource` containing an
+        HTML/iframe embed that MCP-UI-compatible clients can display inline.
+
+        Prefer this over `get_chart_image` when the client supports MCP-UI, as it
+        provides a much richer experience.
+      tags:
+        - MCP Tools — Rendering
+      x-agent-hints:
+        usage: >
+          Use this to show a chart interactively. The response is a UIResource
+          (not a URL) that MCP-UI-capable clients render as an embedded iframe.
+          Falls back gracefully — if the client doesn't support MCP-UI, suggest
+          using get_chart_image instead.
+        when_to_use:
+          - You want to display a chart to the user interactively
+          - After knowledge_search or create_chart, to show the result
+          - User asks to see, view, or open a chart
+        when_not_to_use:
+          - You need a static image URL (use get_chart_image)
+          - The client does not support MCP-UI rendering
+        workflow: >
+          knowledge_search -> open_chart_ui
+          create_chart -> open_chart_ui
+        note: >
+          This tool does NOT require an api_token since it generates a client-side
+          embed URL. The pub_id must reference a valid chart.
+      x-semantic-tags:
+        - render
+        - interactive
+        - mcp-ui
+        - embed
+        - iframe
+        - chart
+      x-tool-annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        openWorldHint: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenChartUiParams"
+            examples:
+              default:
+                summary: Open chart with defaults
+                value:
+                  pub_id: abc123
+                  dark_mode: true
+                  width: 900
+                  height: 600
+              lightWide:
+                summary: Open chart in light mode, wider
+                value:
+                  pub_id: abc123
+                  dark_mode: false
+                  width: 1200
+                  height: 800
+      responses:
+        "200":
+          description: MCP-UI resource for interactive chart rendering
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenChartUiResponse"
+              examples:
+                success:
+                  summary: UIResource for chart embed
+                  value:
+                    uri: ui://tako/embed/abc123
+                    content:
+                      type: rawHtml
+                      htmlString: "<html><!-- interactive Tako chart embed --></html>"
+                    encoding: text
+                    uiMetadata:
+                      preferredFrameSize:
+                        - 900px
+                        - 600px
+
+# =============================================================================
+# Component Schemas
+# =============================================================================
+
+components:
+  securitySchemes:
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Tako API token passed in the X-API-Key request header
+    ApiKeyParam:
+      type: apiKey
+      in: query
+      name: api_token
+      description: Tako API token passed as a query/body parameter (used in MCP tool calls)
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Tako API token passed as a Bearer token
+
+  schemas:
+    # -------------------------------------------------------------------------
+    # REST endpoint schemas
+    # -------------------------------------------------------------------------
+
+    DetailedHealth:
+      type: object
+      description: Detailed health check response
+      required:
+        - status
+        - service
+        - version
+        - timestamp
+      properties:
+        status:
+          type: string
+          description: Service status
+          enum:
+            - ok
+          example: ok
+        service:
+          type: string
+          description: Service name
+          example: tako-mcp-server
+        version:
+          type: string
+          description: Server version (semver)
+          pattern: "^\\d+\\.\\d+\\.\\d+$"
+          example: "0.1.0"
+        timestamp:
+          type: number
+          format: double
+          description: Unix timestamp (seconds since epoch)
+          example: 1708790400.123
+
+    McpServerCard:
+      type: object
+      description: MCP Server Card for discovery (per MCP specification)
+      required:
+        - protocolVersion
+        - serverInfo
+        - transport
+        - capabilities
+      properties:
+        protocolVersion:
+          type: string
+          description: MCP protocol version
+          example: "2025-06-18"
+        serverInfo:
+          $ref: "#/components/schemas/McpServerInfo"
+        transport:
+          type: array
+          description: Available MCP transports
+          items:
+            $ref: "#/components/schemas/McpTransport"
+        capabilities:
+          type: object
+          description: Server capabilities
+          properties:
+            tools:
+              type: object
+              properties:
+                listChanged:
+                  type: boolean
+                  description: Whether the server supports tools/listChanged notifications
+        authentication:
+          type: object
+          description: Authentication requirements
+          properties:
+            required:
+              type: boolean
+            schemes:
+              type: array
+              items:
+                type: string
+        tools:
+          type: array
+          description: Summary of registered tools
+          items:
+            $ref: "#/components/schemas/McpToolSummary"
+
+    McpServerInfo:
+      type: object
+      description: Server identification information
+      required:
+        - name
+        - version
+      properties:
+        name:
+          type: string
+          example: tako-mcp
+        title:
+          type: string
+          example: Tako MCP Server
+        version:
+          type: string
+          example: "0.1.0"
+        description:
+          type: string
+        iconUrl:
+          type: string
+          format: uri
+          example: https://tako.com/favicon.ico
+        documentationUrl:
+          type: string
+          format: uri
+          example: https://github.com/TakoData/tako-mcp
+
+    McpTransport:
+      type: object
+      description: MCP transport endpoint description
+      required:
+        - type
+        - endpoint
+      properties:
+        type:
+          type: string
+          enum:
+            - streamable-http
+            - sse
+          description: Transport type
+        endpoint:
+          type: string
+          description: URL path for this transport
+          example: /mcp
+
+    McpToolSummary:
+      type: object
+      description: Summary of an MCP tool (as listed in the server card)
+      required:
+        - name
+        - description
+      properties:
+        name:
+          type: string
+          description: Tool name
+        description:
+          type: string
+          description: Brief tool description
+        annotations:
+          $ref: "#/components/schemas/ToolAnnotations"
+
+    ToolAnnotations:
+      type: object
+      description: MCP tool behavior annotations
+      properties:
+        readOnlyHint:
+          type: boolean
+          description: Whether the tool only reads data (no side effects)
+        destructiveHint:
+          type: boolean
+          description: Whether the tool may destructively modify data
+        openWorldHint:
+          type: boolean
+          description: Whether the tool interacts with the open world (network, UI)
+
+    # -------------------------------------------------------------------------
+    # JSON-RPC schemas
+    # -------------------------------------------------------------------------
+
+    JsonRpcRequest:
+      type: object
+      description: JSON-RPC 2.0 request
+      required:
+        - jsonrpc
+        - method
+      properties:
+        jsonrpc:
+          type: string
+          const: "2.0"
+        id:
+          oneOf:
+            - type: string
+            - type: integer
+          description: Request ID (omit for notifications)
+        method:
+          type: string
+          description: MCP method name
+          examples:
+            - initialize
+            - tools/list
+            - tools/call
+            - ping
+        params:
+          type: object
+          description: Method parameters
+
+    JsonRpcResponse:
+      type: object
+      description: JSON-RPC 2.0 success response
+      required:
+        - jsonrpc
+        - id
+      properties:
+        jsonrpc:
+          type: string
+          const: "2.0"
+        id:
+          oneOf:
+            - type: string
+            - type: integer
+        result:
+          description: Result payload (varies by method)
+
+    JsonRpcError:
+      type: object
+      description: JSON-RPC 2.0 error response
+      required:
+        - jsonrpc
+        - id
+        - error
+      properties:
+        jsonrpc:
+          type: string
+          const: "2.0"
+        id:
+          oneOf:
+            - type: string
+            - type: integer
+            - type: "null"
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: integer
+              description: JSON-RPC error code
+            message:
+              type: string
+              description: Error message
+            data:
+              description: Additional error data
+
+    SessionExpiredError:
+      type: object
+      description: Session expired or not found error
+      properties:
+        error:
+          type: string
+          example: Session expired or not found
+        code:
+          type: integer
+          example: -32001
+        message:
+          type: string
+          example: Please reconnect to /sse to establish a new session
+        reconnect:
+          type: boolean
+          example: true
+
+    # -------------------------------------------------------------------------
+    # MCP Tool parameter schemas
+    # -------------------------------------------------------------------------
+
+    KnowledgeSearchParams:
+      type: object
+      description: Parameters for the knowledge_search MCP tool
+      required:
+        - query
+        - api_token
+      properties:
+        query:
+          type: string
+          description: |
+            Natural language search query for charts and data.
+            Examples: "US GDP growth", "Intel vs Nvidia revenue", "climate change temperature data"
+          minLength: 1
+          maxLength: 1000
+          examples:
+            - US GDP growth rate
+            - Intel vs Nvidia revenue comparison
+            - global temperature change
+        api_token:
+          type: string
+          description: Tako API token for authentication. Obtain at https://tako.com
+        count:
+          type: integer
+          description: Number of results to return
+          minimum: 1
+          maximum: 20
+          default: 5
+        search_effort:
+          type: string
+          description: |
+            Search depth. "fast" returns quick results with lower latency.
+            "deep" performs a comprehensive search for better relevance.
+          enum:
+            - fast
+            - deep
+          default: deep
+        country_code:
+          type: string
+          description: ISO 3166-1 alpha-2 country code for localized results
+          pattern: "^[A-Z]{2}$"
+          default: US
+          examples:
+            - US
+            - GB
+            - DE
+            - JP
+        locale:
+          type: string
+          description: BCP 47 locale code for result language and formatting
+          pattern: "^[a-z]{2}-[A-Z]{2}$"
+          default: en-US
+          examples:
+            - en-US
+            - en-GB
+            - de-DE
+
+    KnowledgeSearchResponse:
+      type: object
+      description: Results from the knowledge_search tool
+      required:
+        - results
+        - count
+      properties:
+        results:
+          type: array
+          description: Matching charts from Tako's knowledge base
+          items:
+            $ref: "#/components/schemas/KnowledgeSearchResult"
+        count:
+          type: integer
+          description: Number of results returned
+          minimum: 0
+
+    KnowledgeSearchResult:
+      type: object
+      description: A single chart result from knowledge search
+      properties:
+        card_id:
+          type: string
+          description: Unique chart identifier (pub_id). Use with other tools.
+          example: abc123
+        title:
+          type: string
+          description: Chart title
+          example: "US GDP Growth Rate (2014-2024)"
+        description:
+          type: string
+          description: Brief description of the chart content
+        url:
+          type: string
+          format: uri
+          description: Public URL to view the chart on tako.com
+          example: https://tako.com/c/abc123
+        source:
+          type: string
+          description: Data source attribution
+          example: World Bank
+        open_ui_tool:
+          type: string
+          description: Name of the tool to call for interactive rendering
+          const: open_chart_ui
+        open_ui_args:
+          type: object
+          description: Arguments to pass to open_chart_ui
+          properties:
+            pub_id:
+              type: string
+
+    ExploreKnowledgeGraphParams:
+      type: object
+      description: Parameters for the explore_knowledge_graph MCP tool
+      required:
+        - query
+        - api_token
+      properties:
+        query:
+          type: string
+          description: |
+            Natural language query to explore. Examples: "tech companies",
+            "GDP metrics", "automotive industry"
+          minLength: 1
+          maxLength: 500
+        api_token:
+          type: string
+          description: Tako API token for authentication
+        node_types:
+          type: array
+          description: |
+            Filter results to specific node types. If omitted, all types are returned.
+          items:
+            type: string
+            enum:
+              - entity
+              - metric
+              - cohort
+              - db
+              - units
+              - time_period
+              - property
+          examples:
+            - - entity
+              - metric
+        limit:
+          type: integer
+          description: Maximum number of results per node type
+          minimum: 1
+          maximum: 50
+          default: 20
+
+    ExploreKnowledgeGraphResponse:
+      type: object
+      description: Results from the explore_knowledge_graph tool
+      required:
+        - query
+        - total_matches
+      properties:
+        query:
+          type: string
+          description: The original query
+        total_matches:
+          type: integer
+          description: Total number of matching nodes across all types
+          minimum: 0
+        entities:
+          type: array
+          description: Matching entities (companies, countries, people, organizations)
+          items:
+            $ref: "#/components/schemas/KnowledgeGraphEntity"
+        metrics:
+          type: array
+          description: Matching metrics (measurements like revenue, GDP, temperature)
+          items:
+            $ref: "#/components/schemas/KnowledgeGraphMetric"
+        cohorts:
+          type: array
+          description: Matching cohorts (groups like S&P 500, BRICS, G7)
+          items:
+            $ref: "#/components/schemas/KnowledgeGraphCohort"
+        time_periods:
+          type: array
+          description: Available time granularities
+          items:
+            type: string
+          examples:
+            - - yearly
+              - quarterly
+              - monthly
+        execution_time_ms:
+          type: number
+          description: Query execution time in milliseconds
+          minimum: 0
+
+    KnowledgeGraphEntity:
+      type: object
+      description: An entity node in the knowledge graph
+      properties:
+        name:
+          type: string
+          description: Entity name
+          example: Apple Inc.
+        type:
+          type: string
+          description: Entity type (e.g., company, country, person)
+          example: company
+        description:
+          type: string
+          description: Brief description of the entity
+        aliases:
+          type: array
+          description: Alternative names or ticker symbols
+          items:
+            type: string
+          maxItems: 3
+          examples:
+            - - AAPL
+              - Apple
+        available_tables:
+          type: array
+          description: Data tables containing this entity
+          items:
+            type: string
+          maxItems: 3
+        node_id:
+          type: string
+          description: Unique node identifier in the knowledge graph
+
+    KnowledgeGraphMetric:
+      type: object
+      description: A metric node in the knowledge graph
+      properties:
+        name:
+          type: string
+          description: Metric name
+          example: Revenue
+        description:
+          type: string
+          description: What this metric measures
+        units:
+          type: array
+          description: Available measurement units
+          items:
+            type: string
+          maxItems: 3
+          examples:
+            - - USD
+              - EUR
+        time_periods:
+          type: array
+          description: Available time granularities for this metric
+          items:
+            type: string
+          maxItems: 3
+        compatible_tables:
+          type: array
+          description: Data tables containing this metric
+          items:
+            type: string
+          maxItems: 3
+        node_id:
+          type: string
+          description: Unique node identifier in the knowledge graph
+
+    KnowledgeGraphCohort:
+      type: object
+      description: A cohort node in the knowledge graph
+      properties:
+        name:
+          type: string
+          description: Cohort name
+          example: S&P 500
+        description:
+          type: string
+          description: What this cohort represents
+        member_count:
+          type: integer
+          description: Number of members in the cohort
+        sample_members:
+          type: array
+          description: Example members of the cohort
+          items:
+            type: string
+        node_id:
+          type: string
+          description: Unique node identifier in the knowledge graph
+
+    GetChartImageParams:
+      type: object
+      description: Parameters for the get_chart_image MCP tool
+      required:
+        - pub_id
+        - api_token
+      properties:
+        pub_id:
+          type: string
+          description: Unique chart identifier (card_id from knowledge_search or create_chart)
+        api_token:
+          type: string
+          description: Tako API token for authentication
+        dark_mode:
+          type: boolean
+          description: Whether to return the dark mode version of the image
+          default: true
+
+    GetChartImageResponse:
+      type: object
+      description: Response from the get_chart_image tool
+      required:
+        - image_url
+        - pub_id
+        - dark_mode
+      properties:
+        image_url:
+          type: string
+          format: uri
+          description: Direct URL to the PNG chart image
+          example: https://api.tako.com/api/v1/image/abc123/?dark_mode=true
+        pub_id:
+          type: string
+          description: The chart identifier
+        dark_mode:
+          type: boolean
+          description: Whether dark mode was applied
+
+    GetCardInsightsParams:
+      type: object
+      description: Parameters for the get_card_insights MCP tool
+      required:
+        - pub_id
+        - api_token
+      properties:
+        pub_id:
+          type: string
+          description: Unique chart identifier (card_id from knowledge_search or create_chart)
+        api_token:
+          type: string
+          description: Tako API token for authentication
+        effort:
+          type: string
+          description: |
+            Reasoning effort level for the AI analysis.
+            "low" gives a quick summary, "medium" provides balanced analysis,
+            "high" does deep analysis with more detail.
+          enum:
+            - low
+            - medium
+            - high
+          default: medium
+
+    GetCardInsightsResponse:
+      type: object
+      description: Response from the get_card_insights tool
+      required:
+        - pub_id
+        - insights
+        - description
+      properties:
+        pub_id:
+          type: string
+          description: The chart identifier
+        insights:
+          type: string
+          description: |
+            Bullet-point AI analysis of the chart data. Identifies trends,
+            outliers, comparisons, and key takeaways.
+        description:
+          type: string
+          description: |
+            Natural language narrative summary of the chart content and
+            its significance.
+
+    ListChartSchemasParams:
+      type: object
+      description: Parameters for the list_chart_schemas MCP tool
+      required:
+        - api_token
+      properties:
+        api_token:
+          type: string
+          description: Tako API token for authentication
+
+    ListChartSchemasResponse:
+      type: object
+      description: Response from the list_chart_schemas tool
+      required:
+        - schemas
+        - count
+      properties:
+        schemas:
+          type: array
+          description: Available chart schemas
+          items:
+            $ref: "#/components/schemas/ChartSchemaSummary"
+        count:
+          type: integer
+          description: Total number of available schemas
+          minimum: 0
+
+    ChartSchemaSummary:
+      type: object
+      description: Summary of a chart schema (template)
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: |
+            Schema name — pass this to get_chart_schema or create_chart.
+            Available values: timeseries_card, stock_card, bar_chart,
+            grouped_bar_chart, pie_chart, scatter_chart, bubble_chart,
+            histogram, boxplot, choropleth, treemap, heatmap, waterfall,
+            financial_boxes, table, data_table_chart, header
+          enum:
+            - timeseries_card
+            - stock_card
+            - bar_chart
+            - grouped_bar_chart
+            - pie_chart
+            - scatter_chart
+            - bubble_chart
+            - histogram
+            - boxplot
+            - choropleth
+            - treemap
+            - heatmap
+            - waterfall
+            - financial_boxes
+            - table
+            - data_table_chart
+            - header
+        description:
+          type: string
+          description: Brief description of the chart type
+        use_case:
+          type: string
+          description: When to use this chart type (guidance for agents)
+        components:
+          type: array
+          description: Component types required by this schema
+          items:
+            type: string
+
+    GetChartSchemaParams:
+      type: object
+      description: Parameters for the get_chart_schema MCP tool
+      required:
+        - schema_name
+        - api_token
+      properties:
+        schema_name:
+          type: string
+          description: Name of the chart schema to retrieve
+          enum:
+            - timeseries_card
+            - stock_card
+            - bar_chart
+            - grouped_bar_chart
+            - pie_chart
+            - scatter_chart
+            - bubble_chart
+            - histogram
+            - boxplot
+            - choropleth
+            - treemap
+            - heatmap
+            - waterfall
+            - financial_boxes
+            - table
+            - data_table_chart
+            - header
+        api_token:
+          type: string
+          description: Tako API token for authentication
+
+    GetChartSchemaResponse:
+      type: object
+      description: Response from the get_chart_schema tool
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Schema name
+        description:
+          type: string
+          description: Schema description
+        components:
+          type: array
+          description: Component definitions with their configuration schemas
+          items:
+            type: object
+            description: Component definition
+            properties:
+              component_type:
+                type: string
+                description: Component type name
+              required:
+                type: boolean
+                description: Whether this component is required
+              config:
+                type: object
+                description: Configuration schema for this component
+        template:
+          type: object
+          description: Template metadata and defaults
+
+    CreateChartParams:
+      type: object
+      description: Parameters for the create_chart MCP tool
+      required:
+        - schema_name
+        - components
+        - api_token
+      properties:
+        schema_name:
+          type: string
+          description: Name of the chart schema to use
+          enum:
+            - timeseries_card
+            - stock_card
+            - bar_chart
+            - grouped_bar_chart
+            - pie_chart
+            - scatter_chart
+            - bubble_chart
+            - histogram
+            - boxplot
+            - choropleth
+            - treemap
+            - heatmap
+            - waterfall
+            - financial_boxes
+            - table
+            - data_table_chart
+            - header
+        components:
+          type: array
+          description: |
+            List of component configurations matching the schema requirements.
+            Each component needs a "component_type" and "config" field.
+            Use get_chart_schema to see the expected structure.
+          items:
+            $ref: "#/components/schemas/ChartComponent"
+          minItems: 1
+        api_token:
+          type: string
+          description: Tako API token for authentication
+        source:
+          type: string
+          description: |
+            Data source attribution (e.g., "Yahoo Finance", "Company Reports",
+            "World Bank"). Displayed on the chart for transparency.
+
+    ChartComponent:
+      type: object
+      description: |
+        A single component in a chart. Components are the building blocks of
+        Tako charts — each schema requires specific component types.
+      required:
+        - component_type
+        - config
+      properties:
+        component_type:
+          type: string
+          description: |
+            The type of component. Common types include: header, categorical_bar,
+            generic_timeseries, pie, scatter, choropleth_map, stock_boxes,
+            grouped_bar, bubble, histogram, boxplot, treemap, heatmap,
+            waterfall, financial_boxes, table, data_table
+        config:
+          type: object
+          description: |
+            Component configuration. Structure varies by component_type.
+            Use get_chart_schema to see the exact format.
+          additionalProperties: true
+
+    CreateChartResponse:
+      type: object
+      description: Response from the create_chart tool
+      required:
+        - card_id
+      properties:
+        card_id:
+          type: string
+          description: Unique identifier for the created chart
+          example: xyz789
+        title:
+          type: string
+          description: Generated chart title
+        description:
+          type: string
+          description: Generated chart description
+        webpage_url:
+          type: string
+          format: uri
+          description: Public URL to view the chart on tako.com
+          example: https://tako.com/c/xyz789
+        embed_url:
+          type: string
+          format: uri
+          description: Embeddable URL for iframes
+          example: https://tako.com/embed/xyz789/
+        image_url:
+          type: string
+          format: uri
+          description: Direct URL to a PNG preview of the chart
+          example: https://api.tako.com/api/v1/image/xyz789/?dark_mode=true
+        open_ui_tool:
+          type: string
+          description: Name of the tool to call for interactive rendering
+          const: open_chart_ui
+        open_ui_args:
+          type: object
+          description: Arguments to pass to open_chart_ui
+          properties:
+            pub_id:
+              type: string
+
+    OpenChartUiParams:
+      type: object
+      description: Parameters for the open_chart_ui MCP tool
+      required:
+        - pub_id
+      properties:
+        pub_id:
+          type: string
+          description: Unique chart identifier (card_id from knowledge_search or create_chart)
+        dark_mode:
+          type: boolean
+          description: Whether to use dark mode theme
+          default: true
+        width:
+          type: integer
+          description: Initial width of the chart embed in pixels
+          default: 900
+          minimum: 200
+          maximum: 2000
+        height:
+          type: integer
+          description: Initial height of the chart embed in pixels
+          default: 600
+          minimum: 200
+          maximum: 2000
+
+    OpenChartUiResponse:
+      type: object
+      description: |
+        MCP-UI resource for interactive chart rendering. This is a UIResource
+        object that MCP-UI-compatible clients can render inline.
+      required:
+        - uri
+        - content
+        - encoding
+      properties:
+        uri:
+          type: string
+          description: MCP-UI resource URI
+          pattern: "^ui://tako/embed/.+"
+          example: ui://tako/embed/abc123
+        content:
+          type: object
+          description: Content payload
+          required:
+            - type
+            - htmlString
+          properties:
+            type:
+              type: string
+              const: rawHtml
+              description: Content type — always "rawHtml" for chart embeds
+            htmlString:
+              type: string
+              description: |
+                Complete HTML document containing an iframe embed of the
+                interactive Tako chart. Includes responsive resize handling.
+        encoding:
+          type: string
+          const: text
+          description: Content encoding
+        uiMetadata:
+          type: object
+          description: UI rendering hints
+          properties:
+            preferredFrameSize:
+              type: array
+              description: "Preferred [width, height] as CSS values"
+              items:
+                type: string
+              minItems: 2
+              maxItems: 2
+              examples:
+                - - 900px
+                  - 600px
+
+    # -------------------------------------------------------------------------
+    # Error schemas
+    # -------------------------------------------------------------------------
+
+    ToolError:
+      type: object
+      description: Error response from an MCP tool call
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error type or HTTP status code
+        message:
+          type: string
+          description: Human-readable error message
+        pub_id:
+          type: string
+          description: Chart ID (if applicable)
+        details:
+          type: object
+          description: Additional error details (e.g., validation errors)
+        suggestion:
+          type: string
+          description: Suggested action to resolve the error
+
+# =============================================================================
+# x-mcp-tools extension — Canonical MCP tool definitions for agent consumption
+# =============================================================================
+
+x-mcp-tools:
+  - name: knowledge_search
+    title: "Tako: Search Charts"
+    description: >
+      Search Tako's curated knowledge base of 100,000+ charts covering economics,
+      finance, demographics, technology, and more. Use when a user asks about data
+      trends, comparisons, or statistics.
+    inputSchema:
+      $ref: "#/components/schemas/KnowledgeSearchParams"
+    outputSchema:
+      $ref: "#/components/schemas/KnowledgeSearchResponse"
+    annotations:
+      readOnlyHint: true
+      destructiveHint: false
+      openWorldHint: false
+    x-agent-hints:
+      category: search
+      typical_latency_ms: 2000-8000
+      workflow_position: entry_point
+
+  - name: explore_knowledge_graph
+    title: "Tako: Explore Knowledge Graph"
+    description: >
+      Discover available entities, metrics, cohorts, and time periods in Tako's
+      knowledge graph. Use to disambiguate queries or understand what data is available.
+    inputSchema:
+      $ref: "#/components/schemas/ExploreKnowledgeGraphParams"
+    outputSchema:
+      $ref: "#/components/schemas/ExploreKnowledgeGraphResponse"
+    annotations:
+      readOnlyHint: true
+      destructiveHint: false
+      openWorldHint: false
+    x-agent-hints:
+      category: search
+      typical_latency_ms: 1000-5000
+      workflow_position: entry_point
+
+  - name: get_chart_image
+    title: "Tako: Get Chart Image"
+    description: >
+      Get a direct URL to a static PNG preview image of a chart. Useful for
+      embedding in responses or documents.
+    inputSchema:
+      $ref: "#/components/schemas/GetChartImageParams"
+    outputSchema:
+      $ref: "#/components/schemas/GetChartImageResponse"
+    annotations:
+      readOnlyHint: true
+      destructiveHint: false
+      openWorldHint: false
+    x-agent-hints:
+      category: retrieval
+      typical_latency_ms: 500-3000
+      workflow_position: after_search
+
+  - name: get_card_insights
+    title: "Tako: Get AI Insights"
+    description: >
+      Get AI-generated bullet-point analysis and natural language description
+      for a chart. Identifies trends, outliers, and key takeaways.
+    inputSchema:
+      $ref: "#/components/schemas/GetCardInsightsParams"
+    outputSchema:
+      $ref: "#/components/schemas/GetCardInsightsResponse"
+    annotations:
+      readOnlyHint: true
+      destructiveHint: false
+      openWorldHint: false
+    x-agent-hints:
+      category: retrieval
+      typical_latency_ms: 3000-15000
+      workflow_position: after_search
+
+  - name: list_chart_schemas
+    title: "Tako: List Chart Types"
+    description: >
+      List all available chart templates for creating custom visualizations.
+      Returns schema names, descriptions, use cases, and component structures.
+    inputSchema:
+      $ref: "#/components/schemas/ListChartSchemasParams"
+    outputSchema:
+      $ref: "#/components/schemas/ListChartSchemasResponse"
+    annotations:
+      readOnlyHint: true
+      destructiveHint: false
+      openWorldHint: false
+    x-agent-hints:
+      category: schema
+      typical_latency_ms: 200-1000
+      workflow_position: before_create
+
+  - name: get_chart_schema
+    title: "Tako: Get Chart Schema"
+    description: >
+      Get the detailed schema definition for a specific chart type including
+      required fields, data structure, and configuration options.
+    inputSchema:
+      $ref: "#/components/schemas/GetChartSchemaParams"
+    outputSchema:
+      $ref: "#/components/schemas/GetChartSchemaResponse"
+    annotations:
+      readOnlyHint: true
+      destructiveHint: false
+      openWorldHint: false
+    x-agent-hints:
+      category: schema
+      typical_latency_ms: 200-1000
+      workflow_position: before_create
+
+  - name: create_chart
+    title: "Tako: Create Chart"
+    description: >
+      Create a new interactive chart from raw data. Supports 15+ chart types
+      including timeseries, bar charts, scatter plots, pie charts, maps, and more.
+      The chart is hosted and shareable.
+    inputSchema:
+      $ref: "#/components/schemas/CreateChartParams"
+    outputSchema:
+      $ref: "#/components/schemas/CreateChartResponse"
+    annotations:
+      readOnlyHint: false
+      destructiveHint: false
+      openWorldHint: true
+    x-agent-hints:
+      category: creation
+      typical_latency_ms: 3000-10000
+      workflow_position: create
+      prerequisite_tools:
+        - get_chart_schema
+
+  - name: open_chart_ui
+    title: "Tako: Open Interactive Chart"
+    description: >
+      Render a fully interactive chart with zooming, panning, hover interactions,
+      and responsive resizing via MCP-UI. Returns a UIResource for inline rendering.
+    inputSchema:
+      $ref: "#/components/schemas/OpenChartUiParams"
+    outputSchema:
+      $ref: "#/components/schemas/OpenChartUiResponse"
+    annotations:
+      readOnlyHint: true
+      destructiveHint: false
+      openWorldHint: true
+    x-agent-hints:
+      category: rendering
+      typical_latency_ms: 100-500
+      workflow_position: final
+      note: Does not require api_token — generates a client-side embed URL.
+
+security:
+  - ApiKeyHeader: []
+  - BearerAuth: []

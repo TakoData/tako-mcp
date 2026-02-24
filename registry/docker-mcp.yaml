@@ -1,0 +1,81 @@
+# Docker MCP Catalog Configuration for Tako MCP Server
+# https://docker.com/mcp
+
+image: ghcr.io/takodata/tako-mcp:latest
+name: tako-mcp
+
+description: |
+  Tako MCP Server for data visualization. Search a knowledge base of 100K+
+  charts covering economics, finance, demographics, and technology. Create
+  custom interactive charts from raw data using 15+ chart types including
+  timeseries, bar charts, scatter plots, pie charts, maps, heatmaps,
+  treemaps, and more.
+
+ports:
+  - 8001
+
+environment:
+  PUBLIC_BASE_URL:
+    description: Base URL for the Tako platform
+    default: "https://tako.com"
+    required: true
+  TAKO_API_URL:
+    description: Tako API endpoint URL (override for custom deployments)
+    required: false
+  PORT:
+    description: Port the server listens on
+    default: "8001"
+    required: false
+  HOST:
+    description: Host address the server binds to
+    default: "0.0.0.0"
+    required: false
+
+health_check:
+  endpoint: /health
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+labels:
+  com.docker.mcp.name: tako-mcp
+  com.docker.mcp.display-name: Tako MCP Server
+  com.docker.mcp.description: >
+    Create and discover data visualizations with Tako's knowledge base
+    of 100K+ charts. Build custom charts from raw data.
+  com.docker.mcp.version: "0.1.0"
+  com.docker.mcp.license: MIT
+  com.docker.mcp.author: Tako
+  com.docker.mcp.repository: https://github.com/TakoData/tako-mcp
+  com.docker.mcp.homepage: https://tako.com
+  com.docker.mcp.transport: sse
+  com.docker.mcp.categories: data-visualization,charts,analytics,knowledge-base
+
+tags:
+  - latest
+  - "0.1.0"
+
+# Docker run example
+run:
+  command: >
+    docker run -d
+    --name tako-mcp
+    -p 8001:8001
+    -e PUBLIC_BASE_URL=https://tako.com
+    ghcr.io/takodata/tako-mcp:latest
+
+# Docker compose snippet
+compose:
+  services:
+    tako-mcp:
+      image: ghcr.io/takodata/tako-mcp:latest
+      ports:
+        - "8001:8001"
+      environment:
+        PUBLIC_BASE_URL: https://tako.com
+      healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+      restart: unless-stopped
