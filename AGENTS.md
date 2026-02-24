@@ -54,8 +54,9 @@ python -m tests.test_client --api-token YOUR_TOKEN
 
 | Path | Method | Description |
 |------|--------|-------------|
+| `/mcp` | POST | Streamable HTTP transport (recommended) |
 | `/sse` | GET | SSE transport connection |
-| `/messages/` | POST | MCP JSON-RPC messages |
+| `/messages/` | POST | SSE JSON-RPC messages |
 | `/health` | GET | Simple health check |
 | `/health/detailed` | GET | Detailed health status |
 | `/.well-known/mcp` | GET | MCP Server Card (SEP-1649) |

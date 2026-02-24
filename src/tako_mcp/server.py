@@ -451,6 +451,27 @@ async def list_chart_schemas(
     Returns:
         JSON with schemas array (name, description, components) and count
     """
+    # Recommended use cases for each schema to help agents pick the right chart type
+    _schema_use_cases = {
+        "stock_card": "Financial data with ticker info — stock prices, forex, crypto over time",
+        "timeseries_card": "Any time-based data — trends, growth rates, historical comparisons",
+        "bar_chart": "Single-series categorical comparisons — revenue by region, top 10 lists",
+        "grouped_bar_chart": "Multi-series categorical comparisons — side-by-side or stacked bars",
+        "data_table_chart": "Bar chart with a data table below for exact values",
+        "histogram": "Frequency distributions — age distribution, salary ranges, score buckets",
+        "pie_chart": "Proportional/percentage data — market share, budget allocation",
+        "table": "Raw tabular data display — rankings, detailed breakdowns",
+        "header": "Title/subtitle card header (usually combined with other components)",
+        "financial_boxes": "KPI metric boxes — revenue, growth rate, key numbers at a glance",
+        "choropleth": "Geographic map data — by US state or world country",
+        "treemap": "Hierarchical proportional data — org structure, category breakdowns",
+        "heatmap": "2D correlation or intensity matrices — correlation tables, activity grids",
+        "boxplot": "Statistical distributions — comparing spread across categories",
+        "waterfall": "Sequential additive/subtractive changes — income statements, bridge charts",
+        "scatter_chart": "2-variable correlation — height vs weight, price vs quantity",
+        "bubble_chart": "3-variable data — scatter with size dimension for a third variable",
+    }
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
@@ -460,14 +481,16 @@ async def list_chart_schemas(
             resp.raise_for_status()
             schemas = resp.json()
 
-            # Simplify response for readability
             result = []
             for schema in schemas:
-                result.append({
-                    "name": schema.get("name"),
+                name = schema.get("name")
+                entry = {
+                    "name": name,
                     "description": schema.get("description"),
+                    "use_case": _schema_use_cases.get(name, ""),
                     "components": schema.get("components", []),
-                })
+                }
+                result.append(entry)
 
             return json.dumps({"schemas": result, "count": len(result)}, indent=2)
     except httpx.HTTPStatusError as e:
@@ -791,7 +814,8 @@ async def open_chart_ui(
 # ASGI application setup
 # =============================================================================
 
-_mcp_app = mcp.sse_app()
+_sse_app = mcp.sse_app()
+_streamable_http_app = mcp.streamable_http_app()
 
 # MCP Server Card (SEP-1649) for /.well-known/mcp
 _SERVER_CARD = {
@@ -809,10 +833,16 @@ _SERVER_CARD = {
         "iconUrl": "https://tako.com/favicon.ico",
         "documentationUrl": "https://github.com/TakoData/tako-mcp",
     },
-    "transport": {
-        "type": "sse",
-        "endpoint": "/sse",
-    },
+    "transport": [
+        {
+            "type": "streamable-http",
+            "endpoint": "/mcp",
+        },
+        {
+            "type": "sse",
+            "endpoint": "/sse",
+        },
+    ],
     "capabilities": {
         "tools": {"listChanged": True},
     },
@@ -890,7 +920,10 @@ def _wrap_send(send, response_started_ref=None):
 
 
 async def app(scope, receive, send):
-    """ASGI application with custom error handling for MCP SSE connections."""
+    """ASGI application with custom error handling for MCP connections.
+
+    Supports both SSE (/sse, /messages/) and Streamable HTTP (/mcp) transports.
+    """
     response_started = [False]
 
     if scope["type"] == "http":
@@ -918,6 +951,23 @@ async def app(scope, receive, send):
             await response(scope, receive, wrapped_send)
             return
 
+        # Route /mcp to Streamable HTTP transport
+        if scope["path"] == "/mcp":
+            wrapped_send = _wrap_send(send, response_started)
+            try:
+                await _streamable_http_app(scope, receive, wrapped_send)
+            except Exception as e:
+                if not response_started[0]:
+                    logging.error(f"Streamable HTTP error: {type(e).__name__}: {e}", exc_info=True)
+                    try:
+                        response = JSONResponse(
+                            {"error": "Unexpected error", "code": -32000}, status_code=500
+                        )
+                        await response(scope, receive, wrapped_send)
+                    except RuntimeError:
+                        pass
+            return
+
         if scope["path"].startswith("/messages/"):
             query_string = scope.get("query_string", b"").decode()
             params = urllib.parse.parse_qs(query_string)
@@ -930,7 +980,7 @@ async def app(scope, receive, send):
     wrapped_send = _wrap_send(send, response_started)
 
     try:
-        await _mcp_app(scope, receive, wrapped_send)
+        await _sse_app(scope, receive, wrapped_send)
     except ExceptionGroup as eg:
         all_connection_errors = all(
             isinstance(exc, (ClosedResourceError, BrokenPipeError, ConnectionResetError))
@@ -1047,6 +1097,7 @@ def main():
     logging.info(f"Tako API URL: {TAKO_API_URL}")
     logging.info(f"Public Base URL: {PUBLIC_BASE_URL}")
     logging.info(f"DNS rebinding protection: {enable_dns_rebinding}")
+    logging.info(f"Transports: SSE (/sse), Streamable HTTP (/mcp)")
     logging.info(f"Listening on {host}:{port}")
     logging.info("=" * 60)
 
