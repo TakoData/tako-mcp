@@ -467,12 +467,147 @@ export function createTakoTools(
     },
   });
 
+  // -----------------------------------------------------------------------
+  // exploreKnowledgeGraph
+  // -----------------------------------------------------------------------
+  const exploreKnowledgeGraph = tool({
+    description:
+      "Use this when you need to discover what data is available before searching. " +
+      "Helps find entities (companies, countries), metrics (revenue, GDP), cohorts " +
+      "(S&P 500, G7), and time periods in Tako's knowledge graph.",
+    parameters: z.object({
+      query: z
+        .string()
+        .describe(
+          'Natural language query to explore (e.g. "tech companies", "GDP metrics").',
+        ),
+      nodeTypes: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Filter by node types: entity, metric, cohort, db, units, time_period, property.",
+        ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .default(20)
+        .describe("Maximum results per type (1-50)."),
+    }),
+    execute: async ({ query, nodeTypes, limit }) => {
+      try {
+        const data = await takoFetch<Record<string, unknown>>(
+          `${baseUrl}/api/v1/explore/`,
+          apiToken,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              query,
+              node_types: nodeTypes,
+              limit,
+            }),
+          },
+        );
+
+        return {
+          query: data.query as string,
+          total_matches: (data.total_matches as number) ?? 0,
+          entities: (data.entities as unknown[]) ?? [],
+          metrics: (data.metrics as unknown[]) ?? [],
+          cohorts: (data.cohorts as unknown[]) ?? [],
+          time_periods: (data.time_periods as unknown[]) ?? [],
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          error: "Exploration failed",
+          message,
+          suggestion:
+            "Try a more specific query or filter by nodeTypes.",
+        };
+      }
+    },
+  });
+
+  // -----------------------------------------------------------------------
+  // getChartSchema
+  // -----------------------------------------------------------------------
+  const getChartSchema = tool({
+    description:
+      "Use this when you need the exact data format for a specific chart type. " +
+      "Returns schema details including required fields and configuration. " +
+      "Always call this before createChart.",
+    parameters: z.object({
+      schemaName: z
+        .string()
+        .describe(
+          'Schema name (e.g. "bar_chart", "timeseries_card", "pie_chart").',
+        ),
+    }),
+    execute: async ({ schemaName }) => {
+      try {
+        const data = await takoFetch<Record<string, unknown>>(
+          `${baseUrl}/api/v1/thin_viz/default_schema/${encodeURIComponent(schemaName)}/`,
+          apiToken,
+        );
+
+        return {
+          name: (data.name as string) ?? null,
+          description: (data.description as string) ?? null,
+          components: (data.components as unknown[]) ?? [],
+          template: data.template ?? null,
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          error: "Failed to get schema",
+          message,
+          suggestion:
+            "Use listChartSchemas to see available schema names.",
+        };
+      }
+    },
+  });
+
+  // -----------------------------------------------------------------------
+  // openChartUi
+  // -----------------------------------------------------------------------
+  const openChartUi = tool({
+    description:
+      "Use this when you want to display a fully interactive chart. Returns an " +
+      "embed URL with zooming, panning, and hover interactions. No API call needed.",
+    parameters: z.object({
+      pubId: z
+        .string()
+        .describe("The chart's unique identifier (pub_id / card_id)."),
+      darkMode: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Whether to use dark mode (default: true)."),
+    }),
+    execute: async ({ pubId, darkMode }) => {
+      const theme = darkMode ? "dark" : "light";
+      const embedUrl = `https://tako.com/embed/${pubId}/?theme=${theme}`;
+      return {
+        pub_id: pubId,
+        embed_url: embedUrl,
+        dark_mode: darkMode,
+      };
+    },
+  });
+
   return {
     searchCharts,
+    exploreKnowledgeGraph,
     createChart,
     listChartSchemas,
+    getChartSchema,
     getChartInsights,
     getChartImage,
+    openChartUi,
   } as const;
 }
 

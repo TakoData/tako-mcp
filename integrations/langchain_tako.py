@@ -309,7 +309,7 @@ class TakoSearchTool(BaseTool):
         """Synchronous fallback -- delegates to the async implementation."""
         import asyncio
 
-        return asyncio.get_event_loop().run_until_complete(
+        return asyncio.run(
             self._arun(
                 query=query,
                 count=count,
@@ -387,7 +387,7 @@ class TakoExploreKnowledgeGraphTool(BaseTool):
         """Synchronous fallback."""
         import asyncio
 
-        return asyncio.get_event_loop().run_until_complete(
+        return asyncio.run(
             self._arun(query=query, node_types=node_types, limit=limit)
         )
 
@@ -452,7 +452,7 @@ class TakoGetChartImageTool(BaseTool):
         """Synchronous fallback."""
         import asyncio
 
-        return asyncio.get_event_loop().run_until_complete(
+        return asyncio.run(
             self._arun(pub_id=pub_id, dark_mode=dark_mode)
         )
 
@@ -511,7 +511,7 @@ class TakoGetInsightsTool(BaseTool):
         """Synchronous fallback."""
         import asyncio
 
-        return asyncio.get_event_loop().run_until_complete(
+        return asyncio.run(
             self._arun(pub_id=pub_id, effort=effort)
         )
 
@@ -558,7 +558,7 @@ class TakoListSchemasTool(BaseTool):
         """Synchronous fallback."""
         import asyncio
 
-        return asyncio.get_event_loop().run_until_complete(self._arun())
+        return asyncio.run(self._arun())
 
 
 class TakoGetSchemaTool(BaseTool):
@@ -611,7 +611,7 @@ class TakoGetSchemaTool(BaseTool):
         """Synchronous fallback."""
         import asyncio
 
-        return asyncio.get_event_loop().run_until_complete(
+        return asyncio.run(
             self._arun(schema_name=schema_name)
         )
 
@@ -699,7 +699,7 @@ class TakoCreateChartTool(BaseTool):
         """Synchronous fallback."""
         import asyncio
 
-        return asyncio.get_event_loop().run_until_complete(
+        return asyncio.run(
             self._arun(schema_name=schema_name, components=components, source=source)
         )
 

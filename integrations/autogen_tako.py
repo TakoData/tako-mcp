@@ -368,6 +368,143 @@ def _make_get_chart_image(api_token: str, api_url: str):
     return get_chart_image
 
 
+def _make_explore_knowledge_graph(api_token: str, api_url: str):
+    """Create the explore_knowledge_graph function bound to credentials."""
+
+    def explore_knowledge_graph(
+        query: str,
+        node_types: Optional[list[str]] = None,
+        limit: int = 20,
+    ) -> str:
+        """Explore Tako's knowledge graph to discover available data.
+
+        Use this when you need to discover what data is available before
+        searching. Helps find entities, metrics, cohorts, and time periods.
+
+        Args:
+            query: Natural language query to explore.
+            node_types: Optional filter for node types.
+            limit: Maximum results per type (1-50).
+
+        Returns:
+            JSON string with entities, metrics, cohorts, time_periods.
+        """
+        try:
+            with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+                resp = client.post(
+                    f"{api_url.rstrip('/')}/api/v1/explore/",
+                    json={
+                        "query": query,
+                        "node_types": node_types,
+                        "limit": limit,
+                    },
+                    headers=_headers(api_token),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return json.dumps(
+                    {
+                        "query": data.get("query"),
+                        "total_matches": data.get("total_matches", 0),
+                        "entities": data.get("entities", []),
+                        "metrics": data.get("metrics", []),
+                        "cohorts": data.get("cohorts", []),
+                        "time_periods": data.get("time_periods", []),
+                    },
+                    indent=2,
+                )
+        except httpx.TimeoutException:
+            return _error_response(
+                "Request timed out",
+                "The exploration request took too long.",
+                "Try a more specific query or filter by node_types.",
+            )
+        except httpx.HTTPStatusError as exc:
+            return _error_response(
+                f"HTTP {exc.response.status_code}",
+                str(exc),
+                "Check your API token is valid and try again.",
+            )
+
+    return explore_knowledge_graph
+
+
+def _make_get_chart_schema(api_token: str, api_url: str):
+    """Create the get_chart_schema function bound to credentials."""
+
+    def get_chart_schema(schema_name: str) -> str:
+        """Get the detailed schema definition for a specific chart type.
+
+        Use this when you need to understand the data format for a chart type.
+        Always call this before create_chart.
+
+        Args:
+            schema_name: Schema name (e.g. 'bar_chart', 'timeseries_card').
+
+        Returns:
+            JSON string with schema details.
+        """
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.get(
+                    f"{api_url.rstrip('/')}/api/v1/thin_viz/default_schema/{schema_name}/",
+                    headers=_headers(api_token),
+                )
+                if resp.status_code == 404:
+                    return json.dumps({
+                        "error": f"Schema '{schema_name}' not found",
+                        "suggestion": "Use list_chart_schemas to see available names.",
+                    })
+                resp.raise_for_status()
+                schema = resp.json()
+                return json.dumps(
+                    {
+                        "name": schema.get("name"),
+                        "description": schema.get("description"),
+                        "components": schema.get("components", []),
+                        "template": schema.get("template"),
+                    },
+                    indent=2,
+                )
+        except httpx.HTTPStatusError as exc:
+            return _error_response(
+                f"HTTP {exc.response.status_code}",
+                str(exc),
+                "Check your API token is valid and try again.",
+            )
+
+    return get_chart_schema
+
+
+def _make_open_chart_ui(api_token: str, api_url: str):
+    """Create the open_chart_ui function bound to credentials."""
+
+    def open_chart_ui(
+        pub_id: str,
+        dark_mode: bool = True,
+    ) -> str:
+        """Generate an interactive embed URL for a Tako chart.
+
+        Use this when you want to display an interactive chart to the user.
+        No API call is made — the URL is constructed locally.
+
+        Args:
+            pub_id: The chart's unique identifier (pub_id / card_id).
+            dark_mode: Whether to use dark mode (default True).
+
+        Returns:
+            JSON string with pub_id, embed_url, dark_mode.
+        """
+        theme = "dark" if dark_mode else "light"
+        embed_url = f"https://tako.com/embed/{pub_id}/?theme={theme}"
+        return json.dumps(
+            {"pub_id": pub_id, "embed_url": embed_url, "dark_mode": dark_mode},
+            indent=2,
+        )
+
+    return open_chart_ui
+
+
 # ---------------------------------------------------------------------------
 # AutoGen function tool definitions (for register_for_llm)
 # ---------------------------------------------------------------------------
@@ -402,6 +539,32 @@ TAKO_FUNCTION_DEFINITIONS: list[dict[str, Any]] = [
                 "locale": {
                     "type": "string",
                     "description": "Locale (e.g. 'en-US'). Default: 'en-US'.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "explore_knowledge_graph",
+        "description": (
+            "Explore Tako's knowledge graph to discover available entities, metrics, "
+            "cohorts, and time periods. Use before search to understand what data exists."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language query to explore.",
+                },
+                "node_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by node types: entity, metric, cohort, db, units, time_period, property.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results per type (1-50). Default: 20.",
                 },
             },
             "required": ["query"],
@@ -446,6 +609,23 @@ TAKO_FUNCTION_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_chart_schema",
+        "description": (
+            "Get the detailed schema definition for a specific chart type. "
+            "Always call this before create_chart to understand the data format."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "schema_name": {
+                    "type": "string",
+                    "description": "Schema name (e.g. 'bar_chart', 'timeseries_card').",
+                },
+            },
+            "required": ["schema_name"],
+        },
+    },
+    {
         "name": "get_chart_insights",
         "description": (
             "Get AI-generated insights for a Tako chart. Returns bullet-point "
@@ -483,6 +663,27 @@ TAKO_FUNCTION_DEFINITIONS: list[dict[str, Any]] = [
                 "dark_mode": {
                     "type": "boolean",
                     "description": "Dark mode image. Default: true.",
+                },
+            },
+            "required": ["pub_id"],
+        },
+    },
+    {
+        "name": "open_chart_ui",
+        "description": (
+            "Generate an interactive embed URL for a Tako chart. Returns a URL "
+            "with zooming, panning, and hover interactions."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pub_id": {
+                    "type": "string",
+                    "description": "The chart's unique identifier (pub_id / card_id).",
+                },
+                "dark_mode": {
+                    "type": "boolean",
+                    "description": "Dark mode theme. Default: true.",
                 },
             },
             "required": ["pub_id"],
@@ -533,10 +734,13 @@ def register_tako_tools(
     """
     function_map = {
         "search_charts": _make_search_charts(api_token, api_url),
+        "explore_knowledge_graph": _make_explore_knowledge_graph(api_token, api_url),
         "create_chart": _make_create_chart(api_token, api_url),
         "list_chart_schemas": _make_list_chart_schemas(api_token, api_url),
+        "get_chart_schema": _make_get_chart_schema(api_token, api_url),
         "get_chart_insights": _make_get_chart_insights(api_token, api_url),
         "get_chart_image": _make_get_chart_image(api_token, api_url),
+        "open_chart_ui": _make_open_chart_ui(api_token, api_url),
     }
 
     # Register function definitions with the agent's LLM config so the model

@@ -360,6 +360,200 @@ class TakoGetInsightsTool(BaseTool):
 
 
 # ---------------------------------------------------------------------------
+# Tool: Explore Knowledge Graph
+# ---------------------------------------------------------------------------
+
+class TakoExploreKnowledgeGraphTool(BaseTool):
+    """Explore Tako's knowledge graph to discover available data."""
+
+    name: str = "tako_explore_knowledge_graph"
+    description: str = (
+        "Use this when you need to discover what data is available before searching. "
+        "Helps find entities (companies, countries), metrics (revenue, GDP), cohorts "
+        "(S&P 500, G7), and time periods. Use to disambiguate queries or understand "
+        "what data Tako has before calling tako_search."
+    )
+
+    api_token: str
+    api_url: str = DEFAULT_API_URL
+
+    def _run(
+        self,
+        query: str,
+        node_types: Optional[list[str]] = None,
+        limit: int = 20,
+    ) -> str:
+        try:
+            with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+                resp = client.post(
+                    f"{self.api_url.rstrip('/')}/api/v1/explore/",
+                    json={
+                        "query": query,
+                        "node_types": node_types,
+                        "limit": limit,
+                    },
+                    headers=_headers(self.api_token),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return json.dumps(
+                    {
+                        "query": data.get("query"),
+                        "total_matches": data.get("total_matches", 0),
+                        "entities": data.get("entities", []),
+                        "metrics": data.get("metrics", []),
+                        "cohorts": data.get("cohorts", []),
+                        "time_periods": data.get("time_periods", []),
+                    },
+                    indent=2,
+                )
+        except httpx.TimeoutException:
+            return _error_response(
+                "Request timed out",
+                "The exploration request took too long.",
+                "Try a more specific query or filter by node_types.",
+            )
+        except httpx.HTTPStatusError as exc:
+            return _error_response(
+                f"HTTP {exc.response.status_code}",
+                str(exc),
+                "Check your API token is valid and try again.",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tool: Get Chart Image
+# ---------------------------------------------------------------------------
+
+class TakoGetChartImageTool(BaseTool):
+    """Get a static PNG preview image URL for a Tako chart."""
+
+    name: str = "tako_get_chart_image"
+    description: str = (
+        "Use this when you need a static PNG preview image of a chart to display or "
+        "embed. Returns a direct URL to a PNG image of the chart."
+    )
+
+    api_token: str
+    api_url: str = DEFAULT_API_URL
+
+    def _run(
+        self,
+        pub_id: str,
+        dark_mode: bool = True,
+    ) -> str:
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.get(
+                    f"{self.api_url.rstrip('/')}/api/v1/image/{pub_id}/",
+                    params={"dark_mode": str(dark_mode).lower()},
+                    headers=_headers(self.api_token),
+                )
+                if resp.status_code == 200:
+                    image_url = (
+                        f"{self.api_url.rstrip('/')}/api/v1/image/{pub_id}/"
+                        f"?dark_mode={str(dark_mode).lower()}"
+                    )
+                    return json.dumps(
+                        {"image_url": image_url, "pub_id": pub_id, "dark_mode": dark_mode},
+                        indent=2,
+                    )
+                elif resp.status_code == 404:
+                    return json.dumps({
+                        "error": "Chart image not found",
+                        "pub_id": pub_id,
+                        "suggestion": "Verify the pub_id/card_id is correct.",
+                    })
+                else:
+                    resp.raise_for_status()
+                    return json.dumps({"error": "Unexpected error"})
+        except httpx.HTTPStatusError as exc:
+            return _error_response(
+                f"HTTP {exc.response.status_code}",
+                str(exc),
+                "Check your API token and try again.",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tool: Get Chart Schema
+# ---------------------------------------------------------------------------
+
+class TakoGetSchemaTool(BaseTool):
+    """Get the detailed schema definition for a specific chart type."""
+
+    name: str = "tako_get_schema"
+    description: str = (
+        "Use this when you need to understand the exact data format required for a "
+        "specific chart type. Returns the schema definition including required fields "
+        "and configuration options. Always call this before tako_create_chart."
+    )
+
+    api_token: str
+    api_url: str = DEFAULT_API_URL
+
+    def _run(self, schema_name: str) -> str:
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.get(
+                    f"{self.api_url.rstrip('/')}/api/v1/thin_viz/default_schema/{schema_name}/",
+                    headers=_headers(self.api_token),
+                )
+                if resp.status_code == 404:
+                    return json.dumps({
+                        "error": f"Schema '{schema_name}' not found",
+                        "suggestion": "Use tako_list_schemas to see available schema names.",
+                    })
+                resp.raise_for_status()
+                schema = resp.json()
+                return json.dumps(
+                    {
+                        "name": schema.get("name"),
+                        "description": schema.get("description"),
+                        "components": schema.get("components", []),
+                        "template": schema.get("template"),
+                    },
+                    indent=2,
+                )
+        except httpx.HTTPStatusError as exc:
+            return _error_response(
+                f"HTTP {exc.response.status_code}",
+                str(exc),
+                "Check your API token is valid and try again.",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tool: Open Chart UI
+# ---------------------------------------------------------------------------
+
+class TakoOpenChartUITool(BaseTool):
+    """Generate an interactive embed URL for a Tako chart."""
+
+    name: str = "tako_open_chart_ui"
+    description: str = (
+        "Use this when you want to display a fully interactive chart to the user. "
+        "Returns an embed URL for the chart with zooming, panning, and hover "
+        "interactions. No API call is made — the URL is constructed locally."
+    )
+
+    api_token: str = ""
+    api_url: str = DEFAULT_API_URL
+
+    def _run(
+        self,
+        pub_id: str,
+        dark_mode: bool = True,
+    ) -> str:
+        theme = "dark" if dark_mode else "light"
+        embed_url = f"https://tako.com/embed/{pub_id}/?theme={theme}"
+        return json.dumps(
+            {"pub_id": pub_id, "embed_url": embed_url, "dark_mode": dark_mode},
+            indent=2,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Convenience factory
 # ---------------------------------------------------------------------------
 
@@ -391,7 +585,11 @@ def create_tako_tools(
     kwargs = {"api_token": api_token, "api_url": api_url}
     return [
         TakoSearchTool(**kwargs),
-        TakoCreateChartTool(**kwargs),
-        TakoListSchemasTool(**kwargs),
+        TakoExploreKnowledgeGraphTool(**kwargs),
+        TakoGetChartImageTool(**kwargs),
         TakoGetInsightsTool(**kwargs),
+        TakoListSchemasTool(**kwargs),
+        TakoGetSchemaTool(**kwargs),
+        TakoCreateChartTool(**kwargs),
+        TakoOpenChartUITool(**kwargs),
     ]

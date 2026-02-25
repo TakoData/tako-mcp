@@ -27,7 +27,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp_ui_server import UIMetadataKey, create_ui_resource
 from mcp_ui_server.core import UIResource
 from pydantic import BaseModel, Field
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
 # Suppress noisy logs from dependencies
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
@@ -367,7 +367,11 @@ async def get_chart_image(
         )
 
         if resp.status_code == 200:
-            image_url = f"{PUBLIC_API_URL}/api/v1/image/{pub_id}/?dark_mode={str(dark_mode).lower()}"
+            dm = str(dark_mode).lower()
+            image_url = (
+                f"{PUBLIC_API_URL}/api/v1/image/{pub_id}/"
+                f"?dark_mode={dm}"
+            )
             return ChartImageResult(
                 image_url=image_url, pub_id=pub_id, dark_mode=dark_mode
             )
@@ -960,7 +964,10 @@ _OAUTH_METADATA = {
     "issuer": OAUTH_ISSUER,
     "authorization_endpoint": f"{OAUTH_ISSUER}/oauth/authorize",
     "token_endpoint": f"{OAUTH_ISSUER}/oauth/token",
-    "registration_endpoint": f"{OAUTH_ISSUER}/oauth/register" if OAUTH_REGISTRATION_ENABLED else None,
+    "registration_endpoint": (
+        f"{OAUTH_ISSUER}/oauth/register"
+        if OAUTH_REGISTRATION_ENABLED else None
+    ),
     "response_types_supported": ["code"],
     "grant_types_supported": ["authorization_code", "refresh_token"],
     "token_endpoint_auth_methods_supported": ["none"],
@@ -974,6 +981,24 @@ def _generate_token(prefix: str = "tako") -> str:
     """Generate a cryptographically random token."""
     import secrets
     return f"{prefix}_{secrets.token_urlsafe(32)}"
+
+
+def _cleanup_expired_oauth():
+    """Remove expired authorization codes and access tokens."""
+    now = time.time()
+    expired_codes = [
+        k for k, v in _oauth_codes.items()
+        if v.get("expires_at", 0) < now
+    ]
+    for k in expired_codes:
+        del _oauth_codes[k]
+
+    expired_tokens = [
+        k for k, v in _oauth_tokens.items()
+        if v.get("expires_at", 0) < now
+    ]
+    for k in expired_tokens:
+        del _oauth_tokens[k]
 
 
 async def _handle_oauth_metadata(scope, receive, send):
@@ -1047,7 +1072,12 @@ async def _handle_oauth_authorize(scope, receive, send):
 
     if not code_challenge or code_challenge_method != "S256":
         response = JSONResponse(
-            {"error": "invalid_request", "error_description": "PKCE with S256 is required (OAuth 2.1)"},
+            {
+                "error": "invalid_request",
+                "error_description": (
+                    "PKCE with S256 is required (OAuth 2.1)"
+                ),
+            },
             status_code=400,
         )
         await response(scope, receive, send)
@@ -1072,16 +1102,14 @@ async def _handle_oauth_authorize(scope, receive, send):
         redirect_params["state"] = state
 
     redirect_url = f"{redirect_uri}?{urllib.parse.urlencode(redirect_params)}"
-    response = JSONResponse(
-        {"redirect_to": redirect_url, "code": code},
-        status_code=200,
-        headers={"Location": redirect_url},
-    )
+    response = RedirectResponse(url=redirect_url, status_code=302)
     await response(scope, receive, send)
 
 
 async def _handle_oauth_token(scope, receive, send):
     """Handle token exchange — trades authorization codes for access tokens."""
+    _cleanup_expired_oauth()
+
     if scope["method"] != "POST":
         response = JSONResponse({"error": "method_not_allowed"}, status_code=405)
         await response(scope, receive, send)
@@ -1109,30 +1137,71 @@ async def _handle_oauth_token(scope, receive, send):
     if grant_type == "authorization_code":
         code = params.get("code")
         code_verifier = params.get("code_verifier")
+        client_id = params.get("client_id")
+        redirect_uri = params.get("redirect_uri")
 
         if not code or code not in _oauth_codes:
-            response = JSONResponse({"error": "invalid_grant"}, status_code=400)
+            response = JSONResponse(
+                {"error": "invalid_grant"}, status_code=400
+            )
             await response(scope, receive, send)
             return
 
         code_record = _oauth_codes.pop(code)
 
         if code_record["expires_at"] < time.time():
-            response = JSONResponse({"error": "invalid_grant", "error_description": "Code expired"}, status_code=400)
+            response = JSONResponse(
+                {"error": "invalid_grant",
+                 "error_description": "Code expired"},
+                status_code=400,
+            )
             await response(scope, receive, send)
             return
 
-        # Verify PKCE
-        if code_verifier:
-            import hashlib
-            import base64
-            challenge = base64.urlsafe_b64encode(
-                hashlib.sha256(code_verifier.encode()).digest()
-            ).rstrip(b"=").decode()
-            if challenge != code_record["code_challenge"]:
-                response = JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, status_code=400)
-                await response(scope, receive, send)
-                return
+        # Validate client_id matches the authorization code
+        if client_id and client_id != code_record.get("client_id"):
+            response = JSONResponse(
+                {"error": "invalid_grant",
+                 "error_description": "client_id mismatch"},
+                status_code=400,
+            )
+            await response(scope, receive, send)
+            return
+
+        # Validate redirect_uri matches the authorization code
+        if redirect_uri and redirect_uri != code_record.get("redirect_uri"):
+            response = JSONResponse(
+                {"error": "invalid_grant",
+                 "error_description": "redirect_uri mismatch"},
+                status_code=400,
+            )
+            await response(scope, receive, send)
+            return
+
+        # PKCE verification is required (OAuth 2.1)
+        if not code_verifier:
+            response = JSONResponse(
+                {"error": "invalid_request",
+                 "error_description": "code_verifier is required"},
+                status_code=400,
+            )
+            await response(scope, receive, send)
+            return
+
+        import base64
+        import hashlib
+
+        challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        if challenge != code_record["code_challenge"]:
+            response = JSONResponse(
+                {"error": "invalid_grant",
+                 "error_description": "PKCE verification failed"},
+                status_code=400,
+            )
+            await response(scope, receive, send)
+            return
 
         access_token = _generate_token("tak")
         refresh_token = _generate_token("ref")
@@ -1211,7 +1280,10 @@ _TOOLS_DESCRIPTION = {
         ),
         "homepage": "https://tako.com",
         "repository": "https://github.com/TakoData/tako-mcp",
-        "connection": "https://mcp.tako.com/sse",
+        "connection": {
+            "streamable_http": "https://mcp.tako.com/mcp",
+            "sse": "https://mcp.tako.com/sse",
+        },
     },
     "authentication": {
         "method": "api_token parameter",
@@ -1227,17 +1299,45 @@ _TOOLS_DESCRIPTION = {
                 "finance, demographics, technology, and more. Start here when a user asks "
                 "about data trends, comparisons, or statistics."
             ),
-            "when_to_use": "When you need to find existing charts and data visualizations on any topic.",
+            "when_to_use": (
+                "When you need to find existing charts and "
+                "data visualizations on any topic."
+            ),
             "parameters": {
-                "query": {"type": "string", "required": True, "description": "Natural language search query"},
-                "api_token": {"type": "string", "required": True, "description": "Tako API token"},
-                "count": {"type": "integer", "required": False, "default": 5, "range": "1-20"},
-                "search_effort": {"type": "string", "required": False, "default": "deep", "enum": ["fast", "deep"]},
-                "country_code": {"type": "string", "required": False, "default": "US"},
-                "locale": {"type": "string", "required": False, "default": "en-US"},
+                "query": {
+                    "type": "string", "required": True,
+                    "description": "Natural language search query",
+                },
+                "api_token": {
+                    "type": "string", "required": True,
+                    "description": "Tako API token",
+                },
+                "count": {
+                    "type": "integer", "required": False,
+                    "default": 5, "range": "1-20",
+                },
+                "search_effort": {
+                    "type": "string", "required": False,
+                    "default": "deep", "enum": ["fast", "deep"],
+                },
+                "country_code": {
+                    "type": "string", "required": False,
+                    "default": "US",
+                },
+                "locale": {
+                    "type": "string", "required": False,
+                    "default": "en-US",
+                },
             },
-            "returns": "SearchResults with matching charts (card_id, title, description, url, source)",
-            "example_queries": ["US GDP growth rate", "Intel vs Nvidia revenue", "climate change temperature data"],
+            "returns": (
+                "SearchResults with matching charts "
+                "(card_id, title, description, url, source)"
+            ),
+            "example_queries": [
+                "US GDP growth rate",
+                "Intel vs Nvidia revenue",
+                "climate change temperature data",
+            ],
         },
         {
             "name": "explore_knowledge_graph",
@@ -1246,36 +1346,88 @@ _TOOLS_DESCRIPTION = {
                 "Discover available entities (companies, countries), metrics (revenue, GDP), "
                 "cohorts (S&P 500, G7), and time periods in Tako's knowledge graph."
             ),
-            "when_to_use": "When you need to discover what data is available before searching.",
+            "when_to_use": (
+                "When you need to discover what data is "
+                "available before searching."
+            ),
             "parameters": {
-                "query": {"type": "string", "required": True, "description": "Natural language query to explore"},
-                "api_token": {"type": "string", "required": True, "description": "Tako API token"},
-                "node_types": {"type": "array[string]", "required": False, "enum": ["entity", "metric", "cohort", "db", "units", "time_period", "property"]},
-                "limit": {"type": "integer", "required": False, "default": 20, "range": "1-50"},
+                "query": {
+                    "type": "string", "required": True,
+                    "description": "Natural language query to explore",
+                },
+                "api_token": {
+                    "type": "string", "required": True,
+                    "description": "Tako API token",
+                },
+                "node_types": {
+                    "type": "array[string]", "required": False,
+                    "enum": [
+                        "entity", "metric", "cohort", "db",
+                        "units", "time_period", "property",
+                    ],
+                },
+                "limit": {
+                    "type": "integer", "required": False,
+                    "default": 20, "range": "1-50",
+                },
             },
-            "returns": "KnowledgeGraphResult with entities, metrics, cohorts, time_periods",
+            "returns": (
+                "KnowledgeGraphResult with entities, metrics, "
+                "cohorts, time_periods"
+            ),
         },
         {
             "name": "get_chart_image",
             "category": "display",
-            "description": "Get a static PNG preview URL for a chart. Useful for including chart previews in responses.",
-            "when_to_use": "When you need a static image of a chart to display or embed.",
+            "description": (
+                "Get a static PNG preview URL for a chart. "
+                "Useful for including chart previews in responses."
+            ),
+            "when_to_use": (
+                "When you need a static image of a chart "
+                "to display or embed."
+            ),
             "parameters": {
-                "pub_id": {"type": "string", "required": True, "description": "Chart identifier (pub_id/card_id)"},
-                "api_token": {"type": "string", "required": True, "description": "Tako API token"},
-                "dark_mode": {"type": "boolean", "required": False, "default": True},
+                "pub_id": {
+                    "type": "string", "required": True,
+                    "description": "Chart identifier (pub_id/card_id)",
+                },
+                "api_token": {
+                    "type": "string", "required": True,
+                    "description": "Tako API token",
+                },
+                "dark_mode": {
+                    "type": "boolean", "required": False,
+                    "default": True,
+                },
             },
             "returns": "ChartImageResult with image_url, pub_id, dark_mode",
         },
         {
             "name": "get_card_insights",
             "category": "analysis",
-            "description": "Get AI-generated analysis with bullet-point insights and a narrative summary of chart data.",
-            "when_to_use": "When you want AI-generated analysis of a chart's data.",
+            "description": (
+                "Get AI-generated analysis with bullet-point "
+                "insights and a narrative summary of chart data."
+            ),
+            "when_to_use": (
+                "When you want AI-generated analysis of "
+                "a chart's data."
+            ),
             "parameters": {
-                "pub_id": {"type": "string", "required": True, "description": "Chart identifier (pub_id/card_id)"},
-                "api_token": {"type": "string", "required": True, "description": "Tako API token"},
-                "effort": {"type": "string", "required": False, "default": "medium", "enum": ["low", "medium", "high"]},
+                "pub_id": {
+                    "type": "string", "required": True,
+                    "description": "Chart identifier (pub_id/card_id)",
+                },
+                "api_token": {
+                    "type": "string", "required": True,
+                    "description": "Tako API token",
+                },
+                "effort": {
+                    "type": "string", "required": False,
+                    "default": "medium",
+                    "enum": ["low", "medium", "high"],
+                },
             },
             "returns": "ChartInsightsResult with pub_id, insights, description",
         },
@@ -1286,22 +1438,49 @@ _TOOLS_DESCRIPTION = {
                 "List all available chart templates (15+ types). Call this first when the user "
                 "wants to create a new visualization."
             ),
-            "when_to_use": "When you want to see all available chart types before creating a chart.",
+            "when_to_use": (
+                "When you want to see all available chart "
+                "types before creating a chart."
+            ),
             "parameters": {
-                "api_token": {"type": "string", "required": True, "description": "Tako API token"},
+                "api_token": {
+                    "type": "string", "required": True,
+                    "description": "Tako API token",
+                },
             },
-            "returns": "ChartSchemaList with schemas (name, description, use_case, components) and count",
+            "returns": (
+                "ChartSchemaList with schemas "
+                "(name, description, use_case, components) and count"
+            ),
         },
         {
             "name": "get_chart_schema",
             "category": "thinviz",
-            "description": "Get the exact data format for a specific chart type. Always call this before create_chart.",
-            "when_to_use": "When you need to understand the data format for creating a chart.",
+            "description": (
+                "Get the exact data format for a specific "
+                "chart type. Always call this before create_chart."
+            ),
+            "when_to_use": (
+                "When you need to understand the data "
+                "format for creating a chart."
+            ),
             "parameters": {
-                "schema_name": {"type": "string", "required": True, "description": "Schema name (e.g., 'bar_chart', 'timeseries_card')"},
-                "api_token": {"type": "string", "required": True, "description": "Tako API token"},
+                "schema_name": {
+                    "type": "string", "required": True,
+                    "description": (
+                        "Schema name "
+                        "(e.g., 'bar_chart', 'timeseries_card')"
+                    ),
+                },
+                "api_token": {
+                    "type": "string", "required": True,
+                    "description": "Tako API token",
+                },
             },
-            "returns": "ChartSchemaDetail with name, description, components, template",
+            "returns": (
+                "ChartSchemaDetail with name, description, "
+                "components, template"
+            ),
         },
         {
             "name": "create_chart",
@@ -1311,22 +1490,52 @@ _TOOLS_DESCRIPTION = {
                 "The chart will be hosted and shareable on Tako."
             ),
             "when_to_use": "When you need to create a new chart from raw data.",
-            "workflow": "list_chart_schemas → get_chart_schema → create_chart",
+            "workflow": (
+                "list_chart_schemas -> get_chart_schema "
+                "-> create_chart"
+            ),
             "parameters": {
-                "schema_name": {"type": "string", "required": True, "description": "Schema name"},
-                "components": {"type": "array[object]", "required": True, "description": "Component configs matching the schema"},
-                "api_token": {"type": "string", "required": True, "description": "Tako API token"},
-                "source": {"type": "string", "required": False, "description": "Data source attribution"},
+                "schema_name": {
+                    "type": "string", "required": True,
+                    "description": "Schema name",
+                },
+                "components": {
+                    "type": "array[object]", "required": True,
+                    "description": (
+                        "Component configs matching the schema"
+                    ),
+                },
+                "api_token": {
+                    "type": "string", "required": True,
+                    "description": "Tako API token",
+                },
+                "source": {
+                    "type": "string", "required": False,
+                    "description": "Data source attribution",
+                },
             },
-            "returns": "ChartCreateResult with card_id, title, webpage_url, embed_url, image_url",
+            "returns": (
+                "ChartCreateResult with card_id, title, "
+                "webpage_url, embed_url, image_url"
+            ),
         },
         {
             "name": "open_chart_ui",
             "category": "display",
-            "description": "Render a fully interactive chart with zooming, panning, and hover interactions via MCP-UI.",
-            "when_to_use": "When you want to display an interactive chart to the user.",
+            "description": (
+                "Render a fully interactive chart with "
+                "zooming, panning, and hover interactions "
+                "via MCP-UI."
+            ),
+            "when_to_use": (
+                "When you want to display an interactive "
+                "chart to the user."
+            ),
             "parameters": {
-                "pub_id": {"type": "string", "required": True, "description": "Chart identifier (pub_id/card_id)"},
+                "pub_id": {
+                    "type": "string", "required": True,
+                    "description": "Chart identifier (pub_id/card_id)",
+                },
                 "dark_mode": {"type": "boolean", "required": False, "default": True},
                 "width": {"type": "integer", "required": False, "default": 900},
                 "height": {"type": "integer", "required": False, "default": 600},
@@ -1335,21 +1544,81 @@ _TOOLS_DESCRIPTION = {
         },
     ],
     "chart_types": [
-        {"schema": "timeseries_card", "name": "Line/Area Chart", "use_case": "Trends over time"},
-        {"schema": "stock_card", "name": "Stock Chart", "use_case": "Financial data with ticker boxes"},
-        {"schema": "bar_chart", "name": "Bar Chart", "use_case": "Categorical comparisons"},
-        {"schema": "grouped_bar_chart", "name": "Grouped Bar Chart", "use_case": "Multi-series comparisons"},
-        {"schema": "pie_chart", "name": "Pie Chart", "use_case": "Proportional data"},
-        {"schema": "scatter_chart", "name": "Scatter Plot", "use_case": "2-variable correlations"},
-        {"schema": "bubble_chart", "name": "Bubble Chart", "use_case": "3-variable data"},
-        {"schema": "histogram", "name": "Histogram", "use_case": "Frequency distributions"},
-        {"schema": "boxplot", "name": "Box Plot", "use_case": "Statistical distributions"},
-        {"schema": "choropleth", "name": "Map", "use_case": "Geographic data (US/World)"},
-        {"schema": "treemap", "name": "Treemap", "use_case": "Hierarchical data"},
-        {"schema": "heatmap", "name": "Heatmap", "use_case": "2D matrices"},
-        {"schema": "waterfall", "name": "Waterfall Chart", "use_case": "Sequential changes"},
-        {"schema": "financial_boxes", "name": "KPI Boxes", "use_case": "Key metrics display"},
-        {"schema": "table", "name": "Table", "use_case": "Tabular data"},
+        {
+            "schema": "timeseries_card",
+            "name": "Line/Area Chart",
+            "use_case": "Trends over time",
+        },
+        {
+            "schema": "stock_card",
+            "name": "Stock Chart",
+            "use_case": "Financial data with ticker boxes",
+        },
+        {
+            "schema": "bar_chart",
+            "name": "Bar Chart",
+            "use_case": "Categorical comparisons",
+        },
+        {
+            "schema": "grouped_bar_chart",
+            "name": "Grouped Bar Chart",
+            "use_case": "Multi-series comparisons",
+        },
+        {
+            "schema": "pie_chart",
+            "name": "Pie Chart",
+            "use_case": "Proportional data",
+        },
+        {
+            "schema": "scatter_chart",
+            "name": "Scatter Plot",
+            "use_case": "2-variable correlations",
+        },
+        {
+            "schema": "bubble_chart",
+            "name": "Bubble Chart",
+            "use_case": "3-variable data",
+        },
+        {
+            "schema": "histogram",
+            "name": "Histogram",
+            "use_case": "Frequency distributions",
+        },
+        {
+            "schema": "boxplot",
+            "name": "Box Plot",
+            "use_case": "Statistical distributions",
+        },
+        {
+            "schema": "choropleth",
+            "name": "Map",
+            "use_case": "Geographic data (US/World)",
+        },
+        {
+            "schema": "treemap",
+            "name": "Treemap",
+            "use_case": "Hierarchical data",
+        },
+        {
+            "schema": "heatmap",
+            "name": "Heatmap",
+            "use_case": "2D matrices",
+        },
+        {
+            "schema": "waterfall",
+            "name": "Waterfall Chart",
+            "use_case": "Sequential changes",
+        },
+        {
+            "schema": "financial_boxes",
+            "name": "KPI Boxes",
+            "use_case": "Key metrics display",
+        },
+        {
+            "schema": "table",
+            "name": "Table",
+            "use_case": "Tabular data",
+        },
     ],
 }
 
@@ -1394,43 +1663,100 @@ _SERVER_CARD = {
     "tools": [
         {
             "name": "knowledge_search",
-            "description": "Search Tako's knowledge base for charts and data visualizations on any topic.",
-            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+            "description": (
+                "Search Tako's knowledge base for charts "
+                "and data visualizations on any topic."
+            ),
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "openWorldHint": False,
+            },
         },
         {
             "name": "explore_knowledge_graph",
-            "description": "Discover available entities, metrics, cohorts, and time periods in Tako's knowledge graph.",
-            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+            "description": (
+                "Discover available entities, metrics, "
+                "cohorts, and time periods in Tako's "
+                "knowledge graph."
+            ),
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "openWorldHint": False,
+            },
         },
         {
             "name": "get_chart_image",
-            "description": "Get a static PNG preview image URL for a chart.",
-            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+            "description": (
+                "Get a static PNG preview image URL "
+                "for a chart."
+            ),
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "openWorldHint": False,
+            },
         },
         {
             "name": "get_card_insights",
-            "description": "Get AI-generated analysis and insights for a chart.",
-            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+            "description": (
+                "Get AI-generated analysis and insights "
+                "for a chart."
+            ),
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "openWorldHint": False,
+            },
         },
         {
             "name": "list_chart_schemas",
-            "description": "List all available chart templates for creating custom visualizations.",
-            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+            "description": (
+                "List all available chart templates "
+                "for creating custom visualizations."
+            ),
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "openWorldHint": False,
+            },
         },
         {
             "name": "get_chart_schema",
-            "description": "Get the detailed schema and data format for a specific chart type.",
-            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+            "description": (
+                "Get the detailed schema and data format "
+                "for a specific chart type."
+            ),
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "openWorldHint": False,
+            },
         },
         {
             "name": "create_chart",
-            "description": "Create a new interactive chart from raw data using 15+ chart types.",
-            "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
+            "description": (
+                "Create a new interactive chart from raw "
+                "data using 15+ chart types."
+            ),
+            "annotations": {
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "openWorldHint": True,
+            },
         },
         {
             "name": "open_chart_ui",
-            "description": "Open a fully interactive chart with zooming, panning, and hover interactions.",
-            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True},
+            "description": (
+                "Open a fully interactive chart with "
+                "zooming, panning, and hover interactions."
+            ),
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "openWorldHint": True,
+            },
         },
     ],
 }
@@ -1556,7 +1882,11 @@ async def app(scope, receive, send):
             for exc in eg.exceptions
         )
         if all_connection_errors:
-            logging.debug(f"Client disconnected (ExceptionGroup): path={scope.get('path', 'unknown')}")
+            path = scope.get('path', 'unknown')
+            logging.debug(
+                f"Client disconnected (ExceptionGroup): "
+                f"path={path}"
+            )
         else:
             raise
     except ClosedResourceError:
@@ -1581,7 +1911,10 @@ async def app(scope, receive, send):
             except RuntimeError:
                 pass
         else:
-            logging.debug(f"Client connection reset mid-stream: path={scope.get('path', 'unknown')}")
+            logging.debug(
+                "Client connection reset mid-stream: "
+                f"path={scope.get('path', 'unknown')}"
+            )
     except Exception as e:
         error_str = str(e)
         if "Could not find session" in error_str:
