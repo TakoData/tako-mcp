@@ -8,9 +8,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --env staging",
     "deploy:staging": "wrangler deploy --env staging",
-    "deploy:production": "wrangler deploy --env production"
+    "deploy:production": "wrangler deploy --env production",
+    "cf-typegen": "wrangler types"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.9.11",

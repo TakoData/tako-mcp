@@ -7,11 +7,6 @@
   "observability": {
     "enabled": true
   },
-  "vars": {
-    // Base URL of the Django backend the Worker proxies to.
-    // Overridden per-environment below.
-    "DJANGO_BASE_URL": ""
-  },
   "env": {
     "staging": {
       "name": "tako-mcp-staging",
