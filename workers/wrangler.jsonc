@@ -3,6 +3,8 @@
   "name": "tako-mcp",
   "main": "src/index.ts",
   "compatibility_date": "2025-06-17",
+  // nodejs_compat: required by the MCP SDK / downstream dependencies we expect
+  // to bring in during the port (Buffer, stream, etc.).
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true

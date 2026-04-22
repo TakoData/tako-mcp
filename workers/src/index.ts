@@ -7,6 +7,9 @@ export default {
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
     }
-    return new Response("not found", { status: 404 });
+    return new Response("not found", {
+      status: 404,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   },
 } satisfies ExportedHandler;
