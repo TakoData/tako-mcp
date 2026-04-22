@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tako-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    // Base URL of the Django backend the Worker proxies to.
+    // Overridden per-environment below.
+    "DJANGO_BASE_URL": ""
+  },
+  "env": {
+    "staging": {
+      "name": "tako-mcp-staging",
+      "vars": {
+        "DJANGO_BASE_URL": "https://staging.tako.com"
+      }
+    },
+    "production": {
+      "name": "tako-mcp-production",
+      "vars": {
+        "DJANGO_BASE_URL": "https://tako.com"
+      }
+    }
+  }
+}
