@@ -1,13 +1,17 @@
 name: workers-ci
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'workers/**'
   pull_request:
     paths:
       - 'workers/**'
   workflow_dispatch:
 
 concurrency:
-  group: workers-ci-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -15,7 +19,7 @@ permissions:
 
 jobs:
   build:
-    name: typecheck + test
+    name: typecheck-and-test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -27,7 +31,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'lts/*'
+          node-version-file: workers/.nvmrc
           cache: 'npm'
           cache-dependency-path: workers/package-lock.json
 
