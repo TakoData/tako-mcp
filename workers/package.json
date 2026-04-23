@@ -1,0 +1,27 @@
+{
+  "name": "tako-mcp-workers",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tako MCP server on Cloudflare Workers (mcp.tako.com).",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "wrangler dev",
+    "dev:staging": "wrangler dev --env staging",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production",
+    "cf-typegen": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.9.11",
+    "@cloudflare/workers-types": "^4.20250617.0",
+    "typescript": "^5.9.2",
+    "vitest": "3.2.4",
+    "wrangler": "^4.40.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  }
+}

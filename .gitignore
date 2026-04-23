@@ -79,3 +79,8 @@ dmypy.json
 
 # ruff
 .ruff_cache/
+
+# Workers / Node
+node_modules/
+.wrangler/
+workers/dist/
