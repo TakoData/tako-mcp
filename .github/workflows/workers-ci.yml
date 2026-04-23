@@ -43,3 +43,14 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Validate wrangler.jsonc without publishing. Catches invalid
+      # compatibility dates, unknown fields, or missing `main` before they
+      # break a real deploy. `--dry-run` skips auth and upload; we run it
+      # against both envs because they have independent `name`/`vars`
+      # overrides that can drift separately.
+      - name: Validate wrangler config (staging)
+        run: npx wrangler deploy --dry-run --env staging
+
+      - name: Validate wrangler config (production)
+        run: npx wrangler deploy --dry-run --env production

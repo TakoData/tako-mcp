@@ -84,6 +84,14 @@ describe("djangoGet", () => {
     expect((err as Error).message).toMatch(/must start with/i);
   });
 
+  it("throws when path begins with `//` (blocks protocol-relative hijack)", async () => {
+    const err = await djangoGet(ENV, TOKEN, "//evil.com/api/v1/x").catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/must not start with/i);
+  });
+
   it("serializes query params in URLSearchParams order and coerces numbers/booleans", async () => {
     mockFetchOnce(jsonResponse(200, {}));
     await djangoGet(ENV, TOKEN, "/api/v1/x", {

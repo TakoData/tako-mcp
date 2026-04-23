@@ -22,15 +22,18 @@ import type { Env } from "./env.js";
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
- * Upper bound on how much of an error-response body we read into memory.
+ * Upper bound on how much of an error-response body we read into memory,
+ * measured in UTF-16 code units (what `String.length` / `String.slice`
+ * operate on). Byte size is bounded too — roughly 1–4× this value
+ * depending on code-point distribution — but not exactly.
  *
  * A hostile or misconfigured upstream could otherwise return an
  * arbitrarily large body and force us to allocate it all — and Phase 2
  * will log these bodies, so an unbounded read would also flood Workers
- * logs. 8 KiB is plenty for Django's DRF validation errors (typically
- * a few hundred bytes of JSON).
+ * logs. 8 Ki code units is plenty for Django's DRF validation errors
+ * (typically a few hundred bytes of JSON).
  */
-const ERROR_BODY_MAX_BYTES = 8192;
+const ERROR_BODY_MAX_CHARS = 8192;
 const ERROR_BODY_TRUNCATED_SUFFIX = "...[truncated]";
 
 type HttpMethod = "GET" | "POST";
@@ -209,6 +212,16 @@ function buildUrl(
       `django path must start with \`/\` (got \`${path}\`)`,
     );
   }
+  // Reject protocol-relative (`//host/...`) prefixes. Concatenation with
+  // `base` would produce `https://trytako.com//evil.com/x` which some
+  // URL parsers collapse to a different authority — an SSRF-shaped
+  // footgun if Phase 2 ever templates user-controlled segments into
+  // `path`. Fail loud now so this invariant is explicit.
+  if (path.startsWith("//")) {
+    throw new Error(
+      `django path must not start with \`//\` (got \`${path}\`)`,
+    );
+  }
   let url = `${base}${path}`;
   if (query !== undefined) {
     const params = new URLSearchParams();
@@ -285,20 +298,19 @@ function isAbortError(err: unknown): boolean {
 }
 
 async function safeReadText(response: Response): Promise<string> {
-  // Cap the body read at `ERROR_BODY_MAX_BYTES`. A hostile or
+  // Cap the body read at `ERROR_BODY_MAX_CHARS`. A hostile or
   // misconfigured upstream could otherwise return an arbitrarily large
   // body and force us to allocate it all (and Phase 2 logs these). If
   // the body exceeds the cap, we append `...[truncated]` so callers /
-  // logs can tell the signal from the noise. We call `response.text()`
-  // and slice the string rather than streaming bytes — JS strings are
-  // UTF-16 code units so the cap is approximate, not exact, but it's
-  // bounded and cheap.
+  // logs can tell the signal from the noise. Cap is measured in UTF-16
+  // code units (what `String.slice` operates on); byte size is bounded
+  // to the same order of magnitude but not exactly.
   try {
     const text = await response.text();
-    if (text.length <= ERROR_BODY_MAX_BYTES) {
+    if (text.length <= ERROR_BODY_MAX_CHARS) {
       return text;
     }
-    return text.slice(0, ERROR_BODY_MAX_BYTES) + ERROR_BODY_TRUNCATED_SUFFIX;
+    return text.slice(0, ERROR_BODY_MAX_CHARS) + ERROR_BODY_TRUNCATED_SUFFIX;
   } catch {
     return "";
   }

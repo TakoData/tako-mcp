@@ -56,6 +56,11 @@ export async function handleMcpRequest(
   env: Env,
 ): Promise<Response> {
   void env;
+  // TODO(Phase 2, Linear project "Tako MCP"): wire `extractBearer` from
+  // `./auth.ts` BEFORE registering any tool. Phase 1 intentionally ships
+  // /mcp without auth because no tools are exposed (initialize handshake
+  // is harmless). The moment a tool lands, this endpoint starts proxying
+  // to Django — unauthenticated access must be closed in the same PR.
   try {
     const server = createMcpServer();
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
