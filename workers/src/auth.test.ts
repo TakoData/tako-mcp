@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BearerAuthError,
   extractBearer,
-} from "./auth";
+} from "./auth.js";
 
 describe("extractBearer", () => {
   it("returns the token on the happy path", () => {

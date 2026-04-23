@@ -17,7 +17,7 @@
  * are explicitly out of scope for this ticket.
  */
 
-import type { Env } from "./env";
+import type { Env } from "./env.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 

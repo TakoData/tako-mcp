@@ -1,7 +1,8 @@
+import type { Env } from "./env.js";
 import { handleMcpRequest } from "./mcp.js";
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
@@ -12,7 +13,7 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/mcp") {
-      return handleMcpRequest(request);
+      return handleMcpRequest(request, env);
     }
 
     return new Response("not found", {
@@ -20,4 +21,4 @@ export default {
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
   },
-} satisfies ExportedHandler;
+} satisfies ExportedHandler<Env>;

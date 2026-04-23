@@ -1,6 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+// No `.js` suffix — the SDK's package.json `exports` map only exposes
+// `./validation/cfworker`, unlike the other server subpaths which do ship
+// `.js` entries. Adding the extension here breaks module resolution.
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
+
+import type { Env } from "./env.js";
 
 /**
  * Server identity. Must match `registry/server.json` so clients see consistent
@@ -40,8 +45,17 @@ export function createMcpServer(): McpServer {
  * `enableJsonResponse: true` makes the transport return a single JSON-RPC
  * response body instead of an SSE stream, which keeps the wire format simple
  * for the common request/response case.
+ *
+ * `env` is threaded through so Phase 2 tool handlers can reach
+ * `DJANGO_BASE_URL` (and future bindings) via `djangoGet` / `djangoPost`.
  */
-export async function handleMcpRequest(request: Request): Promise<Response> {
+export async function handleMcpRequest(
+  request: Request,
+  // `env` is unused until Phase 2 registers tools — accepted now so
+  // `index.ts` wires bindings through the right shape from the start.
+  env: Env,
+): Promise<Response> {
+  void env;
   try {
     const server = createMcpServer();
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
@@ -70,11 +84,14 @@ export async function handleMcpRequest(request: Request): Promise<Response> {
       await transport.close();
       await server.close();
     }
-  } catch {
+  } catch (err) {
     // The SDK handles JSON-RPC validation errors internally. This outer
     // catch is a last-resort safety net for unexpected throws from
     // `server.connect(transport)` or future handlers — we don't want to
     // leak a generic Worker 500 (or the exception message) to clients.
+    // Log to Workers Logs (observability is enabled in wrangler.jsonc) so
+    // production incidents still produce a signal.
+    console.error("mcp handler error:", err);
     return new Response(
       JSON.stringify({
         jsonrpc: "2.0",

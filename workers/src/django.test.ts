@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Env } from "./env";
+import type { Env } from "./env.js";
 import {
   DjangoBadRequestError,
   DjangoError,
@@ -10,7 +10,7 @@ import {
   DjangoUnauthorizedError,
   djangoGet,
   djangoPost,
-} from "./django";
+} from "./django.js";
 
 const BASE_URL = "https://trytako.com";
 const ENV: Env = { DJANGO_BASE_URL: BASE_URL };
@@ -30,10 +30,6 @@ function jsonResponse(status: number, body: unknown): Response {
     headers: { "content-type": "application/json" },
   });
 }
-
-beforeEach(() => {
-  vi.unstubAllGlobals();
-});
 
 afterEach(() => {
   vi.unstubAllGlobals();
