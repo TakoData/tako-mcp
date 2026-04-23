@@ -8,11 +8,24 @@ import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validatio
 import type { Env } from "./env.js";
 
 /**
- * Server identity. Must match `registry/server.json` so clients see consistent
- * metadata whether they read the registry or call `initialize`.
+ * Server identity. `registry/server.json` is the canonical source — keep this
+ * constant and `workers/package.json#version` aligned with it when bumping.
+ * Clients compare what they read from the registry against what `initialize`
+ * returns, so a mismatch surfaces as "wrong server" in tooling.
  */
 export const SERVER_NAME = "tako-mcp";
 export const SERVER_VERSION = "0.1.0";
+
+/**
+ * The CfWorker schema validator is stateless (it compiles a schema on each
+ * `validate` call), so one module-scope instance is reused across warm
+ * invocations rather than allocating a fresh one per `/mcp` POST.
+ *
+ * Default Ajv validator uses `new Function(...)` under the hood and breaks
+ * in the Workers runtime (no eval). The @cfworker/json-schema provider ships
+ * with the SDK exactly for this case.
+ */
+const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
 
 /**
  * Build a fresh `McpServer` with tako-mcp identity. No tools are registered
@@ -25,10 +38,7 @@ export function createMcpServer(): McpServer {
       version: SERVER_VERSION,
     },
     {
-      // Default Ajv validator uses `new Function(...)` under the hood and
-      // breaks in the Workers runtime (no eval). The @cfworker/json-schema
-      // provider ships with the SDK exactly for this case.
-      jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
+      jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
     },
   );
 }

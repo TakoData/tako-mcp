@@ -93,6 +93,18 @@ describe("djangoGet", () => {
     expect((err as Error).message).toMatch(/must not start with/i);
   });
 
+  it("throws when path contains `?` (forces callers to use the query option)", async () => {
+    // Without this guard, `path="/api/v1/x?foo=bar"` + `query={ baz: "qux" }`
+    // would produce `/api/v1/x?foo=bar?baz=qux` — most servers parse the
+    // first `?` as the separator and the literal string `foo=bar?baz=qux`
+    // as the first key.
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/x?foo=bar", {
+      query: { baz: "qux" },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/must not contain/i);
+  });
+
   it("serializes query params in URLSearchParams order and coerces numbers/booleans", async () => {
     mockFetchOnce(jsonResponse(200, {}));
     await djangoGet(ENV, TOKEN, "/api/v1/x", {
@@ -232,5 +244,24 @@ describe("djangoPost", () => {
     const err = await djangoPost(ENV, TOKEN, "/api/v1/x", {}).catch((e) => e);
     expect(err).toBeInstanceOf(DjangoNotFoundError);
     expect((err as DjangoNotFoundError).method).toBe("POST");
+  });
+
+  it("threads query params through djangoPost (mirrors djangoGet shape)", async () => {
+    // DRF accepts POSTs with query params (e.g. `?format=json`,
+    // filter-then-mutate). The Post/Get option shapes match so callers
+    // can route query params through the `query` option instead of
+    // templating them into `path` (which the `?` guard would reject).
+    mockFetchOnce(jsonResponse(200, { ok: true }));
+    await djangoPost(
+      ENV,
+      TOKEN,
+      "/api/v1/create",
+      { foo: "bar" },
+      { query: { format: "json" } },
+    );
+    const req = (globalThis.fetch as unknown as FetchMock).mock.calls[0]![0] as Request;
+    const url = new URL(req.url);
+    expect(url.pathname).toBe("/api/v1/create");
+    expect(url.searchParams.get("format")).toBe("json");
   });
 });

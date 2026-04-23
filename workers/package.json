@@ -1,6 +1,6 @@
 {
   "name": "tako-mcp-workers",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Tako MCP server on Cloudflare Workers (mcp.tako.com).",
   "type": "module",
@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "wrangler dev --env staging",
+    "dev": "wrangler dev",
+    "dev:staging": "wrangler dev --env staging",
     "deploy:staging": "wrangler deploy --env staging",
     "deploy:production": "wrangler deploy --env production",
     "cf-typegen": "wrangler types"

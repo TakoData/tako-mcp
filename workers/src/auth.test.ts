@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BEARER_AUTH_JSON_RPC_CODE,
   BearerAuthError,
+  bearerAuthErrorToJsonRpc,
   extractBearer,
 } from "./auth.js";
 
@@ -140,5 +142,33 @@ describe("extractBearer", () => {
       expect(err).toBeInstanceOf(BearerAuthError);
       expect((err as BearerAuthError).kind).toBe("malformed");
     }
+  });
+});
+
+describe("bearerAuthErrorToJsonRpc", () => {
+  it("maps a `missing` error to the shared JSON-RPC code with kind in data", () => {
+    const err = new BearerAuthError("missing", "Authorization header is required");
+    const rpc = bearerAuthErrorToJsonRpc(err);
+    expect(rpc.code).toBe(BEARER_AUTH_JSON_RPC_CODE);
+    expect(rpc.message).toBe("Authorization header is required");
+    expect(rpc.data).toEqual({ kind: "missing" });
+  });
+
+  it("preserves the `malformed` discriminant in data.kind", () => {
+    const err = new BearerAuthError("malformed", "bad scheme");
+    expect(bearerAuthErrorToJsonRpc(err).data).toEqual({ kind: "malformed" });
+  });
+
+  it("preserves the `empty` discriminant in data.kind", () => {
+    const err = new BearerAuthError("empty", "Bearer token is empty");
+    expect(bearerAuthErrorToJsonRpc(err).data).toEqual({ kind: "empty" });
+  });
+
+  it("uses a code inside the JSON-RPC implementation-defined server-error range", () => {
+    const err = new BearerAuthError("missing", "x");
+    const { code } = bearerAuthErrorToJsonRpc(err);
+    // JSON-RPC 2.0 reserves -32000..-32099 for implementation-defined server errors.
+    expect(code).toBeLessThanOrEqual(-32000);
+    expect(code).toBeGreaterThanOrEqual(-32099);
   });
 });

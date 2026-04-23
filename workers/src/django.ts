@@ -56,9 +56,10 @@ export interface DjangoRequestOptions {
 
 export type DjangoGetOptions = DjangoRequestOptions;
 
-export interface DjangoPostOptions {
-  timeoutMs?: number;
-}
+// POST mirrors GET so DRF endpoints that legitimately mix body + query (e.g.
+// `?format=json`, filter-then-mutate) don't need callers to template the query
+// into `path` (which would trip the `?` guard in `buildUrl`).
+export type DjangoPostOptions = DjangoRequestOptions;
 
 /**
  * Base class for all Django transport errors. Carrying `path` and
@@ -198,7 +199,7 @@ export async function djangoPost<T>(
   body: unknown,
   opts: DjangoPostOptions = {},
 ): Promise<T> {
-  const url = buildUrl(env, path);
+  const url = buildUrl(env, path, opts.query);
   const headers = new Headers({
     "X-API-Key": token,
     "Content-Type": "application/json",
@@ -257,6 +258,16 @@ function buildUrl(
       `django path must not start with \`//\` (got \`${path}\`)`,
     );
   }
+  // Reject embedded query strings. A caller-supplied `?` in `path`
+  // combined with the `query` option would concatenate to e.g.
+  // `/api/v1/x?foo=bar?baz=qux`, which most HTTP servers parse as a
+  // single key `foo` with the literal value `bar?baz=qux`. Force
+  // callers to route query params through the `query` option instead.
+  if (path.includes("?")) {
+    throw new Error(
+      `django path must not contain \`?\` — use the \`query\` option (got \`${path}\`)`,
+    );
+  }
   let url = `${base}${path}`;
   if (query !== undefined) {
     const params = new URLSearchParams();
@@ -292,6 +303,12 @@ async function executeRequest<T>(
   }
 
   if (response.ok) {
+    // Every Phase 2 endpoint returns a JSON body on 2xx (verified against
+    // the legacy `src/tako_mcp/server.py` — each tool calls `resp.json()`
+    // directly, no 204s or empty-body cases). An empty body here is
+    // therefore a contract violation, not a normal outcome, and surfacing
+    // it as `DjangoResponseParseError` is the right signal. Revisit if a
+    // future endpoint legitimately returns 204 / an empty 200.
     try {
       return (await response.json()) as T;
     } catch (err) {

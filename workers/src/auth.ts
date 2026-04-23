@@ -126,3 +126,37 @@ export function extractBearer(request: Request): string {
 
   return rest;
 }
+
+/**
+ * JSON-RPC 2.0 error object shape — the `error` field of a JSON-RPC response.
+ * Exported so Phase 2 tool wiring can build the full response envelope
+ * (`{ jsonrpc: "2.0", id, error }`) with the correct `id` from the request.
+ */
+export interface JsonRpcError {
+  code: number;
+  message: string;
+  data?: { kind: BearerAuthErrorKind };
+}
+
+/**
+ * Single code for all Bearer auth failures. Falls inside the JSON-RPC 2.0
+ * implementation-defined server-error range (-32000 to -32099). The specific
+ * failure mode is carried in `data.kind` so clients that want to distinguish
+ * "missing" from "malformed" from "empty" can, but the HTTP 401 response path
+ * stays uniform for the common case.
+ */
+export const BEARER_AUTH_JSON_RPC_CODE = -32001;
+
+/**
+ * Map a `BearerAuthError` to a JSON-RPC error object. Centralizing the shape
+ * here prevents the 8 Phase 2 tool wirings from each inventing their own
+ * 401 response and drifting into divergent messages / codes. Callers are
+ * still responsible for the outer response envelope and HTTP status.
+ */
+export function bearerAuthErrorToJsonRpc(err: BearerAuthError): JsonRpcError {
+  return {
+    code: BEARER_AUTH_JSON_RPC_CODE,
+    message: err.message,
+    data: { kind: err.kind },
+  };
+}
