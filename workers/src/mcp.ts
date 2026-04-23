@@ -10,13 +10,6 @@ export const SERVER_NAME = "tako-mcp";
 export const SERVER_VERSION = "0.1.0";
 
 /**
- * Latest stable MCP protocol version we advertise. The SDK also accepts older
- * versions during negotiation, so clients speaking 2024-11-05 through
- * 2025-11-25 will still work.
- */
-export const PROTOCOL_VERSION = "2025-11-25";
-
-/**
  * Build a fresh `McpServer` with tako-mcp identity. No tools are registered
  * yet — that lands in Phase 2.
  */
@@ -63,6 +56,17 @@ export async function handleMcpRequest(request: Request): Promise<Response> {
     try {
       return await transport.handleRequest(request);
     } finally {
+      // TODO(Phase 2): revisit this unconditional close.
+      //
+      // Safe today ONLY because `enableJsonResponse: true` buffers the full
+      // response before `handleRequest` resolves — there is no in-flight SSE
+      // stream for `transport.close()` to truncate, and no tools are
+      // registered that could produce one.
+      //
+      // When Phase 2 introduces tools that stream results over SSE, this
+      // `finally` will clear `_streamMapping` and abort the stream before
+      // the client has read it. Likely fix: move to on-error close only and
+      // rely on Workers GC at request completion to release resources.
       await transport.close();
       await server.close();
     }

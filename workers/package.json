@@ -20,7 +20,6 @@
     "wrangler": "^4.40.3"
   },
   "dependencies": {
-    "@cfworker/json-schema": "^4.1.1",
     "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }
