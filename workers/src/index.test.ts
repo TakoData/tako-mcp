@@ -50,5 +50,9 @@ describe("worker routing", () => {
     expect(body.id).toBe(1);
     expect(body.result.serverInfo.name).toBe("tako-mcp");
     expect(body.result.serverInfo.version).toBe("0.1.0");
+    // Guard against silent SDK negotiation regressions — a missing or
+    // malformed protocolVersion should fail loudly. The regex tolerates
+    // future SDK bumps without pinning to a specific release.
+    expect(body.result.protocolVersion).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

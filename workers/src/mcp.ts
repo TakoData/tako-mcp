@@ -49,20 +49,38 @@ export function createMcpServer(): McpServer {
  * for the common request/response case.
  */
 export async function handleMcpRequest(request: Request): Promise<Response> {
-  const server = createMcpServer();
-  // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
-  // `Mcp-Session-Id` header is issued or validated. This matches the Worker
-  // model (no persistent per-session state) and keeps each request
-  // self-contained.
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    enableJsonResponse: true,
-  });
-
-  await server.connect(transport);
   try {
-    return await transport.handleRequest(request);
-  } finally {
-    await transport.close();
-    await server.close();
+    const server = createMcpServer();
+    // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
+    // `Mcp-Session-Id` header is issued or validated. This matches the Worker
+    // model (no persistent per-session state) and keeps each request
+    // self-contained.
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      enableJsonResponse: true,
+    });
+
+    await server.connect(transport);
+    try {
+      return await transport.handleRequest(request);
+    } finally {
+      await transport.close();
+      await server.close();
+    }
+  } catch {
+    // The SDK handles JSON-RPC validation errors internally. This outer
+    // catch is a last-resort safety net for unexpected throws from
+    // `server.connect(transport)` or future handlers — we don't want to
+    // leak a generic Worker 500 (or the exception message) to clients.
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32603, message: "Internal error" },
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
   }
 }
