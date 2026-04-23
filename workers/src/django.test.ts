@@ -58,14 +58,34 @@ describe("djangoGet", () => {
     expect(req.headers.get("x-api-key")).toBe(TOKEN);
   });
 
-  it("concatenates base URL + path without producing double slashes", async () => {
+  it("concatenates a no-trailing-slash base URL with a leading-slash path to produce exactly one slash", async () => {
     mockFetchOnce(jsonResponse(200, {}));
-    const envTrailing: Env = { DJANGO_BASE_URL: BASE_URL };
-    await djangoGet(envTrailing, TOKEN, "/api/v1/x");
+    const envNoTrailing: Env = { DJANGO_BASE_URL: BASE_URL };
+    await djangoGet(envNoTrailing, TOKEN, "/api/v1/x");
     const req = (globalThis.fetch as unknown as FetchMock).mock.calls[0]![0] as Request;
     // Exactly one slash between origin and `/api/v1/x`:
     expect(req.url).toBe(`${BASE_URL}/api/v1/x`);
     expect(req.url).not.toMatch(/trytako\.com\/\/api/);
+  });
+
+  it("throws when DJANGO_BASE_URL ends with a trailing slash (rather than silently producing `//`)", async () => {
+    const envTrailing: Env = { DJANGO_BASE_URL: "https://trytako.com/" };
+    const err = await djangoGet(envTrailing, TOKEN, "/api/v1/x").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/trailing slash/i);
+  });
+
+  it("throws when DJANGO_BASE_URL is empty", async () => {
+    const envEmpty: Env = { DJANGO_BASE_URL: "" };
+    const err = await djangoGet(envEmpty, TOKEN, "/api/v1/x").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/not configured/i);
+  });
+
+  it("throws when path does not start with a leading slash", async () => {
+    const err = await djangoGet(ENV, TOKEN, "api/v1/x").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/must start with/i);
   });
 
   it("serializes query params in URLSearchParams order and coerces numbers/booleans", async () => {
@@ -119,17 +139,48 @@ describe("djangoGet", () => {
     expect((err as DjangoHttpError).body).toBe("boom");
   });
 
-  it("throws DjangoTimeoutError when fetch is aborted", async () => {
+  it("throws DjangoTimeoutError when fetch is aborted, and wires an AbortSignal into fetch's init", async () => {
+    // Two things under test here:
+    //   1. Classification: an AbortError from fetch becomes
+    //      DjangoTimeoutError (existing coverage).
+    //   2. Wiring: the second arg to `fetch` actually contains
+    //      `init.signal instanceof AbortSignal`. Without this,
+    //      regressing `AbortSignal.timeout(ctx.timeoutMs)` back to a
+    //      plain `fetch(request)` would still pass the classification
+    //      assertion.
     const abortErr = new DOMException("aborted", "AbortError");
-    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => {
       throw abortErr;
-    }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
     const err = await djangoGet(ENV, TOKEN, "/api/v1/x", { timeoutMs: 50 }).catch(
       (e) => e,
     );
     expect(err).toBeInstanceOf(DjangoTimeoutError);
     expect((err as DjangoTimeoutError).path).toBe("/api/v1/x");
     expect((err as DjangoTimeoutError).method).toBe("GET");
+
+    // Verify fetch actually received an AbortSignal in its init arg.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]![1];
+    expect(init).toBeDefined();
+    expect(init!.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("truncates oversized error-response bodies at 8 KiB with a clear suffix", async () => {
+    // A hostile or misconfigured upstream could return an arbitrarily
+    // large error body; `safeReadText` caps the read and appends
+    // `...[truncated]` so callers / logs can tell signal from noise.
+    const oversize = "x".repeat(16_384); // 2x the 8 KiB cap
+    mockFetchOnce(new Response(oversize, { status: 500 }));
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/x").catch((e) => e);
+    expect(err).toBeInstanceOf(DjangoHttpError);
+    const body = (err as DjangoHttpError).body;
+    expect(body.length).toBeLessThanOrEqual(8192 + "...[truncated]".length);
+    expect(body.endsWith("...[truncated]")).toBe(true);
+    // Sanity: the first 8 KiB should be the upstream body verbatim.
+    expect(body.slice(0, 8192)).toBe("x".repeat(8192));
   });
 });
 

@@ -11,6 +11,20 @@
 export type BearerAuthErrorKind = "missing" | "malformed" | "empty";
 
 /**
+ * RFC 6750 §2.1 `b64token` production:
+ *
+ *     b64token = 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="
+ *
+ * This intentionally rejects characters that are legal elsewhere in an
+ * `Authorization` header value — notably spaces (which would signal a
+ * malformed multi-token header), commas (which would be a legal
+ * multi-challenge response like `Bearer abc, Basic xyz`), and quotes.
+ * Catching these here gives the caller a clean "malformed" signal
+ * instead of forwarding garbage to Django and getting a confusing 401.
+ */
+const B64TOKEN_RE = /^[A-Za-z0-9\-._~+/]+=*$/;
+
+/**
  * Thrown when the `Authorization` header cannot be parsed into a usable
  * Bearer token. Phase 2 tool wiring is responsible for turning this
  * into a JSON-RPC `401` response — this module just signals the
@@ -96,6 +110,17 @@ export function extractBearer(request: Request): string {
     throw new BearerAuthError(
       "empty",
       "Bearer token is empty",
+    );
+  }
+
+  // Enforce RFC 6750 §2.1 `b64token` charset. Rejects space-in-token
+  // (`Bearer a b`), comma-separated challenges (`Bearer abc, Basic xyz`),
+  // and any other non-b64token characters. Without this check we would
+  // forward garbage to Django and produce a confusing upstream 401.
+  if (!B64TOKEN_RE.test(rest)) {
+    throw new BearerAuthError(
+      "malformed",
+      "Bearer token contains invalid characters (RFC 6750 §2.1 b64token)",
     );
   }
 

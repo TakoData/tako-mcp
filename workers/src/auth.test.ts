@@ -95,4 +95,50 @@ describe("extractBearer", () => {
       expect((err as BearerAuthError).kind).toBe("malformed");
     }
   });
+
+  it("throws MalformedBearerError when the token contains an internal space", () => {
+    // `Bearer a b` — the b64token grammar in RFC 6750 §2.1 disallows
+    // spaces, so even though we split on the first space, any further
+    // spaces must be rejected.
+    const req = new Request("https://example.com/", {
+      headers: { Authorization: "Bearer a b" },
+    });
+    try {
+      extractBearer(req);
+      throw new Error("expected to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(BearerAuthError);
+      expect((err as BearerAuthError).kind).toBe("malformed");
+    }
+  });
+
+  it("throws MalformedBearerError for comma-separated multi-challenge values", () => {
+    // `Bearer abc, Basic xyz` is a legal RFC 7235 multi-challenge
+    // response, but not a valid single-token request value. Rejecting
+    // here gives callers a clean "malformed" signal instead of
+    // forwarding garbage to Django.
+    const req = new Request("https://example.com/", {
+      headers: { Authorization: "Bearer abc, Basic xyz" },
+    });
+    try {
+      extractBearer(req);
+      throw new Error("expected to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(BearerAuthError);
+      expect((err as BearerAuthError).kind).toBe("malformed");
+    }
+  });
+
+  it("throws MalformedBearerError for non-b64token characters (e.g. `!`)", () => {
+    const req = new Request("https://example.com/", {
+      headers: { Authorization: "Bearer abc!def" },
+    });
+    try {
+      extractBearer(req);
+      throw new Error("expected to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(BearerAuthError);
+      expect((err as BearerAuthError).kind).toBe("malformed");
+    }
+  });
 });

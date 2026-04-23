@@ -1,6 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tako-mcp",
+  // The top-level `name` is `tako-mcp-dev` (not `tako-mcp`) so that a
+  // misfired `wrangler deploy` (without `--env staging|production`)
+  // cannot collide with staging/prod Workers. The top-level config is
+  // intended for `wrangler dev` only; actual deploys must specify
+  // `--env staging` or `--env production` below.
+  "name": "tako-mcp-dev",
   "main": "src/index.ts",
   "compatibility_date": "2025-06-17",
   "compatibility_flags": ["nodejs_compat"],

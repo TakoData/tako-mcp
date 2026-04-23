@@ -21,6 +21,18 @@ import type { Env } from "./env";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/**
+ * Upper bound on how much of an error-response body we read into memory.
+ *
+ * A hostile or misconfigured upstream could otherwise return an
+ * arbitrarily large body and force us to allocate it all — and Phase 2
+ * will log these bodies, so an unbounded read would also flood Workers
+ * logs. 8 KiB is plenty for Django's DRF validation errors (typically
+ * a few hundred bytes of JSON).
+ */
+const ERROR_BODY_MAX_BYTES = 8192;
+const ERROR_BODY_TRUNCATED_SUFFIX = "...[truncated]";
+
 type HttpMethod = "GET" | "POST";
 
 export interface DjangoRequestOptions {
@@ -172,11 +184,32 @@ function buildUrl(
   path: string,
   query?: Record<string, string | number | boolean>,
 ): string {
-  // `path` is expected to start with `/api/v1/...`; `DJANGO_BASE_URL`
-  // is expected to be an origin with no trailing slash. We don't
-  // silently "fix" either side — Phase 2 callers will pass the path
-  // literally, and wrangler.jsonc sets the binding once.
-  let url = `${env.DJANGO_BASE_URL}${path}`;
+  // Validate the base URL up-front. An empty / missing binding would
+  // otherwise produce a URL like `/api/v1/x` (which is not a legal
+  // absolute URL for `new Request(...)`) and a trailing slash would
+  // produce `//api/v1/x` (wrong origin interpretation). We fail loud
+  // here rather than silently forwarding broken requests to Django.
+  const base = env.DJANGO_BASE_URL;
+  if (base === undefined || base === "") {
+    throw new Error(
+      "DJANGO_BASE_URL is not configured (empty or undefined binding)",
+    );
+  }
+  if (base.endsWith("/")) {
+    throw new Error(
+      `DJANGO_BASE_URL must not end with a trailing slash (got \`${base}\`)`,
+    );
+  }
+  // `path` is expected to start with `/api/v1/...`. We require the
+  // leading slash so concatenation produces a well-formed URL (the
+  // alternative would be silent corruption like
+  // `https://trytako.comapi/v1/x`).
+  if (!path.startsWith("/")) {
+    throw new Error(
+      `django path must start with \`/\` (got \`${path}\`)`,
+    );
+  }
+  let url = `${base}${path}`;
   if (query !== undefined) {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
@@ -252,8 +285,20 @@ function isAbortError(err: unknown): boolean {
 }
 
 async function safeReadText(response: Response): Promise<string> {
+  // Cap the body read at `ERROR_BODY_MAX_BYTES`. A hostile or
+  // misconfigured upstream could otherwise return an arbitrarily large
+  // body and force us to allocate it all (and Phase 2 logs these). If
+  // the body exceeds the cap, we append `...[truncated]` so callers /
+  // logs can tell the signal from the noise. We call `response.text()`
+  // and slice the string rather than streaming bytes — JS strings are
+  // UTF-16 code units so the cap is approximate, not exact, but it's
+  // bounded and cheap.
   try {
-    return await response.text();
+    const text = await response.text();
+    if (text.length <= ERROR_BODY_MAX_BYTES) {
+      return text;
+    }
+    return text.slice(0, ERROR_BODY_MAX_BYTES) + ERROR_BODY_TRUNCATED_SUFFIX;
   } catch {
     return "";
   }
