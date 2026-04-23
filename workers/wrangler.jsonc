@@ -1,6 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tako-mcp",
+  // The top-level `name` is `tako-mcp-dev` (not `tako-mcp`) so that a
+  // misfired `wrangler deploy` (without `--env staging|production`)
+  // cannot collide with staging/prod Workers. The top-level config is
+  // intended for `wrangler dev` only; actual deploys must specify
+  // `--env staging` or `--env production` below.
+  "name": "tako-mcp-dev",
   "main": "src/index.ts",
   "compatibility_date": "2025-06-17",
   // nodejs_compat: required by the MCP SDK / downstream dependencies we expect
@@ -9,17 +14,27 @@
   "observability": {
     "enabled": true
   },
+  "vars": {
+    // Base URL of the Django backend the Worker proxies to (origin only,
+    // no trailing slash — `django.ts` concatenates `/api/v1/...` paths).
+    //
+    // The top-level default targets a local Django dev server so that
+    // `wrangler dev` works out of the box. Staging / production overrides
+    // are declared per-env below and are selected via
+    // `wrangler deploy --env staging|production`.
+    "DJANGO_BASE_URL": "http://localhost:8000"
+  },
   "env": {
     "staging": {
       "name": "tako-mcp-staging",
       "vars": {
-        "DJANGO_BASE_URL": "https://staging.tako.com"
+        "DJANGO_BASE_URL": "https://staging.trytako.com"
       }
     },
     "production": {
       "name": "tako-mcp-production",
       "vars": {
-        "DJANGO_BASE_URL": "https://tako.com"
+        "DJANGO_BASE_URL": "https://trytako.com"
       }
     }
   }
