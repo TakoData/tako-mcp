@@ -6,6 +6,7 @@ import {
   DjangoError,
   DjangoHttpError,
   DjangoNotFoundError,
+  DjangoResponseParseError,
   DjangoTimeoutError,
   DjangoUnauthorizedError,
   djangoGet,
@@ -128,6 +129,23 @@ describe("djangoGet", () => {
     const err = await djangoGet(ENV, TOKEN, "/api/v1/x").catch((e) => e);
     expect(err).toBeInstanceOf(DjangoUnauthorizedError);
     expect((err as DjangoUnauthorizedError).status).toBe(401);
+  });
+
+  it("throws DjangoResponseParseError when a 2xx body is not valid JSON", async () => {
+    mockFetchOnce(
+      new Response("not json at all", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/x").catch((e) => e);
+    expect(err).toBeInstanceOf(DjangoResponseParseError);
+    // Contract for Phase 2 handlers: a single `instanceof DjangoError`
+    // gate must cover this case too.
+    expect(err).toBeInstanceOf(DjangoError);
+    expect((err as DjangoResponseParseError).status).toBe(200);
+    expect((err as DjangoResponseParseError).method).toBe("GET");
+    expect((err as DjangoResponseParseError).cause).toBeDefined();
   });
 
   it("throws DjangoHttpError with status=500 for other non-2xx responses", async () => {

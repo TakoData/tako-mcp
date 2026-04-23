@@ -105,7 +105,7 @@ export async function handleMcpRequest(
       }),
       {
         status: 500,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json; charset=utf-8" },
       },
     );
   }

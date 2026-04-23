@@ -39,7 +39,16 @@ const ERROR_BODY_TRUNCATED_SUFFIX = "...[truncated]";
 type HttpMethod = "GET" | "POST";
 
 export interface DjangoRequestOptions {
-  /** Serialized into a `?a=1&b=two` query string via URLSearchParams. */
+  /**
+   * Serialized into a `?a=1&b=two` query string via URLSearchParams.
+   *
+   * Arrays are intentionally NOT part of this type. `URLSearchParams`
+   * applied to `String([1, 2])` would produce `"1,2"` (a single
+   * comma-joined value), not DRF's expected repeated-key form
+   * `?tags=a&tags=b`. Introduce explicit array handling here when a
+   * Phase 2 endpoint actually needs it — don't rely on implicit
+   * coercion.
+   */
   query?: Record<string, string | number | boolean>;
   /** Abort threshold in milliseconds. Defaults to 30 000. */
   timeoutMs?: number;
@@ -89,10 +98,14 @@ export class DjangoBadRequestError extends DjangoError {
   readonly body: string;
 
   constructor(opts: { path: string; method: HttpMethod; body: string }) {
-    super(
-      `Django returned 400 for ${opts.method} ${opts.path}: ${opts.body}`,
-      { path: opts.path, method: opts.method, status: 400 },
-    );
+    // Keep the message body-free so logs stay greppable and a hostile
+    // upstream body can't inject newlines / fill log lines. Callers that
+    // need the body should read `.body` directly.
+    super(`Django returned 400 for ${opts.method} ${opts.path}`, {
+      path: opts.path,
+      method: opts.method,
+      status: 400,
+    });
     this.body = opts.body;
   }
 }
@@ -129,10 +142,32 @@ export class DjangoHttpError extends DjangoError {
     body: string;
   }) {
     super(
-      `Django returned ${opts.status} for ${opts.method} ${opts.path}: ${opts.body}`,
+      `Django returned ${opts.status} for ${opts.method} ${opts.path}`,
       { path: opts.path, method: opts.method, status: opts.status },
     );
     this.body = opts.body;
+  }
+}
+
+/**
+ * Thrown when Django returns 2xx with a body we cannot parse as JSON —
+ * preserves the "all transport failures surface as DjangoError" contract
+ * so Phase 2 handlers can rely on a single `instanceof DjangoError` gate.
+ */
+export class DjangoResponseParseError extends DjangoError {
+  override readonly cause: unknown;
+
+  constructor(opts: {
+    path: string;
+    method: HttpMethod;
+    status: number;
+    cause: unknown;
+  }) {
+    super(
+      `Django ${opts.method} ${opts.path} returned ${opts.status} with an unparseable JSON body`,
+      { path: opts.path, method: opts.method, status: opts.status },
+    );
+    this.cause = opts.cause;
   }
 }
 
@@ -257,7 +292,16 @@ async function executeRequest<T>(
   }
 
   if (response.ok) {
-    return (await response.json()) as T;
+    try {
+      return (await response.json()) as T;
+    } catch (err) {
+      throw new DjangoResponseParseError({
+        path: ctx.path,
+        method: ctx.method,
+        status: response.status,
+        cause: err,
+      });
+    }
   }
 
   // Only read the body for error types that actually surface it —
@@ -311,7 +355,11 @@ async function safeReadText(response: Response): Promise<string> {
       return text;
     }
     return text.slice(0, ERROR_BODY_MAX_CHARS) + ERROR_BODY_TRUNCATED_SUFFIX;
-  } catch {
+  } catch (err) {
+    // Surface read failures in Workers Logs so a silent `.body === ""` on
+    // a DjangoError subclass doesn't look identical to "upstream
+    // returned an empty body" during incident triage.
+    console.warn("safeReadText failed to read response body:", err);
     return "";
   }
 }

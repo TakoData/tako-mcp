@@ -15,10 +15,12 @@ export default {
     if (request.method === "POST" && url.pathname === "/mcp") {
       return handleMcpRequest(request, env);
     }
-    // GET /mcp (SSE resubscription) and DELETE /mcp (session terminate)
-    // are intentionally unrouted: stateless JSON-response mode does not
-    // use either. Revisit when Phase 2 introduces streaming tools — see
-    // the `transport.close()` TODO in `mcp.ts`.
+    // GET /mcp (SSE resubscription), DELETE /mcp (session terminate), and
+    // OPTIONS /mcp (browser CORS preflight) are intentionally unrouted:
+    // stateless JSON-response mode does not use GET/DELETE, and current
+    // MCP clients (Claude Desktop, CLI) do not issue preflights. Revisit
+    // when Phase 2 introduces streaming tools or browser-based clients —
+    // see the `transport.close()` TODO in `mcp.ts`.
 
     return new Response("not found", {
       status: 404,
