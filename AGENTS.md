@@ -33,9 +33,15 @@ python -m tests.test_client --api-token YOUR_TOKEN
 
 | File | Purpose |
 |------|---------|
-| `src/tako_mcp/server.py` | Main MCP server — ASGI app, 8 tool definitions, health endpoints |
+| `src/tako_mcp/server.py` | Main MCP server — ASGI app, 8 tools, OAuth 2.1, discovery endpoints |
 | `src/tako_mcp/main.py` | Alternative implementation using Tako Python client (not the primary server) |
 | `src/tako_mcp/smithery/server.py` | Smithery marketplace integration wrapper |
+| `integrations/langchain_tako.py` | LangChain/LangGraph tool wrapper |
+| `integrations/crewai_tako.py` | CrewAI tool wrapper |
+| `integrations/autogen_tako.py` | AutoGen (Microsoft) tool wrapper |
+| `integrations/vercel_ai_tako.ts` | Vercel AI SDK tool wrapper |
+| `integrations/openai_actions.yaml` | OpenAI GPT Actions spec |
+| `openapi.yaml` | OpenAPI 3.1.0 spec with agent hints |
 | `tests/test_client.py` | Integration test client |
 | `Dockerfile` | Container build (Python 3.11-slim, port 8001) |
 
@@ -54,18 +60,25 @@ python -m tests.test_client --api-token YOUR_TOKEN
 
 | Path | Method | Description |
 |------|--------|-------------|
+| `/mcp` | POST | Streamable HTTP transport (recommended) |
 | `/sse` | GET | SSE transport connection |
-| `/messages/` | POST | MCP JSON-RPC messages |
+| `/messages/` | POST | SSE JSON-RPC messages |
 | `/health` | GET | Simple health check |
 | `/health/detailed` | GET | Detailed health status |
 | `/.well-known/mcp` | GET | MCP Server Card (SEP-1649) |
+| `/v1/tools` | GET | Agent-friendly tool descriptions |
+| `/.well-known/oauth-authorization-server` | GET | OAuth 2.1 metadata |
+| `/oauth/register` | POST | Dynamic client registration |
+| `/oauth/authorize` | GET | Authorization endpoint |
+| `/oauth/token` | POST | Token exchange endpoint |
 
 ## Code Conventions
 
 - Python 3.11+, async/await throughout
 - Ruff for linting (line length 100, rules: E, F, I, N, W, UP)
 - All tool functions are async, decorated with `@mcp.tool()`
-- Error responses return JSON with `error`, `message`, and `suggestion` keys
+- Tools return Pydantic models for structured output (`structuredContent`)
+- Errors raised as `TakoToolError` exceptions (converted to MCP error responses)
 - Timeouts: 30s for schema ops, 60s for search/create, 90s for insights
 - Environment variables for configuration (see README)
 

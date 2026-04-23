@@ -19,8 +19,7 @@ COPY src/ src/
 EXPOSE 8001
 
 # Environment variables (override at runtime)
-ENV TAKO_API_URL=https://api.trytako.com
-ENV PUBLIC_BASE_URL=https://trytako.com
+ENV PUBLIC_BASE_URL=https://tako.com
 ENV PORT=8001
 ENV HOST=0.0.0.0
 

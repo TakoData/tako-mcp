@@ -1,0 +1,110 @@
+# Glama MCP Marketplace Configuration for Tako MCP Server
+# https://glama.ai/mcp/servers
+
+name: tako-mcp
+display_name: Tako MCP Server
+
+description: |
+  Tako MCP Server lets AI assistants create and discover data visualizations.
+  Search Tako's curated knowledge base of 100K+ charts spanning economics,
+  finance, demographics, technology, and more. Create custom interactive charts
+  from raw data using 15+ chart types including timeseries, bar charts, scatter
+  plots, pie charts, geographic maps, heatmaps, treemaps, and sankey diagrams.
+
+  Key capabilities:
+  - Knowledge search across 100K+ professionally curated charts
+  - Knowledge graph exploration for entities, metrics, cohorts, and time periods
+  - AI-generated insights and analysis for any chart
+  - Custom chart creation from raw data with 15+ chart types
+  - Interactive chart rendering via MCP-UI (zoom, pan, hover)
+  - Static PNG chart previews for embedding
+
+version: "0.1.0"
+
+author:
+  name: Tako
+  email: hello@tako.com
+  url: https://tako.com
+
+repository: https://github.com/TakoData/tako-mcp
+license: MIT
+
+categories:
+  - data-visualization
+  - charts
+  - analytics
+  - knowledge-base
+
+tags:
+  - charts
+  - data-visualization
+  - thinviz
+  - interactive-charts
+  - mcp-ui
+  - knowledge-base
+  - analytics
+
+tools:
+  - name: knowledge_search
+    description: >
+      Search Tako's knowledge base for charts and data visualizations on any topic.
+      Use when a user asks about data trends, comparisons, or statistics.
+  - name: explore_knowledge_graph
+    description: >
+      Discover available entities, metrics, cohorts, and time periods. Use to
+      understand what data is available before searching.
+  - name: get_chart_image
+    description: >
+      Get a static PNG preview image URL for a chart.
+  - name: get_card_insights
+    description: >
+      Get AI-generated insights and analysis for a chart.
+  - name: list_chart_schemas
+    description: >
+      List all available chart templates for creating custom visualizations.
+  - name: get_chart_schema
+    description: >
+      Get the detailed schema and data format for a specific chart type.
+  - name: create_chart
+    description: >
+      Create a new interactive chart from raw data using 15+ chart types
+      including timeseries, bar charts, scatter plots, pie charts, maps, and more.
+  - name: open_chart_ui
+    description: >
+      Open a fully interactive chart with zooming, panning, and hover
+      interactions via MCP-UI.
+
+installation:
+  pip:
+    command: pip install tako-mcp
+    entrypoint: tako-mcp
+  docker:
+    image: ghcr.io/takodata/tako-mcp:latest
+    ports:
+      - "8001:8001"
+    environment:
+      PUBLIC_BASE_URL: https://tako.com
+
+hosted_server:
+  url: https://mcp.tako.com/sse
+  transport:
+    - sse
+    - streamable-http
+
+transport:
+  - sse
+  - streamable-http
+
+authentication:
+  type: api_key
+  description: >
+    Tako API token. Sign up at tako.com and create a token in your
+    account settings.
+  setup_url: https://tako.com
+
+links:
+  homepage: https://tako.com
+  documentation: https://github.com/TakoData/tako-mcp#readme
+  repository: https://github.com/TakoData/tako-mcp
+  issues: https://github.com/TakoData/tako-mcp/issues
+  mcp_server: https://mcp.tako.com
