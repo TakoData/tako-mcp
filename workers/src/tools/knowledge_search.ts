@@ -110,7 +110,7 @@ const knowledge_search = {
         url: card.url ?? null,
         source: card.source ?? null,
       };
-      if (cardId !== null && cardId !== undefined && cardId !== "") {
+      if (cardId !== null && cardId !== "") {
         return {
           ...base,
           open_ui_tool: "open_chart_ui" as const,

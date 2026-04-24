@@ -9,7 +9,7 @@
  */
 import { z } from "zod";
 
-import { resolvePublicBase } from "../env.js";
+import { resolvePublicApiBase } from "../env.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -51,13 +51,17 @@ const get_chart_image = {
   async handler(input, ctx) {
     const pubId = encodeURIComponent(input.pub_id);
     const darkMode = input.dark_mode ? "true" : "false";
-    // `resolvePublicBase` prefers `PUBLIC_BASE_URL` when set (this is the
-    // URL the user's browser will load), falls back to `DJANGO_BASE_URL`,
-    // and enforces the same invariants `buildUrl` does for the Django
-    // origin (non-empty, http/https scheme, no trailing slash). Throws
-    // loud on config drift — this URL flows to user browsers, so it's a
-    // security boundary, not a soft fallback.
-    const base = resolvePublicBase(ctx.env);
+    // `resolvePublicApiBase` prefers `PUBLIC_API_URL` when set (the
+    // origin serving `/api/v1/image/...`), falls back to
+    // `DJANGO_BASE_URL`, and enforces the same invariants `buildUrl`
+    // does for the Django origin (non-empty, http/https scheme, no
+    // trailing slash). Kept distinct from `resolvePublicBase` (used by
+    // `open_chart_ui`) because production API and web origins can
+    // diverge (`api.tako.com` vs `tako.com`) — mirrors the
+    // `PUBLIC_API_URL` / `PUBLIC_BASE_URL` split in the Python
+    // reference. Throws loud on config drift — this URL flows to user
+    // browsers, so it's a security boundary, not a soft fallback.
+    const base = resolvePublicApiBase(ctx.env);
     const image_url = `${base}/api/v1/image/${pubId}/?dark_mode=${darkMode}`;
     return {
       image_url,

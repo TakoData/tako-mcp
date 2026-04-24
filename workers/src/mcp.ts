@@ -164,8 +164,22 @@ export function djangoErrorToToolResult(err: DjangoError): {
   if (err instanceof DjangoBadRequestError || err instanceof DjangoHttpError) {
     structured.body = err.body;
   }
+  // For 400s, splice the response body into the text content. DRF
+  // validation errors (missing fields, invalid enum values, bad
+  // component config) carry the guidance the LLM needs to retry;
+  // keeping it in `structuredContent.body` alone isn't enough because
+  // not every MCP client surfaces structured content to the model.
+  // Intentionally scoped to `DjangoBadRequestError` — other subtypes
+  // (404/401/5xx/timeout) don't carry LLM-actionable detail, so their
+  // text stays body-free to keep Workers Logs greppable. `err.message`
+  // stays body-free by construction (log-injection guard in
+  // `django.ts`); the splice happens here at the MCP boundary.
+  const text =
+    err instanceof DjangoBadRequestError
+      ? `${err.message}: ${err.body}`
+      : err.message;
   return {
-    content: [{ type: "text", text: err.message }],
+    content: [{ type: "text", text }],
     structuredContent: structured,
     isError: true,
   };

@@ -17,7 +17,7 @@
  */
 import { z } from "zod";
 
-import { DjangoBadRequestError, djangoPost } from "../django.js";
+import { djangoPost } from "../django.js";
 import type { ToolModule } from "./types.js";
 
 const componentSchema = z
@@ -89,29 +89,19 @@ const create_chart = {
     if (input.title !== undefined) body.title = input.title;
     if (input.description !== undefined) body.description = input.description;
     if (input.source !== undefined) body.source = input.source;
-    let data: DjangoResponse;
-    try {
-      data = await djangoPost<DjangoResponse>(
-        ctx.env,
-        ctx.token,
-        "/api/v1/thin_viz/create/",
-        body,
-        { timeoutMs: 60_000 },
-      );
-    } catch (err) {
-      // Chart creation 400s carry actionable validation detail (missing
-      // component fields, invalid component_type, wrong config shape, etc.).
-      // `DjangoBadRequestError` keeps that detail on `.body` rather than in
-      // `.message` (log-injection guard in `django.ts`) — re-throw with the
-      // body so the LLM can read Tako's validation guidance and correct the
-      // components on retry.
-      if (err instanceof DjangoBadRequestError) {
-        throw new Error(
-          `Tako rejected create_chart (400): ${err.body}`,
-        );
-      }
-      throw err;
-    }
+    // Chart creation 400s carry actionable validation detail (missing
+    // component fields, invalid component_type, wrong config shape, etc.).
+    // `DjangoBadRequestError` keeps that detail on `.body`; the MCP
+    // adapter (`djangoErrorToToolResult`) splices `.body` into the tool's
+    // text content so the LLM can read Tako's validation guidance and
+    // retry. Let the error propagate — no per-tool try/catch needed.
+    const data = await djangoPost<DjangoResponse>(
+      ctx.env,
+      ctx.token,
+      "/api/v1/thin_viz/create/",
+      body,
+      { timeoutMs: 60_000 },
+    );
     const cardId = data.card_id ?? null;
     const base = {
       card_id: cardId,
@@ -121,7 +111,7 @@ const create_chart = {
       embed_url: data.embed_url ?? null,
       image_url: data.image_url ?? null,
     };
-    if (cardId !== null && cardId !== undefined && cardId !== "") {
+    if (cardId !== null && cardId !== "") {
       return {
         ...base,
         open_ui_tool: "open_chart_ui" as const,

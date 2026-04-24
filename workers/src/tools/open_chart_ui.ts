@@ -53,13 +53,17 @@ const inputSchema = z.object({
     .int()
     .min(1)
     .default(900)
-    .describe("Initial iframe width in pixels."),
+    .describe(
+      'Advisory width in pixels. The returned `iframe_html` pins the iframe to `width="100%"` so it fills its container; consumers should use this value to size the container they render `iframe_html` into. Mirrors the Python reference, which only uses `width` as an MCP-UI `PREFERRED_FRAME_SIZE` hint.',
+    ),
   height: z
     .number()
     .int()
     .min(1)
     .default(600)
-    .describe("Initial iframe height in pixels."),
+    .describe(
+      "Initial iframe height in pixels. Applied directly in the iframe's CSS (`height` + `min-height`) — no resize handshake.",
+    ),
 });
 
 // Tighter than `z.string().url()` — Zod's URL check accepts `javascript:`,
@@ -74,6 +78,10 @@ const outputSchema = z.object({
     .regex(HTTP_URL_REGEX, { message: "embed_url must be http(s)" }),
   iframe_html: z.string(),
   dark_mode: z.boolean(),
+  // `width` is advisory — the iframe in `iframe_html` is `width="100%"`,
+  // so consumers render at whatever container width they choose and use
+  // this value as the suggested target. `height` is authoritative —
+  // baked into the iframe's CSS.
   width: z.number().int().positive(),
   height: z.number().int().positive(),
 });
@@ -120,6 +128,8 @@ const open_chart_ui = {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; }
+      /* width: 100% by design — matches the Python reference. input.width is
+         advisory only; consumers size the container that wraps this HTML. */
       #tako-embed {
         width: 100% !important;
         height: ${input.height}px !important;

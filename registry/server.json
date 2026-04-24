@@ -274,12 +274,12 @@
         },
         "width": {
           "type": "integer",
-          "description": "Initial iframe width in pixels.",
+          "description": "Advisory width in pixels. The returned `iframe_html` pins the iframe to `width=\"100%\"` so it fills its container; consumers should use this value to size the container they render `iframe_html` into. Mirrors the Python reference, which only uses `width` as an MCP-UI `PREFERRED_FRAME_SIZE` hint.",
           "default": 900
         },
         "height": {
           "type": "integer",
-          "description": "Initial iframe height in pixels.",
+          "description": "Initial iframe height in pixels. Applied directly in the iframe's CSS (`height` + `min-height`) — no resize handshake.",
           "default": 600
         }
       },

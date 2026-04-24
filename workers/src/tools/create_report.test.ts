@@ -1,21 +1,29 @@
 /**
  * Tests for `create_report`'s error-forwarding contract.
  *
- * Iter-1 of the self-review loop added a specific behavior: when Django
- * returns 400, the tool catches `DjangoBadRequestError` and re-throws an
- * `Error` whose message contains the response body. This is load-bearing
- * — the input-schema description promises LLMs can read the list of valid
- * `report_type` values from the thrown message and retry. A future
- * refactor that drops the `instanceof` branch (or swaps `Error` for a
- * subclass the SDK doesn't special-case) would silently break that
- * contract.
+ * Contract: `create_report` does NOT catch or rewrap Django transport
+ * errors. It lets `DjangoBadRequestError` propagate with the response
+ * body intact on `.body`; the MCP adapter (`djangoErrorToToolResult`)
+ * splices that body into the tool's text content so the LLM can read
+ * Tako's DRF validation guidance and retry.
  *
- * Focuses ONLY on the splice path — the happy path is exercised by the
- * integration test in `src/index.test.ts` once we add per-tool Django
- * mocking. Keep this file narrow.
+ * This file locks two properties:
+ *   1. On 400, the tool surfaces `DjangoBadRequestError` unchanged
+ *      (so `err.body` is available to the adapter).
+ *   2. On non-400, the tool surfaces the appropriate non-BadRequest
+ *      `DjangoError` subtype (i.e. no catch-all swallowing).
+ *
+ * A future refactor that wraps Django errors inside `create_report` —
+ * e.g. `throw new Error(err.body)` — would silently break the adapter's
+ * splice logic and strip `structuredContent.body` from the result. Keep
+ * this file narrow; the happy path is covered by `src/index.test.ts`.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  DjangoBadRequestError,
+  DjangoHttpError,
+} from "../django.js";
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import create_report from "./create_report.js";
@@ -43,7 +51,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("create_report error forwarding", () => {
-  it("splices the 400 response body into the thrown Error message", async () => {
+  it("propagates DjangoBadRequestError with the response body intact on 400", async () => {
     // Realistic DRF validation payload — what Django returns when the
     // `report_type` slug isn't in `get_all_report_types()`.
     const drfErrorBody = {
@@ -64,30 +72,27 @@ describe("create_report error forwarding", () => {
       )
       .catch((e) => e);
 
-    // Tool must surface a plain Error (the MCP SDK special-cases `McpError`
-    // but propagates everything else via `error.message` as tool text).
-    expect(err).toBeInstanceOf(Error);
-    const message = (err as Error).message;
-    // Message should identify the tool + status up front so Workers Logs
-    // stay greppable.
-    expect(message).toMatch(/create_report/);
-    expect(message).toMatch(/400/);
-    // The body must be present so an LLM can read the list of valid
-    // `report_type` values and retry — this is the whole point of the
-    // catch-and-rethrow pattern.
-    expect(message).toContain("earnings_analysis");
-    expect(message).toContain("industry_overview");
-    expect(message).toContain("company_deep_dive");
+    // Tool must surface the raw DjangoBadRequestError — the MCP adapter
+    // (`djangoErrorToToolResult`) handles the body splice at the MCP
+    // boundary. Wrapping in `new Error(...)` here would drop the
+    // `.body` / `.path` / `.method` metadata.
+    expect(err).toBeInstanceOf(DjangoBadRequestError);
+    const bad = err as DjangoBadRequestError;
+    expect(bad.status).toBe(400);
+    expect(bad.path).toBe("/api/v1/internal/reports/");
+    expect(bad.method).toBe("POST");
+    // Body must contain the DRF validation detail so the adapter can
+    // splice it into the tool's text content.
+    expect(bad.body).toContain("earnings_analysis");
+    expect(bad.body).toContain("industry_overview");
+    expect(bad.body).toContain("company_deep_dive");
   });
 
-  it("does not catch non-400 errors (those propagate unchanged)", async () => {
-    // A 500 should NOT be swallowed into a tool-friendly message — it's a
-    // genuine server error and the SDK/runtime should see it unchanged.
-    // Verifies the catch branch is narrow (`instanceof DjangoBadRequestError`
-    // only) and not a catch-all.
-    mockFetchOnce(
-      jsonResponse(500, { detail: "Internal Server Error" }),
-    );
+  it("propagates non-400 errors unchanged (no BadRequest special-casing)", async () => {
+    // A 500 should surface as DjangoHttpError — NOT accidentally wrapped
+    // or coerced into DjangoBadRequestError. Verifies the tool doesn't
+    // contain a catch-all rewrite path.
+    mockFetchOnce(jsonResponse(500, { detail: "Internal Server Error" }));
 
     const err = await create_report
       .handler(
@@ -100,10 +105,8 @@ describe("create_report error forwarding", () => {
       )
       .catch((e) => e);
 
-    expect(err).toBeInstanceOf(Error);
-    // Should be the generic DjangoHttpError message, NOT the spliced-body
-    // "Tako rejected create_report" prefix reserved for 400s.
-    expect((err as Error).message).not.toMatch(/Tako rejected/);
-    expect((err as Error).message).toMatch(/500/);
+    expect(err).toBeInstanceOf(DjangoHttpError);
+    expect(err).not.toBeInstanceOf(DjangoBadRequestError);
+    expect((err as DjangoHttpError).status).toBe(500);
   });
 });
