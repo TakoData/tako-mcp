@@ -29,6 +29,7 @@
  */
 import { z } from "zod";
 
+import { resolvePublicBase } from "../env.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -54,9 +55,16 @@ const inputSchema = z.object({
     .describe("Initial iframe height in pixels."),
 });
 
+// Tighter than `z.string().url()` — Zod's URL check accepts `javascript:`,
+// `data:`, and other non-web schemes. Since `embed_url` is handed to a
+// browser (possibly inlined into an `<iframe src>`), constrain to http(s).
+const HTTP_URL_REGEX = /^https?:\/\//;
+
 const outputSchema = z.object({
   pub_id: z.string(),
-  embed_url: z.string().url(),
+  embed_url: z
+    .string()
+    .regex(HTTP_URL_REGEX, { message: "embed_url must be http(s)" }),
   iframe_html: z.string(),
   dark_mode: z.boolean(),
   width: z.number().int().positive(),
@@ -85,12 +93,14 @@ const open_chart_ui = {
     openWorldHint: true,
   },
   async handler(input, ctx) {
-    // Prefer `PUBLIC_BASE_URL` for the embed origin (this is the URL a user
-    // will load in a browser), else fall back to `DJANGO_BASE_URL` — mirrors
-    // the Python legacy `PUBLIC_BASE_URL` / `TAKO_API_URL` split at
-    // `src/tako_mcp/server.py:36-40`. Trailing slash stripped defensively.
-    const rawBase = ctx.env.PUBLIC_BASE_URL ?? ctx.env.DJANGO_BASE_URL;
-    const base = rawBase.replace(/\/+$/, "");
+    // `resolvePublicBase` prefers `PUBLIC_BASE_URL` (user-browser origin)
+    // and falls back to `DJANGO_BASE_URL`, validating non-empty, http/https
+    // scheme, and no trailing slash. The validated value flows directly
+    // into the `<iframe src="...">` below, so we rely on the helper's
+    // scheme check (not `encodeURIComponent` or `escapeHtml` alone) as the
+    // security boundary — a `javascript:` PUBLIC_BASE_URL would otherwise
+    // produce an iframe that executes script on render.
+    const base = resolvePublicBase(ctx.env);
     const theme = input.dark_mode ? "dark" : "light";
     const pubId = encodeURIComponent(input.pub_id);
     const embedUrl = `${base}/embed/${pubId}/?theme=${theme}`;

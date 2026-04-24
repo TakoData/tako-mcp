@@ -85,14 +85,27 @@ const list_reports = {
       { query, timeoutMs: 30_000 },
     );
     const rows = Array.isArray(data) ? data : (data.results ?? []);
-    const reports = rows.map((r) => ({
-      report_id: r.report_id ?? r.id ?? "",
-      title: r.title ?? null,
-      report_type: r.report_type ?? null,
-      status: r.status ?? null,
-      created_at: r.created_at ?? null,
-      credit_cost: r.credit_cost ?? null,
-    }));
+    // Skip rows with no usable id rather than emit an empty-id report that
+    // would break downstream `get_report("")` calls. Warn so a backend
+    // anomaly surfaces in Workers Logs during incident triage.
+    const reports: Array<z.infer<typeof reportSummarySchema>> = [];
+    for (const r of rows) {
+      const reportId = r.report_id ?? r.id;
+      if (reportId === undefined || reportId === "") {
+        console.warn("list_reports: skipping row with no `report_id` or `id`", {
+          title: r.title,
+        });
+        continue;
+      }
+      reports.push({
+        report_id: reportId,
+        title: r.title ?? null,
+        report_type: r.report_type ?? null,
+        status: r.status ?? null,
+        created_at: r.created_at ?? null,
+        credit_cost: r.credit_cost ?? null,
+      });
+    }
     return { reports, count: reports.length };
   },
 } satisfies ToolModule<typeof inputSchema, z.infer<typeof outputSchema>>;

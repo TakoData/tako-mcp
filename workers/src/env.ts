@@ -25,3 +25,46 @@ export interface Env {
    */
   PUBLIC_BASE_URL?: string;
 }
+
+/**
+ * Resolve the origin used for user-visible URLs (chart image URLs, embed
+ * iframe `src` values). Prefers `PUBLIC_BASE_URL` when set, falls back to
+ * `DJANGO_BASE_URL`. Validates the chosen value against the same
+ * invariants `django.ts::buildUrl` enforces for the Django origin:
+ *
+ * - Non-empty.
+ * - Scheme is `http:` or `https:` (rejects `javascript:`, `data:` etc.).
+ * - No trailing slash (so concatenation `${base}/path` produces exactly
+ *   one separator).
+ *
+ * Fails loudly on config error — these URLs flow back to the end-user's
+ * browser, so silent fallback on bad input would be a security boundary.
+ */
+export function resolvePublicBase(env: Env): string {
+  const raw = env.PUBLIC_BASE_URL ?? env.DJANGO_BASE_URL;
+  if (raw === undefined || raw === "") {
+    throw new Error(
+      "Neither PUBLIC_BASE_URL nor DJANGO_BASE_URL is configured (empty or undefined binding)",
+    );
+  }
+  if (raw.endsWith("/")) {
+    throw new Error(
+      `public base URL must not end with a trailing slash (got \`${raw}\`)`,
+    );
+  }
+  // Validate scheme by parsing as a URL. `new URL(...)` throws on
+  // unparseable input, and we further require http/https so a pasted
+  // `javascript:` or `data:` URL can never reach an `<iframe src="...">`.
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`public base URL is not a valid URL (got \`${raw}\`)`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `public base URL must use http or https (got \`${parsed.protocol}\`)`,
+    );
+  }
+  return raw;
+}

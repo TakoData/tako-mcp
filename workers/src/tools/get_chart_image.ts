@@ -9,6 +9,7 @@
  */
 import { z } from "zod";
 
+import { resolvePublicBase } from "../env.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -22,8 +23,15 @@ const inputSchema = z.object({
     .describe("Render the dark-mode variant of the PNG."),
 });
 
+// Constrain to http(s) — this URL is handed to a browser (via the LLM
+// rendering it as an `<img src>` or link), so schemes like `javascript:`
+// or `data:` must be rejected at the tool boundary.
+const HTTP_URL_REGEX = /^https?:\/\//;
+
 const outputSchema = z.object({
-  image_url: z.string().url(),
+  image_url: z
+    .string()
+    .regex(HTTP_URL_REGEX, { message: "image_url must be http(s)" }),
   pub_id: z.string(),
   dark_mode: z.boolean(),
 });
@@ -43,14 +51,13 @@ const get_chart_image = {
   async handler(input, ctx) {
     const pubId = encodeURIComponent(input.pub_id);
     const darkMode = input.dark_mode ? "true" : "false";
-    // Prefer `PUBLIC_BASE_URL` when set (this is the URL the user's browser
-    // will load), else fall back to `DJANGO_BASE_URL`. Matches the Python
-    // legacy split between `TAKO_API_URL` (internal) and `PUBLIC_API_URL`
-    // (user-facing) — see `src/tako_mcp/server.py:36-40`. Trailing slash is
-    // stripped defensively; `Env` contract says neither field should have
-    // one, but stripping keeps the URL well-formed even if a binding drifts.
-    const rawBase = ctx.env.PUBLIC_BASE_URL ?? ctx.env.DJANGO_BASE_URL;
-    const base = rawBase.replace(/\/+$/, "");
+    // `resolvePublicBase` prefers `PUBLIC_BASE_URL` when set (this is the
+    // URL the user's browser will load), falls back to `DJANGO_BASE_URL`,
+    // and enforces the same invariants `buildUrl` does for the Django
+    // origin (non-empty, http/https scheme, no trailing slash). Throws
+    // loud on config drift — this URL flows to user browsers, so it's a
+    // security boundary, not a soft fallback.
+    const base = resolvePublicBase(ctx.env);
     const image_url = `${base}/api/v1/image/${pubId}/?dark_mode=${darkMode}`;
     return {
       image_url,

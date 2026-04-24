@@ -106,8 +106,19 @@ const create_report = {
       }
       throw err;
     }
+    // Prefer `report_id`, fall back to `id`. Throwing when both are
+    // missing is louder than returning `""` — an empty id silently
+    // propagates into a downstream `get_report("")` call that 404s with
+    // a confusing message, while a thrown error fails precisely at the
+    // tool that produced the bad response.
+    const reportId = data.report_id ?? data.id;
+    if (reportId === undefined || reportId === "") {
+      throw new Error(
+        "Tako create_report response missing both `report_id` and `id`",
+      );
+    }
     return {
-      report_id: data.report_id ?? data.id ?? "",
+      report_id: reportId,
       status: data.status ?? null,
       title: data.title ?? null,
       credit_cost: data.credit_cost ?? null,

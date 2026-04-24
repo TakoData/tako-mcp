@@ -63,18 +63,20 @@ type DjangoResponse = {
   [k: string]: unknown;
 };
 
-// Keys lifted to their own top-level output field and therefore excluded
-// from the flattened `export_urls` bucket to avoid double-reporting.
-const EXPORT_URL_KEY_EXCLUSIONS = new Set(["webpage_url"]);
+// Keys that already have their own dedicated top-level output field and
+// should therefore NOT be re-flattened into the `export_urls` bucket.
+// Named for the semantic distinction (top-level vs flattened) rather than
+// the filter mechanism, to keep future additions obvious.
+const TOP_LEVEL_URL_KEYS = new Set(["webpage_url"]);
 
 function extractExportUrls(data: DjangoResponse): Record<string, string> | null {
   const urls: Record<string, string> = {};
   for (const [key, value] of Object.entries(data)) {
-    if (EXPORT_URL_KEY_EXCLUSIONS.has(key)) continue;
-    if (
-      typeof value === "string" &&
-      (key.endsWith("_url") || key.endsWith("_urls"))
-    ) {
+    if (TOP_LEVEL_URL_KEYS.has(key)) continue;
+    // Only `_url` (singular) — no known export endpoint returns a string
+    // under a plural `_urls` key (those are typically arrays, which wouldn't
+    // fit `Record<string, string>` anyway). Drop the dead branch.
+    if (typeof value === "string" && key.endsWith("_url")) {
       urls[key] = value;
     }
   }

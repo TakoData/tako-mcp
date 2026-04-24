@@ -25,9 +25,14 @@ const inputSchema = z.object({});
 // usage aggregates, expiry) without needing a tool re-ship. Using `.loose()`
 // lets Zod accept additional keys; they still reach the LLM via
 // `structuredContent` because the adapter stringifies the whole payload.
+//
+// `credit_balance` is typed as `number | string` because DRF serializes
+// `DecimalField` as a string by default (`coerce_to_string=True`). The
+// backend payload shape is not catalogued in the audit, so we accept both
+// rather than break the tool on the first call if the field is a string.
 const detailsSchema = z
   .object({
-    credit_balance: z.number().optional(),
+    credit_balance: z.union([z.number(), z.string()]).optional(),
   })
   .loose();
 
