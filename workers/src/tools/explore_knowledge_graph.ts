@@ -115,7 +115,7 @@ type DjangoResponse = {
 const explore_knowledge_graph = {
   name: "explore_knowledge_graph",
   description:
-    "Use this when you need to discover what data is available before searching. Finds entities (companies, countries), metrics (revenue, GDP), cohorts (S&P 500, G7), and time periods. Use to disambiguate queries or understand what data Tako has before calling knowledge_search.",
+    "Use this to discover what data Tako has before searching. Finds entities (companies, countries, teams, candidates, websites, cities), metrics (revenue, GDP, poll share, unique visitors, temperature, box-office), cohorts (S&P 500, G7, NBA teams, presidential candidates, top-100 websites), and time periods. Covers the full Tako domain — economics, finance, demographics, technology, weather, polls and elections, internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more. Use this to disambiguate a user's query or to understand available dimensions before calling knowledge_search.",
   inputSchema,
   outputSchema,
   annotations: {

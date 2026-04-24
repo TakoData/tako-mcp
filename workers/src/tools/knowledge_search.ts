@@ -76,7 +76,7 @@ type DjangoResponse = {
 const knowledge_search = {
   name: "knowledge_search",
   description:
-    "Use this when you need to find existing charts and data visualizations on any topic. Searches Tako's curated knowledge base of charts covering economics, finance, demographics, technology, and more. Start here when a user asks about data trends, comparisons, or statistics — Tako likely already has a relevant visualization.",
+    "Use this to find existing charts and live-data visualizations on almost any topic. Tako's knowledge base covers economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more — plus real-time / live data via the deep-research pipeline. Default to calling this first whenever a user asks about any trend, comparison, statistic, current value, or forecast, even if the topic seems outside traditional 'chart' categories — Tako very likely has a relevant card.",
   inputSchema,
   outputSchema,
   annotations: {
