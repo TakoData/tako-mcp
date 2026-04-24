@@ -42,9 +42,7 @@
     },
     "docker": {
       "image": "ghcr.io/takodata/tako-mcp:latest",
-      "ports": [
-        "8001:8001"
-      ],
+      "ports": ["8001:8001"],
       "environment": {
         "PUBLIC_BASE_URL": "https://tako.com"
       }
@@ -60,25 +58,6 @@
     "description": "Tako API token. Sign up at tako.com and create a token in account settings.",
     "setup_url": "https://tako.com"
   },
-  "tools": [
-    {
-      "name": "_example",
-      "description": "Internal placeholder — echoes back its input. Do not use; will be removed when the first real tool lands.",
-      "parameters": {
-        "message": {
-          "type": "string",
-          "description": "Anything to echo back.",
-          "required": true
-        }
-      },
-      "annotations": {
-        "title": "Tako: Example (Placeholder)",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "openWorldHint": false
-      }
-    }
-  ],
   "links": {
     "homepage": "https://tako.com",
     "documentation": "https://github.com/TakoData/tako-mcp#readme",

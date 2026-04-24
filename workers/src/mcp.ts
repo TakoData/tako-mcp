@@ -5,7 +5,23 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 // `.js` entries. Adding the extension here breaks module resolution.
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 
+import {
+  BearerAuthError,
+  bearerAuthErrorToJsonRpc,
+  extractBearer,
+} from "./auth.js";
+import {
+  DjangoBadRequestError,
+  DjangoError,
+  DjangoHttpError,
+  DjangoNotFoundError,
+  DjangoResponseParseError,
+  DjangoTimeoutError,
+  DjangoUnauthorizedError,
+} from "./django.js";
 import type { Env } from "./env.js";
+import { TOOL_REGISTRY } from "./tools/_registry.js";
+import type { AnyToolModule, ToolContext } from "./tools/types.js";
 
 /**
  * Server identity. `registry/server.json` is the canonical source — keep this
@@ -28,11 +44,13 @@ export const SERVER_VERSION = "0.1.0";
 const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
 
 /**
- * Build a fresh `McpServer` with tako-mcp identity. No tools are registered
- * yet — that lands in Phase 2.
+ * Build a fresh `McpServer` with tako-mcp identity and register every tool
+ * in `TOOL_REGISTRY` against it. Each handler closes over the per-request
+ * `ToolContext` so tools see the right Bearer token + env bindings without
+ * having to reach for request state themselves.
  */
-export function createMcpServer(): McpServer {
-  return new McpServer(
+export function createMcpServer(ctx: ToolContext): McpServer {
+  const server = new McpServer(
     {
       name: SERVER_NAME,
       version: SERVER_VERSION,
@@ -41,6 +59,126 @@ export function createMcpServer(): McpServer {
       jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
     },
   );
+
+  for (const tool of TOOL_REGISTRY) {
+    registerTool(server, tool, ctx);
+  }
+
+  return server;
+}
+
+/**
+ * Register a single `ToolModule` with an `McpServer`, adapting between our
+ * handler signature (`(input, ctx) => Promise<Output>`) and the SDK's
+ * expected `CallToolResult` return shape.
+ *
+ * The SDK's `registerTool` takes `ZodRawShape` (the `.shape` of a z.object),
+ * not a full ZodObject — common gotcha. We pull `.shape` out here so tool
+ * files don't have to.
+ */
+function registerTool(
+  server: McpServer,
+  tool: AnyToolModule,
+  ctx: ToolContext,
+): void {
+  // SDK's `registerTool` takes `ZodRawShape` (the `.shape` of a z.object),
+  // not a full ZodObject — pull `.shape` here so tool files don't have to.
+  const config: Record<string, unknown> = {
+    title: tool.annotations.title,
+    description: tool.description,
+    inputSchema: tool.inputSchema.shape,
+    annotations: tool.annotations,
+  };
+
+  if (tool.outputSchema !== undefined) {
+    // Output schemas are optional — only read tools + `create_chart` declare
+    // them. In practice every `outputSchema` we ship is `z.object(...)`,
+    // so `.shape` is defined; if it isn't, we simply don't pass outputSchema.
+    const outputShape = (tool.outputSchema as unknown as { shape?: unknown })
+      .shape;
+    if (outputShape !== undefined) {
+      config.outputSchema = outputShape;
+    }
+  }
+
+  server.registerTool(
+    tool.name,
+    config as Parameters<McpServer["registerTool"]>[1],
+    async (input) => {
+      let output: unknown;
+      try {
+        output = await tool.handler(input as unknown, ctx);
+      } catch (err) {
+        // Map Django transport failures to a structured `isError: true`
+        // result so MCP clients can distinguish "your token was rejected"
+        // from "upstream timed out" without string-matching `err.message`.
+        // Non-Django throws re-throw to the SDK, which wraps them in a
+        // generic tool error (last-resort path for handler bugs).
+        if (err instanceof DjangoError) {
+          return djangoErrorToToolResult(err);
+        }
+        throw err;
+      }
+      // When the tool declares an `outputSchema`, report the structured
+      // payload alongside a JSON-stringified text fallback. Clients that
+      // understand `structuredContent` get the typed value; legacy clients
+      // fall back to the text content. When no outputSchema, text-only is
+      // sufficient.
+      const text = JSON.stringify(output, null, 2);
+      const result: {
+        content: Array<{ type: "text"; text: string }>;
+        structuredContent?: Record<string, unknown>;
+      } = {
+        content: [{ type: "text", text }],
+      };
+      if (tool.outputSchema !== undefined) {
+        result.structuredContent = output as Record<string, unknown>;
+      }
+      return result;
+    },
+  );
+}
+
+/**
+ * Convert a `DjangoError` into a structured MCP `CallToolResult` with
+ * `isError: true`. Each subtype maps to a distinct `kind` discriminator so
+ * clients can branch on `structuredContent.kind` (e.g. "unauthorized" vs
+ * "timeout") instead of parsing `err.message`. Per-subtype fields
+ * (`timeoutMs`, `body`) are only attached where they exist on the error.
+ *
+ * Exported for unit testing — the wire contract is stable enough that
+ * Phase 2 tests can rely on the `kind` strings here.
+ */
+export function djangoErrorToToolResult(err: DjangoError): {
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent: Record<string, unknown>;
+  isError: true;
+} {
+  const structured: Record<string, unknown> = {
+    kind: djangoErrorKind(err),
+    path: err.path,
+    method: err.method,
+  };
+  if (err.status !== undefined) structured.status = err.status;
+  if (err instanceof DjangoTimeoutError) structured.timeoutMs = err.timeoutMs;
+  if (err instanceof DjangoBadRequestError || err instanceof DjangoHttpError) {
+    structured.body = err.body;
+  }
+  return {
+    content: [{ type: "text", text: err.message }],
+    structuredContent: structured,
+    isError: true,
+  };
+}
+
+function djangoErrorKind(err: DjangoError): string {
+  if (err instanceof DjangoUnauthorizedError) return "unauthorized";
+  if (err instanceof DjangoTimeoutError) return "timeout";
+  if (err instanceof DjangoNotFoundError) return "not_found";
+  if (err instanceof DjangoBadRequestError) return "bad_request";
+  if (err instanceof DjangoResponseParseError) return "response_parse";
+  if (err instanceof DjangoHttpError) return "http";
+  return "unknown";
 }
 
 /**
@@ -52,27 +190,36 @@ export function createMcpServer(): McpServer {
  * request carries all the state it needs (client sends `initialize` and
  * subsequent calls independently; re-negotiation is cheap).
  *
+ * Auth gate: `extractBearer` runs BEFORE the SDK sees the request. A
+ * missing / malformed / empty `Authorization` header short-circuits here
+ * with a uniform JSON-RPC 401 response — the SDK never processes
+ * unauthenticated traffic. `initialize` requires auth too; MCP clients are
+ * expected to be configured with a Tako API token before they connect.
+ *
  * `enableJsonResponse: true` makes the transport return a single JSON-RPC
  * response body instead of an SSE stream, which keeps the wire format simple
  * for the common request/response case.
- *
- * `env` is threaded through so Phase 2 tool handlers can reach
- * `DJANGO_BASE_URL` (and future bindings) via `djangoGet` / `djangoPost`.
  */
 export async function handleMcpRequest(
   request: Request,
-  // `env` is unused until Phase 2 registers tools — accepted now so
-  // `index.ts` wires bindings through the right shape from the start.
   env: Env,
 ): Promise<Response> {
-  void env;
-  // TODO(Phase 2, Linear project "Tako MCP"): wire `extractBearer` from
-  // `./auth.ts` BEFORE registering any tool. Phase 1 intentionally ships
-  // /mcp without auth because no tools are exposed (initialize handshake
-  // is harmless). The moment a tool lands, this endpoint starts proxying
-  // to Django — unauthenticated access must be closed in the same PR.
+  // Gate the whole endpoint behind Bearer auth. If the header is missing /
+  // malformed / empty, return a uniform 401 before invoking the SDK.
+  let token: string;
   try {
-    const server = createMcpServer();
+    token = extractBearer(request);
+  } catch (err) {
+    if (err instanceof BearerAuthError) {
+      return bearerAuthResponse(err);
+    }
+    throw err;
+  }
+
+  const ctx: ToolContext = { token, env };
+
+  try {
+    const server = createMcpServer(ctx);
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
     // model (no persistent per-session state) and keeps each request
@@ -89,8 +236,7 @@ export async function handleMcpRequest(
       //
       // Safe today ONLY because `enableJsonResponse: true` buffers the full
       // response before `handleRequest` resolves — there is no in-flight SSE
-      // stream for `transport.close()` to truncate, and no tools are
-      // registered that could produce one.
+      // stream for `transport.close()` to truncate.
       //
       // When Phase 2 introduces tools that stream results over SSE, this
       // `finally` will clear `_streamMapping` and abort the stream before
@@ -102,7 +248,7 @@ export async function handleMcpRequest(
   } catch (err) {
     // The SDK handles JSON-RPC validation errors internally. This outer
     // catch is a last-resort safety net for unexpected throws from
-    // `server.connect(transport)` or future handlers — we don't want to
+    // `server.connect(transport)` or tool handler bugs — we don't want to
     // leak a generic Worker 500 (or the exception message) to clients.
     // Log to Workers Logs (observability is enabled in wrangler.jsonc) so
     // production incidents still produce a signal.
@@ -119,4 +265,30 @@ export async function handleMcpRequest(
       },
     );
   }
+}
+
+/**
+ * Build the HTTP 401 response for a bearer auth failure. The body is a
+ * JSON-RPC 2.0 error envelope with `id: null` (auth failures happen before
+ * the SDK sees the request id). The `code` / `data.kind` pair comes from
+ * {@link bearerAuthErrorToJsonRpc}; see `auth.ts`.
+ *
+ * Emits `WWW-Authenticate: Bearer` per RFC 6750 §3 so clients know to
+ * supply a Bearer token on retry.
+ */
+function bearerAuthResponse(err: BearerAuthError): Response {
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: bearerAuthErrorToJsonRpc(err),
+    }),
+    {
+      status: 401,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "WWW-Authenticate": `Bearer error="invalid_token"`,
+      },
+    },
+  );
 }

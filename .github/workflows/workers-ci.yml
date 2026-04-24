@@ -5,9 +5,11 @@ on:
     branches: [main]
     paths:
       - 'workers/**'
+      - 'registry/**'
   pull_request:
     paths:
       - 'workers/**'
+      - 'registry/**'
   workflow_dispatch:
 
 concurrency:
@@ -43,6 +45,15 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Registry drift guard. `registry:gen` writes `registry/server.json`
+      # and `workers/src/tools/_registry.ts` from the Zod schemas + annotations
+      # in `workers/src/tools/*.ts`. Check mode regenerates in-memory and
+      # exits non-zero on any drift — so a tool edit that forgets to run
+      # `npm run registry:gen` fails the PR here instead of shipping a
+      # stale registry or barrel.
+      - name: Registry check
+        run: npm run registry:check
 
       # Validate wrangler.jsonc without publishing. Catches invalid
       # compatibility dates, unknown fields, or missing `main` before they
