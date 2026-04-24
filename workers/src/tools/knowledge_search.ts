@@ -6,10 +6,15 @@
  * a `results[]` shape, and adds `open_ui_tool` / `open_ui_args` hints so an LLM
  * can chain into `open_chart_ui` without re-deriving the card id.
  *
- * `search_effort` default ("deep") matches the Python tool. On the backend, deep
- * mode delegates to the Orca/orchestrator async pipeline — legacy Python MCP
- * relied on the sync endpoint's transparent redirect; that behavior is
- * preserved here.
+ * `search_effort` is optional; omitted → run `fast` first, escalate to `deep`
+ * only if `fast` returns zero cards. Deep against staging/prod returns a
+ * 202 with `{ task_id, status: "pending" }` and expects the caller to poll
+ * `GET /api/v1/knowledge_search/async/status/?task_id=<id>` until
+ * `status: "COMPLETED"` (the cards land on `result.outputs.knowledge_cards[]`).
+ * This tool does NOT poll yet — an explicit `search_effort="deep"` call will
+ * silently return `[]` because the 202 body has no `outputs.knowledge_cards`.
+ * Legacy Python MCP had the same gap. Implementing polling (budgeted against
+ * the 60s tool timeout) is tracked separately.
  */
 import { z } from "zod";
 
@@ -32,9 +37,9 @@ const inputSchema = z.object({
     .describe("Maximum number of matching cards to return (1–20)."),
   search_effort: z
     .enum(["fast", "medium", "deep", "auto"])
-    .default("deep")
+    .optional()
     .describe(
-      "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, higher credit cost).",
+      "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, higher credit cost). Omit to let the tool run `fast` first and escalate to `deep` only if `fast` returns zero cards — deep against staging/prod is fragile (Orca redirect round-trip) and often empty, so the fallback avoids spending a credit unless `fast` couldn't answer.",
     ),
   country_code: z
     .string()
@@ -76,7 +81,7 @@ type DjangoResponse = {
 const knowledge_search = {
   name: "knowledge_search",
   description:
-    "Use this to find existing charts and live-data visualizations on almost any topic. Tako's knowledge base covers economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more — plus real-time / live data via the deep-research pipeline. Default to calling this first whenever a user asks about any trend, comparison, statistic, current value, or forecast, even if the topic seems outside traditional 'chart' categories — Tako very likely has a relevant card.",
+    "Use this to find existing charts and live-data visualizations on almost any topic. Tako's knowledge base covers economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, prediction markets (Polymarket), internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more — plus real-time / live data via the deep-research pipeline. Default to calling this first whenever a user asks about any trend, comparison, statistic, current value, forecast, or betting/prediction-market odds, even if the topic seems outside traditional 'chart' categories — Tako very likely has a relevant card.",
   inputSchema,
   outputSchema,
   annotations: {
@@ -86,21 +91,33 @@ const knowledge_search = {
     openWorldHint: false,
   },
   async handler(input, ctx) {
-    const body = {
-      inputs: { text: input.query, count: input.count },
-      source_indexes: ["tako"],
-      search_effort: input.search_effort,
-      country_code: input.country_code,
-      locale: input.locale,
+    const runSearch = async (effort: "fast" | "medium" | "deep" | "auto") => {
+      const body = {
+        inputs: { text: input.query, count: input.count },
+        source_indexes: ["tako"],
+        search_effort: effort,
+        country_code: input.country_code,
+        locale: input.locale,
+      };
+      const data = await djangoPost<DjangoResponse>(
+        ctx.env,
+        ctx.token,
+        "/api/v1/knowledge_search",
+        body,
+        { timeoutMs: 60_000 },
+      );
+      return data.outputs?.knowledge_cards ?? [];
     };
-    const data = await djangoPost<DjangoResponse>(
-      ctx.env,
-      ctx.token,
-      "/api/v1/knowledge_search",
-      body,
-      { timeoutMs: 60_000 },
-    );
-    const cards = data.outputs?.knowledge_cards ?? [];
+
+    // When caller omits `search_effort`, orchestrate fast → deep. Deep
+    // against staging/prod frequently returns empty (Orca redirect path
+    // is fragile from Workers), while fast is reliable and credit-cheap,
+    // so running fast first avoids wasted deep calls on common queries.
+    // Any explicit effort — including "fast" — is a directive: single call.
+    let cards = await runSearch(input.search_effort ?? "fast");
+    if (input.search_effort === undefined && cards.length === 0) {
+      cards = await runSearch("deep");
+    }
     const results = cards.map((card) => {
       const cardId = card.card_id ?? null;
       const base = {
