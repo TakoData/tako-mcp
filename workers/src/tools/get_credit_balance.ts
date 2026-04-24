@@ -59,11 +59,20 @@ const get_credit_balance = {
       "/api/v1/credit_balance/",
       { timeoutMs: 15_000 },
     );
-    // Parse-don't-coerce: run the backend payload through the loose schema
-    // so known fields are typed where present and unknown fields pass
-    // through. If validation fails (e.g. backend returns a non-object),
-    // the Zod error propagates to the MCP SDK as a tool-call error.
-    return { details: detailsSchema.parse(data) };
+    // Parse-don't-coerce: run the payload through the loose schema so
+    // known fields are typed where present and unknown fields pass
+    // through. On failure (e.g. backend returns an array or non-object
+    // for some reason), surface a human-readable sentence instead of
+    // the raw Zod issue dump — the latter is noisy and gives the LLM no
+    // hint that this is a backend contract breach rather than a client
+    // bug.
+    const parsed = detailsSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new Error(
+        "Tako credit_balance endpoint returned an unexpected shape (not a JSON object). This is likely a backend issue — retry once; if it persists, flag it to the Tako team.",
+      );
+    }
+    return { details: parsed.data };
   },
 } satisfies ToolModule<typeof inputSchema, z.infer<typeof outputSchema>>;
 

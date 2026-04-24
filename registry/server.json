@@ -222,7 +222,7 @@
     },
     {
       "name": "get_report",
-      "description": "Use this to check the status of a Tako report (from create_report) and fetch its contents once generation completes. Poll every ~15 s until status == 'completed'. When the report is still generating, narrative/sections fields are null; when done, they contain the full report payload and export URLs (pdf, pptx).",
+      "description": "Use this to check the status of a Tako report (from create_report) and fetch its contents once generation completes. Poll every ~15 s; stop polling when status is 'completed' OR 'failed'. When still 'pending' / 'running', narrative / sections fields are null. When 'completed', they contain the full report payload plus export URLs (pdf, pptx). When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely.",
       "parameters": {
         "report_id": {
           "type": "string",

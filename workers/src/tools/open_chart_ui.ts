@@ -25,6 +25,13 @@
  * update this tool to emit a `resource` block containing the HTML and a
  * `ui://tako/embed/{pub_id}` URI. Track under a dedicated ticket.
  *
+ * Additional deliberate omission vs Python: the Python version shipped a
+ * `window.addEventListener("message")` handler that reflowed the iframe
+ * height in response to `{type: "tako::resize"}` postMessages from the
+ * embedded chart. The TS port omits it — even a thin client that drops
+ * `iframe_html` into the DOM will lose the auto-resize. Re-add alongside
+ * the MCP-UI content-block work above.
+ *
  * No Django call — purely a URL + HTML builder.
  */
 import { z } from "zod";
