@@ -43,10 +43,14 @@ const get_chart_image = {
   async handler(input, ctx) {
     const pubId = encodeURIComponent(input.pub_id);
     const darkMode = input.dark_mode ? "true" : "false";
-    // `DJANGO_BASE_URL` points at the internal origin this Worker proxies
-    // through; the image URL is the public one the user's browser will load.
-    // We keep them aligned in staging/prod via wrangler.jsonc env.
-    const base = ctx.env.DJANGO_BASE_URL.replace(/\/+$/, "");
+    // Prefer `PUBLIC_BASE_URL` when set (this is the URL the user's browser
+    // will load), else fall back to `DJANGO_BASE_URL`. Matches the Python
+    // legacy split between `TAKO_API_URL` (internal) and `PUBLIC_API_URL`
+    // (user-facing) — see `src/tako_mcp/server.py:36-40`. Trailing slash is
+    // stripped defensively; `Env` contract says neither field should have
+    // one, but stripping keeps the URL well-formed even if a binding drifts.
+    const rawBase = ctx.env.PUBLIC_BASE_URL ?? ctx.env.DJANGO_BASE_URL;
+    const base = rawBase.replace(/\/+$/, "");
     const image_url = `${base}/api/v1/image/${pubId}/?dark_mode=${darkMode}`;
     return {
       image_url,

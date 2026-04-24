@@ -12,7 +12,7 @@
  */
 import { z } from "zod";
 
-import { djangoPost } from "../django.js";
+import { DjangoBadRequestError, djangoPost } from "../django.js";
 import type { ToolModule } from "./types.js";
 
 const componentSchema = z
@@ -81,13 +81,28 @@ const create_chart = {
     if (input.source !== undefined) {
       body.source = input.source;
     }
-    const data = await djangoPost<DjangoResponse>(
-      ctx.env,
-      ctx.token,
-      `/api/v1/thin_viz/default_schema/${schemaName}/create/`,
-      body,
-      { timeoutMs: 60_000 },
-    );
+    let data: DjangoResponse;
+    try {
+      data = await djangoPost<DjangoResponse>(
+        ctx.env,
+        ctx.token,
+        `/api/v1/thin_viz/default_schema/${schemaName}/create/`,
+        body,
+        { timeoutMs: 60_000 },
+      );
+    } catch (err) {
+      // Chart creation 400s carry actionable per-schema validation detail
+      // (missing component fields, wrong dataset shape, etc.). `DjangoBadRequestError`
+      // keeps that detail on `.body` rather than in `.message` (log-injection
+      // guard in `django.ts`) — re-throw with the body so the LLM can read
+      // Tako's validation guidance and correct the components on retry.
+      if (err instanceof DjangoBadRequestError) {
+        throw new Error(
+          `Tako rejected create_chart for schema "${input.schema_name}" (400): ${err.body}`,
+        );
+      }
+      throw err;
+    }
     const cardId = data.card_id ?? null;
     const base = {
       card_id: cardId,

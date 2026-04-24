@@ -20,10 +20,19 @@ import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({});
 
+// Hint at the field LLMs most care about (`credit_balance`) while staying
+// permissive on everything else — billing may add fields (subscription info,
+// usage aggregates, expiry) without needing a tool re-ship. Using `.loose()`
+// lets Zod accept additional keys; they still reach the LLM via
+// `structuredContent` because the adapter stringifies the whole payload.
+const detailsSchema = z
+  .object({
+    credit_balance: z.number().optional(),
+  })
+  .loose();
+
 const outputSchema = z.object({
-  // Pass the backend payload through as `details`. Kept as `unknown` so this
-  // tool doesn't need re-shipping every time billing adds a field.
-  details: z.unknown(),
+  details: detailsSchema,
 });
 
 const get_credit_balance = {
@@ -39,13 +48,17 @@ const get_credit_balance = {
     openWorldHint: false,
   },
   async handler(_input, ctx) {
-    const data = await djangoGet<unknown>(
+    const data = await djangoGet<Record<string, unknown>>(
       ctx.env,
       ctx.token,
       "/api/v1/credit_balance/",
       { timeoutMs: 15_000 },
     );
-    return { details: data };
+    // Parse-don't-coerce: run the backend payload through the loose schema
+    // so known fields are typed where present and unknown fields pass
+    // through. If validation fails (e.g. backend returns a non-object),
+    // the Zod error propagates to the MCP SDK as a tool-call error.
+    return { details: detailsSchema.parse(data) };
   },
 } satisfies ToolModule<typeof inputSchema, z.infer<typeof outputSchema>>;
 

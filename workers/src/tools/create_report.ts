@@ -14,7 +14,7 @@
  */
 import { z } from "zod";
 
-import { djangoPost } from "../django.js";
+import { DjangoBadRequestError, djangoPost } from "../django.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -86,13 +86,26 @@ const create_report = {
       body.template_source = input.template_source;
     }
 
-    const data = await djangoPost<DjangoResponse>(
-      ctx.env,
-      ctx.token,
-      "/api/v1/internal/reports/",
-      body,
-      { timeoutMs: 30_000 },
-    );
+    let data: DjangoResponse;
+    try {
+      data = await djangoPost<DjangoResponse>(
+        ctx.env,
+        ctx.token,
+        "/api/v1/internal/reports/",
+        body,
+        { timeoutMs: 30_000 },
+      );
+    } catch (err) {
+      // The tool's input-schema description promises LLMs can retry after a
+      // 400 by reading the list of valid `report_type` values from the
+      // response body. `DjangoBadRequestError.message` is deliberately
+      // body-free (log-injection guard in `django.ts`), so we re-throw with
+      // the body spliced in so the SDK surfaces it as tool text content.
+      if (err instanceof DjangoBadRequestError) {
+        throw new Error(`Tako rejected create_report (400): ${err.body}`);
+      }
+      throw err;
+    }
     return {
       report_id: data.report_id ?? data.id ?? "",
       status: data.status ?? null,

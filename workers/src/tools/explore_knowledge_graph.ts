@@ -160,7 +160,11 @@ const explore_knowledge_graph = {
         name: c.name ?? null,
         description: c.description ?? null,
         member_count: c.member_count ?? null,
-        sample_members: c.sample_members ?? [],
+        // Cap sample_members for LLM-friendliness. Python reference does not
+        // slice here (server.py:371-379); a cohort with thousands of members
+        // would otherwise inflate tool output. 10 is enough to illustrate
+        // what's inside without dominating the payload.
+        sample_members: (c.sample_members ?? []).slice(0, 10),
         node_id: c.node_id ?? null,
       })),
       time_periods: data.time_periods ?? [],

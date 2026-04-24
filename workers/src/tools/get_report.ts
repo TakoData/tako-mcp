@@ -31,6 +31,10 @@ const outputSchema = z.object({
   credit_cost: z.number().nullable(),
   runtime_seconds: z.number().nullable(),
   estimated_runtime_seconds: z.number().nullable(),
+  // Canonical "view this report in the Tako UI" link. Surfaced as a
+  // dedicated top-level field (not rolled into `export_urls`) because it is
+  // semantically distinct: a view URL, not a downloadable export.
+  webpage_url: z.string().nullable(),
   // Populated only when status === "completed":
   result: z.unknown().nullable(),
   export_urls: z.record(z.string(), z.string()).nullable(),
@@ -49,6 +53,7 @@ type DjangoResponse = {
   credit_cost?: number | null;
   runtime_seconds?: number | null;
   estimated_runtime_seconds?: number | null;
+  webpage_url?: string | null;
   result?: unknown;
   thread_id?: string | null;
   error_message?: string | null;
@@ -58,13 +63,17 @@ type DjangoResponse = {
   [k: string]: unknown;
 };
 
+// Keys lifted to their own top-level output field and therefore excluded
+// from the flattened `export_urls` bucket to avoid double-reporting.
+const EXPORT_URL_KEY_EXCLUSIONS = new Set(["webpage_url"]);
+
 function extractExportUrls(data: DjangoResponse): Record<string, string> | null {
   const urls: Record<string, string> = {};
   for (const [key, value] of Object.entries(data)) {
+    if (EXPORT_URL_KEY_EXCLUSIONS.has(key)) continue;
     if (
       typeof value === "string" &&
-      (key.endsWith("_url") || key.endsWith("_urls")) &&
-      key !== "webpage_url"
+      (key.endsWith("_url") || key.endsWith("_urls"))
     ) {
       urls[key] = value;
     }
@@ -101,6 +110,7 @@ const get_report = {
       credit_cost: data.credit_cost ?? null,
       runtime_seconds: data.runtime_seconds ?? null,
       estimated_runtime_seconds: data.estimated_runtime_seconds ?? null,
+      webpage_url: data.webpage_url ?? null,
       result: data.result ?? null,
       export_urls: extractExportUrls(data),
       thread_id: data.thread_id ?? null,

@@ -2,18 +2,28 @@
  * `open_chart_ui` — return everything a client needs to render an interactive
  * Tako chart iframe.
  *
- * Ports `open_chart_ui` from `src/tako_mcp/server.py:691`. Python returns a
- * `list[UIResource]` via the `mcp-ui` library, which renders as an interactive
- * iframe in MCP-UI-aware clients. The TS registry contract serializes tool
- * outputs as JSON text (`mcp.ts:98-115`), so we cannot emit a raw MCP-UI
- * `resource` content block without extending the adapter — out of scope for
- * Phase 2 port.
+ * Ports `open_chart_ui` from `src/tako_mcp/server.py:691`.
  *
- * Pragmatic shape: return `embed_url` plus a ready-to-render `iframe_html`
- * string. Clients that understand inline HTML rendering (e.g. some Claude
- * clients with UI extensions) can drop it in; basic clients can fall back to
- * rendering the `embed_url` as a link. Re-introducing full MCP-UI requires a
- * contract extension — park as a follow-up if needed.
+ * KNOWN REGRESSION vs the Python reference: the Python tool returns a
+ * `list[UIResource]` via the `mcp-ui` library, which MCP-UI-aware clients
+ * (e.g. Claude Desktop with the MCP-UI extension) auto-render as a live
+ * interactive iframe. The TS registry contract (`mcp.ts:95-117`) currently
+ * only emits `type: "text"` content blocks, so we cannot hand back a raw
+ * MCP-UI `resource` content block without a `ToolModule` contract
+ * extension (e.g. an optional `toContentBlocks(output)` hook). That
+ * extension is out of scope for Phase 2 port. Clients that previously saw
+ * an auto-rendered chart here will now see a JSON payload containing the
+ * iframe HTML — a real UX regression for those clients.
+ *
+ * Interim shape: return `embed_url` plus a ready-to-render `iframe_html`
+ * string. Clients that can inject HTML inline (some Claude clients with UI
+ * extensions, some custom inspectors) can render; thin clients can still
+ * show the `embed_url` as a clickable link.
+ *
+ * Follow-up work to re-enable full interactivity: extend `ToolModule` with
+ * a content-block emitter, port `create_ui_resource()` equivalent, and
+ * update this tool to emit a `resource` block containing the HTML and a
+ * `ui://tako/embed/{pub_id}` URI. Track under a dedicated ticket.
  *
  * No Django call — purely a URL + HTML builder.
  */
@@ -75,11 +85,12 @@ const open_chart_ui = {
     openWorldHint: true,
   },
   async handler(input, ctx) {
-    // `DJANGO_BASE_URL` is the origin the Worker proxies through — in staging
-    // and production it also serves `/embed/{pub_id}/`. If/when a separate
-    // PUBLIC_BASE_URL is introduced (as the Python MCP has), add an env
-    // binding and prefer it over DJANGO_BASE_URL here.
-    const base = ctx.env.DJANGO_BASE_URL.replace(/\/+$/, "");
+    // Prefer `PUBLIC_BASE_URL` for the embed origin (this is the URL a user
+    // will load in a browser), else fall back to `DJANGO_BASE_URL` — mirrors
+    // the Python legacy `PUBLIC_BASE_URL` / `TAKO_API_URL` split at
+    // `src/tako_mcp/server.py:36-40`. Trailing slash stripped defensively.
+    const rawBase = ctx.env.PUBLIC_BASE_URL ?? ctx.env.DJANGO_BASE_URL;
+    const base = rawBase.replace(/\/+$/, "");
     const theme = input.dark_mode ? "dark" : "light";
     const pubId = encodeURIComponent(input.pub_id);
     const embedUrl = `${base}/embed/${pubId}/?theme=${theme}`;
