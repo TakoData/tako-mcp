@@ -63,21 +63,24 @@
   "tools": [
     {
       "name": "create_chart",
-      "description": "Use this when you need to create a new chart from raw data. Pass a schema name and your data components to generate an interactive, shareable Tako visualization. Supports 15+ chart types (timeseries, bar, scatter, maps, etc.). Workflow: list_chart_schemas → get_chart_schema → create_chart.",
+      "description": "Use this when you need to create a new chart from raw data. Pass an array of component configurations (header + one or more visualization components) to generate an interactive, shareable Tako visualization. Supports 15+ component types (timeseries, bar, scatter, maps, etc.).",
       "parameters": {
-        "schema_name": {
-          "type": "string",
-          "description": "Name of the ThinViz template to instantiate (e.g. \"bar_chart\", \"stock_card\"). Learn valid names via list_chart_schemas.",
-          "required": true
-        },
         "components": {
           "type": "array",
-          "description": "Array of component objects matching the template's required shape. Each component has `component_type` and `config` fields. Use get_chart_schema first to learn the exact shape per template.",
+          "description": "Array of component configurations. Each component has `component_type` (e.g. \"header\", \"generic_timeseries\", \"categorical_bar\", \"choropleth\", \"pie\", \"scatter\", \"treemap\"), optional `component_variant`, and a `config` object whose shape depends on the component type.",
           "required": true
+        },
+        "title": {
+          "type": "string",
+          "description": "Optional card title. Falls back to the header component's title if not provided."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional card description."
         },
         "source": {
           "type": "string",
-          "description": "Optional attribution text (e.g. \"Yahoo Finance\", \"Company Reports\")."
+          "description": "Optional data-source attribution displayed in the card footer (e.g. \"Yahoo Finance\", \"Company Reports\")."
         }
       },
       "annotations": {
@@ -149,28 +152,6 @@
       }
     },
     {
-      "name": "get_card_insights",
-      "description": "Use this when you want AI-generated analysis of a chart's data. Returns bullet-point insights and a natural-language description that summarizes trends, outliers, and key takeaways.",
-      "parameters": {
-        "pub_id": {
-          "type": "string",
-          "description": "The unique chart identifier (pub_id / card_id).",
-          "required": true
-        },
-        "effort": {
-          "type": "string",
-          "description": "Reasoning effort for the insights: `low` (quick summary), `medium` (balanced), `high` (deep).",
-          "default": "medium"
-        }
-      },
-      "annotations": {
-        "title": "Tako: Get AI Insights",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "get_chart_image",
       "description": "Use this when you need a static preview image URL of a chart to display or embed. Returns a direct URL to a PNG. Useful for including chart previews in responses or documents.",
       "parameters": {
@@ -187,23 +168,6 @@
       },
       "annotations": {
         "title": "Tako: Get Chart Image",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "get_chart_schema",
-      "description": "Use this when you need to understand the exact data format required for a specific chart type. Returns the schema definition including required fields, data structure, and configuration options. Always call this before create_chart to understand what data is needed.",
-      "parameters": {
-        "schema_name": {
-          "type": "string",
-          "description": "Name of the schema (e.g. \"stock_card\", \"bar_chart\", \"pie_chart\", \"scatter_chart\", \"choropleth\", \"timeseries_card\"). List options via list_chart_schemas.",
-          "required": true
-        }
-      },
-      "annotations": {
-        "title": "Tako: Get Chart Schema",
         "readOnlyHint": true,
         "destructiveHint": false,
         "openWorldHint": false
@@ -269,17 +233,6 @@
       },
       "annotations": {
         "title": "Tako: Search Charts",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "list_chart_schemas",
-      "description": "Use this when you want to see all available chart templates before creating a custom chart. Returns the full list of ThinViz schemas including timeseries, bar charts, pie charts, scatter plots, maps, and more. Call this first when the user wants to create a new visualization.",
-      "parameters": {},
-      "annotations": {
-        "title": "Tako: List Chart Types",
         "readOnlyHint": true,
         "destructiveHint": false,
         "openWorldHint": false

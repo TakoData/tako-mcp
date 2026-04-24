@@ -125,13 +125,10 @@ describe("worker routing", () => {
       "create_chart",
       "create_report",
       "explore_knowledge_graph",
-      "get_card_insights",
       "get_chart_image",
-      "get_chart_schema",
       "get_credit_balance",
       "get_report",
       "knowledge_search",
-      "list_chart_schemas",
       "list_reports",
       "open_chart_ui",
     ]);

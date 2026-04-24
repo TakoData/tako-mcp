@@ -1,14 +1,19 @@
 /**
- * `create_chart` — create a new interactive Tako chart from raw data.
+ * `create_chart` — create a new interactive Tako chart from component configs.
  *
- * Ports `create_chart` from `src/tako_mcp/server.py:537`. The ONLY write tool
- * in the Phase 2 surface: `readOnlyHint: false`, `openWorldHint: true` (creates
- * a publicly-hostable chart URL).
+ * Hits the ThinViz direct-create endpoint (`POST /api/v1/thin_viz/create/`) —
+ * the schema-name-based flow (`/thin_viz/default_schema/{name}/create/`) is
+ * deprecated and no longer supported. Clients supply full component
+ * configurations directly; no prior schema lookup is required.
  *
- * Components are intentionally typed loosely (`z.array(z.looseObject(...))`):
- * each template under `/api/v1/thin_viz/default_schema/*` declares its own
- * component shape. LLMs are expected to call `get_chart_schema(name)` first to
- * learn the shape, then pass matching `components[]` here.
+ * The ONLY write tool in the Phase 2 surface: `readOnlyHint: false`,
+ * `openWorldHint: true` (creates a publicly-hostable chart URL).
+ *
+ * Components are typed loosely (`z.array(z.looseObject(...))`) — every
+ * ThinViz `component_type` (header, generic_timeseries, categorical_bar,
+ * data_table_chart, financial_boxes, table, choropleth, heatmap, histogram,
+ * pie, scatter, boxplot, treemap, waterfall, bubble, …) declares its own
+ * `config` shape, validated server-side.
  */
 import { z } from "zod";
 
@@ -23,23 +28,27 @@ const componentSchema = z
   .loose();
 
 const inputSchema = z.object({
-  schema_name: z
-    .string()
-    .min(1)
-    .describe(
-      'Name of the ThinViz template to instantiate (e.g. "bar_chart", "stock_card"). Learn valid names via list_chart_schemas.',
-    ),
   components: z
     .array(componentSchema)
     .min(1)
     .describe(
-      "Array of component objects matching the template's required shape. Each component has `component_type` and `config` fields. Use get_chart_schema first to learn the exact shape per template.",
+      "Array of component configurations. Each component has `component_type` (e.g. \"header\", \"generic_timeseries\", \"categorical_bar\", \"choropleth\", \"pie\", \"scatter\", \"treemap\"), optional `component_variant`, and a `config` object whose shape depends on the component type.",
     ),
+  title: z
+    .string()
+    .optional()
+    .describe(
+      "Optional card title. Falls back to the header component's title if not provided.",
+    ),
+  description: z
+    .string()
+    .optional()
+    .describe("Optional card description."),
   source: z
     .string()
     .optional()
     .describe(
-      'Optional attribution text (e.g. "Yahoo Finance", "Company Reports").',
+      'Optional data-source attribution displayed in the card footer (e.g. "Yahoo Finance", "Company Reports").',
     ),
 });
 
@@ -66,7 +75,7 @@ type DjangoResponse = {
 const create_chart = {
   name: "create_chart",
   description:
-    "Use this when you need to create a new chart from raw data. Pass a schema name and your data components to generate an interactive, shareable Tako visualization. Supports 15+ chart types (timeseries, bar, scatter, maps, etc.). Workflow: list_chart_schemas → get_chart_schema → create_chart.",
+    "Use this when you need to create a new chart from raw data. Pass an array of component configurations (header + one or more visualization components) to generate an interactive, shareable Tako visualization. Supports 15+ component types (timeseries, bar, scatter, maps, etc.).",
   inputSchema,
   outputSchema,
   annotations: {
@@ -76,29 +85,29 @@ const create_chart = {
     openWorldHint: true,
   },
   async handler(input, ctx) {
-    const schemaName = encodeURIComponent(input.schema_name);
     const body: Record<string, unknown> = { components: input.components };
-    if (input.source !== undefined) {
-      body.source = input.source;
-    }
+    if (input.title !== undefined) body.title = input.title;
+    if (input.description !== undefined) body.description = input.description;
+    if (input.source !== undefined) body.source = input.source;
     let data: DjangoResponse;
     try {
       data = await djangoPost<DjangoResponse>(
         ctx.env,
         ctx.token,
-        `/api/v1/thin_viz/default_schema/${schemaName}/create/`,
+        "/api/v1/thin_viz/create/",
         body,
         { timeoutMs: 60_000 },
       );
     } catch (err) {
-      // Chart creation 400s carry actionable per-schema validation detail
-      // (missing component fields, wrong dataset shape, etc.). `DjangoBadRequestError`
-      // keeps that detail on `.body` rather than in `.message` (log-injection
-      // guard in `django.ts`) — re-throw with the body so the LLM can read
-      // Tako's validation guidance and correct the components on retry.
+      // Chart creation 400s carry actionable validation detail (missing
+      // component fields, invalid component_type, wrong config shape, etc.).
+      // `DjangoBadRequestError` keeps that detail on `.body` rather than in
+      // `.message` (log-injection guard in `django.ts`) — re-throw with the
+      // body so the LLM can read Tako's validation guidance and correct the
+      // components on retry.
       if (err instanceof DjangoBadRequestError) {
         throw new Error(
-          `Tako rejected create_chart for schema "${input.schema_name}" (400): ${err.body}`,
+          `Tako rejected create_chart (400): ${err.body}`,
         );
       }
       throw err;
