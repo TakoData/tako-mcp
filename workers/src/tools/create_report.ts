@@ -23,6 +23,14 @@
  * two XML fields. Without step 2, the report sits in the user's Library
  * as a Draft forever — see `ReportViewSet.create` vs `ReportViewSet.analyze`.
  *
+ * Partial-success: if step 1 succeeds but step 2 fails (Celery queue
+ * down, analyze 5xx, timeout, …), the report already exists as a Draft
+ * on the user's account. Rather than throwing and losing `report_id`,
+ * the tool returns with `status: "created_but_not_started"` and a
+ * structured `analyze_error`, so the LLM can tell the user their draft
+ * is recoverable from the web UI instead of reporting a generic failure.
+ * Create failures still throw — there's no record to recover on that path.
+ *
  * `report_type` is validated against a finite backend registry
  * (`app/backend/reports/types/registry.py::get_all_report_types`). There is no
  * MCP tool to enumerate valid types today; if Claude passes an unknown value,
@@ -31,7 +39,17 @@
  */
 import { z } from "zod";
 
-import { djangoGet, djangoPost } from "../django.js";
+import {
+  DjangoBadRequestError,
+  DjangoError,
+  DjangoHttpError,
+  DjangoNotFoundError,
+  DjangoResponseParseError,
+  DjangoTimeoutError,
+  DjangoUnauthorizedError,
+  djangoGet,
+  djangoPost,
+} from "../django.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -65,13 +83,30 @@ const inputSchema = z.object({
 
 const outputSchema = z.object({
   report_id: z.string(),
-  status: z.string().nullable(),
+  status: z
+    .string()
+    .nullable()
+    .describe(
+      "`running` when generation started successfully. `created_but_not_started` means the report exists as a Draft in the user's Library but `/analyze/` failed, so no Celery job was dispatched — tell the user their draft was created and they can re-trigger generation from the web UI. Otherwise whatever the backend returned from create (e.g. `pending`).",
+    ),
   title: z.string().nullable(),
   credit_cost: z.number().nullable(),
   estimated_runtime_seconds: z.number().nullable(),
   // Celery task id returned by the `/analyze/` call. Surfaced so operators
   // have a handle to look up the job in Flower / Datadog if it stalls.
+  // Null when analyze failed (`status == "created_but_not_started"`).
   celery_task_id: z.string().nullable(),
+  // Present when create succeeded but analyze failed. Gives the LLM a
+  // structured handle to explain the partial-success state to the user.
+  // Create failures still throw — see the comment above the `/analyze/`
+  // call for the reason we only swallow analyze errors.
+  analyze_error: z
+    .object({
+      kind: z.string(),
+      status: z.number().nullable(),
+      message: z.string(),
+    })
+    .nullable(),
 });
 
 type CreateResponse = {
@@ -120,6 +155,24 @@ function findDefaultTemplate(
   return templates.find(
     (t) => t.is_default === true && t.report_type === reportType,
   );
+}
+
+/**
+ * Narrow a `DjangoError` to the same discriminator strings that
+ * `djangoErrorToToolResult` (see mcp.ts) uses at the tool boundary, so
+ * `analyze_error.kind` is meaningful to the same clients. Kept local to
+ * avoid a circular import (mcp.ts imports this file via the tool
+ * registry) — the kind strings are duplicated by convention, not by
+ * runtime sharing.
+ */
+function djangoErrorKind(err: DjangoError): string {
+  if (err instanceof DjangoUnauthorizedError) return "unauthorized";
+  if (err instanceof DjangoTimeoutError) return "timeout";
+  if (err instanceof DjangoNotFoundError) return "not_found";
+  if (err instanceof DjangoBadRequestError) return "bad_request";
+  if (err instanceof DjangoResponseParseError) return "response_parse";
+  if (err instanceof DjangoHttpError) return "http";
+  return "unknown";
 }
 
 function xmlEscape(text: string): string {
@@ -294,24 +347,58 @@ const create_report = {
     // Draft; `analyze` is what transitions it to RUNNING and dispatches
     // the Celery task. Empty body is fine for non-brief report types —
     // backend assembles config from what create already persisted.
-    const analyzed = await djangoPost<AnalyzeResponse>(
-      ctx.env,
-      ctx.token,
-      `/api/v1/internal/reports/${encodeURIComponent(reportId)}/analyze/`,
-      {},
-      { timeoutMs: 30_000 },
-    );
+    //
+    // We catch Django transport errors here instead of propagating: by
+    // this point the report already exists as a Draft on the user's
+    // account, and the thrown `DjangoError` doesn't carry `report_id`.
+    // Letting it bubble up through `djangoErrorToToolResult` would
+    // produce a generic "analyze failed" error with no handle the LLM
+    // could use to tell the user their draft is waiting for them in the
+    // web UI. Returning partial success — `report_id` + a
+    // `created_but_not_started` status + the structured `analyze_error`
+    // — keeps the draft recoverable. Create failures still throw (above)
+    // because there's no record to recover on that path.
+    //
+    // Scope: only `DjangoError` subtypes are caught. Raw JS exceptions
+    // (programmer errors, V8 OOM, etc.) still bubble because they
+    // indicate a handler bug, not an upstream partial failure.
+    let analyzed: AnalyzeResponse | undefined;
+    let analyzeError: z.infer<typeof outputSchema>["analyze_error"] = null;
+    try {
+      analyzed = await djangoPost<AnalyzeResponse>(
+        ctx.env,
+        ctx.token,
+        `/api/v1/internal/reports/${encodeURIComponent(reportId)}/analyze/`,
+        {},
+        { timeoutMs: 30_000 },
+      );
+    } catch (err) {
+      if (err instanceof DjangoError) {
+        analyzeError = {
+          kind: djangoErrorKind(err),
+          status: err.status ?? null,
+          message: err.message,
+        };
+      } else {
+        throw err;
+      }
+    }
 
     return {
       report_id: reportId,
       // Prefer the analyze response's status ("running") so the caller
-      // knows generation actually started. Falling back to create's
-      // status only if analyze omitted it (shouldn't happen for 202s).
-      status: analyzed.status ?? created.status ?? null,
+      // knows generation actually started. On analyze failure, surface
+      // `created_but_not_started` — the `status` field's schema doc
+      // explains what that means for the LLM.
+      status:
+        analyzeError !== null
+          ? "created_but_not_started"
+          : (analyzed?.status ?? created.status ?? null),
       title: created.title ?? null,
       credit_cost: created.credit_cost ?? null,
       estimated_runtime_seconds: created.estimated_runtime_seconds ?? null,
-      celery_task_id: analyzed.celery_task_id ?? null,
+      celery_task_id: analyzed?.celery_task_id ?? null,
+      analyze_error: analyzeError,
     };
   },
 } satisfies ToolModule<typeof inputSchema, z.infer<typeof outputSchema>>;

@@ -27,6 +27,12 @@ import {
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import create_report from "./create_report.js";
+import {
+  jsonResponse,
+  mockFetchOnce,
+  mockFetchSequence,
+  requestFrom,
+} from "./__test_helpers.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://trytako.com" };
 const CTX: ToolContext = { token: "sk-test", env: ENV };
@@ -35,47 +41,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-
-function mockFetchOnce(response: Response): void {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn<typeof fetch>(async () => response),
-  );
-}
-
-function mockFetchSequence(responses: Response[]): ReturnType<typeof vi.fn<typeof fetch>> {
-  const queue = [...responses];
-  const fn = vi.fn<typeof fetch>(async () => {
-    const next = queue.shift();
-    if (next === undefined) {
-      throw new Error("mockFetchSequence: no more responses queued");
-    }
-    return next;
-  });
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
-
-function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function requestFrom(
-  call: Parameters<typeof fetch> | undefined,
-): Request {
-  if (call === undefined) {
-    throw new Error("expected a recorded fetch call, got undefined");
-  }
-  const [input] = call;
-  // djangoPost/djangoGet always pass a Request object as the first arg.
-  if (!(input instanceof Request)) {
-    throw new Error("expected fetch to be called with a Request");
-  }
-  return input;
-}
 
 describe("create_report error forwarding", () => {
   it("propagates DjangoBadRequestError with the response body intact on 400", async () => {
@@ -169,6 +134,151 @@ describe("create_report error forwarding", () => {
     // actually started (not just that a draft was created).
     expect(out.report_id).toBe("rep_abc");
     expect(out.status).toBe("running");
+    // Happy path → no analyze_error. Locked so the partial-success
+    // shape below can't silently leak into successful calls.
+    expect(out.analyze_error).toBeNull();
+  });
+
+  it("returns partial-success when create succeeds but analyze 5xxs", async () => {
+    // Observed failure mode: create 201 (report lands in Library as a
+    // Draft) but analyze returns 500 (Celery queue down, backend
+    // contention, …). The thrown `DjangoHttpError` doesn't carry
+    // `report_id`, so if we let it propagate the LLM has no handle to
+    // tell the user "your draft is recoverable — retry from the web UI."
+    // Contract: on analyze failure, resolve with `report_id`,
+    // `status: "created_but_not_started"`, and a structured
+    // `analyze_error` the LLM can surface. Create failures still throw
+    // (covered by the 400 test above) — only the analyze path falls
+    // back to partial success.
+    const fetchMock = mockFetchSequence([
+      jsonResponse(201, {
+        id: "rep_orphan",
+        status: "pending",
+        title: "Stranded draft",
+        credit_cost: 25,
+        estimated_runtime_seconds: 120,
+      }),
+      jsonResponse(500, { detail: "Celery worker unreachable" }),
+    ]);
+
+    const out = await create_report.handler(
+      {
+        report_type: "agent_report",
+        title: "Stranded draft",
+        research_objective: "whatever",
+        config: { research_objective: "whatever" },
+      },
+      CTX,
+    );
+
+    // Both calls still happen — the catch is downstream of analyze,
+    // not a skip.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // The recoverable handle: report_id is present and matches the id
+    // Django persisted.
+    expect(out.report_id).toBe("rep_orphan");
+
+    // Status discriminator the LLM keys on.
+    expect(out.status).toBe("created_but_not_started");
+
+    // Celery handle is null on failure — there's no task to track.
+    expect(out.celery_task_id).toBeNull();
+
+    // Create-response fields still flow through so the LLM can quote
+    // credit cost / ETA when telling the user what was created.
+    expect(out.title).toBe("Stranded draft");
+    expect(out.credit_cost).toBe(25);
+    expect(out.estimated_runtime_seconds).toBe(120);
+
+    // Structured failure detail so the LLM can explain what happened.
+    // `kind: "http"` matches djangoErrorKind in mcp.ts for 5xx/unknown
+    // status; `status` carries the HTTP code so clients can branch.
+    expect(out.analyze_error).not.toBeNull();
+    const analyzeErr = out.analyze_error as NonNullable<
+      typeof out.analyze_error
+    >;
+    expect(analyzeErr.kind).toBe("http");
+    expect(analyzeErr.status).toBe(500);
+    expect(analyzeErr.message).toContain("500");
+    expect(analyzeErr.message).toContain("/analyze/");
+  });
+
+  it("returns partial-success when analyze times out", async () => {
+    // Timeout is the other analyze failure mode operators observed on
+    // staging (DB lock contention can hold the request past the 30s
+    // abort). Kind discriminator should be `timeout`, status null.
+    //
+    // mockFetchSequence takes pre-built Responses; for the timeout we
+    // throw an AbortError on the second call the way `AbortSignal.timeout`
+    // would, since djangoPost's executeRequest maps that to
+    // DjangoTimeoutError.
+    let call = 0;
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      call += 1;
+      if (call === 1) {
+        return new Response(JSON.stringify({ id: "rep_slow", status: "pending" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new DOMException("The operation was aborted.", "AbortError");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await create_report.handler(
+      {
+        report_type: "agent_report",
+        title: "Slow analyze",
+        research_objective: "obj",
+        config: { research_objective: "obj" },
+      },
+      CTX,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(out.report_id).toBe("rep_slow");
+    expect(out.status).toBe("created_but_not_started");
+    expect(out.celery_task_id).toBeNull();
+    expect(out.analyze_error).not.toBeNull();
+    const analyzeErr = out.analyze_error as NonNullable<
+      typeof out.analyze_error
+    >;
+    expect(analyzeErr.kind).toBe("timeout");
+    // DjangoTimeoutError.status is undefined → serialized as null.
+    expect(analyzeErr.status).toBeNull();
+    expect(analyzeErr.message).toContain("timed out");
+  });
+
+  it("returns partial-success (not a throw) when analyze 400s", async () => {
+    // Analyze is unlikely to 400 in practice (the body is empty), but if
+    // the backend ever gains validation there, the tool still has a
+    // Draft to recover. A DjangoBadRequestError from analyze should NOT
+    // propagate — that's the create-side contract, not analyze's.
+    const fetchMock = mockFetchSequence([
+      jsonResponse(201, { id: "rep_400", status: "pending" }),
+      jsonResponse(400, { detail: "hypothetical future validation" }),
+    ]);
+
+    const out = await create_report.handler(
+      {
+        report_type: "agent_report",
+        title: "Bad analyze",
+        research_objective: "obj",
+        config: { research_objective: "obj" },
+      },
+      CTX,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(out.report_id).toBe("rep_400");
+    expect(out.status).toBe("created_but_not_started");
+    expect(out.analyze_error).not.toBeNull();
+    const analyzeErr = out.analyze_error as NonNullable<
+      typeof out.analyze_error
+    >;
+    expect(analyzeErr.kind).toBe("bad_request");
+    expect(analyzeErr.status).toBe(400);
   });
 
   it("auto-resolves default template when caller omits config", async () => {
