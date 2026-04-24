@@ -90,18 +90,6 @@ Get AI-generated insights for a chart.
 
 Returns bullet-point insights and a natural language description.
 
-### `explore_knowledge_graph`
-
-Discover available entities, metrics, and cohorts.
-
-```json
-{
-  "query": "tech companies",
-  "api_token": "your-api-token",
-  "limit": 20
-}
-```
-
 ## ThinViz API - Create Custom Charts
 
 ThinViz lets you create charts with your own data using pre-configured templates.
