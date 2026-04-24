@@ -10,6 +10,15 @@ import {
   bearerAuthErrorToJsonRpc,
   extractBearer,
 } from "./auth.js";
+import {
+  DjangoBadRequestError,
+  DjangoError,
+  DjangoHttpError,
+  DjangoNotFoundError,
+  DjangoResponseParseError,
+  DjangoTimeoutError,
+  DjangoUnauthorizedError,
+} from "./django.js";
 import type { Env } from "./env.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import type { AnyToolModule, ToolContext } from "./tools/types.js";
@@ -96,7 +105,20 @@ function registerTool(
     tool.name,
     config as Parameters<McpServer["registerTool"]>[1],
     async (input) => {
-      const output = await tool.handler(input as unknown, ctx);
+      let output: unknown;
+      try {
+        output = await tool.handler(input as unknown, ctx);
+      } catch (err) {
+        // Map Django transport failures to a structured `isError: true`
+        // result so MCP clients can distinguish "your token was rejected"
+        // from "upstream timed out" without string-matching `err.message`.
+        // Non-Django throws re-throw to the SDK, which wraps them in a
+        // generic tool error (last-resort path for handler bugs).
+        if (err instanceof DjangoError) {
+          return djangoErrorToToolResult(err);
+        }
+        throw err;
+      }
       // When the tool declares an `outputSchema`, report the structured
       // payload alongside a JSON-stringified text fallback. Clients that
       // understand `structuredContent` get the typed value; legacy clients
@@ -115,6 +137,48 @@ function registerTool(
       return result;
     },
   );
+}
+
+/**
+ * Convert a `DjangoError` into a structured MCP `CallToolResult` with
+ * `isError: true`. Each subtype maps to a distinct `kind` discriminator so
+ * clients can branch on `structuredContent.kind` (e.g. "unauthorized" vs
+ * "timeout") instead of parsing `err.message`. Per-subtype fields
+ * (`timeoutMs`, `body`) are only attached where they exist on the error.
+ *
+ * Exported for unit testing — the wire contract is stable enough that
+ * Phase 2 tests can rely on the `kind` strings here.
+ */
+export function djangoErrorToToolResult(err: DjangoError): {
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent: Record<string, unknown>;
+  isError: true;
+} {
+  const structured: Record<string, unknown> = {
+    kind: djangoErrorKind(err),
+    path: err.path,
+    method: err.method,
+  };
+  if (err.status !== undefined) structured.status = err.status;
+  if (err instanceof DjangoTimeoutError) structured.timeoutMs = err.timeoutMs;
+  if (err instanceof DjangoBadRequestError || err instanceof DjangoHttpError) {
+    structured.body = err.body;
+  }
+  return {
+    content: [{ type: "text", text: err.message }],
+    structuredContent: structured,
+    isError: true,
+  };
+}
+
+function djangoErrorKind(err: DjangoError): string {
+  if (err instanceof DjangoUnauthorizedError) return "unauthorized";
+  if (err instanceof DjangoTimeoutError) return "timeout";
+  if (err instanceof DjangoNotFoundError) return "not_found";
+  if (err instanceof DjangoBadRequestError) return "bad_request";
+  if (err instanceof DjangoResponseParseError) return "response_parse";
+  if (err instanceof DjangoHttpError) return "http";
+  return "unknown";
 }
 
 /**
