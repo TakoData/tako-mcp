@@ -29,6 +29,7 @@ jobs:
   deploy:
     name: deploy (${{ github.event.inputs.environment || 'staging' }})
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     # GitHub Environments: surfaces deployment URL + history in the Actions UI.
     # No protection rules; manual-dispatch is the gate for production.
     environment: ${{ github.event.inputs.environment || 'staging' }}
