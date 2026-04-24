@@ -126,32 +126,6 @@
       }
     },
     {
-      "name": "explore_knowledge_graph",
-      "description": "Use this to discover what data Tako has before searching. Finds entities (companies, countries, teams, candidates, websites, cities), metrics (revenue, GDP, poll share, unique visitors, temperature, box-office), cohorts (S&P 500, G7, NBA teams, presidential candidates, top-100 websites), and time periods. Covers the full Tako domain — economics, finance, demographics, technology, weather, polls and elections, internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more. Use this to disambiguate a user's query or to understand available dimensions before calling knowledge_search.",
-      "parameters": {
-        "query": {
-          "type": "string",
-          "description": "Natural-language query (e.g. \"tech companies\", \"GDP metrics\", \"automotive industry\").",
-          "required": true
-        },
-        "node_types": {
-          "type": "array",
-          "description": "Optional filter for specific node types: entity, metric, cohort, db, units, time_period, property."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Maximum number of results per type (1–50).",
-          "default": 20
-        }
-      },
-      "annotations": {
-        "title": "Tako: Explore Knowledge Graph",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "get_chart_image",
       "description": "Use this when you need a static preview image URL of a chart to display or embed. Returns a direct URL to a PNG. Useful for including chart previews in responses or documents.",
       "parameters": {
