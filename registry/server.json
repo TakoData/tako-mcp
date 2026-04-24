@@ -62,20 +62,232 @@
   },
   "tools": [
     {
-      "name": "_example",
-      "description": "Internal placeholder — echoes back its input. Do not use; will be removed when the first real tool lands.",
+      "name": "create_chart",
+      "description": "Use this when you need to create a new chart from raw data. Pass an array of component configurations (header + one or more visualization components) to generate an interactive, shareable Tako visualization. Supports 15+ component types (timeseries, bar, scatter, maps, etc.).",
       "parameters": {
-        "message": {
+        "components": {
+          "type": "array",
+          "description": "Array of component configurations. Each component has `component_type` (e.g. \"header\", \"generic_timeseries\", \"categorical_bar\", \"choropleth\", \"pie\", \"scatter\", \"treemap\"), optional `component_variant`, and a `config` object whose shape depends on the component type.",
+          "required": true
+        },
+        "title": {
           "type": "string",
-          "description": "Anything to echo back.",
+          "description": "Optional card title. Falls back to the header component's title if not provided."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional card description."
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional data-source attribution displayed in the card footer (e.g. \"Yahoo Finance\", \"Company Reports\")."
+        }
+      },
+      "annotations": {
+        "title": "Tako: Create Chart",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "create_report",
+      "description": "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns a report_id. The caller must poll get_report(report_id) until status == 'completed' to retrieve contents. Consumes credits — surface credit_cost to the user when appropriate.",
+      "parameters": {
+        "report_type": {
+          "type": "string",
+          "description": "The report type slug (e.g. an earnings-analysis or industry-overview template). Enumerated by the backend's `get_all_report_types` registry; on an invalid value the server returns 400 with the valid names.",
+          "required": true
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title for the generated report.",
+          "required": true
+        },
+        "research_objective": {
+          "type": "string",
+          "description": "Natural-language brief describing what the report should analyze or answer.",
+          "required": true
+        },
+        "config": {
+          "type": "object",
+          "description": "Type-specific configuration (e.g. ticker, time range). Shape varies by report_type."
+        },
+        "template_source": {
+          "type": "string",
+          "description": "Optional ID of a user-saved template to seed the report from."
+        }
+      },
+      "annotations": {
+        "title": "Tako: Create Report",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "explore_knowledge_graph",
+      "description": "Use this to discover what data Tako has before searching. Finds entities (companies, countries, teams, candidates, websites, cities), metrics (revenue, GDP, poll share, unique visitors, temperature, box-office), cohorts (S&P 500, G7, NBA teams, presidential candidates, top-100 websites), and time periods. Covers the full Tako domain — economics, finance, demographics, technology, weather, polls and elections, internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more. Use this to disambiguate a user's query or to understand available dimensions before calling knowledge_search.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Natural-language query (e.g. \"tech companies\", \"GDP metrics\", \"automotive industry\").",
+          "required": true
+        },
+        "node_types": {
+          "type": "array",
+          "description": "Optional filter for specific node types: entity, metric, cohort, db, units, time_period, property."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of results per type (1–50).",
+          "default": 20
+        }
+      },
+      "annotations": {
+        "title": "Tako: Explore Knowledge Graph",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_chart_image",
+      "description": "Use this when you need a static preview image URL of a chart to display or embed. Returns a direct URL to a PNG. Useful for including chart previews in responses or documents.",
+      "parameters": {
+        "pub_id": {
+          "type": "string",
+          "description": "The unique chart identifier (pub_id / card_id).",
+          "required": true
+        },
+        "dark_mode": {
+          "type": "boolean",
+          "description": "Render the dark-mode variant of the PNG.",
+          "default": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Get Chart Image",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_credit_balance",
+      "description": "Use this to check how many Tako credits the current user has remaining. Cheap and fast — good to call before kicking off expensive operations (create_report, deep knowledge_search) so you can warn the user about cost.",
+      "parameters": {},
+      "annotations": {
+        "title": "Tako: Get Credit Balance",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_report",
+      "description": "Use this to check the status of a Tako report (from create_report) and fetch its contents once generation completes. Poll every ~15 s; stop polling when status is 'completed' OR 'failed'. When still 'pending' / 'running', narrative / sections fields are null. When 'completed', they contain the full report payload plus export URLs (pdf, pptx). When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely.",
+      "parameters": {
+        "report_id": {
+          "type": "string",
+          "description": "Report ID returned from create_report or list_reports.",
           "required": true
         }
       },
       "annotations": {
-        "title": "Tako: Example (Placeholder)",
+        "title": "Tako: Get Report",
         "readOnlyHint": true,
         "destructiveHint": false,
         "openWorldHint": false
+      }
+    },
+    {
+      "name": "knowledge_search",
+      "description": "Use this to find existing charts and live-data visualizations on almost any topic. Tako's knowledge base covers economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more — plus real-time / live data via the deep-research pipeline. Default to calling this first whenever a user asks about any trend, comparison, statistic, current value, or forecast, even if the topic seems outside traditional 'chart' categories — Tako very likely has a relevant card.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Natural-language search query (e.g. \"US GDP growth\", \"Intel vs Nvidia revenue\").",
+          "required": true
+        },
+        "count": {
+          "type": "integer",
+          "description": "Maximum number of matching cards to return (1–20).",
+          "default": 5
+        },
+        "search_effort": {
+          "type": "string",
+          "description": "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, higher credit cost).",
+          "default": "deep"
+        },
+        "country_code": {
+          "type": "string",
+          "description": "ISO country code for localized results.",
+          "default": "US"
+        },
+        "locale": {
+          "type": "string",
+          "description": "Locale for results.",
+          "default": "en-US"
+        }
+      },
+      "annotations": {
+        "title": "Tako: Search Charts",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_reports",
+      "description": "Use this to list the user's existing Tako reports. Returns report IDs, titles, types, and statuses. Useful for finding a report the user created earlier so you can fetch its contents with get_report or refer to it in follow-up actions.",
+      "parameters": {
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of reports to return."
+        },
+        "status": {
+          "type": "string",
+          "description": "Filter by report status."
+        }
+      },
+      "annotations": {
+        "title": "Tako: List Reports",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "open_chart_ui",
+      "description": "Use this when you want to display a fully interactive chart to the user. Returns the embed URL plus a ready-to-render iframe HTML snippet with zoom, pan, and hover interactions. Prefer this over get_chart_image when the user wants to explore the data interactively.",
+      "parameters": {
+        "pub_id": {
+          "type": "string",
+          "description": "The unique chart identifier (pub_id / card_id).",
+          "required": true
+        },
+        "dark_mode": {
+          "type": "boolean",
+          "description": "Render the dark-mode theme.",
+          "default": true
+        },
+        "width": {
+          "type": "integer",
+          "description": "Advisory width in pixels. The returned `iframe_html` pins the iframe to `width=\"100%\"` so it fills its container; consumers should use this value to size the container they render `iframe_html` into. Mirrors the Python reference, which only uses `width` as an MCP-UI `PREFERRED_FRAME_SIZE` hint.",
+          "default": 900
+        },
+        "height": {
+          "type": "integer",
+          "description": "Initial iframe height in pixels. Applied directly in the iframe's CSS (`height` + `min-height`) — no resize handshake.",
+          "default": 600
+        }
+      },
+      "annotations": {
+        "title": "Tako: Open Interactive Chart",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
       }
     }
   ],

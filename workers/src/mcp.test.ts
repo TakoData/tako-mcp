@@ -58,7 +58,7 @@ describe("djangoErrorToToolResult", () => {
     });
   });
 
-  it("maps DjangoBadRequestError and surfaces the response body", () => {
+  it("maps DjangoBadRequestError and surfaces the response body in both structured and text content", () => {
     const err = new DjangoBadRequestError({
       path: "/api/v1/create_chart",
       method: "POST",
@@ -71,6 +71,13 @@ describe("djangoErrorToToolResult", () => {
       method: "POST",
       status: 400,
       body: '{"series":["this field is required"]}',
+    });
+    // 400s are the only subtype whose body is spliced into `content[0].text`:
+    // DRF validation errors carry the guidance the LLM needs to retry, and
+    // not every MCP client surfaces `structuredContent` to the model.
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: `${err.message}: {"series":["this field is required"]}`,
     });
   });
 
@@ -105,5 +112,10 @@ describe("djangoErrorToToolResult", () => {
       status: 503,
       body: "service unavailable",
     });
+    // 5xx body stays in `structuredContent` only — not spliced into the
+    // text content. Non-400 errors don't carry LLM-actionable retry
+    // guidance and a noisy upstream body would flood the text channel.
+    expect(result.content[0]).toEqual({ type: "text", text: err.message });
+    expect(result.content[0]?.text).not.toContain("service unavailable");
   });
 });

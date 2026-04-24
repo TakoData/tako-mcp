@@ -12,12 +12,28 @@
 
 import type { AnyToolModule } from "./types.js";
 
-import tool_example from "./_example.js";
+import create_chart from "./create_chart.js";
+import create_report from "./create_report.js";
+import explore_knowledge_graph from "./explore_knowledge_graph.js";
+import get_chart_image from "./get_chart_image.js";
+import get_credit_balance from "./get_credit_balance.js";
+import get_report from "./get_report.js";
+import knowledge_search from "./knowledge_search.js";
+import list_reports from "./list_reports.js";
+import open_chart_ui from "./open_chart_ui.js";
 
 // Cast at the barrel boundary because function parameters are invariant:
 // each tool's handler has a narrow input type from its Zod schema, which
 // TS will not assign to the erased `AnyToolModule` handler signature.
 // Runtime Zod validation inside the MCP SDK narrows safely.
 export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
-  tool_example as unknown as AnyToolModule,
+  create_chart as unknown as AnyToolModule,
+  create_report as unknown as AnyToolModule,
+  explore_knowledge_graph as unknown as AnyToolModule,
+  get_chart_image as unknown as AnyToolModule,
+  get_credit_balance as unknown as AnyToolModule,
+  get_report as unknown as AnyToolModule,
+  knowledge_search as unknown as AnyToolModule,
+  list_reports as unknown as AnyToolModule,
+  open_chart_ui as unknown as AnyToolModule,
 ];
