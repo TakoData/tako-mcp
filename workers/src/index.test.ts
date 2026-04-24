@@ -97,7 +97,7 @@ describe("worker routing", () => {
     expect(body.error.data.kind).toBe("missing");
   });
 
-  it("POST /mcp tools/list includes the registered _example tool", async () => {
+  it("POST /mcp tools/list returns the full Phase 2 tool set", async () => {
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -118,14 +118,29 @@ describe("worker routing", () => {
     const body = (await res.json()) as {
       result: { tools: Array<{ name: string }> };
     };
-    const names = body.result.tools.map((t) => t.name);
-    // Exact set: when Phase 2 ports land, `_example` will be gone and
-    // real tool names take its place. The assertion then updates in the
-    // same PR that drops the stub.
-    expect(names).toEqual(["_example"]);
+    const names = body.result.tools.map((t) => t.name).sort();
+    // The exact set of tools registered by the codegen barrel. When a tool
+    // is added or removed, update this list alongside the tool-module file.
+    expect(names).toEqual([
+      "create_chart",
+      "create_report",
+      "explore_knowledge_graph",
+      "get_card_insights",
+      "get_chart_image",
+      "get_chart_schema",
+      "get_credit_balance",
+      "get_report",
+      "knowledge_search",
+      "list_chart_schemas",
+      "list_reports",
+      "open_chart_ui",
+    ]);
   });
 
   it("POST /mcp tools/call invokes the registered handler and surfaces structuredContent", async () => {
+    // `open_chart_ui` is a pure URL/HTML builder — no Django fetch, so we can
+    // exercise the full SDK → registry → handler path without mocking the
+    // network in the integration test.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -138,8 +153,8 @@ describe("worker routing", () => {
         id: 3,
         method: "tools/call",
         params: {
-          name: "_example",
-          arguments: { message: "hi" },
+          name: "open_chart_ui",
+          arguments: { pub_id: "abc123" },
         },
       }),
     });
@@ -149,19 +164,32 @@ describe("worker routing", () => {
     const body = (await res.json()) as {
       result: {
         content: Array<{ type: string; text: string }>;
-        structuredContent?: { echoed: string; authenticated: boolean };
+        structuredContent?: {
+          pub_id: string;
+          embed_url: string;
+          iframe_html: string;
+          dark_mode: boolean;
+          width: number;
+          height: number;
+        };
       };
     };
 
     // `structuredContent` is the typed payload; clients without that support
     // fall back to the `content[0].text` JSON string. Both must be present
-    // when the tool declares an `outputSchema` (as `_example` does).
-    expect(body.result.structuredContent).toEqual({
-      echoed: "hi",
-      authenticated: true,
+    // when the tool declares an `outputSchema`.
+    expect(body.result.structuredContent).toMatchObject({
+      pub_id: "abc123",
+      dark_mode: true,
+      width: 900,
+      height: 600,
     });
+    expect(body.result.structuredContent?.embed_url).toContain("/embed/abc123/");
+    expect(body.result.structuredContent?.iframe_html).toContain("<iframe");
     expect(body.result.content[0]).toMatchObject({ type: "text" });
-    const parsed = JSON.parse(body.result.content[0]!.text) as unknown;
-    expect(parsed).toEqual({ echoed: "hi", authenticated: true });
+    const parsed = JSON.parse(body.result.content[0]!.text) as {
+      pub_id: string;
+    };
+    expect(parsed.pub_id).toBe("abc123");
   });
 });
