@@ -5,15 +5,15 @@
   "description": "Tako MCP server on Cloudflare Workers (mcp.tako.com).",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "wrangler dev",
     "dev:staging": "wrangler dev --env staging",
     "deploy:staging": "wrangler deploy --env staging",
-    "predeploy:staging": "npm run registry:gen",
+    "predeploy:staging": "npm run registry:check",
     "deploy:production": "wrangler deploy --env production",
-    "predeploy:production": "npm run registry:gen",
+    "predeploy:production": "npm run registry:check",
     "cf-typegen": "wrangler types",
     "registry:gen": "tsx scripts/gen-registry.ts",
     "registry:check": "tsx scripts/gen-registry.ts --check"
@@ -21,6 +21,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.9.11",
     "@cloudflare/workers-types": "^4.20250617.0",
+    "@types/node": "^22.9.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.2",
     "vitest": "3.2.4",
