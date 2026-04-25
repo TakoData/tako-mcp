@@ -36,10 +36,15 @@ const METADATA_PATH = resolve(REPO_ROOT, "registry", "metadata.json");
 const REGISTRY_PATH = resolve(REPO_ROOT, "registry", "server.json");
 const BARREL_PATH = resolve(TOOLS_DIR, "_registry.ts");
 
-// Filename conventions for the tools/ directory. Anything matching `types.ts`,
-// `_registry.ts`, or `*.test.ts` is NOT a tool module. Everything else must
-// default-export a `ToolModule`.
-const NON_TOOL_FILES = new Set(["types.ts", "_registry.ts"]);
+// Filename conventions for the tools/ directory. A tool module is any `.ts`
+// file that does NOT match one of the following:
+//   - `types.ts`                    (shared types, no default export)
+//   - a name starting with `_`      (e.g. `_registry.ts`, `__test_helpers.ts`
+//                                    — the leading underscore signals
+//                                    "private to the tools/ dir, not a tool")
+//   - a `*.test.ts` suffix          (vitest suites)
+// Everything else must default-export a `ToolModule`.
+const NON_TOOL_FILES = new Set(["types.ts"]);
 
 // ---------------------------------------------------------------------------
 // Registry shape (mirrors `registry/server.json` `tools[]` entries)
@@ -74,6 +79,7 @@ async function loadToolModules(): Promise<LoadedModule[]> {
       (f) =>
         f.endsWith(".ts") &&
         !NON_TOOL_FILES.has(f) &&
+        !f.startsWith("_") &&
         !f.endsWith(".test.ts"),
     )
     .sort();

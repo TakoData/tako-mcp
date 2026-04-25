@@ -203,7 +203,7 @@
     },
     {
       "name": "knowledge_search",
-      "description": "Use this to find existing charts and live-data visualizations on almost any topic. Tako's knowledge base covers economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more — plus real-time / live data via the deep-research pipeline. Default to calling this first whenever a user asks about any trend, comparison, statistic, current value, or forecast, even if the topic seems outside traditional 'chart' categories — Tako very likely has a relevant card.",
+      "description": "Use this to find existing charts and live-data visualizations on almost any topic. Tako's knowledge base covers economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, prediction markets (Polymarket), internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more — plus real-time / live data via the deep-research pipeline. Default to calling this first whenever a user asks about any trend, comparison, statistic, current value, forecast, or betting/prediction-market odds, even if the topic seems outside traditional 'chart' categories — Tako very likely has a relevant card.",
       "parameters": {
         "query": {
           "type": "string",
@@ -217,8 +217,7 @@
         },
         "search_effort": {
           "type": "string",
-          "description": "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, higher credit cost).",
-          "default": "deep"
+          "description": "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, higher credit cost). Omit to let the tool run `fast` first and escalate to `deep` only if `fast` returns zero cards — deep against staging/prod is fragile (Orca redirect round-trip) and often empty, so the fallback avoids spending a credit unless `fast` couldn't answer."
         },
         "country_code": {
           "type": "string",
