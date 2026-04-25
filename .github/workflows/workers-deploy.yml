@@ -1,0 +1,75 @@
+name: workers-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'workers/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+
+# Per-env queue so two deploys to the same env don't race. `cancel-in-progress:
+# false` intentionally differs from `workers-ci.yml` — a deploy must not be cut
+# off mid-upload.
+concurrency:
+  group: workers-deploy-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy (${{ github.event.inputs.environment || 'staging' }})
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    # GitHub Environments: surfaces deployment URL + history in the Actions UI.
+    # No protection rules; manual-dispatch is the gate for production.
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    defaults:
+      run:
+        working-directory: workers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: workers/.nvmrc
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # Registry drift guard — fails the deploy if `workers/src/tools/_registry.ts`
+      # or `registry/server.json` is out of sync with the tool modules. Script
+      # is introduced by TAKO-2600; this workflow must merge after PR #44.
+      - name: Registry check
+        run: npm run registry:check
+
+      # cloudflare/wrangler-action@v3 reads the token from `apiToken`, passes it
+      # to wrangler as an env var, and masks it in logs. We never echo secrets
+      # or enable `set -x`.
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers
+          command: deploy --env ${{ github.event.inputs.environment || 'staging' }}
+          packageManager: npm
