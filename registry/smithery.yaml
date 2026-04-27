@@ -71,8 +71,6 @@ installation:
 tools:
   - name: knowledge_search
     description: Search charts and data visualizations on any topic
-  - name: explore_knowledge_graph
-    description: Discover available entities, metrics, and cohorts
   - name: get_chart_image
     description: Get static PNG preview of a chart
   - name: get_card_insights
