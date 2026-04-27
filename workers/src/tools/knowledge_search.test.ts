@@ -332,6 +332,99 @@ describe("knowledge_search async-task polling (TAKO-2686)", () => {
     }
   });
 
+  it("retries the status GET on a transient 5xx and recovers", async () => {
+    // Transient transport blips against the status endpoint (Django
+    // restart, LB hiccup) shouldn't kill a polling loop whose underlying
+    // Celery task is still running. The first GET fails 503, the loop
+    // sleeps one interval, and the second GET succeeds with cards.
+    vi.useFakeTimers();
+    try {
+      const fetchMock = mockFetchSequence([
+        jsonResponse(202, { task_id: "task-retry", status: "pending" }),
+        jsonResponse(503, { detail: "Service Unavailable" }),
+        jsonResponse(200, {
+          task_id: "task-retry",
+          status: "COMPLETED",
+          result: {
+            outputs: {
+              knowledge_cards: [
+                {
+                  card_id: "after-retry",
+                  title: null,
+                  description: null,
+                  url: null,
+                  source: null,
+                },
+              ],
+            },
+          },
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      expect(fetchMock).toHaveBeenCalledTimes(3); // POST + 503 + 200
+      expect(out.count).toBe(1);
+      expect(out.results[0]?.card_id).toBe("after-retry");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("surfaces the error when transient failures exceed the retry budget", async () => {
+    // MAX_TRANSIENT_RETRIES = 2, so after the 2nd retry is consumed the
+    // 3rd consecutive failure must throw the underlying DjangoHttpError
+    // instead of swallowing it indefinitely.
+    vi.useFakeTimers();
+    try {
+      mockFetchSequence([
+        jsonResponse(202, { task_id: "task-flap", status: "pending" }),
+        jsonResponse(503, { detail: "blip 1" }),
+        jsonResponse(503, { detail: "blip 2" }),
+        jsonResponse(503, { detail: "blip 3" }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await expect(
+        Promise.all([promise, vi.runAllTimersAsync()]),
+      ).rejects.toThrow(/Django returned 503/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry the status GET on a 404 (terminal task-not-found)", async () => {
+    // 404 means the task is gone — retrying won't bring it back. Surface
+    // the DjangoNotFoundError immediately instead of burning the retry
+    // budget on a hopeless cause.
+    vi.useFakeTimers();
+    try {
+      const fetchMock = mockFetchSequence([
+        jsonResponse(202, { task_id: "task-404", status: "pending" }),
+        new Response("", { status: 404 }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await expect(
+        Promise.all([promise, vi.runAllTimersAsync()]),
+      ).rejects.toThrow(/404/);
+      expect(fetchMock).toHaveBeenCalledTimes(2); // POST + single 404, no retry
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("throws when the budget is exhausted before the task terminates", async () => {
     vi.useFakeTimers();
     try {

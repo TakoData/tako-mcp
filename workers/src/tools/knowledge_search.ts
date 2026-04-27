@@ -28,7 +28,12 @@
  */
 import { z } from "zod";
 
-import { djangoGet, djangoPost } from "../django.js";
+import {
+  DjangoHttpError,
+  DjangoTimeoutError,
+  djangoGet,
+  djangoPost,
+} from "../django.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
 // Polling budget — exposed as module-level constants so vitest can fake the
@@ -50,16 +55,24 @@ import type { ToolContext, ToolModule } from "./types.js";
 //      get the full Worker budget. The tool `description` warns callers
 //      to bump their timeout for deep searches.
 //
-// Sizing math: `2 + ceil(POLL_BUDGET_MS / POLL_INTERVAL_MS) ≤ 50` (worst
-// case is fast POST → deep POST → status GETs). With 10s polls and a 290s
-// budget that's `2 + 29 = 31 subrequests` — under the cap with ~19 slots
-// of headroom. The 10s interval is fine because explicit `search_effort:
-// "deep"` is inherently long-running (Orca pipeline routinely runs
-// 60-300s); a 10s detection delta on completion is irrelevant against
-// that wait.
+// Sizing math: `2 + ceil(POLL_BUDGET_MS / POLL_INTERVAL_MS) +
+// MAX_TRANSIENT_RETRIES ≤ 50` (worst case is fast POST → deep POST →
+// status GETs + a small retry budget for transient blips). With 10s
+// polls, a 290s budget, and 2 retries that's `2 + 29 + 2 = 33
+// subrequests` — under the cap with ~17 slots of headroom. The 10s
+// interval is fine because explicit `search_effort: "deep"` is inherently
+// long-running (Orca pipeline routinely runs 60-300s); a 10s detection
+// delta on completion is irrelevant against that wait.
 const POLL_INTERVAL_MS = 10_000;
 const POLL_BUDGET_MS = 290_000;
 const STATUS_REQUEST_TIMEOUT_MS = 10_000;
+// Transient transport blips against the status endpoint (Django restart
+// mid-deploy, LB hiccup, network reset) shouldn't kill a polling loop
+// whose underlying Celery task is still running and would have completed
+// on the next poll. We swallow up to this many transient failures across
+// the whole loop, count each one against the subrequest budget, and let
+// the (N+1)th surface as before so a sustained outage still fails loud.
+const MAX_TRANSIENT_RETRIES = 2;
 
 // Django's task status discriminator. `PENDING` and `IN_PROGRESS` are the
 // non-terminal states we keep polling through; the rest exit the loop.
@@ -69,7 +82,6 @@ const STATUS_REQUEST_TIMEOUT_MS = 10_000;
 // silently turn a terminal response into an infinite loop.
 const COMPLETED_STATE = "COMPLETED";
 const FAILURE_STATES = new Set(["FAILED", "INTERRUPTED"]);
-const TERMINAL_STATES = new Set([COMPLETED_STATE, ...FAILURE_STATES]);
 
 const inputSchema = z.object({
   query: z
@@ -203,6 +215,25 @@ function summarizeProgress(events: AsyncTaskEvent[] | undefined): string {
   return `${list.length} progress event${list.length === 1 ? "" : "s"}; last: ${lastEventType}`;
 }
 
+/**
+ * Classify whether a status-GET failure is likely transient (worth a
+ * single retry) or terminal (caller should bail). Conservatively
+ * whitelisted: only request-timeout aborts and Django-reported 5xx
+ * count as transient. 404 (task gone), 401 (auth dead), 400 (bad
+ * request), and parse errors are all surfaced immediately.
+ */
+function isTransientStatusError(err: unknown): boolean {
+  if (err instanceof DjangoTimeoutError) return true;
+  if (
+    err instanceof DjangoHttpError &&
+    err.status !== undefined &&
+    err.status >= 500
+  ) {
+    return true;
+  }
+  return false;
+}
+
 async function pollAsyncKnowledgeSearch(
   ctx: ToolContext,
   taskId: string,
@@ -214,20 +245,42 @@ async function pollAsyncKnowledgeSearch(
   // than what we've already seen — no duplicates, no need to dedupe here.
   let nextSinceIndex = 0;
   let latestEvents: AsyncTaskEvent[] = [];
+  let transientRetriesLeft = MAX_TRANSIENT_RETRIES;
 
-  // Poll-first ordering: a fast-completing deep task can return cards on
-  // the very first GET without paying the interval delay. Slow tasks then
-  // pay the delay between subsequent polls.
+  // Poll first, then sleep. Deep tasks routinely run 60-300s so the first
+  // GET realistically won't be terminal — the ordering is just to keep the
+  // loop body uniform (status check + budget check + sleep) instead of
+  // splitting the first iteration off as a special case.
   while (true) {
-    const status = await djangoGet<AsyncTaskStatus>(
-      ctx.env,
-      ctx.token,
-      "/api/v1/knowledge_search/async/status/",
-      {
-        query: { task_id: taskId, since_index: nextSinceIndex },
-        timeoutMs: STATUS_REQUEST_TIMEOUT_MS,
-      },
-    );
+    let status: AsyncTaskStatus;
+    try {
+      status = await djangoGet<AsyncTaskStatus>(
+        ctx.env,
+        ctx.token,
+        "/api/v1/knowledge_search/async/status/",
+        {
+          query: { task_id: taskId, since_index: nextSinceIndex },
+          timeoutMs: STATUS_REQUEST_TIMEOUT_MS,
+        },
+      );
+    } catch (err) {
+      if (isTransientStatusError(err) && transientRetriesLeft > 0) {
+        transientRetriesLeft -= 1;
+        // Fall through into the budget-check + sleep tail of this
+        // iteration so we don't spin: the next loop iteration will
+        // retry the GET (against the same since_index — we haven't
+        // advanced any state). If the budget is already exhausted,
+        // surface the original error instead of the timeout error so
+        // the caller sees the real cause.
+        const elapsed = Date.now() - startedAt;
+        if (elapsed + POLL_INTERVAL_MS >= POLL_BUDGET_MS) {
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        continue;
+      }
+      throw err;
+    }
 
     // Accumulate events across polls. Each response only contains events
     // newer than the last `since_index` we sent, so we just append.
@@ -342,13 +395,10 @@ const knowledge_search = {
 
 export default knowledge_search;
 
-// Exported for unit tests — TERMINAL_STATES is small enough to inline in
-// tests, but exposing it keeps the test in lockstep with any future state
-// the backend introduces.
+// Exported for unit tests — the polling-budget constants drive the
+// mock-response counts in `knowledge_search.test.ts` so the
+// budget-exhaustion test stays correct when the budget is tuned.
 export const __test_only__ = {
-  TERMINAL_STATES,
-  FAILURE_STATES,
-  COMPLETED_STATE,
   POLL_INTERVAL_MS,
   POLL_BUDGET_MS,
 };
