@@ -36,7 +36,7 @@
  *
  * Excluded by design:
  *   - `create_report`, `get_report` — write/long-running tools
- *   - `explore_knowledge_graph`     — being removed in PR #47
+ *   - `explore_knowledge_graph`     — removed in PR #47
  *
  * Any failure prints a `✘ ...` line to stderr and exits non-zero so the
  * GitHub Actions job (or anyone running `npm run smoke`) flips red.
@@ -48,7 +48,7 @@
  *                             env var so the canonical URL lives in one
  *                             place. For local runs, set explicitly:
  *
- *                                 SMOKE_BASE_URL=https://tako-mcp-staging.bobby-118.workers.dev \
+ *                                 SMOKE_BASE_URL=https://mcp.staging.tako.com \
  *                                   TAKO_SMOKE_API_TOKEN=... npm run smoke
  *
  *   TAKO_SMOKE_API_TOKEN    — Tako API token forwarded to the Worker as
@@ -78,7 +78,7 @@ const apiToken = process.env.TAKO_SMOKE_API_TOKEN;
 
 if (!rawBaseUrl) {
   console.error(
-    "✘ SMOKE_BASE_URL env var is required (e.g. https://tako-mcp-staging.bobby-118.workers.dev)",
+    "✘ SMOKE_BASE_URL env var is required (e.g. https://mcp.staging.tako.com)",
   );
   process.exit(1);
 }
