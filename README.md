@@ -10,6 +10,85 @@ This MCP server enables AI agents to:
 - **Fetch** chart preview images and AI-generated insights
 - **Render** fully interactive Tako charts via MCP-UI
 
+## Distribution Paths
+
+| Path | Endpoint / Install | Best for | Trade-offs |
+|------|---|---|---|
+| **Hosted (Cloudflare)** | `https://mcp.tako.com` | Most users — fastest setup, zero infrastructure | Internet round-trip; requires a Tako API token (free) |
+| **`pip install tako-mcp`** | local stdio / SSE | Local development, air-gapped environments, custom forks | You manage the process and updates |
+| **Docker** | `docker run …` | Self-hosting, on-prem deploys, container orchestration | You manage the image and runtime |
+| **Smithery** | [smithery.ai](https://smithery.ai/) | Discoverability via the Smithery marketplace | Same caveats as the underlying transport |
+
+If you don't have strong opinions, **use the hosted option** — `mcp.tako.com` is the canonical endpoint and gets all updates first.
+
+## Hosted (Cloudflare Workers)
+
+The fastest path: point your MCP client at `https://mcp.tako.com` with a Bearer token. No install, no local server.
+
+**Endpoints:**
+
+| Environment | URL |
+|---|---|
+| Production | `https://mcp.tako.com/mcp` |
+| Staging (testing only) | `https://mcp.staging.tako.com/mcp` |
+
+**Authentication:** every request needs `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at [trytako.com](https://trytako.com) → account settings → API tokens.
+
+### Claude Code
+
+```bash
+export TAKO_API_TOKEN='<your-token>'
+
+claude mcp add tako-mcp --transport http https://mcp.tako.com/mcp \
+  --header "Authorization: Bearer $TAKO_API_TOKEN"
+```
+
+Verify with `claude mcp list` (should show `tako-mcp` connected) or `/mcp` inside a session.
+
+### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```jsonc
+{
+  "mcpServers": {
+    "tako-mcp": {
+      "type": "http",
+      "url": "https://mcp.tako.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-tako-api-token>"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop. `Tako MCP` should appear in the available tools list.
+
+### Cursor / Windsurf
+
+Add to `~/.cursor/mcp.json` (Cursor) or the equivalent Windsurf config:
+
+```jsonc
+{
+  "mcpServers": {
+    "tako-mcp": {
+      "type": "http",
+      "url": "https://mcp.tako.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-tako-api-token>"
+      }
+    }
+  }
+}
+```
+
+### Notes
+
+- **Tools are discovered automatically** via the MCP `tools/list` handshake on connect — your client always sees the current tool surface, no manual list to keep in sync.
+- **Hosted uses Bearer auth on the connection**, not the `api_token` per-tool-call argument shown in the self-hosted examples below. Once authenticated, tool inputs match exactly across both transports.
+- **Use the staging endpoint** (`mcp.staging.tako.com`) for testing changes against an unstable build before they reach `mcp.tako.com`.
+
 ## Installation
 
 ```bash
@@ -216,18 +295,38 @@ This verifies:
 
 ## Architecture
 
+Tako MCP runs in two modes depending on which distribution path you chose. Both speak the same MCP tool protocol; only the transport and host differ.
+
+**Hosted mode (`mcp.tako.com`)** — the recommended path:
+
 ```
-AI Agent (LangGraph, CopilotKit, etc.)
+AI Agent (Claude Code/Desktop, Cursor, etc.)
+    ↓
+  MCP Protocol (Streamable HTTP, POST /mcp)
+    ↓
+Cloudflare Worker  ──  Bearer auth, tool dispatch
+    ↓
+Tako Django API  (api.trytako.com)
+```
+
+The Cloudflare Worker is a thin TypeScript proxy: it extracts the Bearer token, validates the MCP request, calls the appropriate Django endpoint with the user's token forwarded as `X-API-Key`, and returns structured tool results. Code lives in `workers/` of this repo.
+
+**Self-hosted mode (`pip install` / Docker)** — same proxy idea, run locally:
+
+```
+AI Agent
     ↓
   MCP Protocol (SSE)
     ↓
-Tako MCP Server
+Local tako-mcp process  (Python, Starlette/Uvicorn)
     ↓
-Tako API
+Tako Django API
 ```
 
-The server acts as a thin proxy that:
-1. Authenticates requests with your API token
+Use this when you need to run inside a private network, modify the server, or pin a specific version. Code lives in `src/tako_mcp/`.
+
+In both modes the server:
+1. Authenticates with your Tako API token (Bearer header for hosted; `api_token` per-tool argument for SSE)
 2. Translates MCP tool calls to Tako API requests
 3. Returns formatted results and UI resources
 
