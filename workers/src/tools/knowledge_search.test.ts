@@ -24,6 +24,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import knowledge_search, { __test_only__ } from "./knowledge_search.js";
+import {
+  bodyOf,
+  jsonResponse,
+  mockFetchSequence,
+  requestFrom,
+} from "./__test_helpers.js";
 
 // Mock-response counts scale with the polling budget so changing
 // `POLL_BUDGET_MS` doesn't silently make the budget-exhaustion test stop
@@ -32,12 +38,6 @@ import knowledge_search, { __test_only__ } from "./knowledge_search.js";
 // budget-check-before-sleep edge.
 const MAX_PENDING_POLLS =
   Math.ceil(__test_only__.POLL_BUDGET_MS / __test_only__.POLL_INTERVAL_MS) + 5;
-import {
-  bodyOf,
-  jsonResponse,
-  mockFetchSequence,
-  requestFrom,
-} from "./__test_helpers.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 const CTX: ToolContext = { token: "sk-test", env: ENV };
@@ -262,6 +262,49 @@ describe("knowledge_search async-task polling (TAKO-2686)", () => {
     }
   });
 
+  it("treats lowercase terminal status from GET as terminal (case normalization)", async () => {
+    // Backend casing has historically drifted between the 202 POST
+    // ("pending") and subsequent GETs ("PENDING" / "COMPLETED" / …).
+    // The polling loop normalizes via toUpperCase() so a future
+    // standardization on lowercase doesn't silently turn a terminal
+    // response into an infinite loop until budget exhausts.
+    vi.useFakeTimers();
+    try {
+      mockFetchSequence([
+        jsonResponse(202, { task_id: "task-case", status: "pending" }),
+        jsonResponse(200, {
+          task_id: "task-case",
+          status: "completed",
+          result: {
+            outputs: {
+              knowledge_cards: [
+                {
+                  card_id: "lowercase-ok",
+                  title: null,
+                  description: null,
+                  url: null,
+                  source: null,
+                },
+              ],
+            },
+          },
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      expect(out.count).toBe(1);
+      expect(out.results[0]?.card_id).toBe("lowercase-ok");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("throws with the error message when status is FAILED", async () => {
     vi.useFakeTimers();
     try {
@@ -292,8 +335,9 @@ describe("knowledge_search async-task polling (TAKO-2686)", () => {
   it("throws when the budget is exhausted before the task terminates", async () => {
     vi.useFakeTimers();
     try {
-      // POST + enough PENDING responses to outlast the budget (50s / 2s
-      // interval = 25 max polls; 40 is comfortable headroom).
+      // POST + `MAX_PENDING_POLLS` IN_PROGRESS responses — that's
+      // `ceil(POLL_BUDGET_MS / POLL_INTERVAL_MS) + 5`, enough to outlast
+      // the budget regardless of how those constants are tuned.
       const responses: Response[] = [
         jsonResponse(202, { task_id: "task-4", status: "pending" }),
       ];

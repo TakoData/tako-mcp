@@ -37,22 +37,26 @@ import type { ToolContext, ToolModule } from "./types.js";
 //   1. Tako's `orchestrator_deep_config.py` (timeout=300.0) is the upper
 //      bound on how long a deep search can possibly take.
 //   2. Cloudflare Workers caps **subrequests per invocation** at 50 on
-//      the default tier (1000 on Paid). One initial POST + N status GETs
-//      must stay under that ceiling, or the runtime kills the Worker
-//      mid-flight with "Too many subrequests by single Worker invocation".
+//      the default tier (1000 on Paid). One or two POSTs (auto-escalation
+//      from fast → deep is two) plus N status GETs must stay under that
+//      ceiling, or the runtime kills the Worker mid-flight with "Too many
+//      subrequests by single Worker invocation".
 //   3. The MCP **client's** per-tool timeout. The MCP TS SDK's
 //      `DEFAULT_REQUEST_TIMEOUT_MSEC` is 60_000 and applies unless the
 //      caller passes `options.timeout` (and/or `resetTimeoutOnProgress:
 //      true` paired with server-sent progress notifications, which we do
-//      not emit yet). For clients on defaults the practical ceiling is
-//      ~60s; clients that override get the full Worker budget.
+//      not emit yet). Clients on defaults will abort at ~60s; clients
+//      that override (or use HTTP transports without their own ceiling)
+//      get the full Worker budget. The tool `description` warns callers
+//      to bump their timeout for deep searches.
 //
-// Sizing math: `1 + ceil(POLL_BUDGET_MS / POLL_INTERVAL_MS) ≤ 50`. With
-// 10s polls and a 290s budget that's `1 + 29 = 30 subrequests` — well
-// under the cap, leaves ~20 slots of headroom. The 10s interval is fine
-// because explicit `search_effort: "deep"` is inherently long-running
-// (Orca pipeline routinely runs 60-300s); a 10s detection delta on
-// completion is irrelevant against that wait.
+// Sizing math: `2 + ceil(POLL_BUDGET_MS / POLL_INTERVAL_MS) ≤ 50` (worst
+// case is fast POST → deep POST → status GETs). With 10s polls and a 290s
+// budget that's `2 + 29 = 31 subrequests` — under the cap with ~19 slots
+// of headroom. The 10s interval is fine because explicit `search_effort:
+// "deep"` is inherently long-running (Orca pipeline routinely runs
+// 60-300s); a 10s detection delta on completion is irrelevant against
+// that wait.
 const POLL_INTERVAL_MS = 10_000;
 const POLL_BUDGET_MS = 290_000;
 const STATUS_REQUEST_TIMEOUT_MS = 10_000;
@@ -60,7 +64,12 @@ const STATUS_REQUEST_TIMEOUT_MS = 10_000;
 // Django's task status discriminator. `PENDING` and `IN_PROGRESS` are the
 // non-terminal states we keep polling through; the rest exit the loop.
 // Source: `tako/app/backend/monolith/models.py:2719` (AsyncTaskStatusChoices).
-const TERMINAL_STATES = new Set(["COMPLETED", "FAILED", "INTERRUPTED"]);
+// Compared against `.toUpperCase()` of the response status so that any
+// future casing drift between POST ("pending") and GET ("PENDING") doesn't
+// silently turn a terminal response into an infinite loop.
+const COMPLETED_STATE = "COMPLETED";
+const FAILURE_STATES = new Set(["FAILED", "INTERRUPTED"]);
+const TERMINAL_STATES = new Set([COMPLETED_STATE, ...FAILURE_STATES]);
 
 const inputSchema = z.object({
   query: z
@@ -163,7 +172,12 @@ function isAsyncTaskInitiation(
   // under `outputs.knowledge_cards`. Checking `task_id` alone keeps the
   // guard tolerant of `status` casing differences ("pending" vs "PENDING")
   // that we've seen between the initial 202 and subsequent polls.
-  return "task_id" in data && typeof data.task_id === "string";
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "task_id" in data &&
+    typeof (data as AsyncTaskInitiation).task_id === "string"
+  );
 }
 
 /**
@@ -174,11 +188,18 @@ function isAsyncTaskInitiation(
  */
 function summarizeProgress(events: AsyncTaskEvent[] | undefined): string {
   const list = events ?? [];
-  const lastTyped = [...list]
-    .reverse()
-    .find((e) => typeof e.data?.event_type === "string");
   if (list.length === 0) return "no progress events emitted";
-  const lastEventType = lastTyped?.data?.event_type ?? "untyped";
+  // Walk from the tail to find the most recent typed event without
+  // allocating a reversed copy. (Array.findLast is ES2023; tsconfig
+  // targets earlier so we hand-roll the reverse scan.)
+  let lastEventType = "untyped";
+  for (let i = list.length - 1; i >= 0; i--) {
+    const t = list[i]?.data?.event_type;
+    if (typeof t === "string") {
+      lastEventType = t;
+      break;
+    }
+  }
   return `${list.length} progress event${list.length === 1 ? "" : "s"}; last: ${lastEventType}`;
 }
 
@@ -188,9 +209,9 @@ async function pollAsyncKnowledgeSearch(
 ): Promise<KnowledgeCard[]> {
   const startedAt = Date.now();
   // Tracked across polls so the timeout/failure message can describe how
-  // far the pipeline got. We pass `since_index` to the status endpoint to
-  // avoid re-fetching the same events every poll — the response only
-  // includes events at index >= since_index.
+  // far the pipeline got. We always pass `since_index = maxId + 1` so the
+  // backend filter (inclusive `>=`) returns only events strictly newer
+  // than what we've already seen — no duplicates, no need to dedupe here.
   let nextSinceIndex = 0;
   let latestEvents: AsyncTaskEvent[] = [];
 
@@ -208,9 +229,8 @@ async function pollAsyncKnowledgeSearch(
       },
     );
 
-    // Accumulate events across polls. Backend returns events with id >=
-    // since_index, so we just append; on the next poll we ask for events
-    // strictly newer than the highest id we've seen.
+    // Accumulate events across polls. Each response only contains events
+    // newer than the last `since_index` we sent, so we just append.
     if (status.events && status.events.length > 0) {
       latestEvents = latestEvents.concat(status.events);
       const maxId = status.events.reduce(
@@ -220,15 +240,21 @@ async function pollAsyncKnowledgeSearch(
       nextSinceIndex = maxId + 1;
     }
 
-    if (status.status === "COMPLETED") {
+    // Normalize casing once: the 202 POST returns lowercase ("pending")
+    // while subsequent GETs return uppercase ("PENDING", "COMPLETED", …).
+    // Comparing against the upper-cased value insulates us from any
+    // future drift on either side.
+    const normalizedStatus =
+      typeof status.status === "string" ? status.status.toUpperCase() : "";
+    if (normalizedStatus === COMPLETED_STATE) {
       return status.result?.outputs?.knowledge_cards ?? [];
     }
-    if (status.status === "FAILED" || status.status === "INTERRUPTED") {
+    if (FAILURE_STATES.has(normalizedStatus)) {
       throw new Error(
-        `knowledge_search deep task ${status.status.toLowerCase()} (${summarizeProgress(latestEvents)}): ${status.error ?? "no detail provided by Tako backend"}`,
+        `knowledge_search deep task ${normalizedStatus.toLowerCase()} (${summarizeProgress(latestEvents)}): ${status.error ?? "no detail provided by Tako backend"}`,
       );
     }
-    // Anything else (PENDING / IN_PROGRESS / ...) → keep polling.
+    // Anything else (PENDING / IN_PROGRESS / unrecognized) → keep polling.
 
     // Re-check the budget BEFORE sleeping rather than after, so a budget
     // that's already exhausted exits cleanly instead of sleeping then
@@ -247,7 +273,7 @@ async function pollAsyncKnowledgeSearch(
 const knowledge_search = {
   name: "knowledge_search",
   description:
-    "Use this to find existing charts and live-data visualizations on almost any topic. Tako's knowledge base covers economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, prediction markets (Polymarket), internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more — plus real-time / live data via the deep-research pipeline. Default to calling this first whenever a user asks about any trend, comparison, statistic, current value, forecast, or betting/prediction-market odds, even if the topic seems outside traditional 'chart' categories — Tako very likely has a relevant card.",
+    "Use this to find existing charts and live-data visualizations on almost any topic. Tako's knowledge base covers economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, prediction markets (Polymarket), internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more — plus real-time / live data via the deep-research pipeline. Default to calling this first whenever a user asks about any trend, comparison, statistic, current value, forecast, or betting/prediction-market odds, even if the topic seems outside traditional 'chart' categories — Tako very likely has a relevant card. Note: with `search_effort: \"deep\"` (and the default fast→deep auto-escalation when fast returns no cards) the call can run up to ~5 minutes server-side; MCP clients on the SDK default 60s timeout should pass `options.timeout` of at least 300_000 ms when invoking this tool, otherwise the client will abort before the deep result lands.",
   inputSchema,
   outputSchema,
   annotations: {
@@ -319,4 +345,10 @@ export default knowledge_search;
 // Exported for unit tests — TERMINAL_STATES is small enough to inline in
 // tests, but exposing it keeps the test in lockstep with any future state
 // the backend introduces.
-export const __test_only__ = { TERMINAL_STATES, POLL_INTERVAL_MS, POLL_BUDGET_MS };
+export const __test_only__ = {
+  TERMINAL_STATES,
+  FAILURE_STATES,
+  COMPLETED_STATE,
+  POLL_INTERVAL_MS,
+  POLL_BUDGET_MS,
+};
