@@ -25,13 +25,13 @@ on:
         # below — GitHub Actions doesn't allow `${{ env.X }}` substitution
         # in `workflow_dispatch` input defaults. If the staging URL ever
         # changes, update both the env var AND this default in lockstep.
-        default: 'https://tako-mcp-staging.bobby-118.workers.dev'
+        default: 'https://mcp.staging.tako.com'
 
 # Single source of truth for the staging URL. Referenced from the smoke step
 # below; the `workflow_dispatch` input default has to repeat the value (see
 # note on the input above).
 env:
-  STAGING_BASE_URL: 'https://tako-mcp-staging.bobby-118.workers.dev'
+  STAGING_BASE_URL: 'https://mcp.staging.tako.com'
 
 # Latest staging deploy is what we want to validate; cancel an in-flight
 # smoke if a newer deploy lands while it's running.
