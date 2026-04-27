@@ -16,7 +16,8 @@
     "predeploy:production": "npm run registry:check",
     "cf-typegen": "wrangler types",
     "registry:gen": "tsx scripts/gen-registry.ts",
-    "registry:check": "tsx scripts/gen-registry.ts --check"
+    "registry:check": "tsx scripts/gen-registry.ts --check",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.9.11",

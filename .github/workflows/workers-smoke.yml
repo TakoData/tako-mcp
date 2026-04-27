@@ -1,0 +1,68 @@
+name: workers-smoke
+
+# Triggers (TAKO-2611):
+#   - `workflow_run`: fire automatically after every successful `workers-deploy`
+#     run on `main`. The smoke target is the staging Worker by default; we
+#     could later read the deployed env from the upstream run if/when a prod
+#     auto-smoke is wanted.
+#   - `workflow_dispatch`: manual trigger so we can smoke prod post-promotion,
+#     or smoke any other base URL without redeploying.
+#
+# `workflow_run` only fires for upstream runs that completed (any conclusion);
+# the `if:` on the job below filters to successful upstream runs.
+on:
+  workflow_run:
+    workflows: [workers-deploy]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Base URL of the Worker to smoke-test (no trailing slash)'
+        type: string
+        # Default points at the staging *.workers.dev URL while TAKO-2610
+        # (custom-domain bind for `mcp.staging.tako.com`) is pending. Flip
+        # to `https://mcp.staging.tako.com` once that ships.
+        default: 'https://tako-mcp-staging.bobby-118.workers.dev'
+
+# Latest staging deploy is what we want to validate; cancel an in-flight
+# smoke if a newer deploy lands while it's running.
+concurrency:
+  group: workers-smoke-${{ github.event.inputs.base_url || 'staging' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # workflow_run fires regardless of conclusion — gate to success only so we
+    # don't smoke a deploy that already failed.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    defaults:
+      run:
+        working-directory: workers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: workers/.nvmrc
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Smoke target: manual dispatch → user-supplied input; auto-trigger →
+      # always staging. Token comes from a GitHub Actions secret and is masked
+      # by Actions in logs; the smoke script also takes care never to print it.
+      - name: Smoke
+        env:
+          SMOKE_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.base_url || 'https://tako-mcp-staging.bobby-118.workers.dev' }}
+          TAKO_SMOKE_API_TOKEN: ${{ secrets.TAKO_SMOKE_API_TOKEN }}
+        run: npm run smoke
