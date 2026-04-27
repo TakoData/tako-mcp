@@ -32,6 +32,9 @@
       "vars": {
         "DJANGO_BASE_URL": "https://staging.trytako.com"
       },
+      // Keep `*.workers.dev` + Preview URLs enabled on staging as a debugging
+      // fallback once `mcp.staging.tako.com` is bound (TAKO-2610). Staging is
+      // not customer-facing, so the secondary entrypoint is acceptable.
       "workers_dev": true,
       "preview_urls": true
     },
@@ -40,6 +43,14 @@
       "vars": {
         "DJANGO_BASE_URL": "https://trytako.com"
       },
+      // Production currently exposes `tako-mcp-production.<account>.workers.dev`
+      // because the `mcp.tako.com` custom domain is not bound yet (TAKO-2610
+      // is blocked on Cloudflare Zone:Edit access — see TAKO-2677). This is
+      // explicitly temporary; the secondary entrypoint bypasses anything
+      // attached to the custom domain (Zone-level rules, future WAF/rate
+      // limits, analytics tags), so it must not survive the cutover.
+      // TODO(TAKO-2610): flip `workers_dev` to `false` once `mcp.tako.com`
+      // resolves to the Worker.
       "workers_dev": true,
       "preview_urls": false
     }
