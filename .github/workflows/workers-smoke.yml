@@ -1,0 +1,92 @@
+name: workers-smoke
+
+# Triggers (TAKO-2611):
+#   - `workflow_run`: fire automatically after a successful `workers-deploy`
+#     run that was triggered by a `push` to `main` (which always deploys
+#     staging). We DO NOT auto-smoke after `workflow_dispatch` deploys —
+#     those can target production and we don't have a prod-aware smoke yet,
+#     so silently smoking staging while prod was deployed would produce a
+#     misleading green badge. Manually dispatch this workflow to smoke any
+#     post-promotion prod deploy.
+#   - `workflow_dispatch`: manual trigger to smoke any base URL.
+#
+# `workflow_run` only fires for upstream runs that completed (any conclusion);
+# the `if:` on the job below filters to successful + push-triggered upstreams.
+on:
+  workflow_run:
+    workflows: [workers-deploy]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Base URL of the Worker to smoke-test (no trailing slash). Leave empty to use the staging default.'
+        type: string
+        # Default duplicated from the workflow-level `STAGING_BASE_URL` env
+        # below — GitHub Actions doesn't allow `${{ env.X }}` substitution
+        # in `workflow_dispatch` input defaults. If the staging URL ever
+        # changes, update both the env var AND this default in lockstep.
+        default: 'https://tako-mcp-staging.bobby-118.workers.dev'
+
+# Single source of truth for the staging URL. Referenced from the smoke step
+# below; the `workflow_dispatch` input default has to repeat the value (see
+# note on the input above).
+env:
+  STAGING_BASE_URL: 'https://tako-mcp-staging.bobby-118.workers.dev'
+
+# Latest staging deploy is what we want to validate; cancel an in-flight
+# smoke if a newer deploy lands while it's running.
+concurrency:
+  group: workers-smoke-${{ github.event.inputs.base_url || 'staging' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Run when:
+    #   - manually dispatched (any base URL the user picked), OR
+    #   - the upstream `workers-deploy` succeeded AND was triggered by a
+    #     `push` (which always deploys staging — see workers-deploy.yml). We
+    #     skip `workflow_dispatch`-triggered upstream runs because those may
+    #     have targeted production, and our smoke target is hardcoded to
+    #     staging here.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    defaults:
+      run:
+        working-directory: workers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: workers/.nvmrc
+          cache: 'npm'
+          cache-dependency-path: workers/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Smoke target precedence:
+      #   1. `workflow_dispatch` input (if set) — lets ops smoke any URL
+      #   2. `STAGING_BASE_URL` env (workflow-level constant)
+      #
+      # The smoke script (`scripts/smoke.ts`) requires `SMOKE_BASE_URL` to be
+      # set explicitly — there is no in-script default — so any source URL
+      # change happens in this YAML, not in TypeScript.
+      #
+      # `TAKO_SMOKE_API_TOKEN` is a GitHub Actions secret, automatically
+      # masked in logs; the smoke script also never prints it.
+      - name: Smoke
+        env:
+          SMOKE_BASE_URL: ${{ inputs.base_url || env.STAGING_BASE_URL }}
+          TAKO_SMOKE_API_TOKEN: ${{ secrets.TAKO_SMOKE_API_TOKEN }}
+        run: npm run smoke
