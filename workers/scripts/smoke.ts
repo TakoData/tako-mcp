@@ -226,10 +226,17 @@ try {
     "get_credit_balance.details is not an object",
   );
   const balance = cbStructured.details["credit_balance"];
+  // Reject empty / whitespace-only strings explicitly: `Number("")` and
+  // `Number("   ")` both coerce to `0` (which Number.isFinite happily
+  // accepts), which would otherwise let a backend bug return "" and look
+  // like a real `0`-credit balance. DRF's DecimalField won't produce that
+  // in practice, but the check is free.
   const balanceNumeric =
     typeof balance === "number"
       ? balance
-      : typeof balance === "string" && Number.isFinite(Number(balance))
+      : typeof balance === "string" &&
+          balance.trim() !== "" &&
+          Number.isFinite(Number(balance))
         ? Number(balance)
         : null;
   assert(
@@ -303,9 +310,10 @@ try {
   //      still proves the handler ran (auth + djangoPost reached
   //      Django, which rejected the chart) — the validation tripped on
   //      the *response* shape, not on our request. Today this is what
-  //      actually happens (the handler doesn't synthesize a
-  //      schema-conformant error payload), so we treat it as
-  //      equivalent evidence of write-path exercise.
+  //      actually happens because `djangoErrorToToolResult` returns a
+  //      `kind`-discriminator envelope that doesn't match each tool's
+  //      success-shape schema. Tracked in TAKO-2681; once that ships,
+  //      remove this fallback and tighten the test to fail-on-throw.
   let createChartFailedAsExpected = false;
   let createChartFailureMode: string;
   try {
