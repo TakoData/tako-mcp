@@ -191,7 +191,7 @@
         },
         "search_effort": {
           "type": "string",
-          "description": "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, higher credit cost). Omit to let the tool run `fast` first and escalate to `deep` only if `fast` returns zero cards — deep against staging/prod is fragile (Orca redirect round-trip) and often empty, so the fallback avoids spending a credit unless `fast` couldn't answer."
+          "description": "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, async, higher credit cost). Omit to let the tool run `fast` first and escalate to `deep` only if `fast` returns zero cards. Deep mode runs asynchronously on Tako's side — the tool polls until the task completes or the per-call budget is exhausted."
         },
         "country_code": {
           "type": "string",
