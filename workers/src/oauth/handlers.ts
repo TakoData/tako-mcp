@@ -41,6 +41,7 @@
 
 import type { Env } from "../env.js";
 import {
+  decryptAesGcm,
   encryptAesGcm,
   sha256B64Url,
   signJwt,
@@ -52,7 +53,10 @@ import {
   StytchError,
   type StytchTokenKind,
 } from "./stytch.js";
-import { fetchTakoApiToken, IdentityError } from "./identity.js";
+import {
+  fetchTakoApiToken,
+  IdentityError,
+} from "./identity.js";
 import {
   buildClearCookie,
   buildSetCookie,
@@ -561,6 +565,68 @@ export async function handleAuthorize(
     );
   }
 
+  // Re-fetch the Tako API token at consent time so token rotations on
+  // trytako.com are always reflected in newly-issued OAuth grants. The
+  // session cookie carries an encrypted Stytch session JWT (not a cached
+  // Tako token), so we decrypt it, present it to Tako, and use whatever
+  // current token Tako returns.
+  const stytchSessionJwt = await decryptAesGcm(
+    session!.enc_stytch_session_jwt,
+    cfg.encKey,
+  );
+  if (stytchSessionJwt === null) {
+    // Cookie was tampered, OAUTH_ENC_KEY rotated, or otherwise unreadable.
+    // Force the user back through /login for a fresh Stytch round-trip.
+    return htmlResponse(
+      sessionExpiredPage(
+        "Your session is no longer valid. Please sign in again.",
+      ),
+      401,
+      { "set-cookie": buildClearCookie(SESSION_COOKIE) },
+    );
+  }
+  let takoToken: string;
+  try {
+    takoToken = await fetchTakoApiToken(env, stytchSessionJwt);
+  } catch (err) {
+    if (err instanceof IdentityError) {
+      if (err.kind === "no_token") {
+        return htmlResponse(
+          sessionExpiredPage(
+            "Your Tako account does not have an API token yet. " +
+              "Visit trytako.com → settings → API tokens to mint one, " +
+              "then retry the connection.",
+          ),
+          400,
+        );
+      }
+      if (err.kind === "unauthorized") {
+        // Stytch session was revoked or expired — force re-login by
+        // clearing the now-useless session cookie.
+        return htmlResponse(
+          sessionExpiredPage(
+            "Your Tako sign-in expired. Please sign in again.",
+          ),
+          401,
+          { "set-cookie": buildClearCookie(SESSION_COOKIE) },
+        );
+      }
+      console.error(
+        "Tako identity lookup failed at /authorize POST:",
+        err.kind,
+        err.message,
+      );
+      return htmlResponse(
+        sessionExpiredPage(
+          "Could not retrieve your Tako API token. Please try again.",
+        ),
+        502,
+      );
+    }
+    throw err;
+  }
+  const enc_tako_token = await encryptAesGcm(takoToken, cfg.encKey);
+
   const now = Math.floor(Date.now() / 1000);
   const codeClaims: AuthCodeClaims = {
     type: "auth_code",
@@ -570,7 +636,7 @@ export async function handleAuthorize(
     scope: parsed.scope ?? "mcp",
     user_id: session!.user_id,
     user_email: session!.user_email,
-    enc_tako_token: session!.enc_tako_token,
+    enc_tako_token,
     exp: now + AUTH_CODE_TTL_S,
   };
   const code = await signJwt(codeClaims, cfg.signKey);
@@ -582,6 +648,42 @@ export async function handleAuthorize(
     status: 302,
     headers: { location: redirect.toString() },
   });
+}
+
+/**
+ * Friendly HTML page shown when /authorize POST cannot complete because
+ * of a session-or-Tako-side error. Reuses the same look as the consent
+ * page; clears the session cookie inline if the session is unrecoverable.
+ */
+function sessionExpiredPage(message: string): string {
+  const safe = escapeHtml(message);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tako — sign-in required</title>
+<style>
+  :root { color-scheme: light dark; --fg: #111; --bg: #fff; --muted: #555; --border: #ddd; --accent: #111; --on-accent: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #f5f5f5; --bg: #0b0b0b; --muted: #aaa; --border: #2a2a2a; --accent: #fff; --on-accent: #111; }
+  }
+  body { font-family: -apple-system, system-ui, "Segoe UI", sans-serif; margin: 0; padding: 3rem 1.5rem; max-width: 28rem; margin-inline: auto; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 1.3rem; margin: 0 0 0.5rem; }
+  p { color: var(--muted); line-height: 1.55; }
+  .actions { margin-top: 1.5rem; display: flex; gap: 0.75rem; }
+  a.btn { flex: 1; text-align: center; padding: 0.75rem 1rem; font-size: 1rem; font-weight: 500; border-radius: 0.5rem; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); text-decoration: none; }
+  a.btn:hover { opacity: 0.85; }
+</style>
+</head>
+<body>
+<h1>Sign-in required</h1>
+<p>${safe}</p>
+<div class="actions">
+  <a class="btn" href="javascript:history.back()">Go back</a>
+</div>
+</body>
+</html>`;
 }
 
 function consentPage(args: {
@@ -972,48 +1074,23 @@ export async function handleStytchCallback(
     throw err;
   }
 
-  // Step 2 — fetch the user's Tako API token using their freshly-minted
-  // Stytch session JWT. This is server-to-server, the JWT travels in a
-  // Cookie header (see identity.ts).
-  let takoToken: string;
-  try {
-    takoToken = await fetchTakoApiToken(env, stytchResult.session_jwt);
-  } catch (err) {
-    if (err instanceof IdentityError) {
-      if (err.kind === "no_token") {
-        return errorPage(
-          400,
-          "Your Tako account does not have an API token yet. " +
-            "Visit trytako.com → settings → API tokens to mint one, " +
-            "then retry the connection.",
-        );
-      }
-      if (err.kind === "unauthorized") {
-        return errorPage(
-          502,
-          "Tako rejected the Stytch session. This usually means the " +
-            "Stytch project on the Worker doesn't match Tako's project. " +
-            "Contact support.",
-        );
-      }
-      console.error("Tako identity lookup failed:", err.kind, err.message);
-      return errorPage(
-        502,
-        "Could not retrieve your Tako API token. Please try again.",
-      );
-    }
-    throw err;
-  }
-
-  // Step 3 — encrypt the Tako token (so it can travel in our session
-  // cookie + future OAuth tokens) and mint our own session JWT.
-  const enc_tako_token = await encryptAesGcm(takoToken, cfg.encKey);
+  // Step 2 — encrypt the Stytch session JWT and stash it in our own
+  // session cookie. We deliberately do NOT fetch the Tako API token
+  // here. Caching the Tako token in the session cookie would mean
+  // a token rotation at trytako.com followed by a connector-reconnect
+  // within the cookie's TTL would re-use the stale cached token. By
+  // keeping the Stytch JWT instead and re-fetching the Tako token on
+  // every POST /authorize, rotations are always reflected.
+  const enc_stytch_session_jwt = await encryptAesGcm(
+    stytchResult.session_jwt,
+    cfg.encKey,
+  );
   const userEmail = primaryEmail(stytchResult.user);
   const sessionClaims: SessionCookieClaims = {
     type: "session",
     user_id: stytchResult.user.user_id,
     user_email: userEmail,
-    enc_tako_token,
+    enc_stytch_session_jwt,
     exp: Math.floor(Date.now() / 1000) + SESSION_COOKIE_MAX_AGE_S,
   };
   const sessionJwt = await signJwt(sessionClaims, cfg.signKey);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import {
@@ -9,7 +9,7 @@ import {
   handleRegister,
   handleToken,
 } from "./handlers.js";
-import { encryptAesGcm, signJwt } from "./jwt.js";
+import { decryptAesGcm, encryptAesGcm, signJwt } from "./jwt.js";
 import {
   buildSetCookie,
   SESSION_COOKIE,
@@ -72,17 +72,97 @@ async function mintClientId(env: Env, redirectUri: string): Promise<string> {
   return signJwt(claims, env.OAUTH_SIGN_KEY!);
 }
 
-async function mintSessionCookie(env: Env, takoToken: string): Promise<string> {
-  const enc_tako_token = await encryptAesGcm(takoToken, env.OAUTH_ENC_KEY!);
+/**
+ * Mint a `tako_oauth_session` cookie value. Carries an encrypted Stytch
+ * session JWT (placeholder ASCII string is fine — handler only decrypts
+ * + forwards it as a Cookie header to a mocked Tako fetch). Tests that
+ * exercise POST /authorize must also stub `globalThis.fetch` so the
+ * Tako-token re-fetch returns whatever value the test wants embedded in
+ * the issued auth code; see `mockTakoTokenFetch`.
+ */
+async function mintSessionCookie(
+  env: Env,
+  stytchJwtPlaceholder = "stub.stytch.session",
+): Promise<string> {
+  const enc_stytch_session_jwt = await encryptAesGcm(
+    stytchJwtPlaceholder,
+    env.OAUTH_ENC_KEY!,
+  );
   const claims: SessionCookieClaims = {
     type: "session",
     user_id: "user-1",
     user_email: "alice@example.com",
-    enc_tako_token,
+    enc_stytch_session_jwt,
     exp: Math.floor(Date.now() / 1000) + 600,
   };
   return signJwt(claims, env.OAUTH_SIGN_KEY!);
 }
+
+/**
+ * Stub `globalThis.fetch` so a server-side call to Tako's
+ * `/api/v1/api_token/` endpoint returns the supplied token value.
+ * Used by tests that exercise POST /authorize, since that handler now
+ * re-fetches the Tako token from the user's Stytch session at consent
+ * time (see Option 2 in the OAuth design doc).
+ */
+function mockTakoTokenFetch(token: string): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.includes("/api/v1/api_token/")) {
+        return new Response(JSON.stringify({ token }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      // Anything else is unexpected from these tests; fail loudly so
+      // we notice if the handler grows another upstream call.
+      return new Response(`unmocked fetch: ${url}`, { status: 599 });
+    }),
+  );
+}
+
+/**
+ * Stub `globalThis.fetch` so Tako's `/api/v1/api_token/` returns the
+ * given non-200 status. Used to test the error branches in POST /authorize.
+ */
+function mockTakoTokenFetchStatus(status: number): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.includes("/api/v1/api_token/")) {
+        return new Response("error", { status });
+      }
+      return new Response(`unmocked fetch: ${url}`, { status: 599 });
+    }),
+  );
+}
+
+beforeEach(() => {
+  // Every test starts with a fetch stub that resolves Tako's
+  // `/api/v1/api_token/` to a generic token. Tests that need to
+  // verify a specific token value or test an error path call
+  // `mockTakoTokenFetch(...)` / `mockTakoTokenFetchStatus(...)`
+  // themselves to override.
+  vi.unstubAllGlobals();
+  mockTakoTokenFetch("default-mocked-tako-token");
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 /* --------------------------- Discovery --------------------------- */
 
@@ -314,7 +394,7 @@ describe("/authorize", () => {
   it("GET with valid session renders HTML consent page", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
-    const sessionJwt = await mintSessionCookie(env, "tako-token-x");
+    const sessionJwt = await mintSessionCookie(env);
     const { challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -359,7 +439,7 @@ describe("/authorize", () => {
   it("POST with valid session redirects to client with auth code", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
-    const sessionJwt = await mintSessionCookie(env, "tako-token-x");
+    const sessionJwt = await mintSessionCookie(env);
     const { challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -414,7 +494,7 @@ describe("/authorize", () => {
       iat: Math.floor(Date.now() / 1000),
     };
     const clientId = await signJwt(claims, env.OAUTH_SIGN_KEY!);
-    const sessionJwt = await mintSessionCookie(env, "tako-token-x");
+    const sessionJwt = await mintSessionCookie(env);
     const { challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -442,7 +522,7 @@ describe("/authorize", () => {
   it("rebuilds form-action from validated params (not raw query string)", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
-    const sessionJwt = await mintSessionCookie(env, "tako-token-x");
+    const sessionJwt = await mintSessionCookie(env);
     const { challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -468,7 +548,7 @@ describe("/authorize", () => {
   it("rejects redirect_uri not in client's registered list", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
-    const sessionJwt = await mintSessionCookie(env, "tako-token-x");
+    const sessionJwt = await mintSessionCookie(env);
     const { challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -499,7 +579,7 @@ describe("/token", () => {
   }> {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
-    const sessionJwt = await mintSessionCookie(env, "tako-token-real");
+    const sessionJwt = await mintSessionCookie(env);
     const { verifier, challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -560,7 +640,7 @@ describe("/token", () => {
   it("rejects authorization_code grant with mismatched PKCE verifier", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
-    const sessionJwt = await mintSessionCookie(env, "tako-token-real");
+    const sessionJwt = await mintSessionCookie(env);
     const { challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -620,7 +700,7 @@ describe("/token", () => {
   it("rejects mismatched redirect_uri at /token", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
-    const sessionJwt = await mintSessionCookie(env, "tako-token-real");
+    const sessionJwt = await mintSessionCookie(env);
     const { verifier, challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -661,7 +741,7 @@ describe("/token", () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
     const otherClientId = await mintClientId(env, "https://other.example.com/cb");
-    const sessionJwt = await mintSessionCookie(env, "tako-token-real");
+    const sessionJwt = await mintSessionCookie(env);
     const { verifier, challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -807,7 +887,7 @@ describe("/authorize hardening", () => {
   it("accepts the supported `mcp` scope", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
-    const sessionJwt = await mintSessionCookie(env, "tako-token-x");
+    const sessionJwt = await mintSessionCookie(env);
     const { challenge } = await pkcePair();
     const url = new URL("https://mcp.example.com/authorize");
     url.searchParams.set("client_id", clientId);
@@ -875,6 +955,152 @@ describe("/authorize hardening", () => {
     ) as { exp?: number; iat: number };
     expect(payload.exp).toBeDefined();
     expect(payload.exp!).toBeGreaterThan(payload.iat);
+  });
+});
+
+/* --------------------------- /authorize POST re-fetches Tako token --------------------------- */
+
+describe("/authorize POST always re-fetches the Tako token (Option 2)", () => {
+  async function runAuthorizePost(
+    env: Env,
+  ): Promise<{ accessToken: string; verifier: string; clientId: string }> {
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { verifier, challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+
+    const authorizeRes = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(authorizeRes.status).toBe(302);
+    const code = new URL(authorizeRes.headers.get("location")!)
+      .searchParams.get("code")!;
+
+    // Exchange the auth code for tokens so the test can decrypt the
+    // resulting access token's enc_tako_token claim.
+    const tokenRes = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://client.example.com/cb",
+          code_verifier: verifier,
+          client_id: clientId,
+        }).toString(),
+      }),
+      env,
+    );
+    const body = (await tokenRes.json()) as { access_token: string };
+    return { accessToken: body.access_token, verifier, clientId };
+  }
+
+  function decodeAccessClaims(jwt: string): Record<string, unknown> {
+    const parts = jwt.split(".");
+    return JSON.parse(
+      atob(parts[1]!.replace(/-/g, "+").replace(/_/g, "/")),
+    ) as Record<string, unknown>;
+  }
+
+  it("embeds the freshly-fetched Tako token in the issued auth code, not a cached value", async () => {
+    const env = envWith();
+    // Mock fetch to return a known token. The session cookie itself
+    // carries only the encrypted Stytch JWT — no Tako token cached.
+    mockTakoTokenFetch("FRESH_TAKO_TOKEN_FROM_DJANGO");
+    const { accessToken } = await runAuthorizePost(env);
+    const claims = decodeAccessClaims(accessToken);
+    const decrypted = await decryptAesGcm(
+      claims["enc_tako_token"] as string,
+      env.OAUTH_ENC_KEY!,
+    );
+    expect(decrypted).toBe("FRESH_TAKO_TOKEN_FROM_DJANGO");
+  });
+
+  it("reflects rotation: a second consent flow uses the rotated Tako token", async () => {
+    const env = envWith();
+
+    mockTakoTokenFetch("OLD_TAKO_TOKEN");
+    const first = await runAuthorizePost(env);
+    const firstDecrypted = await decryptAesGcm(
+      decodeAccessClaims(first.accessToken)["enc_tako_token"] as string,
+      env.OAUTH_ENC_KEY!,
+    );
+    expect(firstDecrypted).toBe("OLD_TAKO_TOKEN");
+
+    // Simulate rotation at trytako.com: subsequent fetches return the new token.
+    mockTakoTokenFetch("NEW_TAKO_TOKEN_AFTER_ROTATION");
+    const second = await runAuthorizePost(env);
+    const secondDecrypted = await decryptAesGcm(
+      decodeAccessClaims(second.accessToken)["enc_tako_token"] as string,
+      env.OAUTH_ENC_KEY!,
+    );
+    expect(secondDecrypted).toBe("NEW_TAKO_TOKEN_AFTER_ROTATION");
+  });
+
+  it("returns a 401 sign-in-required page when Stytch session is rejected by Tako", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+
+    // Tako returns 401 → unauthorized → user must re-login.
+    mockTakoTokenFetchStatus(401);
+
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(401);
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    // Session cookie cleared so the next /authorize forces a fresh /login.
+    expect(setCookie).toContain(`${SESSION_COOKIE}=`);
+    expect(setCookie).toContain("Max-Age=0");
+  });
+
+  it("returns a 400 'mint a Tako token' page when user has no Tako API token", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+
+    // 404 from Tako means user hasn't minted a token yet.
+    mockTakoTokenFetchStatus(404);
+
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain("trytako.com");
   });
 });
 

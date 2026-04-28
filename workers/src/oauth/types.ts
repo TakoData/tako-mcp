@@ -100,15 +100,36 @@ export interface StateCookieClaims extends BaseClaims {
 
 /**
  * `tako_oauth_session` cookie. Set on /oauth/stytch_callback after we
- * exchange Stytch's redirect token for a session JWT, look up the user's
- * Tako API token, and encrypt it for embedding. Lasts long enough to
- * complete consent (default 30 min).
+ * exchange Stytch's redirect token for a session JWT and identify the
+ * user. Carries the (encrypted) Stytch session JWT itself — NOT a
+ * cached Tako API token. The Tako token is re-fetched on every
+ * `POST /authorize` so token rotations on trytako.com are always
+ * reflected in newly-issued OAuth grants.
+ *
+ * Why we cache the Stytch JWT instead of the Tako token: if a user
+ * rotates their Tako API token at trytako.com, every previously-issued
+ * OAuth grant becomes invalid (the embedded token no longer authenticates
+ * to Django — that's the documented kill switch). But on reconnect, the
+ * user expects the NEW connector to work. If we cached the Tako token
+ * here, the reconnect flow would reuse the stale cached token. By
+ * keeping the Stytch JWT and re-fetching the Tako token at consent
+ * time, we always issue grants with the user's current Tako token.
+ *
+ * Freshness is bounded by the Stytch session: if the user signs out of
+ * trytako.com (revoking the Stytch session), subsequent
+ * `POST /authorize` attempts will be rejected at the Tako call and
+ * force a fresh `/login` round-trip. This is a feature.
+ *
+ * The Stytch JWT is encrypted (not just signed) because, unlike a Tako
+ * API token, a Stytch session JWT can be replayed against any
+ * Stytch-protected resource for its lifetime; encryption ensures a
+ * SIGN_KEY-only leak doesn't expose it.
  */
 export interface SessionCookieClaims extends BaseClaims {
   type: "session";
   user_id: string;
   user_email: string;
-  enc_tako_token: string;
+  enc_stytch_session_jwt: string;
 }
 
 /* --------------------------- Stytch --------------------------- */
