@@ -1,5 +1,14 @@
 import type { Env } from "./env.js";
 import { handleMcpRequest } from "./mcp.js";
+import {
+  handleAuthorize,
+  handleAuthServerMetadata,
+  handleLogin,
+  handleProtectedResourceMetadata,
+  handleRegister,
+  handleStytchCallback,
+  handleToken,
+} from "./oauth/handlers.js";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -21,6 +30,40 @@ export default {
     // MCP clients (Claude Desktop, CLI) do not issue preflights. Revisit
     // when Phase 2 introduces streaming tools or browser-based clients —
     // see the `transport.close()` TODO in `mcp.ts`.
+
+    // OAuth 2.1 + DCR + PKCE (TAKO-2679). The two `.well-known/...`
+    // discovery docs let MCP hosts (Claude.ai, ChatGPT) bootstrap the
+    // OAuth flow from just the resource URL. `/register`, `/authorize`,
+    // `/token` implement the protocol per the MCP spec; `/login` and
+    // `/oauth/stytch_callback` are the user-facing parts of the dance
+    // that map a Stytch login to a Tako API token under the hood.
+    if (
+      request.method === "GET" &&
+      url.pathname === "/.well-known/oauth-protected-resource"
+    ) {
+      return handleProtectedResourceMetadata(request, env);
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/.well-known/oauth-authorization-server"
+    ) {
+      return handleAuthServerMetadata(request, env);
+    }
+    if (url.pathname === "/register") {
+      return handleRegister(request, env);
+    }
+    if (url.pathname === "/authorize") {
+      return handleAuthorize(request, env);
+    }
+    if (url.pathname === "/token") {
+      return handleToken(request, env);
+    }
+    if (url.pathname === "/login") {
+      return handleLogin(request, env);
+    }
+    if (url.pathname === "/oauth/stytch_callback") {
+      return handleStytchCallback(request, env);
+    }
 
     return new Response("not found", {
       status: 404,
