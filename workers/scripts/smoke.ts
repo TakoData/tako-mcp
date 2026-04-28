@@ -176,6 +176,44 @@ try {
   }
   ok(`tools/list → ${tools.length} tools (${toolNames.join(", ")})`);
 
+  // ----- MCP Apps wiring on open_chart_ui --------------------------------
+  // The widget bundle must be advertised two ways: the tool listing carries
+  // `_meta.ui.resourceUri`, and `resources/list` exposes a resource at that
+  // URI with the MCP Apps mimeType. Without both, MCP Apps clients
+  // (claude.ai, ChatGPT) silently fall back to the static-image path and
+  // we lose the interactive embed. Soft-warn if either is missing rather
+  // than failing — the smoke is still useful for the URL/image path even
+  // if the widget piece broke in this deploy.
+  const openChart = tools.find((t) => t.name === "open_chart_ui");
+  const openChartUiMeta = (openChart?._meta as { ui?: { resourceUri?: unknown } } | undefined)?.ui;
+  if (
+    !openChartUiMeta ||
+    typeof openChartUiMeta.resourceUri !== "string" ||
+    !openChartUiMeta.resourceUri.startsWith("ui://")
+  ) {
+    console.warn(
+      `[warn] open_chart_ui._meta.ui.resourceUri missing or not a ui:// URI ` +
+        `(got: ${JSON.stringify(openChart?._meta)})`,
+    );
+  } else {
+    const widgetUri = openChartUiMeta.resourceUri;
+    const { resources } = await client.listResources();
+    const widget = resources.find((r) => r.uri === widgetUri);
+    if (!widget) {
+      console.warn(
+        `[warn] resources/list does not include ${widgetUri} ` +
+          `(got: ${resources.map((r) => r.uri).join(", ") || "<none>"})`,
+      );
+    } else if (widget.mimeType !== "text/html;profile=mcp-app") {
+      console.warn(
+        `[warn] widget ${widgetUri} mimeType is ${JSON.stringify(widget.mimeType)} ` +
+          `(expected "text/html;profile=mcp-app")`,
+      );
+    } else {
+      ok(`open_chart_ui → MCP Apps widget at ${widgetUri} (${widget.mimeType})`);
+    }
+  }
+
   // ----- a) knowledge_search canary --------------------------------------
   const ksResult = await callOk(client, "knowledge_search", {
     query: CANARY_QUERY,
@@ -278,17 +316,53 @@ try {
   const ouResult = await callOk(client, "open_chart_ui", {
     pub_id: chainPubId,
   });
-  // open_chart_ui's structured payload includes `iframe_html` + `url`-ish
-  // fields; we don't pin to a specific shape (it's a UI helper that may
-  // evolve), only that it returns a structured object referencing pub_id.
+  // Structured payload carries `image_url` + `embed_url` (URL-only, no
+  // raw HTML — see the regression notes in tools/open_chart_ui.ts). The
+  // tool also appends an inline `image` content block via the
+  // `extraContentBlocks` hook so claude.ai-style clients render the chart
+  // without a click-to-load gate. The hook is best-effort: the image
+  // block is only present when the PNG endpoint responds with image
+  // bytes. We assert structuredContent is well-formed (always required)
+  // but only WARN if the inline image is missing — a slow PNG render or
+  // a transient upstream blip should not fail the smoke.
   const ouStructured = ouResult.structuredContent as
-    | Record<string, unknown>
+    | { embed_url?: string; image_url?: string; pub_id?: string }
     | undefined;
+  assert(ouStructured, "open_chart_ui missing structuredContent");
   assert(
-    ouStructured && typeof ouStructured === "object",
-    "open_chart_ui missing structuredContent",
+    typeof ouStructured.embed_url === "string" &&
+      HTTP_URL_REGEX.test(ouStructured.embed_url),
+    `open_chart_ui.embed_url is not http(s): ${JSON.stringify(ouStructured.embed_url)}`,
   );
-  ok(`open_chart_ui {pub_id:${chainPubId}} → structuredContent present`);
+  assert(
+    typeof ouStructured.image_url === "string" &&
+      HTTP_URL_REGEX.test(ouStructured.image_url),
+    `open_chart_ui.image_url is not http(s): ${JSON.stringify(ouStructured.image_url)}`,
+  );
+  const ouContent = (ouResult.content ?? []) as Array<{
+    type: string;
+    mimeType?: string;
+    data?: string;
+  }>;
+  const inlineImage = ouContent.find((b) => b.type === "image");
+  if (inlineImage) {
+    assert(
+      typeof inlineImage.mimeType === "string" &&
+        inlineImage.mimeType.startsWith("image/"),
+      `open_chart_ui inline image mimeType not image/*: ${JSON.stringify(inlineImage.mimeType)}`,
+    );
+    assert(
+      typeof inlineImage.data === "string" && inlineImage.data.length > 0,
+      "open_chart_ui inline image has no base64 data",
+    );
+    ok(
+      `open_chart_ui {pub_id:${chainPubId}} → structuredContent + inline ${inlineImage.mimeType} (${inlineImage.data.length} base64 chars)`,
+    );
+  } else {
+    ok(
+      `open_chart_ui {pub_id:${chainPubId}} → structuredContent present (no inline image — soft-fail path; URL fallback OK)`,
+    );
+  }
 
   // ----- f) create_chart NEGATIVE test ----------------------------------
   // Smoke must not have side effects, so we verify create_chart fails
