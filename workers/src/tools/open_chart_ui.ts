@@ -266,8 +266,8 @@ const WIDGET_HTML = `<!doctype html>
   // Subscribe to host updates. Multiple event-name candidates because
   // OpenAI's emitted name has drifted across SDK releases. Bind on both
   // \`window\` and \`document\` because some hosts dispatch on one and not
-  // the other. Also handles re-runs when the tool is invoked again in
-  // the same widget.
+  // the other. Prevents duplicate renders from redundant events within a
+  // single tool call (\`render()\` is one-shot via the \`rendered\` flag).
   var EVENT_NAMES = [
     "openai:set_globals",
     "openai:tool_result",
@@ -394,6 +394,10 @@ const open_chart_ui = {
       // that doesn't look like an image.
       if (!contentType.startsWith("image/")) return [];
       const buffer = await response.arrayBuffer();
+      // 0-byte 200 is plausible if a renderer returned early; emitting a
+      // `{ data: "", mimeType: "image/png" }` block would have clients try
+      // to render an invalid image. Mirror the oversize bail.
+      if (buffer.byteLength === 0) return [];
       if (buffer.byteLength > MAX_INLINE_PNG_BYTES) return [];
       return [
         {

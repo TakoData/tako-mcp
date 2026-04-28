@@ -133,6 +133,12 @@ export interface ToolModule<
    *
    * Example: `open_chart_ui` uses this to inline a base64 PNG so MCP clients
    * (claude.ai etc.) render the chart without a click-to-load gate.
+   *
+   * Skipped when `appUiResource` is also set on the same tool — see `mcp.ts`
+   * for the wiring. Rationale: combining a widget bundle with a large inline
+   * image trips ChatGPT's ~150K-token response guard and silently disables
+   * widget data flow, and the image is redundant when the widget renders the
+   * chart interactively anyway.
    */
   extraContentBlocks?: (
     output: Output,

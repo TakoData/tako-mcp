@@ -170,6 +170,26 @@ describe("open_chart_ui extraContentBlocks", () => {
     expect(blocks).toEqual([]);
   });
 
+  it("returns [] on a 0-byte response body (renderer returned early)", async () => {
+    // A 200 with content-type: image/png but an empty body would otherwise
+    // produce `{ data: "", mimeType: "image/png" }` — an invalid image
+    // block clients would try to render. Mirrors the oversize bail.
+    mockFetchOnce(pngResponse(new Uint8Array(0)));
+
+    const blocks = await open_chart_ui.extraContentBlocks!(
+      {
+        pub_id: "abc123",
+        embed_url: "https://example.com/embed/abc123/?theme=dark",
+        image_url: "https://example.com/api/v1/image/abc123/?dark_mode=true",
+        dark_mode: true,
+        width: 900,
+        height: 600,
+      },
+      CTX,
+    );
+    expect(blocks).toEqual([]);
+  });
+
   it("returns [] on network errors (fetch throws)", async () => {
     vi.stubGlobal(
       "fetch",
