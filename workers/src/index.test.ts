@@ -116,7 +116,9 @@ describe("worker routing", () => {
     expect(res.status).toBe(200);
 
     const body = (await res.json()) as {
-      result: { tools: Array<{ name: string }> };
+      result: {
+        tools: Array<{ name: string; _meta?: Record<string, unknown> }>;
+      };
     };
     const names = body.result.tools.map((t) => t.name).sort();
     // The exact set of tools registered by the codegen barrel. When a tool
@@ -131,6 +133,130 @@ describe("worker routing", () => {
       "list_reports",
       "open_chart_ui",
     ]);
+
+    // MCP Apps: `open_chart_ui` ships a widget bundle, so its tool listing
+    // must carry the widget URI under BOTH `_meta.ui.resourceUri` (the
+    // open MCP Apps spec, read by claude.ai / VS Code / Goose) AND
+    // `_meta["openai/outputTemplate"]` (the OpenAI Apps SDK namespace,
+    // read by ChatGPT — without it ChatGPT loads the widget but never
+    // pipes structuredContent into `window.openai.toolOutput`, so the
+    // widget stays on its loading state forever). Other tools ship no
+    // widget and should declare neither field.
+    const openChart = body.result.tools.find((t) => t.name === "open_chart_ui");
+    // Three metadata keys, all carrying the same widget URI — matches what
+    // OpenAI's official `@modelcontextprotocol/ext-apps` helper emits.
+    // Different hosts read different keys (and different versions of the
+    // same host may have read different keys historically), so we set
+    // them all and let each host pick what it expects.
+    expect(openChart?._meta).toMatchObject({
+      ui: { resourceUri: "ui://tako/embed/chart" },
+      "ui/resourceUri": "ui://tako/embed/chart",
+      "openai/outputTemplate": "ui://tako/embed/chart",
+    });
+    for (const t of body.result.tools) {
+      if (t.name === "open_chart_ui") continue;
+      const meta = t._meta as
+        | {
+            ui?: unknown;
+            "ui/resourceUri"?: unknown;
+            "openai/outputTemplate"?: unknown;
+          }
+        | undefined;
+      expect(meta?.ui).toBeUndefined();
+      expect(meta?.["ui/resourceUri"]).toBeUndefined();
+      expect(meta?.["openai/outputTemplate"]).toBeUndefined();
+    }
+  });
+
+  it("POST /mcp resources/list includes the open_chart_ui widget bundle", async () => {
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 10,
+        method: "resources/list",
+        params: {},
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        resources: Array<{
+          uri: string;
+          mimeType?: string;
+          _meta?: Record<string, unknown>;
+        }>;
+      };
+    };
+    const widget = body.result.resources.find(
+      (r) => r.uri === "ui://tako/embed/chart",
+    );
+    expect(widget).toBeDefined();
+    expect(widget?.mimeType).toBe("text/html;profile=mcp-app");
+    // CSP-allowed iframe domain mirrors `resolvePublicBase(env)` (which in
+    // tests resolves to `DJANGO_BASE_URL` / `http://localhost:8000`). The
+    // widget embeds Tako's own embed page; without this the host's CSP
+    // blocks the inner iframe. ChatGPT also reads `_meta.ui.csp.frameDomains`
+    // (the open spec) for iframe permissions; the OpenAI-namespaced
+    // `widgetCSP` field is for `redirect_domains` (safe-link handling),
+    // a different concept we don't need.
+    expect(widget?._meta).toMatchObject({
+      ui: { csp: { frameDomains: ["http://localhost:8000"] } },
+    });
+  });
+
+  it("POST /mcp resources/read returns the widget HTML at the MCP Apps mimeType", async () => {
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 11,
+        method: "resources/read",
+        params: { uri: "ui://tako/embed/chart" },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        contents: Array<{ uri: string; mimeType?: string; text?: string }>;
+      };
+    };
+    expect(body.result.contents).toHaveLength(1);
+    const item = body.result.contents[0]! as {
+      uri: string;
+      mimeType?: string;
+      text?: string;
+      _meta?: { ui?: { csp?: { frameDomains?: unknown } } };
+    };
+    expect(item.uri).toBe("ui://tako/embed/chart");
+    expect(item.mimeType).toBe("text/html;profile=mcp-app");
+    // Content-item `_meta.ui.csp` is what ChatGPT and other MCP-Apps
+    // hosts read during `resources/read` — content-item value takes
+    // precedence over registration-level `_meta` per the ext-apps
+    // contract. Without this on the read response, frame-ancestors
+    // stays empty and the inner iframe is blocked by the host's CSP.
+    expect(item._meta).toMatchObject({
+      ui: { csp: { frameDomains: ["http://localhost:8000"] } },
+    });
+    // Sanity-check the bundle's wire protocol: it MUST listen for the
+    // `ui/notifications/tool-result` JSON-RPC method (the post-message
+    // event the host emits on every tool call) and validate `embed_url`
+    // is http(s) before assigning to `iframe.src`. If this regresses,
+    // the widget either silently never renders or exposes itself to a
+    // hostile `javascript:` payload from a compromised server.
+    expect(item.text).toContain("ui/notifications/tool-result");
+    expect(item.text).toContain("https?:");
+    expect(item.text).toContain("tako-embed");
   });
 
   it("POST /mcp tools/call invokes the registered handler and surfaces structuredContent", async () => {
@@ -163,7 +289,7 @@ describe("worker routing", () => {
         structuredContent?: {
           pub_id: string;
           embed_url: string;
-          iframe_html: string;
+          image_url: string;
           dark_mode: boolean;
           width: number;
           height: number;
@@ -173,7 +299,9 @@ describe("worker routing", () => {
 
     // `structuredContent` is the typed payload; clients without that support
     // fall back to the `content[0].text` JSON string. Both must be present
-    // when the tool declares an `outputSchema`.
+    // when the tool declares an `outputSchema`. The output deliberately does
+    // NOT carry an `iframe_html` field — see open_chart_ui.ts header for
+    // the regression that motivated dropping it.
     expect(body.result.structuredContent).toMatchObject({
       pub_id: "abc123",
       dark_mode: true,
@@ -181,7 +309,10 @@ describe("worker routing", () => {
       height: 600,
     });
     expect(body.result.structuredContent?.embed_url).toContain("/embed/abc123/");
-    expect(body.result.structuredContent?.iframe_html).toContain("<iframe");
+    expect(body.result.structuredContent?.image_url).toContain(
+      "/api/v1/image/abc123/",
+    );
+    expect(body.result.structuredContent).not.toHaveProperty("iframe_html");
     expect(body.result.content[0]).toMatchObject({ type: "text" });
     const parsed = JSON.parse(body.result.content[0]!.text) as {
       pub_id: string;

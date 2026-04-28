@@ -34,6 +34,15 @@ export const SERVER_NAME = "tako-mcp";
 export const SERVER_VERSION = "0.1.0";
 
 /**
+ * MCP Apps UI resource MIME type. Hosts (claude.ai, ChatGPT Apps SDK, VS
+ * Code Insiders, Goose) gate sandbox-iframe rendering on this exact value
+ * — plain `text/html` resources are treated as opaque and not rendered as
+ * widgets. Source: MCP Apps standard ("text/html;profile=mcp-app") and
+ * the OpenAI Apps SDK "Build your MCP server" guide.
+ */
+const APP_UI_MIME_TYPE = "text/html;profile=mcp-app";
+
+/**
  * The CfWorker schema validator is stateless (it compiles a schema on each
  * `validate` call), so one module-scope instance is reused across warm
  * invocations rather than allocating a fresh one per `/mcp` POST.
@@ -102,6 +111,101 @@ function registerTool(
     }
   }
 
+  // MCP Apps: when the tool ships a UI bundle, register it as a separate
+  // resource and thread the widget URI into the tool's registration via
+  // BOTH the open-spec field and the OpenAI-namespaced field. Clients
+  // that support MCP Apps fetch the resource, sandbox it in an iframe,
+  // and pipe each `tools/call` result to the widget. Clients without
+  // MCP Apps support ignore the metadata and rely on the default
+  // text + image content blocks the registry already emits.
+  //
+  // Two metadata fields, two clients:
+  //
+  //   - `_meta.ui.resourceUri` — the open MCP Apps standard
+  //     (blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps).
+  //     claude.ai, VS Code Insiders, and Goose read this field. They
+  //     also pass the `tools/call` result to the widget via a JSON-RPC
+  //     `postMessage` (`ui/notifications/tool-result`).
+  //
+  //   - `_meta["openai/outputTemplate"]` — ChatGPT's Apps SDK reads
+  //     this exact namespaced key. It controls TWO things on ChatGPT's
+  //     side: which widget URI to load AND whether structuredContent
+  //     gets piped into `window.openai.toolOutput`. Without it, the
+  //     widget loads (because ChatGPT can fall back on `_meta.ui` to
+  //     find the URI) but `toolOutput` stays null forever, leaving the
+  //     widget stuck on its loading state. Found the hard way: the
+  //     debug widget polled `window.openai.toolOutput` 40 times across
+  //     10 seconds and watched it never populate, even though
+  //     `openai:set_globals` events fired with `detail.globals` set.
+  if (tool.appUiResource !== undefined) {
+    const ui = tool.appUiResource(ctx.env);
+    const uiMeta: Record<string, unknown> = {};
+    if (ui.frameDomains && ui.frameDomains.length > 0) {
+      uiMeta.csp = { frameDomains: ui.frameDomains };
+    }
+    // Resource registration. CSP-allowed iframe domains live on
+    // `_meta.ui.csp.frameDomains` (open MCP Apps spec). The bundle's
+    // `_meta.ui` is set in TWO places by design (matches the official
+    // `@modelcontextprotocol/ext-apps` helper):
+    //
+    //   1. Resource registration metadata (third arg to
+    //      `server.registerResource`) — surfaces in the `resources/list`
+    //      response so clients can discover CSP rules without fetching.
+    //   2. The content item itself (inside `readCallback`'s
+    //      `contents[0]._meta`) — clients reading the bundle read CSP
+    //      from here, and per the ext-apps docs the content-item value
+    //      "takes precedence" over the registration value. ChatGPT
+    //      specifically reads the content-item `_meta` during
+    //      `resources/read`; without it, frame-ancestors stays empty
+    //      and the inner `<iframe src="https://tako.com/embed/…">` is
+    //      blocked even though the registration metadata declared the
+    //      domain.
+    server.registerResource(
+      ui.name,
+      ui.uri,
+      {
+        // Per the MCP Apps spec: the host gates UI rendering on this
+        // exact MIME type. Plain "text/html" is treated as a normal
+        // resource and won't be sandbox-rendered as a widget.
+        mimeType: APP_UI_MIME_TYPE,
+        ...(Object.keys(uiMeta).length > 0 ? { _meta: { ui: uiMeta } } : {}),
+      },
+      // Static bundle — no per-request templating. The widget reads its
+      // chart-specific data (pub_id, embed_url, dark_mode, …) from each
+      // `tools/call` result via either `window.openai.toolOutput`
+      // (ChatGPT) or a `ui/notifications/tool-result` postMessage
+      // (claude.ai), so the same bundle serves every chart.
+      async (uri) => {
+        const contentItem: {
+          uri: string;
+          mimeType: string;
+          text: string;
+          _meta?: Record<string, unknown>;
+        } = {
+          uri: uri.toString(),
+          mimeType: APP_UI_MIME_TYPE,
+          text: ui.html,
+        };
+        if (Object.keys(uiMeta).length > 0) {
+          contentItem._meta = { ui: uiMeta };
+        }
+        return { contents: [contentItem] };
+      },
+    );
+    // Tool-side metadata: set the modern `_meta.ui.resourceUri`, the
+    // legacy flat `_meta["ui/resourceUri"]` (the official ext-apps
+    // helper auto-mirrors these for backward compat with older host
+    // readers — we do the same so a ChatGPT build still reading the
+    // legacy key works), and `_meta["openai/outputTemplate"]` (OpenAI
+    // namespace alias). Three keys, one URI — same data delivered
+    // under whichever name the host happens to read.
+    config._meta = {
+      ui: { resourceUri: ui.uri },
+      "ui/resourceUri": ui.uri,
+      "openai/outputTemplate": ui.uri,
+    };
+  }
+
   server.registerTool(
     tool.name,
     config as Parameters<McpServer["registerTool"]>[1],
@@ -126,12 +230,46 @@ function registerTool(
       // fall back to the text content. When no outputSchema, text-only is
       // sufficient.
       const text = JSON.stringify(output, null, 2);
+      const content: Array<
+        | { type: "text"; text: string }
+        | { type: "image"; data: string; mimeType: string }
+      > = [{ type: "text", text }];
+      // Optional per-tool hook to append extra MCP content blocks (image,
+      // audio, resource). Best-effort: a thrown hook degrades to the text
+      // + structuredContent that's already there rather than failing the
+      // call.
+      //
+      // SKIPPED when the tool also ships an `appUiResource`. Reason:
+      // when both are set, the response carries `content: [text, image]`
+      // + a `_meta.ui.resourceUri` pointing at a widget. The base64
+      // image inflates the JSON-RPC response by ~70-400 KB which on
+      // ChatGPT was tokenized at ~150K tokens and apparently triggers
+      // an internal size guard that silently disables widget data flow
+      // (`window.openai.toolOutput` stays null, `openai:set_globals`
+      // events fire only with maxHeight/maxWidth). The image is also
+      // redundant for clients that DO render the widget — the widget
+      // shows the chart interactively, an inline PNG below it would
+      // duplicate. Clients without widget support still see the
+      // structuredContent JSON (with `image_url` and `embed_url`) and
+      // can render those as markdown.
+      if (
+        tool.extraContentBlocks !== undefined &&
+        tool.appUiResource === undefined
+      ) {
+        try {
+          const extra = await tool.extraContentBlocks(output, ctx);
+          content.push(...extra);
+        } catch (err) {
+          console.error(
+            `extraContentBlocks hook failed for ${tool.name}:`,
+            err,
+          );
+        }
+      }
       const result: {
-        content: Array<{ type: "text"; text: string }>;
+        content: typeof content;
         structuredContent?: Record<string, unknown>;
-      } = {
-        content: [{ type: "text", text }],
-      };
+      } = { content };
       if (tool.outputSchema !== undefined) {
         result.structuredContent = output as Record<string, unknown>;
       }

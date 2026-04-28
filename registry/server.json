@@ -233,7 +233,7 @@
     },
     {
       "name": "open_chart_ui",
-      "description": "Use this when you want to display a fully interactive chart to the user. Returns the embed URL plus a ready-to-render iframe HTML snippet with zoom, pan, and hover interactions. Prefer this over get_chart_image when the user wants to explore the data interactively.",
+      "description": "Use this when you want to show a chart to the user. The chart's PNG is returned as a native MCP image content block — clients (claude.ai etc.) render it inline automatically; do NOT echo `![…](image_url)` markdown for it (that would re-display the chart behind a click-to-load gate). Also returns `embed_url` for a fully interactive version with zoom, pan, hover — surface it as a markdown link, e.g. `[Open interactive chart](embed_url)`. Never paste raw HTML or `<iframe>` markup; chat clients render markdown, not arbitrary HTML.",
       "parameters": {
         "pub_id": {
           "type": "string",
@@ -247,12 +247,12 @@
         },
         "width": {
           "type": "integer",
-          "description": "Advisory width in pixels. The returned `iframe_html` pins the iframe to `width=\"100%\"` so it fills its container; consumers should use this value to size the container they render `iframe_html` into. Mirrors the Python reference, which only uses `width` as an MCP-UI `PREFERRED_FRAME_SIZE` hint.",
+          "description": "Advisory width in pixels for the rendered chart container. The PNG endpoint ignores it; pass through to the client as a sizing hint only.",
           "default": 900
         },
         "height": {
           "type": "integer",
-          "description": "Initial iframe height in pixels. Applied directly in the iframe's CSS (`height` + `min-height`) — no resize handshake.",
+          "description": "Advisory height in pixels for the rendered chart container. The PNG endpoint ignores it; pass through to the client as a sizing hint only.",
           "default": 600
         }
       },
