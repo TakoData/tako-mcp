@@ -33,6 +33,55 @@ export interface Env {
    * include a trailing slash.
    */
   PUBLIC_API_URL?: string;
+  /**
+   * HMAC-SHA256 signing secret for every JWT the OAuth subsystem mints
+   * (auth codes, refresh tokens, access tokens, DCR client_ids, state /
+   * session cookies). Optional: when unset, `/authorize`, `/token`,
+   * `/register`, `/login`, and `/oauth/stytch_callback` all return 503
+   * and the Worker still serves the existing static-Bearer Claude Code
+   * path on `/mcp`. Set per-env via `wrangler secret put OAUTH_SIGN_KEY`.
+   */
+  OAUTH_SIGN_KEY?: string;
+  /**
+   * Base64-encoded 32-byte key (AES-256) used to encrypt the per-user
+   * Tako API token before embedding it in OAuth access / refresh /
+   * auth-code claims. Held separately from `OAUTH_SIGN_KEY` so the
+   * signing key can be hot-rotated without exposing previously-issued
+   * encrypted token claims to a leaked signing key. Optional in the
+   * same sense as `OAUTH_SIGN_KEY`. Set via
+   * `openssl rand -base64 32 | wrangler secret put OAUTH_ENC_KEY`.
+   */
+  OAUTH_ENC_KEY?: string;
+  /**
+   * Stytch project ID (e.g. `project-test-…` or `project-live-…`).
+   * Used as the username half of the HTTP Basic credential when the
+   * Worker calls Stytch's authenticate APIs server-to-server. Distinct
+   * from `STYTCH_PUBLIC_TOKEN` which the browser-side login page uses.
+   */
+  STYTCH_PROJECT_ID?: string;
+  /**
+   * Stytch project secret. Pairs with `STYTCH_PROJECT_ID` for HTTP Basic
+   * auth on Stytch's API. Treated as a Worker secret.
+   */
+  STYTCH_SECRET?: string;
+  /**
+   * Stytch public token. Embedded in the `/login` HTML page so the
+   * browser-side Stytch SDK can drive Google / magic-link auth. Safe to
+   * expose; it cannot, by itself, authenticate users — Stytch only
+   * issues real sessions via redirects back to URLs registered against
+   * the project ID.
+   */
+  STYTCH_PUBLIC_TOKEN?: string;
+  /**
+   * Base URL of the Stytch API for this project.
+   * - Test projects: `https://test.stytch.com`
+   * - Live projects: `https://api.stytch.com`
+   *
+   * Held as a binding (not derived from the project ID) so we can
+   * point at a sandbox without juggling project IDs. Must NOT include
+   * a trailing slash.
+   */
+  STYTCH_BASE_URL?: string;
 }
 
 /**

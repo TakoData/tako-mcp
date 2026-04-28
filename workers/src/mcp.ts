@@ -20,6 +20,7 @@ import {
   DjangoUnauthorizedError,
 } from "./django.js";
 import type { Env } from "./env.js";
+import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import type { AnyToolModule, ToolContext } from "./tools/types.js";
 
@@ -220,15 +221,27 @@ export async function handleMcpRequest(
 ): Promise<Response> {
   // Gate the whole endpoint behind Bearer auth. If the header is missing /
   // malformed / empty, return a uniform 401 before invoking the SDK.
-  let token: string;
+  let bearer: string;
   try {
-    token = extractBearer(request);
+    bearer = extractBearer(request);
   } catch (err) {
     if (err instanceof BearerAuthError) {
-      return bearerAuthResponse(err);
+      return bearerAuthResponse(request, err);
     }
     throw err;
   }
+
+  // Two-mode bearer handling:
+  // - OAuth access JWT issued by /token: verify signature, decrypt the
+  //   per-user Tako API token from the `enc_tako_token` claim, forward
+  //   that token downstream as `X-API-Key`. Each user authenticates as
+  //   themselves to Django.
+  // - Raw Tako API token (the existing Claude Code path): non-JWT shape,
+  //   `tryResolveOAuthAccessToken` returns null, we forward the bearer
+  //   verbatim. Backwards-compatible with every Claude Code install in
+  //   the wild.
+  const oauthMappedToken = await tryResolveOAuthAccessToken(bearer, env);
+  const token = oauthMappedToken ?? bearer;
 
   const ctx: ToolContext = { token, env };
 
@@ -288,9 +301,14 @@ export async function handleMcpRequest(
  * {@link bearerAuthErrorToJsonRpc}; see `auth.ts`.
  *
  * Emits `WWW-Authenticate: Bearer` per RFC 6750 §3 so clients know to
- * supply a Bearer token on retry.
+ * supply a Bearer token on retry. The `resource_metadata` parameter
+ * (RFC 9728) points the client at our OAuth protected-resource discovery
+ * doc — that is how MCP hosts (Claude.ai, ChatGPT) bootstrap an OAuth
+ * flow when they have only the MCP URL and got a 401.
  */
-function bearerAuthResponse(err: BearerAuthError): Response {
+function bearerAuthResponse(request: Request, err: BearerAuthError): Response {
+  const origin = new URL(request.url).origin;
+  const resourceMetadataUrl = `${origin}/.well-known/oauth-protected-resource`;
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
@@ -301,7 +319,7 @@ function bearerAuthResponse(err: BearerAuthError): Response {
       status: 401,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "WWW-Authenticate": `Bearer error="invalid_token"`,
+        "WWW-Authenticate": `Bearer error="invalid_token", resource_metadata="${resourceMetadataUrl}"`,
       },
     },
   );
