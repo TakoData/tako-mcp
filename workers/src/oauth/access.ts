@@ -43,9 +43,14 @@ export async function tryResolveOAuthAccessToken(
     // raw Tako-token mode. Same semantics as the legacy Claude Code path.
     return null;
   }
-  // Cheap shape check — `<header>.<body>.<sig>`. Avoids the HMAC import
-  // for non-JWT bearers (the common case for Claude Code raw-token use).
-  if (bearer.split(".").length !== 3) return null;
+  // Cheap shape check — three base64url segments separated by dots.
+  // Avoids the HMAC import for non-JWT bearers (the common case for
+  // Claude Code raw-token use) and is tighter than `split(".").length`
+  // alone — a Tako token that happens to contain two dots would no
+  // longer falsely look like a JWT.
+  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(bearer)) {
+    return null;
+  }
 
   const claims = await verifyJwt<AccessTokenClaims>(bearer, sign);
   if (!claims || claims.type !== "access") return null;

@@ -122,7 +122,17 @@ export async function verifyJwt<T extends JwtClaims = JwtClaims>(
   } catch {
     return null;
   }
-  if (payload.exp !== undefined && payload.exp * 1000 < Date.now()) {
+  // 30 seconds of clock-skew tolerance on `exp`. Stytch sessions, the
+  // Worker, and the requesting client may not share a time source; a
+  // strict-equality check at the second boundary spuriously fails for
+  // tokens minted within the last few hundred milliseconds of their
+  // TTL. The 60s auth-code TTL is short enough that a 30s window
+  // doesn't materially weaken replay protection.
+  const CLOCK_SKEW_MS = 30 * 1000;
+  if (
+    payload.exp !== undefined &&
+    payload.exp * 1000 + CLOCK_SKEW_MS < Date.now()
+  ) {
     return null;
   }
   return payload;

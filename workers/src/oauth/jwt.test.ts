@@ -111,8 +111,15 @@ describe("AES-GCM encrypt / decrypt", () => {
   it("returns null for tampered ciphertext", async () => {
     const key = freshEncKey();
     const ciphertext = await encryptAesGcm("secret", key);
-    // Flip the last character of the ciphertext (the auth tag region).
-    const tampered = ciphertext.slice(0, -1) + (ciphertext.endsWith("A") ? "B" : "A");
+    // Flip a character in the middle of the encoded value rather than the
+    // last char. base64url's last char can carry unused bits (depending on
+    // the encoded length), so a single-char flip there sometimes decodes
+    // to identical bytes — the tamper would be invisible to AES-GCM.
+    // Mid-string the bits land squarely inside the ciphertext + tag.
+    const mid = Math.floor(ciphertext.length / 2);
+    const flip = ciphertext[mid] === "A" ? "B" : "A";
+    const tampered =
+      ciphertext.slice(0, mid) + flip + ciphertext.slice(mid + 1);
     expect(await decryptAesGcm(tampered, key)).toBeNull();
   });
 

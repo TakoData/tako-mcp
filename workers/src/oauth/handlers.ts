@@ -127,8 +127,12 @@ function readConfig(env: Env): OAuthConfig | null {
 }
 
 function oauthDisabledResponse(): Response {
+  // RFC 6749 §5.2 — `temporarily_unavailable` is the spec-conformant
+  // value when the authorization server is configured but cannot
+  // service requests. Used here for "OAuth subsystem disabled in this
+  // env" too, since that's the closest match in the standard set.
   return jsonError(
-    "service_unavailable",
+    "temporarily_unavailable",
     "OAuth is not configured on this Worker (missing OAUTH_*/STYTCH_* secrets)",
     503,
   );
@@ -200,6 +204,46 @@ export function handleAuthServerMetadata(req: Request): Response {
 
 /* --------------------------- Dynamic Client Registration --------------------------- */
 
+/** Cap registration body size to keep the resulting `client_id` JWT
+ *  (which echoes the redirect_uris and client_name) from blowing past
+ *  reasonable HTTP header limits. 4 KB is comfortably above any sane
+ *  consumer-host registration. */
+const REGISTER_MAX_BODY_BYTES = 4 * 1024;
+/** Limit on a single redirect_uri so a malicious registration can't
+ *  bake an enormous URL into every signed `client_id`. */
+const REDIRECT_URI_MAX_LEN = 2048;
+/** Reject control characters in `client_name` to prevent log-line
+ *  injection / display corruption when we echo the name back on the
+ *  consent page. The `\x00-\x1f\x7f` range covers ASCII control codes. */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS_RE = /[\x00-\x1f\x7f]/;
+
+function isValidRedirectUri(s: string): boolean {
+  if (s.length === 0 || s.length > REDIRECT_URI_MAX_LEN) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(s);
+  } catch {
+    return false;
+  }
+  // Only http/https. Reject `javascript:`, `data:`, `file:`, `vbscript:`
+  // etc. — even though redirect_uris are looked up against the registered
+  // list before being used, this is a defense-in-depth check at the
+  // entry point so a malicious `/register` can't seed the system with
+  // exotic-scheme URIs that some downstream code path might honor.
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return false;
+  }
+  // `http:` only for `localhost` (and `127.0.0.1`) — production OAuth
+  // clients must use https. Any non-loopback `http:` redirect_uri is a
+  // strong signal of either misconfiguration or attack.
+  if (parsed.protocol === "http:") {
+    const host = parsed.hostname;
+    if (host !== "localhost" && host !== "127.0.0.1") return false;
+  }
+  return true;
+}
+
 export async function handleRegister(
   req: Request,
   env: Env,
@@ -209,9 +253,25 @@ export async function handleRegister(
   if (req.method !== "POST") {
     return jsonError("invalid_request", "POST required", 405);
   }
+  // Read at most REGISTER_MAX_BODY_BYTES of body. Anything larger gets
+  // rejected before we try to parse it — a 100 MB JSON blob would
+  // otherwise pin a Worker until the body finishes streaming.
+  let bodyText: string;
+  try {
+    bodyText = await req.text();
+  } catch {
+    return jsonError("invalid_request", "could not read request body", 400);
+  }
+  if (bodyText.length > REGISTER_MAX_BODY_BYTES) {
+    return jsonError(
+      "invalid_request",
+      `body too large (max ${REGISTER_MAX_BODY_BYTES} bytes)`,
+      413,
+    );
+  }
   let body: unknown;
   try {
-    body = await req.json();
+    body = JSON.parse(bodyText);
   } catch {
     return jsonError("invalid_request", "body must be JSON", 400);
   }
@@ -231,10 +291,25 @@ export async function handleRegister(
       400,
     );
   }
-  const client_name =
+  if (!redirect_uris.every(isValidRedirectUri)) {
+    return jsonError(
+      "invalid_redirect_uri",
+      "every redirect_uri must be a valid https URL (http only allowed for localhost)",
+      400,
+    );
+  }
+  const rawName =
     typeof obj["client_name"] === "string"
-      ? (obj["client_name"] as string).slice(0, 200)
+      ? (obj["client_name"] as string)
       : "unknown";
+  if (CONTROL_CHARS_RE.test(rawName)) {
+    return jsonError(
+      "invalid_request",
+      "client_name must not contain control characters",
+      400,
+    );
+  }
+  const client_name = rawName.slice(0, 200);
 
   const claims: ClientIdClaims = {
     type: "client_id",
@@ -339,6 +414,15 @@ export async function handleAuthorize(
     if (!sessionValid) {
       // Stash original OAuth params in a state cookie so /oauth/stytch_callback
       // can resume the flow after the Stytch round-trip. Then bounce to /login.
+      //
+      // KNOWN GAP (TAKO-2679 follow-up): the cookie's only binding to the
+      // user-agent is the cookie itself (HttpOnly + Secure + SameSite=Lax,
+      // which prevents network attackers from reading or planting it under
+      // HTTPS). RFC 9700 (OAuth 2.0 Security BCP) recommends a nonce
+      // round-tripped via Stytch's `state` parameter for belt-and-suspenders
+      // session-fixation defense. Defer to the OAuth-hardening follow-up
+      // ticket; the cookie alone is adequate for the threat model where
+      // an attacker has neither XSS on mcp.tako.com nor an active MITM.
       const stateClaims: StateCookieClaims = {
         type: "state",
         client_id: parsed.client_id,
@@ -362,11 +446,27 @@ export async function handleAuthorize(
       });
     }
     // Already authenticated — render the consent page.
+    // Rebuild the form-action URL deterministically from validated
+    // params instead of echoing `url.search` back into HTML. Echoing
+    // the raw search string would mean an attacker-supplied unknown
+    // query param survives into the form post; rebuilding gates the
+    // round-trip on values we already validated.
+    const formActionUrl = new URL(url.pathname, url.origin);
+    formActionUrl.searchParams.set("client_id", parsed.client_id);
+    formActionUrl.searchParams.set("redirect_uri", parsed.redirect_uri);
+    formActionUrl.searchParams.set("response_type", parsed.response_type);
+    formActionUrl.searchParams.set("code_challenge", parsed.code_challenge);
+    formActionUrl.searchParams.set(
+      "code_challenge_method",
+      parsed.code_challenge_method,
+    );
+    if (parsed.state !== null) formActionUrl.searchParams.set("state", parsed.state);
+    if (parsed.scope !== null) formActionUrl.searchParams.set("scope", parsed.scope);
     return htmlResponse(
       consentPage({
         clientName: client.client_name,
         userEmail: session!.user_email,
-        formAction: url.pathname + url.search,
+        formAction: formActionUrl.pathname + formActionUrl.search,
       }),
     );
   }
@@ -511,10 +611,29 @@ async function handleAuthorizationCodeGrant(
       400,
     );
   }
+  // Belt-and-suspenders against confused-deputy / token-leak scenarios:
+  // PKCE alone is sufficient per the spec for public clients, but if
+  // the form body carries a `client_id` it MUST match the one bound to
+  // the auth code. A mismatch is a strong signal worth surfacing.
+  const formClientId = params.get("client_id");
+  if (formClientId !== null && formClientId !== claims.client_id) {
+    return jsonError(
+      "invalid_grant",
+      "client_id does not match authorization request",
+      400,
+    );
+  }
   const expectedChallenge = await sha256B64Url(code_verifier);
   if (claims.code_challenge !== expectedChallenge) {
     return jsonError("invalid_grant", "PKCE verifier does not match", 400);
   }
+  // KNOWN GAP (TAKO-2679 follow-up): auth codes are not single-use.
+  // The 60s TTL bounds replay risk, but a code captured in that window
+  // can be redeemed multiple times until it expires. The JWT-stateless
+  // architecture (per /tmp/oauth-real-impl-comparison.md) means we have
+  // no persistent storage to mark a code as consumed. Adding a small
+  // KV-backed `jti` revocation set would close this; tracking under
+  // the OAuth-hardening follow-up ticket.
   return issueTokens(
     {
       scope: claims.scope,
@@ -616,13 +735,25 @@ export function handleLogin(req: Request, env: Env): Response {
   return htmlResponse(loginPage(cfg.stytch.publicToken, callbackUrl));
 }
 
+/**
+ * Encode a string as a JS string literal safe to embed inside a
+ * `<script>` block. `JSON.stringify` is the standard JS escape, but a
+ * literal `</script>` sequence inside the resulting string would still
+ * close the surrounding tag — replace `<` with `<` to suppress
+ * that. Do NOT pass the value through `escapeHtml` first: the
+ * resulting `&amp;`/`&#39;` would corrupt the JS literal at runtime
+ * and the Stytch SDK would receive garbage tokens / URLs.
+ */
+function jsStringLiteral(s: string): string {
+  return JSON.stringify(s).replace(/</g, "\\u003c");
+}
+
 function loginPage(stytchPublicToken: string, callbackUrl: string): string {
-  // The Stytch SDK is loaded over their CDN; the `data-stytch-public-token`
-  // and `callbackUrl` constants below are the only Worker-side data the
-  // page needs. Keep this page minimal — its only job is to drive Stytch
-  // to redirect to /oauth/stytch_callback.
-  const safeToken = escapeHtml(stytchPublicToken);
-  const safeCallback = escapeHtml(callbackUrl);
+  // The Stytch SDK is loaded over their CDN; `publicToken` and
+  // `callbackUrl` are the only Worker-side data the page needs.
+  // Both are embedded as JS string literals via `jsStringLiteral`,
+  // not HTML-escaped — they live inside <script>, not in HTML
+  // attributes / text.
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -662,8 +793,8 @@ function loginPage(stytchPublicToken: string, callbackUrl: string): string {
 <script src="https://js.stytch.com/stytch.js"></script>
 <script>
   (function() {
-    var publicToken = ${JSON.stringify(safeToken)};
-    var callbackUrl = ${JSON.stringify(safeCallback)};
+    var publicToken = ${jsStringLiteral(stytchPublicToken)};
+    var callbackUrl = ${jsStringLiteral(callbackUrl)};
     var errEl = document.getElementById("err");
     function showError(msg) { errEl.textContent = msg || ""; }
 

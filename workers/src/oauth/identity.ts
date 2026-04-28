@@ -44,6 +44,15 @@ export class IdentityError extends Error {
 }
 
 /**
+ * Strict JWT-shape regex: three base64url segments separated by dots.
+ * Used to gate the value before we interpolate it into a `Cookie`
+ * header — a stytch JWT containing `\r` or `\n` (theoretically
+ * impossible from Stytch, but worth the cheap defense) would otherwise
+ * inject headers into the upstream Tako request.
+ */
+const STYTCH_JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+
+/**
  * Fetch the user's Tako API token by calling `GET /api/v1/api_token/`
  * with the Stytch session JWT in a `Cookie` header. Returns the raw
  * token string. Throws `IdentityError` with a kind discriminator on
@@ -59,6 +68,15 @@ export async function fetchTakoApiToken(
     throw new IdentityError(
       "transport",
       "DJANGO_BASE_URL is missing or has a trailing slash",
+    );
+  }
+  if (!STYTCH_JWT_SHAPE.test(stytchSessionJwt)) {
+    // Stytch should never return a non-JWT-shaped session token; if it
+    // does, treat it as a transport-level breakage rather than blindly
+    // forwarding to Django where it could splice the Cookie header.
+    throw new IdentityError(
+      "transport",
+      "stytch session JWT is malformed (failed shape check)",
     );
   }
   const url = `${base}${TAKO_API_TOKEN_PATH}`;

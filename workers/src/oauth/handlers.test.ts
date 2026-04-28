@@ -167,6 +167,104 @@ describe("/register (DCR)", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it("rejects a `javascript:` redirect_uri", async () => {
+    const env = envWith();
+    const res = await handleRegister(
+      new Request("https://mcp.example.com/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "evil",
+          redirect_uris: ["javascript:alert(1)"],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "invalid_redirect_uri",
+    );
+  });
+
+  it("rejects a `data:` redirect_uri", async () => {
+    const env = envWith();
+    const res = await handleRegister(
+      new Request("https://mcp.example.com/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          redirect_uris: ["data:text/html,<script>alert(1)</script>"],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects non-loopback `http:` redirect_uri", async () => {
+    const env = envWith();
+    const res = await handleRegister(
+      new Request("https://mcp.example.com/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          redirect_uris: ["http://evil.example.com/cb"],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts `http://localhost` redirect_uri (developer use)", async () => {
+    const env = envWith();
+    const res = await handleRegister(
+      new Request("https://mcp.example.com/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "dev-host",
+          redirect_uris: ["http://localhost:3000/cb"],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("rejects client_name with control characters", async () => {
+    const env = envWith();
+    const res = await handleRegister(
+      new Request("https://mcp.example.com/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "evil\nlog-injection",
+          redirect_uris: ["https://client.example.com/cb"],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects oversized request bodies with 413", async () => {
+    const env = envWith();
+    const huge = "x".repeat(5000);
+    const res = await handleRegister(
+      new Request("https://mcp.example.com/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: huge,
+          redirect_uris: ["https://client.example.com/cb"],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(413);
+  });
 });
 
 /* --------------------------- /authorize --------------------------- */
@@ -270,6 +368,84 @@ describe("/authorize", () => {
     );
     expect(redirected.searchParams.get("state")).toBe("client-state");
     expect(redirected.searchParams.get("code")?.split(".").length).toBe(3);
+  });
+
+  it("rejects code_challenge_method=plain (only S256 is supported)", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", "plain-challenge-string");
+    url.searchParams.set("code_challenge_method", "plain");
+    const res = await handleAuthorize(
+      new Request(url.toString(), { method: "GET" }),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("escapes HTML-injecting client_name in the consent page", async () => {
+    const env = envWith();
+    // Inject a registration with a client_name that would break out of
+    // attribute / text contexts if escaping is forgotten anywhere.
+    const claims = {
+      type: "client_id" as const,
+      client_name: "evil<script>alert(1)</script>\"'",
+      redirect_uris: ["https://client.example.com/cb"],
+      iat: Math.floor(Date.now() / 1000),
+    };
+    const clientId = await signJwt(claims, env.OAUTH_SIGN_KEY!);
+    const sessionJwt = await mintSessionCookie(env, "tako-token-x");
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "GET",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // Raw <script> from the client_name must NOT appear unescaped.
+    expect(html).not.toContain("<script>alert(1)</script>");
+    // The escaped form should be present so the page still tells the
+    // user which client_name was registered.
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+
+  it("rebuilds form-action from validated params (not raw query string)", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env, "tako-token-x");
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    // An attacker-supplied unknown query param should not survive
+    // into the form-action URL.
+    url.searchParams.set("attacker_param", "whatever");
+
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "GET",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const html = await res.text();
+    expect(html).not.toContain("attacker_param");
   });
 
   it("rejects redirect_uri not in client's registered list", async () => {
@@ -422,6 +598,89 @@ describe("/token", () => {
     expect(refreshRes.status).toBe(200);
     const body = (await refreshRes.json()) as { access_token: string };
     expect(body.access_token.split(".").length).toBe(3);
+  });
+
+  it("rejects mismatched redirect_uri at /token", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env, "tako-token-real");
+    const { verifier, challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    const authorizeRes = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const code = new URL(authorizeRes.headers.get("location")!)
+      .searchParams.get("code")!;
+    const tokenRes = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://attacker.example.com/cb",
+          code_verifier: verifier,
+          client_id: clientId,
+        }).toString(),
+      }),
+      env,
+    );
+    expect(tokenRes.status).toBe(400);
+    expect(((await tokenRes.json()) as { error: string }).error).toBe(
+      "invalid_grant",
+    );
+  });
+
+  it("rejects mismatched client_id at /token (belt-and-suspenders vs PKCE)", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const otherClientId = await mintClientId(env, "https://other.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env, "tako-token-real");
+    const { verifier, challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    const authorizeRes = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const code = new URL(authorizeRes.headers.get("location")!)
+      .searchParams.get("code")!;
+    // Client B presents the form with their own client_id even though
+    // the auth code was minted for client A.
+    const tokenRes = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://client.example.com/cb",
+          code_verifier: verifier,
+          client_id: otherClientId,
+        }).toString(),
+      }),
+      env,
+    );
+    expect(tokenRes.status).toBe(400);
+    expect(((await tokenRes.json()) as { error: string }).error).toBe(
+      "invalid_grant",
+    );
   });
 
   it("rejects unsupported grant_type", async () => {
