@@ -49,6 +49,53 @@ export interface ToolAnnotations {
 }
 
 /**
+ * Extra content blocks a tool can append to its result alongside the default
+ * JSON-stringified text block. Only the shapes we currently use are typed
+ * here — extend as new block types are needed (audio, resource, …). Mirrors
+ * the relevant subset of the MCP SDK's `ContentBlockSchema`.
+ */
+export type ToolContentBlock =
+  | { type: "image"; data: string; mimeType: string };
+
+/**
+ * MCP Apps UI bundle attached to a tool. When a tool declares this, the
+ * registry registers the bundle as an MCP resource at `uri` and threads
+ * `_meta.ui.resourceUri = uri` into the tool's MCP registration. Clients
+ * that support MCP Apps (claude.ai web/desktop, ChatGPT via Apps SDK, VS
+ * Code Insiders, Goose) fetch the bundle, sandbox it in an iframe, and
+ * forward each `tools/call` result to the widget over a JSON-RPC
+ * `postMessage` bridge (`ui/notifications/tool-result`). Clients without
+ * MCP Apps support ignore `_meta.ui` and the resource registration; the
+ * default text + image content blocks remain a working fallback.
+ *
+ * The factory is called once per `McpServer` instance (one per `/mcp`
+ * request) and receives the request's env, so per-environment values
+ * (e.g. `frameDomains` derived from `PUBLIC_BASE_URL`) can be baked into
+ * the registration without leaking env-specific strings into a static
+ * declaration.
+ *
+ * Spec references:
+ *  - MIME type and `_meta.ui.resourceUri` shape: OpenAI Apps SDK,
+ *    "Build your MCP server" / MCP Apps standard.
+ *  - `_meta.ui.csp.frameDomains`: required by the host sandbox so the
+ *    widget can embed an `<iframe src="https://tako.com/embed/...">`.
+ */
+export interface AppUiResource {
+  /** Unique resource URI, e.g. `"ui://tako/embed/chart"`. */
+  uri: string;
+  /** Stable resource name used in the SDK registration. */
+  name: string;
+  /** Bundled HTML (CSS+JS inline) the host loads into the sandbox iframe. */
+  html: string;
+  /**
+   * Hosts the widget may embed as nested iframes. Required for the chart
+   * embed: without this the host's CSP blocks the inner `<iframe src=
+   * "https://tako.com/embed/...">`.
+   */
+  frameDomains?: string[];
+}
+
+/**
  * The shape every tool file default-exports.
  *
  * Typical usage:
@@ -77,6 +124,26 @@ export interface ToolModule<
   outputSchema?: z.ZodType<Output>;
   annotations: ToolAnnotations;
   handler: (input: z.infer<InputSchema>, ctx: ToolContext) => Promise<Output>;
+  /**
+   * Optional hook to append extra MCP content blocks (image, audio, resource)
+   * after the default JSON-stringified text block. Called once per
+   * `tools/call`, after `handler` resolves. Tools should treat this as
+   * best-effort presentation: if the hook throws or returns `[]`, the text +
+   * `structuredContent` pair already provides a working response.
+   *
+   * Example: `open_chart_ui` uses this to inline a base64 PNG so MCP clients
+   * (claude.ai etc.) render the chart without a click-to-load gate.
+   */
+  extraContentBlocks?: (
+    output: Output,
+    ctx: ToolContext,
+  ) => Promise<ToolContentBlock[]>;
+  /**
+   * Optional MCP Apps UI bundle. Declared as a factory so values that
+   * depend on env (e.g. `frameDomains` from `PUBLIC_BASE_URL`) can be
+   * baked in at registration time. See {@link AppUiResource}.
+   */
+  appUiResource?: (env: Env) => AppUiResource;
 }
 
 /**
@@ -100,4 +167,9 @@ export interface AnyToolModule {
   outputSchema?: z.ZodType<unknown>;
   annotations: ToolAnnotations;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;
+  extraContentBlocks?: (
+    output: unknown,
+    ctx: ToolContext,
+  ) => Promise<ToolContentBlock[]>;
+  appUiResource?: (env: Env) => AppUiResource;
 }
