@@ -41,13 +41,13 @@ export default {
       request.method === "GET" &&
       url.pathname === "/.well-known/oauth-protected-resource"
     ) {
-      return handleProtectedResourceMetadata(request);
+      return handleProtectedResourceMetadata(request, env);
     }
     if (
       request.method === "GET" &&
       url.pathname === "/.well-known/oauth-authorization-server"
     ) {
-      return handleAuthServerMetadata(request);
+      return handleAuthServerMetadata(request, env);
     }
     if (url.pathname === "/register") {
       return handleRegister(request, env);

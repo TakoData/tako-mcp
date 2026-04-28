@@ -87,9 +87,10 @@ async function mintSessionCookie(env: Env, takoToken: string): Promise<string> {
 /* --------------------------- Discovery --------------------------- */
 
 describe("discovery", () => {
-  it("/.well-known/oauth-protected-resource advertises auth server", async () => {
+  it("/.well-known/oauth-protected-resource advertises auth server when configured", async () => {
     const res = handleProtectedResourceMetadata(
       new Request("https://mcp.example.com/.well-known/oauth-protected-resource"),
+      envWith(),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -100,11 +101,12 @@ describe("discovery", () => {
     expect(body.authorization_servers).toEqual(["https://mcp.example.com"]);
   });
 
-  it("/.well-known/oauth-authorization-server lists endpoints + PKCE S256", async () => {
+  it("/.well-known/oauth-authorization-server lists endpoints + PKCE S256 when configured", async () => {
     const res = handleAuthServerMetadata(
       new Request(
         "https://mcp.example.com/.well-known/oauth-authorization-server",
       ),
+      envWith(),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -117,6 +119,21 @@ describe("discovery", () => {
     expect(body.token_endpoint).toBe("https://mcp.example.com/token");
     expect(body.registration_endpoint).toBe("https://mcp.example.com/register");
     expect(body.code_challenge_methods_supported).toContain("S256");
+  });
+
+  it("returns 404 when OAuth is disabled (no metadata advertised)", async () => {
+    const res1 = handleProtectedResourceMetadata(
+      new Request("https://mcp.example.com/.well-known/oauth-protected-resource"),
+      ENV_NO_OAUTH,
+    );
+    expect(res1.status).toBe(404);
+    const res2 = handleAuthServerMetadata(
+      new Request(
+        "https://mcp.example.com/.well-known/oauth-authorization-server",
+      ),
+      ENV_NO_OAUTH,
+    );
+    expect(res2.status).toBe(404);
   });
 });
 
@@ -725,6 +742,139 @@ describe("/login", () => {
       expect(html).toContain("/oauth/stytch_callback");
       expect(html).toContain("Continue with Google");
     });
+  });
+});
+
+/* --------------------------- HTML response hardening --------------------------- */
+
+describe("HTML responses set defensive headers", () => {
+  async function fetchHtml(): Promise<Response> {
+    const env = envWith();
+    return handleLogin(new Request("https://mcp.example.com/login"), env);
+  }
+
+  it("sets X-Frame-Options: DENY (clickjacking defense)", async () => {
+    const res = await fetchHtml();
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+
+  it("sets CSP frame-ancestors 'none' (modern clickjacking defense)", async () => {
+    const res = await fetchHtml();
+    expect(res.headers.get("content-security-policy")).toContain(
+      "frame-ancestors 'none'",
+    );
+  });
+
+  it("sets Cache-Control: no-store (no proxy caching of auth pages)", async () => {
+    const res = await fetchHtml();
+    const cc = res.headers.get("cache-control") ?? "";
+    expect(cc).toContain("no-store");
+    expect(cc).toContain("no-cache");
+  });
+
+  it("sets X-Content-Type-Options: nosniff", async () => {
+    const res = await fetchHtml();
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("sets Referrer-Policy: no-referrer (don't leak OAuth params on outbound clicks)", async () => {
+    const res = await fetchHtml();
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+});
+
+/* --------------------------- /authorize scope + client_id expiry --------------------------- */
+
+describe("/authorize hardening", () => {
+  it("rejects unsupported scope values", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("scope", "admin:write");
+    const res = await handleAuthorize(
+      new Request(url.toString(), { method: "GET" }),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts the supported `mcp` scope", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env, "tako-token-x");
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("scope", "mcp");
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "GET",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects an expired client_id (registration TTL)", async () => {
+    const env = envWith();
+    // Mint a client_id that's already expired.
+    const expiredClient: ClientIdClaims = {
+      type: "client_id",
+      client_name: "expired-test",
+      redirect_uris: ["https://client.example.com/cb"],
+      iat: Math.floor(Date.now() / 1000) - 1000,
+      exp: Math.floor(Date.now() / 1000) - 100,
+    };
+    const expiredClientId = await signJwt(expiredClient, env.OAUTH_SIGN_KEY!);
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", expiredClientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    const res = await handleAuthorize(
+      new Request(url.toString(), { method: "GET" }),
+      env,
+    );
+    // 401 from the invalid_client branch — verifyJwt returned null
+    // because exp is in the past.
+    expect(res.status).toBe(401);
+  });
+
+  it("issues client_id JWTs with an `exp` (registrations age out)", async () => {
+    const env = envWith();
+    const res = await handleRegister(
+      new Request("https://mcp.example.com/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "exp-check",
+          redirect_uris: ["https://client.example.com/cb"],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { client_id: string };
+    // Decode the JWT body manually and check that exp is set.
+    const parts = body.client_id.split(".");
+    const payload = JSON.parse(
+      atob(parts[1]!.replace(/-/g, "+").replace(/_/g, "/")),
+    ) as { exp?: number; iat: number };
+    expect(payload.exp).toBeDefined();
+    expect(payload.exp!).toBeGreaterThan(payload.iat);
   });
 });
 

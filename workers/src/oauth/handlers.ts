@@ -76,6 +76,18 @@ import type {
 const ACCESS_TOKEN_TTL_S = 15 * 60;
 const REFRESH_TOKEN_TTL_S = 14 * 24 * 60 * 60;
 const AUTH_CODE_TTL_S = 60;
+/** DCR registrations expire after a year. Without expiry the only way
+ *  to invalidate an abandoned client is to rotate `OAUTH_SIGN_KEY`,
+ *  which nukes every registration at once. A 1-year TTL means a
+ *  long-running connector re-registers periodically (Claude.ai/ChatGPT
+ *  do this automatically on first use after expiry) while leaked /
+ *  abandoned client_ids age out. */
+const REGISTRATION_TTL_S = 365 * 24 * 60 * 60;
+/** Scopes we advertise in the discovery doc. Any scope value not on
+ *  this list is rejected at /authorize so we don't echo unexpected
+ *  values into issued tokens. Keep in sync with the
+ *  `scopes_supported` field in `handleAuthServerMetadata`. */
+const SUPPORTED_SCOPES = new Set(["mcp"]);
 
 /* --------------------------- Config helpers --------------------------- */
 
@@ -161,6 +173,24 @@ function htmlResponse(
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
+      // Clickjacking defense: every HTML page we serve carries
+      // user-identifying or grant-authorizing UI. Framing them in a
+      // hostile parent enables click-jacked consent. `frame-ancestors
+      // 'none'` (CSP) plus the legacy `X-Frame-Options: DENY` covers
+      // both modern and old browsers.
+      "x-frame-options": "DENY",
+      "content-security-policy": "frame-ancestors 'none'",
+      // Prevent intermediate caches from storing pages that embed
+      // `user_email` (consent) or any auth-flow artifact. Belt-and-
+      // suspenders Pragma covers ancient HTTP/1.0 caches.
+      "cache-control": "no-store, no-cache, must-revalidate, private",
+      pragma: "no-cache",
+      // MIME-sniffing defense — ensures browsers never reinterpret
+      // these HTML responses as another type.
+      "x-content-type-options": "nosniff",
+      // Don't leak the full URL (which carries OAuth params + cookies)
+      // when users click out from /login or /authorize.
+      "referrer-policy": "no-referrer",
       ...extraHeaders,
     },
   });
@@ -177,17 +207,42 @@ function escapeHtml(s: string): string {
 
 /* --------------------------- Discovery --------------------------- */
 
-export function handleProtectedResourceMetadata(req: Request): Response {
+/**
+ * RFC 9728 — OAuth 2.0 Protected Resource Metadata.
+ *
+ * Gated on OAuth configuration: when the secrets are unset the Worker
+ * should not advertise an OAuth surface, since following discovery would
+ * just take the client to a 503 from /register. Returning 404 lets
+ * clients fall back cleanly to static-Bearer mode.
+ */
+export function handleProtectedResourceMetadata(
+  req: Request,
+  env: Env,
+): Response {
+  if (readConfig(env) === null) {
+    return new Response("not found", { status: 404 });
+  }
   const origin = new URL(req.url).origin;
   return Response.json({
     resource: `${origin}/mcp`,
     authorization_servers: [origin],
     bearer_methods_supported: ["header"],
-    scopes_supported: ["mcp"],
+    scopes_supported: [...SUPPORTED_SCOPES],
   });
 }
 
-export function handleAuthServerMetadata(req: Request): Response {
+/**
+ * RFC 8414 — OAuth 2.0 Authorization Server Metadata.
+ *
+ * Same env-gating rationale as the protected-resource metadata above.
+ */
+export function handleAuthServerMetadata(
+  req: Request,
+  env: Env,
+): Response {
+  if (readConfig(env) === null) {
+    return new Response("not found", { status: 404 });
+  }
   const origin = new URL(req.url).origin;
   return Response.json({
     issuer: origin,
@@ -198,11 +253,20 @@ export function handleAuthServerMetadata(req: Request): Response {
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
-    scopes_supported: ["mcp"],
+    scopes_supported: [...SUPPORTED_SCOPES],
   });
 }
 
 /* --------------------------- Dynamic Client Registration --------------------------- */
+
+/**
+ * `/register` is intentionally unauthenticated, per RFC 7591 conventions
+ * for public-client DCR. Cloudflare WAF / rate-limit rules in front of
+ * the Worker are expected to bound abuse — every registration is a small
+ * HMAC sign + JSON response, but a sustained flood would still burn CPU.
+ * Document the assumption in infra; don't add app-level rate limiting
+ * here unless we observe abuse.
+ */
 
 /** Cap registration body size to keep the resulting `client_id` JWT
  *  (which echoes the redirect_uris and client_name) from blowing past
@@ -311,11 +375,13 @@ export async function handleRegister(
   }
   const client_name = rawName.slice(0, 200);
 
+  const now = Math.floor(Date.now() / 1000);
   const claims: ClientIdClaims = {
     type: "client_id",
     client_name,
     redirect_uris,
-    iat: Math.floor(Date.now() / 1000),
+    iat: now,
+    exp: now + REGISTRATION_TTL_S,
   };
   const client_id = await signJwt(claims, cfg.signKey);
 
@@ -359,6 +425,17 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
   if (code_challenge_method !== "S256") {
     return "code_challenge_method must be `S256`";
   }
+  // Validate `scope`: only values in SUPPORTED_SCOPES are accepted.
+  // Empty / null defaults to "mcp" downstream. This fails-closed instead
+  // of silently echoing unknown scope strings into issued tokens — which
+  // matters once any downstream system starts gating behavior on scope.
+  const scope = p.get("scope");
+  if (scope !== null && scope.length > 0) {
+    const requested = scope.split(/\s+/).filter((s) => s.length > 0);
+    if (!requested.every((s) => SUPPORTED_SCOPES.has(s))) {
+      return `scope contains unsupported values; supported: ${[...SUPPORTED_SCOPES].join(", ")}`;
+    }
+  }
   return {
     client_id,
     redirect_uri,
@@ -366,7 +443,7 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
     code_challenge,
     code_challenge_method,
     state: p.get("state"),
-    scope: p.get("scope"),
+    scope,
   };
 }
 
@@ -661,6 +738,13 @@ async function handleRefreshGrant(
       400,
     );
   }
+  // KNOWN GAP (TAKO-2679 follow-up): refresh tokens are not single-use.
+  // OAuth 2.1 §4.3.1 recommends rotation-with-replay-detection — when a
+  // previously-rotated refresh token is re-presented, all derived tokens
+  // for that user/client should be revoked. The JWT-stateless design
+  // has no persistent store to mark tokens spent; the same KV-backed
+  // `jti` mitigation that would close the auth-code reuse gap closes
+  // this one too.
   return issueTokens(
     {
       scope: claims.scope,
@@ -790,6 +874,12 @@ function loginPage(stytchPublicToken: string, callbackUrl: string): string {
 </form>
 <div class="err" id="err"></div>
 
+<!-- Stytch's vanilla JS SDK. Loaded over their CDN without Subresource
+     Integrity because Stytch publishes a rolling URL and breaks SRI
+     pins on every revision. Trade-off: a compromise of js.stytch.com
+     would let an attacker run JS on this page (which only handles
+     login redirects — no Tako tokens are touched here). Revisit if
+     Stytch publishes versioned URLs with stable hashes. -->
 <script src="https://js.stytch.com/stytch.js"></script>
 <script>
   (function() {

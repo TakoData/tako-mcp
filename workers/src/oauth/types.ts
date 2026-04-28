@@ -55,6 +55,15 @@ export interface AuthCodeClaims extends BaseClaims {
 
 /* --------------------------- Tokens issued to clients --------------------------- */
 
+/**
+ * Note on plaintext claims: `user_id` and `user_email` are visible to
+ * anyone who decodes the JWT (clients store these tokens). The Tako API
+ * token is the only secret value; it lives encrypted in
+ * `enc_tako_token`. This is industry-standard for JWT access tokens
+ * (clients are expected to read certain claims), but if the user's
+ * email becomes a stricter PII boundary, replace `user_email` with an
+ * opaque ID and look up the email server-side at consent-render time.
+ */
 export interface AccessTokenClaims extends BaseClaims {
   type: "access";
   scope: string;
