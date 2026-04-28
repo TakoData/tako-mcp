@@ -433,8 +433,10 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
   // Empty / null defaults to "mcp" downstream. This fails-closed instead
   // of silently echoing unknown scope strings into issued tokens — which
   // matters once any downstream system starts gating behavior on scope.
-  const scope = p.get("scope");
-  if (scope !== null && scope.length > 0) {
+  // Normalize `?scope=` (present but empty) to null so the downstream
+  // `?? "mcp"` default applies consistently — `??` doesn't trigger on "".
+  const scope = p.get("scope") || null;
+  if (scope !== null) {
     const requested = scope.split(/\s+/).filter((s) => s.length > 0);
     if (!requested.every((s) => SUPPORTED_SCOPES.has(s))) {
       return `scope contains unsupported values; supported: ${[...SUPPORTED_SCOPES].join(", ")}`;
@@ -752,6 +754,9 @@ export async function handleToken(req: Request, env: Env): Promise<Response> {
   }
 
   const grant_type = params.get("grant_type");
+  if (grant_type === null) {
+    return jsonError("invalid_request", "grant_type is required", 400);
+  }
   if (grant_type === "authorization_code") {
     return handleAuthorizationCodeGrant(params, cfg);
   }

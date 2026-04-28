@@ -795,6 +795,25 @@ describe("/token", () => {
       "unsupported_grant_type",
     );
   });
+
+  it("returns invalid_request when grant_type is missing", async () => {
+    const env = envWith();
+    const res = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ code: "x" }).toString(),
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: string;
+      error_description: string;
+    };
+    expect(body.error).toBe("invalid_request");
+    expect(body.error_description).toBe("grant_type is required");
+  });
 });
 
 /* --------------------------- /login --------------------------- */
@@ -904,6 +923,47 @@ describe("/authorize hardening", () => {
       env,
     );
     expect(res.status).toBe(200);
+  });
+
+  it("treats empty `?scope=` as the default `mcp` scope", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { verifier, challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("scope", "");
+    const authorizeRes = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(authorizeRes.status).toBe(302);
+    const code = new URL(authorizeRes.headers.get("location")!)
+      .searchParams.get("code")!;
+    const tokenRes = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://client.example.com/cb",
+          code_verifier: verifier,
+          client_id: clientId,
+        }).toString(),
+      }),
+      env,
+    );
+    expect(tokenRes.status).toBe(200);
+    const body = (await tokenRes.json()) as { scope: string };
+    expect(body.scope).toBe("mcp");
   });
 
   it("rejects an expired client_id (registration TTL)", async () => {
