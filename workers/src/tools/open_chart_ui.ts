@@ -837,14 +837,14 @@ const open_chart_ui = {
     const theme = input.dark_mode ? "dark" : "light";
     const pubId = encodeURIComponent(input.pub_id);
     const embed_url = `${webBase}/embed/${pubId}/?theme=${theme}`;
-    // Request a 3:2 aspect ratio (`width=1500&height=1000`) instead of
+    // Request a 4:3 aspect ratio (`width=1200&height=900`) instead of
     // Tako's default 1.91:1 — the wider default renders the chart at a
     // squat ~340 px tall in a typical ~700 px-wide chat column, which
-    // looked too small in claude.ai. 3:2 brings the rendered height to
-    // ~470 px at the same width — a noticeably more chart-like
-    // proportion. The endpoint accepts `width` and `height` directly
-    // (see `ImageView.get` in tako/app/backend/knowledge/api/views.py).
-    const image_url = `${apiBase}/api/v1/image/${pubId}/?dark_mode=${input.dark_mode ? "true" : "false"}&width=1500&height=1000`;
+    // looked too small in claude.ai. 4:3 brings the rendered height to
+    // ~525 px at the same width — about 55% taller than the default.
+    // Endpoint accepts `width` and `height` directly (see
+    // `ImageView.get` in tako/app/backend/knowledge/api/views.py).
+    const image_url = `${apiBase}/api/v1/image/${pubId}/?dark_mode=${input.dark_mode ? "true" : "false"}&width=1200&height=900`;
 
     // The inlined PNG `data:` URI is fetched separately in `extraMeta`
     // and shipped via `_meta` (NOT `structuredContent`), to keep
@@ -935,9 +935,9 @@ const open_chart_ui = {
           }
           const encoded = encodeURIComponent(pubId);
           const embedUrl = `${webBase}/embed/${encoded}/?theme=dark`;
-          // Same 3:2 aspect override as the handler — see the comment
+          // Same 4:3 aspect override as the handler — see the comment
           // in `handler` for rationale.
-          const imageUrl = `${apiBase}/api/v1/image/${encoded}/?dark_mode=true&width=1500&height=1000`;
+          const imageUrl = `${apiBase}/api/v1/image/${encoded}/?dark_mode=true&width=1200&height=900`;
           // The resource read happens with a valid request-context
           // `ctx.token`, so authenticated PNG endpoints (if any)
           // would work — currently the image endpoint is public, so
