@@ -278,14 +278,28 @@ function registerTool(
     // helper auto-mirrors these for backward compat with older host
     // readers — we do the same so a ChatGPT build still reading the
     // legacy key works), and `_meta["openai/outputTemplate"]` (OpenAI
-    // namespace alias). Three keys, one URI — same data delivered
-    // under whichever name the host happens to read.
+    // namespace alias).
     //
-    // The static URI lives in registration; per-call overrides for the
-    // dynamic-resource path get attached to the tool RESULT below.
+    // When the tool ships a `dynamic` resource template, the open-spec
+    // keys (`ui.resourceUri` + `ui/resourceUri`) advertise the URI
+    // TEMPLATE itself (e.g. `ui://tako/embed/chart/{pub_id}`) at
+    // registration time. Hosts that honor URI-template syntax in
+    // `_meta.ui.resourceUri` (the spec describes the field as a URI;
+    // RFC 6570 templates are URIs) substitute from the tool's
+    // structuredContent / args at call time and load the resolved
+    // instance per call. claude.ai appears to read the registration
+    // metadata exclusively (per-call result `_meta` overrides we ship
+    // below are ignored), so this is the only place the dynamic URI
+    // is exposed for it.
+    //
+    // `openai/outputTemplate` stays on the static URI: ChatGPT's CSP
+    // permits the cross-origin iframe path and it loads the static
+    // interactive widget — flipping it to a template would break the
+    // working ChatGPT integration.
+    const claudeFacingUri = ui.dynamic?.uriPattern ?? ui.uri;
     config._meta = {
-      ui: { resourceUri: ui.uri },
-      "ui/resourceUri": ui.uri,
+      ui: { resourceUri: claudeFacingUri },
+      "ui/resourceUri": claudeFacingUri,
       "openai/outputTemplate": ui.uri,
     };
   }

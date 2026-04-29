@@ -143,14 +143,24 @@ describe("worker routing", () => {
     // widget stays on its loading state forever). Other tools ship no
     // widget and should declare neither field.
     const openChart = body.result.tools.find((t) => t.name === "open_chart_ui");
-    // Three metadata keys, all carrying the same widget URI — matches what
-    // OpenAI's official `@modelcontextprotocol/ext-apps` helper emits.
-    // Different hosts read different keys (and different versions of the
-    // same host may have read different keys historically), so we set
-    // them all and let each host pick what it expects.
+    // Three metadata keys, two URI flavors:
+    //
+    //  - `ui.resourceUri` and the legacy flat `ui/resourceUri` carry
+    //    the URI TEMPLATE (`ui://tako/embed/chart/{pub_id}`). claude.ai
+    //    reads from registration metadata exclusively (per-call
+    //    `_meta` overrides on tool results are ignored, verified empirically),
+    //    so the only place we can hand it a per-call URI is by
+    //    advertising the template at registration time. Hosts that
+    //    honor RFC 6570 substitute `{pub_id}` from the tool's
+    //    structuredContent / args at call time.
+    //
+    //  - `openai/outputTemplate` carries the static URI
+    //    (`ui://tako/embed/chart`). ChatGPT loads this once and pipes
+    //    per-call data via `window.openai.toolOutput`; flipping it to
+    //    a template would break that working integration.
     expect(openChart?._meta).toMatchObject({
-      ui: { resourceUri: "ui://tako/embed/chart" },
-      "ui/resourceUri": "ui://tako/embed/chart",
+      ui: { resourceUri: "ui://tako/embed/chart/{pub_id}" },
+      "ui/resourceUri": "ui://tako/embed/chart/{pub_id}",
       "openai/outputTemplate": "ui://tako/embed/chart",
     });
     for (const t of body.result.tools) {
