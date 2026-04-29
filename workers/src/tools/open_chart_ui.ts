@@ -804,7 +804,7 @@ async function fetchImageDataUrlAndDims(
 const open_chart_ui = {
   name: "open_chart_ui",
   description:
-    "Use this when you want to show a chart to the user. The chart's PNG is returned as a native MCP image content block — clients (claude.ai etc.) render it inline automatically; do NOT echo `![…](image_url)` markdown for it (that would re-display the chart behind a click-to-load gate). Also returns `embed_url` for a fully interactive version with zoom, pan, hover — surface it as a markdown link, e.g. `[Open interactive chart](embed_url)`. Never paste raw HTML or `<iframe>` markup; chat clients render markdown, not arbitrary HTML.",
+    "Renders a Tako chart inline for the user. **You MUST call this immediately after `knowledge_search` or `create_chart` returns a card AND the user asked to see / view / show / render / get a chart — pass the top result's `open_ui_args` (i.e. `{ pub_id }`) and chain the call in the same turn. Do not reply with the price / number / summary first and wait for the user to ask a second time; chain in one turn.** The chart's PNG is returned as a native MCP image content block — clients (claude.ai etc.) render it inline automatically; do NOT echo `![…](image_url)` markdown for it (that would re-display the chart behind a click-to-load gate). Also returns `embed_url` for a fully interactive version with zoom, pan, hover — surface it as a markdown link, e.g. `[Open interactive chart](embed_url)`. Never paste raw HTML or `<iframe>` markup; chat clients render markdown, not arbitrary HTML.",
   inputSchema,
   outputSchema,
   annotations: {
