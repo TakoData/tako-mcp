@@ -251,13 +251,18 @@ const WIDGET_HTML = `<!doctype html>
     if (!structuredContent || typeof structuredContent !== "object") return false;
     var url = structuredContent.embed_url;
     var imgUrl = structuredContent.image_url;
-    // \`image_data_url\` lives on \`_meta\` (not on \`structuredContent\`)
-    // so its ~250 KB doesn't get tokenized into the LLM's context
-    // window — claude.ai otherwise rejects the tool result as too
-    // large. Hosts using the \`window.openai\` path (ChatGPT) ignore
-    // \`_meta\` entirely; they don't need the data URI because their
-    // CSP allows cross-origin \`<img src>\`.
+    // \`image_data_url\` and PNG natural dimensions live on \`_meta\`
+    // (not on \`structuredContent\`) so the ~250 KB data URI doesn't
+    // get tokenized into the LLM's context window — claude.ai
+    // otherwise rejects the tool result as too large. Hosts using the
+    // \`window.openai\` path (ChatGPT) ignore \`_meta\` entirely; they
+    // don't need the data URI because their CSP allows cross-origin
+    // \`<img src>\`.
     var imgDataUrl = meta && typeof meta === "object" ? meta.image_data_url : undefined;
+    var imgNaturalW = meta && typeof meta === "object" && typeof meta.image_natural_width === "number"
+      ? meta.image_natural_width : 0;
+    var imgNaturalH = meta && typeof meta === "object" && typeof meta.image_natural_height === "number"
+      ? meta.image_natural_height : 0;
     // Defense-in-depth: re-validate URL/DataURL schemes before
     // assigning to \`iframe.src\` / \`img.src\`. The handler validates
     // server-side too, but the widget is the last hop before the DOM,
@@ -305,17 +310,34 @@ const WIDGET_HTML = `<!doctype html>
         imageLink.removeAttribute("href");
       }
       imageLink.classList.remove("hidden");
-      // Resize on image load. \`structuredContent.height\` is sized for
-      // the (taller) iframe path — line-chart PNGs render at ~3:1
-      // aspect, so a ~800-wide widget yields a ~270 px-tall image,
-      // leaving ~450 px of unused white space below if we leave the
-      // iframe at the original 720. Update html/body height so Claude
-      // (which reads \`documentElement.offsetHeight\` directly to size
-      // the outer iframe — see anthropics/claude-ai-mcp#69) picks up
-      // the new size, and call \`notifyIntrinsicHeight\` for ChatGPT's
-      // path. \`offsetHeight\` over \`naturalHeight\` because the image
-      // is sized via \`width: 100%\`, so its rendered dimensions depend
-      // on the host's widget width, not the source PNG's pixels.
+      // Pre-size the widget document height from the PNG's known
+      // natural aspect ratio, BEFORE the image even loads. Claude
+      // reads \`documentElement.offsetHeight\` early on widget mount
+      // and apparently doesn't re-poll on later layout changes
+      // (anthropics/claude-ai-mcp#69), so any post-load resize
+      // doesn't reach the outer iframe. Setting it up front from the
+      // server-supplied PNG dimensions matches the iframe to the
+      // chart's true rendered height.
+      //
+      // Body width is unknown at this point (image hasn't laid out
+      // yet) so we read the host-given iframe width as a proxy —
+      // \`document.documentElement.clientWidth\` is the widest reliable
+      // signal for the iframe content area. Fall back to a sensible
+      // default if that's also zero.
+      if (imgNaturalW > 0 && imgNaturalH > 0) {
+        var bodyW = document.documentElement.clientWidth || 800;
+        var renderedH = Math.round((bodyW / imgNaturalW) * imgNaturalH);
+        document.documentElement.style.height = renderedH + "px";
+        document.body.style.height = renderedH + "px";
+        notifyHeight(renderedH);
+        log("img pre-sized from PNG dims", {
+          natural: { w: imgNaturalW, h: imgNaturalH },
+          rendered: { w: bodyW, h: renderedH },
+        });
+      }
+      // Refine on actual image load — covers the case where the host
+      // resized between our pre-size and image render, or where the
+      // PNG dims weren't available server-side.
       image.addEventListener("load", function () {
         var actualH = image.offsetHeight || image.naturalHeight;
         if (actualH > 0) {
@@ -569,16 +591,44 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 }
 
 /**
- * Fetch the chart PNG and return a `data:image/<mime>;base64,<bytes>`
- * URI under the inline cap, or `undefined` on any failure mode.
+ * Parse PNG width / height from the IHDR chunk. PNGs are required to
+ * have IHDR as the first chunk, immediately after the 8-byte signature,
+ * so width and height are at byte offsets 16 and 20 respectively
+ * (each a 4-byte big-endian uint). Returns `undefined` for anything
+ * that doesn't pass the signature check — small JPEG/GIF/HTML error
+ * pages would otherwise read garbage dimensions.
+ */
+function parsePngDimensions(
+  buffer: ArrayBuffer,
+): { width: number; height: number } | undefined {
+  if (buffer.byteLength < 24) return undefined;
+  const view = new DataView(buffer);
+  // PNG signature: 89 50 4E 47 0D 0A 1A 0A — first 4 bytes are enough.
+  if (view.getUint32(0) !== 0x89504e47) return undefined;
+  const width = view.getUint32(16);
+  const height = view.getUint32(20);
+  if (width === 0 || height === 0) return undefined;
+  return { width, height };
+}
+
+/**
+ * Fetch the chart PNG and return its `data:image/...;base64,...` URI
+ * along with the source PNG's natural pixel dimensions. The dimensions
+ * let the widget pre-size its document height (so claude.ai's outer
+ * iframe ends up matching the rendered chart instead of the
+ * 720-px-tall iframe-path default — Claude reads
+ * `documentElement.offsetHeight` early and apparently doesn't re-poll
+ * after image load, so any post-load resize is lost).
  *
- * Used by the handler to populate `structuredContent.image_data_url`,
- * which the widget reads for hosts with restrictive `img-src` CSP
- * (claude.ai for custom connectors most notably). All failures degrade
- * to `undefined` rather than throwing — `image_url` is always in the
+ * All failure modes (timeout, !ok, wrong content-type, oversize, bad
+ * PNG header) degrade to `undefined`. `image_url` is always in the
  * response, so hosts that allow cross-origin images still render fine.
  */
-async function fetchImageDataUrl(url: string): Promise<string | undefined> {
+async function fetchImageDataUrlAndDims(
+  url: string,
+): Promise<
+  { dataUrl: string; naturalWidth: number; naturalHeight: number } | undefined
+> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PNG_FETCH_TIMEOUT_MS);
   try {
@@ -592,8 +642,14 @@ async function fetchImageDataUrl(url: string): Promise<string | undefined> {
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength === 0) return undefined;
     if (buffer.byteLength > MAX_INLINE_DATA_URL_BYTES) return undefined;
+    const dims = parsePngDimensions(buffer);
+    if (dims === undefined) return undefined;
     const mime = contentType.split(";")[0]!.trim();
-    return `data:${mime};base64,${arrayBufferToBase64(buffer)}`;
+    return {
+      dataUrl: `data:${mime};base64,${arrayBufferToBase64(buffer)}`,
+      naturalWidth: dims.width,
+      naturalHeight: dims.height,
+    };
   } catch {
     return undefined;
   } finally {
@@ -644,23 +700,32 @@ const open_chart_ui = {
   },
   async extraMeta(output, _ctx): Promise<Record<string, unknown> | undefined> {
     // Inline the chart PNG as a `data:image/...;base64,...` URI for
-    // the widget. Routes through `_meta` (not `structuredContent`)
-    // because the data URI is large (~70-330 KB encoded) and putting
-    // it in `structuredContent` blows past claude.ai's per-tool-result
+    // the widget, plus the source PNG's natural pixel dimensions.
+    // Routed through `_meta` (not `structuredContent`) because the
+    // data URI is large (~70-330 KB encoded) and putting it in
+    // `structuredContent` blows past claude.ai's per-tool-result
     // context budget — Claude then offloads the whole result to a
-    // file and skips widget delivery, leaving the widget stuck on
-    // its loading placeholder.
+    // file and skips widget delivery.
     //
-    // The widget reads `params._meta.image_data_url` from the
+    // The widget reads `params._meta` from the
     // `ui/notifications/tool-result` postMessage (per MCP Apps spec
-    // §"Wire protocol — Host → View notification") and uses it under
-    // hosts whose CSP rejects cross-origin `<img src>` (claude.ai for
-    // custom connectors most notably). On hosts that allow
-    // cross-origin images (ChatGPT, others), the widget falls back to
-    // `structuredContent.image_url` and never reads `_meta`.
-    const dataUrl = await fetchImageDataUrl(output.image_url);
-    if (dataUrl === undefined) return undefined;
-    return { image_data_url: dataUrl };
+    // §"Wire protocol — Host → View notification") and:
+    //  - uses `image_data_url` as the `<img src>` under hosts whose
+    //    CSP rejects cross-origin imgs (claude.ai for custom
+    //    connectors most notably).
+    //  - uses `image_natural_width` / `image_natural_height` to
+    //    pre-size the widget document height before the image even
+    //    loads. Claude reads `documentElement.offsetHeight` early and
+    //    doesn't re-poll, so post-load `notifyHeight` calls don't
+    //    shrink the outer iframe; setting the height up front from
+    //    the known PNG aspect ratio matches the iframe to the chart.
+    const fetched = await fetchImageDataUrlAndDims(output.image_url);
+    if (fetched === undefined) return undefined;
+    return {
+      image_data_url: fetched.dataUrl,
+      image_natural_width: fetched.naturalWidth,
+      image_natural_height: fetched.naturalHeight,
+    };
   },
   appUiResource(env): AppUiResource {
     // `frameDomains` is the host CSP's allow-list for nested iframes —
