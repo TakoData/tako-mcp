@@ -92,7 +92,7 @@
     },
     {
       "name": "create_report",
-      "description": "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns a report_id. The caller must poll get_report(report_id) until status == 'completed' to retrieve contents. Pass only `report_type`, `title`, and `research_objective` — the tool resolves the right template internally. Do NOT pre-call get_credit_balance; the response carries credit_cost.",
+      "description": "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns report_id + webpage_url. **IMMEDIATELY after this returns, share the `webpage_url` with the user as a clickable link (the report page works even while it's still cooking), then call `wait_for_report(report_id)` and continue chaining further `wait_for_report` calls back-to-back until status is 'completed' or 'failed' — reports take 5–20 minutes, so expect 5+ chained calls. Do NOT stop after presenting the report_id; the user expects you to wait it out and surface the final report.** Once status is terminal, summarize the result (or `error_message` on failed) and re-share the `webpage_url`. Pass only `report_type`, `title`, and `research_objective` — the tool resolves the right template internally. Do NOT pre-call get_credit_balance; the response carries credit_cost.",
       "parameters": {
         "report_type": {
           "type": "string",
@@ -160,7 +160,7 @@
     },
     {
       "name": "get_report",
-      "description": "Use this to check the status of a Tako report (from create_report) and fetch its contents once generation completes. Poll every ~15 s; stop polling when status is 'completed' OR 'failed'. When still 'pending' / 'running', narrative / sections fields are null. When 'completed', they contain the full report payload plus export URLs (pdf, pptx). When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely.",
+      "description": "Use this for a one-shot status check on a Tako report (from create_report). For waiting on a report to finish, prefer `wait_for_report` — it keeps the polling loop on the server. When still 'pending' / 'running', narrative / sections fields are null. When 'completed', they contain the full report payload plus export URLs (pdf, pptx). When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely. ALWAYS include the response's `webpage_url` in your reply so the user has a clickable link to open the report in their browser — every response carries one whether the report is still cooking or done.",
       "parameters": {
         "report_id": {
           "type": "string",
@@ -261,6 +261,28 @@
         "readOnlyHint": true,
         "destructiveHint": false,
         "openWorldHint": true
+      }
+    },
+    {
+      "name": "wait_for_report",
+      "description": "Use this after create_report (or whenever the user wants to wait for / check on a report). Server-side polling — returns when status is 'completed' / 'failed' / 'cancelled' OR after max_wait_seconds (default 50s) without a terminal status. **If `timed_out` is true, you MUST IMMEDIATELY call wait_for_report again with the same report_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. Reports take 5–20 minutes, so expect 5+ chained calls.** Once terminal, ALWAYS include the response's `webpage_url` so the user has a clickable link to open the report in their browser, then summarize `result` / `export_urls` on completed or `error_message` on failed.",
+      "parameters": {
+        "report_id": {
+          "type": "string",
+          "description": "Report ID returned from create_report or list_reports.",
+          "required": true
+        },
+        "max_wait_seconds": {
+          "type": "integer",
+          "description": "How long this single call may block waiting for a terminal status. Capped at 50s so the call always returns before the MCP client's tool-call timeout fires. If the report isn't done yet, call this tool again with the same report_id — reports typically take 5–20 minutes, so expect to chain several calls in a row.",
+          "default": 50
+        }
+      },
+      "annotations": {
+        "title": "Tako: Wait for Report",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
       }
     }
   ],

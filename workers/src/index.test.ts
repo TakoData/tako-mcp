@@ -132,6 +132,7 @@ describe("worker routing", () => {
       "knowledge_search",
       "list_reports",
       "open_chart_ui",
+      "wait_for_report",
     ]);
 
     // MCP Apps: `open_chart_ui` ships a widget bundle, so its tool listing
