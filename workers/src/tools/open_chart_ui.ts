@@ -61,9 +61,9 @@ const inputSchema = z.object({
     .number()
     .int()
     .min(1)
-    .default(520)
+    .default(720)
     .describe(
-      "Advisory initial height in pixels for the rendered chart container. The PNG endpoint ignores it; pass through to the client as a sizing hint only. Sized for a single-component card by default — tall multi-component charts may briefly under-reserve until the embed page handshakes its true height (forthcoming).",
+      "Advisory initial height in pixels for the rendered chart container. The PNG endpoint ignores it; pass through to the client as a sizing hint only. Sized for tall multi-component cards (with tabs / sub-tabs) so they don't get cropped — single-component cards leave unused footer space until the embed page handshakes its true height (forthcoming).",
     ),
 });
 
