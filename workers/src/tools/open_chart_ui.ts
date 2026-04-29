@@ -142,6 +142,7 @@ const WIDGET_HTML = `<!doctype html>
 <style>
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
   #tako-embed { width: 100% !important; border: 0 !important; display: block !important; background: transparent; }
+  #tako-embed-img { width: 100%; height: auto; display: block; background: transparent; }
   #tako-placeholder {
     display: flex; align-items: center; justify-content: center;
     width: 100%; min-height: 240px;
@@ -159,16 +160,40 @@ const WIDGET_HTML = `<!doctype html>
   allow="fullscreen"
   title="Tako chart"
 ></iframe>
+<img id="tako-embed-img" class="hidden" alt="Tako chart" />
 <script>
 (function () {
   "use strict";
   var frame = document.getElementById("tako-embed");
+  var image = document.getElementById("tako-embed-img");
   var placeholder = document.getElementById("tako-placeholder");
   var rendered = false;
   // Origin of the iframe we loaded — used to gate the height handshake
   // listener below so we only honor resize messages from the actual
   // embed page, not arbitrary cross-frame senders.
   var embedOrigin = null;
+
+  // Pick the rendering mode based on host. ChatGPT's Apps SDK runtime
+  // exposes \`window.openai\`; its outer sandbox CSP honors our
+  // \`frameDomains\` declaration and lets the cross-origin
+  // \`<iframe src=https://staging.trytako.com/embed/...>\` load fully
+  // interactive. Other hosts (claude.ai for custom connectors most
+  // notably) enforce a stricter \`frame-src 'self' blob: data:\` outer
+  // CSP that ignores frameDomains entirely, so the iframe ends up
+  // showing Chrome's "This content is blocked" placeholder. For those
+  // hosts we drop back to the static PNG via \`image_url\` — the
+  // \`img-src\` directive is far more commonly permissive than
+  // \`frame-src\`, and a non-interactive chart is strictly better than
+  // a "blocked" error tile. Confirmed via DevTools (2026-04-29) on
+  // claude.ai web: the same widget bundle, same handshake completion,
+  // with iframe blocked vs static \`<img>\` allowed.
+  function shouldUseInteractiveIframe() {
+    try {
+      return typeof window.openai !== "undefined";
+    } catch (e) {
+      return false;
+    }
+  }
 
   function log(label, payload) {
     try { console.log("[tako-widget]", label, payload); } catch (e) {}
@@ -205,26 +230,59 @@ const WIDGET_HTML = `<!doctype html>
     if (rendered) return true;
     if (!structuredContent || typeof structuredContent !== "object") return false;
     var url = structuredContent.embed_url;
+    var imgUrl = structuredContent.image_url;
     // Defense-in-depth: re-validate http(s) before assigning to
-    // \`iframe.src\`. The handler validates server-side too, but the
-    // widget is the last hop before the DOM, so a hostile MCP server
-    // shipping \`javascript:\` would otherwise execute in the widget
-    // origin once dropped into \`src\`.
-    if (typeof url !== "string" || !/^https?:\\/\\//.test(url)) return false;
-    if (frame.src !== url) frame.src = url;
-    try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
+    // \`iframe.src\` / \`img.src\`. The handler validates server-side too,
+    // but the widget is the last hop before the DOM, so a hostile MCP
+    // server shipping \`javascript:\` would otherwise execute in the
+    // widget origin once dropped into \`src\`.
+    var validEmbed = typeof url === "string" && /^https?:\\/\\//.test(url);
+    var validImage = typeof imgUrl === "string" && /^https?:\\/\\//.test(imgUrl);
     var h =
       typeof structuredContent.height === "number" && structuredContent.height > 0
         ? structuredContent.height
         : 600;
-    frame.style.height = h + "px";
-    frame.style.minHeight = h + "px";
-    frame.setAttribute("height", String(h));
-    frame.classList.remove("hidden");
+    var useIframe = shouldUseInteractiveIframe() && validEmbed;
+
+    if (useIframe) {
+      if (frame.src !== url) frame.src = url;
+      try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
+      frame.style.height = h + "px";
+      frame.style.minHeight = h + "px";
+      frame.setAttribute("height", String(h));
+      frame.classList.remove("hidden");
+    } else if (validImage) {
+      // Static fallback. We don't pin a height on \`<img>\` — the image
+      // has its own intrinsic aspect ratio and stretching to a fixed
+      // height would distort the chart. Width-only sizing yields a
+      // slightly different height than the iframe path; that's fine.
+      image.src = imgUrl;
+      image.classList.remove("hidden");
+    } else if (validEmbed) {
+      // No image_url but we have an embed_url — try the iframe even on
+      // hosts we'd normally treat as restricted. Worst case the host
+      // CSP-blocks it and the user sees the same "blocked" tile they
+      // would have seen otherwise; best case some host without
+      // \`window.openai\` actually allows the iframe.
+      if (frame.src !== url) frame.src = url;
+      try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
+      frame.style.height = h + "px";
+      frame.style.minHeight = h + "px";
+      frame.setAttribute("height", String(h));
+      frame.classList.remove("hidden");
+    } else {
+      // Nothing usable; leave the placeholder visible.
+      return false;
+    }
+
     placeholder.classList.add("hidden");
     rendered = true;
     notifyHeight(h);
-    log("rendered", { src: url, height: h });
+    log("rendered", {
+      mode: useIframe ? "iframe" : validImage ? "img" : "iframe-fallback",
+      src: useIframe || !validImage ? url : imgUrl,
+      height: h,
+    });
     return true;
   }
 
