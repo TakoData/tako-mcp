@@ -285,7 +285,16 @@ const WIDGET_HTML = `<!doctype html>
   #tako-embed { width: 100% !important; border: 0 !important; display: block; background: transparent; }
   #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
   #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
-  #tako-embed-img { width: 100%; height: auto; display: block; background: transparent; transition: opacity 120ms ease-out; }
+  /* Render the chart at a fixed display width that exceeds the typical
+   * chat-column width (~705 px), then let body scroll horizontally to
+   * reveal the rest. This makes the image visually bigger AND the
+   * iframe taller (since iframe height tracks image rendered height)
+   * without scaling the source PNG up or distorting it. Trade-off: a
+   * horizontal scrollbar inside the widget. The alternative — keeping
+   * width: 100% — produces a ~200 px-tall chart that the user found
+   * too small. */
+  #tako-embed-img { width: 1200px; max-width: none; height: auto; display: block; background: transparent; transition: opacity 120ms ease-out; }
+  body { overflow-x: auto; }
   #tako-placeholder {
     display: flex; align-items: center; justify-content: center;
     width: 100%; min-height: 240px;
