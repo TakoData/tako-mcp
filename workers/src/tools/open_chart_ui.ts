@@ -124,6 +124,136 @@ const APP_UI_RESOURCE_URI = "ui://tako/embed/chart";
 const APP_UI_RESOURCE_NAME = "open_chart_ui_widget";
 
 /**
+ * URI template (RFC 6570) for the dynamic-resource variant. Each
+ * `tools/call` resolves `{pub_id}` to a specific instance like
+ * `ui://tako/embed/chart/abc123`, and the host fetches that instance
+ * via `resources/read`. The template's read callback in `mcp.ts`
+ * fetches the chart PNG, parses dimensions, and bakes everything into
+ * the widget HTML so the document height is correct on the host's
+ * first `documentElement.offsetHeight` snapshot.
+ *
+ * Used by claude.ai (read from per-call `_meta.ui.resourceUri`).
+ * ChatGPT continues to load the static `APP_UI_RESOURCE_URI` widget
+ * via `_meta["openai/outputTemplate"]` so its iframe path stays
+ * interactive.
+ */
+const APP_UI_TEMPLATE_URI_PATTERN = "ui://tako/embed/chart/{pub_id}";
+const APP_UI_TEMPLATE_NAME = "open_chart_ui_widget_baked";
+
+// Assumed default chat-widget pixel width when computing the baked
+// widget's initial height from PNG dimensions. Real iframe widths vary
+// by host (Claude ~700-800, ChatGPT ~600-700, claude.ai mobile ~360);
+// 800 is a slight over-estimate so the body height comes out a hair
+// taller than the rendered image — small white space below is benign,
+// scrollable overflow inside the widget is not.
+const ASSUMED_WIDGET_WIDTH_PX = 800;
+
+/**
+ * HTML-escape a string for safe interpolation into attribute values
+ * or text content. Base64 data URIs and standard URLs don't normally
+ * contain unsafe chars, but defensive escaping costs ~nothing and
+ * shields against any future upstream change that might inject
+ * angle-brackets or quotes into one.
+ */
+function htmlEscape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Render the "baked" widget HTML for one specific chart — image data
+ * URI, dimensions, and embed URL all inlined into the markup so the
+ * widget mounts with the chart already in the DOM. No handshake, no
+ * postMessage data flow, no `_meta` smuggling.
+ *
+ * Why this path exists: claude.ai's host wraps the widget iframe in
+ * a parent container sized once from `documentElement.offsetHeight`
+ * at mount and doesn't re-poll (anthropics/claude-ai-mcp#69). Any
+ * height set after `tool-result` arrives is too late. Baking the
+ * image into the resource HTML so it's already in the DOM when the
+ * host snapshots gives the correct height on the first read.
+ */
+function buildBakedWidgetHtml(opts: {
+  embedUrl: string;
+  imageDataUrl: string;
+  naturalWidth: number;
+  naturalHeight: number;
+}): string {
+  const initialHeight = Math.round(
+    (ASSUMED_WIDGET_WIDTH_PX / opts.naturalWidth) * opts.naturalHeight,
+  );
+  const safeEmbedUrl = htmlEscape(opts.embedUrl);
+  const safeDataUrl = htmlEscape(opts.imageDataUrl);
+  // Inline `style="height: ${initialHeight}px"` on both <html> and
+  // <body> so claude.ai's documentElement.offsetHeight read returns
+  // exactly initialHeight regardless of image-load timing. Body
+  // background pinned to a Tako-card-ish dark gray so the rounded
+  // corners on the chart card image don't show iframe-default white
+  // through the corners.
+  return `<!doctype html>
+<html lang="en" style="height: ${initialHeight}px;">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="x-tako-widget" content="open_chart_ui_baked/v1" />
+<title>Tako chart</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; background: #0f1115; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
+  #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
+  #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
+  #tako-embed-img { width: 100%; height: auto; display: block; background: transparent; transition: opacity 120ms ease-out; }
+</style>
+</head>
+<body style="height: ${initialHeight}px;">
+<a
+  id="tako-embed-link"
+  target="_blank"
+  rel="noopener noreferrer"
+  title="Open interactive chart"
+  href="${safeEmbedUrl}"
+><img id="tako-embed-img" alt="Tako chart" src="${safeDataUrl}" /></a>
+<script>
+(function(){"use strict";try{if(window.openai&&typeof window.openai.notifyIntrinsicHeight==="function"){window.openai.notifyIntrinsicHeight(${initialHeight});}}catch(e){}})();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * Render a fallback widget when we couldn't fetch the chart image.
+ * Shows a "click to open" link so the user has at least one path to
+ * the chart, instead of a blank widget.
+ */
+function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
+  const safeEmbedUrl = htmlEscape(embedUrl);
+  const safeMessage = htmlEscape(message);
+  return `<!doctype html>
+<html lang="en" style="height: 240px;">
+<head>
+<meta charset="utf-8" />
+<meta name="x-tako-widget" content="open_chart_ui_baked_fallback/v1" />
+<title>Tako chart</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; background: #0f1115; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
+  .wrap { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; height: 100%; padding: 24px; box-sizing: border-box; text-align: center; }
+  a { color: #4aa9ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body style="height: 240px;">
+<div class="wrap">
+  <p>${safeMessage}</p>
+  <a href="${safeEmbedUrl}" target="_blank" rel="noopener noreferrer">Open interactive chart →</a>
+</div>
+</body>
+</html>`;
+}
+
+/**
  * Bundle the host loads into a sandboxed iframe. One thin `<iframe>`
  * pointing at Tako's existing `/embed/{pub_id}` page — we delegate
  * rendering, zoom/pan/hover, and resize to that page rather than
@@ -735,11 +865,76 @@ const open_chart_ui = {
     // tool also writes into `embed_url`, so the two move together. No
     // wildcards: the widget only ever embeds Tako's own embed page.
     const webBase = resolvePublicBase(env);
+    const apiBase = resolvePublicApiBase(env);
     return {
+      // Static URI — registered as before, used by ChatGPT (which
+      // reads the widget URI from `_meta["openai/outputTemplate"]`)
+      // for its interactive iframe path. Also serves any host that
+      // doesn't honor per-call URI overrides.
       uri: APP_UI_RESOURCE_URI,
       name: APP_UI_RESOURCE_NAME,
       html: WIDGET_HTML,
       frameDomains: [webBase],
+      // Dynamic-resource variant — registered as a `ResourceTemplate`,
+      // one URI per pub_id. Per-call tool result overrides
+      // `_meta.ui.resourceUri` to point claude.ai at a specific
+      // instance, where the widget HTML has the chart's image and
+      // dimensions baked in at fetch time. See `AppUiResource.dynamic`
+      // and `buildBakedWidgetHtml` for the why.
+      dynamic: {
+        uriPattern: APP_UI_TEMPLATE_URI_PATTERN,
+        templateName: APP_UI_TEMPLATE_NAME,
+        async renderHtml(variables, ctx) {
+          // `variables.pub_id` is the URI-template substitution; for
+          // `{pub_id}` it arrives already URL-decoded. Build the
+          // image and embed URLs the same way the handler does.
+          const pubIdRaw = variables.pub_id;
+          const pubId =
+            typeof pubIdRaw === "string"
+              ? pubIdRaw
+              : Array.isArray(pubIdRaw)
+                ? (pubIdRaw[0] ?? "")
+                : "";
+          if (pubId === "") {
+            return buildFallbackWidgetHtml(
+              webBase,
+              "Missing chart identifier.",
+            );
+          }
+          const encoded = encodeURIComponent(pubId);
+          const embedUrl = `${webBase}/embed/${encoded}/?theme=dark`;
+          const imageUrl = `${apiBase}/api/v1/image/${encoded}/?dark_mode=true`;
+          // The resource read happens with a valid request-context
+          // `ctx.token`, so authenticated PNG endpoints (if any)
+          // would work — currently the image endpoint is public, so
+          // only the URL matters.
+          void ctx;
+          const fetched = await fetchImageDataUrlAndDims(imageUrl);
+          if (fetched === undefined) {
+            return buildFallbackWidgetHtml(
+              embedUrl,
+              "Couldn't load chart preview.",
+            );
+          }
+          return buildBakedWidgetHtml({
+            embedUrl,
+            imageDataUrl: fetched.dataUrl,
+            naturalWidth: fetched.naturalWidth,
+            naturalHeight: fetched.naturalHeight,
+          });
+        },
+        resolveUriFromInput(input) {
+          // Match the input shape `open_chart_ui` accepts. URI-encode
+          // the pub_id so non-alphanumeric characters in the input
+          // don't break URI parsing (rare in practice, since Tako
+          // pub_ids are URL-safe slugs, but defensive).
+          const pubId =
+            typeof (input as { pub_id?: unknown })?.pub_id === "string"
+              ? (input as { pub_id: string }).pub_id
+              : "";
+          return `ui://tako/embed/chart/${encodeURIComponent(pubId)}`;
+        },
+      },
     };
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {

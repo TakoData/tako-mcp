@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 // No `.js` suffix — the SDK's package.json `exports` map only exposes
 // `./validation/cfworker`, unlike the other server subpaths which do ship
@@ -178,8 +178,13 @@ function registerTool(
   //     debug widget polled `window.openai.toolOutput` 40 times across
   //     10 seconds and watched it never populate, even though
   //     `openai:set_globals` events fired with `detail.globals` set.
-  if (tool.appUiResource !== undefined) {
-    const ui = tool.appUiResource(ctx.env);
+  // Hoisted to outer scope so the per-call tool result handler below
+  // can read `ui.dynamic` and resolve the per-call widget URI for the
+  // dynamic-resource path.
+  const ui =
+    tool.appUiResource !== undefined ? tool.appUiResource(ctx.env) : undefined;
+
+  if (ui !== undefined) {
     const uiMeta: Record<string, unknown> = {};
     if (ui.frameDomains && ui.frameDomains.length > 0) {
       uiMeta.csp = { frameDomains: ui.frameDomains };
@@ -233,6 +238,41 @@ function registerTool(
         return { contents: [contentItem] };
       },
     );
+    // Optional dynamic-resource variant. When defined, the same widget
+    // also gets a `ResourceTemplate` registration, and per-call tool
+    // results point claude.ai's `_meta.ui.resourceUri` at a specific
+    // instance of that template (so the widget HTML can have the
+    // chart's image + dimensions baked in at fetch time, sidestepping
+    // claude.ai's "snapshot offsetHeight once on mount" behavior). See
+    // `AppUiResource.dynamic` for the rationale.
+    if (ui.dynamic !== undefined) {
+      const dynamic = ui.dynamic;
+      server.registerResource(
+        dynamic.templateName,
+        new ResourceTemplate(dynamic.uriPattern, { list: undefined }),
+        {
+          mimeType: APP_UI_MIME_TYPE,
+          ...(Object.keys(uiMeta).length > 0 ? { _meta: { ui: uiMeta } } : {}),
+        },
+        async (uri, variables) => {
+          const html = await dynamic.renderHtml(variables, ctx);
+          const contentItem: {
+            uri: string;
+            mimeType: string;
+            text: string;
+            _meta?: Record<string, unknown>;
+          } = {
+            uri: uri.toString(),
+            mimeType: APP_UI_MIME_TYPE,
+            text: html,
+          };
+          if (Object.keys(uiMeta).length > 0) {
+            contentItem._meta = { ui: uiMeta };
+          }
+          return { contents: [contentItem] };
+        },
+      );
+    }
     // Tool-side metadata: set the modern `_meta.ui.resourceUri`, the
     // legacy flat `_meta["ui/resourceUri"]` (the official ext-apps
     // helper auto-mirrors these for backward compat with older host
@@ -240,6 +280,9 @@ function registerTool(
     // legacy key works), and `_meta["openai/outputTemplate"]` (OpenAI
     // namespace alias). Three keys, one URI — same data delivered
     // under whichever name the host happens to read.
+    //
+    // The static URI lives in registration; per-call overrides for the
+    // dynamic-resource path get attached to the tool RESULT below.
     config._meta = {
       ui: { resourceUri: ui.uri },
       "ui/resourceUri": ui.uri,
@@ -322,6 +365,36 @@ function registerTool(
           resultMeta = await tool.extraMeta(output, ctx);
         } catch (err) {
           console.error(`extraMeta hook failed for ${tool.name}:`, err);
+        }
+      }
+      // Dynamic-resource path: when the tool's `appUiResource` declares
+      // a `dynamic` variant, resolve a per-call URI from the tool input
+      // and override `_meta.ui.resourceUri` (and the legacy flat
+      // `_meta["ui/resourceUri"]`) in the tool result. claude.ai reads
+      // these from the result's `_meta`, so per-call routing works
+      // even though tool registration metadata is static.
+      //
+      // Deliberately NOT overriding `_meta["openai/outputTemplate"]`
+      // here — that key is read by ChatGPT, which keeps using the
+      // static iframe widget (its CSP allows the cross-origin iframe
+      // path for full interactivity, so it doesn't need the
+      // image-baked dynamic variant).
+      if (ui?.dynamic !== undefined) {
+        try {
+          const resolvedUri = ui.dynamic.resolveUriFromInput(input);
+          resultMeta = {
+            ...(resultMeta ?? {}),
+            ui: {
+              ...((resultMeta?.ui as Record<string, unknown> | undefined) ?? {}),
+              resourceUri: resolvedUri,
+            },
+            "ui/resourceUri": resolvedUri,
+          };
+        } catch (err) {
+          console.error(
+            `dynamic.resolveUriFromInput failed for ${tool.name}:`,
+            err,
+          );
         }
       }
       const result: {

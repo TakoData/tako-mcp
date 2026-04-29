@@ -93,6 +93,51 @@ export interface AppUiResource {
    * "https://tako.com/embed/...">`.
    */
   frameDomains?: string[];
+  /**
+   * Optional dynamic-resource variant — registered as a `ResourceTemplate`
+   * (one URI per per-call substitution). Used when the widget needs to
+   * have call-specific data (chart image, dimensions) baked into the HTML
+   * at fetch time instead of delivered via `tool-result` postMessage.
+   *
+   * Why: hosts that read `documentElement.offsetHeight` once on widget
+   * mount (claude.ai, per anthropics/claude-ai-mcp#69) ignore later
+   * height changes. Baking the image into the resource HTML so it's
+   * already in the DOM when the host snapshots gives the correct height
+   * on first read.
+   *
+   * Tool result-side wiring (in `mcp.ts`): when this is present, the
+   * per-call `_meta.ui.resourceUri` (read by claude.ai) is set to the
+   * specific instance URI for the tool call, while
+   * `_meta["openai/outputTemplate"]` (read by ChatGPT) stays on the
+   * static `uri` so ChatGPT keeps using the iframe widget. This split
+   * is intentional: ChatGPT's CSP allows the cross-origin iframe path
+   * for full interactivity; Claude needs the data baked in or it can't
+   * render anything.
+   */
+  dynamic?: {
+    /** RFC 6570 URI template, e.g. `"ui://tako/embed/chart/{pub_id}"`. */
+    uriPattern: string;
+    /** Registration name for the template (distinct from the static `name`). */
+    templateName: string;
+    /**
+     * Generate the full widget HTML for a specific instance. Receives the
+     * parsed URI variables (e.g. `{ pub_id: "abc123" }`) and the request
+     * `ToolContext` so the renderer can reach Django over `ctx.token`.
+     * Failure modes (upstream fetch error, missing data) should still
+     * return valid HTML — a placeholder widget that explains the error
+     * is better than a 500 from the resource read.
+     */
+    renderHtml: (
+      variables: Record<string, string | string[]>,
+      ctx: ToolContext,
+    ) => Promise<string>;
+    /**
+     * Build the resolved URI for a specific tool call from its input.
+     * Called by `mcp.ts` per `tools/call` to set `_meta.ui.resourceUri`.
+     * Should URL-encode any user-supplied substitution variables.
+     */
+    resolveUriFromInput: (input: unknown) => string;
+  };
 }
 
 /**
