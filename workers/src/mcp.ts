@@ -307,12 +307,33 @@ function registerTool(
           );
         }
       }
+      // Optional `_meta` hook. Distinct from `extraContentBlocks` and
+      // `structuredContent` because `_meta` is the MCP spec's
+      // metadata-only field — hosts MAY forward it to widgets via
+      // `ui/notifications/tool-result` (per the MCP Apps spec) but it
+      // is NOT part of the LLM's context window. Use this to ship
+      // payloads the widget needs but the LLM shouldn't tokenize, e.g.
+      // an inline base64 PNG too large to fit in `structuredContent`
+      // without tripping claude.ai's "tool result too large for
+      // context" guard.
+      let resultMeta: Record<string, unknown> | undefined;
+      if (tool.extraMeta !== undefined) {
+        try {
+          resultMeta = await tool.extraMeta(output, ctx);
+        } catch (err) {
+          console.error(`extraMeta hook failed for ${tool.name}:`, err);
+        }
+      }
       const result: {
         content: typeof content;
         structuredContent?: Record<string, unknown>;
+        _meta?: Record<string, unknown>;
       } = { content };
       if (tool.outputSchema !== undefined) {
         result.structuredContent = output as Record<string, unknown>;
+      }
+      if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
+        result._meta = resultMeta;
       }
       return result;
     },

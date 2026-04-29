@@ -145,6 +145,28 @@ export interface ToolModule<
     ctx: ToolContext,
   ) => Promise<ToolContentBlock[]>;
   /**
+   * Optional hook to attach metadata to the tool result's `_meta` field.
+   * Per the MCP spec, `_meta` is metadata for hosts/widgets that's NOT
+   * forwarded into the LLM's context window — distinct from `content[]`
+   * and `structuredContent`. Use this for payloads the widget needs but
+   * the LLM shouldn't see.
+   *
+   * Concrete example: `open_chart_ui` uses this to ship a ~250 KB
+   * `data:image/png;base64,...` URI to the widget. Putting that in
+   * `structuredContent` causes claude.ai to flag the tool result as
+   * "Tool result too large for context", offload it to a file, and
+   * skip widget delivery entirely. Routing the data URI through
+   * `_meta` keeps it off the LLM's context budget while still reaching
+   * the widget via `params._meta` in the `ui/notifications/tool-result`
+   * postMessage.
+   *
+   * Returning `undefined` (or throwing) leaves `_meta` unset.
+   */
+  extraMeta?: (
+    output: Output,
+    ctx: ToolContext,
+  ) => Promise<Record<string, unknown> | undefined>;
+  /**
    * Optional MCP Apps UI bundle. Declared as a factory so values that
    * depend on env (e.g. `frameDomains` from `PUBLIC_BASE_URL`) can be
    * baked in at registration time. See {@link AppUiResource}.
@@ -177,5 +199,9 @@ export interface AnyToolModule {
     output: unknown,
     ctx: ToolContext,
   ) => Promise<ToolContentBlock[]>;
+  extraMeta?: (
+    output: unknown,
+    ctx: ToolContext,
+  ) => Promise<Record<string, unknown> | undefined>;
   appUiResource?: (env: Env) => AppUiResource;
 }

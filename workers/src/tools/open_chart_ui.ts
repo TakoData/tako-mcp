@@ -80,20 +80,6 @@ const outputSchema = z.object({
   image_url: z
     .string()
     .regex(HTTP_URL_REGEX, { message: "image_url must be http(s)" }),
-  // `data:image/<mime>;base64,<bytes>` form of the chart PNG, populated
-  // by the handler when the worker can fetch + inline the image within
-  // the size cap. Optional because: (a) the upstream PNG fetch can
-  // fail or time out, (b) the chart may be larger than the inline cap,
-  // (c) tests sometimes exercise the URL-only path. The widget reads
-  // this in preference to `image_url` because hosts with restrictive
-  // `img-src` CSP (notably claude.ai for custom connectors) reject the
-  // cross-origin URL but allow `data:` URIs.
-  image_data_url: z
-    .string()
-    .regex(/^data:image\//, {
-      message: "image_data_url must be a data:image/* URI",
-    })
-    .optional(),
   dark_mode: z.boolean(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
@@ -260,12 +246,18 @@ const WIDGET_HTML = `<!doctype html>
     } catch (e) { /* ignore */ }
   }
 
-  function render(structuredContent) {
+  function render(structuredContent, meta) {
     if (rendered) return true;
     if (!structuredContent || typeof structuredContent !== "object") return false;
     var url = structuredContent.embed_url;
     var imgUrl = structuredContent.image_url;
-    var imgDataUrl = structuredContent.image_data_url;
+    // \`image_data_url\` lives on \`_meta\` (not on \`structuredContent\`)
+    // so its ~250 KB doesn't get tokenized into the LLM's context
+    // window — claude.ai otherwise rejects the tool result as too
+    // large. Hosts using the \`window.openai\` path (ChatGPT) ignore
+    // \`_meta\` entirely; they don't need the data URI because their
+    // CSP allows cross-origin \`<img src>\`.
+    var imgDataUrl = meta && typeof meta === "object" ? meta.image_data_url : undefined;
     // Defense-in-depth: re-validate URL/DataURL schemes before
     // assigning to \`iframe.src\` / \`img.src\`. The handler validates
     // server-side too, but the widget is the last hop before the DOM,
@@ -517,7 +509,12 @@ const WIDGET_HTML = `<!doctype html>
     }
     if (msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
       var params = msg.params || {};
-      render(params.structuredContent);
+      // Forward both \`structuredContent\` (LLM-visible payload) and
+      // \`_meta\` (metadata-only payload, where \`image_data_url\` lives).
+      // Per the MCP Apps spec §"Wire protocol — Host → View
+      // notification", \`params._meta\` is part of the tool-result
+      // notification.
+      render(params.structuredContent, params._meta);
       return;
     }
     if (msg.type === "tako-embed-height" && embedOrigin && event.origin === embedOrigin) {
@@ -631,24 +628,39 @@ const open_chart_ui = {
     const embed_url = `${webBase}/embed/${pubId}/?theme=${theme}`;
     const image_url = `${apiBase}/api/v1/image/${pubId}/?dark_mode=${input.dark_mode ? "true" : "false"}`;
 
-    // Fetch + inline the PNG as a `data:` URI when feasible. The widget
-    // prefers this over `image_url` because hosts with restrictive
-    // `img-src` CSP (claude.ai for custom connectors) reject
-    // cross-origin URLs but allow `data:`. Failure modes (timeout, 5xx,
-    // size cap, missing `image/*` content-type) all degrade silently
-    // to `undefined` — `image_url` is still in the response and the
-    // widget falls back to it for hosts that allow cross-origin imgs.
-    const image_data_url = await fetchImageDataUrl(image_url);
-
+    // The inlined PNG `data:` URI is fetched separately in `extraMeta`
+    // and shipped via `_meta` (NOT `structuredContent`), to keep
+    // ~250 KB of base64 off the LLM's context window. claude.ai
+    // otherwise flags the tool result as "Tool result too large for
+    // context", offloads it to a file, and skips widget delivery.
     return {
       pub_id: input.pub_id,
       embed_url,
       image_url,
-      ...(image_data_url !== undefined ? { image_data_url } : {}),
       dark_mode: input.dark_mode,
       width: input.width,
       height: input.height,
     };
+  },
+  async extraMeta(output, _ctx): Promise<Record<string, unknown> | undefined> {
+    // Inline the chart PNG as a `data:image/...;base64,...` URI for
+    // the widget. Routes through `_meta` (not `structuredContent`)
+    // because the data URI is large (~70-330 KB encoded) and putting
+    // it in `structuredContent` blows past claude.ai's per-tool-result
+    // context budget — Claude then offloads the whole result to a
+    // file and skips widget delivery, leaving the widget stuck on
+    // its loading placeholder.
+    //
+    // The widget reads `params._meta.image_data_url` from the
+    // `ui/notifications/tool-result` postMessage (per MCP Apps spec
+    // §"Wire protocol — Host → View notification") and uses it under
+    // hosts whose CSP rejects cross-origin `<img src>` (claude.ai for
+    // custom connectors most notably). On hosts that allow
+    // cross-origin images (ChatGPT, others), the widget falls back to
+    // `structuredContent.image_url` and never reads `_meta`.
+    const dataUrl = await fetchImageDataUrl(output.image_url);
+    if (dataUrl === undefined) return undefined;
+    return { image_data_url: dataUrl };
   },
   appUiResource(env): AppUiResource {
     // `frameDomains` is the host CSP's allow-list for nested iframes —
