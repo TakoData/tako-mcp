@@ -456,17 +456,38 @@ const WIDGET_HTML = `<!doctype html>
       image.addEventListener("load", function () {
         imageLink.classList.remove("hidden");
         placeholder.classList.add("hidden");
-        var actualH =
-          imageLink.scrollHeight ||
-          image.offsetHeight ||
-          image.naturalHeight ||
-          0;
-        if (actualH > 0) {
-          document.documentElement.style.height = actualH + "px";
-          document.body.style.height = actualH + "px";
-          notifyHeight(actualH);
-          log("img resized after load", { height: actualH });
-        }
+        // Defer measurement one frame so layout settles after the
+        // visibility change. \`offsetHeight\` (rendered height after CSS
+        // width: 100% scaling) is the right measurement; \`scrollHeight\`
+        // can over-report on some browsers when the source PNG's
+        // natural dimensions differ from the rendered ones, and
+        // \`naturalHeight\` is the source PNG pixels (almost always
+        // taller than rendered).
+        requestAnimationFrame(function () {
+          var rectH = image.getBoundingClientRect().height;
+          var offsetH = image.offsetHeight;
+          var scrollH = imageLink.scrollHeight;
+          var naturalH = image.naturalHeight;
+          // Diagnostic: log every available measurement so we can
+          // identify which one matches what claude.ai actually reads.
+          log("img measurements", {
+            rectH: rectH,
+            offsetH: offsetH,
+            scrollH: scrollH,
+            naturalH: naturalH,
+            bodyClientWidth: document.body.clientWidth,
+            htmlClientWidth: document.documentElement.clientWidth,
+          });
+          // Pick the rendered height (post-CSS-scaling). Fall through
+          // to natural height as a last resort.
+          var actualH = Math.round(rectH || offsetH || naturalH || 0);
+          if (actualH > 0) {
+            document.documentElement.style.height = actualH + "px";
+            document.body.style.height = actualH + "px";
+            notifyHeight(actualH);
+            log("img resized after load", { height: actualH });
+          }
+        });
       });
       // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
       // guard at the top of \`render()\` blocks any re-entry from a
