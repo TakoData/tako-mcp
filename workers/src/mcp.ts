@@ -59,7 +59,43 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * `ToolContext` so tools see the right Bearer token + env bindings without
  * having to reach for request state themselves.
  */
-export function createMcpServer(ctx: ToolContext): McpServer {
+export function createMcpServer(
+  ctx: ToolContext,
+  options: { iconsBaseUrl?: string } = {},
+): McpServer {
+  // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
+  // one entry per the spec's matching rules: theme first, then size.
+  // Order entries best-fit-first within each theme so simple hosts that
+  // just take `icons[0]` still get a sensible asset.
+  //
+  // URLs are served by this same worker under `/icons/*` (see
+  // `icons.ts`). Going through our own origin keeps the public icon URL
+  // stable across Tako frontend deploys — Tako only exposes its brand
+  // assets under hashed CDN paths that rotate per deploy, so proxying
+  // is the only way to ship a serverInfo.icons array that doesn't rot.
+  // `iconsBaseUrl` is omitted in tests / non-HTTP contexts; in that
+  // case we just don't advertise icons.
+  const icons =
+    options.iconsBaseUrl !== undefined
+      ? [
+          {
+            src: `${options.iconsBaseUrl}/icons/favicon.svg`,
+            mimeType: "image/svg+xml",
+            theme: "light" as const,
+          },
+          {
+            src: `${options.iconsBaseUrl}/icons/favicon-light.svg`,
+            mimeType: "image/svg+xml",
+            theme: "dark" as const,
+          },
+          {
+            src: `${options.iconsBaseUrl}/icons/apple-touch-icon.png`,
+            mimeType: "image/png",
+            sizes: ["180x180"],
+          },
+        ]
+      : undefined;
+
   const server = new McpServer(
     {
       name: SERVER_NAME,
@@ -68,35 +104,7 @@ export function createMcpServer(ctx: ToolContext): McpServer {
       websiteUrl: "https://tako.com",
       description:
         "Interactive charts and live-data visualizations for finance, economics, demographics, prediction markets, and more.",
-      // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.)
-      // pick one entry per the spec's matching rules: theme first, then
-      // size. Order entries best-fit-first within each theme so simple
-      // hosts that just take `icons[0]` still get a sensible asset.
-      //
-      // SVG → preferred for arbitrary connector card sizes (no
-      // pixelation when the card grows). PNG fallback covers hosts that
-      // don't render SVG. URLs hardcoded to production
-      // `trytako.com/static/...` because the brand asset doesn't change
-      // per worker deployment, and routing the icon through the staging
-      // origin would mean a private staging environment outage takes
-      // out the prod connector pic too.
-      icons: [
-        {
-          src: "https://trytako.com/static/images/favicon.svg",
-          mimeType: "image/svg+xml",
-          theme: "light",
-        },
-        {
-          src: "https://trytako.com/static/images/favicon-light.svg",
-          mimeType: "image/svg+xml",
-          theme: "dark",
-        },
-        {
-          src: "https://trytako.com/static/images/apple-touch-icon.png",
-          mimeType: "image/png",
-          sizes: ["180x180"],
-        },
-      ],
+      ...(icons !== undefined ? { icons } : {}),
     },
     {
       jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
@@ -417,7 +425,12 @@ export async function handleMcpRequest(
   const ctx: ToolContext = { token, env };
 
   try {
-    const server = createMcpServer(ctx);
+    // Use the request's own origin as the icon base, so each deployed
+    // env (mcp.tako.com, mcp.staging.tako.com, *.workers.dev) advertises
+    // icons it itself serves under `/icons/*`. Prevents staging
+    // connectors from referencing prod URLs and vice versa.
+    const requestOrigin = new URL(request.url).origin;
+    const server = createMcpServer(ctx, { iconsBaseUrl: requestOrigin });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
     // model (no persistent per-session state) and keeps each request

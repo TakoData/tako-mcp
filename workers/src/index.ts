@@ -1,4 +1,5 @@
 import type { Env } from "./env.js";
+import { handleIconRequest } from "./icons.js";
 import { handleMcpRequest } from "./mcp.js";
 import {
   handleAuthorize,
@@ -23,6 +24,15 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/mcp") {
       return handleMcpRequest(request, env);
+    }
+
+    // Brand-icon proxy. Connector cards in Claude / ChatGPT fetch these
+    // URLs directly (advertised via `serverInfo.icons` on `initialize`).
+    // Serving through the worker keeps the public URL stable across
+    // Tako frontend redeploys — see `icons.ts` header for why proxying
+    // is preferable to pointing connectors at Tako's hashed CDN paths.
+    if (request.method === "GET" && url.pathname.startsWith("/icons/")) {
+      return handleIconRequest(url.pathname);
     }
     // GET /mcp (SSE resubscription), DELETE /mcp (session terminate), and
     // OPTIONS /mcp (browser CORS preflight) are intentionally unrouted:
