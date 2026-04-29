@@ -313,6 +313,26 @@ const WIDGET_HTML = `<!doctype html>
         imageLink.removeAttribute("href");
       }
       imageLink.classList.remove("hidden");
+      // Resize on image load. \`structuredContent.height\` is sized for
+      // the (taller) iframe path — line-chart PNGs render at ~3:1
+      // aspect, so a ~800-wide widget yields a ~270 px-tall image,
+      // leaving ~450 px of unused white space below if we leave the
+      // iframe at the original 720. Update html/body height so Claude
+      // (which reads \`documentElement.offsetHeight\` directly to size
+      // the outer iframe — see anthropics/claude-ai-mcp#69) picks up
+      // the new size, and call \`notifyIntrinsicHeight\` for ChatGPT's
+      // path. \`offsetHeight\` over \`naturalHeight\` because the image
+      // is sized via \`width: 100%\`, so its rendered dimensions depend
+      // on the host's widget width, not the source PNG's pixels.
+      image.addEventListener("load", function () {
+        var actualH = image.offsetHeight || image.naturalHeight;
+        if (actualH > 0) {
+          document.documentElement.style.height = actualH + "px";
+          document.body.style.height = actualH + "px";
+          notifyHeight(actualH);
+          log("img resized after load", { height: actualH });
+        }
+      });
     } else if (validEmbed) {
       // No image at all but we have an embed_url — try the iframe even
       // on hosts we'd normally treat as restricted. Worst case the
