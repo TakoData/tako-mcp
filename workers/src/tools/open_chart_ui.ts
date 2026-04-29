@@ -291,19 +291,93 @@ const WIDGET_HTML = `<!doctype html>
     document.addEventListener(name, handler);
   });
 
-  // MCP Apps open-spec bridge — \`ui/notifications/tool-result\`
-  // JSON-RPC over postMessage. claude.ai, VS Code Insiders, and Goose
-  // follow this; ChatGPT uses the \`window.openai\` path above.
+  // MCP Apps handshake — REQUIRED for claude.ai (and any spec-compliant
+  // host) to deliver tool results. Per the MCP Apps spec (2026-01-26):
   //
-  // Also handles a \`tako-embed-height\` resize handshake from the inner
+  //   "The Host MUST NOT send any request or notification to the View
+  //    before it receives an \`initialized\` notification."
+  //
+  // Sequence:
+  //   1. View → Host: \`ui/initialize\` request (declares appInfo +
+  //      protocolVersion).
+  //   2. Host → View: response with hostInfo / hostCapabilities.
+  //   3. View → Host: \`ui/notifications/initialized\` notification.
+  //   4. Host → View: starts sending \`ui/notifications/tool-result\`
+  //      (and \`ui/notifications/tool-input\`) for every tool call.
+  //
+  // Without steps 1 and 3 Claude correctly withholds tool-result; the
+  // widget then sits on its placeholder forever. Symptom of skipping
+  // the handshake matched exactly: \`[tako-widget] listener attached\`
+  // logs but \`rendered\` never does. Sources:
+  // \`@modelcontextprotocol/ext-apps@1.7.x\` \`dist/src/app.js::connect()\`
+  // and the spec at modelcontextprotocol/ext-apps/specification/
+  // 2026-01-26/apps.mdx.
+  //
+  // ChatGPT's data path (\`window.openai.toolOutput\` /
+  // \`openai:set_globals\`) is independent of this handshake — these
+  // messages are silently ignored on its side, so ChatGPT keeps working
+  // unchanged.
+  var INIT_REQUEST_ID = "tako-ui-init";
+  var initRequestSent = false;
+  var initializedSent = false;
+
+  function sendInitRequest() {
+    if (initRequestSent) return;
+    initRequestSent = true;
+    try {
+      window.parent.postMessage({
+        jsonrpc: "2.0",
+        id: INIT_REQUEST_ID,
+        method: "ui/initialize",
+        params: {
+          appInfo: { name: "tako-open-chart-ui", version: "1.0.0" },
+          appCapabilities: {},
+          protocolVersion: "2026-01-26",
+        },
+      }, "*");
+      log("ui/initialize sent");
+    } catch (e) { /* host gone — nothing to do */ }
+  }
+
+  function sendInitializedNotification() {
+    if (initializedSent) return;
+    initializedSent = true;
+    try {
+      window.parent.postMessage({
+        jsonrpc: "2.0",
+        method: "ui/notifications/initialized",
+        params: {},
+      }, "*");
+      log("ui/notifications/initialized sent");
+    } catch (e) { /* host gone — nothing to do */ }
+  }
+
+  // MCP Apps open-spec bridge — \`ui/notifications/tool-result\`
+  // JSON-RPC over postMessage, plus the response side of the handshake
+  // above. claude.ai, VS Code Insiders, and Goose follow this; ChatGPT
+  // uses the \`window.openai\` path further up.
+  //
+  // Also handles a \`tako-embed-height\` resize message from the inner
   // embed iframe, gated to that iframe's origin. The Tako web app does
-  // not emit this message yet — when it ships, the widget will start
+  // not emit it yet — when it ships, the widget will start
   // self-correcting chart heights without a worker redeploy. Sanity
   // bounds (positive integer < 4000 px) keep a hostile or buggy embed
   // from blowing the iframe up to nonsensical sizes.
   window.addEventListener("message", function (event) {
     var msg = event.data;
     if (!msg || typeof msg !== "object") return;
+    // Init response → send the \`initialized\` notification so the host
+    // starts piping tool-result messages. Don't gate on response
+    // contents — any matching id (success or error) is sufficient
+    // signal that the host saw our \`ui/initialize\`.
+    if (
+      msg.jsonrpc === "2.0" &&
+      msg.id === INIT_REQUEST_ID &&
+      (msg.result !== undefined || msg.error !== undefined)
+    ) {
+      sendInitializedNotification();
+      return;
+    }
     if (msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
       var params = msg.params || {};
       render(params.structuredContent);
@@ -320,6 +394,16 @@ const WIDGET_HTML = `<!doctype html>
       log("resized via embed handshake", { height: n });
     }
   });
+
+  // Kick the handshake off. Listener is already attached above so the
+  // response can come in immediately. Fallback: 2 s after sending the
+  // request, send \`initialized\` regardless. Hosts that don't implement
+  // the handshake (e.g. ChatGPT, which uses \`window.openai\`) won't
+  // respond to \`ui/initialize\`; without the timeout we'd wait forever.
+  // Sending an unsolicited \`initialized\` to such hosts is harmless —
+  // they ignore unknown JSON-RPC notifications.
+  sendInitRequest();
+  setTimeout(sendInitializedNotification, 2000);
 
   log("listener attached", {
     hasOpenAiGlobal: typeof window.openai !== "undefined",
