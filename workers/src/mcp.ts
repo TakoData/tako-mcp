@@ -64,6 +64,39 @@ export function createMcpServer(ctx: ToolContext): McpServer {
     {
       name: SERVER_NAME,
       version: SERVER_VERSION,
+      title: "Tako",
+      websiteUrl: "https://tako.com",
+      description:
+        "Interactive charts and live-data visualizations for finance, economics, demographics, prediction markets, and more.",
+      // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.)
+      // pick one entry per the spec's matching rules: theme first, then
+      // size. Order entries best-fit-first within each theme so simple
+      // hosts that just take `icons[0]` still get a sensible asset.
+      //
+      // SVG → preferred for arbitrary connector card sizes (no
+      // pixelation when the card grows). PNG fallback covers hosts that
+      // don't render SVG. URLs hardcoded to production
+      // `trytako.com/static/...` because the brand asset doesn't change
+      // per worker deployment, and routing the icon through the staging
+      // origin would mean a private staging environment outage takes
+      // out the prod connector pic too.
+      icons: [
+        {
+          src: "https://trytako.com/static/images/favicon.svg",
+          mimeType: "image/svg+xml",
+          theme: "light",
+        },
+        {
+          src: "https://trytako.com/static/images/favicon-light.svg",
+          mimeType: "image/svg+xml",
+          theme: "dark",
+        },
+        {
+          src: "https://trytako.com/static/images/apple-touch-icon.png",
+          mimeType: "image/png",
+          sizes: ["180x180"],
+        },
+      ],
     },
     {
       jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
