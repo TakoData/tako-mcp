@@ -50,7 +50,10 @@ describe("open_chart_ui handler", () => {
       "https://staging.trytako.com/embed/abc123/?theme=dark",
     );
     expect(out.image_url).toBe(
-      "https://staging.trytako.com/api/v1/image/abc123/?dark_mode=true",
+      // 3:2 aspect override is intentional — see the comment in the
+      // handler. Default Tako PNG aspect is 1.91:1 which renders too
+      // squat at typical chat-column widths.
+      "https://staging.trytako.com/api/v1/image/abc123/?dark_mode=true&width=1500&height=1000",
     );
     expect(out.dark_mode).toBe(true);
     expect(out.width).toBe(900);
