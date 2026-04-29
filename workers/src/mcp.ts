@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 // No `.js` suffix — the SDK's package.json `exports` map only exposes
 // `./validation/cfworker`, unlike the other server subpaths which do ship
@@ -59,11 +59,52 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * `ToolContext` so tools see the right Bearer token + env bindings without
  * having to reach for request state themselves.
  */
-export function createMcpServer(ctx: ToolContext): McpServer {
+export function createMcpServer(
+  ctx: ToolContext,
+  options: { iconsBaseUrl?: string } = {},
+): McpServer {
+  // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
+  // one entry per the spec's matching rules: theme first, then size.
+  // Order entries best-fit-first within each theme so simple hosts that
+  // just take `icons[0]` still get a sensible asset.
+  //
+  // URLs are served by this same worker under `/icons/*` (see
+  // `icons.ts`). Going through our own origin keeps the public icon URL
+  // stable across Tako frontend deploys — Tako only exposes its brand
+  // assets under hashed CDN paths that rotate per deploy, so proxying
+  // is the only way to ship a serverInfo.icons array that doesn't rot.
+  // `iconsBaseUrl` is omitted in tests / non-HTTP contexts; in that
+  // case we just don't advertise icons.
+  const icons =
+    options.iconsBaseUrl !== undefined
+      ? [
+          {
+            src: `${options.iconsBaseUrl}/icons/favicon.svg`,
+            mimeType: "image/svg+xml",
+            theme: "light" as const,
+          },
+          {
+            src: `${options.iconsBaseUrl}/icons/favicon-light.svg`,
+            mimeType: "image/svg+xml",
+            theme: "dark" as const,
+          },
+          {
+            src: `${options.iconsBaseUrl}/icons/apple-touch-icon.png`,
+            mimeType: "image/png",
+            sizes: ["180x180"],
+          },
+        ]
+      : undefined;
+
   const server = new McpServer(
     {
       name: SERVER_NAME,
       version: SERVER_VERSION,
+      title: "Tako",
+      websiteUrl: "https://tako.com",
+      description:
+        "Interactive charts and live-data visualizations for finance, economics, demographics, prediction markets, and more.",
+      ...(icons !== undefined ? { icons } : {}),
     },
     {
       jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
@@ -137,8 +178,13 @@ function registerTool(
   //     debug widget polled `window.openai.toolOutput` 40 times across
   //     10 seconds and watched it never populate, even though
   //     `openai:set_globals` events fired with `detail.globals` set.
-  if (tool.appUiResource !== undefined) {
-    const ui = tool.appUiResource(ctx.env);
+  // Hoisted to outer scope so the per-call tool result handler below
+  // can read `ui.dynamic` and resolve the per-call widget URI for the
+  // dynamic-resource path.
+  const ui =
+    tool.appUiResource !== undefined ? tool.appUiResource(ctx.env) : undefined;
+
+  if (ui !== undefined) {
     const uiMeta: Record<string, unknown> = {};
     if (ui.frameDomains && ui.frameDomains.length > 0) {
       uiMeta.csp = { frameDomains: ui.frameDomains };
@@ -192,13 +238,66 @@ function registerTool(
         return { contents: [contentItem] };
       },
     );
+    // Optional dynamic-resource variant. When defined, the same widget
+    // also gets a `ResourceTemplate` registration, and per-call tool
+    // results point claude.ai's `_meta.ui.resourceUri` at a specific
+    // instance of that template (so the widget HTML can have the
+    // chart's image + dimensions baked in at fetch time, sidestepping
+    // claude.ai's "snapshot offsetHeight once on mount" behavior). See
+    // `AppUiResource.dynamic` for the rationale.
+    if (ui.dynamic !== undefined) {
+      const dynamic = ui.dynamic;
+      server.registerResource(
+        dynamic.templateName,
+        new ResourceTemplate(dynamic.uriPattern, { list: undefined }),
+        {
+          mimeType: APP_UI_MIME_TYPE,
+          ...(Object.keys(uiMeta).length > 0 ? { _meta: { ui: uiMeta } } : {}),
+        },
+        async (uri, variables) => {
+          const html = await dynamic.renderHtml(variables, ctx);
+          const contentItem: {
+            uri: string;
+            mimeType: string;
+            text: string;
+            _meta?: Record<string, unknown>;
+          } = {
+            uri: uri.toString(),
+            mimeType: APP_UI_MIME_TYPE,
+            text: html,
+          };
+          if (Object.keys(uiMeta).length > 0) {
+            contentItem._meta = { ui: uiMeta };
+          }
+          return { contents: [contentItem] };
+        },
+      );
+    }
     // Tool-side metadata: set the modern `_meta.ui.resourceUri`, the
     // legacy flat `_meta["ui/resourceUri"]` (the official ext-apps
     // helper auto-mirrors these for backward compat with older host
     // readers — we do the same so a ChatGPT build still reading the
     // legacy key works), and `_meta["openai/outputTemplate"]` (OpenAI
-    // namespace alias). Three keys, one URI — same data delivered
-    // under whichever name the host happens to read.
+    // namespace alias). All three carry the static URI.
+    //
+    // We tried two routes to use the dynamic resource template
+    // (registered above) on claude.ai for per-chart sizing:
+    //
+    //   1. Per-call `_meta.ui.resourceUri` overrides on the tool
+    //      result. Verified delivered correctly (curl), but
+    //      claude.ai loads the widget URI from `tools/list`
+    //      registration metadata and ignores per-call overrides.
+    //   2. Advertising the URI template (`ui://tako/embed/chart/{pub_id}`)
+    //      directly in registration `_meta.ui.resourceUri`. Hosts
+    //      that honor RFC 6570 substitution would have resolved
+    //      `{pub_id}` from tool output. claude.ai didn't; it
+    //      appeared to fetch the literal template URI and rendered
+    //      nothing — strictly worse than the static-URI behavior.
+    //
+    // Conclusion: claude.ai for custom connectors today does not
+    // support per-tool-call widget URI variation, so we stay on the
+    // static URI for all three keys. The template resource is still
+    // registered above for future hosts that may support it.
     config._meta = {
       ui: { resourceUri: ui.uri },
       "ui/resourceUri": ui.uri,
@@ -266,12 +365,63 @@ function registerTool(
           );
         }
       }
+      // Optional `_meta` hook. Distinct from `extraContentBlocks` and
+      // `structuredContent` because `_meta` is the MCP spec's
+      // metadata-only field — hosts MAY forward it to widgets via
+      // `ui/notifications/tool-result` (per the MCP Apps spec) but it
+      // is NOT part of the LLM's context window. Use this to ship
+      // payloads the widget needs but the LLM shouldn't tokenize, e.g.
+      // an inline base64 PNG too large to fit in `structuredContent`
+      // without tripping claude.ai's "tool result too large for
+      // context" guard.
+      let resultMeta: Record<string, unknown> | undefined;
+      if (tool.extraMeta !== undefined) {
+        try {
+          resultMeta = await tool.extraMeta(output, ctx);
+        } catch (err) {
+          console.error(`extraMeta hook failed for ${tool.name}:`, err);
+        }
+      }
+      // Dynamic-resource path: when the tool's `appUiResource` declares
+      // a `dynamic` variant, resolve a per-call URI from the tool input
+      // and override `_meta.ui.resourceUri` (and the legacy flat
+      // `_meta["ui/resourceUri"]`) in the tool result. claude.ai reads
+      // these from the result's `_meta`, so per-call routing works
+      // even though tool registration metadata is static.
+      //
+      // Deliberately NOT overriding `_meta["openai/outputTemplate"]`
+      // here — that key is read by ChatGPT, which keeps using the
+      // static iframe widget (its CSP allows the cross-origin iframe
+      // path for full interactivity, so it doesn't need the
+      // image-baked dynamic variant).
+      if (ui?.dynamic !== undefined) {
+        try {
+          const resolvedUri = ui.dynamic.resolveUriFromInput(input);
+          resultMeta = {
+            ...(resultMeta ?? {}),
+            ui: {
+              ...((resultMeta?.ui as Record<string, unknown> | undefined) ?? {}),
+              resourceUri: resolvedUri,
+            },
+            "ui/resourceUri": resolvedUri,
+          };
+        } catch (err) {
+          console.error(
+            `dynamic.resolveUriFromInput failed for ${tool.name}:`,
+            err,
+          );
+        }
+      }
       const result: {
         content: typeof content;
         structuredContent?: Record<string, unknown>;
+        _meta?: Record<string, unknown>;
       } = { content };
       if (tool.outputSchema !== undefined) {
         result.structuredContent = output as Record<string, unknown>;
+      }
+      if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
+        result._meta = resultMeta;
       }
       return result;
     },
@@ -384,7 +534,12 @@ export async function handleMcpRequest(
   const ctx: ToolContext = { token, env };
 
   try {
-    const server = createMcpServer(ctx);
+    // Use the request's own origin as the icon base, so each deployed
+    // env (mcp.tako.com, mcp.staging.tako.com, *.workers.dev) advertises
+    // icons it itself serves under `/icons/*`. Prevents staging
+    // connectors from referencing prod URLs and vice versa.
+    const requestOrigin = new URL(request.url).origin;
+    const server = createMcpServer(ctx, { iconsBaseUrl: requestOrigin });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
     // model (no persistent per-session state) and keeps each request

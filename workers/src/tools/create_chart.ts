@@ -75,7 +75,7 @@ type DjangoResponse = {
 const create_chart = {
   name: "create_chart",
   description:
-    "Use this when you need to create a new chart from raw data. Pass an array of component configurations (header + one or more visualization components) to generate an interactive, shareable Tako visualization. Supports 15+ component types (timeseries, bar, scatter, maps, etc.).",
+    "Use this when you need to create a new chart from raw data. Pass an array of component configurations (header + one or more visualization components) to generate an interactive, shareable Tako visualization. Supports 15+ component types (timeseries, bar, scatter, maps, etc.). **IMMEDIATELY after this returns successfully, you MUST call `open_chart_ui` with the result's `open_ui_args` (i.e. `{ pub_id: card_id }`) in the same turn to render the chart inline. Do not reply with text first or paste the URL — that renders nothing and forces the user to ask again.**",
   inputSchema,
   outputSchema,
   annotations: {
