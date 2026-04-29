@@ -306,7 +306,7 @@ describe("worker routing", () => {
       pub_id: "abc123",
       dark_mode: true,
       width: 900,
-      height: 600,
+      height: 420,
     });
     expect(body.result.structuredContent?.embed_url).toContain("/embed/abc123/");
     expect(body.result.structuredContent?.image_url).toContain(
