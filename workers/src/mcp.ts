@@ -59,9 +59,41 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * `ToolContext` so tools see the right Bearer token + env bindings without
  * having to reach for request state themselves.
  */
+/**
+ * Detect the calling MCP client from the HTTP `User-Agent` header.
+ *
+ * Used to gate per-client behavior that we'd otherwise have to ask the
+ * LLM to figure out from prose — specifically, suppressing the
+ * `open_chart_ui` widget on claude.ai (where the constrained iframe
+ * container makes the chart unusable) while keeping it for ChatGPT
+ * (where the interactive iframe widget works fine).
+ *
+ * The match is intentionally loose: we don't care about exact UA
+ * strings, just whether the request smells like one of the major
+ * MCP-app hosts. Unknown UAs fall through to the "render the widget"
+ * default — better to over-render than to hide the chart from a host
+ * that supports it.
+ */
+export type McpClientKind = "claude" | "chatgpt" | "unknown";
+
+export function detectMcpClient(userAgent: string | null): McpClientKind {
+  if (userAgent === null || userAgent === "") return "unknown";
+  const ua = userAgent.toLowerCase();
+  // Claude.ai's MCP server-to-server connector identifies itself as
+  // either `Claude-User`, `claude-mcp-client`, or similar — match on
+  // any "claude" / "anthropic" substring. The user's own browser UA
+  // never reaches /mcp directly (claude.ai proxies through its
+  // backend), so this won't false-positive on user browsers.
+  if (ua.includes("claude") || ua.includes("anthropic")) return "claude";
+  // ChatGPT's Apps SDK connector typically advertises `ChatGPT-User`,
+  // `openai-mcp`, or similar in UA.
+  if (ua.includes("chatgpt") || ua.includes("openai")) return "chatgpt";
+  return "unknown";
+}
+
 export function createMcpServer(
   ctx: ToolContext,
-  options: { iconsBaseUrl?: string } = {},
+  options: { iconsBaseUrl?: string; client?: McpClientKind } = {},
 ): McpServer {
   // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
   // one entry per the spec's matching rules: theme first, then size.
@@ -112,7 +144,7 @@ export function createMcpServer(
   );
 
   for (const tool of TOOL_REGISTRY) {
-    registerTool(server, tool, ctx);
+    registerTool(server, tool, ctx, { client: options.client ?? "unknown" });
   }
 
   return server;
@@ -131,6 +163,7 @@ function registerTool(
   server: McpServer,
   tool: AnyToolModule,
   ctx: ToolContext,
+  options: { client: McpClientKind },
 ): void {
   // SDK's `registerTool` takes `ZodRawShape` (the `.shape` of a z.object),
   // not a full ZodObject — pull `.shape` here so tool files don't have to.
@@ -181,8 +214,22 @@ function registerTool(
   // Hoisted to outer scope so the per-call tool result handler below
   // can read `ui.dynamic` and resolve the per-call widget URI for the
   // dynamic-resource path.
+  //
+  // Claude.ai-specific suppression: claude.ai renders MCP tool widgets
+  // inside a constrained, non-resizable iframe container that crops
+  // the chart to ~200 px tall regardless of any postMessage / CSS
+  // gymnastics on our side. Disabling the widget for claude.ai
+  // requests forces the LLM to fall back to the markdown-link path
+  // (per the `knowledge_search` description's conditional directive),
+  // which gives the user a clickable link that opens the fully
+  // interactive chart in a new tab — strictly better UX than the
+  // cropped widget. Detection happens upstream in handleMcpRequest
+  // by inspecting the User-Agent header.
+  const widgetSuppressed = options.client === "claude";
   const ui =
-    tool.appUiResource !== undefined ? tool.appUiResource(ctx.env) : undefined;
+    tool.appUiResource !== undefined && !widgetSuppressed
+      ? tool.appUiResource(ctx.env)
+      : undefined;
 
   if (ui !== undefined) {
     const uiMeta: Record<string, unknown> = {};
@@ -539,7 +586,15 @@ export async function handleMcpRequest(
     // icons it itself serves under `/icons/*`. Prevents staging
     // connectors from referencing prod URLs and vice versa.
     const requestOrigin = new URL(request.url).origin;
-    const server = createMcpServer(ctx, { iconsBaseUrl: requestOrigin });
+    // Detect calling client from User-Agent so we can hide the
+    // `open_chart_ui` widget on claude.ai (where the constrained
+    // iframe container makes the chart unusable). See
+    // `detectMcpClient` for the matching rules.
+    const client = detectMcpClient(request.headers.get("user-agent"));
+    const server = createMcpServer(ctx, {
+      iconsBaseUrl: requestOrigin,
+      client,
+    });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
     // model (no persistent per-session state) and keeps each request
