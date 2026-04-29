@@ -92,11 +92,11 @@
     },
     {
       "name": "create_report",
-      "description": "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns a report_id. The caller must poll get_report(report_id) until status == 'completed' to retrieve contents. Consumes credits — surface credit_cost to the user when appropriate.",
+      "description": "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns a report_id. The caller must poll get_report(report_id) until status == 'completed' to retrieve contents. Pass only `report_type`, `title`, and `research_objective` — the tool resolves the right template internally. Do NOT pre-call get_credit_balance; the response carries credit_cost.",
       "parameters": {
         "report_type": {
           "type": "string",
-          "description": "The report type slug (e.g. an earnings-analysis or industry-overview template). Enumerated by the backend's `get_all_report_types` registry; on an invalid value the server returns 400 with the valid names.",
+          "description": "The report type slug. Today the backend ships exactly one type — `agent_report` — so use that unless the user explicitly names another. Enumerated by the backend's `get_all_report_types` registry; on an invalid value the server returns 400 with the valid names so you can retry. Do NOT guess hyphenated slugs like `earnings-analysis` or `industry-overview` — those are not valid report types.",
           "required": true
         },
         "title": {
@@ -115,7 +115,7 @@
         },
         "template_source": {
           "type": "string",
-          "description": "Optional ID of a user-saved template to seed the report from."
+          "description": "OMIT THIS unless the user explicitly references a saved template by ID. The tool auto-resolves the seeded default template for the given report_type, so you almost never need to set this. When set, it must be a *template* UUID (from a user-saved template), NOT a report_id. Never invent a UUID, and never pass a previously-returned report_id here — the backend will reject it."
         }
       },
       "annotations": {
@@ -149,7 +149,7 @@
     },
     {
       "name": "get_credit_balance",
-      "description": "Use this to check how many Tako credits the current user has remaining. Cheap and fast — good to call before kicking off expensive operations (create_report, deep knowledge_search) so you can warn the user about cost.",
+      "description": "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
       "parameters": {},
       "annotations": {
         "title": "Tako: Get Credit Balance",

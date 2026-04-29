@@ -57,7 +57,7 @@ const inputSchema = z.object({
     .string()
     .min(1)
     .describe(
-      "The report type slug (e.g. an earnings-analysis or industry-overview template). Enumerated by the backend's `get_all_report_types` registry; on an invalid value the server returns 400 with the valid names.",
+      "The report type slug. Today the backend ships exactly one type — `agent_report` — so use that unless the user explicitly names another. Enumerated by the backend's `get_all_report_types` registry; on an invalid value the server returns 400 with the valid names so you can retry. Do NOT guess hyphenated slugs like `earnings-analysis` or `industry-overview` — those are not valid report types.",
     ),
   title: z
     .string()
@@ -78,7 +78,9 @@ const inputSchema = z.object({
   template_source: z
     .string()
     .optional()
-    .describe("Optional ID of a user-saved template to seed the report from."),
+    .describe(
+      "OMIT THIS unless the user explicitly references a saved template by ID. The tool auto-resolves the seeded default template for the given report_type, so you almost never need to set this. When set, it must be a *template* UUID (from a user-saved template), NOT a report_id. Never invent a UUID, and never pass a previously-returned report_id here — the backend will reject it.",
+    ),
 });
 
 const outputSchema = z.object({
@@ -225,7 +227,7 @@ function fillInputTemplate(
 const create_report = {
   name: "create_report",
   description:
-    "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns a report_id. The caller must poll get_report(report_id) until status == 'completed' to retrieve contents. Consumes credits — surface credit_cost to the user when appropriate.",
+    "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns a report_id. The caller must poll get_report(report_id) until status == 'completed' to retrieve contents. Pass only `report_type`, `title`, and `research_objective` — the tool resolves the right template internally. Do NOT pre-call get_credit_balance; the response carries credit_cost.",
   inputSchema,
   outputSchema,
   annotations: {

@@ -43,7 +43,7 @@ const outputSchema = z.object({
 const get_credit_balance = {
   name: "get_credit_balance",
   description:
-    "Use this to check how many Tako credits the current user has remaining. Cheap and fast — good to call before kicking off expensive operations (create_report, deep knowledge_search) so you can warn the user about cost.",
+    "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
   inputSchema,
   outputSchema,
   annotations: {
