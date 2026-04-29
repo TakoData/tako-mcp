@@ -385,22 +385,19 @@ function registerTool(
       // + structuredContent that's already there rather than failing the
       // call.
       //
-      // SKIPPED when the tool also ships an `appUiResource`. Reason:
-      // when both are set, the response carries `content: [text, image]`
-      // + a `_meta.ui.resourceUri` pointing at a widget. The base64
-      // image inflates the JSON-RPC response by ~70-400 KB which on
-      // ChatGPT was tokenized at ~150K tokens and apparently triggers
-      // an internal size guard that silently disables widget data flow
-      // (`window.openai.toolOutput` stays null, `openai:set_globals`
-      // events fire only with maxHeight/maxWidth). The image is also
-      // redundant for clients that DO render the widget — the widget
-      // shows the chart interactively, an inline PNG below it would
-      // duplicate. Clients without widget support still see the
-      // structuredContent JSON (with `image_url` and `embed_url`) and
-      // can render those as markdown.
+      // Skip ONLY when the widget was actually registered for this
+      // request (`ui !== undefined`). When the widget is suppressed
+      // (e.g. claude.ai client detection above), we want to fall back
+      // to inlining the image as a content block so the chart still
+      // renders — claude.ai shows MCP image content blocks inline
+      // without a click-to-load gate. The skip-when-widget-active
+      // rule is what avoids the ChatGPT bug where image + widget
+      // metadata together silently disabled widget data flow; that
+      // rule still holds because `ui` is only set when the widget
+      // registered.
       if (
         tool.extraContentBlocks !== undefined &&
-        tool.appUiResource === undefined
+        ui === undefined
       ) {
         try {
           const extra = await tool.extraContentBlocks(output, ctx);
