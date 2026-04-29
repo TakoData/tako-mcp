@@ -478,6 +478,34 @@ const WIDGET_HTML = `<!doctype html>
           }
         });
       });
+      // CSP / network error fallback. The most common trigger is
+      // claude.ai's outer-document CSP (\`img-src 'self' blob: data:\`)
+      // blocking the cross-origin \`image_url\` when we couldn't inline
+      // a \`data:\` URI — \`fetchImageDataUrlAndDims\` returns undefined
+      // for PNG > 250 KB, fetch timeout, or non-PNG content type, and
+      // the widget falls through to \`validHttpImage\`. Without this
+      // listener the \`load\` event never fires, leaving the placeholder
+      // stuck at "Loading chart…" with no path to the chart. Repurpose
+      // the placeholder into a click-through link so the user can
+      // still reach the interactive embed.
+      image.addEventListener("error", function () {
+        image.classList.add("hidden");
+        imageLink.classList.add("hidden");
+        if (validEmbed) {
+          placeholder.innerHTML = "";
+          var fallbackAnchor = document.createElement("a");
+          fallbackAnchor.href = url;
+          fallbackAnchor.target = "_blank";
+          fallbackAnchor.rel = "noopener noreferrer";
+          fallbackAnchor.textContent = "Open interactive chart →";
+          fallbackAnchor.style.color = "#4aa9ff";
+          fallbackAnchor.style.textDecoration = "none";
+          placeholder.appendChild(fallbackAnchor);
+        } else {
+          placeholder.textContent = "Couldn't load chart.";
+        }
+        log("img errored, showing click-through fallback");
+      });
       // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
       // guard at the top of \`render()\` blocks any re-entry from a
       // duplicate tool-result delivery, even if the load event fires
@@ -508,16 +536,16 @@ const WIDGET_HTML = `<!doctype html>
       return false;
     }
 
+    // Reached only by the iframe paths (\`useIframe\` or the no-image
+    // \`validEmbed\` fallback) — the \`validImage\` branch returns early
+    // above so its load/error listeners can manage placeholder/height
+    // atomically. \`h\` matches the height we just pinned on the iframe.
     placeholder.classList.add("hidden");
     rendered = true;
     notifyHeight(h);
     log("rendered", {
-      mode: useIframe
-        ? "iframe"
-        : validImage
-        ? validDataImage ? "img-data" : "img-url"
-        : "iframe-fallback",
-      src: useIframe || !validImage ? url : (validDataImage ? "<data:image>" : imgUrl),
+      mode: useIframe ? "iframe" : "iframe-fallback",
+      src: url,
       height: h,
     });
     return true;
