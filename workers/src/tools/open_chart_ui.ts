@@ -281,35 +281,20 @@ const WIDGET_HTML = `<!doctype html>
 <meta name="x-tako-widget" content="open_chart_ui/v1" />
 <title>Tako chart</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; background: #0f1115; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
+  html, body { margin: 0; padding: 0; width: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
   #tako-embed { width: 100% !important; border: 0 !important; display: block; background: transparent; }
   #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
   #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
-  #tako-embed-img { width: 100%; height: auto; display: block; background: transparent; transition: opacity 120ms ease-out; }
-  /* Footer CTA row below the chart image — intentional content that
-   * makes the iframe taller without reading as whitespace. The chart
-   * is short at chat-column width (~200 px) due to its wide aspect
-   * ratio; adding a designed CTA below brings the iframe closer to
-   * a substantial widget size while keeping all content meaningful. */
-  #tako-cta {
-    display: flex; align-items: center; justify-content: center;
-    flex-direction: column; gap: 8px;
-    padding: 20px 16px;
-    background: #0f1115;
-    border-top: 1px solid #1f242c;
-  }
-  #tako-cta-button {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 10px 18px;
-    background: #1f6feb;
-    color: #ffffff;
-    border-radius: 6px;
-    text-decoration: none;
-    font-size: 14px; font-weight: 500;
-    transition: background 120ms ease-out;
-  }
-  #tako-cta-button:hover { background: #1a5fd0; }
-  #tako-cta-hint { color: #6b7280; font-size: 12px; }
+  /* Render the chart at a fixed display width that exceeds the typical
+   * chat-column width (~705 px), then let body scroll horizontally to
+   * reveal the rest. This makes the image visually bigger AND the
+   * iframe taller (since iframe height tracks image rendered height)
+   * without scaling the source PNG up or distorting it. Trade-off: a
+   * horizontal scrollbar inside the widget. The alternative — keeping
+   * width: 100% — produces a ~200 px-tall chart that the user found
+   * too small. */
+  #tako-embed-img { width: 1200px; max-width: none; height: auto; display: block; background: transparent; transition: opacity 120ms ease-out; }
+  body { overflow-x: auto; }
   #tako-placeholder {
     display: flex; align-items: center; justify-content: center;
     width: 100%; min-height: 240px;
@@ -334,22 +319,12 @@ const WIDGET_HTML = `<!doctype html>
   rel="noopener noreferrer"
   title="Open interactive chart"
 ><img id="tako-embed-img" alt="Tako chart" /></a>
-<div id="tako-cta" class="hidden">
-  <a
-    id="tako-cta-button"
-    target="_blank"
-    rel="noopener noreferrer"
-  >Open interactive chart →</a>
-  <div id="tako-cta-hint">Full zoom, pan, and tooltips in a new tab</div>
-</div>
 <script>
 (function () {
   "use strict";
   var frame = document.getElementById("tako-embed");
   var image = document.getElementById("tako-embed-img");
   var imageLink = document.getElementById("tako-embed-link");
-  var cta = document.getElementById("tako-cta");
-  var ctaButton = document.getElementById("tako-cta-button");
   var placeholder = document.getElementById("tako-placeholder");
   var rendered = false;
   // Origin of the iframe we loaded — used to gate the height handshake
@@ -487,36 +462,28 @@ const WIDGET_HTML = `<!doctype html>
         imageLink.removeAttribute("href");
       }
 
-      // Wire the CTA button's href to the same embed_url the
-      // imageLink uses. Both are now click-to-open.
-      if (validEmbed && ctaButton) {
-        ctaButton.setAttribute("href", url);
-      }
       image.addEventListener("load", function () {
         imageLink.classList.remove("hidden");
-        if (cta && validEmbed) cta.classList.remove("hidden");
         placeholder.classList.add("hidden");
+        // Defer measurement one frame so layout settles after the
+        // visibility change. Use the rendered height only — using the
+        // source PNG's \`naturalHeight\` to upsize the iframe (a thing
+        // we tried) yields ~1100 px tall iframes for retina-2x
+        // renders, claude.ai then visibly clips the iframe to its own
+        // smaller container leaving a "black ribbon" of empty body
+        // below the chart. Match the iframe to what the image
+        // actually renders at and accept the chart aspect (~3.5:1 →
+        // ~200 px tall at chat-column widths) as the natural ceiling
+        // for height without cross-repo Tako changes.
         requestAnimationFrame(function () {
           var rectH = image.getBoundingClientRect().height;
           var offsetH = image.offsetHeight;
           var renderedH = Math.round(rectH || offsetH || 0);
-          // Total iframe height = image rendered height + CTA section
-          // height. The CTA is intentional content (button + hint
-          // text) that makes the iframe taller without reading as
-          // whitespace; chart-column-width line charts come out
-          // ~200 px tall, the CTA adds another ~80-100 px for a
-          // ~280-300 px iframe overall.
-          var ctaH = cta ? cta.offsetHeight : 0;
-          var totalH = renderedH + ctaH;
-          if (totalH > 0) {
-            document.documentElement.style.height = totalH + "px";
-            document.body.style.height = totalH + "px";
-            notifyHeight(totalH);
-            log("img resized after load", {
-              image: renderedH,
-              cta: ctaH,
-              total: totalH,
-            });
+          if (renderedH > 0) {
+            document.documentElement.style.height = renderedH + "px";
+            document.body.style.height = renderedH + "px";
+            notifyHeight(renderedH);
+            log("img resized after load", { height: renderedH });
           }
         });
       });
