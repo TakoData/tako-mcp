@@ -423,53 +423,44 @@ const WIDGET_HTML = `<!doctype html>
       frame.setAttribute("height", String(h));
       frame.classList.remove("hidden");
     } else if (validImage) {
-      // Static fallback. We don't pin a height on \`<img>\` — the image
-      // has its own intrinsic aspect ratio and stretching to a fixed
-      // height would distort the chart. Width-only sizing yields a
-      // slightly different height than the iframe path; that's fine.
-      image.src = imageSrc;
-      // Wrap the image in an anchor pointing at \`embed_url\` so a click
-      // opens the fully interactive version in a new tab. Recovers
-      // most of the lost interactivity (zoom/pan/hover) for hosts that
-      // can't render the inline iframe — at the cost of a navigation
-      // out of the chat surface. Only set the href when we have a
-      // valid embed URL; otherwise the anchor stays inert.
+      // Per anthropics/claude-ai-mcp#69 workaround:
+      //   "After the MCP App renders content, explicitly measure the
+      //    content and set it on <html>."
+      //
+      // The whole sequence must happen ATOMICALLY in \`image.load\` —
+      // not at \`render()\` time — to avoid claude.ai snapshotting an
+      // intermediate layout state with the wrong height. Sequence
+      // here:
+      //
+      //   1. Set image.src (starts the data: URI decode).
+      //   2. Wait for \`load\` (image is laid out).
+      //   3. In one tick: hide placeholder + show anchor + measure
+      //      content scrollHeight + set documentElement.style.height.
+      //
+      // \`scrollHeight\` of the anchor wrapper over \`offsetHeight\` of
+      // the image because that's the pattern from the issue thread
+      // that's reported to work; \`offsetHeight\` fallbacks cover hosts
+      // where \`scrollHeight\` returns 0. The PNG-natural dimensions
+      // (\`imgNaturalW\` / \`imgNaturalH\`) are intentionally NOT used as
+      // a pre-size hint here — that was the prior approach that
+      // caused claude.ai to lock the outer iframe at the wrong height.
+      void imgNaturalW;
+      void imgNaturalH;
+
       if (validEmbed) {
         imageLink.setAttribute("href", url);
       } else {
         imageLink.removeAttribute("href");
       }
-      imageLink.classList.remove("hidden");
-      // Pre-size the widget document height from the PNG's known
-      // natural aspect ratio, BEFORE the image even loads. Claude
-      // reads \`documentElement.offsetHeight\` early on widget mount
-      // and apparently doesn't re-poll on later layout changes
-      // (anthropics/claude-ai-mcp#69), so any post-load resize
-      // doesn't reach the outer iframe. Setting it up front from the
-      // server-supplied PNG dimensions matches the iframe to the
-      // chart's true rendered height.
-      //
-      // Body width is unknown at this point (image hasn't laid out
-      // yet) so we read the host-given iframe width as a proxy —
-      // \`document.documentElement.clientWidth\` is the widest reliable
-      // signal for the iframe content area. Fall back to a sensible
-      // default if that's also zero.
-      if (imgNaturalW > 0 && imgNaturalH > 0) {
-        var bodyW = document.documentElement.clientWidth || 800;
-        var renderedH = Math.round((bodyW / imgNaturalW) * imgNaturalH);
-        document.documentElement.style.height = renderedH + "px";
-        document.body.style.height = renderedH + "px";
-        notifyHeight(renderedH);
-        log("img pre-sized from PNG dims", {
-          natural: { w: imgNaturalW, h: imgNaturalH },
-          rendered: { w: bodyW, h: renderedH },
-        });
-      }
-      // Refine on actual image load — covers the case where the host
-      // resized between our pre-size and image render, or where the
-      // PNG dims weren't available server-side.
+
       image.addEventListener("load", function () {
-        var actualH = image.offsetHeight || image.naturalHeight;
+        imageLink.classList.remove("hidden");
+        placeholder.classList.add("hidden");
+        var actualH =
+          imageLink.scrollHeight ||
+          image.offsetHeight ||
+          image.naturalHeight ||
+          0;
         if (actualH > 0) {
           document.documentElement.style.height = actualH + "px";
           document.body.style.height = actualH + "px";
@@ -477,6 +468,19 @@ const WIDGET_HTML = `<!doctype html>
           log("img resized after load", { height: actualH });
         }
       });
+      // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
+      // guard at the top of \`render()\` blocks any re-entry from a
+      // duplicate tool-result delivery, even if the load event fires
+      // synchronously (data: URIs can do that in some browsers).
+      rendered = true;
+      // Triggers the load event above. Set last so the listener is
+      // attached first.
+      image.src = imageSrc;
+      // Skip the synchronous hide-placeholder / show-anchor / notifyHeight
+      // tail below — image.load handles those atomically once the
+      // content has actually rendered.
+      log("img path queued", { src: validDataImage ? "<data:image>" : imgUrl });
+      return true;
     } else if (validEmbed) {
       // No image at all but we have an embed_url — try the iframe even
       // on hosts we'd normally treat as restricted. Worst case the
