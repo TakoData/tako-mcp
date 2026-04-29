@@ -281,7 +281,7 @@ const WIDGET_HTML = `<!doctype html>
 <meta name="x-tako-widget" content="open_chart_ui/v1" />
 <title>Tako chart</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; background: #0f1115; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
+  html, body { margin: 0; padding: 0; width: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
   #tako-embed { width: 100% !important; border: 0 !important; display: block; background: transparent; }
   #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
   #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
@@ -457,50 +457,25 @@ const WIDGET_HTML = `<!doctype html>
         imageLink.classList.remove("hidden");
         placeholder.classList.add("hidden");
         // Defer measurement one frame so layout settles after the
-        // visibility change.
+        // visibility change. Use the rendered height only — using the
+        // source PNG's \`naturalHeight\` to upsize the iframe (a thing
+        // we tried) yields ~1100 px tall iframes for retina-2x
+        // renders, claude.ai then visibly clips the iframe to its own
+        // smaller container leaving a "black ribbon" of empty body
+        // below the chart. Match the iframe to what the image
+        // actually renders at and accept the chart aspect (~3.5:1 →
+        // ~200 px tall at chat-column widths) as the natural ceiling
+        // for height without cross-repo Tako changes.
         requestAnimationFrame(function () {
           var rectH = image.getBoundingClientRect().height;
           var offsetH = image.offsetHeight;
           var renderedH = Math.round(rectH || offsetH || 0);
-          var naturalH = image.naturalHeight;
-          // Iframe height: use the source PNG's natural pixel height
-          // when it's larger than the rendered height. Tako chart
-          // cards have very wide aspects (~3.5:1 for line charts);
-          // at typical chat-column widths (~700 px) the proportional
-          // rendered height collapses to ~200 px which feels visually
-          // small. Using naturalHeight gives the iframe more vertical
-          // presence (~420 px for typical charts) without scaling
-          // the image up. The extra space below the image is filled
-          // by the body's dark background — which matches the chart
-          // card's color, so it visually extends the card rather
-          // than reading as whitespace.
-          //
-          // Bounded: floor at 240 (placeholder min-height) so we
-          // never collapse to zero on edge cases; ceiling at 1200 so
-          // a runaway naturalHeight (corrupt PNG, retina-2x render)
-          // can't blow the iframe up to nonsensical sizes.
-          var MIN_H = 240;
-          var MAX_H = 1200;
-          var iframeH = Math.min(
-            MAX_H,
-            Math.max(MIN_H, naturalH || 0, renderedH || 0),
-          );
-          log("img measurements", {
-            rectH: rectH,
-            offsetH: offsetH,
-            renderedH: renderedH,
-            naturalH: naturalH,
-            iframeH: iframeH,
-            bodyClientWidth: document.body.clientWidth,
-            htmlClientWidth: document.documentElement.clientWidth,
-          });
-          document.documentElement.style.height = iframeH + "px";
-          document.body.style.height = iframeH + "px";
-          notifyHeight(iframeH);
-          log("img resized after load", {
-            iframe: iframeH,
-            image: renderedH,
-          });
+          if (renderedH > 0) {
+            document.documentElement.style.height = renderedH + "px";
+            document.body.style.height = renderedH + "px";
+            notifyHeight(renderedH);
+            log("img resized after load", { height: renderedH });
+          }
         });
       });
       // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
