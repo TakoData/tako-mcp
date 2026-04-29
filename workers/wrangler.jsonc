@@ -30,7 +30,8 @@
     "staging": {
       "name": "tako-mcp-staging",
       "vars": {
-        "DJANGO_BASE_URL": "https://staging.trytako.com"
+        "DJANGO_BASE_URL": "https://staging.trytako.com",
+        "PUBLIC_BASE_URL": "https://staging.tako.com"
       },
       // `custom_domain: true` provisions a Cloudflare Custom Domain (TLS
       // auto-issued, CNAME auto-managed) on the deploying account's
@@ -49,7 +50,8 @@
     "production": {
       "name": "tako-mcp-production",
       "vars": {
-        "DJANGO_BASE_URL": "https://trytako.com"
+        "DJANGO_BASE_URL": "https://trytako.com",
+        "PUBLIC_BASE_URL": "https://tako.com"
       },
       "routes": [
         { "pattern": "mcp.tako.com", "custom_domain": true }

@@ -92,11 +92,11 @@
     },
     {
       "name": "create_report",
-      "description": "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns a report_id. The caller must poll get_report(report_id) until status == 'completed' to retrieve contents. Consumes credits — surface credit_cost to the user when appropriate.",
+      "description": "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns report_id + webpage_url. **IMMEDIATELY after this returns, share the `webpage_url` with the user as a clickable link (the report page works even while it's still cooking) AND tell them they'll be notified via email when the report is ready (so they can step away from the chat if they want), then call `wait_for_report(report_id)` and continue chaining further `wait_for_report` calls back-to-back until status is 'completed' or 'failed' — reports take 5–20 minutes, so expect 5–12 chained calls. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting): if 12 chained wait_for_report calls elapse without a terminal status, STOP chaining and tell the user the report is taking longer than usual; the email notification will reach them when it's done. Do NOT stop after presenting the report_id alone; the user expects you to wait it out and surface the final report when reasonable.** Once status is terminal, summarize the result (or `error_message` on failed) and re-share the `webpage_url`. Pass only `report_type`, `title`, and `research_objective` — the tool resolves the right template internally. Do NOT pre-call get_credit_balance; the response carries credit_cost.",
       "parameters": {
         "report_type": {
           "type": "string",
-          "description": "The report type slug (e.g. an earnings-analysis or industry-overview template). Enumerated by the backend's `get_all_report_types` registry; on an invalid value the server returns 400 with the valid names.",
+          "description": "The report type slug. Today the backend ships exactly one type — `agent_report` — so use that unless the user explicitly names another. Enumerated by the backend's `get_all_report_types` registry; on an invalid value the server returns 400 with the valid names so you can retry. Do NOT guess hyphenated slugs like `earnings-analysis` or `industry-overview` — those are not valid report types.",
           "required": true
         },
         "title": {
@@ -115,7 +115,7 @@
         },
         "template_source": {
           "type": "string",
-          "description": "Optional ID of a user-saved template to seed the report from."
+          "description": "OMIT THIS unless the user explicitly references a saved template by ID. The tool auto-resolves the seeded default template for the given report_type, so you almost never need to set this. When set, it must be a *template* UUID (from a user-saved template), NOT a report_id. Never invent a UUID, and never pass a previously-returned report_id here — the backend will reject it."
         }
       },
       "annotations": {
@@ -149,7 +149,7 @@
     },
     {
       "name": "get_credit_balance",
-      "description": "Use this to check how many Tako credits the current user has remaining. Cheap and fast — good to call before kicking off expensive operations (create_report, deep knowledge_search) so you can warn the user about cost.",
+      "description": "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
       "parameters": {},
       "annotations": {
         "title": "Tako: Get Credit Balance",
@@ -160,7 +160,7 @@
     },
     {
       "name": "get_report",
-      "description": "Use this to check the status of a Tako report (from create_report) and fetch its contents once generation completes. Poll every ~15 s; stop polling when status is 'completed' OR 'failed'. When still 'pending' / 'running', narrative / sections fields are null. When 'completed', they contain the full report payload plus export URLs (pdf, pptx). When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely.",
+      "description": "Use this for a one-shot status check on a Tako report (from create_report). For waiting on a report to finish, prefer `wait_for_report` — it keeps the polling loop on the server. When still 'pending' / 'running', narrative / sections fields are null. When 'completed', they contain the full report payload plus export URLs (pdf, pptx). When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely. ALWAYS include the response's `webpage_url` in your reply so the user has a clickable link to open the report in their browser — every response carries one whether the report is still cooking or done.",
       "parameters": {
         "report_id": {
           "type": "string",
@@ -261,6 +261,28 @@
         "readOnlyHint": true,
         "destructiveHint": false,
         "openWorldHint": true
+      }
+    },
+    {
+      "name": "wait_for_report",
+      "description": "Use this after create_report (or whenever the user wants to wait for / check on a report). Server-side polling — returns when status is 'completed' / 'failed' / 'cancelled' OR after max_wait_seconds (default 50s) without a terminal status. **If `timed_out` is true, IMMEDIATELY call wait_for_report again with the same report_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting): once you've made 12 chained wait_for_report calls and the report is still not terminal, STOP chaining; tell the user the report is taking longer than usual, re-share the `webpage_url`, and remind them they'll receive an email when it's done.** Once terminal, ALWAYS include the response's `webpage_url` so the user has a clickable link to open the report in their browser, then summarize `result` / `export_urls` on completed or `error_message` on failed.",
+      "parameters": {
+        "report_id": {
+          "type": "string",
+          "description": "Report ID returned from create_report or list_reports.",
+          "required": true
+        },
+        "max_wait_seconds": {
+          "type": "integer",
+          "description": "How long this single call may block waiting for a terminal status. Capped at 50s so the call always returns before the MCP client's tool-call timeout fires. If the report isn't done yet, call this tool again with the same report_id — reports typically take 5–20 minutes, so expect to chain several calls in a row.",
+          "default": 50
+        }
+      },
+      "annotations": {
+        "title": "Tako: Wait for Report",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
       }
     }
   ],

@@ -6,13 +6,21 @@
  * are absent; once `status === "completed"`, the full `sections`,
  * `export_urls`, etc. are populated.
  *
- * Caller (Claude) polls this after `create_report` returns a `report_id`. The
- * backend report detail endpoint is synchronous/cheap; polling every ~15 s is
- * reasonable. A future refinement could surface a `next_poll_at` hint.
+ * One-shot status check. For waiting on the report to finish, prefer
+ * `wait_for_report` — it keeps the polling loop server-side so the model
+ * doesn't have to manage cadence + termination + budget itself.
+ *
+ * Response shape and flattening logic live in `_report_shape.ts` so this
+ * tool and `wait_for_report` cannot drift on field names.
  */
 import { z } from "zod";
 
 import { djangoGet } from "../django.js";
+import {
+  type ReportDetailResponse,
+  reportOutputSchema,
+  shapeReportOutput,
+} from "./_report_shape.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -22,73 +30,12 @@ const inputSchema = z.object({
     .describe("Report ID returned from create_report or list_reports."),
 });
 
-const outputSchema = z.object({
-  report_id: z.string(),
-  status: z.string().nullable(),
-  title: z.string().nullable(),
-  report_type: z.string().nullable(),
-  research_objective: z.string().nullable(),
-  credit_cost: z.number().nullable(),
-  runtime_seconds: z.number().nullable(),
-  estimated_runtime_seconds: z.number().nullable(),
-  // Canonical "view this report in the Tako UI" link. Surfaced as a
-  // dedicated top-level field (not rolled into `export_urls`) because it is
-  // semantically distinct: a view URL, not a downloadable export.
-  webpage_url: z.string().nullable(),
-  // Populated only when status === "completed":
-  result: z.unknown().nullable(),
-  export_urls: z.record(z.string(), z.string()).nullable(),
-  thread_id: z.string().nullable(),
-  // Populated only when status === "failed":
-  error_message: z.string().nullable(),
-});
-
-type DjangoResponse = {
-  id?: string;
-  report_id?: string;
-  status?: string | null;
-  title?: string | null;
-  report_type?: string | null;
-  research_objective?: string | null;
-  credit_cost?: number | null;
-  runtime_seconds?: number | null;
-  estimated_runtime_seconds?: number | null;
-  webpage_url?: string | null;
-  result?: unknown;
-  thread_id?: string | null;
-  error_message?: string | null;
-  // The detail serializer exposes several per-format export URLs. We flatten
-  // any keys ending in `_url` whose value is a string into a single
-  // `export_urls` map for LLM convenience.
-  [k: string]: unknown;
-};
-
-// Keys that already have their own dedicated top-level output field and
-// should therefore NOT be re-flattened into the `export_urls` bucket.
-// Named for the semantic distinction (top-level vs flattened) rather than
-// the filter mechanism, to keep future additions obvious.
-const TOP_LEVEL_URL_KEYS = new Set(["webpage_url"]);
-
-function extractExportUrls(data: DjangoResponse): Record<string, string> | null {
-  const urls: Record<string, string> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (TOP_LEVEL_URL_KEYS.has(key)) continue;
-    // Only `_url` (singular) — no known export endpoint returns a string
-    // under a plural `_urls` key (those are typically arrays, which wouldn't
-    // fit `Record<string, string>` anyway). Drop the dead branch.
-    if (typeof value === "string" && key.endsWith("_url")) {
-      urls[key] = value;
-    }
-  }
-  return Object.keys(urls).length > 0 ? urls : null;
-}
-
 const get_report = {
   name: "get_report",
   description:
-    "Use this to check the status of a Tako report (from create_report) and fetch its contents once generation completes. Poll every ~15 s; stop polling when status is 'completed' OR 'failed'. When still 'pending' / 'running', narrative / sections fields are null. When 'completed', they contain the full report payload plus export URLs (pdf, pptx). When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely.",
+    "Use this for a one-shot status check on a Tako report (from create_report). For waiting on a report to finish, prefer `wait_for_report` — it keeps the polling loop on the server. When still 'pending' / 'running', narrative / sections fields are null. When 'completed', they contain the full report payload plus export URLs (pdf, pptx). When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely. ALWAYS include the response's `webpage_url` in your reply so the user has a clickable link to open the report in their browser — every response carries one whether the report is still cooking or done.",
   inputSchema,
-  outputSchema,
+  outputSchema: reportOutputSchema,
   annotations: {
     title: "Tako: Get Report",
     readOnlyHint: true,
@@ -97,28 +44,14 @@ const get_report = {
   },
   async handler(input, ctx) {
     const reportId = encodeURIComponent(input.report_id);
-    const data = await djangoGet<DjangoResponse>(
+    const data = await djangoGet<ReportDetailResponse>(
       ctx.env,
       ctx.token,
       `/api/v1/internal/reports/${reportId}/`,
       { timeoutMs: 30_000 },
     );
-    return {
-      report_id: data.report_id ?? data.id ?? input.report_id,
-      status: data.status ?? null,
-      title: data.title ?? null,
-      report_type: data.report_type ?? null,
-      research_objective: data.research_objective ?? null,
-      credit_cost: data.credit_cost ?? null,
-      runtime_seconds: data.runtime_seconds ?? null,
-      estimated_runtime_seconds: data.estimated_runtime_seconds ?? null,
-      webpage_url: data.webpage_url ?? null,
-      result: data.result ?? null,
-      export_urls: extractExportUrls(data),
-      thread_id: data.thread_id ?? null,
-      error_message: data.error_message ?? null,
-    };
+    return shapeReportOutput(data, input.report_id, ctx.env);
   },
-} satisfies ToolModule<typeof inputSchema, z.infer<typeof outputSchema>>;
+} satisfies ToolModule<typeof inputSchema, z.infer<typeof reportOutputSchema>>;
 
 export default get_report;

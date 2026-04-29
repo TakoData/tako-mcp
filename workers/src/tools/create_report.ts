@@ -50,6 +50,7 @@ import {
   djangoGet,
   djangoPost,
 } from "../django.js";
+import { resolvePublicBase } from "../env.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -57,7 +58,7 @@ const inputSchema = z.object({
     .string()
     .min(1)
     .describe(
-      "The report type slug (e.g. an earnings-analysis or industry-overview template). Enumerated by the backend's `get_all_report_types` registry; on an invalid value the server returns 400 with the valid names.",
+      "The report type slug. Today the backend ships exactly one type — `agent_report` — so use that unless the user explicitly names another. Enumerated by the backend's `get_all_report_types` registry; on an invalid value the server returns 400 with the valid names so you can retry. Do NOT guess hyphenated slugs like `earnings-analysis` or `industry-overview` — those are not valid report types.",
     ),
   title: z
     .string()
@@ -78,7 +79,9 @@ const inputSchema = z.object({
   template_source: z
     .string()
     .optional()
-    .describe("Optional ID of a user-saved template to seed the report from."),
+    .describe(
+      "OMIT THIS unless the user explicitly references a saved template by ID. The tool auto-resolves the seeded default template for the given report_type, so you almost never need to set this. When set, it must be a *template* UUID (from a user-saved template), NOT a report_id. Never invent a UUID, and never pass a previously-returned report_id here — the backend will reject it.",
+    ),
 });
 
 const outputSchema = z.object({
@@ -90,6 +93,11 @@ const outputSchema = z.object({
       "`running` when generation started successfully. `created_but_not_started` means the report exists as a Draft in the user's Library but `/analyze/` failed, so no Celery job was dispatched — tell the user their draft was created and they can re-trigger generation from the web UI. Otherwise whatever the backend returned from create (e.g. `pending`).",
     ),
   title: z.string().nullable(),
+  // Public web link to the report — constructed from PUBLIC_BASE_URL +
+  // report_id. Surfaced from create so the LLM can hand the user a
+  // clickable link immediately (the report page renders even while the
+  // backend is still cooking the content).
+  webpage_url: z.string(),
   credit_cost: z.number().nullable(),
   estimated_runtime_seconds: z.number().nullable(),
   // Celery task id returned by the `/analyze/` call. Surfaced so operators
@@ -225,7 +233,7 @@ function fillInputTemplate(
 const create_report = {
   name: "create_report",
   description:
-    "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns a report_id. The caller must poll get_report(report_id) until status == 'completed' to retrieve contents. Consumes credits — surface credit_cost to the user when appropriate.",
+    "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns report_id + webpage_url. **IMMEDIATELY after this returns, share the `webpage_url` with the user as a clickable link (the report page works even while it's still cooking) AND tell them they'll be notified via email when the report is ready (so they can step away from the chat if they want), then call `wait_for_report(report_id)` and continue chaining further `wait_for_report` calls back-to-back until status is 'completed' or 'failed' — reports take 5–20 minutes, so expect 5–12 chained calls. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting): if 12 chained wait_for_report calls elapse without a terminal status, STOP chaining and tell the user the report is taking longer than usual; the email notification will reach them when it's done. Do NOT stop after presenting the report_id alone; the user expects you to wait it out and surface the final report when reasonable.** Once status is terminal, summarize the result (or `error_message` on failed) and re-share the `webpage_url`. Pass only `report_type`, `title`, and `research_objective` — the tool resolves the right template internally. Do NOT pre-call get_credit_balance; the response carries credit_cost.",
   inputSchema,
   outputSchema,
   annotations: {
@@ -395,6 +403,11 @@ const create_report = {
           ? "created_but_not_started"
           : (analyzed?.status ?? created.status ?? null),
       title: created.title ?? null,
+      // Always-present link to the Library view of the report. Mirrors
+      // the construction in `_report_shape.ts::shapeReportOutput` so a
+      // report's URL stays stable across create_report / get_report /
+      // wait_for_report responses.
+      webpage_url: `${resolvePublicBase(ctx.env)}/reports/${encodeURIComponent(reportId)}?from=library`,
       credit_cost: created.credit_cost ?? null,
       estimated_runtime_seconds: created.estimated_runtime_seconds ?? null,
       celery_task_id: analyzed?.celery_task_id ?? null,
