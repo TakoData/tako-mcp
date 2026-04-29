@@ -281,7 +281,7 @@ const WIDGET_HTML = `<!doctype html>
 <meta name="x-tako-widget" content="open_chart_ui/v1" />
 <title>Tako chart</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
+  html, body { margin: 0; padding: 0; width: 100%; background: #0f1115; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
   #tako-embed { width: 100% !important; border: 0 !important; display: block; background: transparent; }
   #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
   #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
@@ -457,36 +457,50 @@ const WIDGET_HTML = `<!doctype html>
         imageLink.classList.remove("hidden");
         placeholder.classList.add("hidden");
         // Defer measurement one frame so layout settles after the
-        // visibility change. \`offsetHeight\` (rendered height after CSS
-        // width: 100% scaling) is the right measurement; \`scrollHeight\`
-        // can over-report on some browsers when the source PNG's
-        // natural dimensions differ from the rendered ones, and
-        // \`naturalHeight\` is the source PNG pixels (almost always
-        // taller than rendered).
+        // visibility change.
         requestAnimationFrame(function () {
           var rectH = image.getBoundingClientRect().height;
           var offsetH = image.offsetHeight;
-          var scrollH = imageLink.scrollHeight;
+          var renderedH = Math.round(rectH || offsetH || 0);
           var naturalH = image.naturalHeight;
-          // Diagnostic: log every available measurement so we can
-          // identify which one matches what claude.ai actually reads.
+          // Iframe height: use the source PNG's natural pixel height
+          // when it's larger than the rendered height. Tako chart
+          // cards have very wide aspects (~3.5:1 for line charts);
+          // at typical chat-column widths (~700 px) the proportional
+          // rendered height collapses to ~200 px which feels visually
+          // small. Using naturalHeight gives the iframe more vertical
+          // presence (~420 px for typical charts) without scaling
+          // the image up. The extra space below the image is filled
+          // by the body's dark background — which matches the chart
+          // card's color, so it visually extends the card rather
+          // than reading as whitespace.
+          //
+          // Bounded: floor at 240 (placeholder min-height) so we
+          // never collapse to zero on edge cases; ceiling at 1200 so
+          // a runaway naturalHeight (corrupt PNG, retina-2x render)
+          // can't blow the iframe up to nonsensical sizes.
+          var MIN_H = 240;
+          var MAX_H = 1200;
+          var iframeH = Math.min(
+            MAX_H,
+            Math.max(MIN_H, naturalH || 0, renderedH || 0),
+          );
           log("img measurements", {
             rectH: rectH,
             offsetH: offsetH,
-            scrollH: scrollH,
+            renderedH: renderedH,
             naturalH: naturalH,
+            iframeH: iframeH,
             bodyClientWidth: document.body.clientWidth,
             htmlClientWidth: document.documentElement.clientWidth,
           });
-          // Pick the rendered height (post-CSS-scaling). Fall through
-          // to natural height as a last resort.
-          var actualH = Math.round(rectH || offsetH || naturalH || 0);
-          if (actualH > 0) {
-            document.documentElement.style.height = actualH + "px";
-            document.body.style.height = actualH + "px";
-            notifyHeight(actualH);
-            log("img resized after load", { height: actualH });
-          }
+          document.documentElement.style.height = iframeH + "px";
+          document.body.style.height = iframeH + "px";
+          notifyHeight(iframeH);
+          log("img resized after load", {
+            iframe: iframeH,
+            image: renderedH,
+          });
         });
       });
       // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
