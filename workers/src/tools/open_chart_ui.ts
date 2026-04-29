@@ -282,7 +282,7 @@ const WIDGET_HTML = `<!doctype html>
 <title>Tako chart</title>
 <style>
   html, body { margin: 0; padding: 0; width: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
-  #tako-embed { width: 100% !important; border: 0 !important; display: block !important; background: transparent; }
+  #tako-embed { width: 100% !important; border: 0 !important; display: block; background: transparent; }
   #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
   #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
   #tako-embed-img { width: 100%; height: auto; display: block; background: transparent; transition: opacity 120ms ease-out; }
