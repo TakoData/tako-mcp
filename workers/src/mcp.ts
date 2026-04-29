@@ -280,21 +280,23 @@ function registerTool(
       // + structuredContent that's already there rather than failing the
       // call.
       //
-      // Run unconditionally — including when `appUiResource` is set.
-      // This used to be gated on `appUiResource === undefined` as a
-      // workaround for a ChatGPT bug (image + widget metadata together
-      // appeared to trip an internal size guard and disable widget
-      // data flow — `window.openai.toolOutput` stayed null). Suppressing
-      // the image fixed ChatGPT but left claude.ai users with nothing
-      // when Claude's widget data pipeline misfires: the widget loads
-      // but Claude errors internally on `tool_found_error: Tool result
-      // could not be submitted`, so the iframe sits on the
-      // "Loading chart…" placeholder forever with no fallback. Putting
-      // the image content block back gives every host a static
-      // rendering when its widget pipeline misfires. If ChatGPT
-      // regresses for large PNGs, the failure mode is "no widget, just
-      // the image" — strictly better than where claude.ai was.
-      if (tool.extraContentBlocks !== undefined) {
+      // SKIPPED when the tool also ships an `appUiResource`. Reason:
+      // when both are set, the response carries `content: [text, image]`
+      // + a `_meta.ui.resourceUri` pointing at a widget. The base64
+      // image inflates the JSON-RPC response by ~70-400 KB which on
+      // ChatGPT was tokenized at ~150K tokens and apparently triggers
+      // an internal size guard that silently disables widget data flow
+      // (`window.openai.toolOutput` stays null, `openai:set_globals`
+      // events fire only with maxHeight/maxWidth). The image is also
+      // redundant for clients that DO render the widget — the widget
+      // shows the chart interactively, an inline PNG below it would
+      // duplicate. Clients without widget support still see the
+      // structuredContent JSON (with `image_url` and `embed_url`) and
+      // can render those as markdown.
+      if (
+        tool.extraContentBlocks !== undefined &&
+        tool.appUiResource === undefined
+      ) {
         try {
           const extra = await tool.extraContentBlocks(output, ctx);
           content.push(...extra);
