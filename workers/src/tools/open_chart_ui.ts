@@ -80,20 +80,45 @@ const outputSchema = z.object({
   image_url: z
     .string()
     .regex(HTTP_URL_REGEX, { message: "image_url must be http(s)" }),
+  // `data:image/<mime>;base64,<bytes>` form of the chart PNG, populated
+  // by the handler when the worker can fetch + inline the image within
+  // the size cap. Optional because: (a) the upstream PNG fetch can
+  // fail or time out, (b) the chart may be larger than the inline cap,
+  // (c) tests sometimes exercise the URL-only path. The widget reads
+  // this in preference to `image_url` because hosts with restrictive
+  // `img-src` CSP (notably claude.ai for custom connectors) reject the
+  // cross-origin URL but allow `data:` URIs.
+  image_data_url: z
+    .string()
+    .regex(/^data:image\//, {
+      message: "image_data_url must be a data:image/* URI",
+    })
+    .optional(),
   dark_mode: z.boolean(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
 });
 
-// Cap how big a PNG we'll inline. Above this we skip the image block and
-// let the URL-only fallback take over. Two reasons: (1) the encoded base64
-// adds ~33% to wire weight on top of the JSON-RPC envelope, so a 5 MB PNG
-// becomes ~7 MB in the response — past the practical limit some MCP
-// clients tolerate before truncating or stalling; (2) Workers' default
-// response size guidance discourages large bodies. Tako chart PNGs run
-// 50-300 KB in practice, so 4 MB is generous headroom that still trips on
-// pathological cases.
+// Cap how big a PNG we'll inline as an `image` content block (used by
+// `extraContentBlocks` on tools without a widget). Above this we skip
+// and rely on the URL-only fallback. Two reasons: (1) base64 inflates
+// ~33%, so a 5 MB PNG becomes ~7 MB in the response — past the
+// practical limit some MCP clients tolerate before truncating or
+// stalling; (2) Workers' response size guidance discourages large
+// bodies. Tako chart PNGs run 50-300 KB, so 4 MB is generous headroom
+// that still trips pathological cases.
 const MAX_INLINE_PNG_BYTES = 4 * 1024 * 1024;
+
+// Cap for inline `image_data_url` in `structuredContent` — distinct
+// from `MAX_INLINE_PNG_BYTES`. The data URI ends up inside the
+// JSON-RPC tool result envelope, which the LLM also tokenizes and
+// some clients have observed to silently fail their widget data flow
+// past ~400 KB encoded. Cap at 250 KB raw → ~333 KB encoded for a
+// margin under that threshold. Charts above the cap fall back to
+// `image_url` only, which is fine for hosts whose CSP allows
+// cross-origin images (ChatGPT) but means claude.ai users see no
+// chart for the largest charts.
+const MAX_INLINE_DATA_URL_BYTES = 250 * 1024;
 
 /**
  * MCP Apps widget URI. Stable — DO NOT bump.
@@ -142,7 +167,9 @@ const WIDGET_HTML = `<!doctype html>
 <style>
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
   #tako-embed { width: 100% !important; border: 0 !important; display: block !important; background: transparent; }
-  #tako-embed-img { width: 100%; height: auto; display: block; background: transparent; }
+  #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
+  #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
+  #tako-embed-img { width: 100%; height: auto; display: block; background: transparent; transition: opacity 120ms ease-out; }
   #tako-placeholder {
     display: flex; align-items: center; justify-content: center;
     width: 100%; min-height: 240px;
@@ -160,12 +187,19 @@ const WIDGET_HTML = `<!doctype html>
   allow="fullscreen"
   title="Tako chart"
 ></iframe>
-<img id="tako-embed-img" class="hidden" alt="Tako chart" />
+<a
+  id="tako-embed-link"
+  class="hidden"
+  target="_blank"
+  rel="noopener noreferrer"
+  title="Open interactive chart"
+><img id="tako-embed-img" alt="Tako chart" /></a>
 <script>
 (function () {
   "use strict";
   var frame = document.getElementById("tako-embed");
   var image = document.getElementById("tako-embed-img");
+  var imageLink = document.getElementById("tako-embed-link");
   var placeholder = document.getElementById("tako-placeholder");
   var rendered = false;
   // Origin of the iframe we loaded — used to gate the height handshake
@@ -231,13 +265,23 @@ const WIDGET_HTML = `<!doctype html>
     if (!structuredContent || typeof structuredContent !== "object") return false;
     var url = structuredContent.embed_url;
     var imgUrl = structuredContent.image_url;
-    // Defense-in-depth: re-validate http(s) before assigning to
-    // \`iframe.src\` / \`img.src\`. The handler validates server-side too,
-    // but the widget is the last hop before the DOM, so a hostile MCP
-    // server shipping \`javascript:\` would otherwise execute in the
-    // widget origin once dropped into \`src\`.
+    var imgDataUrl = structuredContent.image_data_url;
+    // Defense-in-depth: re-validate URL/DataURL schemes before
+    // assigning to \`iframe.src\` / \`img.src\`. The handler validates
+    // server-side too, but the widget is the last hop before the DOM,
+    // so a hostile MCP server shipping \`javascript:\` would otherwise
+    // execute in the widget origin once dropped into \`src\`.
     var validEmbed = typeof url === "string" && /^https?:\\/\\//.test(url);
-    var validImage = typeof imgUrl === "string" && /^https?:\\/\\//.test(imgUrl);
+    var validDataImage = typeof imgDataUrl === "string" && imgDataUrl.indexOf("data:image/") === 0;
+    var validHttpImage = typeof imgUrl === "string" && /^https?:\\/\\//.test(imgUrl);
+    // Prefer the inlined \`data:\` URI over the cross-origin URL — the
+    // data URI works under restrictive \`img-src\` CSPs (claude.ai for
+    // custom connectors), while the http URL only renders on hosts
+    // with permissive img-src (ChatGPT and most others). Fall back to
+    // the http URL when the worker couldn't inline (size cap or fetch
+    // failure).
+    var imageSrc = validDataImage ? imgDataUrl : validHttpImage ? imgUrl : null;
+    var validImage = imageSrc !== null;
     var h =
       typeof structuredContent.height === "number" && structuredContent.height > 0
         ? structuredContent.height
@@ -256,13 +300,24 @@ const WIDGET_HTML = `<!doctype html>
       // has its own intrinsic aspect ratio and stretching to a fixed
       // height would distort the chart. Width-only sizing yields a
       // slightly different height than the iframe path; that's fine.
-      image.src = imgUrl;
-      image.classList.remove("hidden");
+      image.src = imageSrc;
+      // Wrap the image in an anchor pointing at \`embed_url\` so a click
+      // opens the fully interactive version in a new tab. Recovers
+      // most of the lost interactivity (zoom/pan/hover) for hosts that
+      // can't render the inline iframe — at the cost of a navigation
+      // out of the chat surface. Only set the href when we have a
+      // valid embed URL; otherwise the anchor stays inert.
+      if (validEmbed) {
+        imageLink.setAttribute("href", url);
+      } else {
+        imageLink.removeAttribute("href");
+      }
+      imageLink.classList.remove("hidden");
     } else if (validEmbed) {
-      // No image_url but we have an embed_url — try the iframe even on
-      // hosts we'd normally treat as restricted. Worst case the host
-      // CSP-blocks it and the user sees the same "blocked" tile they
-      // would have seen otherwise; best case some host without
+      // No image at all but we have an embed_url — try the iframe even
+      // on hosts we'd normally treat as restricted. Worst case the
+      // host CSP-blocks it and the user sees the same "blocked" tile
+      // they'd otherwise have seen; best case some host without
       // \`window.openai\` actually allows the iframe.
       if (frame.src !== url) frame.src = url;
       try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
@@ -279,8 +334,12 @@ const WIDGET_HTML = `<!doctype html>
     rendered = true;
     notifyHeight(h);
     log("rendered", {
-      mode: useIframe ? "iframe" : validImage ? "img" : "iframe-fallback",
-      src: useIframe || !validImage ? url : imgUrl,
+      mode: useIframe
+        ? "iframe"
+        : validImage
+        ? validDataImage ? "img-data" : "img-url"
+        : "iframe-fallback",
+      src: useIframe || !validImage ? url : (validDataImage ? "<data:image>" : imgUrl),
       height: h,
     });
     return true;
@@ -482,6 +541,39 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return Buffer.from(buffer).toString("base64");
 }
 
+/**
+ * Fetch the chart PNG and return a `data:image/<mime>;base64,<bytes>`
+ * URI under the inline cap, or `undefined` on any failure mode.
+ *
+ * Used by the handler to populate `structuredContent.image_data_url`,
+ * which the widget reads for hosts with restrictive `img-src` CSP
+ * (claude.ai for custom connectors most notably). All failures degrade
+ * to `undefined` rather than throwing — `image_url` is always in the
+ * response, so hosts that allow cross-origin images still render fine.
+ */
+async function fetchImageDataUrl(url: string): Promise<string | undefined> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PNG_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return undefined;
+    const contentType = response.headers.get("content-type") ?? "";
+    // Reject anything that's not an image — an upstream redirect to an
+    // HTML error page would otherwise let us base64 HTML and ship it
+    // as a `data:image/...` URI the client can't render.
+    if (!contentType.startsWith("image/")) return undefined;
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength === 0) return undefined;
+    if (buffer.byteLength > MAX_INLINE_DATA_URL_BYTES) return undefined;
+    const mime = contentType.split(";")[0]!.trim();
+    return `data:${mime};base64,${arrayBufferToBase64(buffer)}`;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 const open_chart_ui = {
   name: "open_chart_ui",
   description:
@@ -509,10 +601,20 @@ const open_chart_ui = {
     const embed_url = `${webBase}/embed/${pubId}/?theme=${theme}`;
     const image_url = `${apiBase}/api/v1/image/${pubId}/?dark_mode=${input.dark_mode ? "true" : "false"}`;
 
+    // Fetch + inline the PNG as a `data:` URI when feasible. The widget
+    // prefers this over `image_url` because hosts with restrictive
+    // `img-src` CSP (claude.ai for custom connectors) reject
+    // cross-origin URLs but allow `data:`. Failure modes (timeout, 5xx,
+    // size cap, missing `image/*` content-type) all degrade silently
+    // to `undefined` — `image_url` is still in the response and the
+    // widget falls back to it for hosts that allow cross-origin imgs.
+    const image_data_url = await fetchImageDataUrl(image_url);
+
     return {
       pub_id: input.pub_id,
       embed_url,
       image_url,
+      ...(image_data_url !== undefined ? { image_data_url } : {}),
       dark_mode: input.dark_mode,
       width: input.width,
       height: input.height,
