@@ -165,7 +165,7 @@ const WIDGET_HTML = `<!doctype html>
 <meta name="x-tako-widget" content="open_chart_ui/v1" />
 <title>Tako chart</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
+  html, body { margin: 0; padding: 0; width: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
   #tako-embed { width: 100% !important; border: 0 !important; display: block !important; background: transparent; }
   #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
   #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
@@ -533,14 +533,24 @@ const WIDGET_HTML = `<!doctype html>
   });
 
   // Kick the handshake off. Listener is already attached above so the
-  // response can come in immediately. Fallback: 2 s after sending the
-  // request, send \`initialized\` regardless. Hosts that don't implement
-  // the handshake (e.g. ChatGPT, which uses \`window.openai\`) won't
-  // respond to \`ui/initialize\`; without the timeout we'd wait forever.
-  // Sending an unsolicited \`initialized\` to such hosts is harmless —
-  // they ignore unknown JSON-RPC notifications.
+  // response can come in immediately. Fallback: send \`initialized\`
+  // 200 ms after the request regardless of whether the host responded
+  // to \`ui/initialize\`. Reasons for the short window:
+  //
+  //   - Hosts that don't implement the handshake (ChatGPT via
+  //     \`window.openai\`) never respond, so we'd block their other
+  //     listeners forever without a timeout.
+  //   - Hosts that DO implement it (claude.ai) appear to start
+  //     attempting tool-result delivery within ~hundreds of ms of
+  //     widget mount; the previous 2 s window left enough room for
+  //     that delivery to fire-and-fail before we sent \`initialized\`,
+  //     causing the FIRST tool call in a session to drop while
+  //     subsequent calls (after handshake completes) worked. Shortening
+  //     to 200 ms tightens the race; sending an unsolicited
+  //     \`initialized\` to a non-handshake host is harmless (they
+  //     ignore unknown JSON-RPC notifications).
   sendInitRequest();
-  setTimeout(sendInitializedNotification, 2000);
+  setTimeout(sendInitializedNotification, 200);
 
   log("listener attached", {
     hasOpenAiGlobal: typeof window.openai !== "undefined",
