@@ -61,9 +61,9 @@ const inputSchema = z.object({
     .number()
     .int()
     .min(1)
-    .default(600)
+    .default(420)
     .describe(
-      "Advisory height in pixels for the rendered chart container. The PNG endpoint ignores it; pass through to the client as a sizing hint only.",
+      "Advisory initial height in pixels for the rendered chart container. The PNG endpoint ignores it; pass through to the client as a sizing hint only. Sized for a single-component card by default — tall multi-component charts may briefly under-reserve until the embed page handshakes its true height (forthcoming).",
     ),
 });
 
@@ -165,6 +165,10 @@ const WIDGET_HTML = `<!doctype html>
   var frame = document.getElementById("tako-embed");
   var placeholder = document.getElementById("tako-placeholder");
   var rendered = false;
+  // Origin of the iframe we loaded — used to gate the height handshake
+  // listener below so we only honor resize messages from the actual
+  // embed page, not arbitrary cross-frame senders.
+  var embedOrigin = null;
 
   function log(label, payload) {
     try { console.log("[tako-widget]", label, payload); } catch (e) {}
@@ -208,6 +212,7 @@ const WIDGET_HTML = `<!doctype html>
     // origin once dropped into \`src\`.
     if (typeof url !== "string" || !/^https?:\\/\\//.test(url)) return false;
     if (frame.src !== url) frame.src = url;
+    try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
     var h =
       typeof structuredContent.height === "number" && structuredContent.height > 0
         ? structuredContent.height
@@ -289,13 +294,31 @@ const WIDGET_HTML = `<!doctype html>
   // MCP Apps open-spec bridge — \`ui/notifications/tool-result\`
   // JSON-RPC over postMessage. claude.ai, VS Code Insiders, and Goose
   // follow this; ChatGPT uses the \`window.openai\` path above.
+  //
+  // Also handles a \`tako-embed-height\` resize handshake from the inner
+  // embed iframe, gated to that iframe's origin. The Tako web app does
+  // not emit this message yet — when it ships, the widget will start
+  // self-correcting chart heights without a worker redeploy. Sanity
+  // bounds (positive integer < 4000 px) keep a hostile or buggy embed
+  // from blowing the iframe up to nonsensical sizes.
   window.addEventListener("message", function (event) {
     var msg = event.data;
     if (!msg || typeof msg !== "object") return;
-    if (msg.jsonrpc !== "2.0") return;
-    if (msg.method !== "ui/notifications/tool-result") return;
-    var params = msg.params || {};
-    render(params.structuredContent);
+    if (msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
+      var params = msg.params || {};
+      render(params.structuredContent);
+      return;
+    }
+    if (msg.type === "tako-embed-height" && embedOrigin && event.origin === embedOrigin) {
+      var h = msg.height;
+      if (typeof h !== "number" || !isFinite(h) || h <= 0 || h > 4000) return;
+      var n = Math.round(h);
+      frame.style.height = n + "px";
+      frame.style.minHeight = n + "px";
+      frame.setAttribute("height", String(n));
+      notifyHeight(n);
+      log("resized via embed handshake", { height: n });
+    }
   });
 
   log("listener attached", {
