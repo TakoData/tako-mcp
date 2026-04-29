@@ -278,28 +278,29 @@ function registerTool(
     // helper auto-mirrors these for backward compat with older host
     // readers — we do the same so a ChatGPT build still reading the
     // legacy key works), and `_meta["openai/outputTemplate"]` (OpenAI
-    // namespace alias).
+    // namespace alias). All three carry the static URI.
     //
-    // When the tool ships a `dynamic` resource template, the open-spec
-    // keys (`ui.resourceUri` + `ui/resourceUri`) advertise the URI
-    // TEMPLATE itself (e.g. `ui://tako/embed/chart/{pub_id}`) at
-    // registration time. Hosts that honor URI-template syntax in
-    // `_meta.ui.resourceUri` (the spec describes the field as a URI;
-    // RFC 6570 templates are URIs) substitute from the tool's
-    // structuredContent / args at call time and load the resolved
-    // instance per call. claude.ai appears to read the registration
-    // metadata exclusively (per-call result `_meta` overrides we ship
-    // below are ignored), so this is the only place the dynamic URI
-    // is exposed for it.
+    // We tried two routes to use the dynamic resource template
+    // (registered above) on claude.ai for per-chart sizing:
     //
-    // `openai/outputTemplate` stays on the static URI: ChatGPT's CSP
-    // permits the cross-origin iframe path and it loads the static
-    // interactive widget — flipping it to a template would break the
-    // working ChatGPT integration.
-    const claudeFacingUri = ui.dynamic?.uriPattern ?? ui.uri;
+    //   1. Per-call `_meta.ui.resourceUri` overrides on the tool
+    //      result. Verified delivered correctly (curl), but
+    //      claude.ai loads the widget URI from `tools/list`
+    //      registration metadata and ignores per-call overrides.
+    //   2. Advertising the URI template (`ui://tako/embed/chart/{pub_id}`)
+    //      directly in registration `_meta.ui.resourceUri`. Hosts
+    //      that honor RFC 6570 substitution would have resolved
+    //      `{pub_id}` from tool output. claude.ai didn't; it
+    //      appeared to fetch the literal template URI and rendered
+    //      nothing — strictly worse than the static-URI behavior.
+    //
+    // Conclusion: claude.ai for custom connectors today does not
+    // support per-tool-call widget URI variation, so we stay on the
+    // static URI for all three keys. The template resource is still
+    // registered above for future hosts that may support it.
     config._meta = {
-      ui: { resourceUri: claudeFacingUri },
-      "ui/resourceUri": claudeFacingUri,
+      ui: { resourceUri: ui.uri },
+      "ui/resourceUri": ui.uri,
       "openai/outputTemplate": ui.uri,
     };
   }
