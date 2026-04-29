@@ -837,14 +837,21 @@ const open_chart_ui = {
     const theme = input.dark_mode ? "dark" : "light";
     const pubId = encodeURIComponent(input.pub_id);
     const embed_url = `${webBase}/embed/${pubId}/?theme=${theme}`;
-    // Request a 4:3 aspect ratio (`width=1200&height=900`) instead of
-    // Tako's default 1.91:1 — the wider default renders the chart at a
-    // squat ~340 px tall in a typical ~700 px-wide chat column, which
-    // looked too small in claude.ai. 4:3 brings the rendered height to
-    // ~525 px at the same width — about 55% taller than the default.
-    // Endpoint accepts `width` and `height` directly (see
-    // `ImageView.get` in tako/app/backend/knowledge/api/views.py).
-    const image_url = `${apiBase}/api/v1/image/${pubId}/?dark_mode=${input.dark_mode ? "true" : "false"}&width=1200&height=900`;
+    // Use Tako's default aspect ratio (1.91:1) — explicitly passing
+    // smaller aspect ratios like 4:3 (`width=1200&height=900`) makes
+    // the chart visually bigger BUT introduces vertical whitespace in
+    // the PNG: the embed page renders the chart at its natural
+    // 1.91:1 ratio inside the larger viewport, padding the rest with
+    // background color (see `take_screenshot` in
+    // tako/app/backend/monolith/tasks.py:287). Default aspect is the
+    // only way to get a chart that fully fills its rendered
+    // dimensions without padding. Trade-off: at typical chat-column
+    // widths (~700 px) the chart renders at ~370 px tall, which can
+    // feel small but has no whitespace. To make charts visually
+    // bigger without padding, the embed page would need to support
+    // viewport-fill rendering at non-default aspect ratios — that's
+    // a Tako web-app change, out of scope here.
+    const image_url = `${apiBase}/api/v1/image/${pubId}/?dark_mode=${input.dark_mode ? "true" : "false"}`;
 
     // The inlined PNG `data:` URI is fetched separately in `extraMeta`
     // and shipped via `_meta` (NOT `structuredContent`), to keep
@@ -935,9 +942,10 @@ const open_chart_ui = {
           }
           const encoded = encodeURIComponent(pubId);
           const embedUrl = `${webBase}/embed/${encoded}/?theme=dark`;
-          // Same 4:3 aspect override as the handler — see the comment
-          // in `handler` for rationale.
-          const imageUrl = `${apiBase}/api/v1/image/${encoded}/?dark_mode=true&width=1200&height=900`;
+          // Default Tako aspect (1.91:1) — see comment in `handler`
+          // for why we don't override; non-default aspects pad the
+          // PNG with whitespace.
+          const imageUrl = `${apiBase}/api/v1/image/${encoded}/?dark_mode=true`;
           // The resource read happens with a valid request-context
           // `ctx.token`, so authenticated PNG endpoints (if any)
           // would work — currently the image endpoint is public, so
