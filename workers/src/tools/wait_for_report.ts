@@ -101,7 +101,7 @@ function sleep(ms: number): Promise<void> {
 const wait_for_report = {
   name: "wait_for_report",
   description:
-    "Use this after create_report (or whenever the user wants to wait for / check on a report). Server-side wait — returns when status is 'completed' / 'failed' / 'cancelled' OR after max_wait_seconds (default 50s) without a terminal status. While waiting, the tool streams live progress (e.g. \"searching knowledge graph\", \"rendering chart\") to the user via MCP progress notifications, so they see the agent working instead of a silent spinner. **If `timed_out` is true, IMMEDIATELY call wait_for_report again with the same report_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting): once you've made 12 chained wait_for_report calls and the report is still not terminal, STOP chaining; tell the user the report is taking longer than usual, re-share the `webpage_url`, and remind them they'll receive an email when it's done.** Once terminal, ALWAYS include the response's `webpage_url` so the user has a clickable link to open the report in their browser, then summarize `result` / `export_urls` on completed or `error_message` on failed.",
+    "Use this after create_report (or whenever the user wants to wait for / check on a report). Server-side wait — returns when status is 'completed' / 'failed' / 'cancelled' OR after max_wait_seconds (default 50s) without a terminal status. **If `timed_out` is true, IMMEDIATELY call wait_for_report again with the same report_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. Do NOT use web_search, browse, or your own knowledge to summarize, paraphrase, or pre-empt the report content while waiting. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting): once you've made 12 chained wait_for_report calls and the report is still not terminal, STOP chaining; tell the user the report is taking longer than usual, re-share the `webpage_url`, and remind them they'll receive an email when it's done.** Once terminal, ALWAYS include the response's `webpage_url` so the user has a clickable link to open the report in their browser, then summarize `result` / `export_urls` on completed (drawing ONLY from those fields, never your own knowledge) or `error_message` on failed.",
   inputSchema,
   outputSchema,
   annotations: {
@@ -141,19 +141,15 @@ const wait_for_report = {
     // is the only option.
     const taskId = readCeleryTaskId(last);
     if (taskId !== null) {
-      console.log(
-        `[wait_for_report] streaming path taskId=${taskId} sendProgress=${
-          ctx.sendProgress !== undefined ? "wired" : "noop"
-        }`,
-      );
       try {
         last = await consumeStream(ctx, taskId, detailPath, deadline, last);
       } catch (err) {
-        // Streaming failed (404 task not yet registered, 5xx, network
-        // glitch). Don't surface — fall through to polling so the
-        // caller still gets a useful answer.
-        console.log(
-          `[wait_for_report] streaming failed, falling back to polling: ${
+        // Real streaming failure (404 task not yet registered, 5xx,
+        // network glitch — NOT graceful budget exhaustion, which
+        // consumeStream swallows internally). Log + fall through to
+        // polling so the caller still gets a useful answer.
+        console.warn(
+          `[wait_for_report] stream error, falling back to polling: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -182,12 +178,14 @@ const wait_for_report = {
  * Drive the SSE stream for one task: emit progress notifications per
  * envelope, then do a final detail fetch when the stream ends so the
  * caller has the report content to return. Returns the last detail
- * response on success; throws on connection errors so the caller can
- * fall back to polling.
+ * response on success; throws on **real** connection errors (4xx/5xx,
+ * network glitch) so the caller can fall back to polling; graceful
+ * budget exhaustion (our own deadline timer firing) is swallowed and
+ * NOT thrown — the caller treats that as a normal early exit.
  *
  * Hard-bounded by the wall-clock `deadline` so a hung backend can't
  * outlast the MCP tool-call timeout — when the deadline is hit we
- * abort the SSE connection cleanly and the caller takes over.
+ * abort the SSE connection and exit cleanly.
  */
 async function consumeStream(
   ctx: ToolContext,
@@ -200,7 +198,11 @@ async function consumeStream(
   if (remaining <= 0) return initial;
 
   const aborter = new AbortController();
-  const budgetTimer = setTimeout(() => aborter.abort(), remaining);
+  let budgetExhausted = false;
+  const budgetTimer = setTimeout(() => {
+    budgetExhausted = true;
+    aborter.abort();
+  }, remaining);
   // Combine the per-call budget with the client's cancel signal so
   // either firing tears down the connection.
   const signal = ctx.signal !== undefined
@@ -208,43 +210,40 @@ async function consumeStream(
     : aborter.signal;
 
   let sawStreamDone = false;
-  let envelopeCount = 0;
-  let progressEmittedCount = 0;
 
   try {
     for await (const env of streamAgent(ctx.env, ctx.token, taskId, {
       signal,
     })) {
-      envelopeCount++;
       const message = humanizeEnvelope(env);
       if (message !== null && ctx.sendProgress !== undefined) {
-        try {
-          await ctx.sendProgress({ message });
-          progressEmittedCount++;
-        } catch (err) {
-          console.log(
-            `[wait_for_report] sendProgress failed: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
+        // Best-effort: a closed transport / write race shouldn't
+        // bring the stream down. Swallow silently — the report
+        // still completes upstream regardless.
+        await ctx.sendProgress({ message }).catch(() => undefined);
       }
       if (env.category === "control" && env.block.kind === "stream_done") {
         sawStreamDone = true;
         break;
       }
     }
+  } catch (err) {
+    // If the budget timer fired, the resulting AbortError /
+    // DjangoTimeoutError is graceful exit, not a failure to surface.
+    // Anything else is a real stream error (4xx/5xx, body parse,
+    // upstream crash) and propagates to the caller's polling fallback.
+    if (!budgetExhausted) {
+      throw err;
+    }
   } finally {
     clearTimeout(budgetTimer);
-    console.log(
-      `[wait_for_report] stream consumed envelopes=${envelopeCount} progressEmitted=${progressEmittedCount} sawStreamDone=${sawStreamDone}`,
-    );
   }
 
-  // After stream_done OR a clean body close, fetch the report detail
-  // once more so we return the actual report content / status. The
-  // stream itself doesn't carry the final report payload (it carries
-  // agent activity envelopes), so this is required either way.
+  // After stream_done OR a clean body close OR budget exhaustion,
+  // fetch the report detail once more so we return the actual report
+  // content / status. The stream itself doesn't carry the final
+  // report payload (it carries agent activity envelopes), so this is
+  // required either way.
   if (sawStreamDone || Date.now() < deadline) {
     return await djangoGet<ReportDetailResponse>(
       ctx.env,

@@ -205,33 +205,36 @@ type ToolCallExtra = {
  *
  *   - `signal` flows through directly so long-running tools can abort
  *     their HTTP work when the client cancels.
- *   - `sendProgress` wraps `extra.sendNotification` into a `notifications/
- *     progress` emitter, but only when the client supplied a
- *     `_meta.progressToken` on the request (the spec requires it). Each
- *     emission auto-increments a closure-local counter so callers don't
- *     have to track monotonicity themselves; explicit `progress` values
- *     in the params override the counter when provided.
+ *   - `sendProgress` wraps `extra.sendNotification` into both a
+ *     `notifications/progress` and a `notifications/message` emitter
+ *     (see `buildProgressEmitter` for the dual-emit rationale). Each
+ *     emission auto-increments a closure-local counter so callers
+ *     don't have to track monotonicity themselves; explicit `progress`
+ *     values in the params override the counter when provided.
  *
- * When there's no `progressToken`, `sendProgress` stays `undefined` —
- * tools see it as "not supported" and skip emission. Same when
- * `extra.sendNotification` isn't there (SDK version drift).
+ * Stays `undefined` only when `extra.sendNotification` is missing
+ * entirely (SDK version drift) — when present we always wire it up,
+ * synthesizing a `progressToken` ourselves if the client didn't send
+ * one (see comment in the function body).
  */
 function buildCallContext(base: ToolContext, extra: ToolCallExtra): ToolContext {
-  const progressToken = extra._meta?.progressToken;
+  const clientProgressToken = extra._meta?.progressToken;
   const send = extra.sendNotification;
+  // Synthesize a progressToken when the client didn't send one. Per
+  // spec the token is required, but in practice neither claude.ai nor
+  // ChatGPT's connectors include it — and without one our progress
+  // notifications would be silently dropped server-side. Minting a
+  // synthetic token lets the SDK emit valid `notifications/progress`
+  // frames; clients that don't recognize the token typically ignore
+  // them rather than erroring, while clients that DO render inline
+  // tool-call activity (or future versions thereof) get to surface
+  // the breadcrumbs.
+  const progressToken =
+    clientProgressToken ?? `auto-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const sendProgress =
-    progressToken !== undefined && typeof send === "function"
+    typeof send === "function"
       ? buildProgressEmitter(progressToken, send)
       : undefined;
-  // Diagnostic — drop once streaming UX is confirmed in both ChatGPT and
-  // claude.ai. Tells us per-call whether the client opted into progress
-  // notifications via `_meta.progressToken`. If this is always
-  // `present:false` for known clients, that's the silence cause.
-  console.log(
-    `[mcp] buildCallContext progressToken=${
-      progressToken !== undefined ? "present" : "absent"
-    } sendNotification=${typeof send === "function" ? "present" : "absent"}`,
-  );
   return {
     ...base,
     ...(extra.signal !== undefined ? { signal: extra.signal } : {}),
@@ -250,17 +253,50 @@ function buildProgressEmitter(
   let counter = 0;
   return async (params) => {
     const progress = params.progress ?? ++counter;
-    const notification: {
+    const progressNotification: {
       method: string;
       params: Record<string, unknown>;
     } = {
       method: "notifications/progress",
       params: { progressToken, progress },
     };
-    if (params.total !== undefined) notification.params.total = params.total;
+    if (params.total !== undefined)
+      progressNotification.params.total = params.total;
     if (params.message !== undefined)
-      notification.params.message = params.message;
-    await send(notification);
+      progressNotification.params.message = params.message;
+    // Also fire `notifications/message` (logging) alongside progress.
+    // Two reasons:
+    //   1. `notifications/message` doesn't need a `progressToken`, so
+    //      it works even when the client didn't opt into progress (the
+    //      common case as of 2026-04 — neither claude.ai nor ChatGPT's
+    //      connector sends one).
+    //   2. Some MCP clients render `notifications/message` inline in
+    //      the expanded tool-call view (or in a side log panel), where
+    //      `notifications/progress` is silently dropped. Sending both
+    //      gives the largest possible surface for visible breadcrumbs.
+    // Per spec `data` is "any JSON value" — we send a plain string
+    // because that's what existing clients render most reliably as a
+    // single log line. Forward-compatible: a richer object would need
+    // every client to parse it the same way, which they don't.
+    const messageNotification =
+      params.message !== undefined
+        ? {
+            method: "notifications/message" as const,
+            params: {
+              level: "info" as const,
+              logger: "tako-mcp",
+              data: params.message,
+            },
+          }
+        : undefined;
+    // Errors on either send shouldn't block the other. We `await` both
+    // so the caller's `await sendProgress(...)` waits for the wire
+    // write before returning to the next envelope; that backpressure
+    // is what keeps us from queueing 300 notifications in 50ms and
+    // overwhelming the SSE stream.
+    const sends: Array<Promise<void>> = [send(progressNotification)];
+    if (messageNotification !== undefined) sends.push(send(messageNotification));
+    await Promise.allSettled(sends);
   };
 }
 
