@@ -61,9 +61,9 @@ const inputSchema = z.object({
     .number()
     .int()
     .min(1)
-    .default(720)
+    .default(500)
     .describe(
-      "Advisory initial height in pixels for the rendered chart container. The PNG endpoint ignores it; pass through to the client as a sizing hint only. Sized for tall multi-component cards (with tabs / sub-tabs) so they don't get cropped — single-component cards leave unused footer space until the embed page handshakes its true height (forthcoming).",
+      "Advisory initial height in pixels for the rendered chart container. The PNG endpoint ignores it; pass through to the client as a sizing hint only — the widget iframe grows past it via the embed page's `tako-embed-height` / `tako::resize` postMessage handshake (TAKO-2725) once content has rendered. Tuned to a value that minimizes empty space below short single-component cards (e.g. a stock-price chart) without cropping into the chart drawing itself before the handshake arrives.",
     ),
 });
 

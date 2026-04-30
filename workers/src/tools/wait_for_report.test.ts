@@ -1,19 +1,20 @@
 /**
- * Tests for `wait_for_report`'s polling loop.
+ * Tests for `wait_for_report` covering both wait modes:
  *
- * Locks four properties:
- *   1. Returns immediately on terminal status (no extra sleep / GET).
- *   2. Polls through pending/running until it sees a terminal status.
- *   3. Returns `timed_out: true` with the latest snapshot when the
- *      `max_wait_seconds` budget elapses without a terminal status.
- *   4. The last sleep is clamped to the remaining budget — the loop
- *      doesn't overshoot the deadline.
+ *   - Polling fallback (no `celery_task_id`, or stream errors): the
+ *     legacy loop locked by the original four properties — terminal
+ *     short-circuit, transition through pending/running, `timed_out:
+ *     true` on budget exhaustion, deadline-clamped sleep.
+ *   - SSE streaming (when `celery_task_id` is present): tool opens
+ *     `/api/v1/agent/stream/{task_id}/`, forwards each activity
+ *     envelope as a `notifications/progress` via `ctx.sendProgress`,
+ *     and re-fetches the report detail once the stream ends.
  *
- * Uses `vi.useFakeTimers()` because the loop sleeps via `setTimeout`.
- * Same pattern as `knowledge_search.test.ts` — `runAllTimersAsync`
- * drains pending timers (advancing the mocked clock as it does) until
- * the handler stops scheduling new ones, which is exactly what we want
- * to exercise both the terminal-status and budget-exhausted exits.
+ * Polling tests use `vi.useFakeTimers()` (the loop sleeps via
+ * `setTimeout`); streaming tests use real timers and a streaming
+ * `Response` with a `ReadableStream` body that yields SSE-formatted
+ * frames. Mocking is URL-aware via `mockFetchByUrl` so a single test
+ * can stub the detail endpoint and the stream endpoint together.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -282,4 +283,247 @@ describe("wait_for_report", () => {
       expect(parse.data.max_wait_seconds).toBe(50);
     }
   });
+
+  describe("SSE streaming path (celery_task_id present)", () => {
+    it("opens the stream, emits a progress notification per activity envelope, and finishes via the final detail fetch", async () => {
+      // Real timers — the streaming consumer reads from a
+      // ReadableStream; fake timers would freeze the iterator.
+      const messages: string[] = [];
+      const ctxWithProgress: ToolContext = {
+        ...CTX,
+        async sendProgress({ message }) {
+          if (message !== undefined) messages.push(message);
+        },
+      };
+
+      const fetchMock = mockFetchByUrl({
+        // First fetch: report still running, exposes the streaming task id.
+        "/api/v1/internal/reports/rep_stream/": [
+          jsonResponse(200, {
+            id: "rep_stream",
+            status: "running",
+            celery_task_id: "task-uuid-1",
+          }),
+          // Final fetch after stream_done: report now completed.
+          jsonResponse(200, {
+            id: "rep_stream",
+            status: "completed",
+            title: "Streamed report",
+            result: { sections: [{ heading: "ok", text: "done" }] },
+          }),
+        ],
+        "/api/v1/agent/stream/task-uuid-1/": [
+          sseResponse([
+            sseFrame({
+              seq: 1,
+              task_id: "task-uuid-1",
+              category: "activity",
+              block: { kind: "status", message: "Searching knowledge graph" },
+            }),
+            sseFrame({
+              seq: 2,
+              task_id: "task-uuid-1",
+              category: "activity",
+              block: {
+                kind: "tool_call",
+                id: "tc1",
+                tool: "knowledge_search",
+                status_message: "Looking up Tesla data",
+              },
+            }),
+            // Content blocks are intentionally not surfaced as
+            // progress lines — they're report body fragments, not
+            // activity breadcrumbs.
+            sseFrame({
+              seq: 3,
+              task_id: "task-uuid-1",
+              category: "content",
+              block: {
+                kind: "text",
+                generation_id: 1,
+                id: "t1",
+                delta: "Q1 earnings ...",
+              },
+            }),
+            sseFrame({
+              seq: 4,
+              task_id: "task-uuid-1",
+              category: "control",
+              block: { kind: "stream_done" },
+            }),
+          ]),
+        ],
+      });
+
+      const out = await wait_for_report.handler(
+        { report_id: "rep_stream", max_wait_seconds: 50 },
+        ctxWithProgress,
+      );
+
+      // Two activity envelopes → two progress notifications, in order.
+      // The status_message wins over the default "Calling tool…" line.
+      expect(messages).toEqual([
+        "Searching knowledge graph",
+        "Looking up Tesla data",
+      ]);
+
+      // Two report-detail fetches (initial + final) plus one stream open.
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const urls = fetchMock.mock.calls.map((call) =>
+        new URL(requestFrom(call).url).pathname,
+      );
+      expect(urls).toEqual([
+        "/api/v1/internal/reports/rep_stream/",
+        "/api/v1/agent/stream/task-uuid-1/",
+        "/api/v1/internal/reports/rep_stream/",
+      ]);
+
+      expect(out.status).toBe("completed");
+      expect(out.timed_out).toBe(false);
+      expect(out.title).toBe("Streamed report");
+    });
+
+    it("falls back to polling when the stream endpoint returns 404 (e.g. task not yet registered)", async () => {
+      // 404 on the stream is the most likely transient failure: an
+      // analyze call whose AsyncTaskStatus row hasn't propagated yet.
+      // The tool should swallow the SSE error and continue with the
+      // poll loop so the user still gets a final answer.
+      vi.useFakeTimers();
+      const fetchMock = mockFetchByUrl({
+        "/api/v1/internal/reports/rep_404/": [
+          jsonResponse(200, {
+            id: "rep_404",
+            status: "running",
+            celery_task_id: "task-missing",
+          }),
+          jsonResponse(200, { id: "rep_404", status: "running" }),
+          jsonResponse(200, { id: "rep_404", status: "completed", title: "ok" }),
+        ],
+        "/api/v1/agent/stream/task-missing/": [
+          new Response("not found", { status: 404 }),
+        ],
+      });
+
+      const promise = wait_for_report.handler(
+        { report_id: "rep_404", max_wait_seconds: 50 },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      // Initial detail + stream attempt + (poll path: at least one
+      // sleep + one detail fetch + terminal detail fetch). Only the
+      // exact terminal sequence matters.
+      expect(out.status).toBe("completed");
+      expect(out.timed_out).toBe(false);
+      // Stream was attempted exactly once.
+      const streamCalls = fetchMock.mock.calls.filter((call) =>
+        new URL(requestFrom(call).url).pathname.startsWith(
+          "/api/v1/agent/stream/",
+        ),
+      );
+      expect(streamCalls).toHaveLength(1);
+    });
+
+    it("skips the stream entirely when celery_task_id is missing, going straight to polling", async () => {
+      vi.useFakeTimers();
+      const fetchMock = mockFetchByUrl({
+        "/api/v1/internal/reports/rep_no_task/": [
+          // No celery_task_id field on the running snapshot.
+          jsonResponse(200, { id: "rep_no_task", status: "running" }),
+          jsonResponse(200, { id: "rep_no_task", status: "completed" }),
+        ],
+      });
+
+      const promise = wait_for_report.handler(
+        { report_id: "rep_no_task", max_wait_seconds: 50 },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      // Stream endpoint never called.
+      const streamCalls = fetchMock.mock.calls.filter((call) =>
+        new URL(requestFrom(call).url).pathname.startsWith(
+          "/api/v1/agent/stream/",
+        ),
+      );
+      expect(streamCalls).toHaveLength(0);
+      expect(out.status).toBe("completed");
+      expect(out.timed_out).toBe(false);
+    });
+
+    it("propagates DjangoUnauthorizedError from the very first detail fetch (not silently swallowed)", async () => {
+      // A bad token surfacing from the *initial* detail fetch must
+      // throw. The fallback-to-polling logic only catches errors
+      // from the stream itself — auth errors hitting the detail
+      // endpoint are real failures and should reach the MCP error
+      // mapper.
+      mockFetchOnce(jsonResponse(401, { detail: "invalid token" }));
+
+      const err = await wait_for_report
+        .handler({ report_id: "rep_401", max_wait_seconds: 50 }, CTX)
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      // DjangoUnauthorizedError extends DjangoError extends Error;
+      // exact class is checked by other tests.
+      expect((err as Error).name).toBe("DjangoUnauthorizedError");
+    });
+  });
 });
+
+/* ----------- streaming test helpers ----------- */
+
+/** Build the wire form of one SSE frame from a JSON envelope. */
+function sseFrame(envelope: object): string {
+  return `data: ${JSON.stringify(envelope)}\n\n`;
+}
+
+/** Build a streaming `Response` whose body emits the given chunks. */
+function sseResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const c of chunks) controller.enqueue(encoder.encode(c));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+/**
+ * Stub `fetch` so each path matches against a queue of pre-built
+ * `Response`s. Different from `mockFetchSequence` in that the same
+ * test can stub two distinct endpoints (detail vs. stream) and not
+ * care about the exact interleaving order — each path's responses are
+ * consumed FIFO independently.
+ */
+function mockFetchByUrl(
+  routes: Record<string, Response[]>,
+): ReturnType<typeof vi.fn<typeof fetch>> {
+  const queues: Record<string, Response[]> = {};
+  for (const [path, responses] of Object.entries(routes)) {
+    queues[path] = [...responses];
+  }
+  const fn = vi.fn<typeof fetch>(async (input) => {
+    const url =
+      input instanceof Request
+        ? new URL(input.url).pathname
+        : new URL(String(input)).pathname;
+    const queue = queues[url];
+    if (queue === undefined) {
+      throw new Error(`mockFetchByUrl: no route configured for ${url}`);
+    }
+    const next = queue.shift();
+    if (next === undefined) {
+      throw new Error(`mockFetchByUrl: queue exhausted for ${url}`);
+    }
+    return next;
+  });
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}

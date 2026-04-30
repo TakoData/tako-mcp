@@ -84,3 +84,7 @@ dmypy.json
 node_modules/
 .wrangler/
 workers/dist/
+# Wrangler local-only env (per-developer DB / Tako web app overrides). Do not
+# commit; secrets/local URLs land here when iterating against a local backend.
+workers/.dev.vars
+workers/.dev.vars.*

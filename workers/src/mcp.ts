@@ -54,6 +54,24 @@ const APP_UI_MIME_TYPE = "text/html;profile=mcp-app";
 const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
 
 /**
+ * Tools whose `tools/call` requests should be served over the Streamable
+ * HTTP transport's **SSE** mode rather than its JSON-response mode.
+ *
+ * SSE mode is what allows mid-call `notifications/progress` events to
+ * actually reach the client — JSON mode buffers a single response and
+ * silently drops notifications. The default for everything else stays
+ * JSON because (a) most tools have nothing useful to stream, (b) JSON
+ * keeps the wire format simpler for ChatGPT / Claude debugging, and
+ * (c) flipping globally would also require reworking the close-in-
+ * finally cleanup in `handleMcpRequest`.
+ *
+ * Detection is by JSON-RPC method + `params.name` peeked from the
+ * inbound request body — see `isStreamingToolCall`. `initialize`,
+ * `tools/list`, and any non-listed tool stay on JSON mode.
+ */
+const STREAMING_TOOL_NAMES = new Set<string>(["wait_for_report"]);
+
+/**
  * Build a fresh `McpServer` with tako-mcp identity and register every tool
  * in `TOOL_REGISTRY` against it. Each handler closes over the per-request
  * `ToolContext` so tools see the right Bearer token + env bindings without
@@ -148,6 +166,123 @@ export function createMcpServer(
   }
 
   return server;
+}
+
+/**
+ * SDK `RequestHandlerExtra`-shaped subset that we read on every tool
+ * call. Typed loosely so future SDK additions don't need a matching
+ * change here — we only touch `signal`, `_meta.progressToken`, and
+ * `sendNotification`.
+ */
+type ToolCallExtra = {
+  signal?: AbortSignal;
+  _meta?: { progressToken?: string | number } & Record<string, unknown>;
+  sendNotification?: (notification: {
+    method: string;
+    params?: Record<string, unknown>;
+  }) => Promise<void>;
+};
+
+/**
+ * Build the per-CALL `ToolContext` from the per-REQUEST `ctx` plus the
+ * SDK's `extra`. The added pieces:
+ *
+ *   - `signal` flows through directly so long-running tools can abort
+ *     their HTTP work when the client cancels.
+ *   - `sendProgress` wraps `extra.sendNotification` into a `notifications/
+ *     progress` emitter, but only when the client supplied a
+ *     `_meta.progressToken` on the request (the spec requires it). Each
+ *     emission auto-increments a closure-local counter so callers don't
+ *     have to track monotonicity themselves; explicit `progress` values
+ *     in the params override the counter when provided.
+ *
+ * When there's no `progressToken`, `sendProgress` stays `undefined` —
+ * tools see it as "not supported" and skip emission. Same when
+ * `extra.sendNotification` isn't there (SDK version drift).
+ */
+function buildCallContext(base: ToolContext, extra: ToolCallExtra): ToolContext {
+  const progressToken = extra._meta?.progressToken;
+  const send = extra.sendNotification;
+  const sendProgress =
+    progressToken !== undefined && typeof send === "function"
+      ? buildProgressEmitter(progressToken, send)
+      : undefined;
+  // Diagnostic — drop once streaming UX is confirmed in both ChatGPT and
+  // claude.ai. Tells us per-call whether the client opted into progress
+  // notifications via `_meta.progressToken`. If this is always
+  // `present:false` for known clients, that's the silence cause.
+  console.log(
+    `[mcp] buildCallContext progressToken=${
+      progressToken !== undefined ? "present" : "absent"
+    } sendNotification=${typeof send === "function" ? "present" : "absent"}`,
+  );
+  return {
+    ...base,
+    ...(extra.signal !== undefined ? { signal: extra.signal } : {}),
+    ...(sendProgress !== undefined ? { sendProgress } : {}),
+  };
+}
+
+function buildProgressEmitter(
+  progressToken: string | number,
+  send: NonNullable<ToolCallExtra["sendNotification"]>,
+): NonNullable<ToolContext["sendProgress"]> {
+  // Per MCP spec, `progress` must increase monotonically per token.
+  // We mint values from a closure-local counter so callers don't have
+  // to track it; an explicit `progress` in params still wins (lets a
+  // tool report a real percentage if it has one).
+  let counter = 0;
+  return async (params) => {
+    const progress = params.progress ?? ++counter;
+    const notification: {
+      method: string;
+      params: Record<string, unknown>;
+    } = {
+      method: "notifications/progress",
+      params: { progressToken, progress },
+    };
+    if (params.total !== undefined) notification.params.total = params.total;
+    if (params.message !== undefined)
+      notification.params.message = params.message;
+    await send(notification);
+  };
+}
+
+/**
+ * Peek at an inbound `/mcp` request body to decide whether the call
+ * should be served over SSE mode (mid-call notifications can flow) vs.
+ * JSON mode (single buffered response).
+ *
+ * Returns true only for a `tools/call` whose target tool is in
+ * `STREAMING_TOOL_NAMES`. Anything we can't parse, or anything that
+ * isn't a `tools/call`, falls through to the JSON-mode default — same
+ * behavior as before this method existed, so non-streaming tools and
+ * `initialize` / `tools/list` are unaffected.
+ *
+ * Batches: if any message in the batch is a streaming `tools/call`,
+ * the whole batch goes SSE. Mixing modes within one HTTP request isn't
+ * possible (the transport is constructed once per request); SSE is
+ * the strict superset, so it's the safe choice.
+ */
+function isStreamingToolCall(bodyText: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return false;
+  }
+  if (Array.isArray(parsed)) return parsed.some(isStreamingMessage);
+  return isStreamingMessage(parsed);
+}
+
+function isStreamingMessage(msg: unknown): boolean {
+  if (typeof msg !== "object" || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  if (m.method !== "tools/call") return false;
+  const params = m.params;
+  if (typeof params !== "object" || params === null) return false;
+  const name = (params as Record<string, unknown>).name;
+  return typeof name === "string" && STREAMING_TOOL_NAMES.has(name);
 }
 
 /**
@@ -352,13 +487,31 @@ function registerTool(
     };
   }
 
-  server.registerTool(
-    tool.name,
-    config as Parameters<McpServer["registerTool"]>[1],
-    async (input) => {
+  // The SDK's `registerTool` overload is `cb: ToolCallback<InputArgs>`,
+  // where `InputArgs` is inferred from `config.inputSchema`. Casting
+  // `config` through `Parameters<...>[1]` erases that generic — TS then
+  // resolves the overload with `InputArgs = undefined`, which expects a
+  // 1-arg callback `(extra) => ...`. The runtime SDK always invokes
+  // callbacks with `(args, extra)` regardless, so the 2-arg form is
+  // correct; we cast through `unknown` to bypass the lost generic.
+  type RegisterToolCb = Parameters<McpServer["registerTool"]>[2];
+  const callback = (async (input: unknown, extra: ToolCallExtra) => {
+      // Thread the SDK's per-call `extra` (request-scoped) onto the
+      // per-request `ctx` (transport-scoped). Two pieces matter:
+      //
+      //   - `extra.signal` lets long-running tools (the SSE consumer in
+      //     `wait_for_report`) tear down on client cancellation.
+      //   - `extra.sendNotification`, paired with `extra._meta.progressToken`
+      //     when present, becomes `ctx.sendProgress` — so tools can emit
+      //     `notifications/progress` events to the client mid-call.
+      //     In JSON-response transport mode this is a silent no-op (the
+      //     SDK drops notifications when there's no SSE stream to write
+      //     to); in SSE mode they reach the client. Tools call it
+      //     unconditionally and let the transport decide.
+      const callCtx = buildCallContext(ctx, extra);
       let output: unknown;
       try {
-        output = await tool.handler(input as unknown, ctx);
+        output = await tool.handler(input as unknown, callCtx);
       } catch (err) {
         // Map Django transport failures to a structured `isError: true`
         // result so MCP clients can distinguish "your token was rejected"
@@ -400,8 +553,8 @@ function registerTool(
         ui === undefined
       ) {
         try {
-          const extra = await tool.extraContentBlocks(output, ctx);
-          content.push(...extra);
+          const blocks = await tool.extraContentBlocks(output, callCtx);
+          content.push(...blocks);
         } catch (err) {
           console.error(
             `extraContentBlocks hook failed for ${tool.name}:`,
@@ -421,7 +574,7 @@ function registerTool(
       let resultMeta: Record<string, unknown> | undefined;
       if (tool.extraMeta !== undefined) {
         try {
-          resultMeta = await tool.extraMeta(output, ctx);
+          resultMeta = await tool.extraMeta(output, callCtx);
         } catch (err) {
           console.error(`extraMeta hook failed for ${tool.name}:`, err);
         }
@@ -468,7 +621,11 @@ function registerTool(
         result._meta = resultMeta;
       }
       return result;
-    },
+    }) satisfies (input: unknown, extra: ToolCallExtra) => Promise<unknown>;
+  server.registerTool(
+    tool.name,
+    config as Parameters<McpServer["registerTool"]>[1],
+    callback as unknown as RegisterToolCb,
   );
 }
 
@@ -543,9 +700,12 @@ function djangoErrorKind(err: DjangoError): string {
  * unauthenticated traffic. `initialize` requires auth too; MCP clients are
  * expected to be configured with a Tako API token before they connect.
  *
- * `enableJsonResponse: true` makes the transport return a single JSON-RPC
- * response body instead of an SSE stream, which keeps the wire format simple
- * for the common request/response case.
+ * Transport mode is decided per request by peeking at the JSON-RPC body
+ * (see `isStreamingToolCall`). Tools that emit progress notifications
+ * (`wait_for_report`) get SSE mode so notifications can flow on the open
+ * response; everything else stays on JSON-response mode where the
+ * response is buffered and returned as a single body — simpler wire
+ * format for the common request/response case.
  */
 export async function handleMcpRequest(
   request: Request,
@@ -577,6 +737,20 @@ export async function handleMcpRequest(
 
   const ctx: ToolContext = { token, env };
 
+  // Read the request body up-front so we can (a) decide whether this
+  // call needs SSE-mode transport based on the target tool name, and
+  // (b) hand a fresh Request to the SDK (Request bodies can only be
+  // consumed once). The peek is cheap — JSON.parse on a small body —
+  // and any parse failure falls through to JSON-mode default, which
+  // is the existing behavior.
+  const bodyText = await request.text();
+  const useSseMode = isStreamingToolCall(bodyText);
+  const sdkRequest = new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: bodyText,
+  });
+
   try {
     // Use the request's own origin as the icon base, so each deployed
     // env (mcp.tako.com, mcp.staging.tako.com, *.workers.dev) advertises
@@ -597,23 +771,28 @@ export async function handleMcpRequest(
     // model (no persistent per-session state) and keeps each request
     // self-contained.
     const transport = new WebStandardStreamableHTTPServerTransport({
-      enableJsonResponse: true,
+      enableJsonResponse: !useSseMode,
     });
 
     await server.connect(transport);
+
+    if (useSseMode) {
+      // SSE mode: `handleRequest` returns a Response with a
+      // ReadableStream body BEFORE the tool handler finishes. The
+      // stream is written to as the handler runs, then closed by the
+      // SDK's internal cleanup when the handler returns. Calling
+      // `transport.close()` ourselves here would abort that
+      // in-flight stream — so we don't. Workers GC frees the
+      // request-scoped state once the response stream completes.
+      return await transport.handleRequest(sdkRequest);
+    }
+
     try {
-      return await transport.handleRequest(request);
+      return await transport.handleRequest(sdkRequest);
     } finally {
-      // TODO(Phase 2): revisit this unconditional close.
-      //
-      // Safe today ONLY because `enableJsonResponse: true` buffers the full
-      // response before `handleRequest` resolves — there is no in-flight SSE
-      // stream for `transport.close()` to truncate.
-      //
-      // When Phase 2 introduces tools that stream results over SSE, this
-      // `finally` will clear `_streamMapping` and abort the stream before
-      // the client has read it. Likely fix: move to on-error close only and
-      // rely on Workers GC at request completion to release resources.
+      // JSON mode only: `handleRequest` buffers the full response
+      // before resolving, so closing here is safe — there is no
+      // in-flight SSE stream to truncate.
       await transport.close();
       await server.close();
     }
