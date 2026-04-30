@@ -27,6 +27,7 @@ import knowledge_search, { __test_only__ } from "./knowledge_search.js";
 import {
   bodyOf,
   jsonResponse,
+  mockFetchOnce,
   mockFetchSequence,
   requestFrom,
 } from "./__test_helpers.js";
@@ -575,5 +576,336 @@ describe("knowledge_search async-task polling (TAKO-2686)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// Minimal valid PNG bytes for `parsePngDimensions` — signature + IHDR
+// length prefix + IHDR type + width (900) + height (720). Just enough
+// bytes to pass the byteLength >= 24 + signature checks and parse
+// dimensions. Real Tako chart PNGs are 50-300 KB; we don't need
+// realism here, just a header that the parser accepts.
+const MINIMAL_VALID_PNG = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // signature
+  0x00, 0x00, 0x00, 0x0d, // IHDR length = 13
+  0x49, 0x48, 0x44, 0x52, // "IHDR"
+  0x00, 0x00, 0x03, 0x84, // width = 900
+  0x00, 0x00, 0x02, 0xd0, // height = 720
+]);
+
+function pngResponse(bytes: Uint8Array, contentType = "image/png"): Response {
+  return new Response(bytes, {
+    status: 200,
+    headers: { "content-type": contentType },
+  });
+}
+
+// Output shape with the auto-chain fields populated, used as input to
+// extraMeta / extraContentBlocks tests. Mirrors what the handler
+// produces when results[0].card_id exists.
+function autoChainOutput(): {
+  results: Array<{
+    card_id: string | null;
+    title: string | null;
+    description: string | null;
+    url: string | null;
+    source: string | null;
+  }>;
+  count: number;
+  pub_id: string;
+  embed_url: string;
+  image_url: string;
+  dark_mode: boolean;
+  width: number;
+  height: number;
+} {
+  return {
+    results: [
+      {
+        card_id: "top-1",
+        title: "Top",
+        description: null,
+        url: null,
+        source: null,
+      },
+    ],
+    count: 1,
+    pub_id: "top-1",
+    embed_url: "https://staging.trytako.com/embed/top-1/?theme=dark",
+    image_url: "https://staging.trytako.com/api/v1/image/top-1/?dark_mode=true",
+    dark_mode: true,
+    width: 900,
+    height: 720,
+  };
+}
+
+describe("knowledge_search auto-chain top-result chart fields", () => {
+  // Handler-side: when the top card has a card_id, the handler lifts
+  // pub_id / embed_url / image_url / dark_mode / width / height to the
+  // output root so the chart widget can read them with the same key
+  // paths it uses for `open_chart_ui`. This is what makes the auto-chain
+  // observable to the host's widget bundle without a second tool call.
+
+  it("lifts top card's pub_id, embed_url, image_url, and chart defaults to the output root when top card has card_id", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        outputs: {
+          knowledge_cards: [
+            {
+              card_id: "aapl-price",
+              title: "AAPL Stock Price",
+              description: null,
+              url: null,
+              source: null,
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const out = await knowledge_search.handler(
+      { query: "AAPL stock price", ...DEFAULTS },
+      CTX,
+    );
+
+    expect(out.pub_id).toBe("aapl-price");
+    expect(out.embed_url).toBe(
+      "https://staging.trytako.com/embed/aapl-price/?theme=dark",
+    );
+    expect(out.image_url).toBe(
+      "https://staging.trytako.com/api/v1/image/aapl-price/?dark_mode=true",
+    );
+    // Defaults match `open_chart_ui` so a follow-up explicit render
+    // produces a visually identical chart.
+    expect(out.dark_mode).toBe(true);
+    expect(out.width).toBe(900);
+    expect(out.height).toBe(720);
+  });
+
+  it("uses results[0] unconditionally when multiple cards are returned (top-only auto-render)", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        outputs: {
+          knowledge_cards: [
+            {
+              card_id: "first",
+              title: "First",
+              description: null,
+              url: null,
+              source: null,
+            },
+            {
+              card_id: "second",
+              title: "Second",
+              description: null,
+              url: null,
+              source: null,
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const out = await knowledge_search.handler(
+      { query: "anything", ...DEFAULTS },
+      CTX,
+    );
+
+    expect(out.pub_id).toBe("first");
+    expect(out.embed_url).toContain("/embed/first/");
+    expect(out.results).toHaveLength(2);
+  });
+
+  it("omits chart fields when no card has a card_id", async () => {
+    // Edge case: knowledge_cards came back but every card_id is null
+    // (rare metadata-only result). No chart to render — output stays
+    // text-only.
+    mockFetchSequence([
+      jsonResponse(200, {
+        outputs: {
+          knowledge_cards: [
+            {
+              card_id: null,
+              title: "Metadata only",
+              description: null,
+              url: null,
+              source: null,
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const out = await knowledge_search.handler(
+      { query: "x", search_effort: "fast", ...DEFAULTS },
+      CTX,
+    );
+
+    expect(out.pub_id).toBeUndefined();
+    expect(out.embed_url).toBeUndefined();
+    expect(out.image_url).toBeUndefined();
+    expect(out.results).toHaveLength(1);
+  });
+
+  it("omits chart fields when results are empty", async () => {
+    // Caller forced `fast` and got nothing — no top card, no auto-render.
+    // (Implicit fast→deep escalation is covered elsewhere; here we just
+    // verify the no-results branch.)
+    mockFetchSequence([
+      jsonResponse(200, { outputs: { knowledge_cards: [] } }),
+    ]);
+
+    const out = await knowledge_search.handler(
+      { query: "obscure", search_effort: "fast", ...DEFAULTS },
+      CTX,
+    );
+
+    expect(out.pub_id).toBeUndefined();
+    expect(out.embed_url).toBeUndefined();
+    expect(out.results).toEqual([]);
+  });
+});
+
+describe("knowledge_search extraMeta", () => {
+  // `extraMeta` ships the top chart's PNG as a `data:` URI on `_meta`
+  // (kept off the LLM's context window) along with the source PNG's
+  // natural pixel dimensions. The widget reads these for the
+  // image-baked render path on hosts whose CSP rejects cross-origin
+  // imgs (claude.ai). All failure modes degrade silently to undefined
+  // so the tool call still resolves — the widget falls through to its
+  // existing `image_url` path.
+
+  it("inlines the PNG as a data:image URI and parses its natural dimensions when image_url is present", async () => {
+    mockFetchOnce(pngResponse(MINIMAL_VALID_PNG));
+
+    const meta = await knowledge_search.extraMeta!(autoChainOutput(), CTX);
+
+    expect(meta).toBeDefined();
+    expect(meta).toMatchObject({
+      image_natural_width: 900,
+      image_natural_height: 720,
+    });
+    expect((meta as { image_data_url: string }).image_data_url).toMatch(
+      /^data:image\/png;base64,/,
+    );
+  });
+
+  it("returns undefined when the output has no image_url (no top card to render)", async () => {
+    // No top card → handler omits image_url → extraMeta has nothing
+    // to fetch. Must NOT call fetch — a stray fetch with `undefined`
+    // URL would throw.
+    const meta = await knowledge_search.extraMeta!(
+      {
+        results: [],
+        count: 0,
+      } as unknown as Parameters<typeof knowledge_search.extraMeta>[0],
+      CTX,
+    );
+
+    expect(meta).toBeUndefined();
+  });
+
+  it("returns undefined when the PNG endpoint fails (silent degradation, no exception)", async () => {
+    mockFetchOnce(new Response("not found", { status: 404 }));
+
+    const meta = await knowledge_search.extraMeta!(autoChainOutput(), CTX);
+
+    expect(meta).toBeUndefined();
+  });
+});
+
+describe("knowledge_search extraContentBlocks", () => {
+  // `extraContentBlocks` runs only when the widget is suppressed (the
+  // skip-when-ui-set rule in mcp.ts). On those hosts we emit the chart
+  // as a native MCP image block so the user still sees it inline
+  // without a click-to-load gate.
+
+  it("returns one image content block with the top chart's PNG when image_url is present", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    mockFetchOnce(pngResponse(png));
+
+    const blocks = await knowledge_search.extraContentBlocks!(
+      autoChainOutput(),
+      CTX,
+    );
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: "image",
+      mimeType: "image/png",
+    });
+  });
+
+  it("returns [] when the output has no image_url (no top card to render)", async () => {
+    const blocks = await knowledge_search.extraContentBlocks!(
+      {
+        results: [],
+        count: 0,
+      } as unknown as Parameters<
+        typeof knowledge_search.extraContentBlocks
+      >[0],
+      CTX,
+    );
+
+    expect(blocks).toEqual([]);
+  });
+
+  it("returns [] when the PNG endpoint fails (silent degradation)", async () => {
+    mockFetchOnce(new Response("not found", { status: 404 }));
+
+    const blocks = await knowledge_search.extraContentBlocks!(
+      autoChainOutput(),
+      CTX,
+    );
+
+    expect(blocks).toEqual([]);
+  });
+});
+
+describe("knowledge_search appUiResource", () => {
+  // `knowledge_search` shares the chart widget bundle with
+  // `open_chart_ui` — same URI, same HTML. mcp.ts dedupes the
+  // duplicate registration so the SDK doesn't throw `Resource ... is
+  // already registered`. The dynamic resolver differs: knowledge_search
+  // reads the pub_id from the handler's *output* (results[0].card_id)
+  // because its input is a query, not a pub_id.
+
+  it("registers the same widget URI as open_chart_ui (so both tools share one bundle)", () => {
+    const ui = knowledge_search.appUiResource!(ENV);
+    expect(ui.uri).toBe("ui://tako/embed/chart");
+    expect(ui.name).toBe("open_chart_ui_widget");
+    // CSP allow-list pinned to env's web base, same as open_chart_ui.
+    expect(ui.frameDomains).toEqual(["https://staging.trytako.com"]);
+  });
+
+  it("dynamic.resolveUriFromInput reads pub_id from output.pub_id (not input)", () => {
+    const ui = knowledge_search.appUiResource!(ENV);
+    const uri = ui.dynamic!.resolveUriFromInput(
+      { query: "anything", count: 5, country_code: "US", locale: "en-US" },
+      autoChainOutput(),
+    );
+    expect(uri).toBe("ui://tako/embed/chart/top-1");
+  });
+
+  it("dynamic.resolveUriFromInput falls back to the static URI when output has no pub_id", () => {
+    // Called pre-handler-result (e.g. test-time validation, or a tool
+    // call that produced no top card) — must not throw, must return a
+    // URI that resolves to a registered resource.
+    const ui = knowledge_search.appUiResource!(ENV);
+    const uri = ui.dynamic!.resolveUriFromInput(
+      { query: "anything", count: 5, country_code: "US", locale: "en-US" },
+      undefined,
+    );
+    expect(uri).toBe("ui://tako/embed/chart");
+  });
+
+  it("dynamic.resolveUriFromInput URL-encodes the pub_id", () => {
+    const ui = knowledge_search.appUiResource!(ENV);
+    const uri = ui.dynamic!.resolveUriFromInput(
+      { query: "anything", count: 5, country_code: "US", locale: "en-US" },
+      { ...autoChainOutput(), pub_id: "weird/id with space" },
+    );
+    expect(uri).toBe(
+      "ui://tako/embed/chart/weird%2Fid%20with%20space",
+    );
   });
 });
