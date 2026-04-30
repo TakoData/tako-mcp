@@ -73,13 +73,16 @@ import type {
 //      to bump their timeout for deep searches.
 //
 // Sizing math: `2 + ceil(POLL_BUDGET_MS / POLL_INTERVAL_MS) +
-// MAX_TRANSIENT_RETRIES ≤ 50` (worst case is fast POST → deep POST →
-// status GETs + a small retry budget for transient blips). With 10s
-// polls, a 290s budget, and 2 retries that's `2 + 29 + 2 = 33
-// subrequests` — under the cap with ~17 slots of headroom. The 10s
-// interval is fine because explicit `search_effort: "deep"` is inherently
-// long-running (Orca pipeline routinely runs 60-300s); a 10s detection
-// delta on completion is irrelevant against that wait.
+// MAX_TRANSIENT_RETRIES + 1 ≤ 50` (worst case is fast POST → deep POST
+// → status GETs + a small retry budget for transient blips + the
+// auto-chain chart PNG fetch). With 10s polls, a 290s budget, 2
+// retries, and one PNG fetch from either `extraMeta` (widget-active
+// host) or `extraContentBlocks` (widget-suppressed host) — never both,
+// gated by `mcp.ts` — that's `2 + 29 + 2 + 1 = 34 subrequests`, under
+// the cap with ~16 slots of headroom. The 10s interval is fine because
+// explicit `search_effort: "deep"` is inherently long-running (Orca
+// pipeline routinely runs 60-300s); a 10s detection delta on completion
+// is irrelevant against that wait.
 const POLL_INTERVAL_MS = 10_000;
 const POLL_BUDGET_MS = 290_000;
 const STATUS_REQUEST_TIMEOUT_MS = 10_000;
@@ -369,7 +372,7 @@ const knowledge_search = {
     title: "Tako: Live Data & Charts",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
   },
   async handler(input, ctx) {
     const runSearch = async (

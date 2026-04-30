@@ -261,6 +261,57 @@ describe("worker routing", () => {
     expect(item.text).toContain("tako-embed");
   });
 
+  it("POST /mcp tools/call from claude.ai (widget suppressed) skips extraMeta image_data_url", async () => {
+    // Regression test for the `extraMeta` gating: when the widget is
+    // suppressed (claude.ai User-Agent), `mcp.ts` must NOT call the
+    // tool's `extraMeta` hook. Otherwise the worker fires a redundant
+    // PNG fetch (the same one `extraContentBlocks` already does on
+    // suppressed hosts) and inflates the JSON-RPC response with a
+    // ~330 KB unused `image_data_url` data URI that no widget will
+    // read.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "claude-mcp-client/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "open_chart_ui",
+          arguments: { pub_id: "abc123" },
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        content: Array<{ type: string }>;
+        _meta?: Record<string, unknown>;
+      };
+    };
+    // `extraContentBlocks` is the path claude.ai uses for inline
+    // rendering — it fires on suppressed hosts. The PNG fetch will
+    // fail in the test env (localhost:8000 unreachable), so the
+    // resulting array is empty and no image content block is appended.
+    // What we're locking in here is the `_meta` shape: no
+    // `image_data_url` key, which would only be set by `extraMeta`.
+    // `_meta` may be entirely absent (no widget metadata + no
+    // `extraMeta` payload = empty), or present with only the dynamic
+    // resolver entries — assert against either shape via optional
+    // chaining.
+    expect(body.result._meta?.image_data_url).toBeUndefined();
+    // The widget metadata wiring (`_meta["openai/outputTemplate"]` etc.)
+    // is also gated on `ui !== undefined`, so suppressed-host calls
+    // come back without those keys too. Sanity-check the gate still
+    // covers the whole `ui` block, not just `extraMeta`.
+    expect(body.result._meta?.["openai/outputTemplate"]).toBeUndefined();
+  });
+
   it("POST /mcp tools/call invokes the registered handler and surfaces structuredContent", async () => {
     // `open_chart_ui` is a pure URL/HTML builder — no Django fetch, so we can
     // exercise the full SDK → registry → handler path without mocking the

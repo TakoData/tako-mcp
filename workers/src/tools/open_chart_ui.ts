@@ -21,10 +21,11 @@
  * chain.
  *
  * Subrequest cost: one extra outbound `fetch` to the PNG endpoint per
- * tool call (via `extraMeta`'s `fetchImageDataUrlAndDims` and, on
- * widget-suppressed hosts, `extraContentBlocks`'s `fetchPngContentBlock`
- * — they're mutually exclusive). Within Workers' 50/1000 cap with
- * plenty of headroom.
+ * tool call. `mcp.ts` gates `extraMeta` on `ui !== undefined` and
+ * `extraContentBlocks` on `ui === undefined`, so each call hits exactly
+ * one of `fetchImageDataUrlAndDims` (widget-active hosts) or
+ * `fetchPngContentBlock` (widget-suppressed hosts) — never both. Within
+ * Workers' 50/1000 cap with plenty of headroom.
  */
 import { z } from "zod";
 

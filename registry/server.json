@@ -208,7 +208,7 @@
         "title": "Tako: Live Data & Charts",
         "readOnlyHint": true,
         "destructiveHint": false,
-        "openWorldHint": true
+        "openWorldHint": false
       }
     },
     {

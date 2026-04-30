@@ -834,9 +834,11 @@ export async function fetchImageDataUrlAndDims(
     if (buffer.byteLength > MAX_INLINE_DATA_URL_BYTES) return undefined;
     const dims = parsePngDimensions(buffer);
     if (dims === undefined) return undefined;
-    const mime = contentType.split(";")[0]!.trim();
+    // `parsePngDimensions` validated the PNG signature (89 50 4E 47…),
+    // so the buffer is always `image/png` by here — no need to derive
+    // the MIME type from the response header.
     return {
-      dataUrl: `data:${mime};base64,${arrayBufferToBase64(buffer)}`,
+      dataUrl: `data:image/png;base64,${arrayBufferToBase64(buffer)}`,
       naturalWidth: dims.width,
       naturalHeight: dims.height,
     };

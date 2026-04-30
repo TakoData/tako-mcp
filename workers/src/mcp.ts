@@ -463,8 +463,19 @@ function registerTool(
       // an inline base64 PNG too large to fit in `structuredContent`
       // without tripping claude.ai's "tool result too large for
       // context" guard.
+      //
+      // Gated on `ui !== undefined` — the inverse of `extraContentBlocks`
+      // above. Both chart-bearing tools (`open_chart_ui`,
+      // `knowledge_search`) use `extraMeta` exclusively to ship
+      // `image_data_url` for the widget to read via `params._meta`.
+      // When the widget is suppressed (claude.ai), no widget will
+      // consume `_meta`, so running this hook would (a) burn an extra
+      // PNG `fetch` (the same one `extraContentBlocks` also does on
+      // those hosts), and (b) inflate the JSON-RPC response with a
+      // ~330 KB unused data URL. Skipping when there's no widget keeps
+      // the per-call PNG fetches at exactly one regardless of host.
       let resultMeta: Record<string, unknown> | undefined;
-      if (tool.extraMeta !== undefined) {
+      if (tool.extraMeta !== undefined && ui !== undefined) {
         try {
           resultMeta = await tool.extraMeta(output, ctx);
         } catch (err) {

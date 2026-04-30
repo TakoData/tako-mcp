@@ -681,7 +681,7 @@ describe("knowledge_search auto-chain top-result chart fields", () => {
     expect(out.height).toBe(720);
   });
 
-  it("uses the FIRST card with a card_id when multiple are returned (top-only auto-render)", async () => {
+  it("uses results[0] unconditionally when multiple cards are returned (top-only auto-render)", async () => {
     mockFetchSequence([
       jsonResponse(200, {
         outputs: {
