@@ -126,6 +126,28 @@
       }
     },
     {
+      "name": "export_report",
+      "description": "Use this when the user explicitly asks to export, download, or save a completed Tako report in a specific file format (Markdown, JSON, PDF, or PowerPoint). The report MUST be `status === \"completed\"` — if it isn't, this tool will return an error; call `wait_for_report` first. **Returning the file:** for `markdown` and `json`, the `content` field has the text — surface it to the user (paste markdown into your reply or summarize JSON). For `pdf` and `powerpoint`, `content_base64` carries the file (with `byte_size` and `content_type`); since chat clients don't reliably render binary downloads inline, tell the user the file size + format and ALSO share the report's `webpage_url` so they can download from the Tako web UI's Export menu. Do NOT call this proactively after `create_report` or `get_report` — only when the user asks for an export. If the user just wants to read the report, share `webpage_url` instead — no export needed.",
+      "parameters": {
+        "report_id": {
+          "type": "string",
+          "description": "Report ID returned from create_report or list_reports.",
+          "required": true
+        },
+        "format": {
+          "type": "string",
+          "description": "File format to export. `markdown` and `json` come back as text in `content`; `pdf` and `powerpoint` come back as base64 in `content_base64`. Maps to the Tako web Export menu options.",
+          "required": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Export Report",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
       "name": "get_chart_image",
       "description": "Use this when you need a static preview image URL of a chart to display or embed. Returns a direct URL to a PNG. Useful for including chart previews in responses or documents.",
       "parameters": {
