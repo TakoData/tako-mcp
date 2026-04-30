@@ -143,8 +143,24 @@ export function createMcpServer(
     },
   );
 
+  // Dedupe state for `appUiResource` registration — multiple tools can
+  // declare the same widget URI (e.g. `open_chart_ui` and
+  // `knowledge_search` both register `ui://tako/embed/chart` so they
+  // share one bundle). The MCP SDK's `registerResource` throws
+  // `Resource <uri> is already registered` on a duplicate URI, and
+  // similarly throws on a duplicate template name. The Sets here let
+  // each tool still get its `_meta.ui.resourceUri` wired into the
+  // tool registration while skipping the redundant `registerResource`
+  // call after the first.
+  const registeredResourceUris = new Set<string>();
+  const registeredTemplateNames = new Set<string>();
+
   for (const tool of TOOL_REGISTRY) {
-    registerTool(server, tool, ctx, { client: options.client ?? "unknown" });
+    registerTool(server, tool, ctx, {
+      client: options.client ?? "unknown",
+      registeredResourceUris,
+      registeredTemplateNames,
+    });
   }
 
   return server;
@@ -163,7 +179,24 @@ function registerTool(
   server: McpServer,
   tool: AnyToolModule,
   ctx: ToolContext,
-  options: { client: McpClientKind },
+  options: {
+    client: McpClientKind;
+    /**
+     * Set of `appUiResource` URIs already registered with the SDK on
+     * this `McpServer` instance. Tools whose `appUiResource.uri`
+     * matches an entry here skip the second `server.registerResource`
+     * call (the SDK throws on duplicates) but still get their
+     * tool-registration `_meta.ui.resourceUri` wired in. Required as
+     * soon as more than one tool ships a widget on the same URI.
+     */
+    registeredResourceUris: Set<string>;
+    /**
+     * Same idea for the dynamic-resource template — the SDK throws
+     * `Resource template <name> is already registered` if two tools
+     * share `appUiResource.dynamic.templateName`.
+     */
+    registeredTemplateNames: Set<string>;
+  },
 ): void {
   // SDK's `registerTool` takes `ZodRawShape` (the `.shape` of a z.object),
   // not a full ZodObject — pull `.shape` here so tool files don't have to.
@@ -253,38 +286,46 @@ function registerTool(
     //      and the inner `<iframe src="https://tako.com/embed/…">` is
     //      blocked even though the registration metadata declared the
     //      domain.
-    server.registerResource(
-      ui.name,
-      ui.uri,
-      {
-        // Per the MCP Apps spec: the host gates UI rendering on this
-        // exact MIME type. Plain "text/html" is treated as a normal
-        // resource and won't be sandbox-rendered as a widget.
-        mimeType: APP_UI_MIME_TYPE,
-        ...(Object.keys(uiMeta).length > 0 ? { _meta: { ui: uiMeta } } : {}),
-      },
-      // Static bundle — no per-request templating. The widget reads its
-      // chart-specific data (pub_id, embed_url, dark_mode, …) from each
-      // `tools/call` result via either `window.openai.toolOutput`
-      // (ChatGPT) or a `ui/notifications/tool-result` postMessage
-      // (claude.ai), so the same bundle serves every chart.
-      async (uri) => {
-        const contentItem: {
-          uri: string;
-          mimeType: string;
-          text: string;
-          _meta?: Record<string, unknown>;
-        } = {
-          uri: uri.toString(),
+    // Dedupe the static URI registration. The SDK throws on a second
+    // `registerResource(name, uri, ...)` call for an already-registered
+    // URI, but the per-tool `_meta.ui.resourceUri` wiring further down
+    // still needs to happen for every tool that declares the widget —
+    // so we just gate the resource registration here.
+    if (!options.registeredResourceUris.has(ui.uri)) {
+      options.registeredResourceUris.add(ui.uri);
+      server.registerResource(
+        ui.name,
+        ui.uri,
+        {
+          // Per the MCP Apps spec: the host gates UI rendering on this
+          // exact MIME type. Plain "text/html" is treated as a normal
+          // resource and won't be sandbox-rendered as a widget.
           mimeType: APP_UI_MIME_TYPE,
-          text: ui.html,
-        };
-        if (Object.keys(uiMeta).length > 0) {
-          contentItem._meta = { ui: uiMeta };
-        }
-        return { contents: [contentItem] };
-      },
-    );
+          ...(Object.keys(uiMeta).length > 0 ? { _meta: { ui: uiMeta } } : {}),
+        },
+        // Static bundle — no per-request templating. The widget reads its
+        // chart-specific data (pub_id, embed_url, dark_mode, …) from each
+        // `tools/call` result via either `window.openai.toolOutput`
+        // (ChatGPT) or a `ui/notifications/tool-result` postMessage
+        // (claude.ai), so the same bundle serves every chart.
+        async (uri) => {
+          const contentItem: {
+            uri: string;
+            mimeType: string;
+            text: string;
+            _meta?: Record<string, unknown>;
+          } = {
+            uri: uri.toString(),
+            mimeType: APP_UI_MIME_TYPE,
+            text: ui.html,
+          };
+          if (Object.keys(uiMeta).length > 0) {
+            contentItem._meta = { ui: uiMeta };
+          }
+          return { contents: [contentItem] };
+        },
+      );
+    }
     // Optional dynamic-resource variant. When defined, the same widget
     // also gets a `ResourceTemplate` registration, and per-call tool
     // results point claude.ai's `_meta.ui.resourceUri` at a specific
@@ -292,7 +333,11 @@ function registerTool(
     // chart's image + dimensions baked in at fetch time, sidestepping
     // claude.ai's "snapshot offsetHeight once on mount" behavior). See
     // `AppUiResource.dynamic` for the rationale.
-    if (ui.dynamic !== undefined) {
+    if (
+      ui.dynamic !== undefined &&
+      !options.registeredTemplateNames.has(ui.dynamic.templateName)
+    ) {
+      options.registeredTemplateNames.add(ui.dynamic.templateName);
       const dynamic = ui.dynamic;
       server.registerResource(
         dynamic.templateName,
@@ -440,7 +485,15 @@ function registerTool(
       // image-baked dynamic variant).
       if (ui?.dynamic !== undefined) {
         try {
-          const resolvedUri = ui.dynamic.resolveUriFromInput(input);
+          // Pass both `input` and `output` to the resolver — tools
+          // whose `pub_id` is part of the input (e.g. `open_chart_ui`)
+          // ignore `output`; tools that derive the chart pub_id from
+          // a search result (e.g. `knowledge_search` →
+          // `output.results[0].card_id`, lifted to `output.pub_id`)
+          // read it from `output`. Output is `unknown` here because
+          // `AnyToolModule` erases handler types at the registry
+          // boundary; resolvers narrow it themselves.
+          const resolvedUri = ui.dynamic.resolveUriFromInput(input, output);
           resultMeta = {
             ...(resultMeta ?? {}),
             ui: {

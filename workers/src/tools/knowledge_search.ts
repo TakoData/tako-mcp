@@ -34,7 +34,24 @@ import {
   djangoGet,
   djangoPost,
 } from "../django.js";
-import type { ToolContext, ToolModule } from "./types.js";
+import {
+  HTTP_URL_REGEX,
+  APP_UI_RESOURCE_URI,
+  APP_UI_TEMPLATE_URI_PATTERN,
+  DEFAULT_DARK_MODE,
+  DEFAULT_HEIGHT,
+  DEFAULT_WIDTH,
+  buildChartAppUiResource,
+  buildChartUrls,
+  fetchImageDataUrlAndDims,
+  fetchPngContentBlock,
+} from "./_chart_widget.js";
+import type {
+  AppUiResource,
+  ToolContext,
+  ToolContentBlock,
+  ToolModule,
+} from "./types.js";
 
 // Polling budget — exposed as module-level constants so vitest can fake the
 // surrounding timers. Three constraints intersect here:
@@ -126,6 +143,25 @@ const visualizationSchema = z.object({
 const outputSchema = z.object({
   results: z.array(visualizationSchema),
   count: z.number().int().nonnegative(),
+  // Auto-chain top-result chart fields. Present iff the top card has
+  // a non-empty `card_id`. Mirrors `open_chart_ui`'s output shape so
+  // the chart widget reads the same top-level keys (`embed_url`,
+  // `image_url`, `height`, …) on both tools without conditional
+  // logic. When absent (no card_id, empty results, no chart to
+  // render), the widget's existing "no embed_url and no image_url →
+  // leave placeholder" branch is the right thing.
+  pub_id: z.string().optional(),
+  embed_url: z
+    .string()
+    .regex(HTTP_URL_REGEX, { message: "embed_url must be http(s)" })
+    .optional(),
+  image_url: z
+    .string()
+    .regex(HTTP_URL_REGEX, { message: "image_url must be http(s)" })
+    .optional(),
+  dark_mode: z.boolean().optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
 });
 
 type KnowledgeCard = {
@@ -326,14 +362,14 @@ async function pollAsyncKnowledgeSearch(
 const knowledge_search = {
   name: "knowledge_search",
   description:
-    "Find existing Tako charts and live-data visualizations. **IMMEDIATELY after this returns, if the user asked to see / view / show / render / get a chart (e.g. \"give me a chart\", \"show AAPL\", \"chart the data\", or any compound request like \"price AND chart\"), you MUST also call `open_chart_ui` with the top result's `open_ui_args` BEFORE you reply to the user.** `open_chart_ui` is the only tool that actually renders the chart inline; writing \"Interactive chart:\" or pasting the URL renders nothing and forces the user to ask twice. Do not split a chart request across two turns — chain the calls in one turn. Default to calling this tool first whenever a user asks about any trend, comparison, statistic, current value, forecast, or betting/prediction-market odds, even if the topic seems outside traditional 'chart' categories — Tako's knowledge base covers economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, prediction markets (Polymarket), internet and app traffic (SimilarWeb), sports, real-estate, energy, health, and more, plus real-time / live data via the deep-research pipeline. Note: with `search_effort: \"deep\"` (and the default fast→deep auto-escalation when fast returns no cards) the call can run up to ~5 minutes server-side; MCP clients on the SDK default 60s timeout should pass `options.timeout` of at least 300_000 ms when invoking this tool, otherwise the client will abort before the deep result lands.",
+    "Answer factual questions and find live data with Tako's curated knowledge graph and deep-research pipeline. **Default to this tool BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events (e.g. \"next Raptors game\", \"when does X play\", \"upcoming election\", \"next Fed meeting\"), recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports (schedules, scores, stats, betting odds), economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, prediction markets (Polymarket), internet and app traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is both a structured factual answer and a chart. **This tool auto-renders the top result inline as a Tako chart** — the chart card appears in the user's chat as part of this same tool call, so you do NOT need to chain into `open_chart_ui`. Just narrate the data in your reply and reference the chart that's already shown (\"as the chart above shows\", \"see the chart for the trend\", etc.); do NOT paste the embed URL or echo `![…](image_url)` markdown for the top card — that re-displays the chart behind a click-to-load gate. **When `results.length > 1`, the top card is the one rendered**; mention the other titles by name in your reply (e.g. \"also available: GDP per capita, Unemployment Rate\") and tell the user they can ask to chart any of them — those follow-ups are routed through `open_chart_ui`. Note: with `search_effort: \"deep\"` (and the default fast→deep auto-escalation when fast returns no cards) the call can run up to ~5 minutes server-side; MCP clients on the SDK default 60s timeout should pass `options.timeout` of at least 300_000 ms when invoking this tool, otherwise the client will abort before the deep result lands.",
   inputSchema,
   outputSchema,
   annotations: {
-    title: "Tako: Search Charts",
+    title: "Tako: Live Data & Charts",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
   },
   async handler(input, ctx) {
     const runSearch = async (
@@ -389,7 +425,85 @@ const knowledge_search = {
       }
       return base;
     });
+    // Auto-chain: if the top card has a card_id, lift its chart URLs
+    // and defaults to the output root so the widget can render the
+    // chart inline as part of THIS tool call. Defaults (dark_mode,
+    // width, height) match `open_chart_ui`'s zod defaults so a
+    // follow-up explicit render produces a visually identical chart.
+    // No top card → omit the fields entirely; the widget falls
+    // through to its "no embed_url" placeholder, which is what the
+    // host showed before this auto-chain change.
+    const topCardId = results[0]?.card_id;
+    if (typeof topCardId === "string" && topCardId !== "") {
+      const { embed_url, image_url } = buildChartUrls(
+        ctx.env,
+        topCardId,
+        DEFAULT_DARK_MODE,
+      );
+      return {
+        results,
+        count: results.length,
+        pub_id: topCardId,
+        embed_url,
+        image_url,
+        dark_mode: DEFAULT_DARK_MODE,
+        width: DEFAULT_WIDTH,
+        height: DEFAULT_HEIGHT,
+      };
+    }
     return { results, count: results.length };
+  },
+  async extraMeta(output, _ctx): Promise<Record<string, unknown> | undefined> {
+    // Inline the top chart's PNG as a `data:` URI on `_meta` (kept
+    // off the LLM's context window per the MCP Apps spec) plus the
+    // source PNG's natural pixel dimensions. The widget reads these
+    // for the image-baked render path on hosts whose CSP rejects
+    // cross-origin imgs (claude.ai). When the handler didn't populate
+    // `image_url` (no top card / no card_id), we have nothing to
+    // fetch and skip silently.
+    void _ctx;
+    if (output.image_url === undefined) return undefined;
+    const fetched = await fetchImageDataUrlAndDims(output.image_url);
+    if (fetched === undefined) return undefined;
+    return {
+      image_data_url: fetched.dataUrl,
+      image_natural_width: fetched.naturalWidth,
+      image_natural_height: fetched.naturalHeight,
+    };
+  },
+  async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
+    // Inline the top chart's PNG as a native MCP image content block
+    // for hosts where the widget is suppressed (claude.ai for custom
+    // connectors, where the constrained iframe crops the chart). The
+    // image renders inline without the click-to-load gate that
+    // markdown image URLs trigger. mcp.ts's skip-when-widget-active
+    // rule already gates this call to widget-suppressed hosts only,
+    // so we don't need to detect the host here. Same silent-undefined
+    // guard as `extraMeta` for the no-top-card case.
+    void _ctx;
+    if (output.image_url === undefined) return [];
+    return fetchPngContentBlock(output.image_url);
+  },
+  appUiResource(env): AppUiResource {
+    return buildChartAppUiResource(env, (_input, output) => {
+      // `knowledge_search`'s pub_id is derived from the handler's
+      // output (`output.pub_id`, set when the top card has a
+      // card_id), NOT from input — its input is a search query.
+      // Pre-handler-result calls (and tool calls that produced no
+      // top card) fall back to the static URI so a registered
+      // resource always answers; the widget itself handles the
+      // no-chart case.
+      void _input;
+      const pubId =
+        typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
+          ? (output as { pub_id: string }).pub_id
+          : "";
+      if (pubId === "") return APP_UI_RESOURCE_URI;
+      return APP_UI_TEMPLATE_URI_PATTERN.replace(
+        "{pub_id}",
+        encodeURIComponent(pubId),
+      );
+    });
   },
 } satisfies ToolModule<typeof inputSchema, z.infer<typeof outputSchema>>;
 

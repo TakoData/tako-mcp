@@ -132,11 +132,22 @@ export interface AppUiResource {
       ctx: ToolContext,
     ) => Promise<string>;
     /**
-     * Build the resolved URI for a specific tool call from its input.
-     * Called by `mcp.ts` per `tools/call` to set `_meta.ui.resourceUri`.
-     * Should URL-encode any user-supplied substitution variables.
+     * Build the resolved URI for a specific tool call. Called by
+     * `mcp.ts` per `tools/call` to set `_meta.ui.resourceUri`. The
+     * resolver gets both the validated `input` and the handler's
+     * resolved `output`, so tools can choose the source: tools whose
+     * `pub_id` is part of the input (e.g. `open_chart_ui`) read it
+     * from `input`; tools that derive the chart pub_id from a search
+     * result (e.g. `knowledge_search` → `output.results[0].card_id`)
+     * read it from `output`. Should URL-encode any user-supplied
+     * substitution variables.
+     *
+     * `output` may be `undefined` when the resolver is called outside
+     * of a tool result (e.g. during pre-registration validation in
+     * tests); resolvers should fall back to a sensible default URI in
+     * that case.
      */
-    resolveUriFromInput: (input: unknown) => string;
+    resolveUriFromInput: (input: unknown, output?: unknown) => string;
   };
 }
 
