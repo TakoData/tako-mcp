@@ -30,31 +30,6 @@ export interface ToolContext {
   token: string;
   /** Cloudflare Workers env bindings (`DJANGO_BASE_URL` etc.). */
   env: Env;
-  /**
-   * Best-effort emitter for MCP `notifications/progress`. Set in
-   * `mcp.ts` per request when (a) the inbound `tools/call` carried a
-   * `_meta.progressToken` AND (b) the transport is in SSE mode (JSON-
-   * response mode can't deliver mid-call notifications). Tools call it
-   * opportunistically — when undefined the call is a no-op, so handlers
-   * never need to null-check at every emission site.
-   *
-   * Errors during emission (closed transport, write race) are swallowed
-   * by the caller in `mcp.ts`'s wrapper — losing one progress crumb is
-   * strictly preferable to aborting an in-flight tool call.
-   */
-  sendProgress?: (params: {
-    progress?: number;
-    total?: number;
-    message?: string;
-  }) => Promise<void>;
-  /**
-   * Abort signal from the MCP transport, fired when the client cancels
-   * the in-flight request (e.g. user navigated away from the chat,
-   * tool-call timeout). Long-running tools (SSE consumers, polling
-   * loops) should propagate this to their HTTP calls so abandoned tool
-   * calls don't keep Django connections open.
-   */
-  signal?: AbortSignal;
 }
 
 /**
