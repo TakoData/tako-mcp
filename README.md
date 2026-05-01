@@ -92,6 +92,97 @@ Add to `~/.cursor/mcp.json` (Cursor) or the equivalent Windsurf config:
 - **Hosted uses Bearer auth on the connection**, not the `api_token` per-tool-call argument shown in the self-hosted examples below. Once authenticated, tool inputs match exactly across both transports.
 - **Use the staging endpoint** (`mcp.staging.tako.com`) for testing changes against an unstable build before they reach `mcp.tako.com`.
 
+## Consumer hosts (OAuth)
+
+Use this if you're connecting Tako from **Claude.ai** or **ChatGPT** — the consumer chat hosts that don't accept Bearer tokens. The hosted endpoint at `https://mcp.tako.com/mcp` runs an OAuth 2.1 flow that signs you in with your Tako account and connects on your behalf, no JSON config or CLI required.
+
+> If you're using Claude Code, Claude Desktop, Cursor, or Windsurf, see the Bearer-auth instructions [above](#hosted-cloudflare-workers) — those clients accept a static `Authorization: Bearer` header and don't need OAuth.
+
+### Prerequisites
+
+Before connecting from Claude.ai or ChatGPT:
+
+1. **Sign up or sign in at [trytako.com](https://trytako.com).**
+2. **Mint an API token** at trytako.com → settings → API tokens.
+
+Step 2 is mandatory: the consent flow looks up your existing token and surfaces a "Your Tako account does not have an API token yet" page if it doesn't find one. Tako does not auto-mint a token during the OAuth dance, because rotating an existing one would break any Claude Code / Cursor wiring you already have on the same account.
+
+> _[Screenshot: trytako.com → settings → API tokens, "Generate token" button highlighted]_
+
+### What you'll see during connect
+
+The same three Tako-hosted screens appear regardless of which host (Claude.ai or ChatGPT) you're connecting from:
+
+1. **Tako sign-in page.** Two options: **Continue with Google** or send yourself an **email magic-link**. Use the same identity you signed up with at trytako.com.
+
+   > _[Screenshot: mcp.tako.com sign-in page showing Google + email magic-link options]_
+
+2. **Tako consent page.** Reads *"Connect [host name] to Tako — Signed in as you@example.com — Allow / Cancel"*. Click **Allow** to authorize the connection.
+
+   > _[Screenshot: mcp.tako.com consent page showing client name + signed-in identity]_
+
+3. **Bounce back to the host.** The connector is now listed and tools are callable.
+
+The host itself (Claude.ai or ChatGPT) may also display its own consent prompt before or after Tako's. That's normal — Tako confirms it's safe to share your account; the host confirms it's safe to invoke an external connector.
+
+### Claude.ai
+
+*Requires Claude.ai Pro, Max, Team, or Enterprise.*
+
+1. Open Claude.ai → **Settings → Connectors**.
+
+   > _[Screenshot: Claude.ai Settings → Connectors landing page]_
+
+2. Click **Add custom connector**.
+
+   > _[Screenshot: Claude.ai "Add custom connector" dialog]_
+
+3. Paste `https://mcp.tako.com/mcp` and click **Connect**.
+
+4. You'll be taken through the Tako sign-in flow described above.
+
+5. After consent, **Tako** appears in your connector list as connected.
+
+   > _[Screenshot: Claude.ai connector list showing Tako connected]_
+
+### ChatGPT
+
+*Requires ChatGPT Pro, Business, or Enterprise. Developer Mode must be enabled.*
+
+1. Open ChatGPT → **Settings → Connectors → Developer Mode** and toggle it on if it isn't already.
+
+   > _[Screenshot: ChatGPT Settings → Connectors with the Developer Mode toggle]_
+
+2. Click **Create custom connector**.
+
+   > _[Screenshot: ChatGPT "Create custom connector" dialog]_
+
+3. Paste `https://mcp.tako.com/mcp` and click **Connect**.
+
+4. You'll be taken through the Tako sign-in flow described above.
+
+5. After consent, the connector is listed and ready to use.
+
+   > _[Screenshot: ChatGPT connector list showing Tako connected]_
+
+### Verify it's working
+
+In a fresh conversation, ask:
+
+> Show me Tako's chart on Intel vs Nvidia headcount.
+
+A successful response includes a chart link or an inline chart render (depending on host) within a few seconds. If you instead see an authentication error, jump to *Disconnecting & re-authorizing* below.
+
+### Disconnecting & re-authorizing
+
+There are two ways to break the connection, and they have different blast radius. Pick the one that matches what you actually want.
+
+**Per-host disconnect** (Claude.ai or ChatGPT settings → remove the Tako connector). Stops *that host* from making MCP calls. Does **not** revoke the underlying Tako API token. Other connected hosts — and any Claude Code / Cursor Bearer-auth wiring on the same account — keep working unchanged.
+
+**Rotate the API token at [trytako.com](https://trytako.com) → settings → API tokens.** This is the hard kill switch. Rotating creates a new token and invalidates the old one server-side, which means every previously-issued OAuth grant — across every host — stops authenticating immediately. To resume from any host, disconnect and reconnect; the new consent flow picks up your fresh token.
+
+> This kill-switch behavior is by design for v1. Per-grant scoped tokens (revoke a single host without touching the others) are tracked under [TAKO-2679](https://linear.app/trytako/issue/TAKO-2679)'s known limitations.
+
 ## Self-hosting (legacy Python server)
 
 > ⚠️ **The pip / Docker / Smithery paths described in this section are the original Python implementation in `src/tako_mcp/`.** They are *not* the current canonical Tako MCP — that's the hosted Cloudflare Worker at `mcp.tako.com` documented above. The Python server still works and is maintained for self-hosted, air-gapped, and Smithery-marketplace deployments, but it ships an older tool surface and an older transport (SSE, per-tool `api_token` argument) than the hosted version. New tool work lands in `workers/` first; the Python server may diverge over time.
