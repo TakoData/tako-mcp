@@ -66,11 +66,18 @@ describe("token mint/verify", () => {
 
   it("rejects a tampered token byte-for-byte", async () => {
     const { token } = await mintExportToken("sk-user", "rep", "pdf", ENV_A);
-    // Flip a character in the body. Token format is `v1.<body>` — we
-    // mutate the last char of body, which is part of the GCM tag and
-    // therefore guaranteed to fail authentication.
-    const bad =
-      token.slice(0, -1) + (token.endsWith("a") ? "b" : "a");
+    // Flip a character in the middle of the body. Token format is
+    // `v1.<body>`. The last character of `body` can fall in base64url
+    // padding bits that decode identically when flipped (3 bytes →
+    // 4 chars; the trailing chars carry only some of the bits), which
+    // would falsely report "no tampering detected." Mutating a char a
+    // few positions in guarantees the decoded ciphertext changes,
+    // which AES-GCM tag verification then rejects.
+    const dot = token.indexOf(".");
+    const target = dot + 5;
+    const original = token[target]!;
+    const flipped = original === "a" ? "b" : "a";
+    const bad = token.slice(0, target) + flipped + token.slice(target + 1);
     await expect(verifyExportToken(bad, ENV_A)).rejects.toThrow();
   });
 
