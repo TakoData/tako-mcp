@@ -52,13 +52,15 @@ const KEY_BYTES = 32;
  */
 export const DEFAULT_TOKEN_TTL_SECONDS = 300;
 
-/** Allowed export format slugs. Kept in lockstep with the tool. */
-export const EXPORT_FORMATS = [
-  "markdown",
-  "json",
-  "pdf",
-  "powerpoint",
-] as const;
+/**
+ * Allowed export format slugs. Kept in lockstep with the tool.
+ *
+ * PowerPoint was supported in an earlier draft but the backend's pptx
+ * export wasn't producing usable output, so it's omitted here. Re-add
+ * `"powerpoint"` (with `pptx` slug + extension) once the backend is
+ * fixed.
+ */
+export const EXPORT_FORMATS = ["markdown", "json", "pdf"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 /** Format → URL slug used in the Django export endpoint path. */
@@ -66,10 +68,6 @@ export const FORMAT_SLUG: Record<ExportFormat, string> = {
   markdown: "markdown",
   json: "json",
   pdf: "pdf",
-  // PowerPoint maps to `.pptx`. Confirmed convention with PDF/JSON; if
-  // the backend ever uses `powerpoint` instead, flip this and the
-  // download endpoint will start working.
-  powerpoint: "pptx",
 };
 
 /** Format → download filename extension. */
@@ -77,7 +75,6 @@ const FORMAT_EXTENSION: Record<ExportFormat, string> = {
   markdown: "md",
   json: "json",
   pdf: "pdf",
-  powerpoint: "pptx",
 };
 
 /** Decoded download-token payload. */

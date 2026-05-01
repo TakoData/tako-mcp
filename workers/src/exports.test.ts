@@ -159,37 +159,6 @@ describe("handleExportRequest", () => {
     );
   });
 
-  it("uses pptx as the slug + extension for powerpoint", async () => {
-    const { token } = await mintExportToken(
-      "sk",
-      "rep_pp",
-      "powerpoint",
-      ENV_A,
-    );
-    const fetchMock = vi.fn<typeof fetch>(async () =>
-      new Response(new Uint8Array([0x50, 0x4b]), {
-        status: 200,
-        headers: {
-          "content-type":
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const res = await handleExportRequest(
-      new Request(`https://mcp.staging.tako.com/exports/${token}`),
-      ENV_A,
-    );
-
-    expect(fetchMock.mock.calls[0]![0]).toBe(
-      "https://staging.trytako.com/api/v1/internal/reports/rep_pp/export/pptx/",
-    );
-    expect(res.headers.get("content-disposition")).toBe(
-      'attachment; filename="tako-report-rep_pp.pptx"',
-    );
-  });
-
   it("returns 401 for an invalid token", async () => {
     const res = await handleExportRequest(
       new Request("https://mcp.staging.tako.com/exports/v1.bogus"),
