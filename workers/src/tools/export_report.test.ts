@@ -99,7 +99,7 @@ describe("export_report", () => {
     expect(a.download_url).not.toBe(b.download_url);
   });
 
-  it.each(["markdown", "json", "pdf"] as const)(
+  it.each(["markdown", "json", "pdf", "powerpoint"] as const)(
     "round-trips format %s through the token",
     async (format) => {
       const out = await export_report.handler(
