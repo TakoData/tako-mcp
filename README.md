@@ -15,7 +15,7 @@ This MCP server enables AI agents to:
 **Use the hosted endpoint at `https://mcp.tako.com`.** Three lines, no install:
 
 ```bash
-export TAKO_API_TOKEN='<your-token-from-trytako.com>'
+export TAKO_API_TOKEN='<your-token-from-tako.com>'
 claude mcp add tako-mcp --transport http https://mcp.tako.com/mcp \
   --header "Authorization: Bearer $TAKO_API_TOKEN"
 ```
@@ -35,7 +35,7 @@ The fastest path: point your MCP client at `https://mcp.tako.com` with a Bearer 
 | Production | `https://mcp.tako.com/mcp` |
 | Staging (testing only) | `https://mcp.staging.tako.com/mcp` |
 
-**Authentication:** every request needs `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at [trytako.com](https://trytako.com) → account settings → API tokens.
+**Authentication:** every request needs `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at [tako.com](https://tako.com) → account settings → API tokens.
 
 ### Claude Code
 
@@ -102,18 +102,18 @@ Use this if you're connecting Tako from **Claude.ai** or **ChatGPT** — the con
 
 Before connecting from Claude.ai or ChatGPT:
 
-1. **Sign up or sign in at [trytako.com](https://trytako.com).**
-2. **Mint an API token** at trytako.com → settings → API tokens.
+1. **Sign up or sign in at [tako.com](https://tako.com).**
+2. **Mint an API token** at tako.com → settings → API tokens.
 
 Step 2 is mandatory: the consent flow looks up your existing token and surfaces a "Your Tako account does not have an API token yet" page if it doesn't find one. Tako does not auto-mint a token during the OAuth dance, because rotating an existing one would break any Claude Code / Cursor wiring you already have on the same account.
 
-> _[Screenshot: trytako.com → settings → API tokens, "Generate token" button highlighted]_
+> _[Screenshot: tako.com → settings → API tokens, "Generate token" button highlighted]_
 
 ### What you'll see during connect
 
 The same three Tako-hosted screens appear regardless of which host (Claude.ai or ChatGPT) you're connecting from:
 
-1. **Tako sign-in page.** Two options: **Continue with Google** or send yourself an **email magic-link**. Use the same identity you signed up with at trytako.com.
+1. **Tako sign-in page.** Two options: **Continue with Google** or send yourself an **email magic-link**. Use the same identity you signed up with at tako.com.
 
    > _[Screenshot: mcp.tako.com sign-in page showing Google + email magic-link options]_
 
@@ -179,9 +179,9 @@ There are two ways to break the connection, and they have different blast radius
 
 **Per-host disconnect** (Claude.ai or ChatGPT settings → remove the Tako connector). Stops *that host* from making MCP calls. Does **not** revoke the underlying Tako API token. Other connected hosts — and any Claude Code / Cursor Bearer-auth wiring on the same account — keep working unchanged.
 
-**Rotate the API token at [trytako.com](https://trytako.com) → settings → API tokens.** This is the hard kill switch. Rotating creates a new token and invalidates the old one server-side, which means every previously-issued OAuth grant — across every host — stops authenticating immediately. To resume from any host, disconnect and reconnect; the new consent flow picks up your fresh token.
+**Rotate the API token at [tako.com](https://tako.com) → settings → API tokens.** This is the hard kill switch. Rotating creates a new token and invalidates the old one server-side, which means every previously-issued OAuth grant — across every host — stops authenticating immediately. To resume from any host, disconnect and reconnect; the new consent flow picks up your fresh token.
 
-> This kill-switch behavior is by design for v1. Per-grant scoped tokens (revoke a single host without touching the others) are tracked under [TAKO-2679](https://linear.app/trytako/issue/TAKO-2679)'s known limitations.
+> This kill-switch behavior is by design for v1. Per-grant scoped tokens (revoke a single host without touching the others) are tracked under [TAKO-2679](https://linear.app/tako/issue/TAKO-2679)'s known limitations.
 
 ## Self-hosting (legacy Python server)
 
@@ -226,8 +226,8 @@ Environment variables apply to the Python server. The hosted Worker has its own 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TAKO_API_URL` | Tako API endpoint | `https://api.trytako.com` |
-| `PUBLIC_BASE_URL` | Public URL for chart embeds | `https://trytako.com` |
+| `TAKO_API_URL` | Tako API endpoint | `https://api.tako.com` |
+| `PUBLIC_BASE_URL` | Public URL for chart embeds | `https://tako.com` |
 | `PORT` | Server port | `8001` |
 | `HOST` | Server host | `0.0.0.0` |
 | `MCP_ALLOWED_HOSTS` | Additional allowed hosts (comma-separated) | |
@@ -400,7 +400,7 @@ AI Agent (Claude Code/Desktop, Cursor, etc.)
     ↓
 Cloudflare Worker  ──  Bearer auth, tool dispatch
     ↓
-Tako Django API  (api.trytako.com)
+Tako Django API  (api.tako.com)
 ```
 
 The Cloudflare Worker is a thin TypeScript proxy: it extracts the Bearer token, validates the MCP request, calls the appropriate Django endpoint with the user's token forwarded as `X-API-Key`, and returns structured tool results. Code lives in `workers/` of this repo.
@@ -441,6 +441,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Links
 
-- [Tako](https://trytako.com) - Data visualization platform
+- [Tako](https://tako.com) - Data visualization platform
 - [MCP Specification](https://spec.modelcontextprotocol.io/) - Model Context Protocol
 - [MCP-UI](https://mcpui.dev/) - MCP UI rendering standard
