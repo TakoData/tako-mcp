@@ -107,7 +107,7 @@ Before connecting from Claude.ai or ChatGPT:
 
 Step 2 is mandatory: the consent flow looks up your existing token and surfaces a "Your Tako account does not have an API token yet" page if it doesn't find one. Tako does not auto-mint a token during the OAuth dance, because rotating an existing one would break any Claude Code / Cursor wiring you already have on the same account.
 
-> _[Screenshot: tako.com → settings → API tokens, "Generate token" button highlighted]_
+![tako.com Settings → API Key with Regenerate button](docs/images/tako-api-token-generate.png)
 
 ### What you'll see during connect
 
@@ -115,11 +115,11 @@ The same three Tako-hosted screens appear regardless of which host (Claude.ai or
 
 1. **Tako sign-in page.** Two options: **Continue with Google** or send yourself an **email magic-link**. Use the same identity you signed up with at tako.com.
 
-   > _[Screenshot: mcp.tako.com sign-in page showing Google + email magic-link options]_
+   ![mcp.tako.com sign-in page showing Google + email magic-link options](docs/images/mcp-tako-signin.png)
 
 2. **Tako consent page.** Reads *"Connect [host name] to Tako — Signed in as you@example.com — Allow / Cancel"*. Click **Allow** to authorize the connection.
 
-   > _[Screenshot: mcp.tako.com consent page showing client name + signed-in identity]_
+   ![mcp.tako.com consent page showing client name + signed-in identity](docs/images/mcp-tako-consent.png)
 
 3. **Bounce back to the host.** The connector is now listed and tools are callable.
 
@@ -131,7 +131,7 @@ The host itself (Claude.ai or ChatGPT) may also display its own consent prompt b
 
 1. Open Claude.ai → **Settings → Connectors**.
 
-   > _[Screenshot: Claude.ai Settings → Connectors landing page]_
+   ![Claude.ai Settings → Connectors landing page](docs/images/claude-connectors-landing.png)
 
 2. Click **Add custom connector**.
 
@@ -143,7 +143,7 @@ The host itself (Claude.ai or ChatGPT) may also display its own consent prompt b
 
 5. After consent, **Tako** appears in your connector list as connected.
 
-   > _[Screenshot: Claude.ai connector list showing Tako connected]_
+   ![Claude.ai connector list showing Tako connected](docs/images/claude-connectors-landing.png)
 
 ### ChatGPT
 
@@ -151,11 +151,11 @@ The host itself (Claude.ai or ChatGPT) may also display its own consent prompt b
 
 1. Open ChatGPT → **Settings → Connectors → Developer Mode** and toggle it on if it isn't already.
 
-   > _[Screenshot: ChatGPT Settings → Connectors with the Developer Mode toggle]_
+   ![ChatGPT Settings → Connectors with the Developer Mode toggle](docs/images/chatgpt-connectors-developer-mode.png)
 
 2. Click **Create custom connector**.
 
-   > _[Screenshot: ChatGPT "Create custom connector" dialog]_
+   ![ChatGPT "Create custom connector" dialog](docs/images/chatgpt-create-custom-connector.png)
 
 3. Paste `https://mcp.tako.com/mcp` and click **Connect**.
 
@@ -163,7 +163,7 @@ The host itself (Claude.ai or ChatGPT) may also display its own consent prompt b
 
 5. After consent, the connector is listed and ready to use.
 
-   > _[Screenshot: ChatGPT connector list showing Tako connected]_
+   ![ChatGPT connector list showing Tako connected](docs/images/chatgpt-tako-connected.png)
 
 ### Verify it's working
 
