@@ -133,21 +133,29 @@ describe("worker routing", () => {
       "knowledge_search",
       "list_reports",
       "open_chart_ui",
+      "wait_for_knowledge_search",
       "wait_for_report",
     ]);
 
-    // MCP Apps: BOTH `open_chart_ui` AND `knowledge_search` ship the
-    // chart widget bundle (knowledge_search auto-renders the top
-    // result inline so the model doesn't have to chain into
-    // open_chart_ui). Both tools' listings must carry the widget URI
-    // under all three metadata keys: `_meta.ui.resourceUri` (open MCP
-    // Apps spec, read by claude.ai / VS Code / Goose), the legacy
+    // MCP Apps: `open_chart_ui`, `knowledge_search`, and
+    // `wait_for_knowledge_search` all ship the chart widget bundle.
+    // `knowledge_search` auto-renders the top result inline on the
+    // sync path, and `wait_for_knowledge_search` does the same on
+    // its COMPLETED branch — both must carry the widget URI so the
+    // host renders the chart without an extra `open_chart_ui` call.
+    // All widget-carrying tools' listings must declare the URI
+    // under all three metadata keys: `_meta.ui.resourceUri` (open
+    // MCP Apps spec, read by claude.ai / VS Code / Goose), the legacy
     // flat `_meta["ui/resourceUri"]` (older host readers), and
     // `_meta["openai/outputTemplate"]` (ChatGPT's Apps SDK — without
     // it the widget loads but `window.openai.toolOutput` never
     // populates). Other tools ship no widget and should declare
     // none of these fields.
-    const widgetTools = new Set(["open_chart_ui", "knowledge_search"]);
+    const widgetTools = new Set([
+      "open_chart_ui",
+      "knowledge_search",
+      "wait_for_knowledge_search",
+    ]);
     for (const name of widgetTools) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool?._meta).toMatchObject({
