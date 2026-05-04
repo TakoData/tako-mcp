@@ -303,7 +303,7 @@
     },
     {
       "name": "wait_for_knowledge_search",
-      "description": "Use this AFTER `knowledge_search` returns a `task_id` with `status: \"pending\"`. Server-side polling around Tako's deep (Orca) async-search status endpoint. Returns when the task reaches `COMPLETED` (results + auto-rendered chart, same shape as knowledge_search's sync response) OR after `max_wait_seconds` (default 50s) without a terminal status. **If `timed_out` is true, IMMEDIATELY call wait_for_knowledge_search again with the same task_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting).** On COMPLETED, narrate the data and reference the auto-rendered top chart; mention other titles in the results and offer to chart them via `open_chart_ui`.",
+      "description": "Use this AFTER `knowledge_search` returns a `task_id` with `status: \"pending\"`. Server-side polling around Tako's deep (Orca) async-search status endpoint. Returns when the task reaches `COMPLETED` OR after `max_wait_seconds` (default 50s) without a terminal status. **If `timed_out` is true, IMMEDIATELY call wait_for_knowledge_search again with the same task_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting).** On COMPLETED, this tool DOES NOT auto-render a chart inline (intentional — the wait flow involves multiple tool calls and an inline widget per call would clutter the chat). Call `open_chart_ui` with `results[0].card_id` to render the top chart, then narrate the data and offer to chart other results.",
       "parameters": {
         "task_id": {
           "type": "string",

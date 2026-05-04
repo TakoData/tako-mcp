@@ -21,13 +21,6 @@ import { z } from "zod";
 
 import { DjangoHttpError, DjangoTimeoutError, djangoGet } from "../django.js";
 import {
-  APP_UI_RESOURCE_URI,
-  APP_UI_TEMPLATE_URI_PATTERN,
-  buildChartAppUiResource,
-  fetchImageDataUrlAndDims,
-  fetchPngContentBlock,
-} from "./_chart_widget.js";
-import {
   type AsyncTaskEvent,
   type AsyncTaskStatus,
   COMPLETED_STATE,
@@ -36,11 +29,7 @@ import {
   resultsOutputShape,
   summarizeProgress,
 } from "./_async_search_shape.js";
-import type {
-  AppUiResource,
-  ToolContentBlock,
-  ToolModule,
-} from "./types.js";
+import type { ToolModule } from "./types.js";
 
 // Hard ceiling on a single call's wait budget. The MCP TS SDK's
 // DEFAULT_REQUEST_TIMEOUT_MSEC is 60_000 and applies unless the caller
@@ -130,7 +119,7 @@ function sleep(ms: number): Promise<void> {
 const wait_for_knowledge_search = {
   name: "wait_for_knowledge_search",
   description:
-    'Use this AFTER `knowledge_search` returns a `task_id` with `status: "pending"`. Server-side polling around Tako\'s deep (Orca) async-search status endpoint. Returns when the task reaches `COMPLETED` (results + auto-rendered chart, same shape as knowledge_search\'s sync response) OR after `max_wait_seconds` (default 50s) without a terminal status. **If `timed_out` is true, IMMEDIATELY call wait_for_knowledge_search again with the same task_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting).** On COMPLETED, narrate the data and reference the auto-rendered top chart; mention other titles in the results and offer to chart them via `open_chart_ui`.',
+    'Use this AFTER `knowledge_search` returns a `task_id` with `status: "pending"`. Server-side polling around Tako\'s deep (Orca) async-search status endpoint. Returns when the task reaches `COMPLETED` OR after `max_wait_seconds` (default 50s) without a terminal status. **If `timed_out` is true, IMMEDIATELY call wait_for_knowledge_search again with the same task_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting).** On COMPLETED, this tool DOES NOT auto-render a chart inline (intentional — the wait flow involves multiple tool calls and an inline widget per call would clutter the chat). Call `open_chart_ui` with `results[0].card_id` to render the top chart, then narrate the data and offer to chart other results.',
   inputSchema,
   outputSchema,
   annotations: {
@@ -237,40 +226,22 @@ const wait_for_knowledge_search = {
       events_summary: summarizeProgress(latestEvents),
     };
   },
-  async extraMeta(output, _ctx) {
-    void _ctx;
-    if (output.image_url === undefined) return undefined;
-    const fetched = await fetchImageDataUrlAndDims(output.image_url);
-    if (fetched === undefined) return undefined;
-    return {
-      image_data_url: fetched.dataUrl,
-      image_natural_width: fetched.naturalWidth,
-      image_natural_height: fetched.naturalHeight,
-    };
-  },
-  async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
-    void _ctx;
-    if (output.image_url === undefined) return [];
-    return fetchPngContentBlock(output.image_url);
-  },
-  appUiResource(env): AppUiResource {
-    return buildChartAppUiResource(env, (_input, output) => {
-      void _input;
-      const pubId =
-        output !== undefined &&
-        typeof output === "object" &&
-        output !== null &&
-        "pub_id" in (output as Record<string, unknown>) &&
-        typeof (output as { pub_id?: unknown }).pub_id === "string"
-          ? (output as { pub_id: string }).pub_id
-          : "";
-      if (pubId === "") return APP_UI_RESOURCE_URI;
-      return APP_UI_TEMPLATE_URI_PATTERN.replace(
-        "{pub_id}",
-        encodeURIComponent(pubId),
-      );
-    });
-  },
+  // Intentionally NO `appUiResource` / `extraMeta` / `extraContentBlocks`
+  // on this tool, even though COMPLETED responses carry chart fields
+  // (pub_id, embed_url, image_url, …). Reason: a deep search routinely
+  // requires multiple chained calls to this tool — one initial kickoff
+  // poll plus several timed_out continuations until the backend task
+  // terminates. If we attached the chart widget bundle to this tool,
+  // every intermediate call would render an empty 240-px-tall widget
+  // container in the chat (host CSS reserves min-height for any tool
+  // with `appUiResource`, regardless of what the inner widget reports
+  // for intrinsic height — verified on ChatGPT). Stacked across N
+  // chained calls, that becomes a visually busy column of empty boxes.
+  // Instead, the agent narrates the COMPLETED data and chains into
+  // `open_chart_ui` (which always carries the widget bundle, always
+  // has a chart to render) for the inline chart. One extra agent step
+  // for the deep path; clean chat for the wait loop. The fast path
+  // (knowledge_search sync results) keeps the inline widget unchanged.
 } satisfies ToolModule<typeof inputSchema, Output>;
 
 export default wait_for_knowledge_search;
