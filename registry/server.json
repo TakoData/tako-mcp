@@ -205,7 +205,7 @@
     },
     {
       "name": "knowledge_search",
-      "description": "Answer factual questions and find live data with Tako's curated knowledge graph and deep-research pipeline. **Default to this tool BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events (e.g. \"next Raptors game\", \"when does X play\", \"upcoming election\", \"next Fed meeting\"), recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports (schedules, scores, stats, betting odds), economics, finance (stocks, crypto, FX), demographics, technology, weather and forecasts, polls and elections, prediction markets (Polymarket), internet and app traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is both a structured factual answer and a chart. **This tool auto-renders the top result inline as a Tako chart** — the chart card appears in the user's chat as part of this same tool call, so you do NOT need to chain into `open_chart_ui`. Just narrate the data in your reply and reference the chart that's already shown (\"as the chart above shows\", \"see the chart for the trend\", etc.); do NOT paste the embed URL or echo `![…](image_url)` markdown for the top card — that re-displays the chart behind a click-to-load gate. **When `results.length > 1`, the top card is the one rendered**; mention the other titles by name in your reply (e.g. \"also available: GDP per capita, Unemployment Rate\") and tell the user they can ask to chart any of them — those follow-ups are routed through `open_chart_ui`. Note: with `search_effort: \"deep\"` (and the default fast→deep auto-escalation when fast returns no cards) the call can run up to ~5 minutes server-side; MCP clients on the SDK default 60s timeout should pass `options.timeout` of at least 300_000 ms when invoking this tool, otherwise the client will abort before the deep result lands.",
+      "description": "Answer factual questions and find live data with Tako's curated knowledge graph. **Default to this BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events, recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports, economics, finance, demographics, technology, weather, polls and elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is a structured factual answer + a chart. **The top result auto-renders inline** as a Tako chart on the sync path — narrate the data and reference the chart that's already shown (\"as the chart above shows\"); do NOT paste the embed URL or echo `![…](image_url)` markdown for the top card. Mention other titles by name and tell the user they can ask to chart any of them — those follow-ups go through `open_chart_ui`. **If the response has `task_id` and `status: \"pending\"` instead of `results`, the deep (Orca) pipeline was kicked off because the fast lexical path didn't find cards. Call `wait_for_knowledge_search` with that `task_id` and loop until it returns `timed_out: false`.**",
       "parameters": {
         "query": {
           "type": "string",
@@ -214,17 +214,15 @@
         },
         "count": {
           "type": "integer",
-          "description": "Maximum number of matching cards to return (1–20).",
-          "default": 5
+          "description": "Maximum number of matching cards to return (1-20).",
+          "default": 10
         },
         "search_effort": {
           "type": "string",
-          "description": "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, async, higher credit cost). Omit to let the tool run `fast` first and escalate to `deep` only if `fast` returns zero cards. Deep mode runs asynchronously on Tako's side — the tool polls until the task completes or the per-call budget is exhausted.",
+          "description": "Search depth: `fast` (lexical, sync) or `deep` (Orca research pipeline, async — kicks off and returns a task_id; chain into `wait_for_knowledge_search` to poll). Omit to run `fast` first and only kick off `deep` if `fast` returns no cards.",
           "enum": [
             "fast",
-            "medium",
-            "deep",
-            "auto"
+            "deep"
           ]
         },
         "country_code": {
@@ -301,6 +299,28 @@
         "readOnlyHint": true,
         "destructiveHint": false,
         "openWorldHint": true
+      }
+    },
+    {
+      "name": "wait_for_knowledge_search",
+      "description": "Use this AFTER `knowledge_search` returns a `task_id` with `status: \"pending\"`. Server-side polling around Tako's deep (Orca) async-search status endpoint. Returns when the task reaches `COMPLETED` (results + auto-rendered chart, same shape as knowledge_search's sync response) OR after `max_wait_seconds` (default 50s) without a terminal status. **If `timed_out` is true, IMMEDIATELY call wait_for_knowledge_search again with the same task_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting).** On COMPLETED, narrate the data and reference the auto-rendered top chart; mention other titles in the results and offer to chart them via `open_chart_ui`.",
+      "parameters": {
+        "task_id": {
+          "type": "string",
+          "description": "Task ID returned from a previous knowledge_search async kickoff.",
+          "required": true
+        },
+        "max_wait_seconds": {
+          "type": "integer",
+          "description": "How long this single call may block waiting for a terminal status. Capped at 50s so the call always returns before the MCP client's tool-call timeout fires. If the task isn't done yet, call this tool again with the same task_id — deep searches typically take 1-5 minutes, expect to chain a few calls in a row.",
+          "default": 50
+        }
+      },
+      "annotations": {
+        "title": "Tako: Wait for Knowledge Search",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
       }
     },
     {
