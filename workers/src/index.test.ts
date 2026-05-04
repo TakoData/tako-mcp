@@ -126,6 +126,7 @@ describe("worker routing", () => {
     expect(names).toEqual([
       "create_chart",
       "create_report",
+      "export_report",
       "get_chart_image",
       "get_credit_balance",
       "get_report",

@@ -82,6 +82,27 @@ export interface Env {
    * a trailing slash.
    */
   STYTCH_BASE_URL?: string;
+  /**
+   * Public origin of the Worker itself — used to build download URLs
+   * for `export_report` (e.g. `https://mcp.staging.tako.com`). Distinct
+   * from `PUBLIC_BASE_URL` (the Tako *web* origin, e.g. `tako.com`)
+   * because the Worker is on its own subdomain. Must NOT include a
+   * trailing slash. When unset, `resolveMcpPublicBase` falls back to
+   * the request's own origin so `wrangler dev` and tests work without
+   * extra config.
+   */
+  MCP_PUBLIC_BASE_URL?: string;
+  /**
+   * Base64-encoded 32-byte key (AES-256) used to encrypt download
+   * tokens for `export_report`. The token embeds the user's Tako API
+   * key so the `/exports/:token` route can call Django on their
+   * behalf without a separate session — see `exports.ts` header for
+   * the security rationale. Set per-env via:
+   *   `openssl rand -base64 32 | wrangler secret put EXPORT_TOKEN_KEY --env staging`
+   * When unset, `export_report` returns a clear "not configured"
+   * error rather than minting tokens that can't be verified.
+   */
+  EXPORT_TOKEN_KEY?: string;
 }
 
 /**
@@ -150,5 +171,28 @@ export function resolvePublicApiBase(env: Env): string {
   return validatePublicOrigin(
     env.PUBLIC_API_URL ?? env.DJANGO_BASE_URL,
     "PUBLIC_API_URL",
+  );
+}
+
+/**
+ * Resolve the Worker's own public origin — used by `export_report` to
+ * build `https://mcp.<env>.tako.com/exports/<token>` download URLs.
+ * Falls back to the incoming request's origin when `MCP_PUBLIC_BASE_URL`
+ * is unset, so `wrangler dev` and unit tests work without per-env
+ * config. Production deploys MUST set the binding to pin the URL to
+ * the canonical custom domain (the request origin would otherwise
+ * leak `*.workers.dev` into download URLs).
+ */
+export function resolveMcpPublicBase(env: Env, request?: Request): string {
+  const configured = env.MCP_PUBLIC_BASE_URL;
+  if (configured !== undefined && configured !== "") {
+    return validatePublicOrigin(configured, "MCP_PUBLIC_BASE_URL");
+  }
+  if (request !== undefined) {
+    const url = new URL(request.url);
+    return `${url.protocol}//${url.host}`;
+  }
+  throw new Error(
+    "MCP_PUBLIC_BASE_URL is not configured and no request was provided to derive the origin from",
   );
 }
