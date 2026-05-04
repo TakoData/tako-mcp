@@ -372,6 +372,42 @@ const WIDGET_HTML = `<!doctype html>
   function render(structuredContent, meta) {
     if (rendered) return true;
     if (!structuredContent || typeof structuredContent !== "object") return false;
+    // No-chart short-circuit: structured content arrived but contains
+    // no chart fields at all. Two paths produce this shape:
+    //
+    //   - \`knowledge_search\` kickoff payload — { task_id, status:
+    //     "pending", search_effort: "deep", message }. Returned when
+    //     the deep (Orca) async pipeline is kicked off; the chart will
+    //     show up in a later \`wait_for_knowledge_search\` COMPLETED
+    //     response, NOT this one.
+    //
+    //   - \`wait_for_knowledge_search\` timed_out branch — { timed_out:
+    //     true, results: [], status, events_summary }. Returned when
+    //     the wait budget elapsed without the task completing; the
+    //     agent loops by calling the tool again.
+    //
+    // Without this guard, the placeholder sits at "Loading chart…"
+    // forever for both shapes — every intermediate kickoff / timed_out
+    // call stacks a 240-px-tall empty widget box in the chat for the
+    // full duration of the deep search (1-5 minutes typical). Detect
+    // both by the absence of any chart URL: \`embed_url\` and
+    // \`image_url\` are mutually present-or-absent on the handler side
+    // (see \`buildResultsWithAutoChain\` in \`_async_search_shape.ts\`),
+    // and \`image_data_url\` is derived from \`image_url\` server-side
+    // (\`extraMeta\` only runs when \`image_url\` is present), so the
+    // \`!image_url && !embed_url\` check covers all three.
+    if (
+      typeof structuredContent.embed_url !== "string" &&
+      typeof structuredContent.image_url !== "string"
+    ) {
+      placeholder.classList.add("hidden");
+      document.documentElement.style.height = "0px";
+      document.body.style.height = "0px";
+      notifyHeight(0);
+      rendered = true;
+      log("no-chart payload, collapsed widget");
+      return true;
+    }
     var url = structuredContent.embed_url;
     var imgUrl = structuredContent.image_url;
     // \`image_data_url\` and PNG natural dimensions live on \`_meta\`
