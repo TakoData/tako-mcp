@@ -14,6 +14,7 @@ import type { AnyToolModule } from "./types.js";
 
 import create_chart from "./create_chart.js";
 import create_report from "./create_report.js";
+import export_report from "./export_report.js";
 import get_chart_image from "./get_chart_image.js";
 import get_credit_balance from "./get_credit_balance.js";
 import get_report from "./get_report.js";
@@ -29,6 +30,7 @@ import wait_for_report from "./wait_for_report.js";
 export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
   create_chart as unknown as AnyToolModule,
   create_report as unknown as AnyToolModule,
+  export_report as unknown as AnyToolModule,
   get_chart_image as unknown as AnyToolModule,
   get_credit_balance as unknown as AnyToolModule,
   get_report as unknown as AnyToolModule,
