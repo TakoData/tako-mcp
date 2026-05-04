@@ -84,8 +84,14 @@ export interface RefreshTokenClaims extends BaseClaims {
   enc_tako_token: string;
   /** Unique JWT ID for single-use enforcement (OAuth 2.1 §4.3.1
    *  refresh-token rotation). Recorded in Workers Cache on successful
-   *  exchange so re-presenting the same refresh token is rejected. */
-  jti: string;
+   *  exchange so re-presenting the same refresh token is rejected.
+   *
+   *  Optional during the rolling cutover: legacy refresh tokens minted
+   *  before TAKO-2701 shipped have no `jti` claim, and `verifyJwt`'s
+   *  runtime cast does not enforce shape. New tokens always carry `jti`.
+   *  Tighten back to required `string` once the 14-day legacy window has
+   *  passed and the bypass in `checkAndMarkRedeemed` is removed. */
+  jti?: string;
 }
 
 /* --------------------------- Worker-only cookies --------------------------- */

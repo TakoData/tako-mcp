@@ -791,6 +791,12 @@ export async function handleToken(req: Request, env: Env): Promise<Response> {
  *   plausible under memory pressure — refresh-replay protection is
  *   correspondingly weaker than auth-code protection. KV-backed enforcement
  *   is the answer if/when refresh replay becomes a hard requirement.
+ * - Check-then-put is non-atomic. `cache.match` and `cache.put` are two
+ *   separate awaits, so two concurrent redemptions of the same `jti`
+ *   inside one isolate can both observe a cache miss before either write
+ *   lands, and both succeed. Sequential replay (the realistic threat) is
+ *   serialized correctly; concurrent replay is best-effort. KV's atomic
+ *   CAS would close this window if/when it matters.
  *
  * Rolling cutover (`jti` undefined): tokens minted before this code
  * shipped have no `jti` claim. `verifyJwt` validates signature + `exp`
@@ -803,7 +809,8 @@ export async function handleToken(req: Request, env: Env): Promise<Response> {
  * remainder of their natural TTL. New tokens (post-deploy) carry `jti`
  * and get full enforcement. The bypass becomes dead code once all
  * legacy refresh tokens age out (≤14 days) and can be removed in a
- * follow-up.
+ * follow-up — at which point `RefreshTokenClaims.jti` should also be
+ * tightened from `string | undefined` back to required `string`.
  */
 async function checkAndMarkRedeemed(
   kind: "auth-code" | "refresh-token",
