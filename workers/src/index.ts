@@ -53,9 +53,20 @@ export default {
     ) {
       return handleProtectedResourceMetadata(request, env);
     }
+    // `/.well-known/openid-configuration` is aliased to the OAuth
+    // metadata path (TAKO-2700). Some MCP hosts (observed: ChatGPT)
+    // probe OIDC discovery first and only fall back to OAuth on 404 —
+    // serving identical JSON saves a round-trip and stops emitting a
+    // spurious 404 in our logs. Our OAuth metadata happens to satisfy
+    // OIDC discovery's *required* fields (issuer, authorization_endpoint,
+    // token_endpoint, response_types_supported), but we deliberately
+    // omit OIDC-specific fields (jwks_uri, id_token_signing_alg_values,
+    // subject_types_supported) — strict OIDC clients will (correctly)
+    // decline; we are not an OIDC IdP.
     if (
       request.method === "GET" &&
-      url.pathname === "/.well-known/oauth-authorization-server"
+      (url.pathname === "/.well-known/oauth-authorization-server" ||
+        url.pathname === "/.well-known/openid-configuration")
     ) {
       return handleAuthServerMetadata(request, env);
     }

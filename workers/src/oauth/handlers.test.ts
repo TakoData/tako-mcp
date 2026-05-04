@@ -201,6 +201,25 @@ describe("discovery", () => {
     expect(body.code_challenge_methods_supported).toContain("S256");
   });
 
+  it("/.well-known/openid-configuration returns identical metadata (OIDC alias, TAKO-2700)", async () => {
+    const env = envWith();
+    const oauthRes = handleAuthServerMetadata(
+      new Request(
+        "https://mcp.example.com/.well-known/oauth-authorization-server",
+      ),
+      env,
+    );
+    const oidcRes = handleAuthServerMetadata(
+      new Request("https://mcp.example.com/.well-known/openid-configuration"),
+      env,
+    );
+    expect(oidcRes.status).toBe(200);
+    // Byte-for-byte identical body — the alias serves the OAuth metadata
+    // verbatim so the "we are not an OIDC IdP" caveat is preserved by
+    // omission of OIDC-specific fields (jwks_uri, id_token_signing_alg_*).
+    expect(await oidcRes.text()).toBe(await oauthRes.text());
+  });
+
   it("returns 404 when OAuth is disabled (no metadata advertised)", async () => {
     const res1 = handleProtectedResourceMetadata(
       new Request("https://mcp.example.com/.well-known/oauth-protected-resource"),
@@ -214,6 +233,12 @@ describe("discovery", () => {
       ENV_NO_OAUTH,
     );
     expect(res2.status).toBe(404);
+    // OIDC alias inherits the same env-gating (TAKO-2700).
+    const res3 = handleAuthServerMetadata(
+      new Request("https://mcp.example.com/.well-known/openid-configuration"),
+      ENV_NO_OAUTH,
+    );
+    expect(res3.status).toBe(404);
   });
 });
 
