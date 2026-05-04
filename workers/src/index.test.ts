@@ -137,28 +137,30 @@ describe("worker routing", () => {
       "wait_for_report",
     ]);
 
-    // MCP Apps: `open_chart_ui` and `knowledge_search` ship the chart
-    // widget bundle. `knowledge_search` auto-renders the top result
-    // inline on the sync results path; `open_chart_ui` always has a
-    // chart to render. Both must carry the widget URI under all three
-    // metadata keys: `_meta.ui.resourceUri` (open MCP Apps spec, read
-    // by claude.ai / VS Code / Goose), the legacy flat
-    // `_meta["ui/resourceUri"]` (older host readers), and
+    // MCP Apps: `open_chart_ui`, `knowledge_search`, and
+    // `wait_for_knowledge_search` all ship the chart widget bundle.
+    // `knowledge_search` auto-renders the top result inline on the
+    // sync path, and `wait_for_knowledge_search` does the same on
+    // its COMPLETED branch — both must carry the widget URI so the
+    // host renders the chart without an extra `open_chart_ui` call.
+    // The widget itself is "start collapsed, grow on chart": tool
+    // calls that don't deliver chart data (kickoff payloads,
+    // timed_out waits) leave the widget at 1 px instead of stacking
+    // empty 240-px-tall containers, so the wait-loop pattern does
+    // not clutter the chat.
+    // All widget-carrying tools' listings must declare the URI
+    // under all three metadata keys: `_meta.ui.resourceUri` (open
+    // MCP Apps spec, read by claude.ai / VS Code / Goose), the legacy
+    // flat `_meta["ui/resourceUri"]` (older host readers), and
     // `_meta["openai/outputTemplate"]` (ChatGPT's Apps SDK — without
     // it the widget loads but `window.openai.toolOutput` never
-    // populates).
-    //
-    // `wait_for_knowledge_search` deliberately does NOT ship the widget
-    // bundle even though COMPLETED responses carry chart fields:
-    // the deep-wait flow chains multiple tool calls (kickoff +
-    // timed_out continuations) and host CSS reserves min-height for
-    // every tool with `appUiResource`, producing a stack of empty
-    // widget containers in the chat. Agent chains into `open_chart_ui`
-    // for the inline chart on COMPLETED instead.
-    //
-    // Other tools ship no widget and should declare none of these
-    // fields.
-    const widgetTools = new Set(["open_chart_ui", "knowledge_search"]);
+    // populates). Other tools ship no widget and should declare
+    // none of these fields.
+    const widgetTools = new Set([
+      "open_chart_ui",
+      "knowledge_search",
+      "wait_for_knowledge_search",
+    ]);
     for (const name of widgetTools) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool?._meta).toMatchObject({

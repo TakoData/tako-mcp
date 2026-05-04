@@ -287,7 +287,20 @@ const WIDGET_HTML = `<!doctype html>
 </style>
 </head>
 <body>
-<div id="tako-placeholder">Loading chart…</div>
+<!-- Placeholder is hidden by default — the widget starts at zero
+     height and only grows once a chart actually arrives. Reason:
+     ChatGPT's widget container appears to pin the initial intrinsic
+     height as a floor and ignore later shrink notifications, so any
+     visible-by-default placeholder leaves a persistent empty box for
+     tool calls that never deliver chart data (knowledge_search
+     kickoff, fast-with-zero-cards). Trade-off: brief blank window
+     between widget mount and chart data arrival on hosts with slow
+     postMessage delivery (~200 ms on claude.ai); ChatGPT's
+     window.openai.toolOutput is synchronous so no visible flash.
+     The chart-rendering paths (iframe / img.load / iframe-fallback)
+     un-hide the relevant element AND notifyHeight(actual height) in
+     lockstep, so the widget grows naturally on success. -->
+<div id="tako-placeholder" class="hidden">Loading chart…</div>
 <iframe
   id="tako-embed"
   class="hidden"
@@ -604,7 +617,17 @@ const WIDGET_HTML = `<!doctype html>
     );
   }
 
-  notifyHeight(240);
+  // Initial intrinsic-height notification — 1 px (effectively invisible)
+  // instead of the previous 240 px. Reasoning: ChatGPT's widget host
+  // pins the highest height ever notified and ignores later shrinks,
+  // so a 240 px initial floor produces a persistent empty box for any
+  // tool call that doesn't deliver chart data (\`knowledge_search\`
+  // kickoff, fast-with-zero-cards). Starting at 1 keeps the host's
+  // floor minimal; render()'s chart-rendering paths grow the widget
+  // to the chart's actual height when data arrives. The no-chart
+  // guard inside render() also notifies 0 so hosts that DO honor
+  // shrink notifications collapse fully.
+  notifyHeight(1);
 
   // Synchronous probe wins when the host injects data before our script
   // runs; otherwise we fall through to a 10s polling window because
