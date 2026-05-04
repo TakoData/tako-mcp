@@ -137,6 +137,12 @@
         "format": {
           "type": "string",
           "description": "File format to export. Maps to the Tako web Export menu options.",
+          "enum": [
+            "markdown",
+            "json",
+            "pdf",
+            "powerpoint"
+          ],
           "required": true
         }
       },
@@ -213,7 +219,13 @@
         },
         "search_effort": {
           "type": "string",
-          "description": "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, async, higher credit cost). Omit to let the tool run `fast` first and escalate to `deep` only if `fast` returns zero cards. Deep mode runs asynchronously on Tako's side — the tool polls until the task completes or the per-call budget is exhausted."
+          "description": "Search depth: `fast` (lexical), `medium` / `auto` (balanced), `deep` (Orca research pipeline, async, higher credit cost). Omit to let the tool run `fast` first and escalate to `deep` only if `fast` returns zero cards. Deep mode runs asynchronously on Tako's side — the tool polls until the task completes or the per-call budget is exhausted.",
+          "enum": [
+            "fast",
+            "medium",
+            "deep",
+            "auto"
+          ]
         },
         "country_code": {
           "type": "string",
@@ -243,7 +255,13 @@
         },
         "status": {
           "type": "string",
-          "description": "Filter by report status."
+          "description": "Filter by report status.",
+          "enum": [
+            "pending",
+            "running",
+            "completed",
+            "failed"
+          ]
         }
       },
       "annotations": {

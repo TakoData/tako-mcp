@@ -132,4 +132,31 @@ describe("export_report", () => {
     expect(err.message).toMatch(/EXPORT_TOKEN_KEY/);
     expect(err.message).toMatch(/wrangler secret put/);
   });
+
+  it("throws a clear operator-targeted error when EXPORT_TOKEN_KEY is the wrong byte length", async () => {
+    // The handler-level pre-flight catches the wrong-length case
+    // and surfaces the same actionable hint as the missing case.
+    // Without the pre-flight, this would bubble up a generic
+    // "must decode to 32 bytes" error from `loadKey` deep inside
+    // `mintExportToken`, leaving the operator without the
+    // `wrangler secret put` fix hint.
+    const badEnv: Env = {
+      DJANGO_BASE_URL: "https://staging.trytako.com",
+      MCP_PUBLIC_BASE_URL: "https://mcp.staging.tako.com",
+      EXPORT_TOKEN_KEY: Buffer.from(new Uint8Array(16).fill(1)).toString(
+        "base64",
+      ),
+    };
+    const badCtx: ToolContext = { token: "sk-test-bearer", env: badEnv };
+
+    const err = await catchError(
+      export_report.handler({ report_id: "rep", format: "pdf" }, badCtx),
+    );
+
+    expect(err.message).toMatch(/EXPORT_TOKEN_KEY/);
+    expect(err.message).toMatch(/wrangler secret put/);
+    // The actual byte count must show up so the operator can tell
+    // "I generated the wrong size" from "I forgot to set it."
+    expect(err.message).toMatch(/16 bytes/);
+  });
 });

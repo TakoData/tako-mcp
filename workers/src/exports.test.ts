@@ -96,6 +96,22 @@ describe("token mint/verify", () => {
     ).rejects.toThrow(/expired/);
   });
 
+  it("accepts a token verified at exactly its expiry second", async () => {
+    // The minted `expiresAt` is the latest second the token is valid.
+    // A strict `<` comparison in verify means `now == exp` still
+    // passes; a `<=` would have shaved one second off the advertised
+    // TTL. Locks the boundary so a future refactor can't silently
+    // re-introduce the off-by-one.
+    const { token, expiresAt } = await mintExportToken(
+      "sk-user",
+      "rep",
+      "pdf",
+      ENV_A,
+    );
+    const payload = await verifyExportToken(token, ENV_A, expiresAt);
+    expect(payload.exp).toBe(expiresAt);
+  });
+
   it("rejects malformed token strings", async () => {
     await expect(verifyExportToken("not-a-token", ENV_A)).rejects.toThrow();
     await expect(verifyExportToken("v2.something", ENV_A)).rejects.toThrow(
@@ -197,14 +213,20 @@ describe("handleExportRequest", () => {
     );
   });
 
-  it("returns 401 for an invalid token", async () => {
+  it("returns a friendly HTML page (401) for an invalid token", async () => {
     const res = await handleExportRequest(
       new Request("https://mcp.staging.tako.com/exports/v1.bogus"),
       ENV_A,
     );
     expect(res.status).toBe(401);
-    // Single generic message — no fingerprinting which check failed.
-    expect(await res.text()).toBe("invalid or expired token");
+    // The user clicking the link sees a browser tab, not chat — give
+    // them a styled HTML page rather than a raw error string.
+    expect(res.headers.get("content-type")).toMatch(/text\/html/);
+    const body = await res.text();
+    expect(body).toMatch(/Download link expired/);
+    // Single generic message — distinguishing expired/tampered/
+    // malformed would help an attacker fingerprint the validator.
+    expect(body).not.toMatch(/tampered|malformed/i);
   });
 
   it("returns 401 for an expired token", async () => {
@@ -231,10 +253,12 @@ describe("handleExportRequest", () => {
       ENV_A,
     );
     expect(res.status).toBe(400);
+    // Stays as plaintext — empty token means hand-edited URL, not a
+    // real user clicking a tool result.
     expect(await res.text()).toBe("missing token");
   });
 
-  it("forwards upstream non-2xx status with body for triage", async () => {
+  it("returns a friendly HTML page (404) when upstream reports the report isn't ready", async () => {
     const { token } = await mintExportToken("sk", "rep", "pdf", ENV_A);
     vi.stubGlobal(
       "fetch",
@@ -251,9 +275,39 @@ describe("handleExportRequest", () => {
       ENV_A,
     );
     expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toMatch(/text\/html/);
     const body = await res.text();
-    expect(body).toMatch(/upstream returned 404/);
-    expect(body).toMatch(/Not found\./);
+    expect(body).toMatch(/Report not ready/);
+    // Upstream raw error must not leak into the user-facing page —
+    // the user's browser tab has no chat context, so a raw "Not
+    // found." string is unhelpful. The body still goes to logs.
+    expect(body).not.toMatch(/Not found\./);
+  });
+
+  it("returns a friendly HTML page for upstream 5xx", async () => {
+    const { token } = await mintExportToken("sk", "rep", "pdf", ENV_A);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () =>
+        new Response("internal error", {
+          status: 500,
+          headers: { "content-type": "text/plain" },
+        }),
+      ),
+    );
+
+    const res = await handleExportRequest(
+      new Request(`https://mcp.staging.tako.com/exports/${token}`),
+      ENV_A,
+    );
+    expect(res.status).toBe(500);
+    expect(res.headers.get("content-type")).toMatch(/text\/html/);
+    const body = await res.text();
+    // Substring-match on the apostrophe-free portion — the page
+    // HTML-escapes `'` to `&#39;`, so a regex against the raw
+    // word would miss.
+    expect(body).toMatch(/generate the export/);
+    expect(body).not.toMatch(/internal error/);
   });
 
   it("returns 500 when DJANGO_BASE_URL has a trailing slash", async () => {
@@ -264,5 +318,54 @@ describe("handleExportRequest", () => {
       badEnv,
     );
     expect(res.status).toBe(500);
+    // Misconfig page is HTML too — the user shouldn't see this in
+    // practice, but if they do they get a "contact support" hint
+    // rather than a bare error string.
+    expect(res.headers.get("content-type")).toMatch(/text\/html/);
+  });
+
+  it("sanitizes the report id in the Content-Disposition filename", async () => {
+    // Report IDs are UUID-shaped today, so the sanitizer is dead
+    // weight on the happy path. The defense matters on the bad-day
+    // path: if a future schema change ever produces a report ID with
+    // a `"`, `\`, or newline, the sanitizer prevents
+    // header-injection / response-splitting via Content-Disposition.
+    // mintExportToken doesn't validate `rid` shape — it accepts any
+    // string — so we can mint with shell-unsafe characters and
+    // assert the sanitizer cleans the resulting header.
+    const { token } = await mintExportToken(
+      "sk",
+      'rep"abc\nuser=admin',
+      "pdf",
+      ENV_A,
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () =>
+        new Response(new Uint8Array([1]), {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        }),
+      ),
+    );
+
+    const res = await handleExportRequest(
+      new Request(`https://mcp.staging.tako.com/exports/${token}`),
+      ENV_A,
+    );
+
+    expect(res.status).toBe(200);
+    const cd = res.headers.get("content-disposition");
+    // Each non-`[A-Za-z0-9_-]` char becomes `_`. Quote/newline/equals
+    // are gone — header stays well-quoted, single-line.
+    expect(cd).toBe(
+      'attachment; filename="tako-report-rep_abc_user_admin.pdf"',
+    );
+    // Pull out the filename component and verify nothing dangerous
+    // survived the sanitizer. The surrounding `filename="..."` quotes
+    // are expected; what matters is the inside.
+    const filenameMatch = cd?.match(/^attachment; filename="([^"]*)"$/);
+    expect(filenameMatch).not.toBeNull();
+    expect(filenameMatch![1]).not.toMatch(/["\\\n\r]/);
   });
 });

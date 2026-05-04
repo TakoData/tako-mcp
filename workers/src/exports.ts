@@ -29,8 +29,17 @@
  * Plaintext is `JSON.stringify({ rid, fmt, key, exp })`. AES-GCM
  * provides confidentiality + integrity in one primitive — no separate
  * HMAC needed.
+ *
+ * Base64url primitives are imported from `oauth/jwt.ts` so the two
+ * modules can't drift on encoding rules. The AES key derivation here
+ * intentionally is NOT shared with `oauth/jwt.ts`'s `encryptAesGcm` /
+ * `decryptAesGcm`: those return `null` on failure (OAuth's "treat as
+ * missing claim" semantics), whereas this module needs to throw so
+ * the route handler can log a distinguishable reason for tampered vs.
+ * expired tokens.
  */
 import type { Env } from "./env.js";
+import { b64url, b64urlDecode } from "./oauth/jwt.js";
 
 /** Wire-format version. Bump if the payload shape ever changes. */
 const TOKEN_VERSION = "v1";
@@ -92,12 +101,49 @@ interface ExportTokenPayload {
   exp: number;
 }
 
+const KEY_HINT_SUFFIX =
+  "Ask the operator to run `wrangler secret put EXPORT_TOKEN_KEY` " +
+  "with a 32-byte AES-256 key (e.g. `openssl rand -base64 32`).";
+
+/**
+ * Pre-flight: throw a single operator-friendly error if
+ * `EXPORT_TOKEN_KEY` is unset, undecodable, or the wrong byte length.
+ * Called from the tool handler so the operator gets the same
+ * actionable hint regardless of which configuration mode failed.
+ *
+ * Internal callers (mint/verify) hit `loadKey` directly and see a
+ * generic message — that's fine because the handler pre-validates,
+ * and a generic error from a deeper layer indicates a bug we want
+ * surfaced loudly rather than papered over.
+ */
+export function assertExportTokenKeyConfigured(env: Env): void {
+  const raw = env.EXPORT_TOKEN_KEY;
+  if (raw === undefined || raw === "") {
+    throw new Error(
+      `export_report is not configured on this deployment (missing EXPORT_TOKEN_KEY). ${KEY_HINT_SUFFIX}`,
+    );
+  }
+  let keyBytes: Uint8Array;
+  try {
+    keyBytes = b64urlDecode(raw);
+  } catch {
+    throw new Error(
+      `export_report is misconfigured (EXPORT_TOKEN_KEY is not valid base64). ${KEY_HINT_SUFFIX}`,
+    );
+  }
+  if (keyBytes.byteLength !== KEY_BYTES) {
+    throw new Error(
+      `export_report is misconfigured (EXPORT_TOKEN_KEY decodes to ${keyBytes.byteLength} bytes, expected ${KEY_BYTES}). ${KEY_HINT_SUFFIX}`,
+    );
+  }
+}
+
 async function loadKey(env: Env): Promise<CryptoKey> {
   const raw = env.EXPORT_TOKEN_KEY;
   if (raw === undefined || raw === "") {
     throw new Error("EXPORT_TOKEN_KEY is not configured");
   }
-  const keyBytes = base64Decode(raw);
+  const keyBytes = b64urlDecode(raw);
   if (keyBytes.byteLength !== KEY_BYTES) {
     throw new Error(
       `EXPORT_TOKEN_KEY must decode to ${KEY_BYTES} bytes (AES-256); got ${keyBytes.byteLength}`,
@@ -147,7 +193,7 @@ export async function mintExportToken(
   blob.set(iv, 0);
   blob.set(new Uint8Array(ciphertext), IV_BYTES);
   return {
-    token: `${TOKEN_VERSION}.${base64UrlEncode(blob)}`,
+    token: `${TOKEN_VERSION}.${b64url(blob)}`,
     expiresAt,
   };
 }
@@ -170,7 +216,12 @@ export async function verifyExportToken(
   if (version !== TOKEN_VERSION || body === "") {
     throw new Error("Invalid token format");
   }
-  const blob = base64UrlDecode(body);
+  let blob: Uint8Array;
+  try {
+    blob = b64urlDecode(body);
+  } catch {
+    throw new Error("Invalid token encoding");
+  }
   // Need at least IV + 16-byte GCM tag. Anything shorter can't be a
   // legitimate encrypted payload.
   if (blob.byteLength <= IV_BYTES + 16) {
@@ -209,7 +260,10 @@ export async function verifyExportToken(
   ) {
     throw new Error("Token payload is malformed");
   }
-  if (payload.exp <= nowSeconds) {
+  // Strict `<` so a token verified at exactly `exp` is still valid —
+  // honors the full advertised TTL. The minted `expiresAt` is the
+  // latest second the token works, not one before.
+  if (payload.exp < nowSeconds) {
     throw new Error("Token expired");
   }
   return payload;
@@ -224,6 +278,12 @@ export async function verifyExportToken(
  * potentially large reports in Worker memory. Cloudflare Workers'
  * fetch is streaming by default — assigning `upstream.body` directly
  * to the new Response keeps it that way.
+ *
+ * Errors return a small HTML page, not raw text: the user clicking
+ * the link sees a browser tab, not a chat window, so a friendly page
+ * with a "go back to your chat" hint is more useful than the upstream
+ * error string. Upstream details still go to `console.warn` for
+ * operator-side triage.
  */
 export async function handleExportRequest(
   request: Request,
@@ -238,6 +298,9 @@ export async function handleExportRequest(
   }
   const token = url.pathname.slice(prefix.length);
   if (token === "") {
+    // Plaintext on this branch only — an empty token means the URL
+    // was hand-edited or truncated, not pasted from a tool result.
+    // No real user should reach this page.
     return textResponse(400, "missing token");
   }
 
@@ -247,12 +310,23 @@ export async function handleExportRequest(
   } catch {
     // Single generic message — distinguishing expired / tampered /
     // malformed would help an attacker fingerprint the validator.
-    return textResponse(401, "invalid or expired token");
+    return htmlErrorResponse(
+      401,
+      "Download link expired",
+      "This download link is no longer valid — it may have expired or already been used.",
+    );
   }
 
   const base = env.DJANGO_BASE_URL;
   if (base === undefined || base === "" || base.endsWith("/")) {
-    return textResponse(500, "server misconfigured");
+    console.error(
+      "[exports] DJANGO_BASE_URL is missing or has a trailing slash",
+    );
+    return htmlErrorResponse(
+      500,
+      "Service unavailable",
+      "The download service isn't configured correctly. Please contact Tako support if this keeps happening.",
+    );
   }
 
   const slug = FORMAT_SLUG[payload.fmt];
@@ -269,35 +343,59 @@ export async function handleExportRequest(
       // own subrequest cap if upstream hangs.
     });
   } catch (err) {
-    return textResponse(
+    console.error(
+      `[exports] upstream fetch threw for rid=${payload.rid} fmt=${payload.fmt}: ${err instanceof Error ? err.message : "unknown"}`,
+    );
+    return htmlErrorResponse(
       502,
-      `upstream fetch failed: ${err instanceof Error ? err.message : "unknown"}`,
+      "Couldn't reach the export service",
+      "We couldn't reach the Tako export service. Please go back to your chat and try again in a moment.",
     );
   }
 
   if (!upstream.ok) {
-    // Forward the upstream status so the user (and Worker logs) can
-    // tell "report not done" (404) from "auth bad" (401/403) from
-    // "render failed" (5xx).
+    // Upstream body goes to logs, not to the user. The end-user is
+    // looking at a browser tab with no chat context, so a friendly
+    // "go back to your chat" page is more useful than a raw 4xx/5xx
+    // string.
     const text = await safeReadText(upstream);
-    return textResponse(
+    console.warn(
+      `[exports] upstream returned ${upstream.status} for rid=${payload.rid} fmt=${payload.fmt}: ${text || "(empty)"}`,
+    );
+    if (upstream.status === 404) {
+      // Most common user-facing case: the user clicked before the
+      // report finished generating. Tell them what to do next.
+      return htmlErrorResponse(
+        404,
+        "Report not ready yet",
+        "This report isn't done generating. Go back to your chat and ask the assistant to try the export again in a moment.",
+      );
+    }
+    return htmlErrorResponse(
       upstream.status,
-      `upstream returned ${upstream.status}: ${text || "(empty)"}`,
+      "Couldn't generate the export",
+      "Something went wrong while preparing this download. Go back to your chat and try again.",
     );
   }
 
   // Mirror the upstream content-type when present so the browser
   // picks the right preview/download path. Filename uses the format
   // extension; the report id is included for "which report did I
-  // download" disambiguation when the user has many.
-  const filename = `tako-report-${payload.rid}.${FORMAT_EXTENSION[payload.fmt]}`;
+  // download" disambiguation when the user has many. Sanitization is
+  // defensive: report IDs are UUID-shaped today (already in the safe
+  // set), but a future schema change shouldn't be allowed to inject
+  // quotes/CRLF/newlines into the Content-Disposition header.
+  const safeRid = sanitizeFilenameComponent(payload.rid);
+  const filename = `tako-report-${safeRid}.${FORMAT_EXTENSION[payload.fmt]}`;
   const headers = new Headers();
   const contentType = upstream.headers.get("content-type");
   if (contentType !== null) headers.set("content-type", contentType);
   const contentLength = upstream.headers.get("content-length");
   if (contentLength !== null) headers.set("content-length", contentLength);
-  // RFC 5987 / 6266 quoting: filename has no special chars in our
-  // format (UUID + extension), so plain quoting is sufficient.
+  // RFC 5987 / 6266 quoting. After sanitizeFilenameComponent the
+  // filename only contains characters in `[A-Za-z0-9_-]` plus the
+  // fixed `tako-report-` prefix and the extension dot, so plain
+  // quoting is sufficient.
   headers.set(
     "content-disposition",
     `attachment; filename="${filename}"`,
@@ -322,6 +420,67 @@ function textResponse(status: number, body: string): Response {
   });
 }
 
+function htmlErrorResponse(
+  status: number,
+  title: string,
+  message: string,
+): Response {
+  // Inline-styled, no external assets — the page must render even
+  // when the user's browser can't reach our origin for a stylesheet.
+  // Kept small (well under 1 KB) so the Worker doesn't burn budget
+  // on a static page.
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)} — Tako</title>
+<style>
+  body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; max-width: 480px; margin: 4em auto; padding: 0 1.5em; color: #1f2937; }
+  h1 { font-size: 1.4em; margin: 0 0 0.5em; }
+  p { margin: 0.75em 0; }
+  .muted { color: #6b7280; font-size: 0.9em; }
+</style>
+</head>
+<body>
+<h1>${escapeHtml(title)}</h1>
+<p>${escapeHtml(message)}</p>
+<p class="muted">You can close this tab and go back to your chat with the assistant.</p>
+</body>
+</html>
+`;
+  return new Response(html, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Restrict a string to characters that are safe inside a
+ * `Content-Disposition: attachment; filename="..."` header. AES-GCM
+ * already authenticates the token payload, so a tampered `rid` won't
+ * reach this point — but a future bug or schema change could
+ * introduce a non-UUID `rid`. Stripping anything outside
+ * `[A-Za-z0-9_-]` is the cheapest insurance against quote/CRLF
+ * injection without needing to add an RFC-5987 `filename*` encoder.
+ */
+function sanitizeFilenameComponent(s: string): string {
+  const cleaned = s.replace(/[^A-Za-z0-9_-]/g, "_");
+  return cleaned === "" ? "_" : cleaned;
+}
+
 async function safeReadText(response: Response): Promise<string> {
   try {
     const text = await response.text();
@@ -329,24 +488,4 @@ async function safeReadText(response: Response): Promise<string> {
   } catch {
     return "";
   }
-}
-
-/** Strict base64 (no URL-safe alphabet) — used for the AES key in env. */
-function base64Decode(s: string): Uint8Array {
-  return new Uint8Array(Buffer.from(s, "base64"));
-}
-
-function base64UrlEncode(data: Uint8Array): string {
-  return Buffer.from(data)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function base64UrlDecode(s: string): Uint8Array {
-  const padded =
-    s.replace(/-/g, "+").replace(/_/g, "/") +
-    "=".repeat((4 - (s.length % 4)) % 4);
-  return new Uint8Array(Buffer.from(padded, "base64"));
 }

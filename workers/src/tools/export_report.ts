@@ -22,6 +22,7 @@ import { z } from "zod";
 
 import { resolveMcpPublicBase } from "../env.js";
 import {
+  assertExportTokenKeyConfigured,
   DEFAULT_TOKEN_TTL_SECONDS,
   EXPORT_FORMATS,
   mintExportToken,
@@ -74,11 +75,12 @@ const export_report = {
     openWorldHint: true,
   },
   async handler(input, ctx) {
-    if (ctx.env.EXPORT_TOKEN_KEY === undefined || ctx.env.EXPORT_TOKEN_KEY === "") {
-      throw new Error(
-        "export_report is not configured on this deployment (missing EXPORT_TOKEN_KEY). Ask the operator to run `wrangler secret put EXPORT_TOKEN_KEY`.",
-      );
-    }
+    // Pre-flight: presence + decoded byte length. Catches the
+    // operator-misconfig cases (missing secret, wrong base64,
+    // wrong key length) up here with one actionable message rather
+    // than letting the user see a generic error from deep inside
+    // `mintExportToken`'s `loadKey`.
+    assertExportTokenKeyConfigured(ctx.env);
 
     // `resolveMcpPublicBase` falls back to the request's own origin
     // when the env binding is unset — safe in `wrangler dev` and in
