@@ -100,18 +100,19 @@ const outputSchema = z.object({
   webpage_url: z.string(),
   credit_cost: z.number().nullable(),
   estimated_runtime_seconds: z.number().nullable(),
-  // Celery task id returned by the `/analyze/` call. Surfaced so operators
-  // have a handle to look up the job in Flower / Datadog if it stalls.
-  // Null when analyze failed (`status == "created_but_not_started"`).
-  celery_task_id: z.string().nullable(),
   // Present when create succeeded but analyze failed. Gives the LLM a
   // structured handle to explain the partial-success state to the user.
   // Create failures still throw — see the comment above the `/analyze/`
   // call for the reason we only swallow analyze errors.
+  //
+  // `kind` is a discriminator the LLM can branch on; `message` is a
+  // curated user-facing string per kind — we deliberately do NOT
+  // surface raw backend error strings or HTTP status codes here, since
+  // those constitute internal telemetry leakage from the perspective
+  // of consumer hosts (Claude.ai, ChatGPT) reviewing the connector.
   analyze_error: z
     .object({
       kind: z.string(),
-      status: z.number().nullable(),
       message: z.string(),
     })
     .nullable(),
@@ -128,7 +129,34 @@ type CreateResponse = {
 
 type AnalyzeResponse = {
   status?: string | null;
+  // Internal Celery handle from the backend's `/analyze/` response.
+  // Logged server-side for operator lookup in Datadog (keyed on
+  // report_id); deliberately NOT surfaced in the tool output, since
+  // it's internal infrastructure telemetry.
   celery_task_id?: string | null;
+};
+
+// Curated user-facing message per Django error kind. The raw
+// `err.message` carries internal endpoint paths and stack-trace-ish
+// fragments — fine for a server log, not for an LLM context that gets
+// shipped through ChatGPT / Claude.ai. Every branch tells the LLM the
+// same recoverable story: the draft is saved, retry from the web UI.
+const FALLBACK_ANALYZE_ERROR_MESSAGE =
+  "The report draft was created, but an unexpected error occurred when starting generation. Open the draft in your Tako library and re-trigger generation from the web UI.";
+
+const ANALYZE_ERROR_MESSAGES: Record<string, string> = {
+  unauthorized:
+    "Authentication failed while starting report generation. Reconnect Tako and retry.",
+  timeout:
+    "The report draft was created, but the backend took too long to confirm generation started. Open the draft in your Tako library and re-trigger generation from the web UI.",
+  not_found:
+    "The report draft was created, but the backend couldn't find it when starting generation. Open your Tako library and re-trigger generation from the web UI.",
+  bad_request:
+    "The report draft was created, but generation could not start due to a validation error. Open the draft in your Tako library, adjust parameters, and retry from the web UI.",
+  response_parse:
+    "The report draft was created, but the backend returned an unexpected response when starting generation. Open the draft in your Tako library and re-trigger generation from the web UI.",
+  http: "The report draft was created, but the backend returned an error when starting generation. Open the draft in your Tako library and re-trigger generation from the web UI.",
+  unknown: FALLBACK_ANALYZE_ERROR_MESSAGE,
 };
 
 type ReportTemplate = {
@@ -382,14 +410,30 @@ const create_report = {
       );
     } catch (err) {
       if (err instanceof DjangoError) {
+        const kind = djangoErrorKind(err);
         analyzeError = {
-          kind: djangoErrorKind(err),
-          status: err.status ?? null,
-          message: err.message,
+          kind,
+          message: ANALYZE_ERROR_MESSAGES[kind] ?? FALLBACK_ANALYZE_ERROR_MESSAGE,
         };
       } else {
         throw err;
       }
+    }
+
+    // Operator log: the Celery handle never leaves the worker via the
+    // tool response (it's internal telemetry that consumer hosts'
+    // review processes flag), but operators still need a way to
+    // correlate report_id with a Celery task when debugging stalled
+    // jobs in Datadog. Cloudflare Workers stdout flows into Datadog
+    // via the existing pipeline.
+    if (analyzed?.celery_task_id !== undefined && analyzed.celery_task_id !== null) {
+      console.log(
+        JSON.stringify({
+          msg: "create_report.analyze_dispatched",
+          report_id: reportId,
+          celery_task_id: analyzed.celery_task_id,
+        }),
+      );
     }
 
     return {
@@ -410,7 +454,6 @@ const create_report = {
       webpage_url: `${resolvePublicBase(ctx.env)}/reports/${encodeURIComponent(reportId)}?from=library`,
       credit_cost: created.credit_cost ?? null,
       estimated_runtime_seconds: created.estimated_runtime_seconds ?? null,
-      celery_task_id: analyzed?.celery_task_id ?? null,
       analyze_error: analyzeError,
     };
   },

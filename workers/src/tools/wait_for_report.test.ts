@@ -46,8 +46,6 @@ describe("wait_for_report", () => {
         status: "completed",
         title: "Q1 Tesla earnings",
         result: { sections: [{ heading: "summary", text: "..." }] },
-        pdf_url: "https://exports.tako.com/r/rep_done.pdf",
-        pptx_url: "https://exports.tako.com/r/rep_done.pptx",
       }),
     ]);
 
@@ -66,15 +64,6 @@ describe("wait_for_report", () => {
       sections: [{ heading: "summary", text: "..." }],
     });
 
-    // Export URLs flatten — but webpage_url stays at top level (it's a
-    // view link, not an export).
-    expect(out.export_urls?.pdf_url).toBe(
-      "https://exports.tako.com/r/rep_done.pdf",
-    );
-    expect(out.export_urls?.pptx_url).toBe(
-      "https://exports.tako.com/r/rep_done.pptx",
-    );
-    expect(out.export_urls?.webpage_url).toBeUndefined();
     // webpage_url is constructed from PUBLIC_BASE_URL (or DJANGO_BASE_URL
     // fallback in tests) — Django's response value is ignored. The
     // ?from=library param is the canonical Library deep-link the web

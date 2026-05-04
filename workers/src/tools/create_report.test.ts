@@ -182,26 +182,34 @@ describe("create_report error forwarding", () => {
     // Status discriminator the LLM keys on.
     expect(out.status).toBe("created_but_not_started");
 
-    // Celery handle is null on failure — there's no task to track.
-    expect(out.celery_task_id).toBeNull();
-
     // Create-response fields still flow through so the LLM can quote
     // credit cost / ETA when telling the user what was created.
     expect(out.title).toBe("Stranded draft");
     expect(out.credit_cost).toBe(25);
     expect(out.estimated_runtime_seconds).toBe(120);
 
+    // Internal telemetry stays out of the tool output. `celery_task_id`
+    // is logged server-side (operators correlate via Datadog) but is
+    // never surfaced to the LLM, since consumer hosts' review
+    // processes flag internal infrastructure identifiers.
+    expect(out).not.toHaveProperty("celery_task_id");
+
     // Structured failure detail so the LLM can explain what happened.
     // `kind: "http"` matches djangoErrorKind in mcp.ts for 5xx/unknown
-    // status; `status` carries the HTTP code so clients can branch.
+    // status. `message` is a curated user-facing string per kind —
+    // raw backend text and HTTP status codes are deliberately NOT
+    // surfaced (same review-safety reasoning as celery_task_id).
     expect(out.analyze_error).not.toBeNull();
     const analyzeErr = out.analyze_error as NonNullable<
       typeof out.analyze_error
     >;
     expect(analyzeErr.kind).toBe("http");
-    expect(analyzeErr.status).toBe(500);
-    expect(analyzeErr.message).toContain("500");
-    expect(analyzeErr.message).toContain("/analyze/");
+    expect(analyzeErr.message).toMatch(/Tako library/);
+    // Lock the absence of internal telemetry — guards against future
+    // refactors re-introducing `status` or raw error strings.
+    expect(analyzeErr).not.toHaveProperty("status");
+    expect(analyzeErr.message).not.toMatch(/\b500\b/);
+    expect(analyzeErr.message).not.toContain("/analyze/");
   });
 
   it("returns partial-success when analyze times out", async () => {
@@ -239,15 +247,17 @@ describe("create_report error forwarding", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(out.report_id).toBe("rep_slow");
     expect(out.status).toBe("created_but_not_started");
-    expect(out.celery_task_id).toBeNull();
+    expect(out).not.toHaveProperty("celery_task_id");
     expect(out.analyze_error).not.toBeNull();
     const analyzeErr = out.analyze_error as NonNullable<
       typeof out.analyze_error
     >;
     expect(analyzeErr.kind).toBe("timeout");
-    // DjangoTimeoutError.status is undefined → serialized as null.
-    expect(analyzeErr.status).toBeNull();
-    expect(analyzeErr.message).toContain("timed out");
+    expect(analyzeErr).not.toHaveProperty("status");
+    // Curated message per kind — does NOT echo raw "timed out" backend
+    // text. Locked to the timeout-branch wording.
+    expect(analyzeErr.message).toMatch(/took too long/);
+    expect(analyzeErr.message).toMatch(/Tako library/);
   });
 
   it("returns partial-success (not a throw) when analyze 400s", async () => {
@@ -278,7 +288,8 @@ describe("create_report error forwarding", () => {
       typeof out.analyze_error
     >;
     expect(analyzeErr.kind).toBe("bad_request");
-    expect(analyzeErr.status).toBe(400);
+    expect(analyzeErr).not.toHaveProperty("status");
+    expect(analyzeErr.message).toMatch(/Tako library/);
   });
 
   it("auto-resolves default template when caller omits config", async () => {
