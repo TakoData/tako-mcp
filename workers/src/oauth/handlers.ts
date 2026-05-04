@@ -791,12 +791,26 @@ export async function handleToken(req: Request, env: Env): Promise<Response> {
  *   plausible under memory pressure — refresh-replay protection is
  *   correspondingly weaker than auth-code protection. KV-backed enforcement
  *   is the answer if/when refresh replay becomes a hard requirement.
+ *
+ * Rolling cutover (`jti` undefined): tokens minted before this code
+ * shipped have no `jti` claim. `verifyJwt` validates signature + `exp`
+ * only — the runtime cast to `RefreshTokenClaims` does not enforce
+ * shape — so `claims.jti` is `undefined` for legacy tokens. If we keyed
+ * the cache on that, every legacy token would collide on a single
+ * `…/undefined` slot and the first post-deploy refresh by any user
+ * would lock out every other still-active session. We instead bypass
+ * enforcement for tokens without `jti`; they remain redeemable for the
+ * remainder of their natural TTL. New tokens (post-deploy) carry `jti`
+ * and get full enforcement. The bypass becomes dead code once all
+ * legacy refresh tokens age out (≤14 days) and can be removed in a
+ * follow-up.
  */
 async function checkAndMarkRedeemed(
   kind: "auth-code" | "refresh-token",
-  jti: string,
+  jti: string | undefined,
   ttlSeconds: number,
 ): Promise<Response | null> {
+  if (!jti) return null;
   const cache = caches.default;
   const cacheKey = new Request(`https://cache.local/oauth-${kind}/${jti}`);
   if (await cache.match(cacheKey)) {

@@ -15,7 +15,11 @@ import {
   SESSION_COOKIE,
   STATE_COOKIE,
 } from "./cookies.js";
-import type { ClientIdClaims, SessionCookieClaims } from "./types.js";
+import type {
+  ClientIdClaims,
+  RefreshTokenClaims,
+  SessionCookieClaims,
+} from "./types.js";
 
 const SIGN_KEY = "test-sign-key-handlers";
 
@@ -872,6 +876,60 @@ describe("/token", () => {
     };
     expect(body.error).toBe("invalid_grant");
     expect(body.error_description).toBe("authorization code already redeemed");
+  });
+
+  it("does not enforce single-use on legacy refresh_token (no jti)", async () => {
+    // Tokens minted before TAKO-2701 shipped lack a `jti` claim.
+    // `verifyJwt` validates signature + exp only, so a legacy token
+    // deserializes with `claims.jti === undefined`. If the redemption
+    // handler keyed the cache on `undefined` directly, every legacy
+    // token would collide on one cache slot and the first post-deploy
+    // refresh would lock out every other still-active session. The
+    // handler must skip enforcement when `jti` is absent so legacy
+    // tokens stay redeemable for the remainder of their natural TTL.
+    const env = envWith();
+    const enc_tako_token = await encryptAesGcm(
+      "stub-tako-token",
+      env.OAUTH_ENC_KEY!,
+    );
+    const legacyClaims = {
+      type: "refresh" as const,
+      scope: "mcp",
+      user_id: "user-1",
+      user_email: "alice@example.com",
+      enc_tako_token,
+      exp: Math.floor(Date.now() / 1000) + 60,
+      // intentionally no jti — simulates a token minted by the previous
+      // deploy.
+    };
+    const refresh_token = await signJwt(
+      legacyClaims as unknown as RefreshTokenClaims,
+      env.OAUTH_SIGN_KEY!,
+    );
+    const form = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token,
+    }).toString();
+
+    const first = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: form,
+      }),
+      env,
+    );
+    expect(first.status).toBe(200);
+
+    const second = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: form,
+      }),
+      env,
+    );
+    expect(second.status).toBe(200);
   });
 
   it("rejects replay of an already-redeemed refresh_token", async () => {
