@@ -51,6 +51,10 @@ export interface AuthCodeClaims extends BaseClaims {
   user_email: string;
   /** AES-GCM-encrypted Tako API token. See `encryptAesGcm` in `jwt.ts`. */
   enc_tako_token: string;
+  /** Unique JWT ID for single-use enforcement (OAuth 2.1 §4.1.2). The
+   *  redemption handler records this in Workers Cache after a successful
+   *  exchange and rejects subsequent presentations with the same `jti`. */
+  jti: string;
 }
 
 /* --------------------------- Tokens issued to clients --------------------------- */
@@ -78,6 +82,10 @@ export interface RefreshTokenClaims extends BaseClaims {
   user_id: string;
   user_email: string;
   enc_tako_token: string;
+  /** Unique JWT ID for single-use enforcement (OAuth 2.1 §4.3.1
+   *  refresh-token rotation). Recorded in Workers Cache on successful
+   *  exchange so re-presenting the same refresh token is rejected. */
+  jti: string;
 }
 
 /* --------------------------- Worker-only cookies --------------------------- */

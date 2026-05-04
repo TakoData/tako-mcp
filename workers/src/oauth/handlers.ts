@@ -640,6 +640,7 @@ export async function handleAuthorize(
     user_email: session!.user_email,
     enc_tako_token,
     exp: now + AUTH_CODE_TTL_S,
+    jti: crypto.randomUUID(),
   };
   const code = await signJwt(codeClaims, cfg.signKey);
 
@@ -770,6 +771,50 @@ export async function handleToken(req: Request, env: Env): Promise<Response> {
   );
 }
 
+/**
+ * Single-use enforcement for grant tokens (OAuth 2.1 §4.1.2 for auth
+ * codes, §4.3.1 for refresh tokens). On the first redemption we record
+ * the token's `jti` in Workers Cache for the remainder of its TTL; on
+ * any subsequent redemption the cache hit short-circuits with
+ * `invalid_grant`.
+ *
+ * Caveats (deliberate, see TAKO-2701):
+ * - Workers Cache is per-colo, not global. A captured token redeemed at
+ *   edge A and replayed at edge B would not see edge B's empty cache.
+ *   In practice, a single OAuth client (Claude.ai's backend, ChatGPT's
+ *   backend) is sticky to one colo per session, so this catches realistic
+ *   replay scenarios. Cross-colo replay would itself be a strong signal
+ *   warranting an upgrade to KV-backed enforcement.
+ * - Workers Cache is best-effort LRU. The 60s auth-code TTL fits easily
+ *   inside any practical eviction window, so auth-code coverage is hard.
+ *   The 14-day refresh-token TTL is long enough that LRU eviction is
+ *   plausible under memory pressure — refresh-replay protection is
+ *   correspondingly weaker than auth-code protection. KV-backed enforcement
+ *   is the answer if/when refresh replay becomes a hard requirement.
+ */
+async function checkAndMarkRedeemed(
+  kind: "auth-code" | "refresh-token",
+  jti: string,
+  ttlSeconds: number,
+): Promise<Response | null> {
+  const cache = caches.default;
+  const cacheKey = new Request(`https://cache.local/oauth-${kind}/${jti}`);
+  if (await cache.match(cacheKey)) {
+    const description =
+      kind === "auth-code"
+        ? "authorization code already redeemed"
+        : "refresh token already redeemed";
+    return jsonError("invalid_grant", description, 400);
+  }
+  await cache.put(
+    cacheKey,
+    new Response("1", {
+      headers: { "Cache-Control": `max-age=${ttlSeconds}` },
+    }),
+  );
+  return null;
+}
+
 async function handleAuthorizationCodeGrant(
   params: URLSearchParams,
   cfg: OAuthConfig,
@@ -811,13 +856,12 @@ async function handleAuthorizationCodeGrant(
   if (claims.code_challenge !== expectedChallenge) {
     return jsonError("invalid_grant", "PKCE verifier does not match", 400);
   }
-  // KNOWN GAP (TAKO-2679 follow-up): auth codes are not single-use.
-  // The 60s TTL bounds replay risk, but a code captured in that window
-  // can be redeemed multiple times until it expires. The JWT-stateless
-  // architecture (per /tmp/oauth-real-impl-comparison.md) means we have
-  // no persistent storage to mark a code as consumed. Adding a small
-  // KV-backed `jti` revocation set would close this; tracking under
-  // the OAuth-hardening follow-up ticket.
+  const replay = await checkAndMarkRedeemed(
+    "auth-code",
+    claims.jti,
+    AUTH_CODE_TTL_S,
+  );
+  if (replay !== null) return replay;
   return issueTokens(
     {
       scope: claims.scope,
@@ -845,13 +889,12 @@ async function handleRefreshGrant(
       400,
     );
   }
-  // KNOWN GAP (TAKO-2679 follow-up): refresh tokens are not single-use.
-  // OAuth 2.1 §4.3.1 recommends rotation-with-replay-detection — when a
-  // previously-rotated refresh token is re-presented, all derived tokens
-  // for that user/client should be revoked. The JWT-stateless design
-  // has no persistent store to mark tokens spent; the same KV-backed
-  // `jti` mitigation that would close the auth-code reuse gap closes
-  // this one too.
+  const replay = await checkAndMarkRedeemed(
+    "refresh-token",
+    claims.jti,
+    REFRESH_TOKEN_TTL_S,
+  );
+  if (replay !== null) return replay;
   return issueTokens(
     {
       scope: claims.scope,
@@ -890,6 +933,7 @@ async function issueTokens(
     user_email: identity.user_email,
     enc_tako_token: identity.enc_tako_token,
     exp: now + REFRESH_TOKEN_TTL_S,
+    jti: crypto.randomUUID(),
   };
   const access_token = await signJwt(accessClaims, cfg.signKey);
   const refresh_token = await signJwt(refreshClaims, cfg.signKey);
