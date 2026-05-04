@@ -29,14 +29,13 @@ export const reportOutputShape = {
   credit_cost: z.number().nullable(),
   runtime_seconds: z.number().nullable(),
   estimated_runtime_seconds: z.number().nullable(),
-  // Canonical "view this report in the Tako UI" link. Surfaced as a
-  // dedicated top-level field (not rolled into `export_urls`) because it
-  // is semantically distinct: a view URL, not a downloadable export.
+  // Canonical "view this report in the Tako UI" link. Always present
+  // and constructed from PUBLIC_BASE_URL — Django's response value is
+  // ignored. Downloadable exports flow through the dedicated
+  // `export_report` tool, not as URL fields on this response.
   webpage_url: z.string().nullable(),
   // Populated only when status === "completed":
   result: z.unknown().nullable(),
-  export_urls: z.record(z.string(), z.string()).nullable(),
-  thread_id: z.string().nullable(),
   // Populated only when status === "failed":
   error_message: z.string().nullable(),
 } as const;
@@ -55,33 +54,8 @@ export type ReportDetailResponse = {
   estimated_runtime_seconds?: number | null;
   webpage_url?: string | null;
   result?: unknown;
-  thread_id?: string | null;
   error_message?: string | null;
-  // The detail serializer exposes several per-format export URLs; we
-  // flatten any keys ending in `_url` whose value is a string into a
-  // single `export_urls` map for LLM convenience.
-  [k: string]: unknown;
 };
-
-// Keys that already have their own dedicated top-level output field and
-// should therefore NOT be re-flattened into the `export_urls` bucket.
-const TOP_LEVEL_URL_KEYS = new Set(["webpage_url"]);
-
-function extractExportUrls(
-  data: ReportDetailResponse,
-): Record<string, string> | null {
-  const urls: Record<string, string> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (TOP_LEVEL_URL_KEYS.has(key)) continue;
-    // Only `_url` (singular) — no known export endpoint returns a
-    // string under a plural `_urls` key (those are typically arrays,
-    // which wouldn't fit `Record<string, string>` anyway).
-    if (typeof value === "string" && key.endsWith("_url")) {
-      urls[key] = value;
-    }
-  }
-  return Object.keys(urls).length > 0 ? urls : null;
-}
 
 /**
  * Normalize a Django report detail response into the canonical output
@@ -115,8 +89,6 @@ export function shapeReportOutput(
     estimated_runtime_seconds: data.estimated_runtime_seconds ?? null,
     webpage_url: `${resolvePublicBase(env)}/reports/${encodeURIComponent(reportId)}?from=library`,
     result: data.result ?? null,
-    export_urls: extractExportUrls(data),
-    thread_id: data.thread_id ?? null,
     error_message: data.error_message ?? null,
   };
 }
