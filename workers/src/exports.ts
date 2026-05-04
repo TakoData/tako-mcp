@@ -307,9 +307,16 @@ export async function handleExportRequest(
   let payload: ExportTokenPayload;
   try {
     payload = await verifyExportToken(token, env);
-  } catch {
-    // Single generic message — distinguishing expired / tampered /
-    // malformed would help an attacker fingerprint the validator.
+  } catch (err) {
+    // User-facing message stays generic — distinguishing expired /
+    // tampered / malformed / misconfigured would help an attacker
+    // fingerprint the validator. The operator log carries the real
+    // reason so a rotated/removed EXPORT_TOKEN_KEY (loadKey throws a
+    // config error) doesn't go silent in production.
+    console.warn(
+      "[exports] verifyExportToken failed:",
+      err instanceof Error ? err.message : err,
+    );
     return htmlErrorResponse(
       401,
       "Download link expired",

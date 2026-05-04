@@ -23,7 +23,6 @@ import { z } from "zod";
 import { resolveMcpPublicBase } from "../env.js";
 import {
   assertExportTokenKeyConfigured,
-  DEFAULT_TOKEN_TTL_SECONDS,
   EXPORT_FORMATS,
   mintExportToken,
 } from "../exports.js";
@@ -104,7 +103,7 @@ const export_report = {
       // Token already URL-safe (base64url), so no extra encoding here.
       download_url: `${base}/exports/${token}`,
       expires_at: expiresAt,
-      expires_in_seconds: DEFAULT_TOKEN_TTL_SECONDS,
+      expires_in_seconds: expiresAt - Math.floor(Date.now() / 1000),
     };
   },
 } satisfies ToolModule<typeof inputSchema, z.infer<typeof outputSchema>>;
