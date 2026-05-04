@@ -15,7 +15,11 @@ import {
   SESSION_COOKIE,
   STATE_COOKIE,
 } from "./cookies.js";
-import type { ClientIdClaims, SessionCookieClaims } from "./types.js";
+import type {
+  ClientIdClaims,
+  RefreshTokenClaims,
+  SessionCookieClaims,
+} from "./types.js";
 
 const SIGN_KEY = "test-sign-key-handlers";
 
@@ -838,6 +842,155 @@ describe("/token", () => {
     };
     expect(body.error).toBe("invalid_request");
     expect(body.error_description).toBe("grant_type is required");
+  });
+
+  it("rejects replay of an already-redeemed authorization_code", async () => {
+    // Single-use enforcement (OAuth 2.1 §4.1.2 / RFC 6749 §4.1.2): an
+    // authorization_code MUST be redeemable at most once.
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { verifier, challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+
+    const authorizeRes = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const code = new URL(authorizeRes.headers.get("location")!)
+      .searchParams.get("code")!;
+
+    const tokenForm = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: "https://client.example.com/cb",
+      code_verifier: verifier,
+      client_id: clientId,
+    }).toString();
+
+    const first = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: tokenForm,
+      }),
+      env,
+    );
+    expect(first.status).toBe(200);
+
+    const replay = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: tokenForm,
+      }),
+      env,
+    );
+    expect(replay.status).toBe(400);
+    const body = (await replay.json()) as {
+      error: string;
+      error_description: string;
+    };
+    expect(body.error).toBe("invalid_grant");
+    expect(body.error_description).toBe("authorization code already redeemed");
+  });
+
+  it("does not enforce single-use on legacy refresh_token (no jti)", async () => {
+    // Tokens minted before TAKO-2701 shipped lack a `jti` claim.
+    // `verifyJwt` validates signature + exp only, so a legacy token
+    // deserializes with `claims.jti === undefined`. If the redemption
+    // handler keyed the cache on `undefined` directly, every legacy
+    // token would collide on one cache slot and the first post-deploy
+    // refresh would lock out every other still-active session. The
+    // handler must skip enforcement when `jti` is absent so legacy
+    // tokens stay redeemable for the remainder of their natural TTL.
+    const env = envWith();
+    const enc_tako_token = await encryptAesGcm(
+      "stub-tako-token",
+      env.OAUTH_ENC_KEY!,
+    );
+    const legacyClaims = {
+      type: "refresh" as const,
+      scope: "mcp",
+      user_id: "user-1",
+      user_email: "alice@example.com",
+      enc_tako_token,
+      exp: Math.floor(Date.now() / 1000) + 60,
+      // intentionally no jti — simulates a token minted by the previous
+      // deploy.
+    };
+    const refresh_token = await signJwt(
+      legacyClaims as unknown as RefreshTokenClaims,
+      env.OAUTH_SIGN_KEY!,
+    );
+    const form = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token,
+    }).toString();
+
+    const first = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: form,
+      }),
+      env,
+    );
+    expect(first.status).toBe(200);
+
+    const second = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: form,
+      }),
+      env,
+    );
+    expect(second.status).toBe(200);
+  });
+
+  it("rejects replay of an already-redeemed refresh_token", async () => {
+    // Refresh tokens are also single-use (OAuth 2.1 §4.3.1 rotation):
+    // re-presenting a token after it has been exchanged must fail.
+    const { env, refreshToken } = await runFullFlow();
+    const refreshForm = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }).toString();
+
+    const first = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: refreshForm,
+      }),
+      env,
+    );
+    expect(first.status).toBe(200);
+
+    const replay = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: refreshForm,
+      }),
+      env,
+    );
+    expect(replay.status).toBe(400);
+    const body = (await replay.json()) as {
+      error: string;
+      error_description: string;
+    };
+    expect(body.error).toBe("invalid_grant");
+    expect(body.error_description).toBe("refresh token already redeemed");
   });
 });
 
