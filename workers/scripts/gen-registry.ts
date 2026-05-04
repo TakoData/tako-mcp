@@ -53,6 +53,7 @@ const NON_TOOL_FILES = new Set(["types.ts"]);
 interface ParameterSpec {
   type: string;
   description?: string;
+  enum?: unknown[];
   required?: boolean;
   default?: unknown;
 }
@@ -129,9 +130,9 @@ async function loadToolModules(): Promise<LoadedModule[]> {
  *
  * This is NOT JSON Schema — it's a flat, hand-friendly shape. The conversion
  * collapses `required: [...]` into a per-property boolean and preserves
- * `default` where present. Everything else (`additionalProperties`, `$schema`,
- * nested schemas, enums, format annotations) is dropped because the external
- * registry's parameter format does not carry them.
+ * `default` and `enum` where present. Everything else (`additionalProperties`,
+ * `$schema`, nested schemas, format annotations) is dropped because the
+ * external registry's parameter format does not carry them.
  */
 function flattenParameters(
   jsonSchema: unknown,
@@ -149,11 +150,18 @@ function flattenParameters(
       type?: string;
       description?: string;
       default?: unknown;
+      enum?: unknown[];
     };
     const spec: ParameterSpec = {
       type: prop.type ?? "unknown",
     };
     if (prop.description !== undefined) spec.description = prop.description;
+    // Forward `enum` so callers reading the registry (LLMs and humans
+    // alike) see the constrained value set. Zod emits `enum` for
+    // `z.enum(...)`, `z.literal(...)` unions, and similar; without
+    // forwarding, the registry only advertises `type: "string"` and
+    // a non-Zod consumer can't tell what values are valid.
+    if (Array.isArray(prop.enum)) spec.enum = prop.enum;
     const hasDefault = Object.prototype.hasOwnProperty.call(prop, "default");
     if (hasDefault) {
       spec.default = prop.default;
