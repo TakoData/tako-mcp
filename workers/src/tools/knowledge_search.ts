@@ -1,21 +1,46 @@
 /**
- * `knowledge_search` — sync entry point for Tako's knowledge-graph search.
+ * `knowledge_search` — single-tool semantic search over Tako's curated
+ * knowledge graph.
  *
- * Runs `fast` (lexical, sync, cheap) and either returns results, or — on
- * empty fast / explicit deep — kicks off the async (Orca) deep pipeline
- * via the existing `/api/v1/knowledge_search` POST. The kickoff payload
- * `{ task_id, status: "pending", … }` is returned immediately so the
- * call always finishes well under the MCP client's 60s default timeout.
- * The agent then chains into `wait_for_knowledge_search` to poll until
- * the deep task terminates.
+ * Runs `fast` (lexical, sync, cheap) by default and auto-escalates to
+ * `deep` (Orca research pipeline, async, slower) when fast returns no
+ * cards (or when the caller passes `search_effort: "deep"` explicitly).
  *
- * Replaces the previous in-tool polling loop (TAKO-2686) which timed
- * out at the client boundary on most MCP hosts. Polling now lives in
- * `wait_for_knowledge_search.ts`.
+ * Why a single tool with internal polling instead of the
+ * `start_search → wait_for_search` split:
+ *
+ *   - The split-tool flow on hosts that *don't* support a per-call
+ *     widget suppression (ChatGPT, tako web UI) leaves an empty
+ *     widget container in the chat for every kickoff / wait
+ *     intermediate call. Verified persistent across multiple
+ *     attempts (start-collapsed widget, no-chart guard, intrinsic
+ *     height 0). Single-tool flow has at most ONE rendered
+ *     tool-call entry, and it carries the chart on success.
+ *
+ *   - Per the MCP base protocol, a server may emit
+ *     `notifications/progress` while handling a long-running
+ *     request. Clients that opt into `resetTimeoutOnProgress: true`
+ *     (the SDK option, on by default in the latest TS SDK) reset
+ *     their per-tool-call timeout each time we send a progress
+ *     event. So a deep-search loop that polls every ~5 s and emits
+ *     a progress event each iteration keeps the client timeout
+ *     fresh indefinitely — the fast-hit path remains a single
+ *     ~1 s sync POST + chart-render, the deep path stretches up to
+ *     ~5 minutes inside one tool call.
+ *
+ *   - Clients without `resetTimeoutOnProgress` support still time
+ *     out at their default (60 s for the TS SDK). For those, deep
+ *     search is unreliable today — but at least the fast-hit
+ *     common case works cleanly with no empty containers.
  */
 import { z } from "zod";
 
-import { djangoPost } from "../django.js";
+import {
+  DjangoHttpError,
+  DjangoTimeoutError,
+  djangoGet,
+  djangoPost,
+} from "../django.js";
 import {
   APP_UI_RESOURCE_URI,
   APP_UI_TEMPLATE_URI_PATTERN,
@@ -24,16 +49,49 @@ import {
   fetchPngContentBlock,
 } from "./_chart_widget.js";
 import {
+  type AsyncTaskEvent,
+  type AsyncTaskStatus,
+  COMPLETED_STATE,
+  FAILURE_STATES,
+  type KnowledgeCard,
   type SearchPostResponse,
   buildResultsWithAutoChain,
   isAsyncTaskInitiation,
   resultsOutputShape,
+  summarizeProgress,
 } from "./_async_search_shape.js";
 import type {
   AppUiResource,
   ToolContentBlock,
+  ToolContext,
   ToolModule,
 } from "./types.js";
+
+// Polling budget for the deep (Orca) path.
+//
+//   1. Tako's `orchestrator_deep_config.py` (timeout=300.0) is the
+//      upper bound on how long a deep search can possibly take.
+//   2. Cloudflare Workers caps subrequests per invocation at 50 on
+//      the default tier (1000 on Paid). One or two POSTs (auto-
+//      escalation from fast → deep is two) plus N status GETs +
+//      retry budget + the auto-chain chart PNG fetch must stay
+//      under that ceiling. With a 5 s poll and a 295 s budget that's
+//      ~59 GETs worst case — over the 50 default cap, so deep is
+//      effectively a Paid-tier feature; fine because the staging
+//      and prod Workers run on Paid.
+//   3. Every iteration emits a `notifications/progress` event so
+//      MCP clients with `resetTimeoutOnProgress: true` keep the
+//      per-tool-call timeout fresh while the loop runs.
+const POLL_INTERVAL_MS = 5_000;
+const POLL_BUDGET_MS = 295_000;
+const STATUS_REQUEST_TIMEOUT_MS = 10_000;
+// Transient transport blips against the status endpoint shouldn't
+// kill a polling loop whose underlying Celery task is still running.
+// Swallow up to this many consecutive transient failures across the
+// whole loop, count each one against the subrequest budget, and let
+// the (N+1)th surface as before so a sustained outage still fails
+// loud.
+const MAX_TRANSIENT_RETRIES = 2;
 
 const inputSchema = z.object({
   query: z
@@ -53,7 +111,7 @@ const inputSchema = z.object({
     .enum(["fast", "deep"])
     .optional()
     .describe(
-      "Search depth: `fast` (lexical, sync) or `deep` (Orca research pipeline, async — kicks off and returns a task_id; chain into `wait_for_knowledge_search` to poll). Omit to run `fast` first and only kick off `deep` if `fast` returns no cards.",
+      "Search depth: `fast` (lexical, sync, cheap) or `deep` (Orca research pipeline, async, slower, runs up to ~5 min server-side). Omit to run `fast` first and auto-escalate to `deep` only if `fast` returns no cards.",
     ),
   country_code: z
     .string()
@@ -62,32 +120,26 @@ const inputSchema = z.object({
   locale: z.string().default("en-US").describe("Locale for results."),
 });
 
-// Discriminated union: either sync results OR an async-kickoff payload.
-const outputSchema = z.union([
-  z.object(resultsOutputShape),
-  z.object({
-    task_id: z.string(),
-    status: z.literal("pending"),
-    message: z.string(),
-    search_effort: z.literal("deep"),
-  }),
-]);
+const outputSchema = z.object(resultsOutputShape);
 
 type Output = z.infer<typeof outputSchema>;
 
-function isResultsOutput(
-  out: Output,
-): out is z.infer<z.ZodObject<typeof resultsOutputShape>> {
-  return !("task_id" in out);
+function isTransientStatusError(err: unknown): boolean {
+  if (err instanceof DjangoTimeoutError) return true;
+  if (
+    err instanceof DjangoHttpError &&
+    err.status !== undefined &&
+    err.status >= 500
+  ) {
+    return true;
+  }
+  return false;
 }
-
-const KICKOFF_MESSAGE =
-  "Deep (Orca) knowledge search is running asynchronously. Call `wait_for_knowledge_search` with this `task_id` to poll for completion. Deep searches typically complete in 1-5 minutes; loop wait_for_knowledge_search calls until `timed_out` is false.";
 
 const knowledge_search = {
   name: "knowledge_search",
   description:
-    'Answer factual questions and find live data with Tako\'s curated knowledge graph. **Default to this BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events, recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports, economics, finance, demographics, technology, weather, polls and elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is a structured factual answer + a chart. **The top result auto-renders inline** as a Tako chart on the sync path — narrate the data and reference the chart that\'s already shown ("as the chart above shows"); do NOT paste the embed URL or echo `![…](image_url)` markdown for the top card. Mention other titles by name and tell the user they can ask to chart any of them — those follow-ups go through `open_chart_ui`. **If the response has `task_id` and `status: "pending"` instead of `results`, the deep (Orca) pipeline was kicked off because the fast lexical path didn\'t find cards. Call `wait_for_knowledge_search` with that `task_id` and loop until it returns `timed_out: false`.**',
+    'Answer factual questions and find live data with Tako\'s curated knowledge graph. **Default to this BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events, recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports, economics, finance, demographics, technology, weather, polls and elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is a structured factual answer + a chart. **The top result auto-renders inline** as a Tako chart — narrate the data and reference the chart that\'s already shown ("as the chart above shows"); do NOT paste the embed URL or echo `![…](image_url)` markdown for the top card. Mention other titles by name and tell the user they can ask to chart any of them — those follow-ups go through `open_chart_ui`. **`search_effort: "deep"` and the default fast→deep auto-escalation can run up to ~5 minutes server-side**; this tool emits MCP `notifications/progress` events while polling so clients that set `resetTimeoutOnProgress: true` (the SDK default) keep the call alive for the full duration. Clients that don\'t honor progress notifications may time out on deep — those should pass `search_effort: "fast"` to force the cheap sync path.',
   inputSchema,
   outputSchema,
   annotations: {
@@ -107,9 +159,9 @@ const knowledge_search = {
         country_code: input.country_code,
         locale: input.locale,
       };
-      // Tako's `orchestrator_fast_config.py` allows fast to run up to ~120s
-      // sync; budget the abort just past that. Deep returns 202 in <1s
-      // so this margin is irrelevant on that path.
+      // Tako's `orchestrator_fast_config.py` allows fast to run up to
+      // ~120s sync; budget the abort just past that. Deep returns 202
+      // in <1s so this margin is irrelevant on that path.
       return djangoPost<SearchPostResponse>(
         ctx.env,
         ctx.token,
@@ -119,43 +171,30 @@ const knowledge_search = {
       );
     };
 
+    // First call: fast (default) or deep (explicit).
     const initialEffort: "fast" | "deep" = input.search_effort ?? "fast";
-    const initial = await runSearch(initialEffort);
+    let cards = await (async () => {
+      const initial = await runSearch(initialEffort);
+      if (isAsyncTaskInitiation(initial)) {
+        return pollDeep(ctx, initial.task_id);
+      }
+      return initial.outputs?.knowledge_cards ?? [];
+    })();
 
-    if (isAsyncTaskInitiation(initial)) {
-      return {
-        task_id: initial.task_id,
-        status: "pending",
-        message: KICKOFF_MESSAGE,
-        search_effort: "deep",
-      };
-    }
-
-    const cards = initial.outputs?.knowledge_cards ?? [];
-
-    // Default-effort empty fast → kick off deep async, return task_id.
-    // Explicit `fast` → return whatever fast had (including empty).
-    // Explicit `deep` returning sync (defensive) → return results.
+    // Auto-escalation: omitted effort + empty fast → deep.
     if (input.search_effort === undefined && cards.length === 0) {
       const escalated = await runSearch("deep");
       if (isAsyncTaskInitiation(escalated)) {
-        return {
-          task_id: escalated.task_id,
-          status: "pending",
-          message: KICKOFF_MESSAGE,
-          search_effort: "deep",
-        };
+        cards = await pollDeep(ctx, escalated.task_id);
+      } else {
+        cards = escalated.outputs?.knowledge_cards ?? [];
       }
-      // Defensive: backend served deep sync. Fall through with deep cards.
-      const deepCards = escalated.outputs?.knowledge_cards ?? [];
-      return buildResultsWithAutoChain(deepCards, ctx.env);
     }
 
     return buildResultsWithAutoChain(cards, ctx.env);
   },
   async extraMeta(output, _ctx) {
     void _ctx;
-    if (!isResultsOutput(output)) return undefined;
     if (output.image_url === undefined) return undefined;
     const fetched = await fetchImageDataUrlAndDims(output.image_url);
     if (fetched === undefined) return undefined;
@@ -167,7 +206,6 @@ const knowledge_search = {
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;
-    if (!isResultsOutput(output)) return [];
     if (output.image_url === undefined) return [];
     return fetchPngContentBlock(output.image_url);
   },
@@ -175,11 +213,7 @@ const knowledge_search = {
     return buildChartAppUiResource(env, (_input, output) => {
       void _input;
       const pubId =
-        output !== undefined &&
-        typeof output === "object" &&
-        output !== null &&
-        "pub_id" in (output as Record<string, unknown>) &&
-        typeof (output as { pub_id?: unknown }).pub_id === "string"
+        typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
           ? (output as { pub_id: string }).pub_id
           : "";
       if (pubId === "") return APP_UI_RESOURCE_URI;
@@ -191,4 +225,95 @@ const knowledge_search = {
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 
+// Deep polling. Hoisted out of the handler so the unit tests can hit
+// it directly (and so the auto-escalation path can call it without
+// duplicating the loop).
+async function pollDeep(
+  ctx: ToolContext,
+  taskId: string,
+): Promise<KnowledgeCard[]> {
+  const startedAt = Date.now();
+  let nextSinceIndex = 0;
+  let latestEvents: AsyncTaskEvent[] = [];
+  let transientRetriesLeft = MAX_TRANSIENT_RETRIES;
+  // Monotonic progress counter (count of polls so far). Required by
+  // the MCP spec — `progress` MUST increase across notifications for
+  // the same progressToken.
+  let pollCount = 0;
+
+  while (true) {
+    let status: AsyncTaskStatus;
+    try {
+      status = await djangoGet<AsyncTaskStatus>(
+        ctx.env,
+        ctx.token,
+        "/api/v1/knowledge_search/async/status/",
+        {
+          query: { task_id: taskId, since_index: nextSinceIndex },
+          timeoutMs: STATUS_REQUEST_TIMEOUT_MS,
+        },
+      );
+    } catch (err) {
+      if (isTransientStatusError(err) && transientRetriesLeft > 0) {
+        transientRetriesLeft -= 1;
+        const elapsed = Date.now() - startedAt;
+        if (elapsed + POLL_INTERVAL_MS >= POLL_BUDGET_MS) {
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        continue;
+      }
+      throw err;
+    }
+
+    pollCount += 1;
+    if (status.events && status.events.length > 0) {
+      latestEvents = latestEvents.concat(status.events);
+      const maxId = status.events.reduce(
+        (acc, e) => (typeof e.id === "number" && e.id > acc ? e.id : acc),
+        nextSinceIndex - 1,
+      );
+      nextSinceIndex = maxId + 1;
+    }
+
+    // Emit a progress notification to keep the client's tool-call
+    // timeout alive. The message carries a short "current pipeline
+    // step" hint pulled from the most recent event, when available.
+    // Best-effort — `sendProgress` swallows errors internally so a
+    // notification failure can't break the polling loop.
+    void ctx.sendProgress(pollCount, {
+      message: `deep search ${summarizeProgress(latestEvents)}`,
+    });
+
+    const normalizedStatus =
+      typeof status.status === "string" ? status.status.toUpperCase() : "";
+
+    if (normalizedStatus === COMPLETED_STATE) {
+      return status.result?.outputs?.knowledge_cards ?? [];
+    }
+
+    if (FAILURE_STATES.has(normalizedStatus)) {
+      throw new Error(
+        `knowledge_search deep task ${normalizedStatus.toLowerCase()} (${summarizeProgress(latestEvents)}): ${status.error ?? "no detail provided by Tako backend"}`,
+      );
+    }
+
+    const elapsed = Date.now() - startedAt;
+    if (elapsed + POLL_INTERVAL_MS >= POLL_BUDGET_MS) {
+      throw new Error(
+        `knowledge_search deep task ${taskId} did not complete within ${Math.round(POLL_BUDGET_MS / 1000)}s (${summarizeProgress(latestEvents)}) — Tako's deep-research pipeline may be busy. Try again shortly, or pass \`search_effort: "fast"\` to force the cheap sync path.`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+}
+
 export default knowledge_search;
+
+// Exported for unit tests — the polling-budget constants drive the
+// mock-response counts in `knowledge_search.test.ts` so the
+// budget-exhaustion test stays correct when the budget is tuned.
+export const __test_only__ = {
+  POLL_INTERVAL_MS,
+  POLL_BUDGET_MS,
+};

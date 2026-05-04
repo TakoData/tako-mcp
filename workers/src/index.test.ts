@@ -133,21 +133,16 @@ describe("worker routing", () => {
       "knowledge_search",
       "list_reports",
       "open_chart_ui",
-      "wait_for_knowledge_search",
       "wait_for_report",
     ]);
 
-    // MCP Apps: `open_chart_ui`, `knowledge_search`, and
-    // `wait_for_knowledge_search` all ship the chart widget bundle.
-    // `knowledge_search` auto-renders the top result inline on the
-    // sync path, and `wait_for_knowledge_search` does the same on
-    // its COMPLETED branch — both must carry the widget URI so the
-    // host renders the chart without an extra `open_chart_ui` call.
-    // The widget itself is "start collapsed, grow on chart": tool
-    // calls that don't deliver chart data (kickoff payloads,
-    // timed_out waits) leave the widget at 1 px instead of stacking
-    // empty 240-px-tall containers, so the wait-loop pattern does
-    // not clutter the chat.
+    // MCP Apps: `open_chart_ui` and `knowledge_search` ship the
+    // chart widget bundle. `knowledge_search` is a single-tool flow
+    // (no kickoff/wait split) — the deep path polls internally and
+    // emits MCP progress notifications to keep the client timeout
+    // alive — so a successful tool call always carries a chart in
+    // the result, and the widget never has to render an empty
+    // intermediate state.
     // All widget-carrying tools' listings must declare the URI
     // under all three metadata keys: `_meta.ui.resourceUri` (open
     // MCP Apps spec, read by claude.ai / VS Code / Goose), the legacy
@@ -156,11 +151,7 @@ describe("worker routing", () => {
     // it the widget loads but `window.openai.toolOutput` never
     // populates). Other tools ship no widget and should declare
     // none of these fields.
-    const widgetTools = new Set([
-      "open_chart_ui",
-      "knowledge_search",
-      "wait_for_knowledge_search",
-    ]);
+    const widgetTools = new Set(["open_chart_ui", "knowledge_search"]);
     for (const name of widgetTools) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool?._meta).toMatchObject({

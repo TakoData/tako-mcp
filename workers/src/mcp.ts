@@ -397,13 +397,70 @@ function registerTool(
     };
   }
 
+  // Structural type for the slice of `RequestHandlerExtra` we read.
+  // We don't import the full SDK type because it requires pulling in
+  // `ServerRequest` / `ServerNotification` and the layered generics
+  // don't add anything we use; this object literal type is checked
+  // structurally against the SDK's actual `extra` at the call site.
+  type ToolHandlerExtra = {
+    sendNotification: (notification: {
+      method: "notifications/progress";
+      params: {
+        progressToken: string | number;
+        progress: number;
+        total?: number;
+        message?: string;
+      };
+    }) => Promise<void>;
+    _meta?: { progressToken?: string | number };
+  };
   server.registerTool(
     tool.name,
     config as Parameters<McpServer["registerTool"]>[1],
-    async (input) => {
+    (async (input: unknown, extra: ToolHandlerExtra) => {
+      // Build a per-call context that layers `sendProgress` over the
+      // shared `{ token, env }`. The SDK's `extra._meta.progressToken`
+      // is set when the client provided a progressToken on the request
+      // (and only then are progress notifications useful — clients
+      // ignore notifications whose progressToken they don't recognize,
+      // and the protocol forbids sending progress without a token). On
+      // requests without a progressToken, `sendProgress` no-ops, so
+      // tools can call it unconditionally. `progress` accumulates a
+      // monotonic count of polls / steps; `total` and `message` are
+      // optional. Errors from the underlying transport are swallowed —
+      // a notification failure must NEVER fail the tool call.
+      const progressToken = (extra._meta as { progressToken?: string | number } | undefined)
+        ?.progressToken;
+      const sendProgress: ToolContext["sendProgress"] = async (
+        progress,
+        opts,
+      ) => {
+        if (progressToken === undefined) return;
+        try {
+          await extra.sendNotification({
+            method: "notifications/progress",
+            params: {
+              progressToken,
+              progress,
+              ...(opts?.total !== undefined ? { total: opts.total } : {}),
+              ...(opts?.message !== undefined ? { message: opts.message } : {}),
+            },
+          });
+        } catch (err) {
+          // Best-effort: log and move on. The polling loop continues
+          // without progress reset on this client; if the timeout
+          // fires, the client will see a clean cancel rather than
+          // an opaque transport error.
+          console.error(
+            `sendProgress failed for ${tool.name}:`,
+            err,
+          );
+        }
+      };
+      const callCtx: ToolContext = { ...ctx, sendProgress };
       let output: unknown;
       try {
-        output = await tool.handler(input as unknown, ctx);
+        output = await tool.handler(input as unknown, callCtx);
       } catch (err) {
         // Map Django transport failures to a structured `isError: true`
         // result so MCP clients can distinguish "your token was rejected"
@@ -532,7 +589,7 @@ function registerTool(
         result._meta = resultMeta;
       }
       return result;
-    },
+    }) as Parameters<McpServer["registerTool"]>[2],
   );
 }
 
@@ -639,7 +696,17 @@ export async function handleMcpRequest(
   const oauthMappedToken = await tryResolveOAuthAccessToken(bearer, env);
   const token = oauthMappedToken ?? bearer;
 
-  const ctx: ToolContext = { token, env };
+  // Base ctx — `sendProgress` here is a placeholder that's overridden
+  // per tool call inside `registerTool`'s SDK callback (where the
+  // request's `progressToken` and the SDK's `sendNotification` are
+  // available). Outside of a tool-call scope, no client is listening.
+  const ctx: ToolContext = {
+    token,
+    env,
+    sendProgress: async () => {
+      /* no-op outside tool-call scope */
+    },
+  };
 
   try {
     // Use the request's own origin as the icon base, so each deployed

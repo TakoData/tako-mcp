@@ -20,6 +20,7 @@ import type { Env } from "../env.js";
 import { verifyExportToken } from "../exports.js";
 import type { ToolContext } from "./types.js";
 import export_report from "./export_report.js";
+import { noopSendProgress } from "./__test_helpers.js";
 
 // 32-byte AES-256 key, base64-encoded. Fixed across tests for
 // determinism — the IV is randomized per-mint, so ciphertexts still
@@ -32,7 +33,11 @@ const ENV: Env = {
   EXPORT_TOKEN_KEY: TEST_KEY_B64,
 };
 
-const CTX: ToolContext = { token: "sk-test-bearer", env: ENV };
+const CTX: ToolContext = {
+  token: "sk-test-bearer",
+  env: ENV,
+  sendProgress: noopSendProgress,
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -120,7 +125,11 @@ describe("export_report", () => {
       MCP_PUBLIC_BASE_URL: "https://mcp.staging.tako.com",
       // EXPORT_TOKEN_KEY intentionally omitted
     };
-    const badCtx: ToolContext = { token: "sk-test-bearer", env: badEnv };
+    const badCtx: ToolContext = {
+      token: "sk-test-bearer",
+      env: badEnv,
+      sendProgress: noopSendProgress,
+    };
 
     const err = await catchError(
       export_report.handler({ report_id: "rep", format: "pdf" }, badCtx),
@@ -147,7 +156,11 @@ describe("export_report", () => {
         "base64",
       ),
     };
-    const badCtx: ToolContext = { token: "sk-test-bearer", env: badEnv };
+    const badCtx: ToolContext = {
+      token: "sk-test-bearer",
+      env: badEnv,
+      sendProgress: noopSendProgress,
+    };
 
     const err = await catchError(
       export_report.handler({ report_id: "rep", format: "pdf" }, badCtx),

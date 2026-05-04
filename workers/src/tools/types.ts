@@ -30,6 +30,28 @@ export interface ToolContext {
   token: string;
   /** Cloudflare Workers env bindings (`DJANGO_BASE_URL` etc.). */
   env: Env;
+  /**
+   * Emit an MCP `notifications/progress` event for the current tool call.
+   *
+   * Spec'd by the MCP base protocol: when the client included a
+   * `progressToken` in the request's `_meta`, we may emit zero or more
+   * progress notifications carrying the same token plus a monotonically
+   * increasing `progress` value, optional `total`, and optional `message`.
+   * Clients that opt into `resetTimeoutOnProgress: true` (the SDK option)
+   * reset their per-request tool-call timeout each time a progress event
+   * arrives — so a long-running handler can stay under the per-call
+   * timeout indefinitely as long as it keeps emitting progress.
+   *
+   * No-op when the request did not carry a progressToken (the client
+   * isn't asking for progress, so we don't send any). No-op when the
+   * underlying transport's `sendNotification` throws (best-effort).
+   *
+   * Tools that don't care about progress can simply not call this.
+   */
+  sendProgress: (
+    progress: number,
+    opts?: { total?: number; message?: string },
+  ) => Promise<void>;
 }
 
 /**

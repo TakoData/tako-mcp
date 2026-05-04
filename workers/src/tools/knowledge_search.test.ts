@@ -1,37 +1,51 @@
 /**
- * Tests for `knowledge_search` after the async-split.
+ * Tests for `knowledge_search`.
+ *
+ * Single-tool flow with internal polling for the deep (Orca) path,
+ * plus MCP `notifications/progress` emission so clients with
+ * `resetTimeoutOnProgress: true` keep their per-tool-call timeout
+ * fresh across the polling window.
  *
  * Locked properties:
  *   1. Default (no explicit `search_effort`) → call `fast` first.
- *   2. Empty `fast` result + default effort → kick off `deep` async,
- *      return `{ task_id, status: "pending", search_effort: "deep" }`.
- *      No polling.
- *   3. Non-empty `fast` result → return results, no escalation.
- *   4. Explicit `search_effort: "fast"` returning empty → return empty
- *      results path (no escalation).
- *   5. Explicit `search_effort: "deep"` → single POST, return kickoff
- *      payload immediately on async response.
- *   6. Explicit `search_effort: "deep"` returning sync cards → return
- *      sync results path (defensive against backend serving deep sync).
- *   7. Schema rejects `medium` and `auto`.
- *   8. Default `count` is 10.
- *   9. Auto-chain widget fields populated on sync results path.
+ *   2. Empty `fast` result → escalate to `deep`; poll until completion.
+ *   3. Non-empty `fast` result → no escalation.
+ *   4. Explicit `search_effort: "fast"` → single call, no escalation.
+ *   5. Explicit `search_effort: "deep"` → single POST + polling, no
+ *      prior `fast`.
+ *   6. Async-task POST response triggers polling against the status
+ *      endpoint.
+ *   7. `COMPLETED` status returns `result.outputs.knowledge_cards[]`.
+ *   8. `FAILED` / `INTERRUPTED` status throws with the error message.
+ *   9. Budget exhaustion throws a clear "did not complete" error.
+ *  10. Schema rejects `medium` and `auto`.
+ *  11. Default `count` is 10.
+ *  12. Auto-chain widget fields populated when top card has `card_id`.
+ *  13. Polling emits `notifications/progress` events with monotonic
+ *      `progress` values when the request carries a `progressToken`.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import knowledge_search from "./knowledge_search.js";
+import knowledge_search, { __test_only__ } from "./knowledge_search.js";
 import {
   bodyOf,
   jsonResponse,
-  mockFetchOnce,
   mockFetchSequence,
+  noopSendProgress,
   requestFrom,
 } from "./__test_helpers.js";
 
+const MAX_PENDING_POLLS =
+  Math.ceil(__test_only__.POLL_BUDGET_MS / __test_only__.POLL_INTERVAL_MS) + 5;
+
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-const CTX: ToolContext = { token: "sk-test", env: ENV };
+const CTX: ToolContext = {
+  token: "sk-test",
+  env: ENV,
+  sendProgress: noopSendProgress,
+};
 
 // Defaults the handler expects post-zod parse. count is 10 after this change.
 const DEFAULTS = { count: 10, country_code: "US", locale: "en-US" };
@@ -81,7 +95,7 @@ describe("knowledge_search input schema", () => {
   });
 });
 
-describe("knowledge_search sync results path", () => {
+describe("knowledge_search fast-first-deep-fallback", () => {
   it("defaults to search_effort=fast on the initial POST", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, {
@@ -106,7 +120,7 @@ describe("knowledge_search sync results path", () => {
     expect(body.search_effort).toBe("fast");
   });
 
-  it("returns results without escalation when fast returns at least one card", async () => {
+  it("does not escalate when fast returns at least one card", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, {
         outputs: {
@@ -129,10 +143,54 @@ describe("knowledge_search sync results path", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect("task_id" in out).toBe(false);
-    if (!("task_id" in out)) {
+    expect(out.count).toBe(1);
+    expect(out.results[0]?.card_id).toBe("abc");
+  });
+
+  it("retries with search_effort=deep when fast returns zero cards (auto-escalation)", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = mockFetchSequence([
+        // 1: fast POST → empty
+        jsonResponse(200, { outputs: { knowledge_cards: [] } }),
+        // 2: deep POST → 202 async-task initiation
+        jsonResponse(202, { task_id: "task-auto", status: "pending" }),
+        // 3: status GET → COMPLETED with one card
+        jsonResponse(200, {
+          task_id: "task-auto",
+          status: "COMPLETED",
+          result: {
+            outputs: {
+              knowledge_cards: [
+                {
+                  card_id: "deep1",
+                  title: "Thailand Tourism",
+                  description: null,
+                  url: null,
+                  source: null,
+                },
+              ],
+            },
+          },
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "thailand tourism gdp", ...DEFAULTS },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const fastBody = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
+      const deepBody = await bodyOf(requestFrom(fetchMock.mock.calls[1]));
+      expect(fastBody.search_effort).toBe("fast");
+      expect(deepBody.search_effort).toBe("deep");
       expect(out.count).toBe(1);
-      expect(out.results[0]?.card_id).toBe("abc");
+      expect(out.results[0]?.card_id).toBe("deep1");
+    } finally {
+      vi.useRealTimers();
     }
   });
 
@@ -147,12 +205,286 @@ describe("knowledge_search sync results path", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect("task_id" in out).toBe(false);
-    if (!("task_id" in out)) {
-      expect(out.count).toBe(0);
+    expect(out.count).toBe(0);
+  });
+});
+
+describe("knowledge_search async-task polling", () => {
+  it("polls once and returns cards when status is COMPLETED on first GET (explicit deep)", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = mockFetchSequence([
+        jsonResponse(202, { task_id: "task-1", status: "pending" }),
+        jsonResponse(200, {
+          task_id: "task-1",
+          status: "COMPLETED",
+          result: {
+            outputs: {
+              knowledge_cards: [
+                {
+                  card_id: "deep1",
+                  title: "US GDP",
+                  description: null,
+                  url: null,
+                  source: null,
+                },
+              ],
+            },
+          },
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "us gdp", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const postBody = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
+      expect(postBody.search_effort).toBe("deep");
+
+      const statusReq = requestFrom(fetchMock.mock.calls[1]);
+      expect(statusReq.method).toBe("GET");
+      const statusUrl = new URL(statusReq.url);
+      expect(statusUrl.pathname).toBe("/api/v1/knowledge_search/async/status/");
+      expect(statusUrl.searchParams.get("task_id")).toBe("task-1");
+
+      expect(out.count).toBe(1);
+      expect(out.results[0]?.card_id).toBe("deep1");
+    } finally {
+      vi.useRealTimers();
     }
   });
 
+  it("polls through PENDING and IN_PROGRESS until COMPLETED", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = mockFetchSequence([
+        jsonResponse(202, { task_id: "task-2", status: "pending" }),
+        jsonResponse(200, { task_id: "task-2", status: "PENDING" }),
+        jsonResponse(200, { task_id: "task-2", status: "IN_PROGRESS" }),
+        jsonResponse(200, {
+          task_id: "task-2",
+          status: "COMPLETED",
+          result: {
+            outputs: {
+              knowledge_cards: [
+                {
+                  card_id: "c-final",
+                  title: null,
+                  description: null,
+                  url: null,
+                  source: null,
+                },
+              ],
+            },
+          },
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "slow query", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(out.count).toBe(1);
+      expect(out.results[0]?.card_id).toBe("c-final");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats lowercase terminal status as terminal (case normalization)", async () => {
+    vi.useFakeTimers();
+    try {
+      mockFetchSequence([
+        jsonResponse(202, { task_id: "task-case", status: "pending" }),
+        jsonResponse(200, {
+          task_id: "task-case",
+          status: "completed",
+          result: {
+            outputs: {
+              knowledge_cards: [
+                {
+                  card_id: "lc",
+                  title: null,
+                  description: null,
+                  url: null,
+                  source: null,
+                },
+              ],
+            },
+          },
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      expect(out.count).toBe(1);
+      expect(out.results[0]?.card_id).toBe("lc");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("throws with the error message when status is FAILED", async () => {
+    vi.useFakeTimers();
+    try {
+      mockFetchSequence([
+        jsonResponse(202, { task_id: "task-3", status: "pending" }),
+        jsonResponse(200, {
+          task_id: "task-3",
+          status: "FAILED",
+          error: "Orca pipeline blew up",
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await expect(
+        Promise.all([promise, vi.runAllTimersAsync()]),
+      ).rejects.toThrow(/failed.*Orca pipeline blew up/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries the status GET on a transient 5xx and recovers", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = mockFetchSequence([
+        jsonResponse(202, { task_id: "task-retry", status: "pending" }),
+        jsonResponse(503, { detail: "Service Unavailable" }),
+        jsonResponse(200, {
+          task_id: "task-retry",
+          status: "COMPLETED",
+          result: {
+            outputs: {
+              knowledge_cards: [
+                {
+                  card_id: "after-retry",
+                  title: null,
+                  description: null,
+                  url: null,
+                  source: null,
+                },
+              ],
+            },
+          },
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(out.count).toBe(1);
+      expect(out.results[0]?.card_id).toBe("after-retry");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("throws when the budget is exhausted before the task terminates", async () => {
+    vi.useFakeTimers();
+    try {
+      const responses: Response[] = [
+        jsonResponse(202, { task_id: "task-4", status: "pending" }),
+      ];
+      for (let i = 0; i < MAX_PENDING_POLLS; i++) {
+        responses.push(
+          jsonResponse(200, { task_id: "task-4", status: "IN_PROGRESS" }),
+        );
+      }
+      mockFetchSequence(responses);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      await expect(
+        Promise.all([promise, vi.runAllTimersAsync()]),
+      ).rejects.toThrow(/did not complete within/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("emits MCP progress notifications during polling with monotonically increasing progress values", async () => {
+    // Lock the contract that's the whole point of going single-tool:
+    // each poll iteration sends a `notifications/progress` event so
+    // clients with `resetTimeoutOnProgress: true` keep their per-call
+    // timeout alive across the deep-search wait.
+    vi.useFakeTimers();
+    try {
+      const sendProgress = vi.fn<ToolContext["sendProgress"]>(async () => {});
+      const ctx: ToolContext = { ...CTX, sendProgress };
+
+      mockFetchSequence([
+        jsonResponse(202, { task_id: "task-prog", status: "pending" }),
+        jsonResponse(200, { task_id: "task-prog", status: "PENDING" }),
+        jsonResponse(200, { task_id: "task-prog", status: "IN_PROGRESS" }),
+        jsonResponse(200, {
+          task_id: "task-prog",
+          status: "COMPLETED",
+          result: {
+            outputs: {
+              knowledge_cards: [
+                {
+                  card_id: "c-prog",
+                  title: null,
+                  description: null,
+                  url: null,
+                  source: null,
+                },
+              ],
+            },
+          },
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        ctx,
+      );
+      await vi.runAllTimersAsync();
+      await promise;
+
+      // Three polls (PENDING, IN_PROGRESS, COMPLETED) → three progress
+      // events with progress=1, 2, 3.
+      expect(sendProgress).toHaveBeenCalledTimes(3);
+      const progressValues = sendProgress.mock.calls.map((c) => c[0]);
+      expect(progressValues).toEqual([1, 2, 3]);
+      // Each call must include a non-empty `message` so progress
+      // shows something useful in clients that surface it.
+      for (const call of sendProgress.mock.calls) {
+        const opts = call[1];
+        expect(typeof opts?.message).toBe("string");
+        expect(opts?.message?.length ?? 0).toBeGreaterThan(0);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("knowledge_search auto-chain top-result chart fields", () => {
   it("populates auto-chain widget fields when top card has card_id", async () => {
     mockFetchSequence([
       jsonResponse(200, {
@@ -175,19 +507,16 @@ describe("knowledge_search sync results path", () => {
       CTX,
     );
 
-    expect("task_id" in out).toBe(false);
-    if (!("task_id" in out)) {
-      expect(out.pub_id).toBe("aapl-price");
-      expect(out.embed_url).toBe(
-        "https://staging.trytako.com/embed/aapl-price/?theme=dark",
-      );
-      expect(out.image_url).toBe(
-        "https://staging.trytako.com/api/v1/image/aapl-price/?dark_mode=true",
-      );
-      expect(out.dark_mode).toBe(true);
-      expect(out.width).toBe(900);
-      expect(out.height).toBe(720);
-    }
+    expect(out.pub_id).toBe("aapl-price");
+    expect(out.embed_url).toBe(
+      "https://staging.trytako.com/embed/aapl-price/?theme=dark",
+    );
+    expect(out.image_url).toBe(
+      "https://staging.trytako.com/api/v1/image/aapl-price/?dark_mode=true",
+    );
+    expect(out.dark_mode).toBe(true);
+    expect(out.width).toBe(900);
+    expect(out.height).toBe(720);
   });
 
   it("omits auto-chain widget fields when no card has card_id", async () => {
@@ -212,213 +541,23 @@ describe("knowledge_search sync results path", () => {
       CTX,
     );
 
-    expect("task_id" in out).toBe(false);
-    if (!("task_id" in out)) {
-      expect(out.pub_id).toBeUndefined();
-      expect(out.embed_url).toBeUndefined();
-      expect(out.image_url).toBeUndefined();
-    }
-  });
-});
-
-describe("knowledge_search async kickoff path", () => {
-  it("kicks off deep and returns task_id (no polling) when fast returns empty under default effort", async () => {
-    const fetchMock = mockFetchSequence([
-      // 1: fast POST (sync, empty)
-      jsonResponse(200, { outputs: { knowledge_cards: [] } }),
-      // 2: deep POST → 202 async-task initiation
-      jsonResponse(202, { task_id: "task-async-1", status: "pending" }),
-    ]);
-
-    const out = await knowledge_search.handler(
-      { query: "obscure thing", ...DEFAULTS },
-      CTX,
-    );
-
-    // Exactly two POSTs and ZERO status GETs — proves no polling.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const fastBody = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    const deepBody = await bodyOf(requestFrom(fetchMock.mock.calls[1]));
-    expect(fastBody.search_effort).toBe("fast");
-    expect(deepBody.search_effort).toBe("deep");
-
-    expect("task_id" in out).toBe(true);
-    if ("task_id" in out) {
-      expect(out.task_id).toBe("task-async-1");
-      expect(out.status).toBe("pending");
-      expect(out.search_effort).toBe("deep");
-      expect(out.message).toMatch(/wait_for_knowledge_search/);
-    }
+    expect(out.pub_id).toBeUndefined();
+    expect(out.embed_url).toBeUndefined();
+    expect(out.image_url).toBeUndefined();
   });
 
-  it("kicks off deep directly (no fast pre-call) when caller sets search_effort=deep", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(202, { task_id: "task-deep-direct", status: "pending" }),
-    ]);
-
-    const out = await knowledge_search.handler(
-      { query: "x", search_effort: "deep", ...DEFAULTS },
-      CTX,
-    );
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.search_effort).toBe("deep");
-
-    expect("task_id" in out).toBe(true);
-    if ("task_id" in out) {
-      expect(out.task_id).toBe("task-deep-direct");
-    }
-  });
-
-  it("returns sync results path when explicit deep responds synchronously (defensive)", async () => {
-    // Backend isn't strictly contractually obligated to return 202 for
-    // deep — fixtures or future fast-deep paths may serve sync. Tool
-    // must surface those cards on the results path.
+  it("omits auto-chain widget fields when results are empty", async () => {
     mockFetchSequence([
-      jsonResponse(200, {
-        outputs: {
-          knowledge_cards: [
-            {
-              card_id: "deep-sync",
-              title: null,
-              description: null,
-              url: null,
-              source: null,
-            },
-          ],
-        },
-      }),
+      jsonResponse(200, { outputs: { knowledge_cards: [] } }),
     ]);
 
     const out = await knowledge_search.handler(
-      { query: "x", search_effort: "deep", ...DEFAULTS },
+      { query: "obscure", search_effort: "fast", ...DEFAULTS },
       CTX,
     );
 
-    expect("task_id" in out).toBe(false);
-    if (!("task_id" in out)) {
-      expect(out.count).toBe(1);
-      expect(out.results[0]?.card_id).toBe("deep-sync");
-    }
-  });
-});
-
-// Minimal valid PNG bytes used by extraMeta tests.
-const MINIMAL_VALID_PNG = new Uint8Array([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  0x00, 0x00, 0x00, 0x0d,
-  0x49, 0x48, 0x44, 0x52,
-  0x00, 0x00, 0x03, 0x84,
-  0x00, 0x00, 0x02, 0xd0,
-]);
-
-function pngResponse(bytes: Uint8Array): Response {
-  return new Response(bytes, {
-    status: 200,
-    headers: { "content-type": "image/png" },
-  });
-}
-
-function autoChainOutput() {
-  return {
-    results: [
-      {
-        card_id: "top-1",
-        title: "Top",
-        description: null,
-        url: null,
-        source: null,
-      },
-    ],
-    count: 1,
-    pub_id: "top-1",
-    embed_url: "https://staging.trytako.com/embed/top-1/?theme=dark",
-    image_url:
-      "https://staging.trytako.com/api/v1/image/top-1/?dark_mode=true",
-    dark_mode: true,
-    width: 900,
-    height: 720,
-  };
-}
-
-describe("knowledge_search extraMeta / extraContentBlocks (sync results path only)", () => {
-  it("inlines PNG as data URI on _meta when image_url present", async () => {
-    mockFetchOnce(pngResponse(MINIMAL_VALID_PNG));
-    const meta = await knowledge_search.extraMeta!(autoChainOutput(), CTX);
-    expect(meta).toBeDefined();
-    expect(meta).toMatchObject({
-      image_natural_width: 900,
-      image_natural_height: 720,
-    });
-  });
-
-  it("returns undefined when output has no image_url (kickoff response)", async () => {
-    const meta = await knowledge_search.extraMeta!(
-      {
-        task_id: "t",
-        status: "pending",
-        message: "...",
-        search_effort: "deep",
-      } as unknown as Parameters<typeof knowledge_search.extraMeta>[0],
-      CTX,
-    );
-    expect(meta).toBeUndefined();
-  });
-
-  it("emits image content block on extraContentBlocks when image_url present", async () => {
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-    mockFetchOnce(pngResponse(png));
-    const blocks = await knowledge_search.extraContentBlocks!(
-      autoChainOutput(),
-      CTX,
-    );
-    expect(blocks).toHaveLength(1);
-  });
-
-  it("emits [] on extraContentBlocks for kickoff payload", async () => {
-    const blocks = await knowledge_search.extraContentBlocks!(
-      {
-        task_id: "t",
-        status: "pending",
-        message: "...",
-        search_effort: "deep",
-      } as unknown as Parameters<typeof knowledge_search.extraContentBlocks>[0],
-      CTX,
-    );
-    expect(blocks).toEqual([]);
-  });
-});
-
-describe("knowledge_search appUiResource", () => {
-  it("uses output.pub_id for dynamic resource URI on results path", () => {
-    const ui = knowledge_search.appUiResource!(ENV);
-    const uri = ui.dynamic!.resolveUriFromInput(
-      { query: "anything", count: 10, country_code: "US", locale: "en-US" },
-      autoChainOutput(),
-    );
-    expect(uri).toBe("ui://tako/embed/chart/top-1");
-  });
-
-  it("falls back to static URI when output is undefined or has no pub_id", () => {
-    const ui = knowledge_search.appUiResource!(ENV);
-    expect(
-      ui.dynamic!.resolveUriFromInput(
-        { query: "anything", count: 10, country_code: "US", locale: "en-US" },
-        undefined,
-      ),
-    ).toBe("ui://tako/embed/chart");
-
-    expect(
-      ui.dynamic!.resolveUriFromInput(
-        { query: "anything", count: 10, country_code: "US", locale: "en-US" },
-        {
-          task_id: "t",
-          status: "pending",
-          message: "...",
-          search_effort: "deep",
-        },
-      ),
-    ).toBe("ui://tako/embed/chart");
+    expect(out.pub_id).toBeUndefined();
+    expect(out.embed_url).toBeUndefined();
+    expect(out.results).toEqual([]);
   });
 });
