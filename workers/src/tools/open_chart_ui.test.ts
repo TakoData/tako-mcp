@@ -52,7 +52,7 @@ describe("open_chart_ui handler", () => {
 
     expect(out.pub_id).toBe("abc123");
     expect(out.embed_url).toBe(
-      "https://staging.trytako.com/embed/abc123/?theme=dark",
+      "https://staging.trytako.com/embed/abc123/?dark_mode=auto",
     );
     expect(out.image_url).toBe(
       "https://staging.trytako.com/api/v1/image/abc123/?dark_mode=true",
@@ -75,12 +75,16 @@ describe("open_chart_ui handler", () => {
     );
   });
 
-  it("light-mode flag flips the embed theme query and the image dark_mode flag", async () => {
+  it("light-mode flag flips the image dark_mode flag; embed_url stays auto", async () => {
+    // Embed URLs always carry `?dark_mode=auto` so the embed page can
+    // resolve the user's actual `prefers-color-scheme` at load time.
+    // The PNG image is server-rendered and can't introspect the
+    // browser, so its `dark_mode` flag still tracks the input.
     const out = await open_chart_ui.handler(
       { ...HANDLER_INPUT, dark_mode: false },
       CTX,
     );
-    expect(out.embed_url).toContain("?theme=light");
+    expect(out.embed_url).toContain("?dark_mode=auto");
     expect(out.image_url).toContain("dark_mode=false");
   });
 });
@@ -95,7 +99,7 @@ describe("open_chart_ui extraContentBlocks", () => {
     const blocks = await open_chart_ui.extraContentBlocks!(
       {
         pub_id: "abc123",
-        embed_url: "https://example.com/embed/abc123/?theme=dark",
+        embed_url: "https://example.com/embed/abc123/?dark_mode=auto",
         image_url: "https://example.com/api/v1/image/abc123/?dark_mode=true",
         dark_mode: true,
         width: 900,
@@ -120,7 +124,7 @@ describe("open_chart_ui extraContentBlocks", () => {
     const blocks = await open_chart_ui.extraContentBlocks!(
       {
         pub_id: "abc123",
-        embed_url: "https://example.com/embed/abc123/?theme=dark",
+        embed_url: "https://example.com/embed/abc123/?dark_mode=auto",
         image_url: "https://example.com/api/v1/image/abc123/?dark_mode=true",
         dark_mode: true,
         width: 900,
@@ -138,7 +142,7 @@ describe("open_chart_ui extraContentBlocks", () => {
     const blocks = await open_chart_ui.extraContentBlocks!(
       {
         pub_id: "missing",
-        embed_url: "https://example.com/embed/missing/?theme=dark",
+        embed_url: "https://example.com/embed/missing/?dark_mode=auto",
         image_url: "https://example.com/api/v1/image/missing/?dark_mode=true",
         dark_mode: true,
         width: 900,
@@ -164,7 +168,7 @@ describe("open_chart_ui extraContentBlocks", () => {
     const blocks = await open_chart_ui.extraContentBlocks!(
       {
         pub_id: "abc123",
-        embed_url: "https://example.com/embed/abc123/?theme=dark",
+        embed_url: "https://example.com/embed/abc123/?dark_mode=auto",
         image_url: "https://example.com/api/v1/image/abc123/?dark_mode=true",
         dark_mode: true,
         width: 900,
@@ -184,7 +188,7 @@ describe("open_chart_ui extraContentBlocks", () => {
     const blocks = await open_chart_ui.extraContentBlocks!(
       {
         pub_id: "abc123",
-        embed_url: "https://example.com/embed/abc123/?theme=dark",
+        embed_url: "https://example.com/embed/abc123/?dark_mode=auto",
         image_url: "https://example.com/api/v1/image/abc123/?dark_mode=true",
         dark_mode: true,
         width: 900,
@@ -206,7 +210,7 @@ describe("open_chart_ui extraContentBlocks", () => {
     const blocks = await open_chart_ui.extraContentBlocks!(
       {
         pub_id: "abc123",
-        embed_url: "https://example.com/embed/abc123/?theme=dark",
+        embed_url: "https://example.com/embed/abc123/?dark_mode=auto",
         image_url: "https://example.com/api/v1/image/abc123/?dark_mode=true",
         dark_mode: true,
         width: 900,

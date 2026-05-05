@@ -841,9 +841,13 @@ function parsePngDimensions(
  * exactly; `knowledge_search`'s auto-chain calls this for the top
  * card so a follow-up `open_chart_ui` produces identical URLs.
  *
- * `dark_mode` flips both the `?theme=` query on the embed URL and the
- * `?dark_mode=` query on the image URL — Tako's embed page reads the
- * former; the PNG endpoint reads the latter.
+ * `embed_url` always carries `?dark_mode=auto` — the embed page runs
+ * in the user's browser and resolves "auto" via
+ * `matchMedia('(prefers-color-scheme: dark)')`, so the chart picks up
+ * the user's actual OS theme regardless of whether MCP or the calling
+ * host knows it. `image_url` is a server-rendered PNG, where the
+ * backend can't read browser preferences, so it stays
+ * `true`/`false` driven by the `darkMode` arg.
  */
 export function buildChartUrls(
   env: Env,
@@ -852,11 +856,11 @@ export function buildChartUrls(
 ): { embed_url: string; image_url: string } {
   const webBase = resolvePublicBase(env);
   const apiBase = resolvePublicApiBase(env);
-  const theme = darkMode ? "dark" : "light";
+  const imageFlag = darkMode ? "true" : "false";
   const encoded = encodeURIComponent(pubId);
   return {
-    embed_url: `${webBase}/embed/${encoded}/?theme=${theme}`,
-    image_url: `${apiBase}/api/v1/image/${encoded}/?dark_mode=${darkMode ? "true" : "false"}`,
+    embed_url: `${webBase}/embed/${encoded}/?dark_mode=auto`,
+    image_url: `${apiBase}/api/v1/image/${encoded}/?dark_mode=${imageFlag}`,
   };
 }
 

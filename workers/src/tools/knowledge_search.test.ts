@@ -607,7 +607,7 @@ describe("knowledge_search auto-chain top-result chart fields", () => {
 
     expect(out.pub_id).toBe("aapl-price");
     expect(out.embed_url).toBe(
-      "https://staging.trytako.com/embed/aapl-price/?theme=dark",
+      "https://staging.trytako.com/embed/aapl-price/?dark_mode=auto",
     );
     expect(out.image_url).toBe(
       "https://staging.trytako.com/api/v1/image/aapl-price/?dark_mode=true",
