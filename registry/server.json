@@ -92,7 +92,7 @@
     },
     {
       "name": "create_report",
-      "description": "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns report_id + webpage_url.\n\n**HARD RULE — the Tako report IS the answer.** Do NOT write the report content yourself. Do NOT call `web_search`, `browse`, or any other research tool while the report runs. Do NOT summarize, paraphrase, pre-empt, or improvise an answer from your own knowledge. Do NOT produce analysis, data, charts, tables, or commentary about the topic before `wait_for_report` returns a terminal status. Your job between create_report and the terminal wait_for_report is exactly two things: (1) share the `webpage_url` link and tell the user the report is being generated, (2) keep calling `wait_for_report` until done. Anything else is wrong.\n\n**Flow:** IMMEDIATELY after this returns, share the `webpage_url` as a clickable link AND tell them they'll get an email when ready, then call `wait_for_report(report_id)` and continue chaining further `wait_for_report` calls back-to-back until status is 'completed' or 'failed' — reports take 5–20 minutes, so expect 5–12 chained calls. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes): if 12 chained wait_for_report calls elapse without a terminal status, STOP chaining and tell the user the report is taking longer than usual; the email notification will reach them when it's done. Once status is terminal, summarize the report's actual `result` (or `error_message` on failed) and re-share the `webpage_url`. The summary MUST be drawn ONLY from the wait_for_report `result` field — never from your own knowledge or external sources.\n\nPass only `report_type`, `title`, and `research_objective` — the tool resolves the right template internally. Do NOT pre-call get_credit_balance; the response carries credit_cost.",
+      "description": "Use this when the user asks to generate a Tako report on a topic (e.g. \"write a Tesla Q1 earnings report\"). Kicks off async generation and returns report_id + webpage_url.\n\n**HARD RULE — the Tako report IS the answer.** Do NOT write the report content yourself. Do NOT call `web_search`, `browse`, or any other research tool while the report runs. Do NOT summarize, paraphrase, pre-empt, or improvise an answer from your own knowledge.\n\n**Flow:** IMMEDIATELY after this returns: (1) share the `webpage_url` as a clickable link, (2) tell the user the report is generating and that they'll get an email when it's ready (typical 5–20 min), (3) STOP. Do NOT poll. Do NOT chain status checks. The user can come back and ask \"is my report ready?\" later — at that point, and ONLY at that point, call `get_report` once with the report_id. If `get_report` returns `status: \"completed\"`, summarize the `result` field (drawn ONLY from the result, never your own knowledge) and re-share the `webpage_url`. If `status` is still 'pending' / 'running', tell the user it's still cooking and re-share the `webpage_url`. If 'failed', surface the `error_message`.\n\nPass only `report_type`, `title`, and `research_objective` — the tool resolves the right template internally. Do NOT pre-call get_credit_balance; the response carries credit_cost.",
       "parameters": {
         "report_type": {
           "type": "string",
@@ -127,7 +127,7 @@
     },
     {
       "name": "export_report",
-      "description": "Use this when the user explicitly asks to export, download, or save a completed Tako report in a specific file format (Markdown, JSON, PDF, or PowerPoint). Returns a short-lived `download_url` (default: 5 minutes) — surface it to the user as a markdown link, e.g. `[Download as PDF](download_url)`, and tell them how long they have to click before it expires (`expires_in_seconds`). The report MUST be `status === \"completed\"`; if the click 404s with \"report not ready,\" call `wait_for_report` first and re-mint a fresh URL. Do NOT call this proactively after `create_report` or `get_report` — only when the user actually asks for an export. If the user just wants to read the report in their browser, share the report's `webpage_url` instead — no export needed.",
+      "description": "Use this when the user explicitly asks to export, download, or save a completed Tako report in a specific file format (Markdown, JSON, PDF, or PowerPoint). Returns a short-lived `download_url` (default: 5 minutes) — surface it to the user as a markdown link, e.g. `[Download as PDF](download_url)`, and tell them how long they have to click before it expires (`expires_in_seconds`). The report MUST be `status === \"completed\"`; if the click 404s with \"report not ready,\" call `get_report` once to check status, and re-mint a fresh URL only after the report has reached completed. Do NOT call this proactively after `create_report` or `get_report` — only when the user actually asks for an export. If the user just wants to read the report in their browser, share the report's `webpage_url` instead — no export needed.",
       "parameters": {
         "report_id": {
           "type": "string",
@@ -188,7 +188,7 @@
     },
     {
       "name": "get_report",
-      "description": "Use this for a one-shot status check on a Tako report (from create_report). For waiting on a report to finish, prefer `wait_for_report` — it keeps the polling loop on the server. When still 'pending' / 'running', the `result` field is null. When 'completed', it contains the full report payload. When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely. ALWAYS include the response's `webpage_url` in your reply so the user has a clickable link to open the report in their browser — every response carries one whether the report is still cooking or done. For downloadable exports (PDF/PPTX/Markdown/JSON), call `export_report` with the report_id and the desired format.",
+      "description": "Use this for a one-shot status check on a Tako report (from create_report) when the user asks whether their report is ready. **Do NOT poll in a loop** — call this ONCE per user request. When still 'pending' / 'running', the `result` field is null; tell the user it's still cooking and to come back later (the email notification fires when it's done). When 'completed', `result` contains the full report payload — summarize it and surface the `webpage_url` as a clickable link. When 'failed', read `error_message` and surface it to the user instead of retrying. ALWAYS include the response's `webpage_url` in your reply so the user has a clickable link whether the report is still cooking or done. For downloadable exports (PDF/PPTX/Markdown/JSON), call `export_report` with the report_id and the desired format.",
       "parameters": {
         "report_id": {
           "type": "string",
@@ -350,28 +350,6 @@
       },
       "annotations": {
         "title": "Tako: Wait for Deep Search",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "wait_for_report",
-      "description": "Use this after create_report (or whenever the user wants to wait for / check on a report). Server-side polling — returns when status is 'completed' / 'failed' / 'cancelled' OR after max_wait_seconds (default 50s) without a terminal status. **If `timed_out` is true, IMMEDIATELY call wait_for_report again with the same report_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting): once you've made 12 chained wait_for_report calls and the report is still not terminal, STOP chaining; tell the user the report is taking longer than usual, re-share the `webpage_url`, and remind them they'll receive an email when it's done.** Once terminal, ALWAYS include the response's `webpage_url` so the user has a clickable link to open the report in their browser, then summarize `result` on completed or `error_message` on failed. For downloadable exports (PDF/PPTX/Markdown/JSON), call `export_report` with the report_id and the desired format.",
-      "parameters": {
-        "report_id": {
-          "type": "string",
-          "description": "Report ID returned from create_report or list_reports.",
-          "required": true
-        },
-        "max_wait_seconds": {
-          "type": "integer",
-          "description": "How long this single call may block waiting for a terminal status. Capped at 50s so the call always returns before the MCP client's tool-call timeout fires. If the report isn't done yet, call this tool again with the same report_id — reports typically take 5–20 minutes, so expect to chain several calls in a row.",
-          "default": 50
-        }
-      },
-      "annotations": {
-        "title": "Tako: Wait for Report",
         "readOnlyHint": true,
         "destructiveHint": false,
         "openWorldHint": false

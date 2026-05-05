@@ -1,11 +1,13 @@
 /**
  * Shared response shape for the Django report detail endpoint.
  *
- * Both `get_report` (one-shot read) and `wait_for_report` (server-side
- * polling wrapper) return the same fields against the same
- * `GET /api/v1/internal/reports/{id}/` endpoint. Pulling the schema,
- * Django response type, and shape function here keeps the two tools in
- * lockstep — adding a field in one place propagates to both.
+ * `get_report` (one-shot read) consumes this shape against the
+ * `GET /api/v1/internal/reports/{id}/` endpoint. The shared module
+ * exists because we previously also had a `wait_for_report` polling
+ * wrapper that needed the same response fields; that tool was removed
+ * (it triggered crashy long-poll loops on ChatGPT and Claude), but
+ * the shared shape is kept here in case a future kickoff/wait variant
+ * for reports is reintroduced.
  *
  * Naming: leading `_` excludes this file from `gen-registry.ts`'s tool
  * scan (see the `NON_TOOL_FILES` / `!f.startsWith("_")` filter there).
@@ -16,9 +18,8 @@ import { type Env, resolvePublicBase } from "../env.js";
 
 /**
  * Raw shape (not yet wrapped in `z.object`) so callers can `...spread`
- * it into a larger schema. `wait_for_report` adds a `timed_out` flag on
- * top of these fields; spreading lets that tool extend without
- * duplicating field definitions.
+ * it into a larger schema (e.g., a future wait-style wrapper that adds
+ * a `timed_out` flag on top).
  */
 export const reportOutputShape = {
   report_id: z.string(),

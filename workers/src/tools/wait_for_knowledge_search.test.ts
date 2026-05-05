@@ -1,5 +1,7 @@
 /**
- * Tests for `wait_for_knowledge_search`. Mirrors `wait_for_report.test.ts`.
+ * Tests for `wait_for_knowledge_search`. Same shape pattern as the
+ * deprecated `wait_for_report` (since removed): server-side polling
+ * up to a 50 s ceiling, agent loops the tool when timed_out is true.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 

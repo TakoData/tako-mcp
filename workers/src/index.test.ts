@@ -136,7 +136,6 @@ describe("worker routing", () => {
       "knowledge_search",
       "list_reports",
       "open_chart_ui",
-      "wait_for_report",
     ]);
 
     // MCP Apps: `open_chart_ui` and `knowledge_search` ship the
@@ -207,7 +206,7 @@ describe("worker routing", () => {
     expect(names.has("wait_for_knowledge_search")).toBe(true);
     // The default 10 tools are still present alongside.
     expect(names.has("knowledge_search")).toBe(true);
-    expect(body.result.tools).toHaveLength(12);
+    expect(body.result.tools).toHaveLength(11);
   });
 
   it("POST /mcp resources/list includes the open_chart_ui widget bundle", async () => {
