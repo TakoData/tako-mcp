@@ -34,7 +34,7 @@ const inputSchema = z.object({
 const get_report = {
   name: "get_report",
   description:
-    "Use this for a one-shot status check on a Tako report (from create_report). For waiting on a report to finish, prefer `wait_for_report` — it keeps the polling loop on the server. When still 'pending' / 'running', the `result` field is null. When 'completed', it contains the full report payload. When 'failed', read `error_message` and surface it to the user instead of retrying indefinitely. ALWAYS include the response's `webpage_url` in your reply so the user has a clickable link to open the report in their browser — every response carries one whether the report is still cooking or done. For downloadable exports (PDF/PPTX/Markdown/JSON), call `export_report` with the report_id and the desired format.",
+    "Use this for a one-shot status check on a Tako report (from create_report) when the user asks whether their report is ready. **Do NOT poll in a loop** — call this ONCE per user request. When still 'pending' / 'running', the `result` field is null; tell the user it's still cooking and to come back later (the email notification fires when it's done). When 'completed', `result` contains the full report payload — summarize it and surface the `webpage_url` as a clickable link. When 'failed', read `error_message` and surface it to the user instead of retrying. ALWAYS include the response's `webpage_url` in your reply so the user has a clickable link whether the report is still cooking or done. For downloadable exports (PDF/PPTX/Markdown/JSON), call `export_report` with the report_id and the desired format.",
   inputSchema,
   outputSchema: reportOutputSchema,
   annotations: {

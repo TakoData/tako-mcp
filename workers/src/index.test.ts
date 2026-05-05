@@ -97,7 +97,7 @@ describe("worker routing", () => {
     expect(body.error.data.kind).toBe("missing");
   });
 
-  it("POST /mcp tools/list returns the full Phase 2 tool set", async () => {
+  it("POST /mcp tools/list returns the default tool set (non-ChatGPT clients)", async () => {
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -121,8 +121,11 @@ describe("worker routing", () => {
       };
     };
     const names = body.result.tools.map((t) => t.name).sort();
-    // The exact set of tools registered by the codegen barrel. When a tool
-    // is added or removed, update this list alongside the tool-module file.
+    // Default tool set — NO `start_deep_knowledge_search` or
+    // `wait_for_knowledge_search`. Those are ChatGPT-only (see
+    // `mcp.ts`'s `CHATGPT_ONLY_TOOL_NAMES`); on Claude.ai and other
+    // clients with `resetTimeoutOnProgress` support, deep search
+    // happens inside `knowledge_search`'s auto-escalation path.
     expect(names).toEqual([
       "create_chart",
       "create_report",
@@ -133,15 +136,18 @@ describe("worker routing", () => {
       "knowledge_search",
       "list_reports",
       "open_chart_ui",
-      "wait_for_report",
     ]);
 
-    // MCP Apps: BOTH `open_chart_ui` AND `knowledge_search` ship the
-    // chart widget bundle (knowledge_search auto-renders the top
-    // result inline so the model doesn't have to chain into
-    // open_chart_ui). Both tools' listings must carry the widget URI
-    // under all three metadata keys: `_meta.ui.resourceUri` (open MCP
-    // Apps spec, read by claude.ai / VS Code / Goose), the legacy
+    // MCP Apps: `open_chart_ui` and `knowledge_search` ship the
+    // chart widget bundle. `knowledge_search` is a single-tool flow
+    // (no kickoff/wait split) — the deep path polls internally and
+    // emits MCP progress notifications to keep the client timeout
+    // alive — so a successful tool call always carries a chart in
+    // the result, and the widget never has to render an empty
+    // intermediate state.
+    // All widget-carrying tools' listings must declare the URI
+    // under all three metadata keys: `_meta.ui.resourceUri` (open
+    // MCP Apps spec, read by claude.ai / VS Code / Goose), the legacy
     // flat `_meta["ui/resourceUri"]` (older host readers), and
     // `_meta["openai/outputTemplate"]` (ChatGPT's Apps SDK — without
     // it the widget loads but `window.openai.toolOutput` never
@@ -169,6 +175,38 @@ describe("worker routing", () => {
       expect(meta?.["ui/resourceUri"]).toBeUndefined();
       expect(meta?.["openai/outputTemplate"]).toBeUndefined();
     }
+  });
+
+  it("POST /mcp tools/list adds the deep-search kickoff/wait pair on ChatGPT clients", async () => {
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        // `detectMcpClient` matches "chatgpt" / "openai" substrings
+        // in the User-Agent — the Apps SDK's UA includes one of
+        // these. We use a stand-in here.
+        "user-agent": "ChatGPT/1.0 (+https://chatgpt.com)",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    const names = new Set(body.result.tools.map((t) => t.name));
+    expect(names.has("start_deep_knowledge_search")).toBe(true);
+    expect(names.has("wait_for_knowledge_search")).toBe(true);
+    // The default 10 tools are still present alongside.
+    expect(names.has("knowledge_search")).toBe(true);
+    expect(body.result.tools).toHaveLength(11);
   });
 
   it("POST /mcp resources/list includes the open_chart_ui widget bundle", async () => {

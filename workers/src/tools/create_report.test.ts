@@ -31,11 +31,17 @@ import {
   jsonResponse,
   mockFetchOnce,
   mockFetchSequence,
+  noopSendProgress,
   requestFrom,
 } from "./__test_helpers.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://trytako.com" };
-const CTX: ToolContext = { token: "sk-test", env: ENV };
+const CTX: ToolContext = {
+  token: "sk-test",
+  env: ENV,
+  sendProgress: noopSendProgress,
+  client: "claude",
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();

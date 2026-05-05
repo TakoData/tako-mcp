@@ -61,7 +61,7 @@ const outputSchema = z.object({
 const export_report = {
   name: "export_report",
   description:
-    "Use this when the user explicitly asks to export, download, or save a completed Tako report in a specific file format (Markdown, JSON, PDF, or PowerPoint). Returns a short-lived `download_url` (default: 5 minutes) — surface it to the user as a markdown link, e.g. `[Download as PDF](download_url)`, and tell them how long they have to click before it expires (`expires_in_seconds`). The report MUST be `status === \"completed\"`; if the click 404s with \"report not ready,\" call `wait_for_report` first and re-mint a fresh URL. Do NOT call this proactively after `create_report` or `get_report` — only when the user actually asks for an export. If the user just wants to read the report in their browser, share the report's `webpage_url` instead — no export needed.",
+    "Use this when the user explicitly asks to export, download, or save a completed Tako report in a specific file format (Markdown, JSON, PDF, or PowerPoint). Returns a short-lived `download_url` (default: 5 minutes) — surface it to the user as a markdown link, e.g. `[Download as PDF](download_url)`, and tell them how long they have to click before it expires (`expires_in_seconds`). The report MUST be `status === \"completed\"`; if the click 404s with \"report not ready,\" call `get_report` once to check status, and re-mint a fresh URL only after the report has reached completed. Do NOT call this proactively after `create_report` or `get_report` — only when the user actually asks for an export. If the user just wants to read the report in their browser, share the report's `webpage_url` instead — no export needed.",
   inputSchema,
   outputSchema,
   annotations: {

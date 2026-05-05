@@ -22,7 +22,7 @@ import {
 import type { Env } from "./env.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
-import type { AnyToolModule, ToolContext } from "./tools/types.js";
+import type { AnyToolModule, McpClientKind, ToolContext } from "./tools/types.js";
 
 /**
  * Server identity. `registry/server.json` is the canonical source — keep this
@@ -74,7 +74,12 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * default — better to over-render than to hide the chart from a host
  * that supports it.
  */
-export type McpClientKind = "claude" | "chatgpt" | "unknown";
+// `McpClientKind` is defined in `tools/types.ts` (re-exported below)
+// so tool modules can reference it without a circular import on
+// `mcp.ts`. Keep the re-export so existing imports from `./mcp.js`
+// continue to work — `index.ts`, `auth.ts`, etc. all read it from
+// here.
+export type { McpClientKind };
 
 export function detectMcpClient(userAgent: string | null): McpClientKind {
   if (userAgent === null || userAgent === "") return "unknown";
@@ -155,9 +160,33 @@ export function createMcpServer(
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
 
+  // Tools that should ONLY appear on ChatGPT-class clients. The deep
+  // (Orca) async path needs a kickoff/wait pattern on hosts that
+  // don't honor MCP `notifications/progress` for tool-call timeout
+  // extension (verified for ChatGPT — its Apps SDK doesn't include a
+  // progressToken in tools/call requests, so any single-tool deep
+  // call dies at the host's default timeout). Claude.ai uses the
+  // single-tool `knowledge_search` auto-escalation with progress
+  // notifications and never needs these.
+  //
+  // Hosting them only on the clients that need them keeps the
+  // Claude.ai tool surface minimal (no risk of the agent there
+  // accidentally choosing the slower kickoff/wait flow over the
+  // single-call deep path) and keeps the registry codegen unchanged
+  // (registry/server.json still lists everything for discovery; the
+  // runtime just filters per request).
+  const CHATGPT_ONLY_TOOL_NAMES = new Set([
+    "start_deep_knowledge_search",
+    "wait_for_knowledge_search",
+  ]);
+  const client = options.client ?? "unknown";
+
   for (const tool of TOOL_REGISTRY) {
+    if (CHATGPT_ONLY_TOOL_NAMES.has(tool.name) && client !== "chatgpt") {
+      continue;
+    }
     registerTool(server, tool, ctx, {
-      client: options.client ?? "unknown",
+      client,
       registeredResourceUris,
       registeredTemplateNames,
     });
@@ -397,13 +426,85 @@ function registerTool(
     };
   }
 
+  // Structural type for the slice of `RequestHandlerExtra` we read.
+  // We don't import the full SDK type because it requires pulling in
+  // `ServerRequest` / `ServerNotification` and the layered generics
+  // don't add anything we use; this object literal type is checked
+  // structurally against the SDK's actual `extra` at the call site.
+  type ToolHandlerExtra = {
+    sendNotification: (notification: {
+      method: "notifications/progress";
+      params: {
+        progressToken: string | number;
+        progress: number;
+        total?: number;
+        message?: string;
+      };
+    }) => Promise<void>;
+    _meta?: { progressToken?: string | number };
+  };
   server.registerTool(
     tool.name,
     config as Parameters<McpServer["registerTool"]>[1],
-    async (input) => {
+    (async (input: unknown, extra: ToolHandlerExtra) => {
+      // Build a per-call context that layers `sendProgress` over the
+      // shared `{ token, env }`. The SDK's `extra._meta.progressToken`
+      // is set when the client provided a progressToken on the request
+      // (and only then are progress notifications useful — clients
+      // ignore notifications whose progressToken they don't recognize,
+      // and the protocol forbids sending progress without a token). On
+      // requests without a progressToken, `sendProgress` no-ops, so
+      // tools can call it unconditionally. `progress` accumulates a
+      // monotonic count of polls / steps; `total` and `message` are
+      // optional. Errors from the underlying transport are swallowed —
+      // a notification failure must NEVER fail the tool call.
+      const progressToken = (extra._meta as { progressToken?: string | number } | undefined)
+        ?.progressToken;
+      // Diagnostic: log whether the client included a progressToken on
+      // the request. Lets us confirm via `wrangler tail` whether a
+      // given client is asking for progress (Claude.ai's TS SDK does
+      // by default; ChatGPT's Apps SDK historically does not). When
+      // absent, `sendProgress` no-ops and the client's per-tool-call
+      // timeout ticks down without resets — the deep-search path
+      // can't survive longer than the client's default (60 s on the
+      // TS SDK) on those clients.
+      console.log(
+        `[mcp] tool=${tool.name} client=${options.client} progressToken=${progressToken ?? "(none)"}`,
+      );
+      const sendProgress: ToolContext["sendProgress"] = async (
+        progress,
+        opts,
+      ) => {
+        if (progressToken === undefined) return;
+        try {
+          await extra.sendNotification({
+            method: "notifications/progress",
+            params: {
+              progressToken,
+              progress,
+              ...(opts?.total !== undefined ? { total: opts.total } : {}),
+              ...(opts?.message !== undefined ? { message: opts.message } : {}),
+            },
+          });
+        } catch (err) {
+          // Best-effort: log and move on. The polling loop continues
+          // without progress reset on this client; if the timeout
+          // fires, the client will see a clean cancel rather than
+          // an opaque transport error.
+          console.error(
+            `sendProgress failed for ${tool.name}:`,
+            err,
+          );
+        }
+      };
+      const callCtx: ToolContext = {
+        ...ctx,
+        sendProgress,
+        client: options.client,
+      };
       let output: unknown;
       try {
-        output = await tool.handler(input as unknown, ctx);
+        output = await tool.handler(input as unknown, callCtx);
       } catch (err) {
         // Map Django transport failures to a structured `isError: true`
         // result so MCP clients can distinguish "your token was rejected"
@@ -532,7 +633,7 @@ function registerTool(
         result._meta = resultMeta;
       }
       return result;
-    },
+    }) as Parameters<McpServer["registerTool"]>[2],
   );
 }
 
@@ -639,7 +740,20 @@ export async function handleMcpRequest(
   const oauthMappedToken = await tryResolveOAuthAccessToken(bearer, env);
   const token = oauthMappedToken ?? bearer;
 
-  const ctx: ToolContext = { token, env };
+  // Base ctx — `sendProgress` here is a placeholder overridden per
+  // tool call inside `registerTool`'s SDK callback (where the
+  // request's `progressToken` and the SDK's `sendNotification` are
+  // available). Outside of a tool-call scope, no client is listening.
+  // `client` defaults to `"unknown"` and is overridden by the
+  // request-handler before tool dispatch.
+  const ctx: ToolContext = {
+    token,
+    env,
+    sendProgress: async () => {
+      /* no-op outside tool-call scope */
+    },
+    client: "unknown",
+  };
 
   try {
     // Use the request's own origin as the icon base, so each deployed

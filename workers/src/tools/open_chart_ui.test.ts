@@ -14,10 +14,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import open_chart_ui from "./open_chart_ui.js";
-import { mockFetchOnce } from "./__test_helpers.js";
+import { mockFetchOnce, noopSendProgress } from "./__test_helpers.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-const CTX: ToolContext = { token: "sk-test", env: ENV };
+const CTX: ToolContext = {
+  token: "sk-test",
+  env: ENV,
+  sendProgress: noopSendProgress,
+  client: "claude",
+};
 
 const HANDLER_INPUT = {
   pub_id: "abc123",

@@ -12,6 +12,20 @@
  */
 import { vi } from "vitest";
 
+import type { ToolContext } from "./types.js";
+
+/**
+ * No-op `sendProgress` for test contexts. Tools that emit progress
+ * notifications (e.g. `knowledge_search`'s deep-polling loop) call
+ * `ctx.sendProgress(...)` unconditionally — in production it routes to
+ * the SDK's `sendNotification`, in tests it should silently swallow.
+ * Tests that want to assert progress emissions can override with a
+ * `vi.fn()` instead of using this helper.
+ */
+export const noopSendProgress: ToolContext["sendProgress"] = async () => {
+  /* no-op */
+};
+
 /** Stub `fetch` to return a single pre-built `Response` on every call. */
 export function mockFetchOnce(response: Response): void {
   vi.stubGlobal(
