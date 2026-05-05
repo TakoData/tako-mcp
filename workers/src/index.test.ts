@@ -199,7 +199,9 @@ describe("worker routing", () => {
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      result: { tools: Array<{ name: string }> };
+      result: {
+        tools: Array<{ name: string; _meta?: Record<string, unknown> }>;
+      };
     };
     const names = new Set(body.result.tools.map((t) => t.name));
     expect(names.has("start_deep_knowledge_search")).toBe(true);
@@ -207,6 +209,35 @@ describe("worker routing", () => {
     // The default 10 tools are still present alongside.
     expect(names.has("knowledge_search")).toBe(true);
     expect(body.result.tools).toHaveLength(11);
+
+    // ChatGPT-specific widget suppression for knowledge_search:
+    // ChatGPT pins the widget container's height to whatever it
+    // first sees and ignores later shrink notifications, so a
+    // knowledge_search call that returns 0 cards (no
+    // server-side auto-escalation on ChatGPT) leaves a persistent
+    // empty widget gap. Suppressing the widget here forces the
+    // model to chain into open_chart_ui for chart rendering on
+    // every path, matching the kickoff/wait pattern.
+    const ks = body.result.tools.find((t) => t.name === "knowledge_search");
+    const ksMeta = ks?._meta as
+      | {
+          ui?: unknown;
+          "ui/resourceUri"?: unknown;
+          "openai/outputTemplate"?: unknown;
+        }
+      | undefined;
+    expect(ksMeta?.ui).toBeUndefined();
+    expect(ksMeta?.["ui/resourceUri"]).toBeUndefined();
+    expect(ksMeta?.["openai/outputTemplate"]).toBeUndefined();
+
+    // open_chart_ui is the chart-rendering tool on ChatGPT and
+    // MUST keep its widget metadata.
+    const ocu = body.result.tools.find((t) => t.name === "open_chart_ui");
+    expect(ocu?._meta).toMatchObject({
+      ui: { resourceUri: "ui://tako/embed/chart" },
+      "ui/resourceUri": "ui://tako/embed/chart",
+      "openai/outputTemplate": "ui://tako/embed/chart",
+    });
   });
 
   it("POST /mcp resources/list includes the open_chart_ui widget bundle", async () => {
@@ -300,14 +331,22 @@ describe("worker routing", () => {
     expect(item.text).toContain("tako-embed");
   });
 
-  it("POST /mcp tools/call from claude.ai (widget suppressed) skips extraMeta image_data_url", async () => {
-    // Regression test for the `extraMeta` gating: when the widget is
-    // suppressed (claude.ai User-Agent), `mcp.ts` must NOT call the
-    // tool's `extraMeta` hook. Otherwise the worker fires a redundant
-    // PNG fetch (the same one `extraContentBlocks` already does on
-    // suppressed hosts) and inflates the JSON-RPC response with a
-    // ~330 KB unused `image_data_url` data URI that no widget will
-    // read.
+  it("POST /mcp tools/call from claude.ai (widget suppressed) returns text-only — no widget metadata, no PNG fallback", async () => {
+    // claude.ai's MCP host renders chart widgets inside a constrained
+    // iframe that clips the chart vertically; we suppress the widget
+    // and rely on the LLM-pasted `[Open in Tako](embed_url)` link
+    // (per the chart tool descriptions) so the user gets a clickable
+    // path to the fully-interactive standalone embed.
+    //
+    // Test locks in three invariants for the suppressed-claude shape:
+    //   1. No widget metadata in `_meta` (no `ui/resourceUri`,
+    //      `_meta.ui.resourceUri`, or `image_data_url`) — claude.ai
+    //      reads these to load the widget bundle, and shipping them
+    //      would re-render the cropped iframe.
+    //   2. No image content block — `extraContentBlocks` is gated on
+    //      `ui === undefined && !widgetSuppressed`, so the PNG
+    //      fallback also doesn't ship. claude.ai gets only the text
+    //      block + structuredContent; the LLM surfaces the link.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -333,22 +372,16 @@ describe("worker routing", () => {
         _meta?: Record<string, unknown>;
       };
     };
-    // `extraContentBlocks` is the path claude.ai uses for inline
-    // rendering — it fires on suppressed hosts. The PNG fetch will
-    // fail in the test env (localhost:8000 unreachable), so the
-    // resulting array is empty and no image content block is appended.
-    // What we're locking in here is the `_meta` shape: no
-    // `image_data_url` key, which would only be set by `extraMeta`.
-    // `_meta` may be entirely absent (no widget metadata + no
-    // `extraMeta` payload = empty), or present with only the dynamic
-    // resolver entries — assert against either shape via optional
-    // chaining.
     expect(body.result._meta?.image_data_url).toBeUndefined();
-    // The widget metadata wiring (`_meta["openai/outputTemplate"]` etc.)
-    // is also gated on `ui !== undefined`, so suppressed-host calls
-    // come back without those keys too. Sanity-check the gate still
-    // covers the whole `ui` block, not just `extraMeta`.
+    expect(body.result._meta?.["ui/resourceUri"]).toBeUndefined();
+    expect(
+      (body.result._meta?.ui as { resourceUri?: string } | undefined)
+        ?.resourceUri,
+    ).toBeUndefined();
     expect(body.result._meta?.["openai/outputTemplate"]).toBeUndefined();
+    // No image content block (PNG fallback) either — content array
+    // should be just the JSON-stringified text block.
+    expect(body.result.content.every((c) => c.type === "text")).toBe(true);
   });
 
   it("POST /mcp tools/call invokes the registered handler and surfaces structuredContent", async () => {

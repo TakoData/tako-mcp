@@ -68,7 +68,7 @@ const KICKOFF_MESSAGE =
 const start_deep_knowledge_search = {
   name: "start_deep_knowledge_search",
   description:
-    'Kick off a thorough (deep / Orca research pipeline) knowledge search and return immediately with a `task_id`. Use this when `knowledge_search` returns no results AND the user wants a thorough/deep research answer, OR when the user explicitly asks for a deep / thorough / research-grade result. The deep task runs server-side for 1-5 minutes; this tool returns in <1s with the task handle. **Workflow:** (1) tell the user the deep search is running and that it can take a few minutes; (2) when the user wants an update OR you want to deliver the final answer, call `wait_for_knowledge_search` with this `task_id`; (3) on COMPLETED, call `open_chart_ui` with `results[0].card_id` to render the chart inline, then narrate the data.',
+    'Kick off a thorough (deep / Orca research pipeline) knowledge search and return immediately with a `task_id`. **Use this whenever `knowledge_search` returns 0 cards OR errors out — auto-escalate by default, do not wait for the user to ask for "deep" or "research-grade" before retrying.** Also use when the user explicitly asks for a deep / thorough / research-grade result. The deep task runs server-side for 1-5 minutes; this tool returns in <1s with the task handle. **Workflow:** (1) tell the user the deep search is running and that it can take a few minutes; (2) when the user wants an update OR you want to deliver the final answer, call `wait_for_knowledge_search` with this `task_id`; (3) on COMPLETED, call `open_chart_ui` with `results[0].card_id` to render the chart inline, then narrate the data.',
   inputSchema,
   outputSchema,
   annotations: {

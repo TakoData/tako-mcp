@@ -196,28 +196,137 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     }
   });
 
-  it("does NOT escalate when fast empty AND client is chatgpt", async () => {
-    // ChatGPT's Apps SDK doesn't honor progress notifications for
-    // timeout reset, so a single-tool-call deep path will time out
-    // at the host. knowledge_search therefore returns the empty
-    // fast result instead of escalating; the agent on ChatGPT
-    // calls `start_deep_knowledge_search` separately when it wants
-    // deep. Gate is UA-based (`ctx.client === "chatgpt"`), NOT
-    // progressToken-based — Claude.ai sometimes omits the token on
-    // specific calls but still supports progress in general, and
-    // we don't want to break Claude.ai's deep flow.
+  it("translates Tako's 404 (no-results) on fast into an empty result and auto-escalates to deep", async () => {
+    // Tako's `/api/v1/knowledge_search` returns HTTP 404 with
+    // `RelevantResultsNotFoundError` when fast finds 0 cards (see
+    // `app/backend/knowledge/api/ga/v1/knowledge_search/views.py`
+    // ~line 607). The Worker's `runSearch` catches that
+    // `DjangoNotFoundError` and returns an empty
+    // `SyncSearchResponse` so the auto-escalation logic — which
+    // keys on `cards.length === 0` — fires the same way it does
+    // for a 200-with-empty-cards response. Without the
+    // translation, the throw would escape the handler and surface
+    // as a fatal `not_found` error, suppressing both this server-
+    // side escalation AND the LLM-side
+    // `start_deep_knowledge_search` directive on ChatGPT.
+    vi.useFakeTimers();
+    try {
+      const fetchMock = mockFetchSequence([
+        // 1: fast POST → 404 (Tako's "0 cards matched" signal)
+        jsonResponse(404, {
+          detail: "No relevant knowledge cards found",
+          error_message: "No relevant knowledge cards found",
+        }),
+        // 2: deep POST → 202 async-task initiation
+        jsonResponse(202, { task_id: "task-404-then-deep", status: "pending" }),
+        // 3: status GET → COMPLETED with one card
+        jsonResponse(200, {
+          task_id: "task-404-then-deep",
+          status: "COMPLETED",
+          result: {
+            outputs: {
+              knowledge_cards: [
+                {
+                  card_id: "deep-after-404",
+                  title: "Daily caloric supply per capita",
+                  description: null,
+                  url: null,
+                  source: null,
+                },
+              ],
+            },
+          },
+        }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "daily caloric supply india china us", ...DEFAULTS },
+        CTX,
+      );
+      await vi.runAllTimersAsync();
+      const out = await promise;
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const fastBody = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
+      const deepBody = await bodyOf(requestFrom(fetchMock.mock.calls[1]));
+      expect(fastBody.search_effort).toBe("fast");
+      expect(deepBody.search_effort).toBe("deep");
+      expect(out.count).toBe(1);
+      expect(out.results[0]?.card_id).toBe("deep-after-404");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns an empty result on Tako 404 when caller forces fast (no auto-escalation, no throw)", async () => {
+    // When the caller passes `search_effort: "fast"` explicitly,
+    // auto-escalation is suppressed regardless of whether fast
+    // returns 0 cards via 200 or 404. Either way the response
+    // shape must be a clean empty result — never a thrown
+    // `DjangoNotFoundError` — so ChatGPT's
+    // `start_deep_knowledge_search` directive (keyed on 0 cards or
+    // errors) has an unambiguous signal to trigger on.
+    const fetchMock = mockFetchSequence([
+      jsonResponse(404, { detail: "No relevant knowledge cards found" }),
+    ]);
+
+    const out = await knowledge_search.handler(
+      {
+        query: "obscure query with no matches",
+        ...DEFAULTS,
+        search_effort: "fast",
+      },
+      CTX,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(out.count).toBe(0);
+    expect(out.results).toEqual([]);
+  });
+
+  it("throws an actionable redirect error when fast empty AND client is chatgpt", async () => {
+    // Server-side auto-escalation is disabled on ChatGPT (the
+    // single-tool deep path can't survive its 60 s host timeout).
+    // Empirically, the model treats a clean `count: 0` reply as a
+    // valid "no results" answer and falls back to training
+    // knowledge instead of calling `start_deep_knowledge_search`
+    // per the description directive. Throwing here surfaces the
+    // empty case as an actionable tool error the model is much
+    // less able to ignore. Same UA-based gate (`ctx.client ===
+    // "chatgpt"`); Claude.ai's auto-escalation handles its empty
+    // case server-side and never reaches this branch.
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { outputs: { knowledge_cards: [] } }),
     ]);
     const ctx: ToolContext = { ...CTX, client: "chatgpt" };
 
-    const out = await knowledge_search.handler(
-      { query: "thailand tourism gdp", ...DEFAULTS },
-      ctx,
-    );
-
+    await expect(
+      knowledge_search.handler(
+        { query: "thailand tourism gdp", ...DEFAULTS },
+        ctx,
+      ),
+    ).rejects.toThrow(/start_deep_knowledge_search/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(out.count).toBe(0);
+  });
+
+  it("throws the same redirect when ChatGPT empty came via Tako 404", async () => {
+    // The 404→empty translation in `runSearch` interacts with the
+    // ChatGPT empty-result throw: a 404 from Tako should still
+    // produce the actionable error on ChatGPT (not bubble as a
+    // raw `DjangoNotFoundError`, which is the failure mode the
+    // 404 translation was added to fix in the first place).
+    const fetchMock = mockFetchSequence([
+      jsonResponse(404, { detail: "No relevant knowledge cards found" }),
+    ]);
+    const ctx: ToolContext = { ...CTX, client: "chatgpt" };
+
+    await expect(
+      knowledge_search.handler(
+        { query: "obscure metric with no coverage", ...DEFAULTS },
+        ctx,
+      ),
+    ).rejects.toThrow(/start_deep_knowledge_search/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws on explicit search_effort=deep when client is chatgpt", async () => {

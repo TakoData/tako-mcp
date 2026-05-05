@@ -63,10 +63,12 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * Detect the calling MCP client from the HTTP `User-Agent` header.
  *
  * Used to gate per-client behavior that we'd otherwise have to ask the
- * LLM to figure out from prose — specifically, suppressing the
- * `open_chart_ui` widget on claude.ai (where the constrained iframe
- * container makes the chart unusable) while keeping it for ChatGPT
- * (where the interactive iframe widget works fine).
+ * LLM to figure out from prose — specifically, suppressing the chart
+ * widget on claude.ai (where the constrained iframe container clips
+ * the chart and the LLM's markdown link is strictly cleaner UX) and
+ * routing ChatGPT through the deep-search kickoff/wait pair (its
+ * Apps SDK doesn't reset tool-call timeouts on progress
+ * notifications).
  *
  * The match is intentionally loose: we don't care about exact UA
  * strings, just whether the request smells like one of the major
@@ -179,6 +181,26 @@ export function createMcpServer(
     "start_deep_knowledge_search",
     "wait_for_knowledge_search",
   ]);
+  // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
+  // from the blanket claude.ai suppression in `widgetSuppressed`).
+  // `knowledge_search`'s output is conditional — sometimes it carries
+  // a chart (top card found) and sometimes it doesn't (count: 0,
+  // server-side auto-escalation disabled on ChatGPT). When it ships
+  // a widget on the empty path, ChatGPT reserves a min-height widget
+  // container, the bundle's no-chart guard notifies 0 height, and
+  // ChatGPT pins the highest height ever notified — leaving a
+  // persistent empty gap in the chat between the empty
+  // `knowledge_search` result and the eventual chart from the
+  // kickoff/wait/`open_chart_ui` chain. Suppressing the widget on
+  // ChatGPT puts `knowledge_search` on the same footing as
+  // `start_deep_knowledge_search` and `wait_for_knowledge_search`:
+  // they all return cards/structured data and the model renders
+  // charts via a follow-up `open_chart_ui` call. One extra tool call
+  // on the success path, but a clean chat surface on every path.
+  // Claude.ai keeps the inline auto-render — its host honors shrink
+  // notifications, and its server-side auto-escalation means the
+  // empty branch never reaches the client.
+  const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set(["knowledge_search"]);
   const client = options.client ?? "unknown";
 
   for (const tool of TOOL_REGISTRY) {
@@ -187,6 +209,8 @@ export function createMcpServer(
     }
     registerTool(server, tool, ctx, {
       client,
+      widgetSuppressedForTool:
+        client === "chatgpt" && CHATGPT_NO_WIDGET_TOOL_NAMES.has(tool.name),
       registeredResourceUris,
       registeredTemplateNames,
     });
@@ -225,6 +249,13 @@ function registerTool(
      * share `appUiResource.dynamic.templateName`.
      */
     registeredTemplateNames: Set<string>;
+    /**
+     * Per-tool widget suppression layered on top of the
+     * client-blanket suppression below. Set true to skip
+     * `appUiResource` for this specific tool/client combination —
+     * see `CHATGPT_NO_WIDGET_TOOL_NAMES` for the rationale.
+     */
+    widgetSuppressedForTool?: boolean;
   },
 ): void {
   // SDK's `registerTool` takes `ZodRawShape` (the `.shape` of a z.object),
@@ -278,16 +309,15 @@ function registerTool(
   // dynamic-resource path.
   //
   // Claude.ai-specific suppression: claude.ai renders MCP tool widgets
-  // inside a constrained, non-resizable iframe container that crops
-  // the chart to ~200 px tall regardless of any postMessage / CSS
-  // gymnastics on our side. Disabling the widget for claude.ai
-  // requests forces the LLM to fall back to the markdown-link path
-  // (per the `knowledge_search` description's conditional directive),
-  // which gives the user a clickable link that opens the fully
-  // interactive chart in a new tab — strictly better UX than the
-  // cropped widget. Detection happens upstream in handleMcpRequest
-  // by inspecting the User-Agent header.
-  const widgetSuppressed = options.client === "claude";
+  // inside a constrained, non-resizable iframe container that clips
+  // the chart vertically and exposes a tiny scrollbar — strictly
+  // worse UX than just giving the LLM a markdown link to the
+  // standalone embed page on tako.com. The chart-bearing tool
+  // descriptions carry an unconditional "always include `[Open in
+  // Tako](embed_url)`" directive so the user always has a clickable
+  // path to the fully-interactive chart, regardless of client.
+  const widgetSuppressed =
+    options.client === "claude" || options.widgetSuppressedForTool === true;
   const ui =
     tool.appUiResource !== undefined && !widgetSuppressed
       ? tool.appUiResource(ctx.env)
@@ -531,19 +561,23 @@ function registerTool(
       // + structuredContent that's already there rather than failing the
       // call.
       //
-      // Skip ONLY when the widget was actually registered for this
-      // request (`ui !== undefined`). When the widget is suppressed
-      // (e.g. claude.ai client detection above), we want to fall back
-      // to inlining the image as a content block so the chart still
-      // renders — claude.ai shows MCP image content blocks inline
-      // without a click-to-load gate. The skip-when-widget-active
-      // rule is what avoids the ChatGPT bug where image + widget
-      // metadata together silently disabled widget data flow; that
-      // rule still holds because `ui` is only set when the widget
-      // registered.
+      // Fires only when the tool genuinely doesn't define a widget
+      // (`appUiResource === undefined`) — NOT when we deliberately
+      // suppressed an existing widget for claude.ai. On claude.ai the
+      // PNG content-block fallback also rendered inside a constrained
+      // container and the LLM's `[Open in Tako](embed_url)` link is a
+      // strictly cleaner answer; we don't want to ship a redundant
+      // PNG that the user can't really interact with. The
+      // `!widgetSuppressed` half of the gate enforces that.
+      //
+      // Pairing image content blocks with widget metadata in the same
+      // result also silently disabled ChatGPT's widget data flow, so
+      // the gate keeps content-block image fallbacks and widget
+      // metadata mutually exclusive.
       if (
         tool.extraContentBlocks !== undefined &&
-        ui === undefined
+        ui === undefined &&
+        !widgetSuppressed
       ) {
         try {
           const extra = await tool.extraContentBlocks(output, ctx);
@@ -570,11 +604,8 @@ function registerTool(
       // `knowledge_search`) use `extraMeta` exclusively to ship
       // `image_data_url` for the widget to read via `params._meta`.
       // When the widget is suppressed (claude.ai), no widget will
-      // consume `_meta`, so running this hook would (a) burn an extra
-      // PNG `fetch` (the same one `extraContentBlocks` also does on
-      // those hosts), and (b) inflate the JSON-RPC response with a
-      // ~330 KB unused data URL. Skipping when there's no widget keeps
-      // the per-call PNG fetches at exactly one regardless of host.
+      // consume `_meta`, so running this hook would inflate the
+      // JSON-RPC response with a ~330 KB unused data URL.
       let resultMeta: Record<string, unknown> | undefined;
       if (tool.extraMeta !== undefined && ui !== undefined) {
         try {
@@ -761,9 +792,9 @@ export async function handleMcpRequest(
     // icons it itself serves under `/icons/*`. Prevents staging
     // connectors from referencing prod URLs and vice versa.
     const requestOrigin = new URL(request.url).origin;
-    // Detect calling client from User-Agent so we can hide the
-    // `open_chart_ui` widget on claude.ai (where the constrained
-    // iframe container makes the chart unusable). See
+    // Detect calling client from User-Agent so we can suppress the
+    // chart widget on claude.ai (constrained iframe container) and
+    // route ChatGPT through the deep-search kickoff/wait pair. See
     // `detectMcpClient` for the matching rules.
     const client = detectMcpClient(request.headers.get("user-agent"));
     const server = createMcpServer(ctx, {
