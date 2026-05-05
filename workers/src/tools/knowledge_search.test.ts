@@ -26,6 +26,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DjangoHttpError, DjangoNotFoundError } from "../django.js";
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import knowledge_search, { __test_only__ } from "./knowledge_search.js";
@@ -434,6 +435,65 @@ describe("knowledge_search async-task polling", () => {
       expect(fetchMock).toHaveBeenCalledTimes(3);
       expect(out.count).toBe(1);
       expect(out.results[0]?.card_id).toBe("after-retry");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("surfaces the underlying DjangoHttpError after exceeding the transient retry budget (3 consecutive 503s)", async () => {
+    // `MAX_TRANSIENT_RETRIES` = 2, so the 3rd consecutive 503 must
+    // surface the typed error instead of being swallowed indefinitely.
+    // Locks `pollDeep`'s retry budget independently from the
+    // `wait_for_knowledge_search` tool (which has its own polling
+    // loop with different backoff).
+    vi.useFakeTimers();
+    try {
+      mockFetchSequence([
+        jsonResponse(202, { task_id: "task-flap", status: "pending" }),
+        jsonResponse(503, { detail: "blip 1" }),
+        jsonResponse(503, { detail: "blip 2" }),
+        jsonResponse(503, { detail: "blip 3" }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      const err = await Promise.all([
+        promise.catch((e) => e),
+        vi.runAllTimersAsync(),
+      ]).then(([e]) => e);
+
+      expect(err).toBeInstanceOf(DjangoHttpError);
+      expect((err as DjangoHttpError).status).toBe(503);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry the status GET on a 404 (terminal task-not-found)", async () => {
+    // 404 means the task is gone — retrying won't bring it back.
+    // Surface immediately as a `DjangoNotFoundError` rather than
+    // burning the transient retry budget on a hopeless cause.
+    vi.useFakeTimers();
+    try {
+      const fetchMock = mockFetchSequence([
+        jsonResponse(202, { task_id: "task-404", status: "pending" }),
+        new Response("", { status: 404 }),
+      ]);
+
+      const promise = knowledge_search.handler(
+        { query: "x", search_effort: "deep", ...DEFAULTS },
+        CTX,
+      );
+      const err = await Promise.all([
+        promise.catch((e) => e),
+        vi.runAllTimersAsync(),
+      ]).then(([e]) => e);
+
+      expect(err).toBeInstanceOf(DjangoNotFoundError);
+      // Exactly the POST + the single 404 GET — no retry on the GET.
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

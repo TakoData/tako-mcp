@@ -13,7 +13,7 @@
  * On Claude.ai (which sends a `progressToken` and resets timeouts on
  * progress events), this tool is NOT registered — the existing
  * `knowledge_search` auto-escalation path handles deep in a single
- * tool call. See `mcp.ts`'s `CHATGPT_ONLY_TOOLS` set.
+ * tool call. See `mcp.ts`'s `CHATGPT_ONLY_TOOL_NAMES` set.
  *
  * Wire path: this tool POSTs to `/api/v1/knowledge_search` with
  * `search_effort: "deep"`. The backend responds 202 with

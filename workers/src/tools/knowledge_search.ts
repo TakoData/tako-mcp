@@ -35,12 +35,7 @@
  */
 import { z } from "zod";
 
-import {
-  DjangoHttpError,
-  DjangoTimeoutError,
-  djangoGet,
-  djangoPost,
-} from "../django.js";
+import { djangoGet, djangoPost } from "../django.js";
 import {
   APP_UI_RESOURCE_URI,
   APP_UI_TEMPLATE_URI_PATTERN,
@@ -57,6 +52,7 @@ import {
   type SearchPostResponse,
   buildResultsWithAutoChain,
   isAsyncTaskInitiation,
+  isTransientStatusError,
   resultsOutputShape,
   summarizeProgress,
 } from "./_async_search_shape.js";
@@ -123,18 +119,6 @@ const inputSchema = z.object({
 const outputSchema = z.object(resultsOutputShape);
 
 type Output = z.infer<typeof outputSchema>;
-
-function isTransientStatusError(err: unknown): boolean {
-  if (err instanceof DjangoTimeoutError) return true;
-  if (
-    err instanceof DjangoHttpError &&
-    err.status !== undefined &&
-    err.status >= 500
-  ) {
-    return true;
-  }
-  return false;
-}
 
 const knowledge_search = {
   name: "knowledge_search",
@@ -304,17 +288,33 @@ async function pollDeep(
       nextSinceIndex = maxId + 1;
     }
 
+    const normalizedStatus =
+      typeof status.status === "string" ? status.status.toUpperCase() : "";
+    const isTerminal =
+      normalizedStatus === COMPLETED_STATE ||
+      FAILURE_STATES.has(normalizedStatus);
+
     // Emit a progress notification to keep the client's tool-call
     // timeout alive. The message carries a short "current pipeline
     // step" hint pulled from the most recent event, when available.
     // Best-effort — `sendProgress` swallows errors internally so a
     // notification failure can't break the polling loop.
-    void ctx.sendProgress(pollCount, {
+    //
+    // On terminal iterations we await so the final progress event
+    // flushes before the handler returns / throws — prior code used
+    // fire-and-forget which races with the result envelope being
+    // assembled in `mcp.ts`. On non-terminal iterations the trailing
+    // sleep is plenty of time for the in-flight notification, and
+    // awaiting per-iteration would block the loop on the network
+    // hop.
+    const progressPromise = ctx.sendProgress(pollCount, {
       message: `deep search ${summarizeProgress(latestEvents)}`,
     });
-
-    const normalizedStatus =
-      typeof status.status === "string" ? status.status.toUpperCase() : "";
+    if (isTerminal) {
+      await progressPromise;
+    } else {
+      void progressPromise;
+    }
 
     if (normalizedStatus === COMPLETED_STATE) {
       return status.result?.outputs?.knowledge_cards ?? [];

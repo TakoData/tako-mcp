@@ -6,12 +6,12 @@
  *
  * Registered ONLY on clients that don't honor MCP
  * `notifications/progress` for tool-call timeout extension (currently:
- * ChatGPT). See `mcp.ts`'s `CHATGPT_ONLY_TOOLS` set and
+ * ChatGPT). See `mcp.ts`'s `CHATGPT_ONLY_TOOL_NAMES` set and
  * `start_deep_knowledge_search` for the full rationale.
  *
- * Mirrors `wait_for_report` for reports — same shape, same hard cap on
- * `max_wait_seconds`, same "agent loops the tool when timed_out is
- * true" pattern.
+ * Same hard cap on `max_wait_seconds` as the previous report-side
+ * polling wrapper, with the same "agent loops the tool when timed_out
+ * is true" pattern.
  *
  * No `appUiResource` / `extraMeta` / `extraContentBlocks` — see
  * `start_deep_knowledge_search` for why. The chart is rendered via a
@@ -19,7 +19,7 @@
  */
 import { z } from "zod";
 
-import { DjangoHttpError, DjangoTimeoutError, djangoGet } from "../django.js";
+import { djangoGet } from "../django.js";
 import {
   type AsyncTaskEvent,
   type AsyncTaskStatus,
@@ -27,6 +27,7 @@ import {
   FAILURE_STATES,
   type Visualization,
   cardToVisualization,
+  isTransientStatusError,
   summarizeProgress,
   visualizationSchema,
 } from "./_async_search_shape.js";
@@ -94,18 +95,6 @@ const outputSchema = z.object({
 });
 
 type Output = z.infer<typeof outputSchema>;
-
-function isTransientStatusError(err: unknown): boolean {
-  if (err instanceof DjangoTimeoutError) return true;
-  if (
-    err instanceof DjangoHttpError &&
-    err.status !== undefined &&
-    err.status >= 500
-  ) {
-    return true;
-  }
-  return false;
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

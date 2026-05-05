@@ -13,6 +13,7 @@
  */
 import { z } from "zod";
 
+import { DjangoHttpError, DjangoTimeoutError } from "../django.js";
 import type { Env } from "../env.js";
 import {
   HTTP_URL_REGEX,
@@ -88,6 +89,30 @@ export function isAsyncTaskInitiation(
 // Source: `tako/app/backend/monolith/models.py:2719` (AsyncTaskStatusChoices).
 export const COMPLETED_STATE = "COMPLETED";
 export const FAILURE_STATES = new Set(["FAILED", "INTERRUPTED"]);
+
+/**
+ * Classify whether a status-GET failure is likely transient (worth a
+ * single retry) or terminal (caller should bail). Conservatively
+ * whitelisted: only request-timeout aborts and Django-reported 5xx
+ * count as transient. 404 (task gone), 401 (auth dead), 400 (bad
+ * request), and parse errors are all surfaced immediately.
+ *
+ * Shared between `knowledge_search`'s in-tool polling loop and
+ * `wait_for_knowledge_search`'s independent polling loop — the
+ * classification rule must stay identical so a poll-style error on
+ * one path can't be silently swallowed on the other.
+ */
+export function isTransientStatusError(err: unknown): boolean {
+  if (err instanceof DjangoTimeoutError) return true;
+  if (
+    err instanceof DjangoHttpError &&
+    err.status !== undefined &&
+    err.status >= 500
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * Summarize a status response's events for use in error / timeout
