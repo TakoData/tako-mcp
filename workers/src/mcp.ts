@@ -431,6 +431,17 @@ function registerTool(
       // a notification failure must NEVER fail the tool call.
       const progressToken = (extra._meta as { progressToken?: string | number } | undefined)
         ?.progressToken;
+      // Diagnostic: log whether the client included a progressToken on
+      // the request. Lets us confirm via `wrangler tail` whether a
+      // given client is asking for progress (Claude.ai's TS SDK does
+      // by default; ChatGPT's Apps SDK historically does not). When
+      // absent, `sendProgress` no-ops and the client's per-tool-call
+      // timeout ticks down without resets — the deep-search path
+      // can't survive longer than the client's default (60 s on the
+      // TS SDK) on those clients.
+      console.log(
+        `[mcp] tool=${tool.name} client=${options.client} progressToken=${progressToken ?? "(none)"}`,
+      );
       const sendProgress: ToolContext["sendProgress"] = async (
         progress,
         opts,
