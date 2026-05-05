@@ -183,24 +183,25 @@ export function createMcpServer(
   ]);
   // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
   // from the blanket claude.ai suppression in `widgetSuppressed`).
-  // `knowledge_search`'s output is conditional — sometimes it carries
-  // a chart (top card found) and sometimes it doesn't (count: 0,
-  // server-side auto-escalation disabled on ChatGPT). When it ships
-  // a widget on the empty path, ChatGPT reserves a min-height widget
-  // container, the bundle's no-chart guard notifies 0 height, and
-  // ChatGPT pins the highest height ever notified — leaving a
-  // persistent empty gap in the chat between the empty
-  // `knowledge_search` result and the eventual chart from the
-  // kickoff/wait/`open_chart_ui` chain. Suppressing the widget on
-  // ChatGPT puts `knowledge_search` on the same footing as
-  // `start_deep_knowledge_search` and `wait_for_knowledge_search`:
-  // they all return cards/structured data and the model renders
-  // charts via a follow-up `open_chart_ui` call. One extra tool call
-  // on the success path, but a clean chat surface on every path.
-  // Claude.ai keeps the inline auto-render — its host honors shrink
-  // notifications, and its server-side auto-escalation means the
-  // empty branch never reaches the client.
-  const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set(["knowledge_search"]);
+  // The mechanism is kept in place for future per-tool gating, but
+  // is currently empty:
+  //
+  //   - `knowledge_search` USED to live here to avoid the empty-fast
+  //     widget gap (ChatGPT pins widget container height at the
+  //     highest ever notified and ignores later shrinks, so a 0-card
+  //     result rendered as an empty container that never collapsed).
+  //     The empty path now throws an actionable tool-call error
+  //     instead of returning a clean `count: 0`, and ChatGPT does
+  //     NOT reserve a widget container for tool errors — so the
+  //     inline auto-render works on the success path AND the empty
+  //     path no longer leaves a gap. Net win: the gap is fixed
+  //     without losing inline charts on success.
+  //
+  // Add a tool name here only if it has a UI bundle that produces
+  // unrenderable / blank widgets on ChatGPT in some legitimate
+  // success state. Most chart-conditional tools should rely on the
+  // throw-on-empty pattern instead.
+  const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
   const client = options.client ?? "unknown";
 
   for (const tool of TOOL_REGISTRY) {
@@ -260,9 +261,19 @@ function registerTool(
 ): void {
   // SDK's `registerTool` takes `ZodRawShape` (the `.shape` of a z.object),
   // not a full ZodObject — pull `.shape` here so tool files don't have to.
+  // Description selection: if the tool defines a per-client override
+  // matching the calling client, ship that text; otherwise fall back
+  // to the default. Per-client text avoids the failure mode where a
+  // single description embeds host-conditional directives ("On
+  // Claude.ai…", "On ChatGPT…") and relies on the model
+  // self-identifying its host — empirically unreliable, since the
+  // model has no first-class signal beyond the description text
+  // itself.
+  const description =
+    tool.descriptionByClient?.[options.client] ?? tool.description;
   const config: Record<string, unknown> = {
     title: tool.annotations.title,
-    description: tool.description,
+    description,
     inputSchema: tool.inputSchema.shape,
     annotations: tool.annotations,
   };
@@ -308,16 +319,38 @@ function registerTool(
   // can read `ui.dynamic` and resolve the per-call widget URI for the
   // dynamic-resource path.
   //
-  // Claude.ai-specific suppression: claude.ai renders MCP tool widgets
-  // inside a constrained, non-resizable iframe container that clips
-  // the chart vertically and exposes a tiny scrollbar — strictly
-  // worse UX than just giving the LLM a markdown link to the
-  // standalone embed page on tako.com. The chart-bearing tool
-  // descriptions carry an unconditional "always include `[Open in
-  // Tako](embed_url)`" directive so the user always has a clickable
-  // path to the fully-interactive chart, regardless of client.
+  // Two independent gates control whether the chart shows up inline
+  // for this tool call. They're computed identically today (both
+  // fire when the client is claude.ai OR a per-tool ChatGPT
+  // suppression is set), but kept as separate variables so a future
+  // case that wants one without the other (e.g. "ship the widget
+  // but no PNG fallback" or "ship the PNG but no widget") becomes
+  // a one-line gate change rather than a refactor.
+  //
+  //   - `widgetSuppressed` → skip `appUiResource`. The host won't
+  //     get a widget URI in the tool's `_meta`, so it won't load
+  //     the chart bundle. Used on claude.ai (constrained iframe
+  //     container clips the chart and exposes an awkward
+  //     scrollbar — markdown-link UX is strictly better) and on
+  //     `knowledge_search` for ChatGPT (its host pins widget
+  //     container height and ignores shrink notifications, so an
+  //     empty fast result leaves a persistent gap; render via
+  //     `open_chart_ui` instead).
+  //
+  //   - `inlinePngFallbackSuppressed` → skip the
+  //     `extraContentBlocks` PNG image content block. Without
+  //     suppression, that hook fires on tools that have no
+  //     `appUiResource` to provide a "render the chart inline as
+  //     an image" fallback for hosts that don't support MCP UI.
+  //     Today we always couple PNG suppression to widget
+  //     suppression because the markdown-link directive in the
+  //     chart-bearing tool descriptions is the agreed
+  //     fallback — shipping a PNG too is redundant and (on
+  //     claude.ai) renders cropped the same way the widget
+  //     does.
   const widgetSuppressed =
     options.client === "claude" || options.widgetSuppressedForTool === true;
+  const inlinePngFallbackSuppressed = widgetSuppressed;
   const ui =
     tool.appUiResource !== undefined && !widgetSuppressed
       ? tool.appUiResource(ctx.env)
@@ -562,22 +595,25 @@ function registerTool(
       // call.
       //
       // Fires only when the tool genuinely doesn't define a widget
-      // (`appUiResource === undefined`) — NOT when we deliberately
-      // suppressed an existing widget for claude.ai. On claude.ai the
-      // PNG content-block fallback also rendered inside a constrained
-      // container and the LLM's `[Open in Tako](embed_url)` link is a
-      // strictly cleaner answer; we don't want to ship a redundant
-      // PNG that the user can't really interact with. The
-      // `!widgetSuppressed` half of the gate enforces that.
+      // (`appUiResource === undefined`) AND inline PNG fallback
+      // hasn't been independently suppressed for this client/tool.
+      // On claude.ai (and on `knowledge_search` for ChatGPT) the PNG
+      // content-block fallback also rendered cropped / awkward, and
+      // the LLM's `[Open in Tako](embed_url)` link is a strictly
+      // cleaner answer; we don't want a redundant PNG the user can't
+      // really interact with. `inlinePngFallbackSuppressed` is the
+      // explicit, separate gate for that — kept distinct from
+      // `widgetSuppressed` (the gate above) so a future case that
+      // wants one without the other is a one-line change.
       //
-      // Pairing image content blocks with widget metadata in the same
-      // result also silently disabled ChatGPT's widget data flow, so
-      // the gate keeps content-block image fallbacks and widget
-      // metadata mutually exclusive.
+      // Pairing image content blocks with widget metadata in the
+      // same result also silently disabled ChatGPT's widget data
+      // flow, so the gate keeps content-block image fallbacks and
+      // widget metadata mutually exclusive.
       if (
         tool.extraContentBlocks !== undefined &&
         ui === undefined &&
-        !widgetSuppressed
+        !inlinePngFallbackSuppressed
       ) {
         try {
           const extra = await tool.extraContentBlocks(output, ctx);

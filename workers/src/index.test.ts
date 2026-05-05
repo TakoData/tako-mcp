@@ -210,34 +210,83 @@ describe("worker routing", () => {
     expect(names.has("knowledge_search")).toBe(true);
     expect(body.result.tools).toHaveLength(11);
 
-    // ChatGPT-specific widget suppression for knowledge_search:
-    // ChatGPT pins the widget container's height to whatever it
-    // first sees and ignores later shrink notifications, so a
-    // knowledge_search call that returns 0 cards (no
-    // server-side auto-escalation on ChatGPT) leaves a persistent
-    // empty widget gap. Suppressing the widget here forces the
-    // model to chain into open_chart_ui for chart rendering on
-    // every path, matching the kickoff/wait pattern.
-    const ks = body.result.tools.find((t) => t.name === "knowledge_search");
-    const ksMeta = ks?._meta as
-      | {
-          ui?: unknown;
-          "ui/resourceUri"?: unknown;
-          "openai/outputTemplate"?: unknown;
-        }
-      | undefined;
-    expect(ksMeta?.ui).toBeUndefined();
-    expect(ksMeta?.["ui/resourceUri"]).toBeUndefined();
-    expect(ksMeta?.["openai/outputTemplate"]).toBeUndefined();
+    // Both `knowledge_search` and `open_chart_ui` ship the chart
+    // widget on ChatGPT. The empty-fast widget-gap problem (ChatGPT
+    // pins widget container height at the highest ever notified
+    // and ignores shrink notifications, so a clean `count: 0`
+    // result rendered as a persistent empty container) is now
+    // handled by `knowledge_search`'s handler throwing on empty
+    // for ChatGPT — tool errors don't reserve a widget container,
+    // so the widget can stay shipped without leaving a gap on the
+    // empty path.
+    for (const name of ["knowledge_search", "open_chart_ui"]) {
+      const tool = body.result.tools.find((t) => t.name === name);
+      expect(tool?._meta).toMatchObject({
+        ui: { resourceUri: "ui://tako/embed/chart" },
+        "ui/resourceUri": "ui://tako/embed/chart",
+        "openai/outputTemplate": "ui://tako/embed/chart",
+      });
+    }
+  });
 
-    // open_chart_ui is the chart-rendering tool on ChatGPT and
-    // MUST keep its widget metadata.
-    const ocu = body.result.tools.find((t) => t.name === "open_chart_ui");
-    expect(ocu?._meta).toMatchObject({
-      ui: { resourceUri: "ui://tako/embed/chart" },
-      "ui/resourceUri": "ui://tako/embed/chart",
-      "openai/outputTemplate": "ui://tako/embed/chart",
-    });
+  it("POST /mcp tools/list serves per-client knowledge_search descriptions", async () => {
+    // `knowledge_search` defines `descriptionByClient` with a
+    // claude variant (auto-renders inline) and a chatgpt variant
+    // (must chain into open_chart_ui + escalate via kickoff/wait).
+    // The Worker selects the right variant from the UA-detected
+    // client kind, so each model only sees the directives that
+    // actually apply to its host. Without per-client routing, a
+    // single description with conditional clauses ("On Claude.ai…"
+    // / "On ChatGPT…") forces the model to self-identify the host
+    // — empirically unreliable.
+    async function descFor(userAgent?: string): Promise<string> {
+      const res = await SELF.fetch("https://example.com/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: AUTH_HEADER,
+          ...(userAgent !== undefined ? { "user-agent": userAgent } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 99,
+          method: "tools/list",
+          params: {},
+        }),
+      });
+      const body = (await res.json()) as {
+        result: { tools: Array<{ name: string; description: string }> };
+      };
+      const ks = body.result.tools.find((t) => t.name === "knowledge_search");
+      return ks?.description ?? "";
+    }
+
+    const claudeDesc = await descFor("claude-mcp-client/1.0");
+    const chatgptDesc = await descFor("ChatGPT/1.0 (+https://chatgpt.com)");
+    const unknownDesc = await descFor();
+
+    // Claude variant: must reference inline auto-render +
+    // server-side auto-escalation, must NOT mention chaining into
+    // start_deep_knowledge_search (that's the ChatGPT-only path).
+    expect(claudeDesc).toContain("auto-renders inline");
+    expect(claudeDesc).toContain("auto-escalation");
+    expect(claudeDesc).not.toContain("start_deep_knowledge_search");
+
+    // ChatGPT variant: ALSO promises the inline auto-render
+    // (`knowledge_search` keeps its widget on ChatGPT now that the
+    // empty-path throw avoids the widget-container gap), AND
+    // includes the LLM-side escalation directive
+    // (server-side auto-escalation is disabled on ChatGPT, so the
+    // model must call `start_deep_knowledge_search` itself).
+    expect(chatgptDesc).toContain("auto-renders inline");
+    expect(chatgptDesc).toContain("start_deep_knowledge_search");
+
+    // Unknown / future hosts: fall back to the claude-style
+    // default. Most non-ChatGPT MCP hosts support inline rendering
+    // and progress-notification timeout reset, so this is the
+    // safer assumption than the ChatGPT branch.
+    expect(unknownDesc).toBe(claudeDesc);
   });
 
   it("POST /mcp resources/list includes the open_chart_ui widget bundle", async () => {

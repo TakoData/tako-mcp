@@ -212,9 +212,13 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     vi.useFakeTimers();
     try {
       const fetchMock = mockFetchSequence([
-        // 1: fast POST → 404 (Tako's "0 cards matched" signal)
+        // 1: fast POST → 404 (Tako's "0 cards matched" signal — the
+        //    `error_type` discriminator is what gates the empty-result
+        //    translation; without it the 404 propagates as a fatal
+        //    DjangoNotFoundError. See `RELEVANT_RESULTS_NOT_FOUND_TYPE`
+        //    in `knowledge_search.ts`.)
         jsonResponse(404, {
-          detail: "No relevant knowledge cards found",
+          error_type: "RELEVANT_RESULTS_NOT_FOUND",
           error_message: "No relevant knowledge cards found",
         }),
         // 2: deep POST → 202 async-task initiation
@@ -267,7 +271,10 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     // `start_deep_knowledge_search` directive (keyed on 0 cards or
     // errors) has an unambiguous signal to trigger on.
     const fetchMock = mockFetchSequence([
-      jsonResponse(404, { detail: "No relevant knowledge cards found" }),
+      jsonResponse(404, {
+        error_type: "RELEVANT_RESULTS_NOT_FOUND",
+        error_message: "No relevant knowledge cards found",
+      }),
     ]);
 
     const out = await knowledge_search.handler(
@@ -282,6 +289,46 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(out.count).toBe(0);
     expect(out.results).toEqual([]);
+  });
+
+  it("re-throws an unrelated 404 (no RELEVANT_RESULTS_NOT_FOUND discriminator) instead of masking it as empty", async () => {
+    // Discriminating a real "no route" 404 from Tako's "0 cards
+    // matched" 404. If `/api/v1/knowledge_search` is ever moved /
+    // renamed and a reverse-proxy 404 (no body, or a body without
+    // `error_type: "RELEVANT_RESULTS_NOT_FOUND"`) starts coming
+    // back, the translation MUST NOT silently convert that to a
+    // false empty-result — both Claude's auto-escalation and
+    // ChatGPT's empty-result throw would then absorb a legitimate
+    // routing failure as "no data," hiding the outage. Cover two
+    // such cases: a body-less 404 (proxy / CF page) and a 404 with
+    // an unrelated `error_type` (some other DRF error class
+    // routed through the same status code).
+    const fetchMock = mockFetchSequence([
+      new Response("", { status: 404 }),
+    ]);
+
+    await expect(
+      knowledge_search.handler(
+        { query: "query against a moved endpoint", ...DEFAULTS },
+        CTX,
+      ),
+    ).rejects.toBeInstanceOf(DjangoNotFoundError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const fetchMock2 = mockFetchSequence([
+      jsonResponse(404, {
+        error_type: "BAD_REQUEST",
+        error_message: "Some unrelated 404 from a different endpoint",
+      }),
+    ]);
+
+    await expect(
+      knowledge_search.handler(
+        { query: "query that hits a different 404", ...DEFAULTS },
+        CTX,
+      ),
+    ).rejects.toBeInstanceOf(DjangoNotFoundError);
+    expect(fetchMock2).toHaveBeenCalledTimes(1);
   });
 
   it("throws an actionable redirect error when fast empty AND client is chatgpt", async () => {
@@ -316,7 +363,10 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     // raw `DjangoNotFoundError`, which is the failure mode the
     // 404 translation was added to fix in the first place).
     const fetchMock = mockFetchSequence([
-      jsonResponse(404, { detail: "No relevant knowledge cards found" }),
+      jsonResponse(404, {
+        error_type: "RELEVANT_RESULTS_NOT_FOUND",
+        error_message: "No relevant knowledge cards found",
+      }),
     ]);
     const ctx: ToolContext = { ...CTX, client: "chatgpt" };
 
@@ -327,6 +377,34 @@ describe("knowledge_search fast-first-deep-fallback", () => {
       ),
     ).rejects.toThrow(/start_deep_knowledge_search/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("respects explicit search_effort=fast on chatgpt (no auto-escalation throw, returns clean empty)", async () => {
+    // The empty-result throw above is only for the "auto" semantics
+    // (search_effort omitted). When a caller passes
+    // `search_effort: "fast"` explicitly, they're opting into the
+    // cheap sync path and accepting that 0 cards is a valid final
+    // state — overriding that with a thrown deep-flow redirect
+    // would contradict the stated intent. Mirrors the
+    // non-ChatGPT auto-escalation gate (also keyed on
+    // `input.search_effort === undefined`).
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { outputs: { knowledge_cards: [] } }),
+    ]);
+    const ctx: ToolContext = { ...CTX, client: "chatgpt" };
+
+    const out = await knowledge_search.handler(
+      {
+        query: "thailand tourism gdp",
+        ...DEFAULTS,
+        search_effort: "fast",
+      },
+      ctx,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(out.count).toBe(0);
+    expect(out.results).toEqual([]);
   });
 
   it("throws on explicit search_effort=deep when client is chatgpt", async () => {

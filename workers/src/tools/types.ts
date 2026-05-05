@@ -226,8 +226,23 @@ export interface ToolModule<
 > {
   /** Wire name, e.g. `"knowledge_search"`. Must be unique across all tools. */
   name: string;
-  /** Prompt-facing description — "Use this when the user asks about …". */
+  /**
+   * Prompt-facing description — "Use this when the user asks about …".
+   * This is the default text every client sees in `tools/list` unless
+   * overridden by {@link descriptionByClient} for that client.
+   */
   description: string;
+  /**
+   * Optional per-client description overrides. The Worker selects the
+   * entry matching the request's detected `McpClientKind` and falls
+   * back to {@link description} when no entry exists. Use this when a
+   * tool's instructions diverge meaningfully by host (e.g. claude.ai
+   * auto-renders charts inline while ChatGPT requires chaining into
+   * `open_chart_ui`) — sending each model only the directive it can
+   * act on is more reliable than asking it to self-identify and
+   * filter from a single description with conditional clauses.
+   */
+  descriptionByClient?: Partial<Record<McpClientKind, string>>;
   inputSchema: InputSchema;
   outputSchema?: z.ZodType<Output>;
   annotations: ToolAnnotations;
@@ -299,6 +314,7 @@ export interface ToolModule<
 export interface AnyToolModule {
   name: string;
   description: string;
+  descriptionByClient?: Partial<Record<McpClientKind, string>>;
   inputSchema: z.ZodObject<z.ZodRawShape>;
   outputSchema?: z.ZodType<unknown>;
   annotations: ToolAnnotations;
