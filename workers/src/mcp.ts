@@ -155,9 +155,33 @@ export function createMcpServer(
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
 
+  // Tools that should ONLY appear on ChatGPT-class clients. The deep
+  // (Orca) async path needs a kickoff/wait pattern on hosts that
+  // don't honor MCP `notifications/progress` for tool-call timeout
+  // extension (verified for ChatGPT — its Apps SDK doesn't include a
+  // progressToken in tools/call requests, so any single-tool deep
+  // call dies at the host's default timeout). Claude.ai uses the
+  // single-tool `knowledge_search` auto-escalation with progress
+  // notifications and never needs these.
+  //
+  // Hosting them only on the clients that need them keeps the
+  // Claude.ai tool surface minimal (no risk of the agent there
+  // accidentally choosing the slower kickoff/wait flow over the
+  // single-call deep path) and keeps the registry codegen unchanged
+  // (registry/server.json still lists everything for discovery; the
+  // runtime just filters per request).
+  const CHATGPT_ONLY_TOOL_NAMES = new Set([
+    "start_deep_knowledge_search",
+    "wait_for_knowledge_search",
+  ]);
+  const client = options.client ?? "unknown";
+
   for (const tool of TOOL_REGISTRY) {
+    if (CHATGPT_ONLY_TOOL_NAMES.has(tool.name) && client !== "chatgpt") {
+      continue;
+    }
     registerTool(server, tool, ctx, {
-      client: options.client ?? "unknown",
+      client,
       registeredResourceUris,
       registeredTemplateNames,
     });
@@ -468,7 +492,11 @@ function registerTool(
           );
         }
       };
-      const callCtx: ToolContext = { ...ctx, sendProgress };
+      const callCtx: ToolContext = {
+        ...ctx,
+        sendProgress,
+        clientSupportsProgress: progressToken !== undefined,
+      };
       let output: unknown;
       try {
         output = await tool.handler(input as unknown, callCtx);
@@ -707,16 +735,18 @@ export async function handleMcpRequest(
   const oauthMappedToken = await tryResolveOAuthAccessToken(bearer, env);
   const token = oauthMappedToken ?? bearer;
 
-  // Base ctx — `sendProgress` here is a placeholder that's overridden
-  // per tool call inside `registerTool`'s SDK callback (where the
-  // request's `progressToken` and the SDK's `sendNotification` are
-  // available). Outside of a tool-call scope, no client is listening.
+  // Base ctx — `sendProgress` and `clientSupportsProgress` here are
+  // placeholders overridden per tool call inside `registerTool`'s
+  // SDK callback (where the request's `progressToken` and the SDK's
+  // `sendNotification` are available). Outside of a tool-call scope,
+  // no client is listening.
   const ctx: ToolContext = {
     token,
     env,
     sendProgress: async () => {
       /* no-op outside tool-call scope */
     },
+    clientSupportsProgress: false,
   };
 
   try {

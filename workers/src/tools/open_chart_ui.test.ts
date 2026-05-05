@@ -21,6 +21,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
+  clientSupportsProgress: true,
 };
 
 const HANDLER_INPUT = {

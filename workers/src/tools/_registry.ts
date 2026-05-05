@@ -21,6 +21,8 @@ import get_report from "./get_report.js";
 import knowledge_search from "./knowledge_search.js";
 import list_reports from "./list_reports.js";
 import open_chart_ui from "./open_chart_ui.js";
+import start_deep_knowledge_search from "./start_deep_knowledge_search.js";
+import wait_for_knowledge_search from "./wait_for_knowledge_search.js";
 import wait_for_report from "./wait_for_report.js";
 
 // Cast at the barrel boundary because function parameters are invariant:
@@ -37,5 +39,7 @@ export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
   knowledge_search as unknown as AnyToolModule,
   list_reports as unknown as AnyToolModule,
   open_chart_ui as unknown as AnyToolModule,
+  start_deep_knowledge_search as unknown as AnyToolModule,
+  wait_for_knowledge_search as unknown as AnyToolModule,
   wait_for_report as unknown as AnyToolModule,
 ];

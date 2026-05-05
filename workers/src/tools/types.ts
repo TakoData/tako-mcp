@@ -52,6 +52,19 @@ export interface ToolContext {
     progress: number,
     opts?: { total?: number; message?: string },
   ) => Promise<void>;
+  /**
+   * True when the request carried a `progressToken` in `_meta` (i.e.,
+   * the client is asking for progress notifications and — by
+   * convention — has set `resetTimeoutOnProgress: true` so a
+   * long-running handler can stretch beyond the default per-call
+   * timeout). Tools can use this as a runtime signal to choose
+   * between a single-call long-poll path (true) and a quick-return
+   * path that asks the agent to chain into a follow-up tool (false).
+   *
+   * In practice, Claude.ai's TS SDK sends a progressToken; ChatGPT's
+   * Apps SDK does not. The value is set per-call by `mcp.ts`.
+   */
+  clientSupportsProgress: boolean;
 }
 
 /**

@@ -171,7 +171,18 @@ const knowledge_search = {
       );
     };
 
-    // First call: fast (default) or deep (explicit).
+    // Reject explicit deep on clients that can't survive the
+    // single-tool-call deep latency. Pointer to the alternative
+    // tools (registered only on those clients in `mcp.ts`) is more
+    // useful than letting the call time out at the host boundary.
+    if (input.search_effort === "deep" && !ctx.clientSupportsProgress) {
+      throw new Error(
+        "This client does not support progress notifications, so a single-call deep search would exceed its per-call timeout. Use `start_deep_knowledge_search` instead, then chain `wait_for_knowledge_search` to retrieve the result.",
+      );
+    }
+
+    // First call: fast (default) or deep (explicit, only reachable
+    // on clients with progress support after the guard above).
     const initialEffort: "fast" | "deep" = input.search_effort ?? "fast";
     let cards = await (async () => {
       const initial = await runSearch(initialEffort);
@@ -181,8 +192,20 @@ const knowledge_search = {
       return initial.outputs?.knowledge_cards ?? [];
     })();
 
-    // Auto-escalation: omitted effort + empty fast → deep.
-    if (input.search_effort === undefined && cards.length === 0) {
+    // Auto-escalation: omitted effort + empty fast → deep, BUT only
+    // on clients that support `resetTimeoutOnProgress` (i.e., that
+    // sent a `progressToken` on the request). On clients that don't,
+    // a single-tool-call deep path will exceed the host's default
+    // per-call timeout (typically 60 s for the TS SDK) and surface a
+    // TimeoutError to the user despite the backend task running fine.
+    // For those clients we expose a separate `start_deep_knowledge_search`
+    // + `wait_for_knowledge_search` pair (registered in `mcp.ts` only
+    // when `client === "chatgpt"`) and the agent uses those for deep.
+    if (
+      input.search_effort === undefined &&
+      cards.length === 0 &&
+      ctx.clientSupportsProgress
+    ) {
       const escalated = await runSearch("deep");
       if (isAsyncTaskInitiation(escalated)) {
         cards = await pollDeep(ctx, escalated.task_id);
