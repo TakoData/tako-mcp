@@ -171,13 +171,24 @@ const knowledge_search = {
       );
     };
 
-    // Reject explicit deep on clients that can't survive the
-    // single-tool-call deep latency. Pointer to the alternative
-    // tools (registered only on those clients in `mcp.ts`) is more
-    // useful than letting the call time out at the host boundary.
-    if (input.search_effort === "deep" && !ctx.clientSupportsProgress) {
+    // On ChatGPT, the single-tool-call deep path can't survive the
+    // host's per-call timeout (its Apps SDK doesn't honor MCP
+    // notifications/progress for timeout reset, so polling for
+    // 1-5 minutes inside one tool call always trips the 60-second
+    // timeout). Redirect the agent to the kickoff/wait pair, which
+    // is registered only when `client === "chatgpt"` in `mcp.ts`.
+    //
+    // Other clients (Claude.ai, "unknown", future hosts) keep the
+    // existing single-call behavior — Claude.ai resets its timeout
+    // on each progress notification we emit, so deep works there
+    // even when a specific request omits the progressToken (the
+    // backend task still completes before any reasonable wall-clock
+    // ceiling for fast or sync paths). Gate is UA-based, NOT
+    // progressToken-based: a Claude.ai request that happens to omit
+    // the token must still reach the deep path.
+    if (input.search_effort === "deep" && ctx.client === "chatgpt") {
       throw new Error(
-        "This client does not support progress notifications, so a single-call deep search would exceed its per-call timeout. Use `start_deep_knowledge_search` instead, then chain `wait_for_knowledge_search` to retrieve the result.",
+        "This client uses the kickoff/wait deep-search flow. Use `start_deep_knowledge_search` to launch the deep task, then `wait_for_knowledge_search` to retrieve the result.",
       );
     }
 
@@ -192,19 +203,13 @@ const knowledge_search = {
       return initial.outputs?.knowledge_cards ?? [];
     })();
 
-    // Auto-escalation: omitted effort + empty fast → deep, BUT only
-    // on clients that support `resetTimeoutOnProgress` (i.e., that
-    // sent a `progressToken` on the request). On clients that don't,
-    // a single-tool-call deep path will exceed the host's default
-    // per-call timeout (typically 60 s for the TS SDK) and surface a
-    // TimeoutError to the user despite the backend task running fine.
-    // For those clients we expose a separate `start_deep_knowledge_search`
-    // + `wait_for_knowledge_search` pair (registered in `mcp.ts` only
-    // when `client === "chatgpt"`) and the agent uses those for deep.
+    // Auto-escalation: omitted effort + empty fast → deep, EXCEPT
+    // on ChatGPT (where the kickoff/wait flow is the agent's path
+    // for deep — see the explicit-deep guard above).
     if (
       input.search_effort === undefined &&
       cards.length === 0 &&
-      ctx.clientSupportsProgress
+      ctx.client !== "chatgpt"
     ) {
       const escalated = await runSearch("deep");
       if (isAsyncTaskInitiation(escalated)) {

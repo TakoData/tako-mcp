@@ -37,7 +37,7 @@ const CTX: ToolContext = {
   token: "sk-test-bearer",
   env: ENV,
   sendProgress: noopSendProgress,
-  clientSupportsProgress: true,
+  client: "claude",
 };
 
 afterEach(() => {
@@ -130,7 +130,7 @@ describe("export_report", () => {
       token: "sk-test-bearer",
       env: badEnv,
       sendProgress: noopSendProgress,
-      clientSupportsProgress: true,
+      client: "claude",
     };
 
     const err = await catchError(
@@ -162,7 +162,7 @@ describe("export_report", () => {
       token: "sk-test-bearer",
       env: badEnv,
       sendProgress: noopSendProgress,
-      clientSupportsProgress: true,
+      client: "claude",
     };
 
     const err = await catchError(

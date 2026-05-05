@@ -19,6 +19,17 @@ import type { z } from "zod";
 import type { Env } from "../env.js";
 
 /**
+ * Calling-client kind detected from the request's User-Agent. Used by
+ * tools and `mcp.ts` to gate behavior that's known to differ across
+ * MCP host implementations (e.g., widget suppression on Claude.ai's
+ * cropped iframe; the kickoff/wait deep-search flow on ChatGPT, whose
+ * Apps SDK doesn't honor `notifications/progress` for timeout
+ * extension). Detection is best-effort by UA substring match — when
+ * we can't classify, `"unknown"` keeps the default behavior.
+ */
+export type McpClientKind = "claude" | "chatgpt" | "unknown";
+
+/**
  * Execution context handed to every tool `handler`. Built in `mcp.ts` once
  * per request, after `extractBearer` succeeds. Tools should never touch
  * `request.headers` themselves — the token is already lifted into `token`
@@ -53,18 +64,24 @@ export interface ToolContext {
     opts?: { total?: number; message?: string },
   ) => Promise<void>;
   /**
-   * True when the request carried a `progressToken` in `_meta` (i.e.,
-   * the client is asking for progress notifications and — by
-   * convention — has set `resetTimeoutOnProgress: true` so a
-   * long-running handler can stretch beyond the default per-call
-   * timeout). Tools can use this as a runtime signal to choose
-   * between a single-call long-poll path (true) and a quick-return
-   * path that asks the agent to chain into a follow-up tool (false).
+   * Detected client kind for the current request — see
+   * {@link McpClientKind}. Tools that need to vary behavior across
+   * known host quirks read this; everyone else can ignore it.
    *
-   * In practice, Claude.ai's TS SDK sends a progressToken; ChatGPT's
-   * Apps SDK does not. The value is set per-call by `mcp.ts`.
+   * In particular, `knowledge_search` uses it to skip the
+   * fast→deep auto-escalation on `"chatgpt"` clients (whose Apps
+   * SDK doesn't honor progress notifications for timeout reset),
+   * routing the agent toward the `start_deep_knowledge_search` /
+   * `wait_for_knowledge_search` pair instead — those tools are only
+   * registered when `client === "chatgpt"` (see `mcp.ts`).
+   *
+   * NB: this is a server-instance-level value (set from User-Agent
+   * detection at server creation), NOT a per-request flag. Don't
+   * confuse it with the per-request "did this call include a
+   * progressToken" signal — Claude.ai sometimes omits the token on
+   * specific calls even though it generally supports progress.
    */
-  clientSupportsProgress: boolean;
+  client: McpClientKind;
 }
 
 /**

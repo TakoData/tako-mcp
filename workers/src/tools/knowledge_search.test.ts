@@ -45,7 +45,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
-  clientSupportsProgress: true,
+  client: "claude",
 };
 
 // Defaults the handler expects post-zod parse. count is 10 after this change.
@@ -195,16 +195,20 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     }
   });
 
-  it("does NOT escalate when fast empty AND clientSupportsProgress is false", async () => {
-    // ChatGPT-class clients can't survive a single-tool-call deep
-    // (they don't honor progress notifications for timeout reset),
-    // so knowledge_search returns the empty fast result instead of
-    // escalating. The agent on those clients calls
-    // `start_deep_knowledge_search` separately when it wants deep.
+  it("does NOT escalate when fast empty AND client is chatgpt", async () => {
+    // ChatGPT's Apps SDK doesn't honor progress notifications for
+    // timeout reset, so a single-tool-call deep path will time out
+    // at the host. knowledge_search therefore returns the empty
+    // fast result instead of escalating; the agent on ChatGPT
+    // calls `start_deep_knowledge_search` separately when it wants
+    // deep. Gate is UA-based (`ctx.client === "chatgpt"`), NOT
+    // progressToken-based — Claude.ai sometimes omits the token on
+    // specific calls but still supports progress in general, and
+    // we don't want to break Claude.ai's deep flow.
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { outputs: { knowledge_cards: [] } }),
     ]);
-    const ctx: ToolContext = { ...CTX, clientSupportsProgress: false };
+    const ctx: ToolContext = { ...CTX, client: "chatgpt" };
 
     const out = await knowledge_search.handler(
       { query: "thailand tourism gdp", ...DEFAULTS },
@@ -215,11 +219,11 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     expect(out.count).toBe(0);
   });
 
-  it("throws on explicit search_effort=deep when clientSupportsProgress is false", async () => {
+  it("throws on explicit search_effort=deep when client is chatgpt", async () => {
     // Pointing the agent at `start_deep_knowledge_search` (registered
     // only on those clients) is more useful than letting the call
     // sit on a hopeless poll loop until the host times out.
-    const ctx: ToolContext = { ...CTX, clientSupportsProgress: false };
+    const ctx: ToolContext = { ...CTX, client: "chatgpt" };
     await expect(
       knowledge_search.handler(
         { query: "x", search_effort: "deep", ...DEFAULTS },

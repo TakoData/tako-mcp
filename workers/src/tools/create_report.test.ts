@@ -40,7 +40,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
-  clientSupportsProgress: true,
+  client: "claude",
 };
 
 afterEach(() => {

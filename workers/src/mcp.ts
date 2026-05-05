@@ -22,7 +22,7 @@ import {
 import type { Env } from "./env.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
-import type { AnyToolModule, ToolContext } from "./tools/types.js";
+import type { AnyToolModule, McpClientKind, ToolContext } from "./tools/types.js";
 
 /**
  * Server identity. `registry/server.json` is the canonical source — keep this
@@ -74,7 +74,12 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * default — better to over-render than to hide the chart from a host
  * that supports it.
  */
-export type McpClientKind = "claude" | "chatgpt" | "unknown";
+// `McpClientKind` is defined in `tools/types.ts` (re-exported below)
+// so tool modules can reference it without a circular import on
+// `mcp.ts`. Keep the re-export so existing imports from `./mcp.js`
+// continue to work — `index.ts`, `auth.ts`, etc. all read it from
+// here.
+export type { McpClientKind };
 
 export function detectMcpClient(userAgent: string | null): McpClientKind {
   if (userAgent === null || userAgent === "") return "unknown";
@@ -495,7 +500,7 @@ function registerTool(
       const callCtx: ToolContext = {
         ...ctx,
         sendProgress,
-        clientSupportsProgress: progressToken !== undefined,
+        client: options.client,
       };
       let output: unknown;
       try {
@@ -735,18 +740,19 @@ export async function handleMcpRequest(
   const oauthMappedToken = await tryResolveOAuthAccessToken(bearer, env);
   const token = oauthMappedToken ?? bearer;
 
-  // Base ctx — `sendProgress` and `clientSupportsProgress` here are
-  // placeholders overridden per tool call inside `registerTool`'s
-  // SDK callback (where the request's `progressToken` and the SDK's
-  // `sendNotification` are available). Outside of a tool-call scope,
-  // no client is listening.
+  // Base ctx — `sendProgress` here is a placeholder overridden per
+  // tool call inside `registerTool`'s SDK callback (where the
+  // request's `progressToken` and the SDK's `sendNotification` are
+  // available). Outside of a tool-call scope, no client is listening.
+  // `client` defaults to `"unknown"` and is overridden by the
+  // request-handler before tool dispatch.
   const ctx: ToolContext = {
     token,
     env,
     sendProgress: async () => {
       /* no-op outside tool-call scope */
     },
-    clientSupportsProgress: false,
+    client: "unknown",
   };
 
   try {

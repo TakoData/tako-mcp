@@ -20,7 +20,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
-  clientSupportsProgress: false,
+  client: "chatgpt",
 };
 
 afterEach(() => {

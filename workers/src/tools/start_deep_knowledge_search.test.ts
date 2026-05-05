@@ -23,7 +23,7 @@ const CTX: ToolContext = {
   sendProgress: noopSendProgress,
   // ChatGPT in practice — but the tool's behavior doesn't depend on
   // this; we set it for type-completeness.
-  clientSupportsProgress: false,
+  client: "chatgpt",
 };
 
 const DEFAULTS = { count: 10, country_code: "US", locale: "en-US" };

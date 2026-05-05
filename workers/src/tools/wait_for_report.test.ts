@@ -34,7 +34,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
-  clientSupportsProgress: true,
+  client: "claude",
 };
 
 afterEach(() => {
@@ -103,7 +103,7 @@ describe("wait_for_report", () => {
         PUBLIC_BASE_URL: "https://tako.com",
       },
       sendProgress: noopSendProgress,
-      clientSupportsProgress: true,
+      client: "claude",
     };
 
     const promise = wait_for_report.handler(
