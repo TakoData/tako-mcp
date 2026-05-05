@@ -86,11 +86,23 @@ export abstract class DjangoError extends Error {
 }
 
 export class DjangoNotFoundError extends DjangoError {
-  constructor(opts: { path: string; method: HttpMethod }) {
+  /**
+   * Response body as a string. Empty when no body was sent (or on
+   * error-class constructions that pre-date body capture). Callers
+   * that need to distinguish "endpoint matched but the resource is
+   * absent" from "no route" 404s can parse this body for an
+   * application-level discriminator (e.g. Tako's
+   * `error_type: "RELEVANT_RESULTS_NOT_FOUND"` shape).
+   */
+  readonly body: string;
+
+  constructor(opts: { path: string; method: HttpMethod; body?: string }) {
     super(`Django returned 404 for ${opts.method} ${opts.path}`, {
-      ...opts,
+      path: opts.path,
+      method: opts.method,
       status: 404,
     });
+    this.body = opts.body ?? "";
   }
 }
 
@@ -321,9 +333,13 @@ async function executeRequest<T>(
     }
   }
 
-  // Only read the body for error types that actually surface it —
-  // `DjangoNotFoundError` and `DjangoUnauthorizedError` don't expose
-  // the body, so reading it would be wasted work.
+  // Only read the body for error types that actually surface it.
+  // `DjangoUnauthorizedError` doesn't expose the body, so reading it
+  // would be wasted work. `DjangoNotFoundError` DOES carry the body
+  // now — Tako's `/api/v1/knowledge_search` overloads 404 to mean
+  // "search ran, 0 cards" (with an `error_type` discriminator in the
+  // payload) and callers need that body to distinguish the
+  // application-level no-results 404 from a real routing 404.
   switch (response.status) {
     case 401:
       throw new DjangoUnauthorizedError({
@@ -334,6 +350,7 @@ async function executeRequest<T>(
       throw new DjangoNotFoundError({
         path: ctx.path,
         method: ctx.method,
+        body: await safeReadText(response),
       });
     case 400:
       throw new DjangoBadRequestError({

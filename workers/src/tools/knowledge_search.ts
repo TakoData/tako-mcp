@@ -35,7 +35,7 @@
  */
 import { z } from "zod";
 
-import { djangoGet, djangoPost } from "../django.js";
+import { DjangoNotFoundError, djangoGet, djangoPost } from "../django.js";
 import {
   APP_UI_RESOURCE_URI,
   APP_UI_TEMPLATE_URI_PATTERN,
@@ -58,6 +58,7 @@ import {
 } from "./_async_search_shape.js";
 import type {
   AppUiResource,
+  McpClientKind,
   ToolContentBlock,
   ToolContext,
   ToolModule,
@@ -88,6 +89,59 @@ const STATUS_REQUEST_TIMEOUT_MS = 10_000;
 // the (N+1)th surface as before so a sustained outage still fails
 // loud.
 const MAX_TRANSIENT_RETRIES = 2;
+
+/**
+ * Tako's machine-readable discriminator (defined in
+ * `app/backend/knowledge/api/ga/v1/types.py` as
+ * `APIErrorType.RELEVANT_RESULTS_NOT_FOUND`) on the 404 body that
+ * means "search ran, 0 cards" — distinct from a routing 404 / proxy
+ * 404 / unrelated DRF 404 with no body. Pinning to this exact string
+ * keeps the empty-result translation in `runSearch` from masking
+ * unrelated 404s as false empties.
+ */
+const RELEVANT_RESULTS_NOT_FOUND_TYPE = "RELEVANT_RESULTS_NOT_FOUND";
+
+function isRelevantResultsNotFound(body: string): boolean {
+  if (body === "") return false;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { error_type?: unknown }).error_type ===
+        RELEVANT_RESULTS_NOT_FOUND_TYPE
+    );
+  } catch {
+    // Non-JSON 404 body (proxy error page, plain text, truncated
+    // response, etc.) — definitely not the application-level
+    // no-results signal. Let the original DjangoNotFoundError
+    // propagate.
+    return false;
+  }
+}
+
+// Per-client descriptions. The Worker selects one based on the
+// detected `McpClientKind` and falls back to `DESCRIPTION_DEFAULT`
+// for unknown / future hosts.
+//
+// Splitting by client (vs. embedding "On Claude.ai…", "On ChatGPT…"
+// branches in a single description) avoids the failure mode where
+// the model has to self-identify its host before following the
+// right instructions — empirically unreliable, since nothing in
+// the protocol tells the model which host loaded its tool list.
+// Each model now sees only the directives that apply to it.
+const DESCRIPTION_CLAUDE =
+  'Answer factual questions and find live data with Tako\'s curated knowledge graph. **Default to this BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events, recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports, economics, finance, demographics, technology, weather, polls and elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is a structured factual answer + a chart. **The top result auto-renders inline** as a Tako chart — narrate the data and reference the chart ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card so the user has a sharable, fullscreen link. Do NOT echo `![…](image_url)` markdown for the top card — that produces a click-to-load duplicate of the same chart. Mention other titles by name and tell the user they can ask to chart any of them — those follow-ups go through `open_chart_ui`. **`search_effort: "deep"` and the default fast→deep auto-escalation can run up to ~5 minutes server-side**; this tool emits MCP `notifications/progress` events while polling so the per-tool-call timeout stays fresh.';
+
+const DESCRIPTION_CHATGPT =
+  'Answer factual questions and find live data with Tako\'s curated knowledge graph. **Default to this BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events, recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports, economics, finance, demographics, technology, weather, polls and elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is a structured factual answer + a chart. **The top result auto-renders inline** as a Tako chart — narrate the data and reference the chart ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card so the user has a sharable, fullscreen link. Do NOT echo `![…](image_url)` markdown for the top card — that produces a click-to-load duplicate of the same chart. Mention other titles by name and tell the user they can ask to chart any of them — those follow-ups go through `open_chart_ui`. **Server-side auto-escalation is disabled here** (the host\'s Apps SDK doesn\'t honor progress notifications, which would trip its 60 s tool-call timeout). **If this tool returns 0 cards or errors out, immediately call `start_deep_knowledge_search` with the same query to retry via the kickoff/wait flow — don\'t stop, don\'t fall back to your own training knowledge, and don\'t wait for the user to re-ask.** Do NOT pass `search_effort: "deep"` directly here (the host timeout would trip).';
+
+// Default used for unknown/future hosts. Mirror the claude variant
+// — most MCP hosts that aren't ChatGPT support the inline auto-
+// render and progress-notification path. If a future host needs
+// the ChatGPT-style chaining instead, add a `descriptionByClient`
+// entry rather than rewriting this default.
+const DESCRIPTION_DEFAULT = DESCRIPTION_CLAUDE;
 
 const inputSchema = z.object({
   query: z
@@ -122,8 +176,11 @@ type Output = z.infer<typeof outputSchema>;
 
 const knowledge_search = {
   name: "knowledge_search",
-  description:
-    'Answer factual questions and find live data with Tako\'s curated knowledge graph. **Default to this BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events, recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports, economics, finance, demographics, technology, weather, polls and elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is a structured factual answer + a chart. **The top result auto-renders inline** as a Tako chart — narrate the data and reference the chart that\'s already shown ("as the chart above shows"); do NOT paste the embed URL or echo `![…](image_url)` markdown for the top card. Mention other titles by name and tell the user they can ask to chart any of them — those follow-ups go through `open_chart_ui`. **`search_effort: "deep"` and the default fast→deep auto-escalation can run up to ~5 minutes server-side**; this tool emits MCP `notifications/progress` events while polling so clients that set `resetTimeoutOnProgress: true` (the SDK default) keep the call alive for the full duration. Clients that don\'t honor progress notifications may time out on deep — those should pass `search_effort: "fast"` to force the cheap sync path.',
+  description: DESCRIPTION_DEFAULT,
+  descriptionByClient: {
+    claude: DESCRIPTION_CLAUDE,
+    chatgpt: DESCRIPTION_CHATGPT,
+  } as Partial<Record<McpClientKind, string>>,
   inputSchema,
   outputSchema,
   annotations: {
@@ -146,13 +203,47 @@ const knowledge_search = {
       // Tako's `orchestrator_fast_config.py` allows fast to run up to
       // ~120s sync; budget the abort just past that. Deep returns 202
       // in <1s so this margin is irrelevant on that path.
-      return djangoPost<SearchPostResponse>(
-        ctx.env,
-        ctx.token,
-        "/api/v1/knowledge_search",
-        body,
-        { timeoutMs: 130_000 },
-      );
+      //
+      // 404 translation: Tako's `/api/v1/knowledge_search` returns HTTP
+      // 404 with `RelevantResultsNotFoundError` when the search ran
+      // successfully but matched 0 cards (see
+      // `app/backend/knowledge/api/ga/v1/knowledge_search/views.py`
+      // ~line 607). That's REST-style "no resource matched" — but for
+      // MCP it would surface as a fatal `DjangoNotFoundError`,
+      // suppressing both the auto-escalation below (which only fires
+      // on `cards.length === 0`) AND the LLM-side
+      // `start_deep_knowledge_search` directive (which keys on the
+      // tool returning 0 cards / errors). Translating the 404 into an
+      // empty `SyncSearchResponse` lets the auto-escalation logic
+      // handle it on Claude.ai and surfaces a clean `count: 0` result
+      // to ChatGPT, which then triggers the description's escalation
+      // directive without ambiguity.
+      //
+      // Discrimination: only translate when the body's `error_type`
+      // matches Tako's `APIErrorType.RELEVANT_RESULTS_NOT_FOUND`
+      // discriminator (machine-readable, defined in
+      // `app/backend/knowledge/api/ga/v1/types.py`). A different 404
+      // — e.g., the route gets renamed and we hit a real "no such
+      // endpoint", or a reverse-proxy 404 with no body — must
+      // re-throw as the original `DjangoNotFoundError` so it's not
+      // silently masked into a false empty-result.
+      try {
+        return await djangoPost<SearchPostResponse>(
+          ctx.env,
+          ctx.token,
+          "/api/v1/knowledge_search",
+          body,
+          { timeoutMs: 130_000 },
+        );
+      } catch (err) {
+        if (
+          err instanceof DjangoNotFoundError &&
+          isRelevantResultsNotFound(err.body)
+        ) {
+          return { outputs: { knowledge_cards: [] } };
+        }
+        throw err;
+      }
     };
 
     // On ChatGPT, the single-tool-call deep path can't survive the
@@ -201,6 +292,45 @@ const knowledge_search = {
       } else {
         cards = escalated.outputs?.knowledge_cards ?? [];
       }
+    }
+
+    // ChatGPT-specific empty-result redirect. Server-side
+    // auto-escalation is disabled here (the Apps SDK doesn't honor
+    // progress notifications), so an empty fast result on ChatGPT
+    // would otherwise return cleanly with `count: 0` and rely on
+    // the model reading the description's escalation directive.
+    // Empirically that's not enough — the model frequently treats
+    // 0 cards as a successful "no results" answer and falls back to
+    // training knowledge instead of calling
+    // `start_deep_knowledge_search`. Throwing here surfaces the
+    // empty case as a tool-call error with an actionable message,
+    // which the model treats as a hard signal it must act on
+    // rather than a soft suggestion it can ignore.
+    //
+    // Doesn't fire when:
+    //   - cards.length > 0 (real results to return),
+    //   - input.search_effort === "deep" (the explicit-deep guard
+    //     above already redirected this path; we never reach here),
+    //   - input.search_effort === "fast" (caller explicitly opted
+    //     into the cheap sync path; respect that intent rather
+    //     than overriding with a deep-flow redirect),
+    //   - ctx.client !== "chatgpt" (Claude.ai et al. already
+    //     auto-escalated above and won't see an empty result).
+    //
+    // The `=== undefined` gate matches the auto-escalation gate
+    // above for non-ChatGPT clients — same "auto" semantics on
+    // both code paths, just delivered via different mechanisms
+    // (server-side `runSearch("deep")` for clients that support
+    // progress, LLM-side throw → `start_deep_knowledge_search`
+    // for ChatGPT).
+    if (
+      input.search_effort === undefined &&
+      cards.length === 0 &&
+      ctx.client === "chatgpt"
+    ) {
+      throw new Error(
+        "knowledge_search returned 0 cards from fast on ChatGPT. The kickoff/wait deep flow is the path forward: call `start_deep_knowledge_search` with the same query, then loop `wait_for_knowledge_search` until COMPLETED, then call `open_chart_ui` with `results[0].card_id` to render the top chart. Do NOT retry `knowledge_search` with `search_effort: \"deep\"` (host timeout would trip), do NOT stop, and do NOT fall back to your own training knowledge.",
+      );
     }
 
     return buildResultsWithAutoChain(cards, ctx.env);

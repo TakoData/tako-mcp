@@ -63,10 +63,12 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * Detect the calling MCP client from the HTTP `User-Agent` header.
  *
  * Used to gate per-client behavior that we'd otherwise have to ask the
- * LLM to figure out from prose — specifically, suppressing the
- * `open_chart_ui` widget on claude.ai (where the constrained iframe
- * container makes the chart unusable) while keeping it for ChatGPT
- * (where the interactive iframe widget works fine).
+ * LLM to figure out from prose — specifically, suppressing the chart
+ * widget on claude.ai (where the constrained iframe container clips
+ * the chart and the LLM's markdown link is strictly cleaner UX) and
+ * routing ChatGPT through the deep-search kickoff/wait pair (its
+ * Apps SDK doesn't reset tool-call timeouts on progress
+ * notifications).
  *
  * The match is intentionally loose: we don't care about exact UA
  * strings, just whether the request smells like one of the major
@@ -179,6 +181,27 @@ export function createMcpServer(
     "start_deep_knowledge_search",
     "wait_for_knowledge_search",
   ]);
+  // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
+  // from the blanket claude.ai suppression in `widgetSuppressed`).
+  // The mechanism is kept in place for future per-tool gating, but
+  // is currently empty:
+  //
+  //   - `knowledge_search` USED to live here to avoid the empty-fast
+  //     widget gap (ChatGPT pins widget container height at the
+  //     highest ever notified and ignores later shrinks, so a 0-card
+  //     result rendered as an empty container that never collapsed).
+  //     The empty path now throws an actionable tool-call error
+  //     instead of returning a clean `count: 0`, and ChatGPT does
+  //     NOT reserve a widget container for tool errors — so the
+  //     inline auto-render works on the success path AND the empty
+  //     path no longer leaves a gap. Net win: the gap is fixed
+  //     without losing inline charts on success.
+  //
+  // Add a tool name here only if it has a UI bundle that produces
+  // unrenderable / blank widgets on ChatGPT in some legitimate
+  // success state. Most chart-conditional tools should rely on the
+  // throw-on-empty pattern instead.
+  const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
   const client = options.client ?? "unknown";
 
   for (const tool of TOOL_REGISTRY) {
@@ -187,6 +210,8 @@ export function createMcpServer(
     }
     registerTool(server, tool, ctx, {
       client,
+      widgetSuppressedForTool:
+        client === "chatgpt" && CHATGPT_NO_WIDGET_TOOL_NAMES.has(tool.name),
       registeredResourceUris,
       registeredTemplateNames,
     });
@@ -225,13 +250,30 @@ function registerTool(
      * share `appUiResource.dynamic.templateName`.
      */
     registeredTemplateNames: Set<string>;
+    /**
+     * Per-tool widget suppression layered on top of the
+     * client-blanket suppression below. Set true to skip
+     * `appUiResource` for this specific tool/client combination —
+     * see `CHATGPT_NO_WIDGET_TOOL_NAMES` for the rationale.
+     */
+    widgetSuppressedForTool?: boolean;
   },
 ): void {
   // SDK's `registerTool` takes `ZodRawShape` (the `.shape` of a z.object),
   // not a full ZodObject — pull `.shape` here so tool files don't have to.
+  // Description selection: if the tool defines a per-client override
+  // matching the calling client, ship that text; otherwise fall back
+  // to the default. Per-client text avoids the failure mode where a
+  // single description embeds host-conditional directives ("On
+  // Claude.ai…", "On ChatGPT…") and relies on the model
+  // self-identifying its host — empirically unreliable, since the
+  // model has no first-class signal beyond the description text
+  // itself.
+  const description =
+    tool.descriptionByClient?.[options.client] ?? tool.description;
   const config: Record<string, unknown> = {
     title: tool.annotations.title,
-    description: tool.description,
+    description,
     inputSchema: tool.inputSchema.shape,
     annotations: tool.annotations,
   };
@@ -277,17 +319,38 @@ function registerTool(
   // can read `ui.dynamic` and resolve the per-call widget URI for the
   // dynamic-resource path.
   //
-  // Claude.ai-specific suppression: claude.ai renders MCP tool widgets
-  // inside a constrained, non-resizable iframe container that crops
-  // the chart to ~200 px tall regardless of any postMessage / CSS
-  // gymnastics on our side. Disabling the widget for claude.ai
-  // requests forces the LLM to fall back to the markdown-link path
-  // (per the `knowledge_search` description's conditional directive),
-  // which gives the user a clickable link that opens the fully
-  // interactive chart in a new tab — strictly better UX than the
-  // cropped widget. Detection happens upstream in handleMcpRequest
-  // by inspecting the User-Agent header.
-  const widgetSuppressed = options.client === "claude";
+  // Two independent gates control whether the chart shows up inline
+  // for this tool call. They're computed identically today (both
+  // fire when the client is claude.ai OR a per-tool ChatGPT
+  // suppression is set), but kept as separate variables so a future
+  // case that wants one without the other (e.g. "ship the widget
+  // but no PNG fallback" or "ship the PNG but no widget") becomes
+  // a one-line gate change rather than a refactor.
+  //
+  //   - `widgetSuppressed` → skip `appUiResource`. The host won't
+  //     get a widget URI in the tool's `_meta`, so it won't load
+  //     the chart bundle. Used on claude.ai (constrained iframe
+  //     container clips the chart and exposes an awkward
+  //     scrollbar — markdown-link UX is strictly better) and on
+  //     `knowledge_search` for ChatGPT (its host pins widget
+  //     container height and ignores shrink notifications, so an
+  //     empty fast result leaves a persistent gap; render via
+  //     `open_chart_ui` instead).
+  //
+  //   - `inlinePngFallbackSuppressed` → skip the
+  //     `extraContentBlocks` PNG image content block. Without
+  //     suppression, that hook fires on tools that have no
+  //     `appUiResource` to provide a "render the chart inline as
+  //     an image" fallback for hosts that don't support MCP UI.
+  //     Today we always couple PNG suppression to widget
+  //     suppression because the markdown-link directive in the
+  //     chart-bearing tool descriptions is the agreed
+  //     fallback — shipping a PNG too is redundant and (on
+  //     claude.ai) renders cropped the same way the widget
+  //     does.
+  const widgetSuppressed =
+    options.client === "claude" || options.widgetSuppressedForTool === true;
+  const inlinePngFallbackSuppressed = widgetSuppressed;
   const ui =
     tool.appUiResource !== undefined && !widgetSuppressed
       ? tool.appUiResource(ctx.env)
@@ -531,19 +594,26 @@ function registerTool(
       // + structuredContent that's already there rather than failing the
       // call.
       //
-      // Skip ONLY when the widget was actually registered for this
-      // request (`ui !== undefined`). When the widget is suppressed
-      // (e.g. claude.ai client detection above), we want to fall back
-      // to inlining the image as a content block so the chart still
-      // renders — claude.ai shows MCP image content blocks inline
-      // without a click-to-load gate. The skip-when-widget-active
-      // rule is what avoids the ChatGPT bug where image + widget
-      // metadata together silently disabled widget data flow; that
-      // rule still holds because `ui` is only set when the widget
-      // registered.
+      // Fires only when the tool genuinely doesn't define a widget
+      // (`appUiResource === undefined`) AND inline PNG fallback
+      // hasn't been independently suppressed for this client/tool.
+      // On claude.ai (and on `knowledge_search` for ChatGPT) the PNG
+      // content-block fallback also rendered cropped / awkward, and
+      // the LLM's `[Open in Tako](embed_url)` link is a strictly
+      // cleaner answer; we don't want a redundant PNG the user can't
+      // really interact with. `inlinePngFallbackSuppressed` is the
+      // explicit, separate gate for that — kept distinct from
+      // `widgetSuppressed` (the gate above) so a future case that
+      // wants one without the other is a one-line change.
+      //
+      // Pairing image content blocks with widget metadata in the
+      // same result also silently disabled ChatGPT's widget data
+      // flow, so the gate keeps content-block image fallbacks and
+      // widget metadata mutually exclusive.
       if (
         tool.extraContentBlocks !== undefined &&
-        ui === undefined
+        ui === undefined &&
+        !inlinePngFallbackSuppressed
       ) {
         try {
           const extra = await tool.extraContentBlocks(output, ctx);
@@ -570,11 +640,8 @@ function registerTool(
       // `knowledge_search`) use `extraMeta` exclusively to ship
       // `image_data_url` for the widget to read via `params._meta`.
       // When the widget is suppressed (claude.ai), no widget will
-      // consume `_meta`, so running this hook would (a) burn an extra
-      // PNG `fetch` (the same one `extraContentBlocks` also does on
-      // those hosts), and (b) inflate the JSON-RPC response with a
-      // ~330 KB unused data URL. Skipping when there's no widget keeps
-      // the per-call PNG fetches at exactly one regardless of host.
+      // consume `_meta`, so running this hook would inflate the
+      // JSON-RPC response with a ~330 KB unused data URL.
       let resultMeta: Record<string, unknown> | undefined;
       if (tool.extraMeta !== undefined && ui !== undefined) {
         try {
@@ -761,9 +828,9 @@ export async function handleMcpRequest(
     // icons it itself serves under `/icons/*`. Prevents staging
     // connectors from referencing prod URLs and vice versa.
     const requestOrigin = new URL(request.url).origin;
-    // Detect calling client from User-Agent so we can hide the
-    // `open_chart_ui` widget on claude.ai (where the constrained
-    // iframe container makes the chart unusable). See
+    // Detect calling client from User-Agent so we can suppress the
+    // chart widget on claude.ai (constrained iframe container) and
+    // route ChatGPT through the deep-search kickoff/wait pair. See
     // `detectMcpClient` for the matching rules.
     const client = detectMcpClient(request.headers.get("user-agent"));
     const server = createMcpServer(ctx, {
