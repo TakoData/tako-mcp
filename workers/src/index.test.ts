@@ -20,6 +20,17 @@ describe("worker routing", () => {
     expect(res.status).toBe(404);
   });
 
+  // Strict OIDC clients (notably ChatGPT App Review) reject our OAuth
+  // metadata when it's served at the OIDC discovery path because we omit
+  // OIDC-only fields. 404 here lets them fall back to the OAuth metadata
+  // path per the MCP spec.
+  it("GET /.well-known/openid-configuration returns 404 (we are not an OIDC IdP)", async () => {
+    const res = await SELF.fetch(
+      "https://example.com/.well-known/openid-configuration",
+    );
+    expect(res.status).toBe(404);
+  });
+
   it("POST /mcp accepts an initialize request and returns serverInfo matching registry", async () => {
     const initializeRequest = {
       jsonrpc: "2.0",
