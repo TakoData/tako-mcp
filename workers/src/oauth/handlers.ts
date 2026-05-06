@@ -256,7 +256,19 @@ export function handleAuthServerMetadata(
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none"],
+    // We only actually accept public clients (PKCE, no secret) at /token.
+    // The two `client_secret_*` methods are advertised because ChatGPT's
+    // App Review backend classifies metadata that advertises only
+    // `"none"` as "unsupported OAuth config type" and refuses to save —
+    // even though we expose `registration_endpoint` and the wizard's
+    // discovery UI auto-selects DCR. Per RFC 8414 a client picks the
+    // method it can support; ChatGPT explicitly uses PKCE per their
+    // docs, so they'll prefer `"none"` and never send a secret.
+    token_endpoint_auth_methods_supported: [
+      "none",
+      "client_secret_post",
+      "client_secret_basic",
+    ],
     scopes_supported: [...SUPPORTED_SCOPES],
   });
 }
