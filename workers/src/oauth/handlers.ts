@@ -257,15 +257,10 @@ export function handleAuthServerMetadata(
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
-    // Controlled experiment for ChatGPT App Review classifier:
-    // `["none"]` alone may be too uncommon for strict OAuth validators;
-    // `client_secret_basic` was previously flagged as a breaking value;
-    // `client_secret_post` is the middle-ground that's both common in
-    // discovery docs and not in the rejected list. We still only accept
-    // public clients (PKCE, no secret) at /token — RFC 8414 lets a
-    // client pick whichever method it can support, and ChatGPT uses
-    // PKCE per their docs, so they'll prefer `"none"`.
-    token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
+    // Public clients (PKCE, no secret) — the only auth method we
+    // actually accept at /token. ChatGPT uses PKCE per their published
+    // guidance, Claude.ai uses PKCE, the MCP spec uses PKCE.
+    token_endpoint_auth_methods_supported: ["none"],
     revocation_endpoint_auth_methods_supported: ["none"],
     scopes_supported: [...SUPPORTED_SCOPES],
   });
