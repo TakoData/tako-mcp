@@ -9,6 +9,7 @@ import {
   handleLogin,
   handleProtectedResourceMetadata,
   handleRegister,
+  handleRevoke,
   handleStytchCallback,
   handleToken,
 } from "./oauth/handlers.js";
@@ -95,6 +96,9 @@ export default {
     }
     if (url.pathname === "/token") {
       return withCors(await handleToken(request, env));
+    }
+    if (url.pathname === "/revoke") {
+      return withCors(handleRevoke(request, env));
     }
     if (url.pathname === "/login") {
       return handleLogin(request, env);

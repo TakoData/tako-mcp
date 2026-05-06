@@ -27,6 +27,7 @@ export const CORS_PATHS = new Set<string>([
   "/.well-known/oauth-authorization-server",
   "/register",
   "/token",
+  "/revoke",
 ]);
 
 /** Returns a new Response with CORS headers merged in. The original
