@@ -31,6 +31,57 @@ describe("worker routing", () => {
     expect(res.status).toBe(404);
   });
 
+  // Browser-based MCP clients (OpenAI Apps SDK wizard, etc.) auto-detect
+  // OAuth via cross-origin fetch. Without ACAO the browser blocks the
+  // body and detection silently fails — see `cors.ts` for the rationale.
+  describe("CORS on the OAuth surface", () => {
+    const CORS_PATHS = [
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-authorization-server",
+      "/register",
+      "/token",
+    ];
+
+    for (const path of CORS_PATHS) {
+      it(`OPTIONS ${path} returns 204 with CORS headers`, async () => {
+        const res = await SELF.fetch(`https://example.com${path}`, {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://platform.openai.com",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "content-type",
+          },
+        });
+        expect(res.status).toBe(204);
+        expect(res.headers.get("access-control-allow-origin")).toBe("*");
+        expect(res.headers.get("access-control-allow-methods")).toContain("POST");
+        expect(res.headers.get("access-control-allow-headers")).toContain(
+          "Content-Type",
+        );
+      });
+    }
+
+    it("GET /.well-known/oauth-protected-resource carries ACAO on the response", async () => {
+      const res = await SELF.fetch(
+        "https://example.com/.well-known/oauth-protected-resource",
+        { headers: { origin: "https://platform.openai.com" } },
+      );
+      // Response status depends on whether OAuth is configured in the test
+      // env (404 vs 200); CORS must be present either way so browser-side
+      // discovery surfaces the underlying error instead of an opaque CORS
+      // failure.
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    });
+
+    it("GET /.well-known/oauth-authorization-server carries ACAO on the response", async () => {
+      const res = await SELF.fetch(
+        "https://example.com/.well-known/oauth-authorization-server",
+        { headers: { origin: "https://platform.openai.com" } },
+      );
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    });
+  });
+
   it("POST /mcp accepts an initialize request and returns serverInfo matching registry", async () => {
     const initializeRequest = {
       jsonrpc: "2.0",

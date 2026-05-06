@@ -1,3 +1,4 @@
+import { CORS_PATHS, corsPreflight, withCors } from "./cors.js";
 import type { Env } from "./env.js";
 import { handleExportRequest } from "./exports.js";
 import { handleIconRequest } from "./icons.js";
@@ -25,6 +26,14 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/mcp") {
       return handleMcpRequest(request, env);
+    }
+
+    // CORS preflight for the discovery + DCR + token endpoints. Browser-
+    // based MCP submission flows (e.g. OpenAI Apps SDK at
+    // platform.openai.com) preflight POST /register and POST /token, and
+    // need ACAO on the metadata GETs. See `cors.ts` for the full rationale.
+    if (request.method === "OPTIONS" && CORS_PATHS.has(url.pathname)) {
+      return corsPreflight();
     }
 
     // Brand-icon proxy. Connector cards in Claude / ChatGPT fetch these
@@ -61,7 +70,7 @@ export default {
       request.method === "GET" &&
       url.pathname === "/.well-known/oauth-protected-resource"
     ) {
-      return handleProtectedResourceMetadata(request, env);
+      return withCors(handleProtectedResourceMetadata(request, env));
     }
     // We deliberately do NOT alias `/.well-known/openid-configuration`
     // to this OAuth metadata. TAKO-2700 added that alias to silence a
@@ -76,16 +85,16 @@ export default {
       request.method === "GET" &&
       url.pathname === "/.well-known/oauth-authorization-server"
     ) {
-      return handleAuthServerMetadata(request, env);
+      return withCors(handleAuthServerMetadata(request, env));
     }
     if (url.pathname === "/register") {
-      return handleRegister(request, env);
+      return withCors(await handleRegister(request, env));
     }
     if (url.pathname === "/authorize") {
       return handleAuthorize(request, env);
     }
     if (url.pathname === "/token") {
-      return handleToken(request, env);
+      return withCors(await handleToken(request, env));
     }
     if (url.pathname === "/login") {
       return handleLogin(request, env);
