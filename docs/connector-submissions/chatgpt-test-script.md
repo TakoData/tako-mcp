@@ -183,17 +183,22 @@ post PR #70):
 
 ## Pre-submission checklist
 
-Before submitting, run this script end-to-end against
-`https://mcp.tako.com/mcp` (production) with the demo account:
+Run this script end-to-end against `https://mcp.tako.com/mcp` (production)
+with the demo account.
 
-- [ ] Prompt 1 returns a chart + narrative + `[Open in Tako]` link
-- [ ] Prompt 2 returns NVIDIA earnings with current data
-- [ ] Prompt 3 returns today's top movers (validates real-time freshness)
-- [ ] Prompt 4 (if submitting) returns a `webpage_url` + waiting message,
+**Verified passing 2026-05-06** against current main (post PR #70):
+
+- [x] Prompt 1 returns a chart + narrative + `[Open in Tako]` link
+- [x] Prompt 2 returns NVIDIA earnings with current data
+- [x] Prompt 3 returns today's top movers (validates real-time freshness)
+- [x] Prompt 4 (if submitting) returns a `webpage_url` + waiting message,
       no improvised content, no `web_search` calls
-- [ ] `create_report` link, when clicked an hour later, opens a populated
+- [x] `create_report` link, when clicked an hour later, opens a populated
       report (validates the async pipeline end-to-end)
-- [ ] All four prompts work in a single fresh conversation (validates
+- [x] All four prompts work in a single fresh conversation (validates
       session-stable OAuth)
+
+Re-run before submitting if main has moved meaningfully (new tools, changed
+descriptions, OAuth changes).
 
 Capture screenshots of each successful run for the submission package.
