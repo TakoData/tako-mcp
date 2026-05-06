@@ -20,21 +20,16 @@ describe("worker routing", () => {
     expect(res.status).toBe(404);
   });
 
-  // ChatGPT's App Review classifier rejects servers that only expose
-  // `oauth-authorization-server`. The OIDC path is aliased to the same
-  // OAuth metadata to satisfy classifiers that expect both paths to
-  // resolve. We are not a full OIDC IdP — strict OIDC clients will
-  // notice the missing OIDC-only fields and (correctly) decline.
-  it("GET /.well-known/openid-configuration aliases the OAuth metadata", async () => {
-    const oidcRes = await SELF.fetch(
+  // We deliberately do not alias the OIDC discovery path. ChatGPT's App
+  // Review wizard auto-locks the OIDC form fields once the URL resolves,
+  // and the resulting half-OIDC / half-OAuth shape trips its classifier.
+  // Pure OAuth + DCR is the safer path for MCP Apps; strict OIDC clients
+  // (correctly) fall back to OAuth on 404.
+  it("GET /.well-known/openid-configuration returns 404 (pure OAuth, not OIDC)", async () => {
+    const res = await SELF.fetch(
       "https://example.com/.well-known/openid-configuration",
     );
-    const oauthRes = await SELF.fetch(
-      "https://example.com/.well-known/oauth-authorization-server",
-    );
-    // Both paths return the same metadata — body byte-for-byte identical.
-    expect(oidcRes.status).toBe(oauthRes.status);
-    expect(await oidcRes.text()).toBe(await oauthRes.text());
+    expect(res.status).toBe(404);
   });
 
   // Browser-based MCP clients (OpenAI Apps SDK wizard, etc.) auto-detect

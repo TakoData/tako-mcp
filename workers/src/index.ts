@@ -73,21 +73,18 @@ export default {
     ) {
       return withCors(handleProtectedResourceMetadata(request, env));
     }
-    // `/.well-known/openid-configuration` is aliased to the OAuth
-    // metadata path. ChatGPT's App Review classifier rejects servers
-    // that only expose `oauth-authorization-server` with "unsupported
-    // OAuth config type" — guidance from outside this codebase says
-    // public Apps expect a discoverable OIDC URL even when the server
-    // is not a full OIDC IdP. Our metadata satisfies OIDC discovery's
-    // *required* fields (issuer, authorization_endpoint, token_endpoint,
-    // response_types_supported); we deliberately omit OIDC-only fields
-    // (jwks_uri, id_token_signing_alg_values_supported,
-    // subject_types_supported) — strict OIDC clients will (correctly)
-    // decline.
+    // We deliberately do NOT alias `/.well-known/openid-configuration`.
+    // Two rounds of external advice converged on the same conclusion:
+    // ChatGPT's App Review classifier dislikes a "half-OIDC / half-OAuth"
+    // shape, where the OIDC URL resolves but the doc lacks OIDC-only
+    // fields (jwks_uri, id_token_signing_alg_values_supported,
+    // subject_types_supported). Once the wizard discovers the OIDC URL,
+    // it locks the OIDC fields on the form, and `OIDC enabled` cannot be
+    // cleared cleanly. Pure OAuth + DCR is the safer shape for MCP Apps.
+    // Strict OIDC clients will (correctly) fall back to OAuth on 404.
     if (
       request.method === "GET" &&
-      (url.pathname === "/.well-known/oauth-authorization-server" ||
-        url.pathname === "/.well-known/openid-configuration")
+      url.pathname === "/.well-known/oauth-authorization-server"
     ) {
       return withCors(handleAuthServerMetadata(request, env));
     }
