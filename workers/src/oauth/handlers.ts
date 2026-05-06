@@ -253,12 +253,42 @@ export function handleAuthServerMetadata(
     authorization_endpoint: `${origin}/authorize`,
     token_endpoint: `${origin}/token`,
     registration_endpoint: `${origin}/register`,
+    revocation_endpoint: `${origin}/revoke`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
+    // Public clients (PKCE, no secret) — the only auth method we
+    // actually accept at /token. ChatGPT uses PKCE per their published
+    // guidance, Claude.ai uses PKCE, the MCP spec uses PKCE.
     token_endpoint_auth_methods_supported: ["none"],
+    revocation_endpoint_auth_methods_supported: ["none"],
     scopes_supported: [...SUPPORTED_SCOPES],
   });
+}
+
+/**
+ * RFC 7009 OAuth 2.0 Token Revocation — stub endpoint.
+ *
+ * Our access + refresh tokens are stateless JWTs, so there is no
+ * server-side state to invalidate; revocation is genuinely a no-op
+ * unless we add a deny list. RFC 7009 §2.2 explicitly allows: "Note:
+ * invalid tokens do not cause an error response since the client
+ * cannot handle such an error in a reasonable way." So returning 200
+ * regardless of the token's validity is spec-compliant.
+ *
+ * Why advertise it at all: ChatGPT's App Review classifier rejects
+ * metadata it labels as "unsupported OAuth config type"; a richer,
+ * more conventional discovery doc (with `revocation_endpoint`) helps
+ * us look like the OAuth servers their classifier already accepts.
+ */
+export function handleRevoke(req: Request, env: Env): Response {
+  if (readConfig(env) === null) {
+    return new Response("not found", { status: 404 });
+  }
+  if (req.method !== "POST") {
+    return new Response("method not allowed", { status: 405 });
+  }
+  return new Response(null, { status: 200 });
 }
 
 /* --------------------------- Dynamic Client Registration --------------------------- */

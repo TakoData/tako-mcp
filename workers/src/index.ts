@@ -1,3 +1,4 @@
+import { CORS_PATHS, corsPreflight, withCors } from "./cors.js";
 import type { Env } from "./env.js";
 import { handleExportRequest } from "./exports.js";
 import { handleIconRequest } from "./icons.js";
@@ -8,6 +9,7 @@ import {
   handleLogin,
   handleProtectedResourceMetadata,
   handleRegister,
+  handleRevoke,
   handleStytchCallback,
   handleToken,
 } from "./oauth/handlers.js";
@@ -25,6 +27,14 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/mcp") {
       return handleMcpRequest(request, env);
+    }
+
+    // CORS preflight for the discovery + DCR + token endpoints. Browser-
+    // based MCP submission flows (e.g. OpenAI Apps SDK at
+    // platform.openai.com) preflight POST /register and POST /token, and
+    // need ACAO on the metadata GETs. See `cors.ts` for the full rationale.
+    if (request.method === "OPTIONS" && CORS_PATHS.has(url.pathname)) {
+      return corsPreflight();
     }
 
     // Brand-icon proxy. Connector cards in Claude / ChatGPT fetch these
@@ -61,33 +71,34 @@ export default {
       request.method === "GET" &&
       url.pathname === "/.well-known/oauth-protected-resource"
     ) {
-      return handleProtectedResourceMetadata(request, env);
+      return withCors(handleProtectedResourceMetadata(request, env));
     }
-    // `/.well-known/openid-configuration` is aliased to the OAuth
-    // metadata path (TAKO-2700). Some MCP hosts (observed: ChatGPT)
-    // probe OIDC discovery first and only fall back to OAuth on 404 —
-    // serving identical JSON saves a round-trip and stops emitting a
-    // spurious 404 in our logs. Our OAuth metadata happens to satisfy
-    // OIDC discovery's *required* fields (issuer, authorization_endpoint,
-    // token_endpoint, response_types_supported), but we deliberately
-    // omit OIDC-specific fields (jwks_uri, id_token_signing_alg_values,
-    // subject_types_supported) — strict OIDC clients will (correctly)
-    // decline; we are not an OIDC IdP.
+    // We deliberately do NOT alias `/.well-known/openid-configuration`.
+    // Two rounds of external advice converged on the same conclusion:
+    // ChatGPT's App Review classifier dislikes a "half-OIDC / half-OAuth"
+    // shape, where the OIDC URL resolves but the doc lacks OIDC-only
+    // fields (jwks_uri, id_token_signing_alg_values_supported,
+    // subject_types_supported). Once the wizard discovers the OIDC URL,
+    // it locks the OIDC fields on the form, and `OIDC enabled` cannot be
+    // cleared cleanly. Pure OAuth + DCR is the safer shape for MCP Apps.
+    // Strict OIDC clients will (correctly) fall back to OAuth on 404.
     if (
       request.method === "GET" &&
-      (url.pathname === "/.well-known/oauth-authorization-server" ||
-        url.pathname === "/.well-known/openid-configuration")
+      url.pathname === "/.well-known/oauth-authorization-server"
     ) {
-      return handleAuthServerMetadata(request, env);
+      return withCors(handleAuthServerMetadata(request, env));
     }
     if (url.pathname === "/register") {
-      return handleRegister(request, env);
+      return withCors(await handleRegister(request, env));
     }
     if (url.pathname === "/authorize") {
       return handleAuthorize(request, env);
     }
     if (url.pathname === "/token") {
-      return handleToken(request, env);
+      return withCors(await handleToken(request, env));
+    }
+    if (url.pathname === "/revoke") {
+      return withCors(handleRevoke(request, env));
     }
     if (url.pathname === "/login") {
       return handleLogin(request, env);
