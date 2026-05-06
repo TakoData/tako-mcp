@@ -73,18 +73,21 @@ export default {
     ) {
       return withCors(handleProtectedResourceMetadata(request, env));
     }
-    // We deliberately do NOT alias `/.well-known/openid-configuration`
-    // to this OAuth metadata. TAKO-2700 added that alias to silence a
-    // spurious 404 in staging logs, but ChatGPT's App Review submission
-    // flow probes the OIDC path, parses the response strictly as OIDC,
-    // and rejects it with "unsupported OAuth config type" because we
-    // omit OIDC-only fields (jwks_uri, id_token_signing_alg_values,
-    // subject_types_supported). We are not an OIDC IdP, so the correct
-    // behaviour is to 404 the OIDC path and let strict clients fall
-    // back to OAuth discovery per the MCP spec.
+    // `/.well-known/openid-configuration` is aliased to the OAuth
+    // metadata path. ChatGPT's App Review classifier rejects servers
+    // that only expose `oauth-authorization-server` with "unsupported
+    // OAuth config type" — guidance from outside this codebase says
+    // public Apps expect a discoverable OIDC URL even when the server
+    // is not a full OIDC IdP. Our metadata satisfies OIDC discovery's
+    // *required* fields (issuer, authorization_endpoint, token_endpoint,
+    // response_types_supported); we deliberately omit OIDC-only fields
+    // (jwks_uri, id_token_signing_alg_values_supported,
+    // subject_types_supported) — strict OIDC clients will (correctly)
+    // decline.
     if (
       request.method === "GET" &&
-      url.pathname === "/.well-known/oauth-authorization-server"
+      (url.pathname === "/.well-known/oauth-authorization-server" ||
+        url.pathname === "/.well-known/openid-configuration")
     ) {
       return withCors(handleAuthServerMetadata(request, env));
     }
