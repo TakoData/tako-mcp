@@ -222,6 +222,65 @@ describe("open_chart_ui extraContentBlocks", () => {
   });
 });
 
+describe("open_chart_ui extraMeta", () => {
+  // ChatGPT's widget bundle takes the iframe path (window.openai
+  // defined → shouldUseInteractiveIframe() === true in
+  // _chart_widget.ts), which renders `embed_url` directly and never
+  // reads `image_data_url` from `_meta`. Fetching the PNG just to
+  // throw the bytes away adds the rendered-chart latency (up to
+  // PNG_FETCH_TIMEOUT_MS = 8s) onto every tool call. Gate the fetch
+  // so ChatGPT skips it entirely.
+  it("skips the PNG fetch on ChatGPT (host uses iframe, _meta.image_data_url unused)", async () => {
+    const fetchSpy = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const meta = await open_chart_ui.extraMeta!(
+      {
+        pub_id: "abc123",
+        embed_url: "https://example.com/embed/abc123/?dark_mode=auto",
+        image_url: "https://example.com/api/v1/image/abc123/?dark_mode=true",
+        dark_mode: true,
+        width: 900,
+        height: 600,
+      },
+      { ...CTX, client: "chatgpt" },
+    );
+
+    expect(meta).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("fetches and inlines the PNG on non-ChatGPT clients (widget consumes image_data_url)", async () => {
+    // Minimal valid PNG: 8-byte signature + IHDR chunk with width=2,
+    // height=1. parsePngDimensions needs ≥24 bytes with the 89 50 4E 47
+    // signature and width/height at offsets 16 and 20.
+    const png = new Uint8Array(24);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    // width = 2 (at offset 16, big-endian uint32)
+    png[19] = 2;
+    // height = 1 (at offset 20, big-endian uint32)
+    png[23] = 1;
+    mockFetchOnce(pngResponse(png));
+
+    const meta = await open_chart_ui.extraMeta!(
+      {
+        pub_id: "abc123",
+        embed_url: "https://example.com/embed/abc123/?dark_mode=auto",
+        image_url: "https://example.com/api/v1/image/abc123/?dark_mode=true",
+        dark_mode: true,
+        width: 900,
+        height: 600,
+      },
+      { ...CTX, client: "unknown" },
+    );
+
+    expect(meta).toBeDefined();
+    expect(meta!.image_data_url).toMatch(/^data:image\/png;base64,/);
+    expect(meta!.image_natural_width).toBe(2);
+    expect(meta!.image_natural_height).toBe(1);
+  });
+});
+
 describe("open_chart_ui appUiResource", () => {
   it("returns a stable URI, the MCP Apps mimeType-bound bundle, and the env's web base as the only allowed frame domain", () => {
     const ui = open_chart_ui.appUiResource!(ENV);
