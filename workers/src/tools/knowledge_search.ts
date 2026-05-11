@@ -335,8 +335,15 @@ const knowledge_search = {
 
     return buildResultsWithAutoChain(cards, ctx.env);
   },
-  async extraMeta(output, _ctx) {
-    void _ctx;
+  async extraMeta(output, ctx) {
+    // Skip the fetch on ChatGPT: its widget bundle takes the iframe
+    // path (`window.openai` defined → `shouldUseInteractiveIframe()`
+    // true in `_chart_widget.ts`), which renders `embed_url` directly
+    // and never reads `image_data_url` from `_meta`. Without this
+    // gate we pay the full chart-render latency
+    // (`PNG_FETCH_TIMEOUT_MS` = 8s upper bound) on every ChatGPT
+    // tool call just to populate a field the host throws away.
+    if (ctx.client === "chatgpt") return undefined;
     if (output.image_url === undefined) return undefined;
     const fetched = await fetchImageDataUrlAndDims(output.image_url);
     if (fetched === undefined) return undefined;

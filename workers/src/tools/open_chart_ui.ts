@@ -113,7 +113,7 @@ const open_chart_ui = {
       height: input.height,
     };
   },
-  async extraMeta(output, _ctx): Promise<Record<string, unknown> | undefined> {
+  async extraMeta(output, ctx): Promise<Record<string, unknown> | undefined> {
     // Inline the chart PNG as a `data:image/...;base64,...` URI for
     // the widget, plus the source PNG's natural pixel dimensions.
     // Routed through `_meta` (not `structuredContent`) because the
@@ -121,7 +121,15 @@ const open_chart_ui = {
     // `structuredContent` blows past claude.ai's per-tool-result
     // context budget — Claude then offloads the whole result to a
     // file and skips widget delivery.
-    void _ctx;
+    //
+    // Skip the fetch on ChatGPT: its widget bundle takes the iframe
+    // path (`window.openai` defined → `shouldUseInteractiveIframe()`
+    // true in `_chart_widget.ts`), which renders `embed_url` directly
+    // and never reads `image_data_url` from `_meta`. Without this
+    // gate we pay the full chart-render latency
+    // (`PNG_FETCH_TIMEOUT_MS` = 8s upper bound) on every ChatGPT
+    // tool call just to populate a field the host throws away.
+    if (ctx.client === "chatgpt") return undefined;
     const fetched = await fetchImageDataUrlAndDims(output.image_url);
     if (fetched === undefined) return undefined;
     return {
