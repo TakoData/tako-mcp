@@ -616,7 +616,7 @@ function registerTool(
         !inlinePngFallbackSuppressed
       ) {
         try {
-          const extra = await tool.extraContentBlocks(output, ctx);
+          const extra = await tool.extraContentBlocks(output, callCtx);
           content.push(...extra);
         } catch (err) {
           console.error(
@@ -645,7 +645,7 @@ function registerTool(
       let resultMeta: Record<string, unknown> | undefined;
       if (tool.extraMeta !== undefined && ui !== undefined) {
         try {
-          resultMeta = await tool.extraMeta(output, ctx);
+          resultMeta = await tool.extraMeta(output, callCtx);
         } catch (err) {
           console.error(`extraMeta hook failed for ${tool.name}:`, err);
         }
