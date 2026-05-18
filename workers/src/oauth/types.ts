@@ -55,6 +55,12 @@ export interface AuthCodeClaims extends BaseClaims {
    *  redemption handler records this in Workers Cache after a successful
    *  exchange and rejects subsequent presentations with the same `jti`. */
   jti: string;
+  /** RFC 8707 §2 — the resource the authorization code is bound to.
+   *  Optional because the parameter is OPTIONAL per the RFC and legacy
+   *  clients (Claude.ai today) do not send it. When present, /token
+   *  MUST receive a matching `resource` and the issued access /
+   *  refresh tokens carry it as the `aud` claim. */
+  resource?: string;
 }
 
 /* --------------------------- Tokens issued to clients --------------------------- */
@@ -74,6 +80,12 @@ export interface AccessTokenClaims extends BaseClaims {
   user_id: string;
   user_email: string;
   enc_tako_token: string;
+  /** RFC 8707 §3 — the resource the token is intended for, propagated
+   *  from the authorization code's `resource` claim. Resource servers
+   *  SHOULD validate this matches their own canonical URL before
+   *  accepting the token. Optional for backward compat with tokens
+   *  minted before resource indicators landed. */
+  aud?: string;
 }
 
 export interface RefreshTokenClaims extends BaseClaims {
@@ -92,6 +104,10 @@ export interface RefreshTokenClaims extends BaseClaims {
    *  Tighten back to required `string` once the 14-day legacy window has
    *  passed and the bypass in `checkAndMarkRedeemed` is removed. */
   jti?: string;
+  /** RFC 8707 §3 — same semantics as on `AccessTokenClaims`. Carried on
+   *  the refresh token so subsequent refresh_token grants can re-issue
+   *  access tokens with the same `aud` without re-running /authorize. */
+  aud?: string;
 }
 
 /* --------------------------- Worker-only cookies --------------------------- */
@@ -110,6 +126,11 @@ export interface StateCookieClaims extends BaseClaims {
   code_challenge_method: string;
   state: string | null;
   scope: string | null;
+  /** RFC 8707 resource indicator carried across the Stytch login round-
+   *  trip so /oauth/stytch_callback can rebuild the original /authorize
+   *  request faithfully. Optional for backward compat with state cookies
+   *  minted before resource indicators landed. */
+  resource?: string;
 }
 
 /**

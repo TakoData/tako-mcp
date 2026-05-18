@@ -443,6 +443,18 @@ interface AuthorizeQuery {
   code_challenge_method: string;
   state: string | null;
   scope: string | null;
+  /** RFC 8707 resource indicator. `null` means the client did not send one
+   *  (fine — the parameter is OPTIONAL); a non-null value MUST equal the
+   *  canonical MCP resource URL on this origin. */
+  resource: string | null;
+}
+
+/** RFC 8707 §2 — the only resource we host. Centralized here so
+ *  /authorize, /token, and /.well-known/oauth-protected-resource agree
+ *  on the canonical URL. Including a fragment in `resource` is a SHOULD-
+ *  reject per the RFC; we reject anything that doesn't byte-match. */
+function canonicalResource(origin: string): string {
+  return `${origin}/mcp`;
 }
 
 function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
@@ -472,6 +484,14 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
       return `scope contains unsupported values; supported: ${[...SUPPORTED_SCOPES].join(", ")}`;
     }
   }
+  // RFC 8707 — accept the resource indicator if present and require it
+  // to match this server's canonical resource URL. We reject anything
+  // else with `invalid_target` (RFC 8707 §3) so confused-deputy clients
+  // can't get an auth code bound to a resource they don't host.
+  const resource = p.get("resource");
+  if (resource !== null && resource !== canonicalResource(url.origin)) {
+    return `resource must equal ${canonicalResource(url.origin)} (RFC 8707)`;
+  }
   return {
     client_id,
     redirect_uri,
@@ -480,6 +500,7 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
     code_challenge_method,
     state: p.get("state"),
     scope,
+    resource,
   };
 }
 
@@ -545,6 +566,7 @@ export async function handleAuthorize(
         code_challenge_method: parsed.code_challenge_method,
         state: parsed.state,
         scope: parsed.scope,
+        ...(parsed.resource !== null ? { resource: parsed.resource } : {}),
         exp: Math.floor(Date.now() / 1000) + STATE_COOKIE_MAX_AGE_S,
       };
       const stateJwt = await signJwt(stateClaims, cfg.signKey);
@@ -575,6 +597,8 @@ export async function handleAuthorize(
     );
     if (parsed.state !== null) formActionUrl.searchParams.set("state", parsed.state);
     if (parsed.scope !== null) formActionUrl.searchParams.set("scope", parsed.scope);
+    if (parsed.resource !== null)
+      formActionUrl.searchParams.set("resource", parsed.resource);
     return htmlResponse(
       consentPage({
         clientName: client.client_name,
@@ -671,6 +695,7 @@ export async function handleAuthorize(
     enc_tako_token,
     exp: now + AUTH_CODE_TTL_S,
     jti: crypto.randomUUID(),
+    ...(parsed.resource !== null ? { resource: parsed.resource } : {}),
   };
   const code = await signJwt(codeClaims, cfg.signKey);
 
@@ -907,6 +932,19 @@ async function handleAuthorizationCodeGrant(
   if (claims.code_challenge !== expectedChallenge) {
     return jsonError("invalid_grant", "PKCE verifier does not match", 400);
   }
+  // RFC 8707 §2.2 — if the auth code was bound to a `resource`, the
+  // token request MUST present the same value. Mismatched / missing
+  // resource at /token is `invalid_target`. If the auth code carries no
+  // resource (legacy / didn't pass it at /authorize), accept whatever
+  // the client sends here for forward compat.
+  const formResource = params.get("resource");
+  if (claims.resource !== undefined && formResource !== claims.resource) {
+    return jsonError(
+      "invalid_target",
+      "resource does not match authorization request",
+      400,
+    );
+  }
   const replay = await checkAndMarkRedeemed(
     "auth-code",
     claims.jti,
@@ -921,6 +959,7 @@ async function handleAuthorizationCodeGrant(
       enc_tako_token: claims.enc_tako_token,
     },
     cfg,
+    claims.resource ?? formResource ?? undefined,
   );
 }
 
@@ -940,6 +979,19 @@ async function handleRefreshGrant(
       400,
     );
   }
+  // RFC 8707 §2.2 — refresh-token requests MAY include `resource` and
+  // the value MUST match the audience the refresh token was issued for.
+  // If the refresh token has no `aud` (legacy, pre-resource-indicators),
+  // accept whatever the client sends so newly-issued tokens can carry
+  // it forward.
+  const formResource = params.get("resource");
+  if (claims.aud !== undefined && formResource !== null && formResource !== claims.aud) {
+    return jsonError(
+      "invalid_target",
+      "resource does not match refresh token audience",
+      400,
+    );
+  }
   const replay = await checkAndMarkRedeemed(
     "refresh-token",
     claims.jti,
@@ -954,6 +1006,7 @@ async function handleRefreshGrant(
       enc_tako_token: claims.enc_tako_token,
     },
     cfg,
+    claims.aud ?? formResource ?? undefined,
   );
 }
 
@@ -967,6 +1020,7 @@ interface IdentityForToken {
 async function issueTokens(
   identity: IdentityForToken,
   cfg: OAuthConfig,
+  aud: string | undefined,
 ): Promise<Response> {
   const now = Math.floor(Date.now() / 1000);
   const accessClaims: AccessTokenClaims = {
@@ -976,6 +1030,7 @@ async function issueTokens(
     user_email: identity.user_email,
     enc_tako_token: identity.enc_tako_token,
     exp: now + ACCESS_TOKEN_TTL_S,
+    ...(aud !== undefined ? { aud } : {}),
   };
   const refreshClaims: RefreshTokenClaims = {
     type: "refresh",
@@ -985,6 +1040,7 @@ async function issueTokens(
     enc_tako_token: identity.enc_tako_token,
     exp: now + REFRESH_TOKEN_TTL_S,
     jti: crypto.randomUUID(),
+    ...(aud !== undefined ? { aud } : {}),
   };
   const access_token = await signJwt(accessClaims, cfg.signKey);
   const refresh_token = await signJwt(refreshClaims, cfg.signKey);
@@ -1232,6 +1288,8 @@ export async function handleStytchCallback(
     authorizeUrl.searchParams.set("state", stateClaims.state);
   if (stateClaims.scope !== null)
     authorizeUrl.searchParams.set("scope", stateClaims.scope);
+  if (stateClaims.resource !== undefined)
+    authorizeUrl.searchParams.set("resource", stateClaims.resource);
 
   // Multiple Set-Cookie headers — modern Workers fetch API handles this
   // by accepting a Headers instance with repeated entries (single string
