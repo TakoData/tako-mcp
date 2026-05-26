@@ -18,6 +18,7 @@ import export_report from "./export_report.js";
 import get_chart_image from "./get_chart_image.js";
 import get_credit_balance from "./get_credit_balance.js";
 import get_report from "./get_report.js";
+import grounding from "./grounding.js";
 import knowledge_search from "./knowledge_search.js";
 import list_reports from "./list_reports.js";
 import open_chart_ui from "./open_chart_ui.js";
@@ -35,6 +36,7 @@ export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
   get_chart_image as unknown as AnyToolModule,
   get_credit_balance as unknown as AnyToolModule,
   get_report as unknown as AnyToolModule,
+  grounding as unknown as AnyToolModule,
   knowledge_search as unknown as AnyToolModule,
   list_reports as unknown as AnyToolModule,
   open_chart_ui as unknown as AnyToolModule,
