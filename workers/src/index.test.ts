@@ -196,6 +196,7 @@ describe("worker routing", () => {
       "get_chart_image",
       "get_credit_balance",
       "get_report",
+      "grounding",
       "knowledge_search",
       "list_reports",
       "open_chart_ui",
@@ -271,7 +272,7 @@ describe("worker routing", () => {
     expect(names.has("wait_for_knowledge_search")).toBe(true);
     // The default 10 tools are still present alongside.
     expect(names.has("knowledge_search")).toBe(true);
-    expect(body.result.tools).toHaveLength(11);
+    expect(body.result.tools).toHaveLength(12);
 
     // Both `knowledge_search` and `open_chart_ui` ship the chart
     // widget on ChatGPT. The empty-fast widget-gap problem (ChatGPT

@@ -230,16 +230,13 @@ describe("handleExportRequest", () => {
   });
 
   it("returns 401 for an expired token", async () => {
-    const { token } = await mintExportToken(
-      "sk",
-      "rep",
-      "pdf",
-      ENV_A,
-      // 1-second TTL — by the time we call the route below, it'll be
-      // expired. Wait one second to be safe.
-      1,
-    );
-    await new Promise((r) => setTimeout(r, 1100));
+    // Mint with a negative TTL so `exp` is already in the past — a
+    // deterministically-expired token. (Previously this waited 1.1s on a
+    // 1s TTL, which was flaky: mint and verify both floor to integer
+    // seconds, and expiry needs `exp < floor(now)` — crossing TWO second
+    // boundaries — so a sub-second mint could still be valid at 1.1s and
+    // fall through to the upstream fetch, surfacing 404 instead of 401.)
+    const { token } = await mintExportToken("sk", "rep", "pdf", ENV_A, -10);
     const res = await handleExportRequest(
       new Request(`https://mcp.staging.tako.com/exports/${token}`),
       ENV_A,
