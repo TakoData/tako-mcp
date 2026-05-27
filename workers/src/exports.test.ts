@@ -230,21 +230,25 @@ describe("handleExportRequest", () => {
   });
 
   it("returns 401 for an expired token", async () => {
-    const { token } = await mintExportToken(
-      "sk",
-      "rep",
-      "pdf",
-      ENV_A,
-      // 1-second TTL — by the time we call the route below, it'll be
-      // expired. Wait one second to be safe.
-      1,
-    );
-    await new Promise((r) => setTimeout(r, 1100));
-    const res = await handleExportRequest(
-      new Request(`https://mcp.staging.tako.com/exports/${token}`),
-      ENV_A,
-    );
-    expect(res.status).toBe(401);
+    // Expiry is compared at whole-second granularity with a strict
+    // `<`, so a 1s-TTL token only reads as expired once the clock is
+    // two whole seconds past the mint second. Drive that with fake
+    // timers instead of a real sleep — a real sleep of ~1.1s lands on
+    // the wrong side of the second boundary most of the time (the
+    // token still validates, the handler then hits real Django and
+    // returns 404 instead of 401), which made this test flaky in CI.
+    vi.useFakeTimers();
+    try {
+      const { token } = await mintExportToken("sk", "rep", "pdf", ENV_A, 1);
+      vi.setSystemTime(Date.now() + 2000);
+      const res = await handleExportRequest(
+        new Request(`https://mcp.staging.tako.com/exports/${token}`),
+        ENV_A,
+      );
+      expect(res.status).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns 400 when the token segment is empty", async () => {
