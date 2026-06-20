@@ -116,15 +116,20 @@ export async function pollAgentRun(
     if (parsed.data.status === "completed" || parsed.data.status === "failed") {
       return { ...parsed.data, timed_out: false };
     }
-    // Budget check: if next poll would exceed deadline
+    // Budget check: stop before the next poll would land past the deadline.
+    // Worst case the loop still overruns budgetMs by up to
+    // POLL_INTERVAL_MS + the per-GET request timeout (one in-flight GET that
+    // started just under the deadline) — acceptable, and well under the MCP
+    // client's tool-call ceiling.
     if (Date.now() + POLL_INTERVAL_MS >= deadline) {
       if (opts.onTimeout === "throw") {
         throw new Error(
           `Agent run ${runId} did not complete within ${Math.round(opts.budgetMs / 1000)}s.`,
         );
       }
-      // onTimeout === "return"
-      return { ...lastRun, timed_out: true };
+      // onTimeout === "return": lastRun is always set here — the deadline
+      // check only runs after a successful GET above assigned it.
+      return { ...lastRun!, timed_out: true };
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
