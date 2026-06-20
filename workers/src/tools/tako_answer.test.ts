@@ -66,6 +66,8 @@ describe("tako_answer handler", () => {
       {
         query: "What was US GDP in 2024?",
         sources: ["tako", "web"],
+        country_code: "US",
+        locale: "en-US",
       },
       CTX,
     );
@@ -97,7 +99,7 @@ describe("tako_answer handler", () => {
     ]);
 
     const out = await takoAnswer.handler(
-      { query: "obscure query", sources: ["tako"] },
+      { query: "obscure query", sources: ["tako"], country_code: "US", locale: "en-US" },
       CTX,
     );
 
@@ -111,7 +113,7 @@ describe("tako_answer handler", () => {
     mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     const out = await takoAnswer.handler(
-      { query: "test", sources: ["tako"] },
+      { query: "test", sources: ["tako"], country_code: "US", locale: "en-US" },
       CTX,
     ) as Record<string, unknown>;
 
@@ -130,7 +132,7 @@ describe("tako_answer handler", () => {
     ]);
 
     await expect(
-      takoAnswer.handler({ query: "q", sources: ["tako", "web"] }, CTX),
+      takoAnswer.handler({ query: "q", sources: ["tako", "web"], country_code: "US", locale: "en-US" }, CTX),
     ).rejects.toThrow(/unexpected shape/);
   });
 });
@@ -153,18 +155,23 @@ describe("tako_answer input schema", () => {
     ).toThrow();
   });
 
-  it("does NOT have country_code or locale fields (dropped from v3 shape)", () => {
-    // These are extra fields — zod strips them by default; parse still succeeds
-    // but the output should not contain them as required fields
-    const parsed = takoAnswer.inputSchema.safeParse({
-      query: "hello",
-      country_code: "US",
-      locale: "en-US",
-    });
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect((parsed.data as Record<string, unknown>).country_code).toBeUndefined();
-      expect((parsed.data as Record<string, unknown>).locale).toBeUndefined();
-    }
+  it("includes country_code and locale in the POST body", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
+
+    await takoAnswer.handler(
+      { query: "test", sources: ["tako"], country_code: "GB", locale: "en-GB" },
+      CTX,
+    );
+
+    const req = requestFrom(fetchMock.mock.calls[0]!);
+    const body = await bodyOf(req);
+    expect(body.country_code).toBe("GB");
+    expect(body.locale).toBe("en-GB");
+  });
+
+  it("defaults country_code to US and locale to en-US", () => {
+    const parsed = takoAnswer.inputSchema.parse({ query: "hello" });
+    expect(parsed.country_code).toBe("US");
+    expect(parsed.locale).toBe("en-US");
   });
 });

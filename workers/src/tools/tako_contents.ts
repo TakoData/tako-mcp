@@ -14,6 +14,7 @@ const DESCRIPTION =
   "Fetch the underlying content behind a result URL. A Tako card URL returns a CSV of the card's data; any other URL returns the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web result URL). Returns a short-lived `download_url`; for web pages the extracted `text` is also inlined so you can read it directly.";
 
 const MAX_INLINE_CHARS = 200_000; // cap inlined web text to keep responses sane
+const CONTENTS_FETCH_TIMEOUT_MS = 15_000;
 
 const inputSchema = z.object({
   url: z
@@ -66,7 +67,7 @@ const takoContents = {
       // Inline the extracted web text so the model can read it without a
       // second tool call. Best-effort: a fetch failure still returns the URL.
       try {
-        const resp = await fetch(item.url);
+        const resp = await fetch(item.url, { signal: AbortSignal.timeout(CONTENTS_FETCH_TIMEOUT_MS) });
         if (resp.ok) {
           const body = await resp.text();
           text = body.length > MAX_INLINE_CHARS ? body.slice(0, MAX_INLINE_CHARS) + "\n...[truncated]" : body;

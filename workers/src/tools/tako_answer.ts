@@ -16,6 +16,11 @@ const inputSchema = z.object({
     .min(1)
     .default(["tako", "web"])
     .describe('Which source(s) to ground in: ["tako"], ["web"], or ["tako","web"] (default).'),
+  country_code: z
+    .string()
+    .default("US")
+    .describe("ISO country code for localized results."),
+  locale: z.string().default("en-US").describe("Locale for results."),
 });
 
 // Minimal TakoCard mirror (backend api/ga/v3/search/types.py::TakoCard). Loose
@@ -75,6 +80,8 @@ const takoAnswer = {
     const body = {
       query: input.query,
       source_indexes: input.sources,
+      country_code: input.country_code,
+      locale: input.locale,
     };
     const data = await djangoPost<AnswerPostResponse>(
       ctx.env,

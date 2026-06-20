@@ -17,6 +17,9 @@ import type { ToolContext, ToolModule } from "./types.js";
 
 const POLL_INTERVAL_MS = 5_000;
 const MAX_TRANSIENT_ERRORS = 2;
+export const AGENT_POLL_BUDGET_MS = 295_000;
+export const AGENT_WAIT_CEILING_S = 50;
+const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 const DESCRIPTION =
   "Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning that a single search/answer can't satisfy. Runs up to ~90s; returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search`/`tako_answer` for simple lookups; reach for this only when the question genuinely needs reasoning over multiple retrievals.";
@@ -37,6 +40,7 @@ const takoCardSchema = z
 export const agentRunSchema = z.object({
   run_id: z.string(),
   status: z.enum(["queued", "running", "completed", "failed"]),
+  timed_out: z.boolean().default(false),
   result: z
     .object({
       answer: z.string().nullable().optional(),
@@ -52,6 +56,7 @@ export type AgentRun = z.infer<typeof agentRunSchema>;
 type AgentRunWire = {
   run_id?: string;
   status?: string;
+  timed_out?: boolean;
   result?: unknown;
   error?: unknown;
 };
@@ -72,15 +77,21 @@ export async function dispatchAgentRun(ctx: ToolContext, query: string): Promise
 }
 
 /** Poll an agent run to a terminal state, emitting progress each iteration. */
-export async function pollAgentRun(ctx: ToolContext, runId: string): Promise<AgentRun> {
+export async function pollAgentRun(
+  ctx: ToolContext,
+  runId: string,
+  opts: { budgetMs: number; onTimeout: "throw" | "return" },
+): Promise<AgentRun> {
+  const deadline = Date.now() + opts.budgetMs;
   let transient = 0;
   let pollCount = 0;
-  // Budget: poll every 5s; the SDK timeout is kept fresh by sendProgress.
+  let lastRun: AgentRun | undefined;
+
   while (true) {
     let wire: AgentRunWire;
     try {
       wire = await djangoGet<AgentRunWire>(ctx.env, ctx.token, `/api/v1/agent/runs/${runId}`, {
-        timeoutMs: 30_000,
+        timeoutMs: AGENT_POLL_REQUEST_TIMEOUT_MS,
       });
       transient = 0;
     } catch (err) {
@@ -92,16 +103,28 @@ export async function pollAgentRun(ctx: ToolContext, runId: string): Promise<Age
     const parsed = agentRunSchema.safeParse({
       run_id: wire.run_id ?? runId,
       status: wire.status ?? "running",
+      timed_out: false,
       result: wire.result ?? null,
       error: wire.error ?? null,
     });
     if (!parsed.success) {
       throw new Error("Tako agent run endpoint returned an unexpected shape.");
     }
+    lastRun = parsed.data;
     pollCount += 1; // MCP requires progress to strictly increase per token.
     await ctx.sendProgress(pollCount, { message: `Agent running… (${parsed.data.status})` });
     if (parsed.data.status === "completed" || parsed.data.status === "failed") {
-      return parsed.data;
+      return { ...parsed.data, timed_out: false };
+    }
+    // Budget check: if next poll would exceed deadline
+    if (Date.now() + POLL_INTERVAL_MS >= deadline) {
+      if (opts.onTimeout === "throw") {
+        throw new Error(
+          `Agent run ${runId} did not complete within ${Math.round(opts.budgetMs / 1000)}s.`,
+        );
+      }
+      // onTimeout === "return"
+      return { ...lastRun, timed_out: true };
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
@@ -120,7 +143,7 @@ const takoAgent = {
   },
   async handler(input, ctx): Promise<AgentRun> {
     const runId = await dispatchAgentRun(ctx, input.query);
-    return pollAgentRun(ctx, runId);
+    return pollAgentRun(ctx, runId, { budgetMs: AGENT_POLL_BUDGET_MS, onTimeout: "throw" });
   },
 } satisfies ToolModule<typeof inputSchema, AgentRun>;
 

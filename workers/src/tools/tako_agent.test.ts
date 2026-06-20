@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../django.js", () => ({ djangoPost: vi.fn(), djangoGet: vi.fn() }));
 import { djangoPost, djangoGet } from "../django.js";
-import tool from "./tako_agent.js";
+import tool, { AGENT_POLL_BUDGET_MS, AGENT_WAIT_CEILING_S, pollAgentRun } from "./tako_agent.js";
 
 const ctx = { token: "t", env: {} as never, client: "claude" as const, sendProgress: vi.fn() };
 
@@ -28,6 +28,7 @@ describe("tako_agent", () => {
     expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({ query: "analyze X", effort: "deep" });
     expect(ctx.sendProgress).toHaveBeenCalled();
     expect(out.status).toBe("completed");
+    expect(out.timed_out).toBe(false);
     expect(out.result?.answer).toBe("42");
   });
 
@@ -41,6 +42,38 @@ describe("tako_agent", () => {
     const out = await handlerPromise;
 
     expect(out.status).toBe("failed");
+    expect(out.timed_out).toBe(false);
     expect(out.error?.message).toBe("boom");
+  });
+
+  it("throws when the run never completes before AGENT_POLL_BUDGET_MS (Claude path)", async () => {
+    vi.useFakeTimers();
+    // Always return "running" — never completes
+    vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_3", status: "running" });
+
+    const pollPromise = pollAgentRun(ctx, "run_3", {
+      budgetMs: AGENT_POLL_BUDGET_MS,
+      onTimeout: "throw",
+    });
+    // Advance past the budget
+    await vi.advanceTimersByTimeAsync(AGENT_POLL_BUDGET_MS + 10_000);
+    await expect(pollPromise).rejects.toThrow(/did not complete within/);
+  });
+
+  it("returns timed_out:true with non-terminal status on wait-path deadline elapse", async () => {
+    vi.useFakeTimers();
+    // Always return "running"
+    vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_4", status: "running" });
+
+    const budgetMs = AGENT_WAIT_CEILING_S * 1000;
+    const pollPromise = pollAgentRun(ctx, "run_4", {
+      budgetMs,
+      onTimeout: "return",
+    });
+    await vi.advanceTimersByTimeAsync(budgetMs + 10_000);
+    const result = await pollPromise;
+
+    expect(result.timed_out).toBe(true);
+    expect(result.status).toBe("running");
   });
 });

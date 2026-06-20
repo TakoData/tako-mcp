@@ -8,15 +8,15 @@
  * `tako_agent_start` for the full rationale.
  *
  * Internally calls `pollAgentRun`, which polls `GET /api/v1/agent/runs/{run_id}`
- * with a 5 s interval until the run reaches `completed` or `failed`.
- * Agent runs are typically 30–90 s, so expect to chain several calls of
- * this tool (~12 calls maximum ≈ 10 minutes) before a terminal status.
+ * with a 5 s interval until the run reaches `completed` or `failed`, or until
+ * `max_wait_seconds` elapses. If `timed_out` is true, call again with the same
+ * `run_id` to continue polling — agent runs are typically 30–90 s.
  *
  * BILLING: agent runs over MCP are not yet metered for PAYG orgs (TAKO-3245).
  */
 import { z } from "zod";
 
-import { agentRunSchema, type AgentRun, pollAgentRun } from "./tako_agent.js";
+import { AGENT_WAIT_CEILING_S, agentRunSchema, type AgentRun, pollAgentRun } from "./tako_agent.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -24,12 +24,21 @@ const inputSchema = z.object({
     .string()
     .min(1)
     .describe("Run ID returned from `tako_agent_start`."),
+  max_wait_seconds: z
+    .number()
+    .int()
+    .positive()
+    .max(AGENT_WAIT_CEILING_S)
+    .default(AGENT_WAIT_CEILING_S)
+    .describe(
+      `How long this single call may block waiting for a terminal status. Capped at ${AGENT_WAIT_CEILING_S} s so the call always returns before the MCP client's tool-call timeout fires. If the run isn't done yet (\`timed_out: true\`), call this tool again with the same run_id — agent runs typically take 30–90 s, expect to chain a few calls.`,
+    ),
 });
 
 const tako_agent_wait = {
   name: "tako_agent_wait",
   description:
-    "Use this AFTER `tako_agent_start` returns a `run_id`. Polls the agent run until it reaches `completed` or `failed`. **On `completed`, the result contains a synthesized `answer` and supporting `cards`.** If the run hasn't finished, call this tool again with the same `run_id` — agent runs typically take 30–90 s. **CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes); after that, tell the user the agent is taking longer than usual.**",
+    `Use this AFTER \`tako_agent_start\` returns a \`run_id\`. Polls the agent run until it reaches \`completed\` or \`failed\`, or until \`max_wait_seconds\` (default ${AGENT_WAIT_CEILING_S} s) elapses. **If \`timed_out\` is true, IMMEDIATELY call tako_agent_wait again with the same run_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting); after that, tell the user the agent is taking longer than usual and offer to retry.** On \`completed\`, the result contains a synthesized \`answer\` and supporting \`cards\`.`,
   inputSchema,
   outputSchema: agentRunSchema,
   annotations: {
@@ -39,7 +48,10 @@ const tako_agent_wait = {
     openWorldHint: false,
   },
   async handler(input, ctx): Promise<AgentRun> {
-    return pollAgentRun(ctx, input.run_id);
+    return pollAgentRun(ctx, input.run_id, {
+      budgetMs: input.max_wait_seconds * 1000,
+      onTimeout: "return",
+    });
   },
 } satisfies ToolModule<typeof inputSchema, AgentRun>;
 
