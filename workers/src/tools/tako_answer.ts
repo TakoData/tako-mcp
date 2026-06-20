@@ -63,7 +63,7 @@ const takoAnswer = {
   inputSchema,
   outputSchema,
   annotations: {
-    title: "Tako: Grounded Answer",
+    title: "Tako: Answer",
     readOnlyHint: true,
     destructiveHint: false,
     openWorldHint: false,
