@@ -18,10 +18,10 @@ import export_report from "./export_report.js";
 import get_chart_image from "./get_chart_image.js";
 import get_credit_balance from "./get_credit_balance.js";
 import get_report from "./get_report.js";
-import grounding from "./grounding.js";
 import list_reports from "./list_reports.js";
 import open_chart_ui from "./open_chart_ui.js";
 import start_deep_knowledge_search from "./start_deep_knowledge_search.js";
+import tako_answer from "./tako_answer.js";
 import tako_search from "./tako_search.js";
 import wait_for_knowledge_search from "./wait_for_knowledge_search.js";
 
@@ -36,10 +36,10 @@ export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
   get_chart_image as unknown as AnyToolModule,
   get_credit_balance as unknown as AnyToolModule,
   get_report as unknown as AnyToolModule,
-  grounding as unknown as AnyToolModule,
   list_reports as unknown as AnyToolModule,
   open_chart_ui as unknown as AnyToolModule,
   start_deep_knowledge_search as unknown as AnyToolModule,
+  tako_answer as unknown as AnyToolModule,
   tako_search as unknown as AnyToolModule,
   wait_for_knowledge_search as unknown as AnyToolModule,
 ];
