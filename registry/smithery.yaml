@@ -4,11 +4,12 @@
 name: tako-mcp
 title: Tako MCP Server
 description: |
-  Create and discover data visualizations with Tako. Search a knowledge base
-  of 100K+ charts covering economics, finance, demographics, and technology.
-  Create custom charts from raw data using 15+ chart types.
+  Search, answer, and fetch data from Tako's knowledge base of 100K+ charts
+  covering economics, finance, demographics, sports, markets, and weather; run
+  deep multi-step research agents; and create custom interactive visualizations
+  using 15+ chart types.
 
-version: "0.1.0"
+version: "0.2.0"
 license: MIT
 
 author:
@@ -32,70 +33,69 @@ tags:
   - mcp-ui
   - knowledge-base
 
-# Server configuration
+# Hosted remote server: a single Streamable HTTP endpoint on Cloudflare Workers.
+# There is no package to install — clients connect to the URL directly.
 server:
-  transport: sse
-  command: tako-mcp
-  port: 8001
+  type: remote
+  transport: streamable-http
+  url: https://mcp.tako.com/mcp
 
-# Configuration schema (what users need to provide)
+# Authentication. Web hosts (Claude.ai, ChatGPT) connect via the server's OAuth
+# flow. CLI/desktop hosts pass a Tako API token as a Bearer credential.
+authentication:
+  type: oauth2
+  description: >
+    Web hosts authenticate via the server's OAuth flow. CLI/desktop hosts may
+    instead pass a Tako API token (from tako.com account settings) as a Bearer
+    credential — set the optional takoApiToken below.
+
+# Optional configuration (only needed for the Bearer/API-token path).
 configSchema:
   type: object
-  required:
-    - takoApiKey
+  required: []
   properties:
-    takoApiKey:
+    takoApiToken:
       type: string
-      title: Tako API Key
+      title: Tako API Token
       description: >
-        Your Tako API token for authentication. Sign up at tako.com
-        and create a token in your account settings.
+        Optional. A Tako API token for the Bearer auth path used by CLI/desktop
+        hosts. Sign up at tako.com and create a token in your account settings.
+        Web hosts can ignore this and use OAuth instead.
 
-# Docker support
-docker:
-  image: ghcr.io/takodata/tako-mcp:latest
-  ports:
-    - "8001:8001"
-  environment:
-    PUBLIC_BASE_URL: https://tako.com
-
-# Installation methods
-installation:
-  pip:
-    package: tako-mcp
-    command: tako-mcp
-  docker:
-    image: ghcr.io/takodata/tako-mcp:latest
-
-# Tool summary for marketplace listing
+# Tool summary for marketplace listing (primary user-facing tools).
 tools:
-  - name: knowledge_search
-    description: Search charts and data visualizations on any topic
-  - name: get_chart_image
-    description: Get static PNG preview of a chart
-  - name: get_card_insights
-    description: Get AI-generated chart analysis
-  - name: list_chart_schemas
-    description: List available chart templates
-  - name: get_chart_schema
-    description: Get chart type data format details
+  - name: tako_search
+    description: Search Tako's knowledge base for charts and data visualizations on any topic
+  - name: tako_answer
+    description: Get a synthesized answer with supporting Tako chart cards and web sources
+  - name: tako_contents
+    description: Fetch the content behind a result URL (a card's CSV or a page's extracted text)
+  - name: tako_agent
+    description: Run Tako's deep research agent for complex, multi-step data questions
   - name: create_chart
-    description: Create new chart from raw data
+    description: Create a new custom chart from raw data
   - name: open_chart_ui
-    description: Open interactive chart via MCP-UI
+    description: Open an interactive chart via MCP-UI
+  - name: get_chart_image
+    description: Get a static PNG preview of a chart
+  - name: get_credit_balance
+    description: Check the connected account's API credit balance
 
 # Screenshots / examples for marketplace
 examples:
   - title: Search for Charts
     description: Find existing visualizations on any topic
     input: |
-      {"query": "US GDP growth rate", "api_token": "your-token"}
+      {"query": "US GDP growth rate"}
+  - title: Answer a Data Question
+    description: Get a synthesized answer with supporting chart cards
+    input: |
+      {"query": "How have US mortgage rates moved over the past year?"}
   - title: Create a Bar Chart
     description: Create a custom bar chart from your data
     input: |
       {
         "schema_name": "bar_chart",
-        "api_token": "your-token",
         "components": [
           {"component_type": "header", "config": {"title": "Revenue by Region"}},
           {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Revenue", "data": [{"x": "NA", "y": 120}, {"x": "EU", "y": 98}], "units": "$M"}]}}
