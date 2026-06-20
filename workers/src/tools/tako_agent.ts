@@ -18,7 +18,11 @@ import type { ToolContext, ToolModule } from "./types.js";
 const POLL_INTERVAL_MS = 5_000;
 const MAX_TRANSIENT_ERRORS = 2;
 export const AGENT_POLL_BUDGET_MS = 295_000;
-export const AGENT_WAIT_CEILING_S = 50;
+// ChatGPT split (tako_agent_wait) per-call cap. Kept at 40 (not 50) so the
+// worst case — a poll-GET that hangs the full AGENT_POLL_REQUEST_TIMEOUT_MS
+// right at the deadline — still returns in ~40+15 = 55s, under ChatGPT's
+// ~60s tool-call ceiling that the split exists to stay below.
+export const AGENT_WAIT_CEILING_S = 40;
 const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 const DESCRIPTION =
@@ -39,6 +43,9 @@ const takoCardSchema = z
 
 export const agentRunSchema = z.object({
   run_id: z.string(),
+  // Mirrors the backend AgentRunStatus StrEnum exactly (api/ga/v1/agent/types.py)
+  // — kept in lockstep on purpose. A new backend status must be added here too,
+  // or the poll will reject the run as an "unexpected shape".
   status: z.enum(["queued", "running", "completed", "failed"]),
   timed_out: z.boolean().default(false),
   result: z

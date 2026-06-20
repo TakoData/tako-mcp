@@ -329,7 +329,7 @@
     },
     {
       "name": "tako_agent_wait",
-      "description": "Use this AFTER `tako_agent_start` returns a `run_id`. Polls the agent run until it reaches `completed` or `failed`, or until `max_wait_seconds` (default 50 s) elapses. **If `timed_out` is true, IMMEDIATELY call tako_agent_wait again with the same run_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting); after that, tell the user the agent is taking longer than usual and offer to retry.** On `completed`, the result contains a synthesized `answer` and supporting `cards`.",
+      "description": "Use this AFTER `tako_agent_start` returns a `run_id`. Polls the agent run until it reaches `completed` or `failed`, or until `max_wait_seconds` (default 40 s) elapses. **If `timed_out` is true, IMMEDIATELY call tako_agent_wait again with the same run_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting); after that, tell the user the agent is taking longer than usual and offer to retry.** On `completed`, the result contains a synthesized `answer` and supporting `cards`.",
       "parameters": {
         "run_id": {
           "type": "string",
@@ -338,8 +338,8 @@
         },
         "max_wait_seconds": {
           "type": "integer",
-          "description": "How long this single call may block waiting for a terminal status. Capped at 50 s so the call always returns before the MCP client's tool-call timeout fires. If the run isn't done yet (`timed_out: true`), call this tool again with the same run_id — agent runs typically take 30–90 s, expect to chain a few calls.",
-          "default": 50
+          "description": "How long this single call may block waiting for a terminal status. Capped at 40 s so the call always returns before the MCP client's tool-call timeout fires. If the run isn't done yet (`timed_out: true`), call this tool again with the same run_id — agent runs typically take 30–90 s, expect to chain a few calls.",
+          "default": 40
         }
       },
       "annotations": {

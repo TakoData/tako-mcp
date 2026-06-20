@@ -28,6 +28,9 @@ const outputSchema = z.object({
   download_url: z.string(),
   expires_at: z.string(),
   source_url: z.string(),
+  // USD charged for this artifact (web text is metered ~$1/1k pages; Tako-card
+  // CSV is free → 0). Surfaced so the agent can report what the call cost.
+  cost: z.number(),
   text: z.string().nullable(),
 });
 
@@ -81,6 +84,7 @@ const takoContents = {
       download_url: item.url,
       expires_at: item.expires_at ?? "",
       source_url: item.source_url ?? input.url,
+      cost: item.cost ?? 0,
       text,
     });
     if (!parsed.success) {
