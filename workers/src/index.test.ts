@@ -184,11 +184,13 @@ describe("worker routing", () => {
       };
     };
     const names = body.result.tools.map((t) => t.name).sort();
-    // Default tool set — NO `start_deep_knowledge_search` or
-    // `wait_for_knowledge_search`. Those are ChatGPT-only (see
+    // Default tool set — NO `start_deep_knowledge_search`,
+    // `wait_for_knowledge_search`, `tako_agent_start`, or
+    // `tako_agent_wait`. Those are ChatGPT-only (see
     // `mcp.ts`'s `CHATGPT_ONLY_TOOL_NAMES`); on Claude.ai and other
     // clients with `resetTimeoutOnProgress` support, deep search
-    // happens inside `tako_search`'s auto-escalation path.
+    // happens inside `tako_search`'s auto-escalation path and
+    // agent runs use the single `tako_agent` tool.
     expect(names).toEqual([
       "create_chart",
       "create_report",
@@ -196,9 +198,11 @@ describe("worker routing", () => {
       "get_chart_image",
       "get_credit_balance",
       "get_report",
-      "grounding",
       "list_reports",
       "open_chart_ui",
+      "tako_agent",
+      "tako_answer",
+      "tako_contents",
       "tako_search",
     ]);
 
@@ -270,9 +274,15 @@ describe("worker routing", () => {
     const names = new Set(body.result.tools.map((t) => t.name));
     expect(names.has("start_deep_knowledge_search")).toBe(true);
     expect(names.has("wait_for_knowledge_search")).toBe(true);
-    // The default 10 tools are still present alongside.
+    // ChatGPT agent split tools are present.
+    expect(names.has("tako_agent_start")).toBe(true);
+    expect(names.has("tako_agent_wait")).toBe(true);
+    // The single tako_agent tool is excluded for chatgpt.
+    expect(names.has("tako_agent")).toBe(false);
+    // The default tools (minus tako_agent) are still present alongside.
     expect(names.has("tako_search")).toBe(true);
-    expect(body.result.tools).toHaveLength(12);
+    // 12 default tools − 1 (tako_agent excluded) + 4 chatgpt-only = 15
+    expect(body.result.tools).toHaveLength(15);
 
     // Both `tako_search` and `open_chart_ui` ship the chart
     // widget on ChatGPT. The empty-fast widget-gap problem (ChatGPT

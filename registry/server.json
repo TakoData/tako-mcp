@@ -294,6 +294,57 @@
       }
     },
     {
+      "name": "tako_agent",
+      "description": "Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning that a single search/answer can't satisfy. Runs up to ~90s; returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search`/`tako_answer` for simple lookups; reach for this only when the question genuinely needs reasoning over multiple retrievals.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "The deep/analytical question for the agent to work through.",
+          "required": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Deep Agent",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tako_agent_start",
+      "description": "Kick off a Tako deep agent run and return immediately with a `run_id`. Use this for complex, multi-step data questions requiring transformations, aggregations, and multi-hop reasoning. The agent runs server-side for 30–90 s; this tool returns in <1 s with the run handle. **Workflow:** (1) tell the user the agent run is starting; (2) call `tako_agent_wait` with the `run_id` to poll for results, chaining calls until `status` is `completed` or `failed`.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "The deep/analytical question for the agent to work through.",
+          "required": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Start Agent Run",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "tako_agent_wait",
+      "description": "Use this AFTER `tako_agent_start` returns a `run_id`. Polls the agent run until it reaches `completed` or `failed`. **On `completed`, the result contains a synthesized `answer` and supporting `cards`.** If the run hasn't finished, call this tool again with the same `run_id` — agent runs typically take 30–90 s. **CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes); after that, tell the user the agent is taking longer than usual.**",
+      "parameters": {
+        "run_id": {
+          "type": "string",
+          "description": "Run ID returned from `tako_agent_start`.",
+          "required": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Wait for Agent Run",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
       "name": "tako_answer",
       "description": "Ask a factual question and get back a single grounded, citation-backed text answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct answer about current or historical values, statistics, schedules, scores, comparisons, prices, forecasts, polls, or prediction-market odds. The answer is synthesized by Tako's arbiter from its curated knowledge graph and/or the live web. Use `sources: [\"tako\"]` to ground only in curated data, `[\"web\"]` for live web only, or omit it to let the arbiter blend both (default). If you want a chart rendered inline instead of a prose answer, use `tako_search`.",
       "parameters": {

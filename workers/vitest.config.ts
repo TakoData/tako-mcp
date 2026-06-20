@@ -29,6 +29,9 @@ export default defineWorkersConfig({
     ],
   },
   test: {
+    // tako_agent polls with a 5 s interval; allow up to 15 s for two poll
+    // iterations before declaring a test hung.
+    testTimeout: 15_000,
     poolOptions: {
       workers: {
         wrangler: { configPath: "./wrangler.jsonc" },

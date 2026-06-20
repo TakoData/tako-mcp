@@ -21,6 +21,9 @@ import get_report from "./get_report.js";
 import list_reports from "./list_reports.js";
 import open_chart_ui from "./open_chart_ui.js";
 import start_deep_knowledge_search from "./start_deep_knowledge_search.js";
+import tako_agent from "./tako_agent.js";
+import tako_agent_start from "./tako_agent_start.js";
+import tako_agent_wait from "./tako_agent_wait.js";
 import tako_answer from "./tako_answer.js";
 import tako_contents from "./tako_contents.js";
 import tako_search from "./tako_search.js";
@@ -40,6 +43,9 @@ export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
   list_reports as unknown as AnyToolModule,
   open_chart_ui as unknown as AnyToolModule,
   start_deep_knowledge_search as unknown as AnyToolModule,
+  tako_agent as unknown as AnyToolModule,
+  tako_agent_start as unknown as AnyToolModule,
+  tako_agent_wait as unknown as AnyToolModule,
   tako_answer as unknown as AnyToolModule,
   tako_contents as unknown as AnyToolModule,
   tako_search as unknown as AnyToolModule,
