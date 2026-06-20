@@ -180,6 +180,19 @@ export function createMcpServer(
   const CHATGPT_ONLY_TOOL_NAMES = new Set([
     "start_deep_knowledge_search",
     "wait_for_knowledge_search",
+    // ChatGPT's Apps SDK doesn't send a progressToken, so the single-tool
+    // `tako_agent` dispatch+poll path (which emits progress to keep the
+    // per-call timeout fresh) can't survive ChatGPT's ~60 s ceiling. The
+    // split pair `tako_agent_start` / `tako_agent_wait` is used instead.
+    "tako_agent_start",
+    "tako_agent_wait",
+  ]);
+  // Tools registered for all clients EXCEPT ChatGPT. The dispatch+poll
+  // `tako_agent` relies on `notifications/progress` for timeout extension —
+  // suppress it for chatgpt (which doesn't support that mechanism) and
+  // route to the split pair instead.
+  const CHATGPT_EXCLUDED_TOOL_NAMES = new Set([
+    "tako_agent",
   ]);
   // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
   // from the blanket claude.ai suppression in `widgetSuppressed`).
@@ -206,6 +219,9 @@ export function createMcpServer(
 
   for (const tool of TOOL_REGISTRY) {
     if (CHATGPT_ONLY_TOOL_NAMES.has(tool.name) && client !== "chatgpt") {
+      continue;
+    }
+    if (CHATGPT_EXCLUDED_TOOL_NAMES.has(tool.name) && client === "chatgpt") {
       continue;
     }
     registerTool(server, tool, ctx, {

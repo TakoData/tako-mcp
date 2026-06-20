@@ -1,11 +1,11 @@
 {
   "name": "tako-mcp-workers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Tako MCP server on Cloudflare Workers (mcp.tako.com).",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p scripts/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "wrangler dev",

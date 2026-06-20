@@ -2,7 +2,7 @@
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
   "namespace": "com.tako",
   "name": "tako-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "title": "Tako MCP Server",
   "description": "Create and discover data visualizations. Search Tako's knowledge base of 100K+ charts covering economics, finance, demographics, and technology. Create custom charts from raw data using 15+ chart types including timeseries, bar charts, scatter plots, pie charts, maps, heatmaps, treemaps, and more.",
   "repository": {

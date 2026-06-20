@@ -184,11 +184,13 @@ describe("worker routing", () => {
       };
     };
     const names = body.result.tools.map((t) => t.name).sort();
-    // Default tool set — NO `start_deep_knowledge_search` or
-    // `wait_for_knowledge_search`. Those are ChatGPT-only (see
+    // Default tool set — NO `start_deep_knowledge_search`,
+    // `wait_for_knowledge_search`, `tako_agent_start`, or
+    // `tako_agent_wait`. Those are ChatGPT-only (see
     // `mcp.ts`'s `CHATGPT_ONLY_TOOL_NAMES`); on Claude.ai and other
     // clients with `resetTimeoutOnProgress` support, deep search
-    // happens inside `knowledge_search`'s auto-escalation path.
+    // happens inside `tako_search`'s auto-escalation path and
+    // agent runs use the single `tako_agent` tool.
     expect(names).toEqual([
       "create_chart",
       "create_report",
@@ -196,14 +198,16 @@ describe("worker routing", () => {
       "get_chart_image",
       "get_credit_balance",
       "get_report",
-      "grounding",
-      "knowledge_search",
       "list_reports",
       "open_chart_ui",
+      "tako_agent",
+      "tako_answer",
+      "tako_contents",
+      "tako_search",
     ]);
 
-    // MCP Apps: `open_chart_ui` and `knowledge_search` ship the
-    // chart widget bundle. `knowledge_search` is a single-tool flow
+    // MCP Apps: `open_chart_ui` and `tako_search` ship the
+    // chart widget bundle. `tako_search` is a single-tool flow
     // (no kickoff/wait split) — the deep path polls internally and
     // emits MCP progress notifications to keep the client timeout
     // alive — so a successful tool call always carries a chart in
@@ -217,7 +221,7 @@ describe("worker routing", () => {
     // it the widget loads but `window.openai.toolOutput` never
     // populates). Other tools ship no widget and should declare
     // none of these fields.
-    const widgetTools = new Set(["open_chart_ui", "knowledge_search"]);
+    const widgetTools = new Set(["open_chart_ui", "tako_search"]);
     for (const name of widgetTools) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool?._meta).toMatchObject({
@@ -270,20 +274,26 @@ describe("worker routing", () => {
     const names = new Set(body.result.tools.map((t) => t.name));
     expect(names.has("start_deep_knowledge_search")).toBe(true);
     expect(names.has("wait_for_knowledge_search")).toBe(true);
-    // The default 10 tools are still present alongside.
-    expect(names.has("knowledge_search")).toBe(true);
-    expect(body.result.tools).toHaveLength(12);
+    // ChatGPT agent split tools are present.
+    expect(names.has("tako_agent_start")).toBe(true);
+    expect(names.has("tako_agent_wait")).toBe(true);
+    // The single tako_agent tool is excluded for chatgpt.
+    expect(names.has("tako_agent")).toBe(false);
+    // The default tools (minus tako_agent) are still present alongside.
+    expect(names.has("tako_search")).toBe(true);
+    // 12 default tools − 1 (tako_agent excluded) + 4 chatgpt-only = 15
+    expect(body.result.tools).toHaveLength(15);
 
-    // Both `knowledge_search` and `open_chart_ui` ship the chart
+    // Both `tako_search` and `open_chart_ui` ship the chart
     // widget on ChatGPT. The empty-fast widget-gap problem (ChatGPT
     // pins widget container height at the highest ever notified
     // and ignores shrink notifications, so a clean `count: 0`
     // result rendered as a persistent empty container) is now
-    // handled by `knowledge_search`'s handler throwing on empty
+    // handled by `tako_search`'s handler throwing on empty
     // for ChatGPT — tool errors don't reserve a widget container,
     // so the widget can stay shipped without leaving a gap on the
     // empty path.
-    for (const name of ["knowledge_search", "open_chart_ui"]) {
+    for (const name of ["tako_search", "open_chart_ui"]) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool?._meta).toMatchObject({
         ui: { resourceUri: "ui://tako/embed/chart" },
@@ -293,8 +303,8 @@ describe("worker routing", () => {
     }
   });
 
-  it("POST /mcp tools/list serves per-client knowledge_search descriptions", async () => {
-    // `knowledge_search` defines `descriptionByClient` with a
+  it("POST /mcp tools/list serves per-client tako_search descriptions", async () => {
+    // `tako_search` defines `descriptionByClient` with a
     // claude variant (auto-renders inline) and a chatgpt variant
     // (must chain into open_chart_ui + escalate via kickoff/wait).
     // The Worker selects the right variant from the UA-detected
@@ -322,7 +332,7 @@ describe("worker routing", () => {
       const body = (await res.json()) as {
         result: { tools: Array<{ name: string; description: string }> };
       };
-      const ks = body.result.tools.find((t) => t.name === "knowledge_search");
+      const ks = body.result.tools.find((t) => t.name === "tako_search");
       return ks?.description ?? "";
     }
 
@@ -338,7 +348,7 @@ describe("worker routing", () => {
     expect(claudeDesc).not.toContain("start_deep_knowledge_search");
 
     // ChatGPT variant: ALSO promises the inline auto-render
-    // (`knowledge_search` keeps its widget on ChatGPT now that the
+    // (`tako_search` keeps its widget on ChatGPT now that the
     // empty-path throw avoids the widget-container gap), AND
     // includes the LLM-side escalation directive
     // (server-side auto-escalation is disabled on ChatGPT, so the
