@@ -16,7 +16,7 @@
  */
 import { z } from "zod";
 
-import { type AgentRun, pollAgentRun } from "./tako_agent.js";
+import { agentRunSchema, type AgentRun, pollAgentRun } from "./tako_agent.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -31,6 +31,7 @@ const tako_agent_wait = {
   description:
     "Use this AFTER `tako_agent_start` returns a `run_id`. Polls the agent run until it reaches `completed` or `failed`. **On `completed`, the result contains a synthesized `answer` and supporting `cards`.** If the run hasn't finished, call this tool again with the same `run_id` — agent runs typically take 30–90 s. **CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes); after that, tell the user the agent is taking longer than usual.**",
   inputSchema,
+  outputSchema: agentRunSchema,
   annotations: {
     title: "Tako: Wait for Agent Run",
     readOnlyHint: true,

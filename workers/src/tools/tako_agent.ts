@@ -34,7 +34,7 @@ const takoCardSchema = z
   })
   .loose();
 
-const agentRunSchema = z.object({
+export const agentRunSchema = z.object({
   run_id: z.string(),
   status: z.enum(["queued", "running", "completed", "failed"]),
   result: z
@@ -98,11 +98,11 @@ export async function pollAgentRun(ctx: ToolContext, runId: string): Promise<Age
     if (!parsed.success) {
       throw new Error("Tako agent run endpoint returned an unexpected shape.");
     }
+    pollCount += 1; // MCP requires progress to strictly increase per token.
+    await ctx.sendProgress(pollCount, { message: `Agent running… (${parsed.data.status})` });
     if (parsed.data.status === "completed" || parsed.data.status === "failed") {
       return parsed.data;
     }
-    pollCount += 1; // MCP requires progress to strictly increase per token.
-    await ctx.sendProgress(pollCount, { message: `Agent running… (${parsed.data.status})` });
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
 }
