@@ -16,8 +16,9 @@ Connect your MCP client to `https://mcp.tako.com/sse`
 
 ## Capabilities
 
-- Search 100K+ curated charts on economics, finance, demographics, technology
+- Search 100K+ curated charts on economics, finance, demographics, technology (`tako_search`)
+- Get grounded, citation-backed prose answers from Tako's knowledge graph and the live web (`tako_answer`)
+- Fetch the underlying data (CSV) or text behind any result URL (`tako_contents`)
+- Run deep multi-step research agent for complex analytical questions (`tako_agent`)
 - Create custom charts: timeseries, bar charts, scatter plots, pie charts, maps, heatmaps, treemaps, and more
-- Get AI-generated insights and analysis for any chart
-- Explore a knowledge graph of entities, metrics, and cohorts
 - Render fully interactive charts via MCP-UI

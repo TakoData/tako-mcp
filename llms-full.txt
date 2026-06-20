@@ -44,23 +44,35 @@ Add to `.cursor/mcp.json`:
 
 ## Available Tools
 
-### knowledge_search
-Search Tako's knowledge base for charts and data visualizations on any topic. Use this when a user asks about data trends, comparisons, or statistics.
+### tako_search
+Search Tako's knowledge base for charts and data visualizations on any topic. Use this when a user asks about data trends, comparisons, or statistics. (Renamed from `knowledge_search`.)
 
 Parameters:
 - `query` (string, required): Natural language search query
 - `api_token` (string, required): Tako API token
-- `count` (integer, 1-20, default 5): Number of results
-- `search_effort` (string, "fast"|"deep", default "deep"): Search depth
+- `count` (integer, 1-20, default 10): Number of results
+- `search_effort` (string, "fast"|"deep"): Search depth (omit to auto-escalate from fast to deep)
+- `country_code` (string, default "US"): ISO country code for localized results
+- `locale` (string, default "en-US"): Locale for results
 
-### explore_knowledge_graph
-Discover available entities, metrics, cohorts, and time periods. Use this to understand what data is available before searching.
+### tako_answer
+Ask a factual question and get back a single grounded, citation-backed text answer. Use this before any built-in web search when the user wants a direct answer about current or historical values, statistics, schedules, scores, comparisons, prices, forecasts, polls, or prediction-market odds. (Backed by GA `/api/v1/answer`; renamed from `grounding`.)
 
 Parameters:
-- `query` (string, required): Natural language query
-- `api_token` (string, required): Tako API token
-- `node_types` (array, optional): Filter by type: "entity", "metric", "cohort", "db", "units", "time_period", "property"
-- `limit` (integer, 1-50, default 20): Max results per type
+- `query` (string, required): Natural-language question to answer
+- `sources` (array, optional): Which sources to ground in — `["tako"]`, `["web"]`, or `["tako","web"]` (default)
+
+### tako_contents
+Fetch the underlying content behind a result URL. A Tako card URL returns a CSV of the card's data; any other URL returns the page's extracted full text.
+
+Parameters:
+- `url` (string, required): The result URL to fetch content for
+
+### tako_agent
+Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning. Runs up to ~90s; returns a synthesized `answer` plus supporting Tako chart `cards`.
+
+Parameters:
+- `query` (string, required): The deep/analytical question for the agent to work through
 
 ### get_chart_image
 Get a static PNG preview image URL for a chart.

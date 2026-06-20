@@ -245,11 +245,19 @@ This verifies:
 - Search, images, and insights
 - MCP-UI resource generation
 
+## Breaking changes (v0.2.0)
+
+- `knowledge_search` → **`tako_search`** (endpoint unchanged).
+- `grounding` → **`tako_answer`** (now backed by GA `/api/v1/answer`; result is `{answer, cards, web_results, request_id}`).
+- New: **`tako_contents`**, **`tako_agent`**.
+
+Update any client config or agent prompts that referenced the old tool names.
+
 ## Available Tools
 
-> **Note on the JSON examples below:** these show the input shape used by the **legacy Python server** (`api_token` passed as a per-tool argument). If you're using the hosted endpoint at `mcp.tako.com`, drop the `api_token` field — auth flows via the connection-level `Authorization: Bearer …` header instead. Tool *inputs* are otherwise compatible across both transports, and your MCP client discovers the live tool surface automatically via `tools/list`. The hosted Worker also ships a different tool surface than the Python server: current Workers tools are `knowledge_search`, `get_chart_image`, `open_chart_ui`, `create_chart`, `create_report`, `get_report`, `list_reports`, and `get_credit_balance`.
+> **Note on the JSON examples below:** these show the input shape used by the **legacy Python server** (`api_token` passed as a per-tool argument). If you're using the hosted endpoint at `mcp.tako.com`, drop the `api_token` field — auth flows via the connection-level `Authorization: Bearer …` header instead. Tool *inputs* are otherwise compatible across both transports, and your MCP client discovers the live tool surface automatically via `tools/list`. The hosted Worker also ships a different tool surface than the Python server: current Workers tools are `tako_search`, `tako_answer`, `tako_contents`, `tako_agent`, `get_chart_image`, `open_chart_ui`, `create_chart`, `create_report`, `get_report`, `list_reports`, and `get_credit_balance`.
 
-### `knowledge_search`
+### `tako_search`
 
 Search Tako's knowledge base for charts and data visualizations.
 
@@ -375,10 +383,10 @@ Returns a UIResource for rendering an interactive iframe.
 ## Example Flow
 
 1. User asks: "Show me a chart about Intel vs Nvidia headcount"
-2. Agent calls `knowledge_search` with the query
+2. Agent calls `tako_search` with the query
 3. Agent receives chart results with IDs
 4. Agent can:
-   - Call `get_card_insights` to summarize the data
+   - Call `tako_answer` to get a grounded prose answer
    - Call `get_chart_image` for a preview
    - Call `open_chart_ui` to render an interactive chart
 

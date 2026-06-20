@@ -90,18 +90,22 @@ Two transport stacks, same Django backend.
 | `Dockerfile` | Self-hosted container build (Python 3.11-slim, port 8001) |
 | `registry/server.json` | Public MCP registry discovery card (auto-generated from Workers tools) |
 
-### Tools (Workers — 8 after PR #47)
+### Tools (Workers — current)
 
 Source of truth: `workers/src/tools/*.ts`. The Python implementation has a different surface (see TAKO-2599 audit).
 
-1. `knowledge_search` — Search charts by natural-language query
-2. `get_chart_image` — Get static PNG preview URL
-3. `open_chart_ui` — Render interactive chart via MCP-UI
-4. `create_chart` — Create chart from components
-5. `create_report` — Kick off async report generation
-6. `get_report` — Fetch a report by ID
-7. `list_reports` — List the user's reports
-8. `get_credit_balance` — Current credit balance
+1. `tako_search` — Search charts by natural-language query (renamed from `knowledge_search`)
+2. `tako_answer` — Get a grounded prose answer (renamed from `grounding`; GA `/api/v1/answer`)
+3. `tako_contents` — Fetch underlying content (CSV or text) behind a result URL
+4. `tako_agent` — Deep research agent for multi-step data questions
+5. `get_chart_image` — Get static PNG preview URL
+6. `open_chart_ui` — Render interactive chart via MCP-UI
+7. `create_chart` — Create chart from components
+8. `create_report` — Kick off async report generation
+9. `export_report` — Export a completed report (PDF/Markdown/JSON/PowerPoint)
+10. `get_report` — Fetch a report by ID
+11. `list_reports` — List the user's reports
+12. `get_credit_balance` — Current credit balance
 
 `explore_knowledge_graph` was retired in PR #47 (endpoint removed upstream).
 
