@@ -1,5 +1,5 @@
 /**
- * Tests for `knowledge_search`.
+ * Tests for `tako_search`.
  *
  * Single-tool flow with internal polling for the deep (Orca) path,
  * plus MCP `notifications/progress` emission so clients with
@@ -29,7 +29,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DjangoHttpError, DjangoNotFoundError } from "../django.js";
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import knowledge_search, { __test_only__ } from "./knowledge_search.js";
+import tako_search, { __test_only__ } from "./tako_search.js";
 import {
   bodyOf,
   jsonResponse,
@@ -57,15 +57,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("knowledge_search input schema", () => {
+describe("tako_search input schema", () => {
   it("defaults count to 10", () => {
-    const parsed = knowledge_search.inputSchema.safeParse({ query: "x" });
+    const parsed = tako_search.inputSchema.safeParse({ query: "x" });
     expect(parsed.success).toBe(true);
     if (parsed.success) expect(parsed.data.count).toBe(10);
   });
 
   it("rejects search_effort=medium", () => {
-    const parsed = knowledge_search.inputSchema.safeParse({
+    const parsed = tako_search.inputSchema.safeParse({
       query: "x",
       search_effort: "medium",
     });
@@ -73,7 +73,7 @@ describe("knowledge_search input schema", () => {
   });
 
   it("rejects search_effort=auto", () => {
-    const parsed = knowledge_search.inputSchema.safeParse({
+    const parsed = tako_search.inputSchema.safeParse({
       query: "x",
       search_effort: "auto",
     });
@@ -81,7 +81,7 @@ describe("knowledge_search input schema", () => {
   });
 
   it("accepts search_effort=fast", () => {
-    const parsed = knowledge_search.inputSchema.safeParse({
+    const parsed = tako_search.inputSchema.safeParse({
       query: "x",
       search_effort: "fast",
     });
@@ -89,7 +89,7 @@ describe("knowledge_search input schema", () => {
   });
 
   it("accepts search_effort=deep", () => {
-    const parsed = knowledge_search.inputSchema.safeParse({
+    const parsed = tako_search.inputSchema.safeParse({
       query: "x",
       search_effort: "deep",
     });
@@ -97,7 +97,7 @@ describe("knowledge_search input schema", () => {
   });
 });
 
-describe("knowledge_search fast-first-deep-fallback", () => {
+describe("tako_search fast-first-deep-fallback", () => {
   it("defaults to search_effort=fast on the initial POST", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, {
@@ -115,7 +115,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
       }),
     ]);
 
-    await knowledge_search.handler({ query: "gold price", ...DEFAULTS }, CTX);
+    await tako_search.handler({ query: "gold price", ...DEFAULTS }, CTX);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
@@ -139,7 +139,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
       }),
     ]);
 
-    const out = await knowledge_search.handler(
+    const out = await tako_search.handler(
       { query: "gold price", ...DEFAULTS },
       CTX,
     );
@@ -177,7 +177,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
         }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "thailand tourism gdp", ...DEFAULTS },
         CTX,
       );
@@ -216,7 +216,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
         //    `error_type` discriminator is what gates the empty-result
         //    translation; without it the 404 propagates as a fatal
         //    DjangoNotFoundError. See `RELEVANT_RESULTS_NOT_FOUND_TYPE`
-        //    in `knowledge_search.ts`.)
+        //    in `tako_search.ts`.)
         jsonResponse(404, {
           error_type: "RELEVANT_RESULTS_NOT_FOUND",
           error_message: "No relevant knowledge cards found",
@@ -243,7 +243,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
         }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "daily caloric supply india china us", ...DEFAULTS },
         CTX,
       );
@@ -277,7 +277,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
       }),
     ]);
 
-    const out = await knowledge_search.handler(
+    const out = await tako_search.handler(
       {
         query: "obscure query with no matches",
         ...DEFAULTS,
@@ -308,7 +308,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     ]);
 
     await expect(
-      knowledge_search.handler(
+      tako_search.handler(
         { query: "query against a moved endpoint", ...DEFAULTS },
         CTX,
       ),
@@ -323,7 +323,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     ]);
 
     await expect(
-      knowledge_search.handler(
+      tako_search.handler(
         { query: "query that hits a different 404", ...DEFAULTS },
         CTX,
       ),
@@ -348,7 +348,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     const ctx: ToolContext = { ...CTX, client: "chatgpt" };
 
     await expect(
-      knowledge_search.handler(
+      tako_search.handler(
         { query: "thailand tourism gdp", ...DEFAULTS },
         ctx,
       ),
@@ -371,7 +371,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     const ctx: ToolContext = { ...CTX, client: "chatgpt" };
 
     await expect(
-      knowledge_search.handler(
+      tako_search.handler(
         { query: "obscure metric with no coverage", ...DEFAULTS },
         ctx,
       ),
@@ -393,7 +393,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     ]);
     const ctx: ToolContext = { ...CTX, client: "chatgpt" };
 
-    const out = await knowledge_search.handler(
+    const out = await tako_search.handler(
       {
         query: "thailand tourism gdp",
         ...DEFAULTS,
@@ -413,7 +413,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
     // sit on a hopeless poll loop until the host times out.
     const ctx: ToolContext = { ...CTX, client: "chatgpt" };
     await expect(
-      knowledge_search.handler(
+      tako_search.handler(
         { query: "x", search_effort: "deep", ...DEFAULTS },
         ctx,
       ),
@@ -425,7 +425,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
       jsonResponse(200, { outputs: { knowledge_cards: [] } }),
     ]);
 
-    const out = await knowledge_search.handler(
+    const out = await tako_search.handler(
       { query: "obscure", search_effort: "fast", ...DEFAULTS },
       CTX,
     );
@@ -435,7 +435,7 @@ describe("knowledge_search fast-first-deep-fallback", () => {
   });
 });
 
-describe("knowledge_search async-task polling", () => {
+describe("tako_search async-task polling", () => {
   it("polls once and returns cards when status is COMPLETED on first GET (explicit deep)", async () => {
     vi.useFakeTimers();
     try {
@@ -460,7 +460,7 @@ describe("knowledge_search async-task polling", () => {
         }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "us gdp", search_effort: "deep", ...DEFAULTS },
         CTX,
       );
@@ -510,7 +510,7 @@ describe("knowledge_search async-task polling", () => {
         }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "slow query", search_effort: "deep", ...DEFAULTS },
         CTX,
       );
@@ -549,7 +549,7 @@ describe("knowledge_search async-task polling", () => {
         }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "x", search_effort: "deep", ...DEFAULTS },
         CTX,
       );
@@ -575,7 +575,7 @@ describe("knowledge_search async-task polling", () => {
         }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "x", search_effort: "deep", ...DEFAULTS },
         CTX,
       );
@@ -612,7 +612,7 @@ describe("knowledge_search async-task polling", () => {
         }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "x", search_effort: "deep", ...DEFAULTS },
         CTX,
       );
@@ -642,7 +642,7 @@ describe("knowledge_search async-task polling", () => {
         jsonResponse(503, { detail: "blip 3" }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "x", search_effort: "deep", ...DEFAULTS },
         CTX,
       );
@@ -669,7 +669,7 @@ describe("knowledge_search async-task polling", () => {
         new Response("", { status: 404 }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "x", search_effort: "deep", ...DEFAULTS },
         CTX,
       );
@@ -699,7 +699,7 @@ describe("knowledge_search async-task polling", () => {
       }
       mockFetchSequence(responses);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "x", search_effort: "deep", ...DEFAULTS },
         CTX,
       );
@@ -744,7 +744,7 @@ describe("knowledge_search async-task polling", () => {
         }),
       ]);
 
-      const promise = knowledge_search.handler(
+      const promise = tako_search.handler(
         { query: "x", search_effort: "deep", ...DEFAULTS },
         ctx,
       );
@@ -769,7 +769,7 @@ describe("knowledge_search async-task polling", () => {
   });
 });
 
-describe("knowledge_search auto-chain top-result chart fields", () => {
+describe("tako_search auto-chain top-result chart fields", () => {
   it("populates auto-chain widget fields when top card has card_id", async () => {
     mockFetchSequence([
       jsonResponse(200, {
@@ -787,7 +787,7 @@ describe("knowledge_search auto-chain top-result chart fields", () => {
       }),
     ]);
 
-    const out = await knowledge_search.handler(
+    const out = await tako_search.handler(
       { query: "AAPL", ...DEFAULTS },
       CTX,
     );
@@ -821,7 +821,7 @@ describe("knowledge_search auto-chain top-result chart fields", () => {
       }),
     ]);
 
-    const out = await knowledge_search.handler(
+    const out = await tako_search.handler(
       { query: "x", search_effort: "fast", ...DEFAULTS },
       CTX,
     );
@@ -836,7 +836,7 @@ describe("knowledge_search auto-chain top-result chart fields", () => {
       jsonResponse(200, { outputs: { knowledge_cards: [] } }),
     ]);
 
-    const out = await knowledge_search.handler(
+    const out = await tako_search.handler(
       { query: "obscure", search_effort: "fast", ...DEFAULTS },
       CTX,
     );

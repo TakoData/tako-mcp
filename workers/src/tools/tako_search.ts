@@ -1,5 +1,5 @@
 /**
- * `knowledge_search` — single-tool semantic search over Tako's curated
+ * `tako_search` — single-tool semantic search over Tako's curated
  * knowledge graph.
  *
  * Runs `fast` (lexical, sync, cheap) by default and auto-escalates to
@@ -174,8 +174,8 @@ const outputSchema = z.object(resultsOutputShape);
 
 type Output = z.infer<typeof outputSchema>;
 
-const knowledge_search = {
-  name: "knowledge_search",
+const tako_search = {
+  name: "tako_search",
   description: DESCRIPTION_DEFAULT,
   descriptionByClient: {
     claude: DESCRIPTION_CLAUDE,
@@ -227,6 +227,9 @@ const knowledge_search = {
       // endpoint", or a reverse-proxy 404 with no body — must
       // re-throw as the original `DjangoNotFoundError` so it's not
       // silently masked into a false empty-result.
+      // Intentionally the LEGACY /api/v1/knowledge_search endpoint: it supports
+      // fast + deep + async. /api/v3/search is fast-only today — repoint here
+      // once v3 gains deep support (TAKO-3183).
       try {
         return await djangoPost<SearchPostResponse>(
           ctx.env,
@@ -329,7 +332,7 @@ const knowledge_search = {
       ctx.client === "chatgpt"
     ) {
       throw new Error(
-        "knowledge_search returned 0 cards from fast on ChatGPT. The kickoff/wait deep flow is the path forward: call `start_deep_knowledge_search` with the same query, then loop `wait_for_knowledge_search` until COMPLETED, then call `open_chart_ui` with `results[0].card_id` to render the top chart. Do NOT retry `knowledge_search` with `search_effort: \"deep\"` (host timeout would trip), do NOT stop, and do NOT fall back to your own training knowledge.",
+        "tako_search returned 0 cards from fast on ChatGPT. The kickoff/wait deep flow is the path forward: call `start_deep_knowledge_search` with the same query, then loop `wait_for_knowledge_search` until COMPLETED, then call `open_chart_ui` with `results[0].card_id` to render the top chart. Do NOT retry `tako_search` with `search_effort: \"deep\"` (host timeout would trip), do NOT stop, and do NOT fall back to your own training knowledge.",
       );
     }
 
@@ -459,24 +462,24 @@ async function pollDeep(
 
     if (FAILURE_STATES.has(normalizedStatus)) {
       throw new Error(
-        `knowledge_search deep task ${normalizedStatus.toLowerCase()} (${summarizeProgress(latestEvents)}): ${status.error ?? "no detail provided by Tako backend"}`,
+        `tako_search deep task ${normalizedStatus.toLowerCase()} (${summarizeProgress(latestEvents)}): ${status.error ?? "no detail provided by Tako backend"}`,
       );
     }
 
     const elapsed = Date.now() - startedAt;
     if (elapsed + POLL_INTERVAL_MS >= POLL_BUDGET_MS) {
       throw new Error(
-        `knowledge_search deep task ${taskId} did not complete within ${Math.round(POLL_BUDGET_MS / 1000)}s (${summarizeProgress(latestEvents)}) — Tako's deep-research pipeline may be busy. Try again shortly, or pass \`search_effort: "fast"\` to force the cheap sync path.`,
+        `tako_search deep task ${taskId} did not complete within ${Math.round(POLL_BUDGET_MS / 1000)}s (${summarizeProgress(latestEvents)}) — Tako's deep-research pipeline may be busy. Try again shortly, or pass \`search_effort: "fast"\` to force the cheap sync path.`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 }
 
-export default knowledge_search;
+export default tako_search;
 
 // Exported for unit tests — the polling-budget constants drive the
-// mock-response counts in `knowledge_search.test.ts` so the
+// mock-response counts in `tako_search.test.ts` so the
 // budget-exhaustion test stays correct when the budget is tuned.
 export const __test_only__ = {
   POLL_INTERVAL_MS,

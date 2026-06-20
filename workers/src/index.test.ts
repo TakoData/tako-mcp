@@ -197,9 +197,9 @@ describe("worker routing", () => {
       "get_credit_balance",
       "get_report",
       "grounding",
-      "knowledge_search",
       "list_reports",
       "open_chart_ui",
+      "tako_search",
     ]);
 
     // MCP Apps: `open_chart_ui` and `knowledge_search` ship the
@@ -217,7 +217,7 @@ describe("worker routing", () => {
     // it the widget loads but `window.openai.toolOutput` never
     // populates). Other tools ship no widget and should declare
     // none of these fields.
-    const widgetTools = new Set(["open_chart_ui", "knowledge_search"]);
+    const widgetTools = new Set(["open_chart_ui", "tako_search"]);
     for (const name of widgetTools) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool?._meta).toMatchObject({
@@ -271,7 +271,7 @@ describe("worker routing", () => {
     expect(names.has("start_deep_knowledge_search")).toBe(true);
     expect(names.has("wait_for_knowledge_search")).toBe(true);
     // The default 10 tools are still present alongside.
-    expect(names.has("knowledge_search")).toBe(true);
+    expect(names.has("tako_search")).toBe(true);
     expect(body.result.tools).toHaveLength(12);
 
     // Both `knowledge_search` and `open_chart_ui` ship the chart
@@ -283,7 +283,7 @@ describe("worker routing", () => {
     // for ChatGPT — tool errors don't reserve a widget container,
     // so the widget can stay shipped without leaving a gap on the
     // empty path.
-    for (const name of ["knowledge_search", "open_chart_ui"]) {
+    for (const name of ["tako_search", "open_chart_ui"]) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool?._meta).toMatchObject({
         ui: { resourceUri: "ui://tako/embed/chart" },
@@ -293,7 +293,7 @@ describe("worker routing", () => {
     }
   });
 
-  it("POST /mcp tools/list serves per-client knowledge_search descriptions", async () => {
+  it("POST /mcp tools/list serves per-client tako_search descriptions", async () => {
     // `knowledge_search` defines `descriptionByClient` with a
     // claude variant (auto-renders inline) and a chatgpt variant
     // (must chain into open_chart_ui + escalate via kickoff/wait).
@@ -322,7 +322,7 @@ describe("worker routing", () => {
       const body = (await res.json()) as {
         result: { tools: Array<{ name: string; description: string }> };
       };
-      const ks = body.result.tools.find((t) => t.name === "knowledge_search");
+      const ks = body.result.tools.find((t) => t.name === "tako_search");
       return ks?.description ?? "";
     }
 
