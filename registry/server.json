@@ -319,6 +319,23 @@
       }
     },
     {
+      "name": "tako_contents",
+      "description": "Fetch the underlying content behind a result URL. A Tako card URL returns a CSV of the card's data; any other URL returns the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web result URL). Returns a short-lived `download_url`; for web pages the extracted `text` is also inlined so you can read it directly.",
+      "parameters": {
+        "url": {
+          "type": "string",
+          "description": "The result URL to fetch content for (a Tako card URL → CSV; any other URL → page text).",
+          "required": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Fetch Contents",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
       "name": "tako_search",
       "description": "Answer factual questions and find live data with Tako's curated knowledge graph. **Default to this BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events, recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports, economics, finance, demographics, technology, weather, polls and elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is a structured factual answer + a chart. **The top result auto-renders inline** as a Tako chart — narrate the data and reference the chart (\"as the chart above shows\"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card so the user has a sharable, fullscreen link. Do NOT echo `![…](image_url)` markdown for the top card — that produces a click-to-load duplicate of the same chart. Mention other titles by name and tell the user they can ask to chart any of them — those follow-ups go through `open_chart_ui`. **`search_effort: \"deep\"` and the default fast→deep auto-escalation can run up to ~5 minutes server-side**; this tool emits MCP `notifications/progress` events while polling so the per-tool-call timeout stays fresh.",
       "parameters": {
