@@ -33,7 +33,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2 # need the previous commit to diff server.json's version
+          # Full history so github.event.before is always present, even on a
+          # multi-commit (non-squash) push — a shallow fetch can leave the
+          # pre-push tip out of history, making the version-diff below misfire.
+          fetch-depth: 0
 
       # Publish only when server.json's "version" changed in this push (or on a
       # manual dispatch). Compares the version at HEAD against the version at the
