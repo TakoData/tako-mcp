@@ -255,7 +255,7 @@ Update any client config or agent prompts that referenced the old tool names.
 
 ## Available Tools
 
-> **Note on the JSON examples below:** these show the input shape used by the **legacy Python server** (`api_token` passed as a per-tool argument). If you're using the hosted endpoint at `mcp.tako.com`, drop the `api_token` field — auth flows via the connection-level `Authorization: Bearer …` header instead. Tool *inputs* are otherwise compatible across both transports, and your MCP client discovers the live tool surface automatically via `tools/list`. The hosted Worker also ships a different tool surface than the Python server: current Workers tools are `tako_search`, `tako_answer`, `tako_contents`, `tako_agent`, `get_chart_image`, `open_chart_ui`, `create_chart`, `create_report`, `get_report`, `list_reports`, and `get_credit_balance`.
+> **Note on the JSON examples below:** these show the input shape used by the **legacy Python server** (`api_token` passed as a per-tool argument). If you're using the hosted endpoint at `mcp.tako.com`, drop the `api_token` field — auth flows via the connection-level `Authorization: Bearer …` header instead. Tool *inputs* are otherwise compatible across both transports, and your MCP client discovers the live tool surface automatically via `tools/list`. The hosted Worker also ships a different tool surface than the Python server: current Workers tools are `tako_search`, `tako_answer`, `tako_contents`, `tako_agent`, `get_chart_image`, `open_chart_ui`, `create_chart`, `create_report`, `get_report`, `list_reports`, `export_report`, and `get_credit_balance`.
 
 ### `tako_search`
 
