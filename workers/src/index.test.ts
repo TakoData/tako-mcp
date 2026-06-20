@@ -188,7 +188,7 @@ describe("worker routing", () => {
     // `wait_for_knowledge_search`. Those are ChatGPT-only (see
     // `mcp.ts`'s `CHATGPT_ONLY_TOOL_NAMES`); on Claude.ai and other
     // clients with `resetTimeoutOnProgress` support, deep search
-    // happens inside `knowledge_search`'s auto-escalation path.
+    // happens inside `tako_search`'s auto-escalation path.
     expect(names).toEqual([
       "create_chart",
       "create_report",
@@ -202,8 +202,8 @@ describe("worker routing", () => {
       "tako_search",
     ]);
 
-    // MCP Apps: `open_chart_ui` and `knowledge_search` ship the
-    // chart widget bundle. `knowledge_search` is a single-tool flow
+    // MCP Apps: `open_chart_ui` and `tako_search` ship the
+    // chart widget bundle. `tako_search` is a single-tool flow
     // (no kickoff/wait split) — the deep path polls internally and
     // emits MCP progress notifications to keep the client timeout
     // alive — so a successful tool call always carries a chart in
@@ -274,12 +274,12 @@ describe("worker routing", () => {
     expect(names.has("tako_search")).toBe(true);
     expect(body.result.tools).toHaveLength(12);
 
-    // Both `knowledge_search` and `open_chart_ui` ship the chart
+    // Both `tako_search` and `open_chart_ui` ship the chart
     // widget on ChatGPT. The empty-fast widget-gap problem (ChatGPT
     // pins widget container height at the highest ever notified
     // and ignores shrink notifications, so a clean `count: 0`
     // result rendered as a persistent empty container) is now
-    // handled by `knowledge_search`'s handler throwing on empty
+    // handled by `tako_search`'s handler throwing on empty
     // for ChatGPT — tool errors don't reserve a widget container,
     // so the widget can stay shipped without leaving a gap on the
     // empty path.
@@ -294,7 +294,7 @@ describe("worker routing", () => {
   });
 
   it("POST /mcp tools/list serves per-client tako_search descriptions", async () => {
-    // `knowledge_search` defines `descriptionByClient` with a
+    // `tako_search` defines `descriptionByClient` with a
     // claude variant (auto-renders inline) and a chatgpt variant
     // (must chain into open_chart_ui + escalate via kickoff/wait).
     // The Worker selects the right variant from the UA-detected
@@ -338,7 +338,7 @@ describe("worker routing", () => {
     expect(claudeDesc).not.toContain("start_deep_knowledge_search");
 
     // ChatGPT variant: ALSO promises the inline auto-render
-    // (`knowledge_search` keeps its widget on ChatGPT now that the
+    // (`tako_search` keeps its widget on ChatGPT now that the
     // empty-path throw avoids the widget-container gap), AND
     // includes the LLM-side escalation directive
     // (server-side auto-escalation is disabled on ChatGPT, so the
