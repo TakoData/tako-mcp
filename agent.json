@@ -2,16 +2,19 @@
   "name": "Tako",
   "description": "Data visualization agent that creates, discovers, and analyzes interactive charts. Searches a knowledge base of 100K+ charts and creates custom visualizations from raw data using 15+ chart types.",
   "url": "https://mcp.tako.com",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "capabilities": {
     "streaming": true,
     "pushNotifications": false
   },
   "authentication": {
-    "schemes": ["apiKey"],
+    "schemes": ["oauth2", "apiKey"],
     "credentials": {
+      "oauth2": {
+        "description": "Web hosts (Claude.ai, ChatGPT) authenticate via the server's OAuth flow."
+      },
       "apiKey": {
-        "description": "Tako API token from tako.com"
+        "description": "CLI/desktop hosts pass a Tako API token from tako.com as a Bearer credential."
       }
     }
   },

@@ -1,0 +1,46 @@
+name: Publish to MCP Registry
+
+# Publishes ./server.json (the io.github.TakoData/tako-mcp remote-server
+# descriptor) to the official MCP Registry (registry.modelcontextprotocol.io)
+# via GitHub OIDC. OIDC needs NO secret: the io.github.TakoData/* namespace is
+# authorized because this repo lives in the TakoData GitHub org.
+#
+# NOTE: ./server.json is the official-registry descriptor (remote streamable-http
+# at mcp.tako.com/mcp; tools are discovered at runtime). It is distinct from
+# registry/server.json, which is the in-repo generated tool catalog used by
+# `npm run registry:gen`/`registry:check`.
+
+on:
+  push:
+    tags: ["v*"] # publish on a release tag, e.g. v0.2.0
+  workflow_dispatch: {} # or publish on demand
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required for OIDC authentication
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      # On a release tag, stamp server.json's version from the tag so the
+      # published version matches the tag (the registry rejects re-publishing an
+      # already-published version). On workflow_dispatch, the checked-in version
+      # is published as-is.
+      - name: Sync server.json version to the release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          jq --arg v "$VERSION" '.version = $v' server.json > server.tmp && mv server.tmp server.json
+
+      - name: Authenticate to the MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to the MCP Registry
+        run: ./mcp-publisher publish

@@ -4,13 +4,12 @@
   "name": "tako-mcp",
   "version": "0.2.0",
   "title": "Tako MCP Server",
-  "description": "Create and discover data visualizations. Search Tako's knowledge base of 100K+ charts covering economics, finance, demographics, and technology. Create custom charts from raw data using 15+ chart types including timeseries, bar charts, scatter plots, pie charts, maps, heatmaps, treemaps, and more.",
+  "description": "Search, answer, and fetch data from Tako's knowledge base of 100K+ charts covering economics, finance, demographics, sports, markets, and weather; run deep multi-step research agents; and create custom interactive visualizations using 15+ chart types.",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
     "source": "github"
   },
   "license": "MIT",
-  "runtime": "python",
   "categories": [
     "Data Visualization",
     "Charts",
@@ -31,33 +30,13 @@
       "url": "https://tako.com"
     }
   ],
-  "package": {
-    "type": "pip",
-    "name": "tako-mcp"
-  },
-  "installation": {
-    "pip": {
-      "command": "pip install tako-mcp",
-      "entrypoint": "tako-mcp"
-    },
-    "docker": {
-      "image": "ghcr.io/takodata/tako-mcp:latest",
-      "ports": [
-        "8001:8001"
-      ],
-      "environment": {
-        "PUBLIC_BASE_URL": "https://tako.com"
-      }
-    }
-  },
   "transport": {
-    "type": "sse",
-    "endpoint": "/sse",
-    "port": 8001
+    "type": "streamable-http",
+    "url": "https://mcp.tako.com/mcp"
   },
   "authentication": {
-    "type": "api_key",
-    "description": "Tako API token. Sign up at tako.com and create a token in account settings.",
+    "type": "oauth2",
+    "description": "Web hosts (Claude.ai, ChatGPT) connect via the server's OAuth flow. CLI/desktop hosts pass a Tako API token (from tako.com account settings) as a Bearer credential.",
     "setup_url": "https://tako.com"
   },
   "tools": [

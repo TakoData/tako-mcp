@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.TakoData/tako-mcp",
+  "title": "Tako",
+  "description": "Search, answer, and fetch data from Tako's knowledge base of 100K+ charts (economics, finance, demographics, sports, markets, weather), run deep multi-step research agents, and render interactive visualizations — over MCP.",
+  "version": "0.2.0",
+  "repository": {
+    "url": "https://github.com/TakoData/tako-mcp",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.tako.com/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Tako API token as a Bearer credential, e.g. `Bearer <token>` (CLI/desktop hosts such as Claude Code, Cursor, Windsurf). Get one at tako.com -> account settings -> API tokens. Web hosts (Claude.ai, ChatGPT) use the server's OAuth flow instead, so this header is optional.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
