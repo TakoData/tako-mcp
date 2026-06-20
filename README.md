@@ -456,9 +456,11 @@ as a remote server under the name `io.github.TakoData/tako-mcp`.
 - **Publishing** is automated by `.github/workflows/publish-mcp.yml`. It
   authenticates with the registry via **GitHub OIDC** (no secret — the
   `io.github.TakoData/*` namespace is authorized because this repo lives in the
-  TakoData org) and runs `mcp-publisher publish`. It triggers on a `v*` release
-  tag (stamping `server.json`'s version from the tag) or via manual
-  `workflow_dispatch`.
+  TakoData org) and runs `mcp-publisher publish`. **The version lives in code:**
+  bump `server.json`'s `version` and merge to `main` and it publishes
+  automatically. A merge that touches `server.json` without changing the version
+  is a no-op (the workflow skips, so the registry never sees a duplicate). Manual
+  `workflow_dispatch` publishes the checked-in version on demand.
 - **Branded namespace (`com.tako/tako-mcp`)** is an optional future upgrade. It
   requires DNS authentication: generate an Ed25519 key, add a `TXT` record on
   `tako.com`, and swap the workflow's `login github-oidc` step for
