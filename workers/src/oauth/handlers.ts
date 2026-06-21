@@ -54,8 +54,8 @@ import {
   type StytchTokenKind,
 } from "./stytch.js";
 import {
-  fetchTakoApiToken,
   IdentityError,
+  mintTakoApiKey,
 } from "./identity.js";
 import {
   buildClearCookie,
@@ -619,15 +619,14 @@ export async function handleAuthorize(
   }
   let takoToken: string;
   try {
-    takoToken = await fetchTakoApiToken(env, stytchSessionJwt);
+    takoToken = await mintTakoApiKey(env, stytchSessionJwt, client.client_name);
   } catch (err) {
     if (err instanceof IdentityError) {
-      if (err.kind === "no_token") {
+      if (err.kind === "at_cap") {
         return htmlResponse(
           sessionExpiredPage(
-            "Your Tako account does not have an API token yet. " +
-              "Visit trytako.com → settings → API tokens to mint one, " +
-              "then retry the connection.",
+            "You have too many active Tako API keys. Revoke one at " +
+              "trytako.com → settings → API tokens, then retry the connection.",
           ),
           400,
         );

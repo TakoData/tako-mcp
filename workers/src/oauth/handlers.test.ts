@@ -104,10 +104,10 @@ async function mintSessionCookie(
 
 /**
  * Stub `globalThis.fetch` so a server-side call to Tako's
- * `/api/v1/api_token/` endpoint returns the supplied token value.
+ * `/api/v1/internal/mcp/api_key/` endpoint returns the supplied key value.
  * Used by tests that exercise POST /authorize, since that handler now
- * re-fetches the Tako token from the user's Stytch session at consent
- * time (see Option 2 in the OAuth design doc).
+ * mints a Tako API key from the user's Stytch session at consent
+ * time (TAKO-3254).
  */
 function mockTakoTokenFetch(token: string): void {
   vi.stubGlobal(
@@ -119,9 +119,9 @@ function mockTakoTokenFetch(token: string): void {
           : input instanceof URL
             ? input.toString()
             : input.url;
-      if (url.includes("/api/v1/api_token/")) {
-        return new Response(JSON.stringify({ token }), {
-          status: 200,
+      if (url.includes("/api/v1/internal/mcp/api_key/")) {
+        return new Response(JSON.stringify({ key: token }), {
+          status: 201,
           headers: { "content-type": "application/json" },
         });
       }
@@ -133,8 +133,8 @@ function mockTakoTokenFetch(token: string): void {
 }
 
 /**
- * Stub `globalThis.fetch` so Tako's `/api/v1/api_token/` returns the
- * given non-200 status. Used to test the error branches in POST /authorize.
+ * Stub `globalThis.fetch` so Tako's `/api/v1/internal/mcp/api_key/` returns the
+ * given non-201 status. Used to test the error branches in POST /authorize.
  */
 function mockTakoTokenFetchStatus(status: number): void {
   vi.stubGlobal(
@@ -146,7 +146,7 @@ function mockTakoTokenFetchStatus(status: number): void {
           : input instanceof URL
             ? input.toString()
             : input.url;
-      if (url.includes("/api/v1/api_token/")) {
+      if (url.includes("/api/v1/internal/mcp/api_key/")) {
         return new Response("error", { status });
       }
       return new Response(`unmocked fetch: ${url}`, { status: 599 });
@@ -156,7 +156,7 @@ function mockTakoTokenFetchStatus(status: number): void {
 
 beforeEach(() => {
   // Every test starts with a fetch stub that resolves Tako's
-  // `/api/v1/api_token/` to a generic token. Tests that need to
+  // `/api/v1/internal/mcp/api_key/` to a generic token. Tests that need to
   // verify a specific token value or test an error path call
   // `mockTakoTokenFetch(...)` / `mockTakoTokenFetchStatus(...)`
   // themselves to override.
@@ -1289,7 +1289,7 @@ describe("/authorize POST always re-fetches the Tako token (Option 2)", () => {
     expect(setCookie).toContain("Max-Age=0");
   });
 
-  it("returns a 400 'mint a Tako token' page when user has no Tako API token", async () => {
+  it("returns a 400 'too many API keys' page when user is at the key cap", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
     const sessionJwt = await mintSessionCookie(env);
@@ -1301,8 +1301,8 @@ describe("/authorize POST always re-fetches the Tako token (Option 2)", () => {
     url.searchParams.set("code_challenge", challenge);
     url.searchParams.set("code_challenge_method", "S256");
 
-    // 404 from Tako means user hasn't minted a token yet.
-    mockTakoTokenFetchStatus(404);
+    // 400 from Tako means user is at the API-key cap.
+    mockTakoTokenFetchStatus(400);
 
     const res = await handleAuthorize(
       new Request(url.toString(), {

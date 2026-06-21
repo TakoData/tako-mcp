@@ -105,7 +105,12 @@ Before connecting from Claude.ai or ChatGPT:
 1. **Sign up or sign in at [tako.com](https://tako.com).**
 2. **Mint an API token** at tako.com → settings → API tokens.
 
-Step 2 is mandatory: the consent flow looks up your existing token and surfaces a "Your Tako account does not have an API token yet" page if it doesn't find one. Tako does not auto-mint a token during the OAuth dance, because rotating an existing one would break any Claude Code / Cursor wiring you already have on the same account.
+Step 2 is no longer required: the consent flow mints a per-host Tako API key for
+you on first authorize (named "MCP: <client>", visible and revocable at
+trytako.com → settings → API tokens). Minting is additive — connecting a new
+host never rotates another host's key — and Tako trims your oldest MCP key once
+you exceed ten. You only see a "too many API keys" page if your account is at
+the overall key cap, in which case revoke one and reconnect.
 
 ![tako.com Settings → API Key with Regenerate button](docs/images/tako-api-token-generate.png)
 
