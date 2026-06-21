@@ -52,6 +52,10 @@ const STYTCH_JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
  * with the Stytch session JWT in a `Cookie` header. `clientName` (from the DCR
  * registration) names the key on the developer page. Returns the raw key.
  * Throws `IdentityError` with a kind discriminator on any failure.
+ *
+ * `clientName` may be `null` or empty string — the backend normalizes a
+ * blank/missing name to "MCP: OAuth client", so passing `null`/`""` is an
+ * intentional, supported pass-through when the DCR client did not supply a name.
  */
 export async function mintTakoApiKey(
   env: Env,

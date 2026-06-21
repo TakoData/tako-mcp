@@ -156,7 +156,7 @@ function mockTakoTokenFetchStatus(status: number): void {
 
 beforeEach(() => {
   // Every test starts with a fetch stub that resolves Tako's
-  // `/api/v1/api_token/` to a generic token. Tests that need to
+  // `/api/v1/internal/mcp/api_key/` to a generic token. Tests that need to
   // verify a specific token value or test an error path call
   // `mockTakoTokenFetch(...)` / `mockTakoTokenFetchStatus(...)`
   // themselves to override.
