@@ -443,6 +443,29 @@ The `open_chart_ui` tool returns an MCP-UI resource that clients can render as a
 
 Clients that support MCP-UI (like CopilotKit) will automatically render these resources.
 
+## MCP Registry (maintainers)
+
+Tako is published to the official [MCP Registry](https://registry.modelcontextprotocol.io)
+as a remote server under the name `io.github.TakoData/tako-mcp`.
+
+- **`server.json`** (repo root) is the registry descriptor: a remote
+  `streamable-http` entry pointing at `https://mcp.tako.com/mcp`. The registry
+  schema does not list tools — hosts discover them at runtime via `tools/list`.
+  (This is distinct from `registry/server.json`, the generated in-repo tool
+  catalog used by `npm run registry:gen` / `registry:check`.)
+- **Publishing** is automated by `.github/workflows/publish-mcp.yml`. It
+  authenticates with the registry via **GitHub OIDC** (no secret — the
+  `io.github.TakoData/*` namespace is authorized because this repo lives in the
+  TakoData org) and runs `mcp-publisher publish`. **The version lives in code:**
+  bump `server.json`'s `version` and merge to `main` and it publishes
+  automatically. A merge that touches `server.json` without changing the version
+  is a no-op (the workflow skips, so the registry never sees a duplicate). Manual
+  `workflow_dispatch` publishes the checked-in version on demand.
+- **Branded namespace (`com.tako/tako-mcp`)** is an optional future upgrade. It
+  requires DNS authentication: generate an Ed25519 key, add a `TXT` record on
+  `tako.com`, and swap the workflow's `login github-oidc` step for
+  `login dns --domain tako.com --private-key ${{ secrets.MCP_PRIVATE_KEY }}`.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
