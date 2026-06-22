@@ -478,5 +478,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Links
 
 - [Tako](https://tako.com) - Data visualization platform
+- [Tako on Smithery](https://smithery.ai/servers/tako/tako) - MCP server listing
+- [Tako on the MCP Registry](https://registry.modelcontextprotocol.io) - `io.github.TakoData/tako-mcp`
 - [MCP Specification](https://spec.modelcontextprotocol.io/) - Model Context Protocol
 - [MCP-UI](https://mcpui.dev/) - MCP UI rendering standard
