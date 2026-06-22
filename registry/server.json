@@ -394,6 +394,13 @@
           "description": "Maximum number of matching cards to return (1-20).",
           "default": 10
         },
+        "sources": {
+          "type": "array",
+          "description": "Which source(s) to search: `[\"tako\"]` (default) returns curated knowledge cards that render as charts; `[\"tako\",\"web\"]` also returns live web results; `[\"web\"]` returns web results only. Web results come back in `web_results` (they are not chartable cards). Deep research (the fast→deep escalation and `search_effort: \"deep\"`) applies to the `tako` source only.",
+          "default": [
+            "tako"
+          ]
+        },
         "search_effort": {
           "type": "string",
           "description": "Search depth: `fast` (lexical, sync, cheap) or `deep` (Orca research pipeline, async, slower, runs up to ~5 min server-side). Omit to run `fast` first and auto-escalate to `deep` only if `fast` returns no cards.",

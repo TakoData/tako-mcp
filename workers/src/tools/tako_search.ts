@@ -50,6 +50,7 @@ import {
   FAILURE_STATES,
   type KnowledgeCard,
   type SearchPostResponse,
+  type WebResult,
   buildResultsWithAutoChain,
   isAsyncTaskInitiation,
   isTransientStatusError,
@@ -157,6 +158,13 @@ const inputSchema = z.object({
     .max(20)
     .default(10)
     .describe("Maximum number of matching cards to return (1-20)."),
+  sources: z
+    .array(z.enum(["tako", "web"]))
+    .min(1)
+    .default(["tako"])
+    .describe(
+      'Which source(s) to search: `["tako"]` (default) returns curated knowledge cards that render as charts; `["tako","web"]` also returns live web results; `["web"]` returns web results only. Web results come back in `web_results` (they are not chartable cards). Deep research (the fast→deep escalation and `search_effort: "deep"`) applies to the `tako` source only.',
+    ),
   search_effort: z
     .enum(["fast", "deep"])
     .optional()
@@ -195,7 +203,7 @@ const tako_search = {
     ): Promise<SearchPostResponse> => {
       const body = {
         inputs: { text: input.query, count: input.count },
-        source_indexes: ["tako"],
+        source_indexes: input.sources,
         search_effort: effort,
         country_code: input.country_code,
         locale: input.locale,
@@ -273,28 +281,39 @@ const tako_search = {
     // First call: fast (default) or deep (explicit, only reachable
     // on clients with progress support after the guard above).
     const initialEffort: "fast" | "deep" = input.search_effort ?? "fast";
-    let cards = await (async () => {
-      const initial = await runSearch(initialEffort);
-      if (isAsyncTaskInitiation(initial)) {
-        return pollDeep(ctx, initial.task_id);
+    const extract = async (
+      resp: SearchPostResponse,
+    ): Promise<{ cards: KnowledgeCard[]; webResults: WebResult[] }> => {
+      if (isAsyncTaskInitiation(resp)) {
+        return pollDeep(ctx, resp.task_id);
       }
-      return initial.outputs?.knowledge_cards ?? [];
-    })();
+      return {
+        cards: resp.outputs?.knowledge_cards ?? [],
+        webResults: resp.outputs?.web_results ?? [],
+      };
+    };
+
+    let { cards, webResults } = await extract(await runSearch(initialEffort));
+
+    // Deep research (the auto-escalation + the ChatGPT empty-redirect below)
+    // targets the `tako` source — it finds knowledge cards. A search that
+    // didn't ask for `tako`, or that already returned web results, has nothing
+    // to escalate, so both gates also require `tako` in `sources` and zero web
+    // results. With the default `sources: ["tako"]`, web results are always
+    // empty, so this preserves the original tako-only escalation behavior.
+    const wantsTako = input.sources.includes("tako");
 
     // Auto-escalation: omitted effort + empty fast → deep, EXCEPT
     // on ChatGPT (where the kickoff/wait flow is the agent's path
     // for deep — see the explicit-deep guard above).
     if (
       input.search_effort === undefined &&
+      wantsTako &&
       cards.length === 0 &&
+      webResults.length === 0 &&
       ctx.client !== "chatgpt"
     ) {
-      const escalated = await runSearch("deep");
-      if (isAsyncTaskInitiation(escalated)) {
-        cards = await pollDeep(ctx, escalated.task_id);
-      } else {
-        cards = escalated.outputs?.knowledge_cards ?? [];
-      }
+      ({ cards, webResults } = await extract(await runSearch("deep")));
     }
 
     // ChatGPT-specific empty-result redirect. Server-side
@@ -328,7 +347,9 @@ const tako_search = {
     // for ChatGPT).
     if (
       input.search_effort === undefined &&
+      wantsTako &&
       cards.length === 0 &&
+      webResults.length === 0 &&
       ctx.client === "chatgpt"
     ) {
       throw new Error(
@@ -336,7 +357,7 @@ const tako_search = {
       );
     }
 
-    return buildResultsWithAutoChain(cards, ctx.env);
+    return buildResultsWithAutoChain(cards, ctx.env, webResults);
   },
   async extraMeta(output, ctx) {
     // Skip the fetch on ChatGPT: its widget bundle takes the iframe
@@ -383,7 +404,7 @@ const tako_search = {
 async function pollDeep(
   ctx: ToolContext,
   taskId: string,
-): Promise<KnowledgeCard[]> {
+): Promise<{ cards: KnowledgeCard[]; webResults: WebResult[] }> {
   const startedAt = Date.now();
   let nextSinceIndex = 0;
   let latestEvents: AsyncTaskEvent[] = [];
@@ -457,7 +478,10 @@ async function pollDeep(
     }
 
     if (normalizedStatus === COMPLETED_STATE) {
-      return status.result?.outputs?.knowledge_cards ?? [];
+      return {
+        cards: status.result?.outputs?.knowledge_cards ?? [],
+        webResults: status.result?.outputs?.web_results ?? [],
+      };
     }
 
     if (FAILURE_STATES.has(normalizedStatus)) {

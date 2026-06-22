@@ -31,6 +31,16 @@ export type KnowledgeCard = {
   source?: string | null;
 };
 
+// A web result returned alongside knowledge cards when the search includes the
+// `web` source. Mirrors the backend `outputs.web_results[]` shape (the
+// knowledge_search GA view returns `{title, url, snippet, source_name}`).
+export type WebResult = {
+  title?: string | null;
+  url?: string | null;
+  snippet?: string | null;
+  source_name?: string | null;
+};
+
 // Append-only progress event log entry emitted by `run_knowledge_agent_search`
 // (Tako's Celery task). Surfaced in error / timeout messages so the
 // caller knows how far the pipeline got.
@@ -48,6 +58,7 @@ export type AsyncTaskStatus = {
   result?: {
     outputs?: {
       knowledge_cards?: KnowledgeCard[];
+      web_results?: WebResult[];
     };
   };
   error?: string;
@@ -63,6 +74,7 @@ export type AsyncTaskInitiation = {
 export type SyncSearchResponse = {
   outputs?: {
     knowledge_cards?: KnowledgeCard[];
+    web_results?: WebResult[];
   };
 };
 
@@ -152,6 +164,18 @@ export const visualizationSchema = z.object({
 
 export type Visualization = z.infer<typeof visualizationSchema>;
 
+// Web result shape returned to the agent when the search includes the `web`
+// source. Lenient (every field nullable/optional) so a malformed backend web
+// result can't fail the whole tool-output validation.
+export const webResultSchema = z
+  .object({
+    title: z.string().nullable().optional(),
+    url: z.string().nullable().optional(),
+    snippet: z.string().nullable().optional(),
+    source_name: z.string().nullable().optional(),
+  })
+  .loose();
+
 // Auto-chain widget fields lifted to the output root when the top card
 // has a card_id. Mirrors `open_chart_ui`'s output so the chart widget
 // reads the same keys on every tool that may render a chart.
@@ -177,6 +201,10 @@ export const autoChainShape = {
 export const resultsOutputShape = {
   results: z.array(visualizationSchema),
   count: z.number().int().nonnegative(),
+  // Web results when the search included the `web` source; defaults to [] so
+  // tools that only ever return cards (e.g. wait_for_knowledge_search) stay
+  // valid against this shape without setting the field.
+  web_results: z.array(webResultSchema).default([]),
   ...autoChainShape,
 } as const;
 
@@ -208,9 +236,11 @@ export function cardToVisualization(card: KnowledgeCard): Visualization {
 export function buildResultsWithAutoChain(
   cards: KnowledgeCard[],
   env: Env,
+  webResults: WebResult[] = [],
 ): {
   results: Visualization[];
   count: number;
+  web_results: WebResult[];
   pub_id?: string;
   embed_url?: string;
   image_url?: string;
@@ -229,6 +259,7 @@ export function buildResultsWithAutoChain(
     return {
       results,
       count: results.length,
+      web_results: webResults,
       pub_id: topCardId,
       embed_url,
       image_url,
@@ -237,5 +268,5 @@ export function buildResultsWithAutoChain(
       height: DEFAULT_HEIGHT,
     };
   }
-  return { results, count: results.length };
+  return { results, count: results.length, web_results: webResults };
 }
