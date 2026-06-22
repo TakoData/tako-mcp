@@ -8,7 +8,7 @@
  *   2. MCP `initialize`        → handshake completes
  *   3. MCP `tools/list`        → at least one tool, includes the canary set
  *   4. Per-tool MCP `tools/call` canaries (read-only unless noted):
- *        a. `knowledge_search "US GDP"`        — non-empty results, requires
+ *        a. `tako_search "US GDP"`        — non-empty results, requires
  *                                                at least one usable
  *                                                `card_id` (fails the smoke
  *                                                if every result lacks one
@@ -160,7 +160,7 @@ try {
   // assert on the *full* tool list because the surface evolves (e.g.
   // explore_knowledge_graph removal in PR #47).
   const requiredTools = [
-    "knowledge_search",
+    "tako_search",
     "get_credit_balance",
     "list_reports",
     "get_chart_image",
@@ -214,8 +214,8 @@ try {
     }
   }
 
-  // ----- a) knowledge_search canary --------------------------------------
-  const ksResult = await callOk(client, "knowledge_search", {
+  // ----- a) tako_search canary --------------------------------------
+  const ksResult = await callOk(client, "tako_search", {
     query: CANARY_QUERY,
   });
   const ksStructured = ksResult.structuredContent as
@@ -224,18 +224,18 @@ try {
         count?: number;
       }
     | undefined;
-  assert(ksStructured, "knowledge_search missing structuredContent");
+  assert(ksStructured, "tako_search missing structuredContent");
   const ksResults = ksStructured.results;
   assert(
     Array.isArray(ksResults) && ksResults.length > 0,
-    `knowledge_search returned empty results (count=${ksStructured.count ?? "?"})`,
+    `tako_search returned empty results (count=${ksStructured.count ?? "?"})`,
   );
   ok(
-    `knowledge_search "${CANARY_QUERY}" → ${ksStructured.count ?? ksResults.length} results`,
+    `tako_search "${CANARY_QUERY}" → ${ksStructured.count ?? ksResults.length} results`,
   );
 
   // Pull the first non-null card_id to chain into get_chart_image /
-  // open_chart_ui. We *require* at least one chartable card — knowledge_search
+  // open_chart_ui. We *require* at least one chartable card — tako_search
   // returning results-without-card_ids for "US GDP" is itself a pipeline
   // regression worth flagging (e.g., raw deep-research outputs leaking
   // through without indexer attribution), so we fail rather than skip the
@@ -245,7 +245,7 @@ try {
     .find((id): id is string => typeof id === "string" && id.length > 0);
   assert(
     chainPubId,
-    `knowledge_search "${CANARY_QUERY}" returned ${ksResults.length} results but none had a usable card_id — chart-tool chaining is broken`,
+    `tako_search "${CANARY_QUERY}" returned ${ksResults.length} results but none had a usable card_id — chart-tool chaining is broken`,
   );
 
   // ----- b) get_credit_balance ------------------------------------------
