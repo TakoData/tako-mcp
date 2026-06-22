@@ -50,7 +50,7 @@ const CTX: ToolContext = {
 };
 
 // Defaults the handler expects post-zod parse. count is 10 after this change.
-const DEFAULTS = { count: 10, country_code: "US", locale: "en-US" };
+const DEFAULTS = { count: 10, sources: ["tako"] as ("tako" | "web")[], country_code: "US", locale: "en-US" };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -844,5 +844,85 @@ describe("tako_search auto-chain top-result chart fields", () => {
     expect(out.pub_id).toBeUndefined();
     expect(out.embed_url).toBeUndefined();
     expect(out.results).toEqual([]);
+  });
+});
+
+describe("tako_search sources + web_results", () => {
+  it("passes the requested sources through as source_indexes", async () => {
+    // Return a card so the fast hit stands (no deep escalation), keeping this
+    // a single-call assertion on the request body.
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, {
+        outputs: {
+          knowledge_cards: [
+            { card_id: "abc", title: "US GDP", description: null, url: null, source: "tako" },
+          ],
+          web_results: [],
+        },
+      }),
+    ]);
+
+    await tako_search.handler(
+      { query: "us gdp", ...DEFAULTS, sources: ["tako", "web"] },
+      CTX,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
+    expect(body.source_indexes).toEqual(["tako", "web"]);
+  });
+
+  it("surfaces web_results from the response in the output", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, {
+        outputs: {
+          knowledge_cards: [
+            { card_id: "abc", title: "US GDP", description: null, url: null, source: "tako" },
+          ],
+          web_results: [
+            { title: "BEA GDP release", url: "https://bea.gov/gdp", snippet: "…", source_name: "BEA" },
+          ],
+        },
+      }),
+    ]);
+
+    const out = await tako_search.handler(
+      { query: "us gdp", ...DEFAULTS, sources: ["tako", "web"] },
+      CTX,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(out.web_results).toHaveLength(1);
+    expect(out.web_results[0]?.url).toBe("https://bea.gov/gdp");
+    expect(out.results[0]?.card_id).toBe("abc");
+  });
+
+  it("does not escalate or throw for a web-only search that returns web results but zero cards", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, {
+        outputs: {
+          knowledge_cards: [],
+          web_results: [
+            { title: "A result", url: "https://example.com/a", snippet: null, source_name: "example" },
+          ],
+        },
+      }),
+    ]);
+
+    const out = await tako_search.handler(
+      { query: "obscure web topic", ...DEFAULTS, sources: ["web"] },
+      // ChatGPT path would normally throw on zero cards; web-only must not.
+      { ...CTX, client: "chatgpt" },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // no deep escalation
+    expect(out.count).toBe(0);
+    expect(out.web_results).toHaveLength(1);
+  });
+
+  it("defaults sources to [tako] (curated cards only)", () => {
+    const parsed = tako_search.inputSchema.safeParse({ query: "x" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.sources).toEqual(["tako"]);
   });
 });
