@@ -567,4 +567,24 @@ describe("worker routing", () => {
     };
     expect(parsed.pub_id).toBe("abc123");
   });
+
+  it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "prompts/list", params: {} }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { result?: { prompts: unknown[] }; error?: { code: number } };
+    // Must NOT be JSON-RPC -32601 "Method not found" — that is the warning
+    // Smithery's capability scan surfaces. We expose no prompts, so an empty
+    // list is the friendly, spec-clean response.
+    expect(body.error).toBeUndefined();
+    expect(body.result?.prompts).toEqual([]);
+  });
 });

@@ -4,6 +4,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 // `./validation/cfworker`, unlike the other server subpaths which do ship
 // `.js` entries. Adding the extension here breaks module resolution.
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
+import { ListPromptsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   BearerAuthError,
@@ -149,6 +150,15 @@ export function createMcpServer(
       jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
     },
   );
+
+  // Advertise an empty prompt list. We expose no prompts, but capability-probing
+  // clients (Smithery's scan, some hosts) call `prompts/list` regardless; without
+  // the prompts capability the SDK answers JSON-RPC -32601, which surfaces as a
+  // "Failed to list prompts" warning. Returning {prompts: []} is the friendly,
+  // spec-clean answer. (tools/resources capabilities are auto-registered by the
+  // SDK as those modules are registered below.)
+  server.server.registerCapabilities({ prompts: {} });
+  server.server.setRequestHandler(ListPromptsRequestSchema, () => ({ prompts: [] }));
 
   // Dedupe state for `appUiResource` registration — multiple tools can
   // declare the same widget URI (e.g. `open_chart_ui` and
