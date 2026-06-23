@@ -11,6 +11,24 @@ import {
 import { djangoErrorToToolResult } from "./mcp.js";
 
 describe("djangoErrorToToolResult", () => {
+  // Read tools (tako_search/tako_answer/tako_contents) declare an
+  // `outputSchema`. Spec-compliant MCP clients validate ANY
+  // `structuredContent` present on a result against that schema — even when
+  // `isError: true` — so attaching the error discriminant as
+  // `structuredContent` made every Django error get rejected with a generic
+  // `-32602` (masking the real failure). The machine-readable detail now
+  // rides on `_meta["tako/error"]`, which clients forward but do NOT validate.
+  it("omits structuredContent so clients validating against outputSchema don't reject the error", () => {
+    const err = new DjangoHttpError({
+      path: "/api/v3/search/",
+      method: "POST",
+      status: 503,
+      body: "service unavailable",
+    });
+    const result = djangoErrorToToolResult(err);
+    expect(result).not.toHaveProperty("structuredContent");
+  });
+
   it("maps DjangoUnauthorizedError to kind=unauthorized with status 401", () => {
     const err = new DjangoUnauthorizedError({
       path: "/api/v1/knowledge_search",
@@ -18,7 +36,7 @@ describe("djangoErrorToToolResult", () => {
     });
     const result = djangoErrorToToolResult(err);
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toEqual({
+    expect(result._meta["tako/error"]).toEqual({
       kind: "unauthorized",
       path: "/api/v1/knowledge_search",
       method: "GET",
@@ -34,14 +52,14 @@ describe("djangoErrorToToolResult", () => {
       timeoutMs: 90_000,
     });
     const result = djangoErrorToToolResult(err);
-    expect(result.structuredContent).toEqual({
+    expect(result._meta["tako/error"]).toEqual({
       kind: "timeout",
       path: "/api/v1/insights",
       method: "POST",
       timeoutMs: 90_000,
     });
     // No `status` — timeouts have no HTTP status by construction.
-    expect(result.structuredContent).not.toHaveProperty("status");
+    expect(result._meta["tako/error"]).not.toHaveProperty("status");
   });
 
   it("maps DjangoNotFoundError to kind=not_found with status 404", () => {
@@ -50,7 +68,7 @@ describe("djangoErrorToToolResult", () => {
       method: "GET",
     });
     const result = djangoErrorToToolResult(err);
-    expect(result.structuredContent).toEqual({
+    expect(result._meta["tako/error"]).toEqual({
       kind: "not_found",
       path: "/api/v1/charts/missing",
       method: "GET",
@@ -58,14 +76,14 @@ describe("djangoErrorToToolResult", () => {
     });
   });
 
-  it("maps DjangoBadRequestError and surfaces the response body in both structured and text content", () => {
+  it("maps DjangoBadRequestError and surfaces the response body in both _meta and text content", () => {
     const err = new DjangoBadRequestError({
       path: "/api/v3/search/",
       method: "POST",
       body: '{"query":["this field is required"]}',
     });
     const result = djangoErrorToToolResult(err);
-    expect(result.structuredContent).toEqual({
+    expect(result._meta["tako/error"]).toEqual({
       kind: "bad_request",
       path: "/api/v3/search/",
       method: "POST",
@@ -74,7 +92,7 @@ describe("djangoErrorToToolResult", () => {
     });
     // 400s are the only subtype whose body is spliced into `content[0].text`:
     // DRF validation errors carry the guidance the LLM needs to retry, and
-    // not every MCP client surfaces `structuredContent` to the model.
+    // not every MCP client surfaces structured detail to the model.
     expect(result.content[0]).toEqual({
       type: "text",
       text: `${err.message}: {"query":["this field is required"]}`,
@@ -89,7 +107,7 @@ describe("djangoErrorToToolResult", () => {
       cause: new Error("unexpected token"),
     });
     const result = djangoErrorToToolResult(err);
-    expect(result.structuredContent).toEqual({
+    expect(result._meta["tako/error"]).toEqual({
       kind: "response_parse",
       path: "/api/v1/knowledge_search",
       method: "GET",
@@ -97,7 +115,7 @@ describe("djangoErrorToToolResult", () => {
     });
   });
 
-  it("maps DjangoHttpError (catch-all) and surfaces the response body", () => {
+  it("maps DjangoHttpError (catch-all) and surfaces the response body in _meta", () => {
     const err = new DjangoHttpError({
       path: "/api/v1/whatever",
       method: "GET",
@@ -105,16 +123,16 @@ describe("djangoErrorToToolResult", () => {
       body: "service unavailable",
     });
     const result = djangoErrorToToolResult(err);
-    expect(result.structuredContent).toEqual({
+    expect(result._meta["tako/error"]).toEqual({
       kind: "http",
       path: "/api/v1/whatever",
       method: "GET",
       status: 503,
       body: "service unavailable",
     });
-    // 5xx body stays in `structuredContent` only — not spliced into the
-    // text content. Non-400 errors don't carry LLM-actionable retry
-    // guidance and a noisy upstream body would flood the text channel.
+    // 5xx body stays in `_meta` only — not spliced into the text content.
+    // Non-400 errors don't carry LLM-actionable retry guidance and a noisy
+    // upstream body would flood the text channel.
     expect(result.content[0]).toEqual({ type: "text", text: err.message });
     expect(result.content[0]?.text).not.toContain("service unavailable");
   });

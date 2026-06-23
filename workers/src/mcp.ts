@@ -712,29 +712,40 @@ function registerTool(
 }
 
 /**
- * Convert a `DjangoError` into a structured MCP `CallToolResult` with
- * `isError: true`. Each subtype maps to a distinct `kind` discriminator so
- * clients can branch on `structuredContent.kind` (e.g. "unauthorized" vs
- * "timeout") instead of parsing `err.message`. Per-subtype fields
- * (`timeoutMs`, `body`) are only attached where they exist on the error.
+ * Convert a `DjangoError` into an MCP `CallToolResult` with `isError: true`.
+ * Each subtype maps to a distinct `kind` discriminator so clients can branch
+ * on `_meta["tako/error"].kind` (e.g. "unauthorized" vs "timeout") instead of
+ * parsing `err.message`. Per-subtype fields (`timeoutMs`, `body`) are only
+ * attached where they exist on the error.
+ *
+ * The discriminant rides on `_meta`, NOT `structuredContent`: read tools
+ * (`tako_search`, `tako_answer`, `tako_contents`) declare an `outputSchema`,
+ * and spec-compliant MCP clients validate ANY `structuredContent` present on
+ * a result against that schema — even when `isError: true` (the SDK's
+ * "skip on error" comment notwithstanding; it only skips the *missing*-content
+ * check, not validation). Carrying the error shape as `structuredContent`
+ * therefore got every Django error rejected with a generic `-32602`, masking
+ * the real failure (e.g. the post-deploy smoke saw "data must have required
+ * property 'cards'" instead of the upstream error). `_meta` is forwarded to
+ * clients but never schema-validated, so it's the correct channel.
  *
  * Exported for unit testing — the wire contract is stable enough that
  * Phase 2 tests can rely on the `kind` strings here.
  */
 export function djangoErrorToToolResult(err: DjangoError): {
   content: Array<{ type: "text"; text: string }>;
-  structuredContent: Record<string, unknown>;
+  _meta: Record<string, unknown>;
   isError: true;
 } {
-  const structured: Record<string, unknown> = {
+  const detail: Record<string, unknown> = {
     kind: djangoErrorKind(err),
     path: err.path,
     method: err.method,
   };
-  if (err.status !== undefined) structured.status = err.status;
-  if (err instanceof DjangoTimeoutError) structured.timeoutMs = err.timeoutMs;
+  if (err.status !== undefined) detail.status = err.status;
+  if (err instanceof DjangoTimeoutError) detail.timeoutMs = err.timeoutMs;
   if (err instanceof DjangoBadRequestError || err instanceof DjangoHttpError) {
-    structured.body = err.body;
+    detail.body = err.body;
   }
   // For 400s, splice the response body into the text content. DRF
   // validation errors (missing fields, invalid enum values, bad
@@ -752,7 +763,7 @@ export function djangoErrorToToolResult(err: DjangoError): {
       : err.message;
   return {
     content: [{ type: "text", text }],
-    structuredContent: structured,
+    _meta: { "tako/error": detail },
     isError: true,
   };
 }
