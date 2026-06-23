@@ -122,7 +122,7 @@ const tako_visualize = {
     title: "Tako: Visualize",
     readOnlyHint: false,
     destructiveHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
   },
   async handler(input, ctx): Promise<Output> {
     // Thin pass-through: send components + only the provided top-level

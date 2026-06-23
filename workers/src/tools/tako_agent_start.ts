@@ -44,7 +44,7 @@ const tako_agent_start = {
     title: "Tako: Start Agent Run",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
   },
   async handler(input, ctx): Promise<Output> {
     const runId = await dispatchAgentRun(ctx, input.query);

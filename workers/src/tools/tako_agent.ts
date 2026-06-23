@@ -151,7 +151,7 @@ const takoAgent = {
     title: "Tako: Deep Agent",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
   },
   async handler(input, ctx): Promise<AgentRun> {
     const runId = await dispatchAgentRun(ctx, input.query);

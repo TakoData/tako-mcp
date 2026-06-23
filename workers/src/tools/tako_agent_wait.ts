@@ -45,7 +45,7 @@ const tako_agent_wait = {
     title: "Tako: Wait for Agent Run",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
   },
   async handler(input, ctx): Promise<AgentRun> {
     return pollAgentRun(ctx, input.run_id, {

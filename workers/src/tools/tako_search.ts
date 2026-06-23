@@ -82,7 +82,7 @@ const tako_search = {
     title: "Tako: Search",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
   },
   async handler(input, ctx): Promise<Output> {
     const body: Record<string, unknown> = {
