@@ -8,7 +8,7 @@ description: |
   covering economics, finance, demographics, sports, markets, and weather; and
   run deep multi-step research agents.
 
-version: "0.3.0"
+version: "0.4.0"
 license: MIT
 
 author:
@@ -66,6 +66,8 @@ tools:
     description: Get a synthesized, citation-backed answer from Tako and/or the web
   - name: tako_contents
     description: Fetch the content behind a result URL (a card's CSV or a page's text)
+  - name: tako_visualize
+    description: Create an embeddable chart/card from your own structured data
   - name: tako_agent
     description: Run Tako's deep research agent for complex, multi-step data questions
   - name: get_credit_balance

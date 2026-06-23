@@ -19,6 +19,7 @@ import tako_agent_wait from "./tako_agent_wait.js";
 import tako_answer from "./tako_answer.js";
 import tako_contents from "./tako_contents.js";
 import tako_search from "./tako_search.js";
+import tako_visualize from "./tako_visualize.js";
 
 // Cast at the barrel boundary because function parameters are invariant:
 // each tool's handler has a narrow input type from its Zod schema, which
@@ -32,4 +33,5 @@ export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
   tako_answer as unknown as AnyToolModule,
   tako_contents as unknown as AnyToolModule,
   tako_search as unknown as AnyToolModule,
+  tako_visualize as unknown as AnyToolModule,
 ];

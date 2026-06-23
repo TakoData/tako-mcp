@@ -46,6 +46,17 @@ Fetch the underlying content behind a result URL. A Tako card URL returns a CSV 
 Parameters:
 - `url` (string, required): The result URL to fetch content for
 
+### tako_visualize
+Create an embeddable Tako card directly from your OWN structured data (not from search), backed by Tako's Thin-Viz API. Provide one or more typed components; the card auto-renders inline as a chart and returns share/embed URLs.
+
+Parameters:
+- `components` (array, required): One or more `{ component_type, config, component_variant? }` objects. `component_type` is one of: header, generic_timeseries, categorical_bar, choropleth, data_table_chart, histogram, pie, table, financial_boxes, timeline, treemap, heatmap, marimekko, boxplot, waterfall, sankey, scatter, bubble, top_level_metric, person_card. `config` holds that type's data (validated server-side). The optional `component_variant` string selects a type variant (e.g. 'simple', 'financial'). `person_card` must be the only component.
+- `title` (string, optional): Card title
+- `description` (string, optional): Card description
+- `source` (string, optional): Data source attribution shown in the footer
+- `height` (integer, 100-2000, optional): Chart height in pixels
+- `normalize_currencies` (string, optional): Target ISO 4217 code to convert currency-denominated datasets
+
 ### tako_agent
 Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning. Returns a synthesized answer plus supporting chart cards. On ChatGPT, exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.
 
