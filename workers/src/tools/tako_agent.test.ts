@@ -27,7 +27,7 @@ describe("tako_agent", () => {
     expect(vi.mocked(djangoPost).mock.calls[0]![2]).toBe("/api/v1/agent/runs");
     expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({
       query: "analyze X",
-      effort: "deep",
+      effort: "medium",
       source_indexes: ["tako", "web"],
     });
     expect(ctx.sendProgress).toHaveBeenCalled();

@@ -87,7 +87,9 @@ export async function dispatchAgentRun(
     "/api/v1/agent/runs",
     // AgentRunRequest (api/ga/v1/agent/types.py) takes `source_indexes`; it
     // defaults to ["tako"] server-side, mirrored by the schema default here.
-    { query, effort: "deep", source_indexes: sources },
+    // `effort` only accepts "medium" today (AgentEffortLevel) — the sole
+    // supported public level; add others here as the backend gains them.
+    { query, effort: "medium", source_indexes: sources },
     { timeoutMs: 30_000 },
   );
   if (!data.run_id) {
