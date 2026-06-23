@@ -50,7 +50,7 @@ Parameters:
 Create an embeddable Tako card directly from your OWN structured data (not from search), backed by Tako's Thin-Viz API. Provide one or more typed components; the card auto-renders inline as a chart and returns share/embed URLs.
 
 Parameters:
-- `components` (array, required): One or more `{ component_type, config }` objects. `component_type` is one of: header, generic_timeseries, categorical_bar, choropleth, data_table_chart, histogram, pie, table, financial_boxes, timeline, treemap, heatmap, marimekko, boxplot, waterfall, sankey, scatter, bubble, top_level_metric, person_card. `config` holds that type's data (validated server-side). `person_card` must be the only component.
+- `components` (array, required): One or more `{ component_type, config, component_variant? }` objects. `component_type` is one of: header, generic_timeseries, categorical_bar, choropleth, data_table_chart, histogram, pie, table, financial_boxes, timeline, treemap, heatmap, marimekko, boxplot, waterfall, sankey, scatter, bubble, top_level_metric, person_card. `config` holds that type's data (validated server-side). The optional `component_variant` string selects a type variant (e.g. 'simple', 'financial'). `person_card` must be the only component.
 - `title` (string, optional): Card title
 - `description` (string, optional): Card description
 - `source` (string, optional): Data source attribution shown in the footer
