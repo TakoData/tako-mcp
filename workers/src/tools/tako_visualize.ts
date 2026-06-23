@@ -164,7 +164,7 @@ const tako_visualize = {
       image_url,
       dark_mode: DEFAULT_DARK_MODE,
       width: DEFAULT_WIDTH,
-      height: DEFAULT_HEIGHT,
+      height: input.height ?? DEFAULT_HEIGHT,
     });
     if (!parsed.success) {
       throw new Error(

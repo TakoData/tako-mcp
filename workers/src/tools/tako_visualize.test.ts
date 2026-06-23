@@ -132,6 +132,18 @@ describe("tako_visualize handler", () => {
 
     await expect(takoVisualize.handler(VALID_INPUT, CTX)).rejects.toThrow(/card_id/);
   });
+
+  it("reflects requested height in output (widget render size)", async () => {
+    // height: 600 → out.height === 600
+    mockFetchSequence([jsonResponse(200, CARD_RESPONSE)]);
+    const outWithHeight = await takoVisualize.handler({ ...VALID_INPUT, height: 600 }, CTX);
+    expect(outWithHeight.height).toBe(600);
+
+    // height omitted → out.height === DEFAULT_HEIGHT (720)
+    mockFetchSequence([jsonResponse(200, CARD_RESPONSE)]);
+    const outNoHeight = await takoVisualize.handler(VALID_INPUT, CTX);
+    expect(outNoHeight.height).toBe(720);
+  });
 });
 
 describe("tako_visualize input schema", () => {
