@@ -1,6 +1,5 @@
 import { CORS_PATHS, corsPreflight, withCors } from "./cors.js";
 import type { Env } from "./env.js";
-import { handleExportRequest } from "./exports.js";
 import { handleIconRequest } from "./icons.js";
 import { handleMcpRequest } from "./mcp.js";
 import {
@@ -46,14 +45,6 @@ export default {
       return handleIconRequest(url.pathname);
     }
 
-    // Signed-token download URLs minted by `export_report`. The token
-    // carries the user's API key encrypted with `EXPORT_TOKEN_KEY`, so
-    // no separate auth header is required (and indeed no chat client
-    // would attach one — the URL is clicked from a browser). See
-    // `exports.ts` for token format and security tradeoffs.
-    if (request.method === "GET" && url.pathname.startsWith("/exports/")) {
-      return handleExportRequest(request, env);
-    }
     // GET /mcp (SSE resubscription), DELETE /mcp (session terminate), and
     // OPTIONS /mcp (browser CORS preflight) are intentionally unrouted:
     // stateless JSON-response mode does not use GET/DELETE, and current

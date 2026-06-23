@@ -119,7 +119,7 @@ describe("worker routing", () => {
     expect(body.jsonrpc).toBe("2.0");
     expect(body.id).toBe(1);
     expect(body.result.serverInfo.name).toBe("tako-mcp");
-    expect(body.result.serverInfo.version).toBe("0.1.0");
+    expect(body.result.serverInfo.version).toBe("0.3.0");
     // Guard against silent SDK negotiation regressions — a missing or
     // malformed protocolVersion should fail loudly. The regex tolerates
     // future SDK bumps without pinning to a specific release.
@@ -191,23 +191,20 @@ describe("worker routing", () => {
     // clients with `resetTimeoutOnProgress` support, deep search
     // happens inside `tako_search`'s auto-escalation path and
     // agent runs use the single `tako_agent` tool.
+    // Chart-authoring tools (`create_chart`, `get_chart_image`,
+    // `open_chart_ui`) were removed in 0.3.0; `tako_search` is the
+    // sole owner of the chart widget (auto-renders the top card inline).
     expect(names).toEqual([
-      "create_chart",
-      "create_report",
-      "export_report",
-      "get_chart_image",
       "get_credit_balance",
-      "get_report",
-      "list_reports",
-      "open_chart_ui",
       "tako_agent",
       "tako_answer",
       "tako_contents",
       "tako_search",
     ]);
 
-    // MCP Apps: `open_chart_ui` and `tako_search` ship the
-    // chart widget bundle. `tako_search` is a single-tool flow
+    // MCP Apps: `tako_search` is the sole chart-widget tool after 0.3.0.
+    // It ships the widget bundle and is the only tool that auto-renders
+    // a Tako chart inline. `tako_search` is a single-tool flow
     // (no kickoff/wait split) — the deep path polls internally and
     // emits MCP progress notifications to keep the client timeout
     // alive — so a successful tool call always carries a chart in
@@ -221,7 +218,7 @@ describe("worker routing", () => {
     // it the widget loads but `window.openai.toolOutput` never
     // populates). Other tools ship no widget and should declare
     // none of these fields.
-    const widgetTools = new Set(["open_chart_ui", "tako_search"]);
+    const widgetTools = new Set(["tako_search"]);
     for (const name of widgetTools) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool?._meta).toMatchObject({
@@ -245,7 +242,7 @@ describe("worker routing", () => {
     }
   });
 
-  it("POST /mcp tools/list adds the deep-search kickoff/wait pair on ChatGPT clients", async () => {
+  it("POST /mcp tools/list adds the agent split pair on ChatGPT clients", async () => {
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -272,8 +269,6 @@ describe("worker routing", () => {
       };
     };
     const names = new Set(body.result.tools.map((t) => t.name));
-    expect(names.has("start_deep_knowledge_search")).toBe(true);
-    expect(names.has("wait_for_knowledge_search")).toBe(true);
     // ChatGPT agent split tools are present.
     expect(names.has("tako_agent_start")).toBe(true);
     expect(names.has("tako_agent_wait")).toBe(true);
@@ -281,38 +276,34 @@ describe("worker routing", () => {
     expect(names.has("tako_agent")).toBe(false);
     // The default tools (minus tako_agent) are still present alongside.
     expect(names.has("tako_search")).toBe(true);
-    // 12 default tools − 1 (tako_agent excluded) + 4 chatgpt-only = 15
-    expect(body.result.tools).toHaveLength(15);
+    // 7 total tools − 1 (tako_agent excluded) + 2 chatgpt-only − 2 (those same
+    // chatgpt-only are in the 7) = 7 − 1 = 6
+    // More directly: 5 default-client tools − tako_agent + tako_agent_start + tako_agent_wait = 6
+    expect(body.result.tools).toHaveLength(6);
 
-    // Both `tako_search` and `open_chart_ui` ship the chart
-    // widget on ChatGPT. The empty-fast widget-gap problem (ChatGPT
-    // pins widget container height at the highest ever notified
-    // and ignores shrink notifications, so a clean `count: 0`
-    // result rendered as a persistent empty container) is now
-    // handled by `tako_search`'s handler throwing on empty
-    // for ChatGPT — tool errors don't reserve a widget container,
-    // so the widget can stay shipped without leaving a gap on the
-    // empty path.
-    for (const name of ["tako_search", "open_chart_ui"]) {
-      const tool = body.result.tools.find((t) => t.name === name);
-      expect(tool?._meta).toMatchObject({
-        ui: { resourceUri: "ui://tako/embed/chart" },
-        "ui/resourceUri": "ui://tako/embed/chart",
-        "openai/outputTemplate": "ui://tako/embed/chart",
-      });
-    }
+    // `tako_search` is the sole chart-widget tool on ChatGPT after 0.3.0.
+    // The empty-fast widget-gap problem (ChatGPT pins widget container
+    // height at the highest ever notified and ignores shrink notifications,
+    // so a clean `count: 0` result rendered as a persistent empty container)
+    // is handled by `tako_search`'s handler throwing on empty for ChatGPT —
+    // tool errors don't reserve a widget container, so the widget can stay
+    // shipped without leaving a gap on the empty path.
+    const takoSearchTool = body.result.tools.find((t) => t.name === "tako_search");
+    expect(takoSearchTool?._meta).toMatchObject({
+      ui: { resourceUri: "ui://tako/embed/chart" },
+      "ui/resourceUri": "ui://tako/embed/chart",
+      "openai/outputTemplate": "ui://tako/embed/chart",
+    });
   });
 
-  it("POST /mcp tools/list serves per-client tako_search descriptions", async () => {
-    // `tako_search` defines `descriptionByClient` with a
-    // claude variant (auto-renders inline) and a chatgpt variant
-    // (must chain into open_chart_ui + escalate via kickoff/wait).
-    // The Worker selects the right variant from the UA-detected
-    // client kind, so each model only sees the directives that
-    // actually apply to its host. Without per-client routing, a
-    // single description with conditional clauses ("On Claude.ai…"
-    // / "On ChatGPT…") forces the model to self-identify the host
-    // — empirically unreliable.
+  it("POST /mcp tools/list serves one client-agnostic tako_search description", async () => {
+    // `tako_search` is now fast-only (`/api/v3/search`) with no in-tool
+    // deep path, so the per-client description split is gone: every host
+    // gets the same description. It promises the inline auto-render and
+    // points deep / empty-result follow-ups at the Tako agent
+    // (`tako_agent_start` → `tako_agent_wait`); it must NOT mention the
+    // removed legacy machinery (`search_effort`, server-side
+    // auto-escalation, or the old `start_deep_knowledge_search` tool).
     async function descFor(userAgent?: string): Promise<string> {
       const res = await SELF.fetch("https://example.com/mcp", {
         method: "POST",
@@ -340,30 +331,22 @@ describe("worker routing", () => {
     const chatgptDesc = await descFor("ChatGPT/1.0 (+https://chatgpt.com)");
     const unknownDesc = await descFor();
 
-    // Claude variant: must reference inline auto-render +
-    // server-side auto-escalation, must NOT mention chaining into
-    // start_deep_knowledge_search (that's the ChatGPT-only path).
-    expect(claudeDesc).toContain("auto-renders inline");
-    expect(claudeDesc).toContain("auto-escalation");
-    expect(claudeDesc).not.toContain("start_deep_knowledge_search");
-
-    // ChatGPT variant: ALSO promises the inline auto-render
-    // (`tako_search` keeps its widget on ChatGPT now that the
-    // empty-path throw avoids the widget-container gap), AND
-    // includes the LLM-side escalation directive
-    // (server-side auto-escalation is disabled on ChatGPT, so the
-    // model must call `start_deep_knowledge_search` itself).
-    expect(chatgptDesc).toContain("auto-renders inline");
-    expect(chatgptDesc).toContain("start_deep_knowledge_search");
-
-    // Unknown / future hosts: fall back to the claude-style
-    // default. Most non-ChatGPT MCP hosts support inline rendering
-    // and progress-notification timeout reset, so this is the
-    // safer assumption than the ChatGPT branch.
+    // Same description regardless of host.
+    expect(chatgptDesc).toBe(claudeDesc);
     expect(unknownDesc).toBe(claudeDesc);
+
+    // Promises the inline auto-render and routes deep / empty-result
+    // follow-ups to the Tako agent.
+    expect(claudeDesc).toContain("auto-renders inline");
+    expect(claudeDesc).toContain("tako_agent_start");
+
+    // No residue from the removed legacy deep/async machinery.
+    expect(claudeDesc).not.toContain("auto-escalation");
+    expect(claudeDesc).not.toContain("search_effort");
+    expect(claudeDesc).not.toContain("start_deep_knowledge_search");
   });
 
-  it("POST /mcp resources/list includes the open_chart_ui widget bundle", async () => {
+  it("POST /mcp resources/list includes the chart widget bundle", async () => {
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -452,120 +435,6 @@ describe("worker routing", () => {
     expect(item.text).toContain("ui/notifications/tool-result");
     expect(item.text).toContain("https?:");
     expect(item.text).toContain("tako-embed");
-  });
-
-  it("POST /mcp tools/call from claude.ai (widget suppressed) returns text-only — no widget metadata, no PNG fallback", async () => {
-    // claude.ai's MCP host renders chart widgets inside a constrained
-    // iframe that clips the chart vertically; we suppress the widget
-    // and rely on the LLM-pasted `[Open in Tako](embed_url)` link
-    // (per the chart tool descriptions) so the user gets a clickable
-    // path to the fully-interactive standalone embed.
-    //
-    // Test locks in three invariants for the suppressed-claude shape:
-    //   1. No widget metadata in `_meta` (no `ui/resourceUri`,
-    //      `_meta.ui.resourceUri`, or `image_data_url`) — claude.ai
-    //      reads these to load the widget bundle, and shipping them
-    //      would re-render the cropped iframe.
-    //   2. No image content block — `extraContentBlocks` is gated on
-    //      `ui === undefined && !widgetSuppressed`, so the PNG
-    //      fallback also doesn't ship. claude.ai gets only the text
-    //      block + structuredContent; the LLM surfaces the link.
-    const res = await SELF.fetch("https://example.com/mcp", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: AUTH_HEADER,
-        "user-agent": "claude-mcp-client/1.0",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 4,
-        method: "tools/call",
-        params: {
-          name: "open_chart_ui",
-          arguments: { pub_id: "abc123" },
-        },
-      }),
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      result: {
-        content: Array<{ type: string }>;
-        _meta?: Record<string, unknown>;
-      };
-    };
-    expect(body.result._meta?.image_data_url).toBeUndefined();
-    expect(body.result._meta?.["ui/resourceUri"]).toBeUndefined();
-    expect(
-      (body.result._meta?.ui as { resourceUri?: string } | undefined)
-        ?.resourceUri,
-    ).toBeUndefined();
-    expect(body.result._meta?.["openai/outputTemplate"]).toBeUndefined();
-    // No image content block (PNG fallback) either — content array
-    // should be just the JSON-stringified text block.
-    expect(body.result.content.every((c) => c.type === "text")).toBe(true);
-  });
-
-  it("POST /mcp tools/call invokes the registered handler and surfaces structuredContent", async () => {
-    // `open_chart_ui` is a pure URL/HTML builder — no Django fetch, so we can
-    // exercise the full SDK → registry → handler path without mocking the
-    // network in the integration test.
-    const res = await SELF.fetch("https://example.com/mcp", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: AUTH_HEADER,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 3,
-        method: "tools/call",
-        params: {
-          name: "open_chart_ui",
-          arguments: { pub_id: "abc123" },
-        },
-      }),
-    });
-
-    expect(res.status).toBe(200);
-
-    const body = (await res.json()) as {
-      result: {
-        content: Array<{ type: string; text: string }>;
-        structuredContent?: {
-          pub_id: string;
-          embed_url: string;
-          image_url: string;
-          dark_mode: boolean;
-          width: number;
-          height: number;
-        };
-      };
-    };
-
-    // `structuredContent` is the typed payload; clients without that support
-    // fall back to the `content[0].text` JSON string. Both must be present
-    // when the tool declares an `outputSchema`. The output deliberately does
-    // NOT carry an `iframe_html` field — see open_chart_ui.ts header for
-    // the regression that motivated dropping it.
-    expect(body.result.structuredContent).toMatchObject({
-      pub_id: "abc123",
-      dark_mode: true,
-      width: 900,
-      height: 500,
-    });
-    expect(body.result.structuredContent?.embed_url).toContain("/embed/abc123/");
-    expect(body.result.structuredContent?.image_url).toContain(
-      "/api/v1/image/abc123/",
-    );
-    expect(body.result.structuredContent).not.toHaveProperty("iframe_html");
-    expect(body.result.content[0]).toMatchObject({ type: "text" });
-    const parsed = JSON.parse(body.result.content[0]!.text) as {
-      pub_id: string;
-    };
-    expect(parsed.pub_id).toBe("abc123");
   });
 
   it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {

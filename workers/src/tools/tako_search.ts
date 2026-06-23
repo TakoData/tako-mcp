@@ -1,41 +1,22 @@
 /**
- * `tako_search` — single-tool semantic search over Tako's curated
- * knowledge graph.
+ * `tako_search` — fast semantic search over Tako's curated knowledge
+ * graph (and the live web when asked), backed by `POST /api/v3/search`.
  *
- * Runs `fast` (lexical, sync, cheap) by default and auto-escalates to
- * `deep` (Orca research pipeline, async, slower) when fast returns no
- * cards (or when the caller passes `search_effort: "deep"` explicitly).
+ * Synchronous and fast-only: `effort` is `fast` (default) or `instant`
+ * (cached-embed fast path). There is no in-tool deep/research path and
+ * no async polling — deep, multi-step research lives in the Tako agent
+ * (`tako_agent_start` → `tako_agent_wait`), and the tool description
+ * steers the model there when this returns nothing.
  *
- * Why a single tool with internal polling instead of the
- * `start_search → wait_for_search` split:
- *
- *   - The split-tool flow on hosts that *don't* support a per-call
- *     widget suppression (ChatGPT, tako web UI) leaves an empty
- *     widget container in the chat for every kickoff / wait
- *     intermediate call. Verified persistent across multiple
- *     attempts (start-collapsed widget, no-chart guard, intrinsic
- *     height 0). Single-tool flow has at most ONE rendered
- *     tool-call entry, and it carries the chart on success.
- *
- *   - Per the MCP base protocol, a server may emit
- *     `notifications/progress` while handling a long-running
- *     request. Clients that opt into `resetTimeoutOnProgress: true`
- *     (the SDK option, on by default in the latest TS SDK) reset
- *     their per-tool-call timeout each time we send a progress
- *     event. So a deep-search loop that polls every ~5 s and emits
- *     a progress event each iteration keeps the client timeout
- *     fresh indefinitely — the fast-hit path remains a single
- *     ~1 s sync POST + chart-render, the deep path stretches up to
- *     ~5 minutes inside one tool call.
- *
- *   - Clients without `resetTimeoutOnProgress` support still time
- *     out at their default (60 s for the TS SDK). For those, deep
- *     search is unreliable today — but at least the fast-hit
- *     common case works cleanly with no empty containers.
+ * The top result auto-renders inline as a chart: `buildSearchOutput`
+ * lifts the top card's `card_id` into top-level widget fields
+ * (`pub_id`, `embed_url`, `image_url`, …) that the host's chart widget
+ * reads. `buildChartUrls` only needs a `card_id`, which v3 TakoCards
+ * carry directly.
  */
 import { z } from "zod";
 
-import { DjangoNotFoundError, djangoGet, djangoPost } from "../django.js";
+import { djangoPost } from "../django.js";
 import {
   APP_UI_RESOURCE_URI,
   APP_UI_TEMPLATE_URI_PATTERN,
@@ -44,104 +25,15 @@ import {
   fetchPngContentBlock,
 } from "./_chart_widget.js";
 import {
-  type AsyncTaskEvent,
-  type AsyncTaskStatus,
-  COMPLETED_STATE,
-  FAILURE_STATES,
-  type KnowledgeCard,
-  type SearchPostResponse,
-  buildResultsWithAutoChain,
-  isAsyncTaskInitiation,
-  isTransientStatusError,
-  resultsOutputShape,
-  summarizeProgress,
-} from "./_async_search_shape.js";
-import type {
-  AppUiResource,
-  McpClientKind,
-  ToolContentBlock,
-  ToolContext,
-  ToolModule,
-} from "./types.js";
+  buildSearchOutput,
+  searchOutputShape,
+  takoCardSchema,
+  webResultSchema,
+} from "./_search_results.js";
+import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
-// Polling budget for the deep (Orca) path.
-//
-//   1. Tako's `orchestrator_deep_config.py` (timeout=300.0) is the
-//      upper bound on how long a deep search can possibly take.
-//   2. Cloudflare Workers caps subrequests per invocation at 50 on
-//      the default tier (1000 on Paid). One or two POSTs (auto-
-//      escalation from fast → deep is two) plus N status GETs +
-//      retry budget + the auto-chain chart PNG fetch must stay
-//      under that ceiling. With a 5 s poll and a 295 s budget that's
-//      ~59 GETs worst case — over the 50 default cap, so deep is
-//      effectively a Paid-tier feature; fine because the staging
-//      and prod Workers run on Paid.
-//   3. Every iteration emits a `notifications/progress` event so
-//      MCP clients with `resetTimeoutOnProgress: true` keep the
-//      per-tool-call timeout fresh while the loop runs.
-const POLL_INTERVAL_MS = 5_000;
-const POLL_BUDGET_MS = 295_000;
-const STATUS_REQUEST_TIMEOUT_MS = 10_000;
-// Transient transport blips against the status endpoint shouldn't
-// kill a polling loop whose underlying Celery task is still running.
-// Swallow up to this many consecutive transient failures across the
-// whole loop, count each one against the subrequest budget, and let
-// the (N+1)th surface as before so a sustained outage still fails
-// loud.
-const MAX_TRANSIENT_RETRIES = 2;
-
-/**
- * Tako's machine-readable discriminator (defined in
- * `app/backend/knowledge/api/ga/v1/types.py` as
- * `APIErrorType.RELEVANT_RESULTS_NOT_FOUND`) on the 404 body that
- * means "search ran, 0 cards" — distinct from a routing 404 / proxy
- * 404 / unrelated DRF 404 with no body. Pinning to this exact string
- * keeps the empty-result translation in `runSearch` from masking
- * unrelated 404s as false empties.
- */
-const RELEVANT_RESULTS_NOT_FOUND_TYPE = "RELEVANT_RESULTS_NOT_FOUND";
-
-function isRelevantResultsNotFound(body: string): boolean {
-  if (body === "") return false;
-  try {
-    const parsed = JSON.parse(body) as unknown;
-    return (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      (parsed as { error_type?: unknown }).error_type ===
-        RELEVANT_RESULTS_NOT_FOUND_TYPE
-    );
-  } catch {
-    // Non-JSON 404 body (proxy error page, plain text, truncated
-    // response, etc.) — definitely not the application-level
-    // no-results signal. Let the original DjangoNotFoundError
-    // propagate.
-    return false;
-  }
-}
-
-// Per-client descriptions. The Worker selects one based on the
-// detected `McpClientKind` and falls back to `DESCRIPTION_DEFAULT`
-// for unknown / future hosts.
-//
-// Splitting by client (vs. embedding "On Claude.ai…", "On ChatGPT…"
-// branches in a single description) avoids the failure mode where
-// the model has to self-identify its host before following the
-// right instructions — empirically unreliable, since nothing in
-// the protocol tells the model which host loaded its tool list.
-// Each model now sees only the directives that apply to it.
-const DESCRIPTION_CLAUDE =
-  'Answer factual questions and find live data with Tako\'s curated knowledge graph. **Default to this BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events, recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports, economics, finance, demographics, technology, weather, polls and elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is a structured factual answer + a chart. **The top result auto-renders inline** as a Tako chart — narrate the data and reference the chart ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card so the user has a sharable, fullscreen link. Do NOT echo `![…](image_url)` markdown for the top card — that produces a click-to-load duplicate of the same chart. Mention other titles by name and tell the user they can ask to chart any of them — those follow-ups go through `open_chart_ui`. **`search_effort: "deep"` and the default fast→deep auto-escalation can run up to ~5 minutes server-side**; this tool emits MCP `notifications/progress` events while polling so the per-tool-call timeout stays fresh.';
-
-const DESCRIPTION_CHATGPT =
-  'Answer factual questions and find live data with Tako\'s curated knowledge graph. **Default to this BEFORE any web search whenever the user asks about: current or latest values, schedules and upcoming events, recent scores and results, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds.** Coverage spans sports, economics, finance, demographics, technology, weather, polls and elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more — plus real-time data via deep research, so it works for fresh / today / this-week questions, not just historical aggregates. Each result is a structured factual answer + a chart. **The top result auto-renders inline** as a Tako chart — narrate the data and reference the chart ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card so the user has a sharable, fullscreen link. Do NOT echo `![…](image_url)` markdown for the top card — that produces a click-to-load duplicate of the same chart. Mention other titles by name and tell the user they can ask to chart any of them — those follow-ups go through `open_chart_ui`. **Server-side auto-escalation is disabled here** (the host\'s Apps SDK doesn\'t honor progress notifications, which would trip its 60 s tool-call timeout). **If this tool returns 0 cards or errors out, immediately call `start_deep_knowledge_search` with the same query to retry via the kickoff/wait flow — don\'t stop, don\'t fall back to your own training knowledge, and don\'t wait for the user to re-ask.** Do NOT pass `search_effort: "deep"` directly here (the host timeout would trip).';
-
-// Default used for unknown/future hosts. Mirror the claude variant
-// — most MCP hosts that aren't ChatGPT support the inline auto-
-// render and progress-notification path. If a future host needs
-// the ChatGPT-style chaining instead, add a `descriptionByClient`
-// entry rather than rewriting this default.
-const DESCRIPTION_DEFAULT = DESCRIPTION_CLAUDE;
+const DESCRIPTION =
+  'Answer factual questions and find live data with Tako\'s curated knowledge graph (and the live web when asked). **Default to this BEFORE any built-in web search** when the user asks about current or latest values, schedules, recent scores, trends and time series, comparisons, statistics, forecasts, prices, polls, or prediction-market odds. Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). Use `sources` to choose curated data (`["tako"]`, default), live web (`["web"]`), or both. Use `effort: "instant"` for the fastest cached path. **For deep, multi-step research — or when this returns no results — use the Tako agent (`tako_agent_start` then `tako_agent_wait`) instead.**';
 
 const inputSchema = z.object({
   query: z
@@ -150,19 +42,26 @@ const inputSchema = z.object({
     .describe(
       'Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue").',
     ),
+  sources: z
+    .array(z.enum(["tako", "web"]))
+    .min(1)
+    .default(["tako"])
+    .describe(
+      'Which source(s) to search: ["tako"] (curated, default), ["web"] (live web), or ["tako","web"].',
+    ),
+  effort: z
+    .enum(["fast", "instant"])
+    .optional()
+    .describe(
+      'Search effort: "fast" (default) or "instant" (fastest, serves cached embeds as-is). Omit for fast.',
+    ),
   count: z
     .number()
     .int()
     .min(1)
     .max(20)
     .default(10)
-    .describe("Maximum number of matching cards to return (1-20)."),
-  search_effort: z
-    .enum(["fast", "deep"])
-    .optional()
-    .describe(
-      "Search depth: `fast` (lexical, sync, cheap) or `deep` (Orca research pipeline, async, slower, runs up to ~5 min server-side). Omit to run `fast` first and auto-escalate to `deep` only if `fast` returns no cards.",
-    ),
+    .describe("Maximum number of results to return per source (1-20)."),
   country_code: z
     .string()
     .default("US")
@@ -170,17 +69,13 @@ const inputSchema = z.object({
   locale: z.string().default("en-US").describe("Locale for results."),
 });
 
-const outputSchema = z.object(resultsOutputShape);
+const outputSchema = z.object(searchOutputShape);
 
 type Output = z.infer<typeof outputSchema>;
 
 const tako_search = {
   name: "tako_search",
-  description: DESCRIPTION_DEFAULT,
-  descriptionByClient: {
-    claude: DESCRIPTION_CLAUDE,
-    chatgpt: DESCRIPTION_CHATGPT,
-  } as Partial<Record<McpClientKind, string>>,
+  description: DESCRIPTION,
   inputSchema,
   outputSchema,
   annotations: {
@@ -190,153 +85,36 @@ const tako_search = {
     openWorldHint: false,
   },
   async handler(input, ctx): Promise<Output> {
-    const runSearch = async (
-      effort: "fast" | "deep",
-    ): Promise<SearchPostResponse> => {
-      const body = {
-        inputs: { text: input.query, count: input.count },
-        source_indexes: ["tako"],
-        search_effort: effort,
-        country_code: input.country_code,
-        locale: input.locale,
-      };
-      // Tako's `orchestrator_fast_config.py` allows fast to run up to
-      // ~120s sync; budget the abort just past that. Deep returns 202
-      // in <1s so this margin is irrelevant on that path.
-      //
-      // 404 translation: Tako's `/api/v1/knowledge_search` returns HTTP
-      // 404 with `RelevantResultsNotFoundError` when the search ran
-      // successfully but matched 0 cards (see
-      // `app/backend/knowledge/api/ga/v1/knowledge_search/views.py`
-      // ~line 607). That's REST-style "no resource matched" — but for
-      // MCP it would surface as a fatal `DjangoNotFoundError`,
-      // suppressing both the auto-escalation below (which only fires
-      // on `cards.length === 0`) AND the LLM-side
-      // `start_deep_knowledge_search` directive (which keys on the
-      // tool returning 0 cards / errors). Translating the 404 into an
-      // empty `SyncSearchResponse` lets the auto-escalation logic
-      // handle it on Claude.ai and surfaces a clean `count: 0` result
-      // to ChatGPT, which then triggers the description's escalation
-      // directive without ambiguity.
-      //
-      // Discrimination: only translate when the body's `error_type`
-      // matches Tako's `APIErrorType.RELEVANT_RESULTS_NOT_FOUND`
-      // discriminator (machine-readable, defined in
-      // `app/backend/knowledge/api/ga/v1/types.py`). A different 404
-      // — e.g., the route gets renamed and we hit a real "no such
-      // endpoint", or a reverse-proxy 404 with no body — must
-      // re-throw as the original `DjangoNotFoundError` so it's not
-      // silently masked into a false empty-result.
-      // Intentionally the LEGACY /api/v1/knowledge_search endpoint: it supports
-      // fast + deep + async. /api/v3/search is fast-only today — repoint here
-      // once v3 gains deep support (TAKO-3183).
-      try {
-        return await djangoPost<SearchPostResponse>(
-          ctx.env,
-          ctx.token,
-          "/api/v1/knowledge_search",
-          body,
-          { timeoutMs: 130_000 },
-        );
-      } catch (err) {
-        if (
-          err instanceof DjangoNotFoundError &&
-          isRelevantResultsNotFound(err.body)
-        ) {
-          return { outputs: { knowledge_cards: [] } };
-        }
-        throw err;
-      }
+    const body: Record<string, unknown> = {
+      query: input.query,
+      source_indexes: input.sources,
+      country_code: input.country_code,
+      locale: input.locale,
+      output_settings: { count: input.count },
     };
-
-    // On ChatGPT, the single-tool-call deep path can't survive the
-    // host's per-call timeout (its Apps SDK doesn't honor MCP
-    // notifications/progress for timeout reset, so polling for
-    // 1-5 minutes inside one tool call always trips the 60-second
-    // timeout). Redirect the agent to the kickoff/wait pair, which
-    // is registered only when `client === "chatgpt"` in `mcp.ts`.
-    //
-    // Other clients (Claude.ai, "unknown", future hosts) keep the
-    // existing single-call behavior — Claude.ai resets its timeout
-    // on each progress notification we emit, so deep works there
-    // even when a specific request omits the progressToken (the
-    // backend task still completes before any reasonable wall-clock
-    // ceiling for fast or sync paths). Gate is UA-based, NOT
-    // progressToken-based: a Claude.ai request that happens to omit
-    // the token must still reach the deep path.
-    if (input.search_effort === "deep" && ctx.client === "chatgpt") {
+    if (input.effort !== undefined) body.effort = input.effort;
+    // v3 fast/instant is synchronous (~120s sync ceiling). No async/202,
+    // no polling. Zero matches come back as 200 with empty `cards`.
+    const data = await djangoPost<{
+      cards?: unknown[];
+      web_results?: unknown[];
+      request_id?: string;
+    }>(ctx.env, ctx.token, "/api/v3/search/", body, { timeoutMs: 130_000 });
+    const cards = z.array(takoCardSchema).safeParse(data.cards ?? []);
+    const webResults = z
+      .array(webResultSchema)
+      .safeParse(data.web_results ?? []);
+    if (!cards.success || !webResults.success) {
       throw new Error(
-        "This client uses the kickoff/wait deep-search flow. Use `start_deep_knowledge_search` to launch the deep task, then `wait_for_knowledge_search` to retrieve the result.",
+        "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
-
-    // First call: fast (default) or deep (explicit, only reachable
-    // on clients with progress support after the guard above).
-    const initialEffort: "fast" | "deep" = input.search_effort ?? "fast";
-    let cards = await (async () => {
-      const initial = await runSearch(initialEffort);
-      if (isAsyncTaskInitiation(initial)) {
-        return pollDeep(ctx, initial.task_id);
-      }
-      return initial.outputs?.knowledge_cards ?? [];
-    })();
-
-    // Auto-escalation: omitted effort + empty fast → deep, EXCEPT
-    // on ChatGPT (where the kickoff/wait flow is the agent's path
-    // for deep — see the explicit-deep guard above).
-    if (
-      input.search_effort === undefined &&
-      cards.length === 0 &&
-      ctx.client !== "chatgpt"
-    ) {
-      const escalated = await runSearch("deep");
-      if (isAsyncTaskInitiation(escalated)) {
-        cards = await pollDeep(ctx, escalated.task_id);
-      } else {
-        cards = escalated.outputs?.knowledge_cards ?? [];
-      }
-    }
-
-    // ChatGPT-specific empty-result redirect. Server-side
-    // auto-escalation is disabled here (the Apps SDK doesn't honor
-    // progress notifications), so an empty fast result on ChatGPT
-    // would otherwise return cleanly with `count: 0` and rely on
-    // the model reading the description's escalation directive.
-    // Empirically that's not enough — the model frequently treats
-    // 0 cards as a successful "no results" answer and falls back to
-    // training knowledge instead of calling
-    // `start_deep_knowledge_search`. Throwing here surfaces the
-    // empty case as a tool-call error with an actionable message,
-    // which the model treats as a hard signal it must act on
-    // rather than a soft suggestion it can ignore.
-    //
-    // Doesn't fire when:
-    //   - cards.length > 0 (real results to return),
-    //   - input.search_effort === "deep" (the explicit-deep guard
-    //     above already redirected this path; we never reach here),
-    //   - input.search_effort === "fast" (caller explicitly opted
-    //     into the cheap sync path; respect that intent rather
-    //     than overriding with a deep-flow redirect),
-    //   - ctx.client !== "chatgpt" (Claude.ai et al. already
-    //     auto-escalated above and won't see an empty result).
-    //
-    // The `=== undefined` gate matches the auto-escalation gate
-    // above for non-ChatGPT clients — same "auto" semantics on
-    // both code paths, just delivered via different mechanisms
-    // (server-side `runSearch("deep")` for clients that support
-    // progress, LLM-side throw → `start_deep_knowledge_search`
-    // for ChatGPT).
-    if (
-      input.search_effort === undefined &&
-      cards.length === 0 &&
-      ctx.client === "chatgpt"
-    ) {
-      throw new Error(
-        "tako_search returned 0 cards from fast on ChatGPT. The kickoff/wait deep flow is the path forward: call `start_deep_knowledge_search` with the same query, then loop `wait_for_knowledge_search` until COMPLETED, then call `open_chart_ui` with `results[0].card_id` to render the top chart. Do NOT retry `tako_search` with `search_effort: \"deep\"` (host timeout would trip), do NOT stop, and do NOT fall back to your own training knowledge.",
-      );
-    }
-
-    return buildResultsWithAutoChain(cards, ctx.env);
+    return buildSearchOutput(
+      cards.data,
+      webResults.data,
+      data.request_id ?? "",
+      ctx.env,
+    );
   },
   async extraMeta(output, ctx) {
     // Skip the fetch on ChatGPT: its widget bundle takes the iframe
@@ -377,111 +155,4 @@ const tako_search = {
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 
-// Deep polling. Hoisted out of the handler so the unit tests can hit
-// it directly (and so the auto-escalation path can call it without
-// duplicating the loop).
-async function pollDeep(
-  ctx: ToolContext,
-  taskId: string,
-): Promise<KnowledgeCard[]> {
-  const startedAt = Date.now();
-  let nextSinceIndex = 0;
-  let latestEvents: AsyncTaskEvent[] = [];
-  let transientRetriesLeft = MAX_TRANSIENT_RETRIES;
-  // Monotonic progress counter (count of polls so far). Required by
-  // the MCP spec — `progress` MUST increase across notifications for
-  // the same progressToken.
-  let pollCount = 0;
-
-  while (true) {
-    let status: AsyncTaskStatus;
-    try {
-      status = await djangoGet<AsyncTaskStatus>(
-        ctx.env,
-        ctx.token,
-        "/api/v1/knowledge_search/async/status/",
-        {
-          query: { task_id: taskId, since_index: nextSinceIndex },
-          timeoutMs: STATUS_REQUEST_TIMEOUT_MS,
-        },
-      );
-    } catch (err) {
-      if (isTransientStatusError(err) && transientRetriesLeft > 0) {
-        transientRetriesLeft -= 1;
-        const elapsed = Date.now() - startedAt;
-        if (elapsed + POLL_INTERVAL_MS >= POLL_BUDGET_MS) {
-          throw err;
-        }
-        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-        continue;
-      }
-      throw err;
-    }
-
-    pollCount += 1;
-    if (status.events && status.events.length > 0) {
-      latestEvents = latestEvents.concat(status.events);
-      const maxId = status.events.reduce(
-        (acc, e) => (typeof e.id === "number" && e.id > acc ? e.id : acc),
-        nextSinceIndex - 1,
-      );
-      nextSinceIndex = maxId + 1;
-    }
-
-    const normalizedStatus =
-      typeof status.status === "string" ? status.status.toUpperCase() : "";
-    const isTerminal =
-      normalizedStatus === COMPLETED_STATE ||
-      FAILURE_STATES.has(normalizedStatus);
-
-    // Emit a progress notification to keep the client's tool-call
-    // timeout alive. The message carries a short "current pipeline
-    // step" hint pulled from the most recent event, when available.
-    // Best-effort — `sendProgress` swallows errors internally so a
-    // notification failure can't break the polling loop.
-    //
-    // On terminal iterations we await so the final progress event
-    // flushes before the handler returns / throws — prior code used
-    // fire-and-forget which races with the result envelope being
-    // assembled in `mcp.ts`. On non-terminal iterations the trailing
-    // sleep is plenty of time for the in-flight notification, and
-    // awaiting per-iteration would block the loop on the network
-    // hop.
-    const progressPromise = ctx.sendProgress(pollCount, {
-      message: `deep search ${summarizeProgress(latestEvents)}`,
-    });
-    if (isTerminal) {
-      await progressPromise;
-    } else {
-      void progressPromise;
-    }
-
-    if (normalizedStatus === COMPLETED_STATE) {
-      return status.result?.outputs?.knowledge_cards ?? [];
-    }
-
-    if (FAILURE_STATES.has(normalizedStatus)) {
-      throw new Error(
-        `tako_search deep task ${normalizedStatus.toLowerCase()} (${summarizeProgress(latestEvents)}): ${status.error ?? "no detail provided by Tako backend"}`,
-      );
-    }
-
-    const elapsed = Date.now() - startedAt;
-    if (elapsed + POLL_INTERVAL_MS >= POLL_BUDGET_MS) {
-      throw new Error(
-        `tako_search deep task ${taskId} did not complete within ${Math.round(POLL_BUDGET_MS / 1000)}s (${summarizeProgress(latestEvents)}) — Tako's deep-research pipeline may be busy. Try again shortly, or pass \`search_effort: "fast"\` to force the cheap sync path.`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-  }
-}
-
 export default tako_search;
-
-// Exported for unit tests — the polling-budget constants drive the
-// mock-response counts in `tako_search.test.ts` so the
-// budget-exhaustion test stays correct when the budget is tuned.
-export const __test_only__ = {
-  POLL_INTERVAL_MS,
-  POLL_BUDGET_MS,
-};

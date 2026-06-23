@@ -1,14 +1,15 @@
 # Tako MCP Server
 
-An MCP (Model Context Protocol) server that provides access to Tako's knowledge base and interactive data visualizations.
+An MCP (Model Context Protocol) server that provides access to Tako's knowledge base and data visualizations.
 
 ## What is this?
 
 This MCP server enables AI agents to:
 
 - **Search** Tako's knowledge base for charts and data visualizations
-- **Fetch** chart preview images and AI-generated insights
-- **Render** fully interactive Tako charts via MCP-UI
+- **Answer** data questions with grounded, citation-backed prose
+- **Fetch** underlying content (CSV or text) behind result URLs
+- **Run** deep multi-step research with Tako's agent
 
 ## Quick start
 
@@ -21,8 +22,6 @@ claude mcp add tako-mcp --transport http https://mcp.tako.com/mcp \
 ```
 
 That's it for new users. Detailed configs for Claude Code / Claude Desktop / Cursor / Windsurf are in the next section.
-
-> Looking for the Python `pip install tako-mcp` server, or the Docker image, or the Smithery listing? Those are the **legacy Python implementation** — see [Self-hosting (legacy)](#self-hosting-legacy-python-server) at the bottom. They're kept for air-gapped, custom-fork, and pre-existing deployments, but the hosted Workers endpoint is where all new tool work ships first and has the current tool surface.
 
 ## Hosted (Cloudflare Workers)
 
@@ -89,7 +88,7 @@ Add to `~/.cursor/mcp.json` (Cursor) or the equivalent Windsurf config:
 ### Notes
 
 - **Tools are discovered automatically** via the MCP `tools/list` handshake on connect — your client always sees the current tool surface, no manual list to keep in sync.
-- **Hosted uses Bearer auth on the connection**, not the `api_token` per-tool-call argument shown in the self-hosted examples below. Once authenticated, tool inputs match exactly across both transports.
+- **Auth is connection-level Bearer** — once the connection is established with your token, tool inputs require no `api_token` argument.
 - **Use the staging endpoint** (`mcp.staging.tako.com`) for testing changes against an unstable build before they reach `mcp.tako.com`.
 
 ## Consumer hosts (OAuth)
@@ -188,265 +187,50 @@ There are two ways to break the connection, and they have different blast radius
 
 > This kill-switch behavior is by design for v1. Per-grant scoped tokens (revoke a single host without touching the others) are tracked under [TAKO-2679](https://linear.app/tako/issue/TAKO-2679)'s known limitations.
 
-## Self-hosting (legacy Python server)
-
-> ⚠️ **The pip / Docker / Smithery paths described in this section are the original Python implementation in `src/tako_mcp/`.** They are *not* the current canonical Tako MCP — that's the hosted Cloudflare Worker at `mcp.tako.com` documented above. The Python server still works and is maintained for self-hosted, air-gapped, and Smithery-marketplace deployments, but it ships an older tool surface and an older transport (SSE, per-tool `api_token` argument) than the hosted version. New tool work lands in `workers/` first; the Python server may diverge over time.
->
-> If you don't have a specific reason to self-host, use the hosted endpoint above.
-
-### Installation
-
-```bash
-pip install tako-mcp
-```
-
-Or install from source:
-
-```bash
-git clone https://github.com/anthropics/tako-mcp.git
-cd tako-mcp
-pip install -e .
-```
-
-### Run the Server
-
-```bash
-tako-mcp
-```
-
-Or with Docker:
-
-```bash
-docker build -t tako-mcp .
-docker run -p 8001:8001 tako-mcp
-```
-
-### Connect Your Agent
-
-Point your MCP client to `http://localhost:8001`.
-
-### Configuration (self-hosted only)
-
-Environment variables apply to the Python server. The hosted Worker has its own configuration baked into `workers/wrangler.jsonc` and is not user-tunable.
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TAKO_API_URL` | Tako API endpoint | `https://api.tako.com` |
-| `PUBLIC_BASE_URL` | Public URL for chart embeds | `https://tako.com` |
-| `PORT` | Server port | `8001` |
-| `HOST` | Server host | `0.0.0.0` |
-| `MCP_ALLOWED_HOSTS` | Additional allowed hosts (comma-separated) | |
-| `MCP_ENABLE_DNS_REBINDING` | Enable DNS rebinding protection | `true` |
-
-### Testing the self-hosted server
-
-```bash
-python -m tests.test_client --api-token YOUR_API_TOKEN
-```
-
-This verifies:
-- MCP handshake and initialization
-- Tool discovery
-- Search, images, and insights
-- MCP-UI resource generation
-
-## Breaking changes (v0.2.0)
-
-- `knowledge_search` → **`tako_search`** (endpoint unchanged).
-- `grounding` → **`tako_answer`** (now backed by GA `/api/v1/answer`; result is `{answer, cards, web_results, request_id}`).
-- New: **`tako_contents`**, **`tako_agent`**.
-
-Update any client config or agent prompts that referenced the old tool names.
-
 ## Available Tools
 
-> **Note on the JSON examples below:** these show the input shape used by the **legacy Python server** (`api_token` passed as a per-tool argument). If you're using the hosted endpoint at `mcp.tako.com`, drop the `api_token` field — auth flows via the connection-level `Authorization: Bearer …` header instead. Tool *inputs* are otherwise compatible across both transports, and your MCP client discovers the live tool surface automatically via `tools/list`. The hosted Worker also ships a different tool surface than the Python server: current Workers tools are `tako_search`, `tako_answer`, `tako_contents`, `tako_agent`, `get_chart_image`, `open_chart_ui`, `create_chart`, `create_report`, `get_report`, `list_reports`, `export_report`, and `get_credit_balance`.
+Tools are discovered automatically via the MCP `tools/list` handshake; your client always sees the live surface. Auth is connection-level (Bearer token or OAuth) — there is no per-call `api_token` argument.
 
-### `tako_search`
-
-Search Tako's knowledge base for charts and data visualizations.
-
-```json
-{
-  "query": "Intel vs Nvidia headcount",
-  "api_token": "your-api-token",
-  "count": 5,
-  "search_effort": "deep"
-}
-```
-
-Returns matching charts with IDs, titles, descriptions, and URLs.
-
-### `get_chart_image`
-
-Get a preview image URL for a chart.
-
-```json
-{
-  "pub_id": "chart-id",
-  "api_token": "your-api-token",
-  "dark_mode": true
-}
-```
-
-### `get_card_insights`
-
-Get AI-generated insights for a chart.
-
-```json
-{
-  "pub_id": "chart-id",
-  "api_token": "your-api-token",
-  "effort": "medium"
-}
-```
-
-Returns bullet-point insights and a natural language description.
-
-## ThinViz API - Create Custom Charts
-
-ThinViz lets you create charts with your own data using pre-configured templates.
-
-### `list_chart_schemas`
-
-List available chart templates.
-
-```json
-{
-  "api_token": "your-api-token"
-}
-```
-
-Returns schemas like `stock_card`, `bar_chart`, `grouped_bar_chart`.
-
-### `get_chart_schema`
-
-Get detailed info about a schema including required components.
-
-```json
-{
-  "schema_name": "bar_chart",
-  "api_token": "your-api-token"
-}
-```
-
-### `create_chart`
-
-Create a chart from a template with your data.
-
-```json
-{
-  "schema_name": "bar_chart",
-  "api_token": "your-api-token",
-  "source": "Company Reports",
-  "components": [
-    {
-      "component_type": "header",
-      "config": {
-        "title": "Revenue by Region",
-        "subtitle": "Q4 2024"
-      }
-    },
-    {
-      "component_type": "categorical_bar",
-      "config": {
-        "datasets": [{
-          "label": "Revenue",
-          "data": [
-            {"x": "North America", "y": 120},
-            {"x": "Europe", "y": 98},
-            {"x": "Asia", "y": 156}
-          ],
-          "units": "$M"
-        }],
-        "title": "Revenue by Region"
-      }
-    }
-  ]
-}
-```
-
-Returns the new chart's `card_id`, `embed_url`, and `image_url`.
-
-## MCP-UI - Interactive Charts
-
-### `open_chart_ui`
-
-Open an interactive chart in the UI (MCP-UI).
-
-```json
-{
-  "pub_id": "chart-id",
-  "dark_mode": true,
-  "width": 900,
-  "height": 600
-}
-```
-
-Returns a UIResource for rendering an interactive iframe.
+- **`tako_search`** — Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on hosts that support MCP Apps (Claude.ai, ChatGPT). Choose `sources` (`["tako"]` default, `["web"]`, or both) and `effort` (`fast` default | `instant`). For deep, multi-step research — or when search returns nothing — use `tako_agent`.
+- **`tako_answer`** — Get a single grounded, citation-backed prose answer. Ground in `["tako"]`, `["web"]`, or both (default).
+- **`tako_contents`** — Fetch the content behind a result URL: a Tako card URL returns a CSV; any other URL returns the page's extracted text.
+- **`tako_agent`** — Run Tako's deep research agent for complex, multi-step data questions. Returns a synthesized answer plus supporting chart cards. (On ChatGPT this is exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.)
+- **`get_credit_balance`** — Check the connected account's API credit balance.
 
 ## Example Flow
 
 1. User asks: "Show me a chart about Intel vs Nvidia headcount"
 2. Agent calls `tako_search` with the query
-3. Agent receives chart results with IDs
-4. Agent can:
-   - Call `tako_answer` to get a grounded prose answer
-   - Call `get_chart_image` for a preview
-   - Call `open_chart_ui` to render an interactive chart
+3. Agent receives chart results with IDs and URLs; the top result renders inline on supported hosts
+4. Agent calls `tako_answer` to get a grounded prose answer with citations
+
+## Breaking changes (v0.3.0)
+
+- The current tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_agent`** (plus the ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), and **`get_credit_balance`**.
+- The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
+- The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
+
+Update any client config or agent prompts that referenced the old tool names or the Python SSE endpoint.
 
 ## Health Checks
 
 - `GET /health` - Simple "ok" response
-- `GET /health/detailed` - JSON with status and timestamp
 
 ## Architecture
 
-Tako MCP runs in two modes depending on which distribution path you chose. Both speak the same MCP tool protocol; only the transport and host differ.
-
-**Hosted mode (`mcp.tako.com`)** — the recommended path:
+Tako MCP is a Cloudflare Worker — a thin TypeScript proxy deployed at `mcp.tako.com`:
 
 ```
-AI Agent (Claude Code/Desktop, Cursor, etc.)
+AI Agent (Claude Code/Desktop, Cursor, Claude.ai, ChatGPT, etc.)
     ↓
   MCP Protocol (Streamable HTTP, POST /mcp)
     ↓
-Cloudflare Worker  ──  Bearer auth, tool dispatch
+Cloudflare Worker  ──  Bearer auth / OAuth, tool dispatch
     ↓
 Tako Django API  (api.tako.com)
 ```
 
-The Cloudflare Worker is a thin TypeScript proxy: it extracts the Bearer token, validates the MCP request, calls the appropriate Django endpoint with the user's token forwarded as `X-API-Key`, and returns structured tool results. Code lives in `workers/` of this repo.
-
-**Self-hosted mode (`pip install` / Docker)** — same proxy idea, run locally:
-
-```
-AI Agent
-    ↓
-  MCP Protocol (SSE)
-    ↓
-Local tako-mcp process  (Python, Starlette/Uvicorn)
-    ↓
-Tako Django API
-```
-
-Use this when you need to run inside a private network, modify the server, or pin a specific version. Code lives in `src/tako_mcp/`.
-
-In both modes the server:
-1. Authenticates with your Tako API token (Bearer header for hosted; `api_token` per-tool argument for SSE)
-2. Translates MCP tool calls to Tako API requests
-3. Returns formatted results and UI resources
-
-## MCP-UI Support
-
-The `open_chart_ui` tool returns an MCP-UI resource that clients can render as an interactive iframe. The embedded chart supports:
-
-- Zooming and panning
-- Hover interactions
-- Responsive resizing via `postMessage`
-- Light and dark themes
-
-Clients that support MCP-UI (like CopilotKit) will automatically render these resources.
+The Worker extracts the Bearer token (or OAuth-derived token), validates the MCP request, calls the appropriate Django endpoint with the user's token forwarded as `X-API-Key`, and returns structured tool results. Code lives in `workers/` of this repo.
 
 ## MCP Registry (maintainers)
 
@@ -478,7 +262,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Links
 
 - [Tako](https://tako.com) - Data visualization platform
-- [Tako on Smithery](https://smithery.ai/servers/tako/tako) - MCP server listing
+- [Tako on Smithery](https://smithery.ai/servers/tako/tako) - MCP server listing (hosted Worker at `mcp.tako.com/mcp`)
 - [Tako on the MCP Registry](https://registry.modelcontextprotocol.io) - `io.github.TakoData/tako-mcp`
 - [MCP Specification](https://spec.modelcontextprotocol.io/) - Model Context Protocol
-- [MCP-UI](https://mcpui.dev/) - MCP UI rendering standard

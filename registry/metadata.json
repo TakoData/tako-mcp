@@ -2,9 +2,9 @@
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
   "namespace": "com.tako",
   "name": "tako-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "title": "Tako MCP Server",
-  "description": "Search, answer, and fetch data from Tako's knowledge base of 100K+ charts covering economics, finance, demographics, sports, markets, and weather; run deep multi-step research agents; and create custom interactive visualizations using 15+ chart types.",
+  "description": "Search, answer, and fetch data from Tako's knowledge base of 100K+ charts covering economics, finance, demographics, sports, markets, and weather; and run deep multi-step research agents.",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
     "source": "github"
@@ -18,10 +18,7 @@
   "tags": [
     "charts",
     "data-visualization",
-    "knowledge-base",
-    "thinviz",
-    "interactive-charts",
-    "mcp-ui"
+    "knowledge-base"
   ],
   "authors": [
     {

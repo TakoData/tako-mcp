@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { djangoPost } from "../django.js";
+import { takoCardSchema, webResultSchema } from "./_search_results.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
@@ -23,28 +24,8 @@ const inputSchema = z.object({
   locale: z.string().default("en-US").describe("Locale for results."),
 });
 
-// Minimal TakoCard mirror (backend api/ga/v3/search/types.py::TakoCard). Loose
-// so a richer backend card doesn't break parsing.
-const takoCardSchema = z
-  .object({
-    card_id: z.string().nullable().optional(),
-    title: z.string().nullable().optional(),
-    description: z.string().nullable().optional(),
-    webpage_url: z.string().nullable().optional(),
-    image_url: z.string().nullable().optional(),
-    embed_url: z.string().nullable().optional(),
-  })
-  .loose();
-
-const webResultSchema = z
-  .object({
-    title: z.string(),
-    url: z.string(),
-    snippet: z.string().nullable().optional(),
-    source_name: z.string().nullable().optional(),
-  })
-  .loose();
-
+// TakoCard + WebResult schemas are shared with tako_search via
+// _search_results.ts (backend api/ga/v3/search/types.py).
 const outputSchema = z.object({
   answer: z.string(),
   cards: z.array(takoCardSchema),

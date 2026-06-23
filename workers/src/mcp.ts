@@ -32,7 +32,7 @@ import type { AnyToolModule, McpClientKind, ToolContext } from "./tools/types.js
  * returns, so a mismatch surfaces as "wrong server" in tooling.
  */
 export const SERVER_NAME = "tako-mcp";
-export const SERVER_VERSION = "0.1.0";
+export const SERVER_VERSION = "0.3.0";
 
 /**
  * MCP Apps UI resource MIME type. Hosts (claude.ai, ChatGPT Apps SDK, VS
@@ -67,9 +67,8 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * LLM to figure out from prose — specifically, suppressing the chart
  * widget on claude.ai (where the constrained iframe container clips
  * the chart and the LLM's markdown link is strictly cleaner UX) and
- * routing ChatGPT through the deep-search kickoff/wait pair (its
- * Apps SDK doesn't reset tool-call timeouts on progress
- * notifications).
+ * routing ChatGPT through the agent split pair (its Apps SDK doesn't
+ * reset tool-call timeouts on progress notifications).
  *
  * The match is intentionally loose: we don't care about exact UA
  * strings, just whether the request smells like one of the major
@@ -160,36 +159,32 @@ export function createMcpServer(
   server.server.registerCapabilities({ prompts: {} });
   server.server.setRequestHandler(ListPromptsRequestSchema, () => ({ prompts: [] }));
 
-  // Dedupe state for `appUiResource` registration — multiple tools can
-  // declare the same widget URI (e.g. `open_chart_ui` and
-  // `knowledge_search` both register `ui://tako/embed/chart` so they
-  // share one bundle). The MCP SDK's `registerResource` throws
-  // `Resource <uri> is already registered` on a duplicate URI, and
-  // similarly throws on a duplicate template name. The Sets here let
-  // each tool still get its `_meta.ui.resourceUri` wired into the
-  // tool registration while skipping the redundant `registerResource`
-  // call after the first.
+  // Dedupe state for `appUiResource` registration — `tako_search` is
+  // currently the sole chart-widget owner (registers
+  // `ui://tako/embed/chart`), but the Sets here guard against future
+  // tools re-declaring the same URI/template name. The MCP SDK's
+  // `registerResource` throws `Resource <uri> is already registered`
+  // on a duplicate URI, and similarly throws on a duplicate template
+  // name. The Sets let each tool still get its `_meta.ui.resourceUri`
+  // wired into the tool registration while skipping any redundant
+  // `registerResource` call after the first.
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
 
-  // Tools that should ONLY appear on ChatGPT-class clients. The deep
-  // (Orca) async path needs a kickoff/wait pattern on hosts that
-  // don't honor MCP `notifications/progress` for tool-call timeout
-  // extension (verified for ChatGPT — its Apps SDK doesn't include a
-  // progressToken in tools/call requests, so any single-tool deep
-  // call dies at the host's default timeout). Claude.ai uses the
-  // single-tool `knowledge_search` auto-escalation with progress
-  // notifications and never needs these.
+  // Tools that should ONLY appear on ChatGPT-class clients.
+  //
+  // ChatGPT's Apps SDK doesn't send a progressToken, so the single-tool
+  // `tako_agent` dispatch+poll path (which emits progress to keep the
+  // per-call timeout fresh) can't survive ChatGPT's ~60 s ceiling. The
+  // split pair `tako_agent_start` / `tako_agent_wait` is used instead.
   //
   // Hosting them only on the clients that need them keeps the
   // Claude.ai tool surface minimal (no risk of the agent there
-  // accidentally choosing the slower kickoff/wait flow over the
-  // single-call deep path) and keeps the registry codegen unchanged
-  // (registry/server.json still lists everything for discovery; the
-  // runtime just filters per request).
+  // accidentally choosing the slower split flow over the single-call
+  // path) and keeps the registry codegen unchanged (registry/server.json
+  // still lists everything for discovery; the runtime just filters per
+  // request).
   const CHATGPT_ONLY_TOOL_NAMES = new Set([
-    "start_deep_knowledge_search",
-    "wait_for_knowledge_search",
     // ChatGPT's Apps SDK doesn't send a progressToken, so the single-tool
     // `tako_agent` dispatch+poll path (which emits progress to keep the
     // per-call timeout fresh) can't survive ChatGPT's ~60 s ceiling. The
@@ -207,18 +202,10 @@ export function createMcpServer(
   // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
   // from the blanket claude.ai suppression in `widgetSuppressed`).
   // The mechanism is kept in place for future per-tool gating, but
-  // is currently empty:
-  //
-  //   - `knowledge_search` USED to live here to avoid the empty-fast
-  //     widget gap (ChatGPT pins widget container height at the
-  //     highest ever notified and ignores later shrinks, so a 0-card
-  //     result rendered as an empty container that never collapsed).
-  //     The empty path now throws an actionable tool-call error
-  //     instead of returning a clean `count: 0`, and ChatGPT does
-  //     NOT reserve a widget container for tool errors — so the
-  //     inline auto-render works on the success path AND the empty
-  //     path no longer leaves a gap. Net win: the gap is fixed
-  //     without losing inline charts on success.
+  // is currently empty: `tako_search` ships its widget on ChatGPT
+  // and handles the empty-result case by throwing an actionable
+  // tool-call error (ChatGPT does NOT reserve a widget container for
+  // tool errors, so the widget never leaves a persistent gap).
   //
   // Add a tool name here only if it has a UI bundle that produces
   // unrenderable / blank widgets on ChatGPT in some legitimate
@@ -305,8 +292,8 @@ function registerTool(
   };
 
   if (tool.outputSchema !== undefined) {
-    // Output schemas are optional — only read tools + `create_chart` declare
-    // them. In practice every `outputSchema` we ship is `z.object(...)`,
+    // Output schemas are optional — only read tools declare them.
+    // In practice every `outputSchema` we ship is `z.object(...)`,
     // so `.shape` is defined; if it isn't, we simply don't pass outputSchema.
     const outputShape = (tool.outputSchema as unknown as { shape?: unknown })
       .shape;
@@ -357,11 +344,9 @@ function registerTool(
   //     get a widget URI in the tool's `_meta`, so it won't load
   //     the chart bundle. Used on claude.ai (constrained iframe
   //     container clips the chart and exposes an awkward
-  //     scrollbar — markdown-link UX is strictly better) and on
-  //     `knowledge_search` for ChatGPT (its host pins widget
-  //     container height and ignores shrink notifications, so an
-  //     empty fast result leaves a persistent gap; render via
-  //     `open_chart_ui` instead).
+  //     scrollbar — markdown-link UX is strictly better). On
+  //     ChatGPT, `tako_search` keeps its widget; the empty-result
+  //     case is handled by throwing a tool-call error instead.
   //
   //   - `inlinePngFallbackSuppressed` → skip the
   //     `extraContentBlocks` PNG image content block. Without
@@ -623,12 +608,11 @@ function registerTool(
       // Fires only when the tool genuinely doesn't define a widget
       // (`appUiResource === undefined`) AND inline PNG fallback
       // hasn't been independently suppressed for this client/tool.
-      // On claude.ai (and on `knowledge_search` for ChatGPT) the PNG
-      // content-block fallback also rendered cropped / awkward, and
-      // the LLM's `[Open in Tako](embed_url)` link is a strictly
-      // cleaner answer; we don't want a redundant PNG the user can't
-      // really interact with. `inlinePngFallbackSuppressed` is the
-      // explicit, separate gate for that — kept distinct from
+      // On claude.ai the PNG content-block fallback rendered cropped
+      // / awkward, and the LLM's `[Open in Tako](embed_url)` link is
+      // a strictly cleaner answer; we don't want a redundant PNG the
+      // user can't really interact with. `inlinePngFallbackSuppressed`
+      // is the explicit, separate gate for that — kept distinct from
       // `widgetSuppressed` (the gate above) so a future case that
       // wants one without the other is a one-line change.
       //
@@ -662,12 +646,11 @@ function registerTool(
       // context" guard.
       //
       // Gated on `ui !== undefined` — the inverse of `extraContentBlocks`
-      // above. Both chart-bearing tools (`open_chart_ui`,
-      // `knowledge_search`) use `extraMeta` exclusively to ship
-      // `image_data_url` for the widget to read via `params._meta`.
-      // When the widget is suppressed (claude.ai), no widget will
-      // consume `_meta`, so running this hook would inflate the
-      // JSON-RPC response with a ~330 KB unused data URL.
+      // above. `tako_search` uses `extraMeta` to ship `image_data_url`
+      // for the widget to read via `params._meta`. When the widget is
+      // suppressed (claude.ai), no widget will consume `_meta`, so
+      // running this hook would inflate the JSON-RPC response with a
+      // ~330 KB unused data URL.
       let resultMeta: Record<string, unknown> | undefined;
       if (tool.extraMeta !== undefined && ui !== undefined) {
         try {
@@ -690,12 +673,10 @@ function registerTool(
       // image-baked dynamic variant).
       if (ui?.dynamic !== undefined) {
         try {
-          // Pass both `input` and `output` to the resolver — tools
-          // whose `pub_id` is part of the input (e.g. `open_chart_ui`)
-          // ignore `output`; tools that derive the chart pub_id from
-          // a search result (e.g. `knowledge_search` →
-          // `output.results[0].card_id`, lifted to `output.pub_id`)
-          // read it from `output`. Output is `unknown` here because
+          // Pass both `input` and `output` to the resolver. Currently
+          // `tako_search` is the only tool with a dynamic URI resolver;
+          // it reads the chart `pub_id` from the search output
+          // (`output.pub_id`). Output is `unknown` here because
           // `AnyToolModule` erases handler types at the registry
           // boundary; resolvers narrow it themselves.
           const resolvedUri = ui.dynamic.resolveUriFromInput(input, output);
@@ -856,7 +837,7 @@ export async function handleMcpRequest(
     const requestOrigin = new URL(request.url).origin;
     // Detect calling client from User-Agent so we can suppress the
     // chart widget on claude.ai (constrained iframe container) and
-    // route ChatGPT through the deep-search kickoff/wait pair. See
+    // route ChatGPT through the agent split pair. See
     // `detectMcpClient` for the matching rules.
     const client = detectMcpClient(request.headers.get("user-agent"));
     const server = createMcpServer(ctx, {
