@@ -6,16 +6,17 @@
  *
  *   1. `GET /health`           → expect HTTP 200 with body "ok"
  *   2. MCP `initialize`        → handshake completes
- *   3. MCP `tools/list`        → 7-tool surface present; hard-asserts
- *                                 the 4 non-gated canary tools; loosely
+ *   3. MCP `tools/list`        → 8-tool surface present; hard-asserts
+ *                                 the 5 non-gated canary tools; loosely
  *                                 asserts at least one agent tool is present
  *   4. MCP Apps widget assertion on `tako_search` (soft-warn on miss)
- *   5. Per-tool MCP `tools/call` canaries (read-only):
- *        a. `tako_search "US GDP"`        — non-empty results
- *        b. `tako_answer "US GDP"`        — answer text returned
- *        c. `tako_contents {url from search}` — download_url returned
+ *   5. Per-tool MCP `tools/call` canaries:
+ *        a. `tako_search "US GDP"`        — non-empty results (read-only)
+ *        b. `tako_answer "US GDP"`        — answer text returned (read-only)
+ *        c. `tako_contents {url from search}` — download_url returned (read-only)
  *        d. `get_credit_balance`          — `details.credit_balance`
- *                                           must be a number or numeric string
+ *                                           must be a number or numeric string (read-only)
+ *        e. `tako_visualize`              — creates a card (charges 1 credit)
  *
  * Excluded by design:
  *   - `tako_agent` / `tako_agent_start` / `tako_agent_wait` — long-running;
@@ -142,7 +143,7 @@ try {
   // with a useful diff if a registry change drops one of them. We don't
   // assert on the *full* tool list because the surface evolves (e.g.
   // explore_knowledge_graph removal in PR #47).
-  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "get_credit_balance"];
+  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_visualize", "get_credit_balance"];
   for (const required of requiredTools) {
     if (!toolNames.includes(required)) {
       fail(
@@ -279,6 +280,35 @@ try {
     `get_credit_balance.details.credit_balance is not a number or numeric string: ${JSON.stringify(balance)}`,
   );
   ok(`get_credit_balance → details.credit_balance=${balanceNumeric}`);
+
+  // ----- e) tako_visualize canary (creates a tiny card; CHARGES 1 CREDIT) ----
+  const tvResult = await callOk(client, "tako_visualize", {
+    title: "MCP smoke test",
+    components: [
+      { component_type: "header", config: { title: "MCP smoke test" } },
+      {
+        component_type: "categorical_bar",
+        config: {
+          datasets: [
+            { label: "Smoke", units: "USD", data: [{ x: "A", y: 1 }, { x: "B", y: 2 }] },
+          ],
+        },
+      },
+    ],
+  });
+  const tvStructured = tvResult.structuredContent as
+    | { card_id?: string; embed_url?: string }
+    | undefined;
+  assert(tvStructured, "tako_visualize missing structuredContent");
+  assert(
+    typeof tvStructured.card_id === "string" && tvStructured.card_id.length > 0,
+    "tako_visualize returned no card_id",
+  );
+  assert(
+    typeof tvStructured.embed_url === "string" && /^https?:\/\//.test(tvStructured.embed_url),
+    `tako_visualize.embed_url is not http(s): ${JSON.stringify(tvStructured?.embed_url)}`,
+  );
+  ok(`tako_visualize → card_id ${tvStructured.card_id}`);
 } finally {
   await client.close().catch(() => {
     // ignore close errors — we already have the answer we care about
