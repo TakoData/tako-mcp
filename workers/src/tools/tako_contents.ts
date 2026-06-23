@@ -48,7 +48,7 @@ const takoContents = {
     title: "Tako: Fetch Contents",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
   },
   async handler(input, ctx): Promise<Output> {
     const data = await djangoPost<ContentsPostResponse>(
