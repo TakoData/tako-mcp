@@ -202,6 +202,43 @@
         "destructiveHint": false,
         "openWorldHint": false
       }
+    },
+    {
+      "name": "tako_visualize",
+      "description": "Create an embeddable Tako chart/card directly from data you ALREADY HAVE (not from search). Provide one or more typed `components`, each with a `component_type` and a `config` object holding that type's data (e.g. `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`, `header`). The card auto-renders inline as a chart and returns `webpage_url` / `embed_url` for sharing or embedding. Use `tako_search` to FIND existing Tako data; use `tako_visualize` when you already have the numbers. For per-`component_type` `config` shapes and worked examples, see Tako's 'Agent Skills → Visualize Your Data' docs and the Thin-Viz chart-creation reference. NOTE: `person_card` must be the ONLY component when used. **Always include `[Open in Tako](embed_url)` once at the end of your reply.**",
+      "parameters": {
+        "components": {
+          "type": "array",
+          "description": "One or more components making up the card, rendered top to bottom.",
+          "required": true
+        },
+        "title": {
+          "type": "string",
+          "description": "Card title (falls back to a header component's title)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Card description."
+        },
+        "source": {
+          "type": "string",
+          "description": "Data source attribution, shown in the footer."
+        },
+        "height": {
+          "type": "integer",
+          "description": "Chart height in pixels (100–2000). Overrides the default aspect-ratio height."
+        },
+        "normalize_currencies": {
+          "type": "string",
+          "description": "Target ISO 4217 currency code (e.g. 'USD'). Converts recognized currency-denominated datasets to this currency using historical rates."
+        }
+      },
+      "annotations": {
+        "title": "Tako: Visualize",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
     }
   ],
   "links": {
