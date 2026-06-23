@@ -194,6 +194,7 @@ Tools are discovered automatically via the MCP `tools/list` handshake; your clie
 - **`tako_search`** — Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on hosts that support MCP Apps (Claude.ai, ChatGPT). Choose `sources` (`["tako"]` default, `["web"]`, or both) and `effort` (`fast` default | `instant`). For deep, multi-step research — or when search returns nothing — use `tako_agent`.
 - **`tako_answer`** — Get a single grounded, citation-backed prose answer. Ground in `["tako"]`, `["web"]`, or both (default).
 - **`tako_contents`** — Fetch the content behind a result URL: a Tako card URL returns a CSV; any other URL returns the page's extracted text.
+- **`tako_visualize`** — Create an embeddable chart/card directly from your own structured data (Tako's [Thin-Viz](https://tako.com/docs/) API). Supply typed `components` (timeseries, bar, table, financial boxes, …); the card auto-renders inline and returns `webpage_url` / `embed_url`.
 - **`tako_agent`** — Run Tako's deep research agent for complex, multi-step data questions. Returns a synthesized answer plus supporting chart cards. (On ChatGPT this is exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.)
 - **`get_credit_balance`** — Check the connected account's API credit balance.
 
@@ -206,7 +207,7 @@ Tools are discovered automatically via the MCP `tools/list` handshake; your clie
 
 ## Breaking changes (v0.3.0)
 
-- The current tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_agent`** (plus the ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), and **`get_credit_balance`**.
+- The current tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_visualize`**, **`tako_agent`** (plus the ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), and **`get_credit_balance`**.
 - The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
 - The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
 

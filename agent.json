@@ -2,7 +2,7 @@
   "name": "Tako",
   "description": "Data intelligence agent that searches a knowledge base of 100K+ charts, answers data questions with citations, fetches underlying source content, and runs deep multi-step research.",
   "url": "https://mcp.tako.com",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "capabilities": {
     "streaming": true,
     "pushNotifications": false
@@ -51,6 +51,17 @@
       "examples": [
         "Get the CSV behind this Tako chart",
         "Extract the text from this article"
+      ]
+    },
+    {
+      "id": "visualize-data",
+      "name": "Visualize Your Data",
+      "description": "Create an embeddable Tako chart/card directly from your own structured data — timeseries, bar, table, financial boxes, and more. The card auto-renders as an interactive chart.",
+      "tags": ["visualize", "charts", "create", "embed"],
+      "examples": [
+        "Chart this monthly revenue: Jan 50k, Feb 62k, Mar 71k",
+        "Make a bar chart of sales by region from my data",
+        "Turn this income statement into a financial card"
       ]
     },
     {

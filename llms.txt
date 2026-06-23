@@ -18,5 +18,6 @@ Connect your MCP client to `https://mcp.tako.com/mcp` with `Authorization: Beare
 - Fast search over 100K+ curated charts and live data — economics, finance, demographics, sports, markets, weather — plus the live web on request (`tako_search`); the top result auto-renders as an interactive chart. Deep multi-step research is the agent (`tako_agent`).
 - Get grounded, citation-backed prose answers from Tako's knowledge graph and/or the live web (`tako_answer`)
 - Fetch the underlying data (CSV) or page text behind any result URL (`tako_contents`)
+- Create an embeddable chart/card directly from your own structured data — timeseries, bar, table, financial boxes, and more (`tako_visualize`); the card auto-renders as an interactive chart.
 - Run a deep multi-step research agent for complex analytical questions (`tako_agent`)
 - Check API credit balance (`get_credit_balance`)
