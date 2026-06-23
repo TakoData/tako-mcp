@@ -79,7 +79,7 @@ const tako_search = {
   inputSchema,
   outputSchema,
   annotations: {
-    title: "Tako: Live Data & Charts",
+    title: "Tako: Search",
     readOnlyHint: true,
     destructiveHint: false,
     openWorldHint: false,
