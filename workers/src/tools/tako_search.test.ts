@@ -1,35 +1,30 @@
 /**
  * Tests for `tako_search`.
  *
- * Single-tool flow with internal polling for the deep (Orca) path,
- * plus MCP `notifications/progress` emission so clients with
- * `resetTimeoutOnProgress: true` keep their per-tool-call timeout
- * fresh across the polling window.
+ * Fast-only, synchronous search backed by `POST /api/v3/search`. No
+ * deep/async path: the handler issues one POST and shapes the response
+ * into `{ cards, web_results, request_id }` plus top-level auto-chain
+ * widget fields when the top card carries a `card_id`. Zero matches
+ * come back as a clean empty result (no throw) — deep/multi-step
+ * research is delegated to the Tako agent.
  *
  * Locked properties:
- *   1. Default (no explicit `search_effort`) → call `fast` first.
- *   2. Empty `fast` result → escalate to `deep`; poll until completion.
- *   3. Non-empty `fast` result → no escalation.
- *   4. Explicit `search_effort: "fast"` → single call, no escalation.
- *   5. Explicit `search_effort: "deep"` → single POST + polling, no
- *      prior `fast`.
- *   6. Async-task POST response triggers polling against the status
- *      endpoint.
- *   7. `COMPLETED` status returns `result.outputs.knowledge_cards[]`.
- *   8. `FAILED` / `INTERRUPTED` status throws with the error message.
- *   9. Budget exhaustion throws a clear "did not complete" error.
- *  10. Schema rejects `medium` and `auto`.
- *  11. Default `count` is 10.
- *  12. Auto-chain widget fields populated when top card has `card_id`.
- *  13. Polling emits `notifications/progress` events with monotonic
- *      `progress` values when the request carries a `progressToken`.
+ *   1. `sources` → `source_indexes` pass-through, default `["tako"]`;
+ *      `count` → `output_settings.count`; path is `/api/v3/search`.
+ *   2. `sources: ["tako","web"]` passed through verbatim.
+ *   3. `effort` omitted → no `effort` key; `effort: "instant"` → passed;
+ *      schema rejects `effort: "deep"`.
+ *   4. `count` → `output_settings.count`.
+ *   5. v3 card mapping (webpage_url) + `request_id` surfaced.
+ *   6. `web_results` surfaced.
+ *   7. Top-card auto-chain widget fields populated from `card_id`.
+ *   8. Clean empty (0 cards + 0 web_results) → resolves, no throw, no widget.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DjangoHttpError, DjangoNotFoundError } from "../django.js";
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import tako_search, { __test_only__ } from "./tako_search.js";
+import tako_search from "./tako_search.js";
 import {
   bodyOf,
   jsonResponse,
@@ -37,9 +32,6 @@ import {
   noopSendProgress,
   requestFrom,
 } from "./__test_helpers.js";
-
-const MAX_PENDING_POLLS =
-  Math.ceil(__test_only__.POLL_BUDGET_MS / __test_only__.POLL_INTERVAL_MS) + 5;
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 const CTX: ToolContext = {
@@ -49,8 +41,15 @@ const CTX: ToolContext = {
   client: "claude",
 };
 
-// Defaults the handler expects post-zod parse. count is 10 after this change.
-const DEFAULTS = { count: 10, country_code: "US", locale: "en-US" };
+// Defaults the handler expects post-zod parse (the MCP framework applies
+// schema defaults before invoking the handler, so direct handler calls
+// must pass the resolved shape — `sources` included).
+const DEFAULTS = {
+  sources: ["tako"] as ("tako" | "web")[],
+  count: 10,
+  country_code: "US",
+  locale: "en-US",
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -64,733 +63,168 @@ describe("tako_search input schema", () => {
     if (parsed.success) expect(parsed.data.count).toBe(10);
   });
 
-  it("rejects search_effort=medium", () => {
-    const parsed = tako_search.inputSchema.safeParse({
-      query: "x",
-      search_effort: "medium",
-    });
-    expect(parsed.success).toBe(false);
+  it("defaults sources to [\"tako\"]", () => {
+    const parsed = tako_search.inputSchema.safeParse({ query: "x" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.sources).toEqual(["tako"]);
   });
 
-  it("rejects search_effort=auto", () => {
+  it("accepts effort=fast", () => {
     const parsed = tako_search.inputSchema.safeParse({
       query: "x",
-      search_effort: "auto",
-    });
-    expect(parsed.success).toBe(false);
-  });
-
-  it("accepts search_effort=fast", () => {
-    const parsed = tako_search.inputSchema.safeParse({
-      query: "x",
-      search_effort: "fast",
+      effort: "fast",
     });
     expect(parsed.success).toBe(true);
   });
 
-  it("accepts search_effort=deep", () => {
+  it("accepts effort=instant", () => {
     const parsed = tako_search.inputSchema.safeParse({
       query: "x",
-      search_effort: "deep",
+      effort: "instant",
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it("rejects effort=deep", () => {
+    const parsed = tako_search.inputSchema.safeParse({
+      query: "x",
+      effort: "deep",
+    });
+    expect(parsed.success).toBe(false);
   });
 });
 
-describe("tako_search fast-first-deep-fallback", () => {
-  it("defaults to search_effort=fast on the initial POST", async () => {
+describe("tako_search request body", () => {
+  it("posts to /api/v3/search with default source_indexes and output_settings.count", async () => {
     const fetchMock = mockFetchSequence([
-      jsonResponse(200, {
-        outputs: {
-          knowledge_cards: [
-            {
-              card_id: "abc",
-              title: "Gold",
-              description: null,
-              url: null,
-              source: null,
-            },
-          ],
-        },
-      }),
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
     ]);
 
     await tako_search.handler({ query: "gold price", ...DEFAULTS }, CTX);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    const req = requestFrom(fetchMock.mock.calls[0]);
+    expect(new URL(req.url).pathname).toBe("/api/v3/search/");
+    const body = await bodyOf(req);
+    expect(body.source_indexes).toEqual(["tako"]);
+    expect(body.output_settings).toEqual({ count: 10 });
+    expect(body.query).toBe("gold price");
+  });
+
+  it("passes sources [\"tako\",\"web\"] through verbatim as source_indexes", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
+    ]);
+
+    await tako_search.handler(
+      { query: "x", ...DEFAULTS, sources: ["tako", "web"] },
+      CTX,
+    );
+
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.search_effort).toBe("fast");
+    expect(body.source_indexes).toEqual(["tako", "web"]);
   });
 
-  it("does not escalate when fast returns at least one card", async () => {
+  it("omits effort from the body when not provided", async () => {
     const fetchMock = mockFetchSequence([
-      jsonResponse(200, {
-        outputs: {
-          knowledge_cards: [
-            {
-              card_id: "abc",
-              title: "Gold",
-              description: null,
-              url: null,
-              source: null,
-            },
-          ],
-        },
-      }),
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
     ]);
 
-    const out = await tako_search.handler(
-      { query: "gold price", ...DEFAULTS },
+    await tako_search.handler({ query: "x", ...DEFAULTS }, CTX);
+
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
+    expect("effort" in body).toBe(false);
+  });
+
+  it("passes effort=instant through to the body", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
+    ]);
+
+    await tako_search.handler(
+      { query: "x", ...DEFAULTS, effort: "instant" },
       CTX,
     );
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(out.count).toBe(1);
-    expect(out.results[0]?.card_id).toBe("abc");
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
+    expect(body.effort).toBe("instant");
   });
 
-  it("retries with search_effort=deep when fast returns zero cards (auto-escalation)", async () => {
-    vi.useFakeTimers();
-    try {
-      const fetchMock = mockFetchSequence([
-        // 1: fast POST → empty
-        jsonResponse(200, { outputs: { knowledge_cards: [] } }),
-        // 2: deep POST → 202 async-task initiation
-        jsonResponse(202, { task_id: "task-auto", status: "pending" }),
-        // 3: status GET → COMPLETED with one card
-        jsonResponse(200, {
-          task_id: "task-auto",
-          status: "COMPLETED",
-          result: {
-            outputs: {
-              knowledge_cards: [
-                {
-                  card_id: "deep1",
-                  title: "Thailand Tourism",
-                  description: null,
-                  url: null,
-                  source: null,
-                },
-              ],
-            },
-          },
-        }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "thailand tourism gdp", ...DEFAULTS },
-        CTX,
-      );
-      await vi.runAllTimersAsync();
-      const out = await promise;
-
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      const fastBody = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-      const deepBody = await bodyOf(requestFrom(fetchMock.mock.calls[1]));
-      expect(fastBody.search_effort).toBe("fast");
-      expect(deepBody.search_effort).toBe("deep");
-      expect(out.count).toBe(1);
-      expect(out.results[0]?.card_id).toBe("deep1");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("translates Tako's 404 (no-results) on fast into an empty result and auto-escalates to deep", async () => {
-    // Tako's `/api/v1/knowledge_search` returns HTTP 404 with
-    // `RelevantResultsNotFoundError` when fast finds 0 cards (see
-    // `app/backend/knowledge/api/ga/v1/knowledge_search/views.py`
-    // ~line 607). The Worker's `runSearch` catches that
-    // `DjangoNotFoundError` and returns an empty
-    // `SyncSearchResponse` so the auto-escalation logic — which
-    // keys on `cards.length === 0` — fires the same way it does
-    // for a 200-with-empty-cards response. Without the
-    // translation, the throw would escape the handler and surface
-    // as a fatal `not_found` error, suppressing both this server-
-    // side escalation AND the LLM-side
-    // `start_deep_knowledge_search` directive on ChatGPT.
-    vi.useFakeTimers();
-    try {
-      const fetchMock = mockFetchSequence([
-        // 1: fast POST → 404 (Tako's "0 cards matched" signal — the
-        //    `error_type` discriminator is what gates the empty-result
-        //    translation; without it the 404 propagates as a fatal
-        //    DjangoNotFoundError. See `RELEVANT_RESULTS_NOT_FOUND_TYPE`
-        //    in `tako_search.ts`.)
-        jsonResponse(404, {
-          error_type: "RELEVANT_RESULTS_NOT_FOUND",
-          error_message: "No relevant knowledge cards found",
-        }),
-        // 2: deep POST → 202 async-task initiation
-        jsonResponse(202, { task_id: "task-404-then-deep", status: "pending" }),
-        // 3: status GET → COMPLETED with one card
-        jsonResponse(200, {
-          task_id: "task-404-then-deep",
-          status: "COMPLETED",
-          result: {
-            outputs: {
-              knowledge_cards: [
-                {
-                  card_id: "deep-after-404",
-                  title: "Daily caloric supply per capita",
-                  description: null,
-                  url: null,
-                  source: null,
-                },
-              ],
-            },
-          },
-        }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "daily caloric supply india china us", ...DEFAULTS },
-        CTX,
-      );
-      await vi.runAllTimersAsync();
-      const out = await promise;
-
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      const fastBody = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-      const deepBody = await bodyOf(requestFrom(fetchMock.mock.calls[1]));
-      expect(fastBody.search_effort).toBe("fast");
-      expect(deepBody.search_effort).toBe("deep");
-      expect(out.count).toBe(1);
-      expect(out.results[0]?.card_id).toBe("deep-after-404");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("returns an empty result on Tako 404 when caller forces fast (no auto-escalation, no throw)", async () => {
-    // When the caller passes `search_effort: "fast"` explicitly,
-    // auto-escalation is suppressed regardless of whether fast
-    // returns 0 cards via 200 or 404. Either way the response
-    // shape must be a clean empty result — never a thrown
-    // `DjangoNotFoundError` — so ChatGPT's
-    // `start_deep_knowledge_search` directive (keyed on 0 cards or
-    // errors) has an unambiguous signal to trigger on.
+  it("maps count to output_settings.count", async () => {
     const fetchMock = mockFetchSequence([
-      jsonResponse(404, {
-        error_type: "RELEVANT_RESULTS_NOT_FOUND",
-        error_message: "No relevant knowledge cards found",
-      }),
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
     ]);
 
-    const out = await tako_search.handler(
-      {
-        query: "obscure query with no matches",
-        ...DEFAULTS,
-        search_effort: "fast",
-      },
-      CTX,
-    );
+    await tako_search.handler({ query: "x", ...DEFAULTS, count: 5 }, CTX);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(out.count).toBe(0);
-    expect(out.results).toEqual([]);
-  });
-
-  it("re-throws an unrelated 404 (no RELEVANT_RESULTS_NOT_FOUND discriminator) instead of masking it as empty", async () => {
-    // Discriminating a real "no route" 404 from Tako's "0 cards
-    // matched" 404. If `/api/v1/knowledge_search` is ever moved /
-    // renamed and a reverse-proxy 404 (no body, or a body without
-    // `error_type: "RELEVANT_RESULTS_NOT_FOUND"`) starts coming
-    // back, the translation MUST NOT silently convert that to a
-    // false empty-result — both Claude's auto-escalation and
-    // ChatGPT's empty-result throw would then absorb a legitimate
-    // routing failure as "no data," hiding the outage. Cover two
-    // such cases: a body-less 404 (proxy / CF page) and a 404 with
-    // an unrelated `error_type` (some other DRF error class
-    // routed through the same status code).
-    const fetchMock = mockFetchSequence([
-      new Response("", { status: 404 }),
-    ]);
-
-    await expect(
-      tako_search.handler(
-        { query: "query against a moved endpoint", ...DEFAULTS },
-        CTX,
-      ),
-    ).rejects.toBeInstanceOf(DjangoNotFoundError);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    const fetchMock2 = mockFetchSequence([
-      jsonResponse(404, {
-        error_type: "BAD_REQUEST",
-        error_message: "Some unrelated 404 from a different endpoint",
-      }),
-    ]);
-
-    await expect(
-      tako_search.handler(
-        { query: "query that hits a different 404", ...DEFAULTS },
-        CTX,
-      ),
-    ).rejects.toBeInstanceOf(DjangoNotFoundError);
-    expect(fetchMock2).toHaveBeenCalledTimes(1);
-  });
-
-  it("throws an actionable redirect error when fast empty AND client is chatgpt", async () => {
-    // Server-side auto-escalation is disabled on ChatGPT (the
-    // single-tool deep path can't survive its 60 s host timeout).
-    // Empirically, the model treats a clean `count: 0` reply as a
-    // valid "no results" answer and falls back to training
-    // knowledge instead of calling `start_deep_knowledge_search`
-    // per the description directive. Throwing here surfaces the
-    // empty case as an actionable tool error the model is much
-    // less able to ignore. Same UA-based gate (`ctx.client ===
-    // "chatgpt"`); Claude.ai's auto-escalation handles its empty
-    // case server-side and never reaches this branch.
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { outputs: { knowledge_cards: [] } }),
-    ]);
-    const ctx: ToolContext = { ...CTX, client: "chatgpt" };
-
-    await expect(
-      tako_search.handler(
-        { query: "thailand tourism gdp", ...DEFAULTS },
-        ctx,
-      ),
-    ).rejects.toThrow(/start_deep_knowledge_search/);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("throws the same redirect when ChatGPT empty came via Tako 404", async () => {
-    // The 404→empty translation in `runSearch` interacts with the
-    // ChatGPT empty-result throw: a 404 from Tako should still
-    // produce the actionable error on ChatGPT (not bubble as a
-    // raw `DjangoNotFoundError`, which is the failure mode the
-    // 404 translation was added to fix in the first place).
-    const fetchMock = mockFetchSequence([
-      jsonResponse(404, {
-        error_type: "RELEVANT_RESULTS_NOT_FOUND",
-        error_message: "No relevant knowledge cards found",
-      }),
-    ]);
-    const ctx: ToolContext = { ...CTX, client: "chatgpt" };
-
-    await expect(
-      tako_search.handler(
-        { query: "obscure metric with no coverage", ...DEFAULTS },
-        ctx,
-      ),
-    ).rejects.toThrow(/start_deep_knowledge_search/);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("respects explicit search_effort=fast on chatgpt (no auto-escalation throw, returns clean empty)", async () => {
-    // The empty-result throw above is only for the "auto" semantics
-    // (search_effort omitted). When a caller passes
-    // `search_effort: "fast"` explicitly, they're opting into the
-    // cheap sync path and accepting that 0 cards is a valid final
-    // state — overriding that with a thrown deep-flow redirect
-    // would contradict the stated intent. Mirrors the
-    // non-ChatGPT auto-escalation gate (also keyed on
-    // `input.search_effort === undefined`).
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { outputs: { knowledge_cards: [] } }),
-    ]);
-    const ctx: ToolContext = { ...CTX, client: "chatgpt" };
-
-    const out = await tako_search.handler(
-      {
-        query: "thailand tourism gdp",
-        ...DEFAULTS,
-        search_effort: "fast",
-      },
-      ctx,
-    );
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(out.count).toBe(0);
-    expect(out.results).toEqual([]);
-  });
-
-  it("throws on explicit search_effort=deep when client is chatgpt", async () => {
-    // Pointing the agent at `start_deep_knowledge_search` (registered
-    // only on those clients) is more useful than letting the call
-    // sit on a hopeless poll loop until the host times out.
-    const ctx: ToolContext = { ...CTX, client: "chatgpt" };
-    await expect(
-      tako_search.handler(
-        { query: "x", search_effort: "deep", ...DEFAULTS },
-        ctx,
-      ),
-    ).rejects.toThrow(/start_deep_knowledge_search/);
-  });
-
-  it("returns the empty fast result (no escalation) when caller forces search_effort=fast", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { outputs: { knowledge_cards: [] } }),
-    ]);
-
-    const out = await tako_search.handler(
-      { query: "obscure", search_effort: "fast", ...DEFAULTS },
-      CTX,
-    );
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(out.count).toBe(0);
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
+    expect(body.output_settings).toEqual({ count: 5 });
   });
 });
 
-describe("tako_search async-task polling", () => {
-  it("polls once and returns cards when status is COMPLETED on first GET (explicit deep)", async () => {
-    vi.useFakeTimers();
-    try {
-      const fetchMock = mockFetchSequence([
-        jsonResponse(202, { task_id: "task-1", status: "pending" }),
-        jsonResponse(200, {
-          task_id: "task-1",
-          status: "COMPLETED",
-          result: {
-            outputs: {
-              knowledge_cards: [
-                {
-                  card_id: "deep1",
-                  title: "US GDP",
-                  description: null,
-                  url: null,
-                  source: null,
-                },
-              ],
-            },
-          },
-        }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "us gdp", search_effort: "deep", ...DEFAULTS },
-        CTX,
-      );
-      await vi.runAllTimersAsync();
-      const out = await promise;
-
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      const postBody = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-      expect(postBody.search_effort).toBe("deep");
-
-      const statusReq = requestFrom(fetchMock.mock.calls[1]);
-      expect(statusReq.method).toBe("GET");
-      const statusUrl = new URL(statusReq.url);
-      expect(statusUrl.pathname).toBe("/api/v1/knowledge_search/async/status/");
-      expect(statusUrl.searchParams.get("task_id")).toBe("task-1");
-
-      expect(out.count).toBe(1);
-      expect(out.results[0]?.card_id).toBe("deep1");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("polls through PENDING and IN_PROGRESS until COMPLETED", async () => {
-    vi.useFakeTimers();
-    try {
-      const fetchMock = mockFetchSequence([
-        jsonResponse(202, { task_id: "task-2", status: "pending" }),
-        jsonResponse(200, { task_id: "task-2", status: "PENDING" }),
-        jsonResponse(200, { task_id: "task-2", status: "IN_PROGRESS" }),
-        jsonResponse(200, {
-          task_id: "task-2",
-          status: "COMPLETED",
-          result: {
-            outputs: {
-              knowledge_cards: [
-                {
-                  card_id: "c-final",
-                  title: null,
-                  description: null,
-                  url: null,
-                  source: null,
-                },
-              ],
-            },
-          },
-        }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "slow query", search_effort: "deep", ...DEFAULTS },
-        CTX,
-      );
-      await vi.runAllTimersAsync();
-      const out = await promise;
-
-      expect(fetchMock).toHaveBeenCalledTimes(4);
-      expect(out.count).toBe(1);
-      expect(out.results[0]?.card_id).toBe("c-final");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("treats lowercase terminal status as terminal (case normalization)", async () => {
-    vi.useFakeTimers();
-    try {
-      mockFetchSequence([
-        jsonResponse(202, { task_id: "task-case", status: "pending" }),
-        jsonResponse(200, {
-          task_id: "task-case",
-          status: "completed",
-          result: {
-            outputs: {
-              knowledge_cards: [
-                {
-                  card_id: "lc",
-                  title: null,
-                  description: null,
-                  url: null,
-                  source: null,
-                },
-              ],
-            },
-          },
-        }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "x", search_effort: "deep", ...DEFAULTS },
-        CTX,
-      );
-      await vi.runAllTimersAsync();
-      const out = await promise;
-
-      expect(out.count).toBe(1);
-      expect(out.results[0]?.card_id).toBe("lc");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("throws with the error message when status is FAILED", async () => {
-    vi.useFakeTimers();
-    try {
-      mockFetchSequence([
-        jsonResponse(202, { task_id: "task-3", status: "pending" }),
-        jsonResponse(200, {
-          task_id: "task-3",
-          status: "FAILED",
-          error: "Orca pipeline blew up",
-        }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "x", search_effort: "deep", ...DEFAULTS },
-        CTX,
-      );
-      await expect(
-        Promise.all([promise, vi.runAllTimersAsync()]),
-      ).rejects.toThrow(/failed.*Orca pipeline blew up/i);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("retries the status GET on a transient 5xx and recovers", async () => {
-    vi.useFakeTimers();
-    try {
-      const fetchMock = mockFetchSequence([
-        jsonResponse(202, { task_id: "task-retry", status: "pending" }),
-        jsonResponse(503, { detail: "Service Unavailable" }),
-        jsonResponse(200, {
-          task_id: "task-retry",
-          status: "COMPLETED",
-          result: {
-            outputs: {
-              knowledge_cards: [
-                {
-                  card_id: "after-retry",
-                  title: null,
-                  description: null,
-                  url: null,
-                  source: null,
-                },
-              ],
-            },
-          },
-        }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "x", search_effort: "deep", ...DEFAULTS },
-        CTX,
-      );
-      await vi.runAllTimersAsync();
-      const out = await promise;
-
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      expect(out.count).toBe(1);
-      expect(out.results[0]?.card_id).toBe("after-retry");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("surfaces the underlying DjangoHttpError after exceeding the transient retry budget (3 consecutive 503s)", async () => {
-    // `MAX_TRANSIENT_RETRIES` = 2, so the 3rd consecutive 503 must
-    // surface the typed error instead of being swallowed indefinitely.
-    // Locks `pollDeep`'s retry budget independently from the
-    // `wait_for_knowledge_search` tool (which has its own polling
-    // loop with different backoff).
-    vi.useFakeTimers();
-    try {
-      mockFetchSequence([
-        jsonResponse(202, { task_id: "task-flap", status: "pending" }),
-        jsonResponse(503, { detail: "blip 1" }),
-        jsonResponse(503, { detail: "blip 2" }),
-        jsonResponse(503, { detail: "blip 3" }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "x", search_effort: "deep", ...DEFAULTS },
-        CTX,
-      );
-      const err = await Promise.all([
-        promise.catch((e) => e),
-        vi.runAllTimersAsync(),
-      ]).then(([e]) => e);
-
-      expect(err).toBeInstanceOf(DjangoHttpError);
-      expect((err as DjangoHttpError).status).toBe(503);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not retry the status GET on a 404 (terminal task-not-found)", async () => {
-    // 404 means the task is gone — retrying won't bring it back.
-    // Surface immediately as a `DjangoNotFoundError` rather than
-    // burning the transient retry budget on a hopeless cause.
-    vi.useFakeTimers();
-    try {
-      const fetchMock = mockFetchSequence([
-        jsonResponse(202, { task_id: "task-404", status: "pending" }),
-        new Response("", { status: 404 }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "x", search_effort: "deep", ...DEFAULTS },
-        CTX,
-      );
-      const err = await Promise.all([
-        promise.catch((e) => e),
-        vi.runAllTimersAsync(),
-      ]).then(([e]) => e);
-
-      expect(err).toBeInstanceOf(DjangoNotFoundError);
-      // Exactly the POST + the single 404 GET — no retry on the GET.
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("throws when the budget is exhausted before the task terminates", async () => {
-    vi.useFakeTimers();
-    try {
-      const responses: Response[] = [
-        jsonResponse(202, { task_id: "task-4", status: "pending" }),
-      ];
-      for (let i = 0; i < MAX_PENDING_POLLS; i++) {
-        responses.push(
-          jsonResponse(200, { task_id: "task-4", status: "IN_PROGRESS" }),
-        );
-      }
-      mockFetchSequence(responses);
-
-      const promise = tako_search.handler(
-        { query: "x", search_effort: "deep", ...DEFAULTS },
-        CTX,
-      );
-      await expect(
-        Promise.all([promise, vi.runAllTimersAsync()]),
-      ).rejects.toThrow(/did not complete within/i);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("emits MCP progress notifications during polling with monotonically increasing progress values", async () => {
-    // Lock the contract that's the whole point of going single-tool:
-    // each poll iteration sends a `notifications/progress` event so
-    // clients with `resetTimeoutOnProgress: true` keep their per-call
-    // timeout alive across the deep-search wait.
-    vi.useFakeTimers();
-    try {
-      const sendProgress = vi.fn<ToolContext["sendProgress"]>(async () => {});
-      const ctx: ToolContext = { ...CTX, sendProgress };
-
-      mockFetchSequence([
-        jsonResponse(202, { task_id: "task-prog", status: "pending" }),
-        jsonResponse(200, { task_id: "task-prog", status: "PENDING" }),
-        jsonResponse(200, { task_id: "task-prog", status: "IN_PROGRESS" }),
-        jsonResponse(200, {
-          task_id: "task-prog",
-          status: "COMPLETED",
-          result: {
-            outputs: {
-              knowledge_cards: [
-                {
-                  card_id: "c-prog",
-                  title: null,
-                  description: null,
-                  url: null,
-                  source: null,
-                },
-              ],
-            },
-          },
-        }),
-      ]);
-
-      const promise = tako_search.handler(
-        { query: "x", search_effort: "deep", ...DEFAULTS },
-        ctx,
-      );
-      await vi.runAllTimersAsync();
-      await promise;
-
-      // Three polls (PENDING, IN_PROGRESS, COMPLETED) → three progress
-      // events with progress=1, 2, 3.
-      expect(sendProgress).toHaveBeenCalledTimes(3);
-      const progressValues = sendProgress.mock.calls.map((c) => c[0]);
-      expect(progressValues).toEqual([1, 2, 3]);
-      // Each call must include a non-empty `message` so progress
-      // shows something useful in clients that surface it.
-      for (const call of sendProgress.mock.calls) {
-        const opts = call[1];
-        expect(typeof opts?.message).toBe("string");
-        expect(opts?.message?.length ?? 0).toBeGreaterThan(0);
-      }
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-});
-
-describe("tako_search auto-chain top-result chart fields", () => {
-  it("populates auto-chain widget fields when top card has card_id", async () => {
+describe("tako_search response mapping", () => {
+  it("maps a v3 card (webpage_url) and surfaces request_id", async () => {
     mockFetchSequence([
       jsonResponse(200, {
-        outputs: {
-          knowledge_cards: [
-            {
-              card_id: "aapl-price",
-              title: "AAPL",
-              description: null,
-              url: null,
-              source: null,
-            },
-          ],
-        },
+        cards: [
+          {
+            card_id: "abc",
+            title: "T",
+            description: "d",
+            webpage_url: "https://trytako.com/c/abc",
+            image_url: "https://trytako.com/img.png",
+            embed_url: "https://trytako.com/embed/abc",
+          },
+        ],
+        web_results: [],
+        request_id: "req-1",
+      }),
+    ]);
+
+    const out = await tako_search.handler({ query: "x", ...DEFAULTS }, CTX);
+
+    expect(out.cards).toHaveLength(1);
+    expect(out.cards[0]?.webpage_url).toBe("https://trytako.com/c/abc");
+    expect(out.request_id).toBe("req-1");
+  });
+
+  it("surfaces web_results", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [],
+        web_results: [
+          {
+            title: "A web result",
+            url: "https://example.com/a",
+            snippet: "snip",
+            source_name: "Example",
+          },
+        ],
+        request_id: "req-web",
       }),
     ]);
 
     const out = await tako_search.handler(
-      { query: "AAPL", ...DEFAULTS },
+      { query: "x", ...DEFAULTS, sources: ["web"] },
       CTX,
     );
+
+    expect(out.web_results).toHaveLength(1);
+    expect(out.web_results[0]?.url).toBe("https://example.com/a");
+  });
+
+  it("populates auto-chain widget fields when the top card has card_id", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [
+          { card_id: "aapl-price", title: "AAPL", webpage_url: "u" },
+        ],
+        web_results: [],
+        request_id: "req-2",
+      }),
+    ]);
+
+    const out = await tako_search.handler({ query: "AAPL", ...DEFAULTS }, CTX);
 
     expect(out.pub_id).toBe("aapl-price");
     expect(out.embed_url).toBe(
@@ -804,45 +238,39 @@ describe("tako_search auto-chain top-result chart fields", () => {
     expect(out.height).toBe(720);
   });
 
-  it("omits auto-chain widget fields when no card has card_id", async () => {
-    mockFetchSequence([
-      jsonResponse(200, {
-        outputs: {
-          knowledge_cards: [
-            {
-              card_id: null,
-              title: "Metadata only",
-              description: null,
-              url: null,
-              source: null,
-            },
-          ],
-        },
-      }),
+  it("returns a clean empty result (no throw, no widget fields) on zero matches", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-empty" }),
     ]);
 
     const out = await tako_search.handler(
-      { query: "x", search_effort: "fast", ...DEFAULTS },
+      { query: "obscure query with no matches", ...DEFAULTS },
       CTX,
     );
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(out.cards).toEqual([]);
+    expect(out.web_results).toEqual([]);
+    expect(out.request_id).toBe("req-empty");
     expect(out.pub_id).toBeUndefined();
     expect(out.embed_url).toBeUndefined();
     expect(out.image_url).toBeUndefined();
   });
 
-  it("omits auto-chain widget fields when results are empty", async () => {
+  it("omits widget fields when the top card has no card_id", async () => {
     mockFetchSequence([
-      jsonResponse(200, { outputs: { knowledge_cards: [] } }),
+      jsonResponse(200, {
+        cards: [{ card_id: null, title: "Metadata only", webpage_url: "u" }],
+        web_results: [],
+        request_id: "req-3",
+      }),
     ]);
 
-    const out = await tako_search.handler(
-      { query: "obscure", search_effort: "fast", ...DEFAULTS },
-      CTX,
-    );
+    const out = await tako_search.handler({ query: "x", ...DEFAULTS }, CTX);
 
+    expect(out.cards).toHaveLength(1);
     expect(out.pub_id).toBeUndefined();
     expect(out.embed_url).toBeUndefined();
-    expect(out.results).toEqual([]);
+    expect(out.image_url).toBeUndefined();
   });
 });

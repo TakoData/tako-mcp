@@ -60,24 +60,24 @@ describe("djangoErrorToToolResult", () => {
 
   it("maps DjangoBadRequestError and surfaces the response body in both structured and text content", () => {
     const err = new DjangoBadRequestError({
-      path: "/api/v1/create_chart",
+      path: "/api/v3/search/",
       method: "POST",
-      body: '{"series":["this field is required"]}',
+      body: '{"query":["this field is required"]}',
     });
     const result = djangoErrorToToolResult(err);
     expect(result.structuredContent).toEqual({
       kind: "bad_request",
-      path: "/api/v1/create_chart",
+      path: "/api/v3/search/",
       method: "POST",
       status: 400,
-      body: '{"series":["this field is required"]}',
+      body: '{"query":["this field is required"]}',
     });
     // 400s are the only subtype whose body is spliced into `content[0].text`:
     // DRF validation errors carry the guidance the LLM needs to retry, and
     // not every MCP client surfaces `structuredContent` to the model.
     expect(result.content[0]).toEqual({
       type: "text",
-      text: `${err.message}: {"series":["this field is required"]}`,
+      text: `${err.message}: {"query":["this field is required"]}`,
     });
   });
 

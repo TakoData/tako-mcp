@@ -1,12 +1,11 @@
 /**
- * Shared chart-widget plumbing used by `open_chart_ui` and `knowledge_search`.
+ * Shared chart-widget plumbing used by `tako_search`.
  *
- * Both tools render the same Tako chart card inline — `open_chart_ui` from an
- * explicit `pub_id` input, `knowledge_search` from `results[0].card_id` after
- * an auto-chain. Rather than duplicate the ~600-line widget HTML, the PNG
- * fetch helpers, and the ChatGPT/claude.ai host quirks across both files
- * (and have them drift the next time a host bug needs a fix), the shared
- * surface lives here:
+ * `tako_search` renders the top result's Tako chart card inline by
+ * auto-chaining `cards[0].card_id` into the widget. Rather than inline the
+ * ~600-line widget HTML, the PNG fetch helpers, and the ChatGPT/claude.ai
+ * host quirks into the tool file (where they'd drift the next time a host
+ * bug needs a fix), the shared surface lives here:
  *
  *   - URL builders (`buildChartUrls`) — the only place that knows how to
  *     compose `/embed/{pub_id}/` web URLs and `/api/v1/image/{pub_id}/`
@@ -22,17 +21,16 @@
  *   - Widget bundle (`buildChartAppUiResource`) — the
  *     `ui://tako/embed/chart` resource: static `WIDGET_HTML` for ChatGPT's
  *     iframe path, plus the dynamic `ui://tako/embed/chart/{pub_id}`
- *     template for claude.ai's image-baked variant. Both tools register
- *     the same URI; `mcp.ts`'s registration loop dedupes the second
- *     registration so the SDK doesn't throw on duplicate URI.
+ *     template for claude.ai's image-baked variant. `tako_search`
+ *     registers this URI; `mcp.ts`'s registration loop dedupes repeat
+ *     registrations of the same URI so the SDK doesn't throw on duplicate.
  *
  *   - Default chart-output dimensions (`DEFAULT_DARK_MODE`, …) — the
- *     defaults `knowledge_search` uses when auto-chaining (its input has
- *     no chart-options field). Match `open_chart_ui`'s zod defaults so a
- *     re-render via `open_chart_ui` produces a visually identical chart.
+ *     defaults applied when `tako_search` auto-chains the top card (the
+ *     search input has no chart-options field).
  *
- * The widget HTML and its host-quirk code are unchanged from when they
- * lived in `open_chart_ui.ts`; this module is a verbatim extraction.
+ * The widget HTML and its host-quirk code are a verbatim extraction of the
+ * original inline chart-rendering implementation.
  */
 import { type Env, resolvePublicApiBase, resolvePublicBase } from "../env.js";
 import type {
@@ -104,10 +102,8 @@ export const APP_UI_RESOURCE_NAME = "open_chart_ui_widget";
 export const APP_UI_TEMPLATE_URI_PATTERN = "ui://tako/embed/chart/{pub_id}";
 export const APP_UI_TEMPLATE_NAME = "open_chart_ui_widget_baked";
 
-// Defaults used when a caller doesn't supply chart-options — mirrors the
-// zod defaults on `open_chart_ui.inputSchema` so an auto-chained chart
-// from `knowledge_search` is visually identical to one rendered via
-// an explicit `open_chart_ui` follow-up.
+// Defaults used when a caller doesn't supply chart-options — applied when
+// `tako_search` auto-chains the top card into the inline-render widget.
 export const DEFAULT_DARK_MODE = true;
 export const DEFAULT_WIDTH = 900;
 export const DEFAULT_HEIGHT = 720;
@@ -292,8 +288,8 @@ const WIDGET_HTML = `<!doctype html>
      ChatGPT's widget container appears to pin the initial intrinsic
      height as a floor and ignore later shrink notifications, so any
      visible-by-default placeholder leaves a persistent empty box for
-     tool calls that never deliver chart data (knowledge_search
-     kickoff, fast-with-zero-cards). Trade-off: brief blank window
+     tool calls that never deliver chart data (e.g. a search that
+     returns zero cards). Trade-off: brief blank window
      between widget mount and chart data arrival on hosts with slow
      postMessage delivery (~200 ms on claude.ai); ChatGPT's
      window.openai.toolOutput is synchronous so no visible flash.
@@ -386,26 +382,16 @@ const WIDGET_HTML = `<!doctype html>
     if (rendered) return true;
     if (!structuredContent || typeof structuredContent !== "object") return false;
     // No-chart short-circuit: structured content arrived but contains
-    // no chart fields at all. Two paths produce this shape:
-    //
-    //   - \`knowledge_search\` kickoff payload — { task_id, status:
-    //     "pending", search_effort: "deep", message }. Returned when
-    //     the deep (Orca) async pipeline is kicked off; the chart will
-    //     show up in a later \`wait_for_knowledge_search\` COMPLETED
-    //     response, NOT this one.
-    //
-    //   - \`wait_for_knowledge_search\` timed_out branch — { timed_out:
-    //     true, results: [], status, events_summary }. Returned when
-    //     the wait budget elapsed without the task completing; the
-    //     agent loops by calling the tool again.
+    // no chart fields at all. \`tako_search\` produces this shape when it
+    // returns zero cards (a clean empty result) or when the top card has
+    // no \`card_id\` — either way there is no top card to render, so
+    // \`buildSearchOutput\` omits the widget URLs.
     //
     // Without this guard, the placeholder sits at "Loading chart…"
-    // forever for both shapes — every intermediate kickoff / timed_out
-    // call stacks a 240-px-tall empty widget box in the chat for the
-    // full duration of the deep search (1-5 minutes typical). Detect
-    // both by the absence of any chart URL: \`embed_url\` and
-    // \`image_url\` are mutually present-or-absent on the handler side
-    // (see \`buildResultsWithAutoChain\` in \`_async_search_shape.ts\`),
+    // forever and stacks a 240-px-tall empty widget box in the chat.
+    // Detect the empty shape by the absence of any chart URL:
+    // \`embed_url\` and \`image_url\` are mutually present-or-absent on the
+    // handler side (see \`buildSearchOutput\` in \`_search_results.ts\`),
     // and \`image_data_url\` is derived from \`image_url\` server-side
     // (\`extraMeta\` only runs when \`image_url\` is present), so the
     // \`!image_url && !embed_url\` check covers all three.
@@ -621,8 +607,8 @@ const WIDGET_HTML = `<!doctype html>
   // instead of the previous 240 px. Reasoning: ChatGPT's widget host
   // pins the highest height ever notified and ignores later shrinks,
   // so a 240 px initial floor produces a persistent empty box for any
-  // tool call that doesn't deliver chart data (\`knowledge_search\`
-  // kickoff, fast-with-zero-cards). Starting at 1 keeps the host's
+  // tool call that doesn't deliver chart data (e.g. a search returning
+  // zero cards). Starting at 1 keeps the host's
   // floor minimal; render()'s chart-rendering paths grow the widget
   // to the chart's actual height when data arrives. The no-chart
   // guard inside render() also notifies 0 so hosts that DO honor
@@ -837,9 +823,8 @@ function parsePngDimensions(
 
 /**
  * Build the public `embed_url` (web origin) and `image_url` (API
- * origin) for one chart. Matches `open_chart_ui.handler`'s URL shape
- * exactly; `knowledge_search`'s auto-chain calls this for the top
- * card so a follow-up `open_chart_ui` produces identical URLs.
+ * origin) for one chart. `tako_search`'s auto-chain calls this for the
+ * top card to populate the inline-render widget fields.
  *
  * `embed_url` always carries `?dark_mode=auto` — the embed page runs
  * in the user's browser and resolves "auto" via
@@ -959,21 +944,19 @@ export async function fetchPngContentBlock(
 }
 
 /**
- * Build the chart widget's `AppUiResource`. Both `open_chart_ui` and
- * `knowledge_search` register the same `ui://tako/embed/chart` URI;
- * `mcp.ts`'s registration loop dedupes the second registration so the
- * SDK doesn't throw `Resource ui://... is already registered`.
+ * Build the chart widget's `AppUiResource`. `tako_search` registers the
+ * `ui://tako/embed/chart` URI; `mcp.ts`'s registration loop dedupes
+ * repeat registrations of the same URI so the SDK doesn't throw
+ * `Resource ui://... is already registered`.
  *
  * The static URI loads the iframe widget (used by ChatGPT). The
  * dynamic per-pub_id URI bakes the chart image into the resource HTML
  * (used by claude.ai, where the host snapshots `documentElement.
  * offsetHeight` once on widget mount and ignores later updates).
  *
- * `resolveUriFromInput` differs per tool: `open_chart_ui` reads
- * `input.pub_id` directly; `knowledge_search` reads
- * `output.results[0].card_id` (its input is a query, not a pub_id).
- * The resolver receives both arguments so each tool picks the right
- * source.
+ * `resolveUriFromInput` reads the top card's `pub_id` from the tool
+ * output (the search input is a query, not a pub_id) and falls back to
+ * the static URI when there's no renderable top card.
  */
 export function buildChartAppUiResource(
   env: Env,

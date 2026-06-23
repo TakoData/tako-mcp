@@ -1,24 +1,22 @@
 # Tako
 
-> Tako is a data visualization platform that helps you create, discover, and share interactive charts. The Tako MCP server enables AI agents to search for existing charts and create new visualizations from raw data.
+> Tako is a data intelligence platform. The Tako MCP server lets AI agents search a knowledge base of 100K+ curated charts, get grounded answers, fetch underlying source content, and run a deep research agent.
 
 ## Documentation
 
-- [MCP Server Setup](https://github.com/TakoData/tako-mcp): Install and configure the Tako MCP server for AI agents
+- [MCP Server Setup](https://github.com/TakoData/tako-mcp): Connect to the hosted Tako MCP server
 - [API Reference](https://tako.com/docs/): Full REST API documentation
 - [Chart Gallery](https://tako.com/gallery): Browse example charts and visualizations
-- [ThinViz API](https://github.com/TakoData/tako-mcp#thinviz-api---create-custom-charts): Create charts from raw data using 15+ chart types
 - [OpenAPI Spec](https://tako.com/openapi.yaml): Machine-readable API specification
 
 ## Quick Start
 
-Connect your MCP client to `https://mcp.tako.com/sse`
+Connect your MCP client to `https://mcp.tako.com/mcp` with `Authorization: Bearer <TAKO_API_TOKEN>` (CLI/desktop), or via the server's OAuth flow (Claude.ai, ChatGPT).
 
 ## Capabilities
 
-- Search 100K+ curated charts on economics, finance, demographics, technology (`tako_search`)
-- Get grounded, citation-backed prose answers from Tako's knowledge graph and the live web (`tako_answer`)
-- Fetch the underlying data (CSV) or text behind any result URL (`tako_contents`)
-- Run deep multi-step research agent for complex analytical questions (`tako_agent`)
-- Create custom charts: timeseries, bar charts, scatter plots, pie charts, maps, heatmaps, treemaps, and more
-- Render fully interactive charts via MCP-UI
+- Fast search over 100K+ curated charts and live data — economics, finance, demographics, sports, markets, weather — plus the live web on request (`tako_search`); the top result auto-renders as an interactive chart. Deep multi-step research is the agent (`tako_agent`).
+- Get grounded, citation-backed prose answers from Tako's knowledge graph and/or the live web (`tako_answer`)
+- Fetch the underlying data (CSV) or page text behind any result URL (`tako_contents`)
+- Run a deep multi-step research agent for complex analytical questions (`tako_agent`)
+- Check API credit balance (`get_credit_balance`)

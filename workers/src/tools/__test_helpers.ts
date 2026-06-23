@@ -16,7 +16,7 @@ import type { ToolContext } from "./types.js";
 
 /**
  * No-op `sendProgress` for test contexts. Tools that emit progress
- * notifications (e.g. `knowledge_search`'s deep-polling loop) call
+ * notifications (e.g. `tako_agent`'s run-polling loop) call
  * `ctx.sendProgress(...)` unconditionally — in production it routes to
  * the SDK's `sendNotification`, in tests it should silently swallow.
  * Tests that want to assert progress emissions can override with a

@@ -2,9 +2,8 @@
  * Typed HTTP client for the Tako Django backend.
  *
  * Every MCP tool handler eventually hits Django via this module. The
- * client injects the user's Bearer token as `X-API-Key` (Django's
- * expected header — see `src/tako_mcp/server.py::_get_auth_header`
- * in the legacy Python implementation) and `Content-Type: application/json`
+ * client injects the user's Bearer token as `X-API-Key` (the Django API
+ * expects the token in the `X-API-Key` header) and `Content-Type: application/json`
  * on bodied requests.
  *
  * Timeouts default to 30 s (matching the legacy Python default) but
@@ -315,9 +314,8 @@ async function executeRequest<T>(
   }
 
   if (response.ok) {
-    // Every Phase 2 endpoint returns a JSON body on 2xx (verified against
-    // the legacy `src/tako_mcp/server.py` — each tool calls `resp.json()`
-    // directly, no 204s or empty-body cases). An empty body here is
+    // Every endpoint returns a JSON body on 2xx — each tool handler calls
+    // `.json()` directly, no 204s or empty-body cases. An empty body here is
     // therefore a contract violation, not a normal outcome, and surfacing
     // it as `DjangoResponseParseError` is the right signal. Revisit if a
     // future endpoint legitimately returns 204 / an empty 200.

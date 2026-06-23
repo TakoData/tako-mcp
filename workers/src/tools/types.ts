@@ -68,12 +68,12 @@ export interface ToolContext {
    * {@link McpClientKind}. Tools that need to vary behavior across
    * known host quirks read this; everyone else can ignore it.
    *
-   * In particular, `knowledge_search` uses it to skip the
-   * fast→deep auto-escalation on `"chatgpt"` clients (whose Apps
-   * SDK doesn't honor progress notifications for timeout reset),
-   * routing the agent toward the `start_deep_knowledge_search` /
-   * `wait_for_knowledge_search` pair instead — those tools are only
-   * registered when `client === "chatgpt"` (see `mcp.ts`).
+   * For example, `tako_search` reads it in `extraMeta` to skip the
+   * chart-PNG prefetch on `"chatgpt"` clients (whose widget renders
+   * `embed_url` directly and never reads the baked-in image), and
+   * `mcp.ts` uses it to gate which tools each host sees — the
+   * `tako_agent_start` / `tako_agent_wait` pair is registered only
+   * when `client === "chatgpt"`.
    *
    * NB: this is a server-instance-level value (set from User-Agent
    * detection at server creation), NOT a per-request flag. Don't
@@ -188,11 +188,11 @@ export interface AppUiResource {
      * `mcp.ts` per `tools/call` to set `_meta.ui.resourceUri`. The
      * resolver gets both the validated `input` and the handler's
      * resolved `output`, so tools can choose the source: tools whose
-     * `pub_id` is part of the input (e.g. `open_chart_ui`) read it
-     * from `input`; tools that derive the chart pub_id from a search
-     * result (e.g. `knowledge_search` → `output.results[0].card_id`)
-     * read it from `output`. Should URL-encode any user-supplied
-     * substitution variables.
+     * `pub_id` is part of the input read it from `input`; tools that
+     * derive the chart pub_id from a search result (e.g.
+     * `tako_search` → `output.results[0].card_id`) read it from
+     * `output`. Should URL-encode any user-supplied substitution
+     * variables.
      *
      * `output` may be `undefined` when the resolver is called outside
      * of a tool result (e.g. during pre-registration validation in
@@ -237,10 +237,11 @@ export interface ToolModule<
    * entry matching the request's detected `McpClientKind` and falls
    * back to {@link description} when no entry exists. Use this when a
    * tool's instructions diverge meaningfully by host (e.g. claude.ai
-   * auto-renders charts inline while ChatGPT requires chaining into
-   * `open_chart_ui`) — sending each model only the directive it can
-   * act on is more reliable than asking it to self-identify and
-   * filter from a single description with conditional clauses.
+   * auto-renders charts inline with server-side escalation while
+   * ChatGPT must redirect to the Tako agent on empty results) —
+   * sending each model only the directive it can act on is more
+   * reliable than asking it to self-identify and filter from a single
+   * description with conditional clauses.
    */
   descriptionByClient?: Partial<Record<McpClientKind, string>>;
   inputSchema: InputSchema;
@@ -254,7 +255,7 @@ export interface ToolModule<
    * best-effort presentation: if the hook throws or returns `[]`, the text +
    * `structuredContent` pair already provides a working response.
    *
-   * Example: `open_chart_ui` uses this to inline a base64 PNG so MCP clients
+   * Example: `tako_search` uses this to inline a base64 PNG so MCP clients
    * (claude.ai etc.) render the chart without a click-to-load gate.
    *
    * Skipped when `appUiResource` is also set on the same tool — see `mcp.ts`
@@ -274,7 +275,7 @@ export interface ToolModule<
    * and `structuredContent`. Use this for payloads the widget needs but
    * the LLM shouldn't see.
    *
-   * Concrete example: `open_chart_ui` uses this to ship a ~250 KB
+   * Concrete example: `tako_search` uses this to ship a ~250 KB
    * `data:image/png;base64,...` URI to the widget. Putting that in
    * `structuredContent` causes claude.ai to flag the tool result as
    * "Tool result too large for context", offload it to a file, and

@@ -3,8 +3,8 @@
  *
  * Wraps `GET /api/v1/credit_balance/`. Cheap + sync. Useful for Claude to
  * answer "how many credits do I have?" and to gate expensive operations
- * (e.g. `create_report`, deep `knowledge_search`, future `ask_tako`) with a
- * pre-flight check so users don't get surprised by 402-style rejections.
+ * (e.g. deep `tako_agent` runs, `tako_search`) with a pre-flight check so
+ * users don't get surprised by 402-style rejections.
  *
  * Response shape is whatever the backend returns today (currently a credit
  * balance number plus subscription metadata); we pass it through verbatim as

@@ -6,37 +6,22 @@
  *
  *   1. `GET /health`           → expect HTTP 200 with body "ok"
  *   2. MCP `initialize`        → handshake completes
- *   3. MCP `tools/list`        → at least one tool, includes the canary set
- *   4. Per-tool MCP `tools/call` canaries (read-only unless noted):
- *        a. `tako_search "US GDP"`        — non-empty results, requires
- *                                                at least one usable
- *                                                `card_id` (fails the smoke
- *                                                if every result lacks one
- *                                                — that's a regression
- *                                                worth catching)
- *        b. `get_credit_balance`               — `details.credit_balance`
- *                                                must be a number or
- *                                                numeric string
- *        c. `list_reports {limit:1}`           — `reports[]` array (may be 0)
- *        d. `get_chart_image {pub_id}`         — `image_url` is http(s);
- *                                                pub_id chained from (a)
- *        e. `open_chart_ui {pub_id}`           — structured payload returned;
- *                                                pub_id chained from (a)
- *        f. `create_chart {bogus comp_type}`   — *negative test* — schema-
- *                                                valid payload (one
- *                                                component, garbage
- *                                                `component_type`) so the
- *                                                Worker's auth + Django
- *                                                round-trip + error mapping
- *                                                actually runs; expect
- *                                                `isError: true` from the
- *                                                server. We never test the
- *                                                success path of write
- *                                                tools in smoke.
+ *   3. MCP `tools/list`        → 7-tool surface present; hard-asserts
+ *                                 the 4 non-gated canary tools; loosely
+ *                                 asserts at least one agent tool is present
+ *   4. MCP Apps widget assertion on `tako_search` (soft-warn on miss)
+ *   5. Per-tool MCP `tools/call` canaries (read-only):
+ *        a. `tako_search "US GDP"`        — non-empty results
+ *        b. `tako_answer "US GDP"`        — answer text returned
+ *        c. `tako_contents {url from search}` — download_url returned
+ *        d. `get_credit_balance`          — `details.credit_balance`
+ *                                           must be a number or numeric string
  *
  * Excluded by design:
- *   - `create_report`, `get_report` — write/long-running tools
- *   - `explore_knowledge_graph`     — removed in PR #47
+ *   - `tako_agent` / `tako_agent_start` / `tako_agent_wait` — long-running;
+ *     presence is asserted in step 3 but the tools are not called
+ *   - removed tools (reporting, chart-authoring) — see Tasks 2–3 cleanup
+ *   - `explore_knowledge_graph` — removed in PR #47
  *
  * Any failure prints a `✘ ...` line to stderr and exits non-zero so the
  * GitHub Actions job (or anyone running `npm run smoke`) flips red.
@@ -64,10 +49,8 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
 
 const CANARY_QUERY = "US GDP";
-const HTTP_URL_REGEX = /^https?:\/\//;
 
 // Both env vars are required — no in-script defaults. The single source of
 // truth for the staging URL is `STAGING_BASE_URL` in `workers-smoke.yml`;
@@ -131,7 +114,7 @@ if (healthBody !== "ok") {
 ok(`/health → 200 "ok"`);
 
 // ---------------------------------------------------------------------------
-// 2-4. MCP protocol via the SDK client
+// 2-5. MCP protocol via the SDK client
 // ---------------------------------------------------------------------------
 const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
   requestInit: {
@@ -159,14 +142,7 @@ try {
   // with a useful diff if a registry change drops one of them. We don't
   // assert on the *full* tool list because the surface evolves (e.g.
   // explore_knowledge_graph removal in PR #47).
-  const requiredTools = [
-    "tako_search",
-    "get_credit_balance",
-    "list_reports",
-    "get_chart_image",
-    "open_chart_ui",
-    "create_chart",
-  ];
+  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "get_credit_balance"];
   for (const required of requiredTools) {
     if (!toolNames.includes(required)) {
       fail(
@@ -176,27 +152,31 @@ try {
   }
   ok(`tools/list → ${tools.length} tools (${toolNames.join(", ")})`);
 
-  // ----- MCP Apps wiring on open_chart_ui --------------------------------
+  // Loose agent-presence check — the agent split is client-gated so the
+  // smoke client's UA may register tako_agent (unsplit) or tako_agent_start
+  // (split). We do NOT call agent tools — they run long.
+  const hasAgent = toolNames.includes("tako_agent") || toolNames.includes("tako_agent_start");
+  assert(hasAgent, `expected an agent tool in tools/list (got: ${toolNames.join(", ")})`);
+  ok("agent tool present");
+
+  // ----- MCP Apps wiring on tako_search ----------------------------------
   // The widget bundle must be advertised two ways: the tool listing carries
   // `_meta.ui.resourceUri`, and `resources/list` exposes a resource at that
   // URI with the MCP Apps mimeType. Without both, MCP Apps clients
   // (claude.ai, ChatGPT) silently fall back to the static-image path and
   // we lose the interactive embed. Soft-warn if either is missing rather
-  // than failing — the smoke is still useful for the URL/image path even
-  // if the widget piece broke in this deploy.
-  const openChart = tools.find((t) => t.name === "open_chart_ui");
-  const openChartUiMeta = (openChart?._meta as { ui?: { resourceUri?: unknown } } | undefined)?.ui;
-  if (
-    !openChartUiMeta ||
-    typeof openChartUiMeta.resourceUri !== "string" ||
-    !openChartUiMeta.resourceUri.startsWith("ui://")
-  ) {
+  // than failing — the smoke is still useful for the search/answer paths
+  // even if the widget piece broke in this deploy.
+  const searchTool = tools.find((t) => t.name === "tako_search");
+  assert(searchTool, "tako_search missing from tools/list");
+  const widgetUri = (searchTool?._meta as { ui?: { resourceUri?: string } } | undefined)?.ui
+    ?.resourceUri;
+  if (typeof widgetUri !== "string" || !widgetUri.startsWith("ui://")) {
     console.warn(
-      `[warn] open_chart_ui._meta.ui.resourceUri missing or not a ui:// URI ` +
-        `(got: ${JSON.stringify(openChart?._meta)})`,
+      `[warn] tako_search._meta.ui.resourceUri missing or not a ui:// URI ` +
+        `(got: ${JSON.stringify(widgetUri)}) — inline chart render may be broken`,
     );
   } else {
-    const widgetUri = openChartUiMeta.resourceUri;
     const { resources } = await client.listResources();
     const widget = resources.find((r) => r.uri === widgetUri);
     if (!widget) {
@@ -210,7 +190,7 @@ try {
           `(expected "text/html;profile=mcp-app")`,
       );
     } else {
-      ok(`open_chart_ui → MCP Apps widget at ${widgetUri} (${widget.mimeType})`);
+      ok(`tako_search → MCP Apps widget at ${widgetUri} (${widget.mimeType})`);
     }
   }
 
@@ -220,35 +200,52 @@ try {
   });
   const ksStructured = ksResult.structuredContent as
     | {
-        results?: Array<{ card_id?: string | null }>;
-        count?: number;
+        cards?: Array<{ card_id?: string | null; webpage_url?: string | null }>;
       }
     | undefined;
   assert(ksStructured, "tako_search missing structuredContent");
-  const ksResults = ksStructured.results;
+  const ksCards = ksStructured.cards;
   assert(
-    Array.isArray(ksResults) && ksResults.length > 0,
-    `tako_search returned empty results (count=${ksStructured.count ?? "?"})`,
+    Array.isArray(ksCards) && ksCards.length > 0,
+    "tako_search returned no cards",
   );
-  ok(
-    `tako_search "${CANARY_QUERY}" → ${ksStructured.count ?? ksResults.length} results`,
+  ok(`tako_search "${CANARY_QUERY}" → ${ksCards.length} cards`);
+
+  // Capture the top card's webpage_url to chain into tako_contents below.
+  const topResultUrl = ksCards[0]?.webpage_url;
+  assert(
+    typeof topResultUrl === "string" && topResultUrl.length > 0,
+    "tako_search top card has no webpage_url to feed tako_contents",
   );
 
-  // Pull the first non-null card_id to chain into get_chart_image /
-  // open_chart_ui. We *require* at least one chartable card — tako_search
-  // returning results-without-card_ids for "US GDP" is itself a pipeline
-  // regression worth flagging (e.g., raw deep-research outputs leaking
-  // through without indexer attribution), so we fail rather than skip the
-  // chained tools.
-  const chainPubId = ksResults
-    .map((r) => r?.card_id)
-    .find((id): id is string => typeof id === "string" && id.length > 0);
+  // ----- b) tako_answer canary ------------------------------------------
+  const taResult = await callOk(client, "tako_answer", {
+    query: CANARY_QUERY,
+  });
+  const taStructured = taResult.structuredContent as
+    | { answer?: string; cards?: unknown[]; web_results?: unknown[] }
+    | undefined;
+  assert(taStructured, "tako_answer missing structuredContent");
   assert(
-    chainPubId,
-    `tako_search "${CANARY_QUERY}" returned ${ksResults.length} results but none had a usable card_id — chart-tool chaining is broken`,
+    typeof taStructured.answer === "string" && taStructured.answer.length > 0,
+    "tako_answer.answer is not a non-empty string",
   );
+  ok(`tako_answer "${CANARY_QUERY}" → answer (${taStructured.answer.length} chars)`);
 
-  // ----- b) get_credit_balance ------------------------------------------
+  // ----- c) tako_contents canary (chained from the top search result) ----
+  const tcResult = await callOk(client, "tako_contents", { url: topResultUrl });
+  const tcStructured = tcResult.structuredContent as
+    | { download_url?: string; text?: string | null }
+    | undefined;
+  assert(tcStructured, "tako_contents missing structuredContent");
+  assert(
+    typeof tcStructured.download_url === "string" &&
+      /^https?:\/\//.test(tcStructured.download_url),
+    `tako_contents.download_url is not http(s): ${JSON.stringify(tcStructured?.download_url)}`,
+  );
+  ok(`tako_contents {url} → download_url present`);
+
+  // ----- d) get_credit_balance ------------------------------------------
   // Asserts `credit_balance` is present and either a number or a numeric
   // string (DRF can serialize DecimalField as either depending on
   // `coerce_to_string` — see the loose schema in get_credit_balance.ts).
@@ -282,153 +279,6 @@ try {
     `get_credit_balance.details.credit_balance is not a number or numeric string: ${JSON.stringify(balance)}`,
   );
   ok(`get_credit_balance → details.credit_balance=${balanceNumeric}`);
-
-  // ----- c) list_reports -------------------------------------------------
-  const lrResult = await callOk(client, "list_reports", { limit: 1 });
-  const lrStructured = lrResult.structuredContent as
-    | { reports?: unknown[]; count?: number }
-    | undefined;
-  assert(lrStructured, "list_reports missing structuredContent");
-  assert(
-    Array.isArray(lrStructured.reports),
-    "list_reports.reports is not an array",
-  );
-  ok(
-    `list_reports {limit:1} → count=${lrStructured.count ?? lrStructured.reports.length}`,
-  );
-
-  // ----- d) get_chart_image (chained) -----------------------------------
-  const giResult = await callOk(client, "get_chart_image", {
-    pub_id: chainPubId,
-  });
-  const giStructured = giResult.structuredContent as
-    | { image_url?: string; pub_id?: string }
-    | undefined;
-  assert(giStructured, "get_chart_image missing structuredContent");
-  assert(
-    typeof giStructured.image_url === "string" &&
-      HTTP_URL_REGEX.test(giStructured.image_url),
-    `get_chart_image.image_url is not http(s): ${JSON.stringify(giStructured.image_url)}`,
-  );
-  ok(`get_chart_image {pub_id:${chainPubId}} → image_url present`);
-
-  // ----- e) open_chart_ui (chained) -------------------------------------
-  const ouResult = await callOk(client, "open_chart_ui", {
-    pub_id: chainPubId,
-  });
-  // Structured payload carries `image_url` + `embed_url` (URL-only, no
-  // raw HTML — see the regression notes in tools/open_chart_ui.ts). The
-  // tool also appends an inline `image` content block via the
-  // `extraContentBlocks` hook so claude.ai-style clients render the chart
-  // without a click-to-load gate. The hook is best-effort: the image
-  // block is only present when the PNG endpoint responds with image
-  // bytes. We assert structuredContent is well-formed (always required)
-  // but only WARN if the inline image is missing — a slow PNG render or
-  // a transient upstream blip should not fail the smoke.
-  const ouStructured = ouResult.structuredContent as
-    | { embed_url?: string; image_url?: string; pub_id?: string }
-    | undefined;
-  assert(ouStructured, "open_chart_ui missing structuredContent");
-  assert(
-    typeof ouStructured.embed_url === "string" &&
-      HTTP_URL_REGEX.test(ouStructured.embed_url),
-    `open_chart_ui.embed_url is not http(s): ${JSON.stringify(ouStructured.embed_url)}`,
-  );
-  assert(
-    typeof ouStructured.image_url === "string" &&
-      HTTP_URL_REGEX.test(ouStructured.image_url),
-    `open_chart_ui.image_url is not http(s): ${JSON.stringify(ouStructured.image_url)}`,
-  );
-  const ouContent = (ouResult.content ?? []) as Array<{
-    type: string;
-    mimeType?: string;
-    data?: string;
-  }>;
-  const inlineImage = ouContent.find((b) => b.type === "image");
-  if (inlineImage) {
-    assert(
-      typeof inlineImage.mimeType === "string" &&
-        inlineImage.mimeType.startsWith("image/"),
-      `open_chart_ui inline image mimeType not image/*: ${JSON.stringify(inlineImage.mimeType)}`,
-    );
-    assert(
-      typeof inlineImage.data === "string" && inlineImage.data.length > 0,
-      "open_chart_ui inline image has no base64 data",
-    );
-    ok(
-      `open_chart_ui {pub_id:${chainPubId}} → structuredContent + inline ${inlineImage.mimeType} (${inlineImage.data.length} base64 chars)`,
-    );
-  } else {
-    ok(
-      `open_chart_ui {pub_id:${chainPubId}} → structuredContent present (no inline image — soft-fail path; URL fallback OK)`,
-    );
-  }
-
-  // ----- f) create_chart NEGATIVE test ----------------------------------
-  // Smoke must not have side effects, so we verify create_chart fails
-  // gracefully on a *server-rejected* payload rather than a
-  // *schema-rejected* one: the empty-array case (`components: []`) is
-  // caught by Zod's `.min(1)` before the handler runs, which would skip
-  // auth, the Django round-trip, and the write-path error mapping
-  // entirely. Passing one component with a bogus `component_type`
-  // satisfies the input schema (`componentSchema` is `.loose()` and only
-  // requires `component_type: string + config: object`) but Django
-  // rejects it during chart construction — exercising the same write
-  // path that a real `create_chart` call would, without producing a card.
-  //
-  // Two acceptable failure shapes:
-  //   1. The server returns `{isError: true, ...}` cleanly — preferred
-  //      and what the handler is *supposed* to do on a Django error.
-  //   2. The SDK throws `McpError` because the server's error response
-  //      doesn't satisfy `create_chart`'s strict output schema. This
-  //      still proves the handler ran (auth + djangoPost reached
-  //      Django, which rejected the chart) — the validation tripped on
-  //      the *response* shape, not on our request. Today this is what
-  //      actually happens because `djangoErrorToToolResult` returns a
-  //      `kind`-discriminator envelope that doesn't match each tool's
-  //      success-shape schema. Tracked in TAKO-2681; once that ships,
-  //      remove this fallback and tighten the test to fail-on-throw.
-  let createChartFailedAsExpected = false;
-  let createChartFailureMode: string;
-  try {
-    const ccResult = await client.callTool({
-      name: "create_chart",
-      arguments: {
-        components: [
-          {
-            component_type: "tako_smoke_invalid_component_type",
-            config: {},
-          },
-        ],
-        title: "tako-mcp smoke negative test (do not surface)",
-      },
-    });
-    if (ccResult.isError === true) {
-      createChartFailedAsExpected = true;
-      createChartFailureMode = "isError: true";
-    } else {
-      createChartFailureMode = `unexpected success: ${JSON.stringify(ccResult).slice(0, 300)}`;
-    }
-  } catch (err) {
-    if (err instanceof McpError) {
-      createChartFailedAsExpected = true;
-      // The SDK's InvalidParams (-32602) message includes "tool's output
-      // schema" when the failure is response-validation; surface that
-      // distinct case in the log so it's clear the handler ran.
-      createChartFailureMode = err.message.includes("output schema")
-        ? `McpError -32602 (server returned non-schema-conformant error response — handler ran, Django rejected)`
-        : `McpError ${err.code}: ${err.message.slice(0, 200)}`;
-    } else {
-      throw err;
-    }
-  }
-  assert(
-    createChartFailedAsExpected,
-    `create_chart with bogus component_type should fail; mode=${createChartFailureMode!}`,
-  );
-  ok(
-    `create_chart {bogus component_type} → ${createChartFailureMode!} (write path exercised, no chart created)`,
-  );
 } finally {
   await client.close().catch(() => {
     // ignore close errors — we already have the answer we care about
