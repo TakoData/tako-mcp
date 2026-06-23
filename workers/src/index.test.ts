@@ -119,7 +119,7 @@ describe("worker routing", () => {
     expect(body.jsonrpc).toBe("2.0");
     expect(body.id).toBe(1);
     expect(body.result.serverInfo.name).toBe("tako-mcp");
-    expect(body.result.serverInfo.version).toBe("0.3.0");
+    expect(body.result.serverInfo.version).toBe("0.4.0");
     // Guard against silent SDK negotiation regressions — a missing or
     // malformed protocolVersion should fail loudly. The regex tolerates
     // future SDK bumps without pinning to a specific release.
@@ -200,6 +200,7 @@ describe("worker routing", () => {
       "tako_answer",
       "tako_contents",
       "tako_search",
+      "tako_visualize",
     ]);
 
     // MCP Apps: `tako_search` is the sole chart-widget tool after 0.3.0.
@@ -218,7 +219,7 @@ describe("worker routing", () => {
     // it the widget loads but `window.openai.toolOutput` never
     // populates). Other tools ship no widget and should declare
     // none of these fields.
-    const widgetTools = new Set(["tako_search"]);
+    const widgetTools = new Set(["tako_search", "tako_visualize"]);
     for (const name of widgetTools) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool?._meta).toMatchObject({
@@ -276,10 +277,10 @@ describe("worker routing", () => {
     expect(names.has("tako_agent")).toBe(false);
     // The default tools (minus tako_agent) are still present alongside.
     expect(names.has("tako_search")).toBe(true);
-    // 7 total tools − 1 (tako_agent excluded) + 2 chatgpt-only − 2 (those same
-    // chatgpt-only are in the 7) = 7 − 1 = 6
-    // More directly: 5 default-client tools − tako_agent + tako_agent_start + tako_agent_wait = 6
-    expect(body.result.tools).toHaveLength(6);
+    // 8 total tools − 1 (tako_agent excluded) + 2 chatgpt-only − 2 (those same
+    // chatgpt-only are in the 8) = 8 − 1 = 7
+    // More directly: 6 default-client tools − tako_agent + tako_agent_start + tako_agent_wait = 7
+    expect(body.result.tools).toHaveLength(7);
 
     // `tako_search` is the sole chart-widget tool on ChatGPT after 0.3.0.
     // The empty-fast widget-gap problem (ChatGPT pins widget container
