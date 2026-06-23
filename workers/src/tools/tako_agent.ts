@@ -26,10 +26,17 @@ export const AGENT_WAIT_CEILING_S = 40;
 const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 const DESCRIPTION =
-  "Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning that a single search/answer can't satisfy. Runs up to ~90s; returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search`/`tako_answer` for simple lookups; reach for this only when the question genuinely needs reasoning over multiple retrievals.";
+  "Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning that a single search/answer can't satisfy. Runs up to ~90s; returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search`/`tako_answer` for simple lookups; reach for this only when the question genuinely needs reasoning over multiple retrievals. Use `sources` to choose connected data (`[\"tako\"]`, default), open-web search (`[\"web\"]`), or both.";
 
 export const inputSchema = z.object({
   query: z.string().min(1).describe("The deep/analytical question for the agent to work through."),
+  sources: z
+    .array(z.enum(["tako", "web"]))
+    .min(1)
+    .default(["tako"])
+    .describe(
+      'Which source(s) the agent may use: ["tako"] (connected data, default), ["web"] (open-web search), or ["tako","web"].',
+    ),
 });
 
 const takoCardSchema = z
@@ -69,12 +76,18 @@ type AgentRunWire = {
 };
 
 /** Dispatch a deep agent run. Returns the run_id. */
-export async function dispatchAgentRun(ctx: ToolContext, query: string): Promise<string> {
+export async function dispatchAgentRun(
+  ctx: ToolContext,
+  query: string,
+  sources: Array<"tako" | "web">,
+): Promise<string> {
   const data = await djangoPost<AgentRunWire>(
     ctx.env,
     ctx.token,
     "/api/v1/agent/runs",
-    { query, effort: "deep" },
+    // AgentRunRequest (api/ga/v1/agent/types.py) takes `source_indexes`; it
+    // defaults to ["tako"] server-side, mirrored by the schema default here.
+    { query, effort: "deep", source_indexes: sources },
     { timeoutMs: 30_000 },
   );
   if (!data.run_id) {
@@ -154,7 +167,7 @@ const takoAgent = {
     openWorldHint: true,
   },
   async handler(input, ctx): Promise<AgentRun> {
-    const runId = await dispatchAgentRun(ctx, input.query);
+    const runId = await dispatchAgentRun(ctx, input.query, input.sources);
     return pollAgentRun(ctx, runId, { budgetMs: AGENT_POLL_BUDGET_MS, onTimeout: "throw" });
   },
 } satisfies ToolModule<typeof inputSchema, AgentRun>;

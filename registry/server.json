@@ -50,12 +50,19 @@
     },
     {
       "name": "tako_agent",
-      "description": "Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning that a single search/answer can't satisfy. Runs up to ~90s; returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search`/`tako_answer` for simple lookups; reach for this only when the question genuinely needs reasoning over multiple retrievals.",
+      "description": "Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning that a single search/answer can't satisfy. Runs up to ~90s; returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search`/`tako_answer` for simple lookups; reach for this only when the question genuinely needs reasoning over multiple retrievals. Use `sources` to choose connected data (`[\"tako\"]`, default), open-web search (`[\"web\"]`), or both.",
       "parameters": {
         "query": {
           "type": "string",
           "description": "The deep/analytical question for the agent to work through.",
           "required": true
+        },
+        "sources": {
+          "type": "array",
+          "description": "Which source(s) the agent may use: [\"tako\"] (connected data, default), [\"web\"] (open-web search), or [\"tako\",\"web\"].",
+          "default": [
+            "tako"
+          ]
         }
       },
       "annotations": {
@@ -73,6 +80,13 @@
           "type": "string",
           "description": "The deep/analytical question for the agent to work through.",
           "required": true
+        },
+        "sources": {
+          "type": "array",
+          "description": "Which source(s) the agent may use: [\"tako\"] (connected data, default), [\"web\"] (open-web search), or [\"tako\",\"web\"].",
+          "default": [
+            "tako"
+          ]
         }
       },
       "annotations": {
