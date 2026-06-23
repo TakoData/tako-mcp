@@ -13,7 +13,7 @@
  * tool handles the full dispatch+poll in one call. See `mcp.ts`'s
  * `CHATGPT_ONLY_TOOL_NAMES` set.
  *
- * Wire path: POSTs to `/api/v1/agent/runs` with `effort: "deep"`.
+ * Wire path: POSTs to `/api/v1/agent/runs` with `effort: "medium"`.
  * Backend responds immediately with `{ run_id, status: "queued" }`.
  *
  * BILLING: agent runs over MCP are not yet metered for PAYG orgs (TAKO-3245).
@@ -47,7 +47,7 @@ const tako_agent_start = {
     openWorldHint: true,
   },
   async handler(input, ctx): Promise<Output> {
-    const runId = await dispatchAgentRun(ctx, input.query);
+    const runId = await dispatchAgentRun(ctx, input.query, input.sources);
     return {
       run_id: runId,
       status: "queued",

@@ -19,13 +19,17 @@ describe("tako_agent", () => {
       .mockResolvedValueOnce({ run_id: "run_1", status: "running" })
       .mockResolvedValueOnce({ run_id: "run_1", status: "completed", result: { answer: "42", cards: [] } });
 
-    const handlerPromise = tool.handler({ query: "analyze X" }, ctx);
+    const handlerPromise = tool.handler({ query: "analyze X", sources: ["tako", "web"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
     expect(tool.name).toBe("tako_agent");
     expect(vi.mocked(djangoPost).mock.calls[0]![2]).toBe("/api/v1/agent/runs");
-    expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({ query: "analyze X", effort: "deep" });
+    expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({
+      query: "analyze X",
+      effort: "medium",
+      source_indexes: ["tako", "web"],
+    });
     expect(ctx.sendProgress).toHaveBeenCalled();
     expect(out.status).toBe("completed");
     expect(out.timed_out).toBe(false);
@@ -37,7 +41,7 @@ describe("tako_agent", () => {
     vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_2", status: "queued" });
     vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_2", status: "failed", error: { code: "x", message: "boom" } });
 
-    const handlerPromise = tool.handler({ query: "q" }, ctx);
+    const handlerPromise = tool.handler({ query: "q", sources: ["tako"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
@@ -75,5 +79,28 @@ describe("tako_agent", () => {
 
     expect(result.timed_out).toBe(true);
     expect(result.status).toBe("running");
+  });
+});
+
+describe("tako_agent input schema", () => {
+  it("defaults sources to tako-only (matches the backend default), preserving prior behavior", () => {
+    const parsed = tool.inputSchema.parse({ query: "hello" });
+    expect(parsed.sources).toEqual(["tako"]);
+  });
+
+  it("accepts web and both", () => {
+    expect(tool.inputSchema.parse({ query: "q", sources: ["web"] }).sources).toEqual(["web"]);
+    expect(tool.inputSchema.parse({ query: "q", sources: ["tako", "web"] }).sources).toEqual([
+      "tako",
+      "web",
+    ]);
+  });
+
+  it("rejects an empty sources array", () => {
+    expect(() => tool.inputSchema.parse({ query: "q", sources: [] })).toThrow();
+  });
+
+  it("rejects an unknown source", () => {
+    expect(() => tool.inputSchema.parse({ query: "q", sources: ["bing"] })).toThrow();
   });
 });
