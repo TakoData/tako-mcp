@@ -1,5 +1,7 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import type { Env } from "./env.js";
+import worker from "./index.js";
 
 // Valid RFC 6750 b64token — any non-empty ASCII token works for these tests
 // because `extractBearer` only validates shape, not value. Django's the one
@@ -17,6 +19,35 @@ describe("worker routing", () => {
 
   it("GET /unknown returns 404", async () => {
     const res = await SELF.fetch("https://example.com/unknown");
+    expect(res.status).toBe(404);
+  });
+
+  it("GET /.well-known/openai-apps-challenge returns the configured token as plain text", async () => {
+    // OpenAI's connector-directory domain-verification flow GETs this
+    // URL during submission and matches the response body verbatim
+    // against the token shown in their dashboard. The token comes
+    // from the `OPENAI_APPS_CHALLENGE_TOKEN` binding (per env, in
+    // `wrangler.jsonc`); for the test runner the top-level `vars`
+    // entry stubs it to a known string.
+    const res = await SELF.fetch(
+      "https://example.com/.well-known/openai-apps-challenge",
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await res.text()).toBe("dev-stub-not-a-real-challenge-token");
+  });
+
+  it("GET /.well-known/openai-apps-challenge returns 404 when the token is unset", async () => {
+    // The "never satisfy an un-issued challenge" security property: with
+    // no `OPENAI_APPS_CHALLENGE_TOKEN` binding, the route must not answer
+    // and instead falls through to the catch-all 404. `SELF.fetch` always
+    // carries the configured stub, so we invoke the handler directly with
+    // an env lacking the token to exercise the unset path.
+    const env = { DJANGO_BASE_URL: "http://localhost:8000" } as Env;
+    const res = await worker.fetch(
+      new Request("https://example.com/.well-known/openai-apps-challenge"),
+      env,
+    );
     expect(res.status).toBe(404);
   });
 
