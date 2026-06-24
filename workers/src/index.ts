@@ -52,6 +52,30 @@ export default {
     // when Phase 2 introduces streaming tools or browser-based clients —
     // see the `transport.close()` TODO in `mcp.ts`.
 
+    // OpenAI connector-directory domain verification. During the
+    // submission flow OpenAI hits this URL and expects to read back
+    // the exact token shown in their dashboard. Token is per-env via
+    // `OPENAI_APPS_CHALLENGE_TOKEN`; when unset, return 404 so an
+    // unrelated environment never satisfies a verification it wasn't
+    // issued. Plain text response — no CORS wrapper needed (OpenAI
+    // hits this server-to-server, not from a browser).
+    if (
+      request.method === "GET" &&
+      url.pathname === "/.well-known/openai-apps-challenge"
+    ) {
+      const token = env.OPENAI_APPS_CHALLENGE_TOKEN;
+      if (token === undefined || token === "") {
+        return new Response("not found", {
+          status: 404,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      }
+      return new Response(token, {
+        status: 200,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
     // OAuth 2.1 + DCR + PKCE (TAKO-2679). The two `.well-known/...`
     // discovery docs let MCP hosts (Claude.ai, ChatGPT) bootstrap the
     // OAuth flow from just the resource URL. `/register`, `/authorize`,

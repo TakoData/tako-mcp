@@ -78,6 +78,17 @@ export interface Env {
    * a trailing slash.
    */
   STYTCH_BASE_URL?: string;
+  /**
+   * OpenAI connector-directory domain-verification token. OpenAI
+   * GETs `/.well-known/openai-apps-challenge` on the registered MCP
+   * hostname during submission and expects this exact string back as
+   * the response body. Set per-env in `wrangler.jsonc` `vars` (not a
+   * secret — the value is meant to be served on a public URL).
+   * When unset, the well-known route returns 404 so non-production
+   * environments don't accidentally satisfy a verification challenge
+   * for a connector that was never registered against them.
+   */
+  OPENAI_APPS_CHALLENGE_TOKEN?: string;
 }
 
 /**

@@ -24,14 +24,24 @@
     // `wrangler dev` works out of the box. Staging / production overrides
     // are declared per-env below and are selected via
     // `wrangler deploy --env staging|production`.
-    "DJANGO_BASE_URL": "http://localhost:8000"
+    "DJANGO_BASE_URL": "http://localhost:8000",
+    // Stub value for `wrangler dev` and the vitest-pool-workers test
+    // suite. The integration test in `index.test.ts` asserts the
+    // `/.well-known/openai-apps-challenge` route echoes whatever this
+    // is set to. Staging / production override with OpenAI-issued
+    // tokens below.
+    "OPENAI_APPS_CHALLENGE_TOKEN": "dev-stub-not-a-real-challenge-token"
   },
   "env": {
     "staging": {
       "name": "tako-mcp-staging",
       "vars": {
         "DJANGO_BASE_URL": "https://staging.trytako.com",
-        "PUBLIC_BASE_URL": "https://staging.tako.com"
+        "PUBLIC_BASE_URL": "https://staging.tako.com",
+        // OpenAI connector-directory token issued for
+        // `mcp.staging.tako.com`. Served as plain text from
+        // `/.well-known/openai-apps-challenge`.
+        "OPENAI_APPS_CHALLENGE_TOKEN": "yvdAP5oZPvNXuisifiatKihXGqCnPqg64InQXJ0yB5U"
       },
       // `custom_domain: true` provisions a Cloudflare Custom Domain (TLS
       // auto-issued, CNAME auto-managed) on the deploying account's
@@ -51,7 +61,13 @@
       "name": "tako-mcp-production",
       "vars": {
         "DJANGO_BASE_URL": "https://trytako.com",
-        "PUBLIC_BASE_URL": "https://tako.com"
+        "PUBLIC_BASE_URL": "https://tako.com",
+        // OpenAI connector-directory domain-verification token issued
+        // for `mcp.tako.com`. Served as plain text from
+        // `/.well-known/openai-apps-challenge`. If OpenAI rotates the
+        // value, update here and redeploy. Not a secret — the URL is
+        // public by design.
+        "OPENAI_APPS_CHALLENGE_TOKEN": "uXTBcUGnISWBPU2YXEn7IPIDh2ANMxLa1rkFvv3Z0c0"
       },
       "routes": [
         { "pattern": "mcp.tako.com", "custom_domain": true }

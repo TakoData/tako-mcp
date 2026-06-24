@@ -20,6 +20,21 @@ describe("worker routing", () => {
     expect(res.status).toBe(404);
   });
 
+  it("GET /.well-known/openai-apps-challenge returns the configured token as plain text", async () => {
+    // OpenAI's connector-directory domain-verification flow GETs this
+    // URL during submission and matches the response body verbatim
+    // against the token shown in their dashboard. The token comes
+    // from the `OPENAI_APPS_CHALLENGE_TOKEN` binding (per env, in
+    // `wrangler.jsonc`); for the test runner the top-level `vars`
+    // entry stubs it to a known string.
+    const res = await SELF.fetch(
+      "https://example.com/.well-known/openai-apps-challenge",
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await res.text()).toBe("dev-stub-not-a-real-challenge-token");
+  });
+
   // We deliberately do not alias the OIDC discovery path. ChatGPT's App
   // Review wizard auto-locks the OIDC form fields once the URL resolves,
   // and the resulting half-OIDC / half-OAuth shape trips its classifier.
