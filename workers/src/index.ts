@@ -55,22 +55,17 @@ export default {
     // OpenAI connector-directory domain verification. During the
     // submission flow OpenAI hits this URL and expects to read back
     // the exact token shown in their dashboard. Token is per-env via
-    // `OPENAI_APPS_CHALLENGE_TOKEN`; when unset, return 404 so an
-    // unrelated environment never satisfies a verification it wasn't
-    // issued. Plain text response — no CORS wrapper needed (OpenAI
-    // hits this server-to-server, not from a browser).
+    // `OPENAI_APPS_CHALLENGE_TOKEN`. We only serve it when configured;
+    // an unset/empty binding falls through to the catch-all 404 below,
+    // so a non-production environment never satisfies a verification it
+    // wasn't issued. Plain text response — no CORS wrapper needed
+    // (OpenAI hits this server-to-server, not from a browser).
     if (
       request.method === "GET" &&
-      url.pathname === "/.well-known/openai-apps-challenge"
+      url.pathname === "/.well-known/openai-apps-challenge" &&
+      env.OPENAI_APPS_CHALLENGE_TOKEN
     ) {
-      const token = env.OPENAI_APPS_CHALLENGE_TOKEN;
-      if (token === undefined || token === "") {
-        return new Response("not found", {
-          status: 404,
-          headers: { "content-type": "text/plain; charset=utf-8" },
-        });
-      }
-      return new Response(token, {
+      return new Response(env.OPENAI_APPS_CHALLENGE_TOKEN, {
         status: 200,
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
