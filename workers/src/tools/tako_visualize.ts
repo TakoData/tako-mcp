@@ -53,7 +53,10 @@ const COMPONENT_TYPES = [
 ] as const;
 
 const DESCRIPTION =
-  "Create an embeddable Tako chart/card directly from data you ALREADY HAVE (not from search). Provide one or more typed `components`, each with a `component_type` and a `config` object holding that type's data (e.g. `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`, `header`). The card auto-renders inline as a chart and returns `webpage_url` / `embed_url` for sharing or embedding. Use `tako_search` to FIND existing Tako data; use `tako_visualize` when you already have the numbers. For per-`component_type` `config` shapes and worked examples, see Tako's 'Agent Skills → Visualize Your Data' docs and the Thin-Viz chart-creation reference. NOTE: `person_card` must be the ONLY component when used. **Always include `[Open in Tako](embed_url)` once at the end of your reply.**";
+  "Create an embeddable Tako chart/card directly from data you ALREADY HAVE (not from search). Provide one or more typed `components`, each with a `component_type` and a `config` object holding that type's data (e.g. `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`, `header`). The card auto-renders inline as a chart and returns `webpage_url` / `embed_url` for sharing or embedding. Use `tako_search` to FIND existing Tako data; use `tako_visualize` when you already have the numbers. " +
+  "Worked example — a bar chart with a title is two components: " +
+  '`{\"title\": \"Monthly Revenue\", \"components\": [{\"component_type\": \"header\", \"config\": {\"title\": \"Monthly Revenue\"}}, {\"component_type\": \"categorical_bar\", \"config\": {\"datasets\": [{\"label\": \"Sales\", \"units\": \"USD\", \"data\": [{\"x\": \"NA\", \"y\": 500}, {\"x\": \"EU\", \"y\": 300}]}]}}]}`. ' +
+  "For per-`component_type` `config` shapes and more worked examples, see Tako's 'Agent Skills → Visualize Your Data' docs and the Thin-Viz chart-creation reference. NOTE: `person_card` must be the ONLY component when used. **Always include `[Open in Tako](embed_url)` once at the end of your reply.**";
 
 const inputSchema = z.object({
   components: z
@@ -69,7 +72,11 @@ const inputSchema = z.object({
         config: z
           .record(z.string(), z.unknown())
           .describe(
-            "Data/configuration for this `component_type` (e.g. a categorical_bar's `datasets`). Freeform per type; validated server-side.",
+            "Data/configuration object for this `component_type`; its shape varies by type and is validated server-side. " +
+              'Examples — `header`: `{"title": "Monthly Revenue"}`. ' +
+              '`categorical_bar`: `{"datasets": [{"label": "Sales", "units": "USD", "data": [{"x": "NA", "y": 500}, {"x": "EU", "y": 300}]}]}` ' +
+              "(each dataset is a labeled series; `data` is an array of `{x, y}` points). " +
+              "For shapes of other types (e.g. `generic_timeseries`, `table`, `financial_boxes`, `pie`) see Tako's 'Visualize Your Data' docs.",
           ),
       }),
     )
