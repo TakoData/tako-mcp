@@ -17,6 +17,12 @@ const inputSchema = z.object({
     .min(1)
     .default(["tako", "web"])
     .describe('Which source(s) to ground in. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for curated data only, or ["web"] for live web only.'),
+  include_contents: z
+    .boolean()
+    .default(false)
+    .describe(
+      "When true, inline the underlying data of each cited result directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call.",
+    ),
   country_code: z
     .string()
     .default("US")
@@ -30,16 +36,19 @@ const outputSchema = z.object({
   answer: z.string(),
   cards: z.array(takoCardSchema),
   web_results: z.array(webResultSchema),
+  // Summed USD quote of all inlined results (0 when include_contents is off).
+  contents_total_cost: z.number(),
   request_id: z.string(),
 });
 
 type Output = z.infer<typeof outputSchema>;
 
-// Backend AnswerResponse (api/ga/v1/answer/types.py): { answer, cards, web_results, request_id }.
+// Backend AnswerResponse (api/ga/v1/answer/types.py): { answer, cards, web_results, contents_total_cost, request_id }.
 type AnswerPostResponse = {
   answer?: string;
   cards?: unknown[];
   web_results?: unknown[];
+  contents_total_cost?: number;
   request_id?: string;
 };
 
@@ -56,11 +65,17 @@ const takoAnswer = {
   },
   async handler(input, ctx): Promise<Output> {
     // GA /api/v1/answer takes the v3 SearchRequest shape: top-level `query`
-    // (NOT inputs.text) + `source_indexes`. Answer runs the fast pipeline +
+    // + a per-source `sources` OBJECT (an index is searched iff its key is
+    // present; include_contents is per-source). The old flat `source_indexes`
+    // is extra="forbid" rejected (400). Answer runs the fast pipeline +
     // arbiter (sync, ~120s ceiling) — no async/deep path, so no polling.
+    const sourceSettings = { include_contents: input.include_contents };
+    const sources: Record<string, unknown> = {};
+    if (input.sources.includes("tako")) sources.tako = sourceSettings;
+    if (input.sources.includes("web")) sources.web = sourceSettings;
     const body = {
       query: input.query,
-      source_indexes: input.sources,
+      sources,
       country_code: input.country_code,
       locale: input.locale,
     };
@@ -75,6 +90,7 @@ const takoAnswer = {
       answer: data.answer ?? "",
       cards: data.cards ?? [],
       web_results: data.web_results ?? [],
+      contents_total_cost: data.contents_total_cost ?? 0,
       request_id: data.request_id ?? "",
     });
     if (!parsed.success) {

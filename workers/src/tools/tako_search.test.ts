@@ -9,12 +9,12 @@
  * research is delegated to the Tako agent.
  *
  * Locked properties:
- *   1. `sources` → `source_indexes` pass-through, default `["tako","web"]`;
- *      `count` → `output_settings.count`; path is `/api/v3/search`.
- *   2. `sources: ["tako","web"]` passed through verbatim.
+ *   1. `sources` array → per-source `sources` object on the wire (count +
+ *      include_contents per source); path is `/api/v3/search`.
+ *   2. `sources: ["tako","web"]` → both keys present in the object.
  *   3. `effort` omitted → no `effort` key; `effort: "instant"` → passed;
  *      schema rejects `effort: "deep"`.
- *   4. `count` → `output_settings.count`.
+ *   4. `count` → per-source `count`.
  *   5. v3 card mapping (webpage_url) + `request_id` surfaced.
  *   6. `web_results` surfaced.
  *   7. Top-card auto-chain widget fields populated from `card_id`.
@@ -47,6 +47,7 @@ const CTX: ToolContext = {
 const DEFAULTS = {
   sources: ["tako"] as ("tako" | "web")[],
   count: 10,
+  include_contents: false,
   country_code: "US",
   locale: "en-US",
 };
@@ -95,7 +96,7 @@ describe("tako_search input schema", () => {
 });
 
 describe("tako_search request body", () => {
-  it("posts to /api/v3/search with source_indexes and output_settings.count", async () => {
+  it("posts to /api/v3/search with a per-source sources object (no flat source_indexes/output_settings)", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
     ]);
@@ -106,12 +107,13 @@ describe("tako_search request body", () => {
     const req = requestFrom(fetchMock.mock.calls[0]);
     expect(new URL(req.url).pathname).toBe("/api/v3/search/");
     const body = await bodyOf(req);
-    expect(body.source_indexes).toEqual(["tako"]);
-    expect(body.output_settings).toEqual({ count: 10 });
+    expect(body.sources).toEqual({ tako: { count: 10, include_contents: false } });
+    expect(body.source_indexes).toBeUndefined();
+    expect(body.output_settings).toBeUndefined();
     expect(body.query).toBe("gold price");
   });
 
-  it("passes sources [\"tako\",\"web\"] through verbatim as source_indexes", async () => {
+  it("maps sources [\"tako\",\"web\"] to both keys of the sources object", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
     ]);
@@ -122,7 +124,27 @@ describe("tako_search request body", () => {
     );
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.source_indexes).toEqual(["tako", "web"]);
+    expect(body.sources).toEqual({
+      tako: { count: 10, include_contents: false },
+      web: { count: 10, include_contents: false },
+    });
+  });
+
+  it("sets include_contents on each selected source when requested", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
+    ]);
+
+    await tako_search.handler(
+      { query: "x", ...DEFAULTS, sources: ["tako", "web"], include_contents: true },
+      CTX,
+    );
+
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
+    expect(body.sources).toEqual({
+      tako: { count: 10, include_contents: true },
+      web: { count: 10, include_contents: true },
+    });
   });
 
   it("omits effort from the body when not provided", async () => {
@@ -150,7 +172,7 @@ describe("tako_search request body", () => {
     expect(body.effort).toBe("instant");
   });
 
-  it("maps count to output_settings.count", async () => {
+  it("maps count into each selected source", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
     ]);
@@ -158,7 +180,7 @@ describe("tako_search request body", () => {
     await tako_search.handler({ query: "x", ...DEFAULTS, count: 5 }, CTX);
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.output_settings).toEqual({ count: 5 });
+    expect(body.sources).toEqual({ tako: { count: 5, include_contents: false } });
   });
 });
 

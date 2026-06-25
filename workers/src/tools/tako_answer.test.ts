@@ -3,9 +3,10 @@
  *
  * The handler is a single POST + re-parse: it maps the tool input onto
  * the backend's `/api/v1/answer/` request body (v3 SearchRequest shape:
- * top-level `query` + `source_indexes`, NOT `inputs.text`) and re-validates
- * the response through the output schema. The interesting behavior is:
- *   - request mapping (`query`→`query`, `sources`→`source_indexes`)
+ * top-level `query` + a per-source `sources` object, NOT `inputs.text` and
+ * NOT the old flat `source_indexes`) and re-validates the response through
+ * the output schema. The interesting behavior is:
+ *   - request mapping (`query`→`query`, `sources` array → `sources` object)
  *   - the defensive defaulting of missing fields (cards/web_results → [])
  *   - the loud failure on a mis-shaped backend payload
  *   - the absence of grounding-era fields (tako_selected, confidence)
@@ -59,13 +60,14 @@ describe("tako_answer handler", () => {
     expect(takoAnswer.name).toBe("tako_answer");
   });
 
-  it("maps query→query and sources→source_indexes, hits /api/v1/answer/", async () => {
+  it("maps query + sources to the per-source sources object, hits /api/v1/answer/", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     const out = await takoAnswer.handler(
       {
         query: "What was US GDP in 2024?",
         sources: ["tako", "web"],
+        include_contents: false,
         country_code: "US",
         locale: "en-US",
       },
@@ -75,10 +77,14 @@ describe("tako_answer handler", () => {
     const req = requestFrom(fetchMock.mock.calls[0]);
     expect(req.url).toBe("https://staging.trytako.com/api/v1/answer/");
     const body = await bodyOf(req);
-    // v3 SearchRequest: top-level `query` (NOT inputs.text)
+    // v3 SearchRequest: top-level `query` + per-source `sources` object
     expect(body.query).toBe("What was US GDP in 2024?");
-    expect(body.source_indexes).toEqual(["tako", "web"]);
-    // grounding-era nested inputs must NOT be present
+    expect(body.sources).toEqual({
+      tako: { include_contents: false },
+      web: { include_contents: false },
+    });
+    // old flat shape + grounding-era nested inputs must NOT be present
+    expect(body.source_indexes).toBeUndefined();
     expect(body.inputs).toBeUndefined();
 
     expect(out.answer).toContain("$29 trillion");
@@ -99,7 +105,7 @@ describe("tako_answer handler", () => {
     ]);
 
     const out = await takoAnswer.handler(
-      { query: "obscure query", sources: ["tako"], country_code: "US", locale: "en-US" },
+      { query: "obscure query", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US" },
       CTX,
     );
 
@@ -113,7 +119,7 @@ describe("tako_answer handler", () => {
     mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     const out = await takoAnswer.handler(
-      { query: "test", sources: ["tako"], country_code: "US", locale: "en-US" },
+      { query: "test", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US" },
       CTX,
     ) as Record<string, unknown>;
 
@@ -132,7 +138,7 @@ describe("tako_answer handler", () => {
     ]);
 
     await expect(
-      takoAnswer.handler({ query: "q", sources: ["tako", "web"], country_code: "US", locale: "en-US" }, CTX),
+      takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, country_code: "US", locale: "en-US" }, CTX),
     ).rejects.toThrow(/unexpected shape/);
   });
 });
@@ -159,7 +165,7 @@ describe("tako_answer input schema", () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     await takoAnswer.handler(
-      { query: "test", sources: ["tako"], country_code: "GB", locale: "en-GB" },
+      { query: "test", sources: ["tako"], include_contents: false, country_code: "GB", locale: "en-GB" },
       CTX,
     );
 

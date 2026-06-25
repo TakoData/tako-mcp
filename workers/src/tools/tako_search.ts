@@ -62,6 +62,12 @@ const inputSchema = z.object({
     .max(20)
     .default(10)
     .describe("Maximum number of results to return per source (1-20)."),
+  include_contents: z
+    .boolean()
+    .default(false)
+    .describe(
+      "When true, inline each result's underlying data directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call.",
+    ),
   country_code: z
     .string()
     .default("US")
@@ -85,12 +91,22 @@ const tako_search = {
     openWorldHint: true,
   },
   async handler(input, ctx): Promise<Output> {
+    // v3 SearchRequest takes a per-source `sources` OBJECT — an index is
+    // searched iff its key is present, and `count` / `include_contents` are
+    // per-source. The old flat `source_indexes` + `output_settings.count`
+    // shape is extra="forbid" rejected (400) by the current backend.
+    const sources: Record<string, unknown> = {};
+    if (input.sources.includes("tako")) {
+      sources.tako = { count: input.count, include_contents: input.include_contents };
+    }
+    if (input.sources.includes("web")) {
+      sources.web = { count: input.count, include_contents: input.include_contents };
+    }
     const body: Record<string, unknown> = {
       query: input.query,
-      source_indexes: input.sources,
+      sources,
       country_code: input.country_code,
       locale: input.locale,
-      output_settings: { count: input.count },
     };
     if (input.effort !== undefined) body.effort = input.effort;
     // v3 fast/instant is synchronous (~120s sync ceiling). No async/202,
@@ -98,6 +114,7 @@ const tako_search = {
     const data = await djangoPost<{
       cards?: unknown[];
       web_results?: unknown[];
+      contents_total_cost?: number;
       request_id?: string;
     }>(ctx.env, ctx.token, "/api/v3/search/", body, { timeoutMs: 130_000 });
     const cards = z.array(takoCardSchema).safeParse(data.cards ?? []);
@@ -113,6 +130,7 @@ const tako_search = {
       cards.data,
       webResults.data,
       data.request_id ?? "",
+      data.contents_total_cost ?? 0,
       ctx.env,
     );
   },

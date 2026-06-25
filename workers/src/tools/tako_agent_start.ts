@@ -47,7 +47,7 @@ const tako_agent_start = {
     openWorldHint: true,
   },
   async handler(input, ctx): Promise<Output> {
-    const runId = await dispatchAgentRun(ctx, input.query, input.sources);
+    const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);
     return {
       run_id: runId,
       status: "queued",

@@ -13,6 +13,7 @@
 import { z } from "zod";
 
 import { djangoGet, djangoPost } from "../django.js";
+import { webResultSchema } from "./_search_results.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -37,6 +38,13 @@ export const inputSchema = z.object({
     .describe(
       'Which source(s) the agent may use. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for connected data only, or ["web"] for open-web search only.',
     ),
+  thread_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional thread ID from a prior agent run (its `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread.",
+    ),
 });
 
 const takoCardSchema = z
@@ -50,6 +58,9 @@ const takoCardSchema = z
 
 export const agentRunSchema = z.object({
   run_id: z.string(),
+  // Surfaced so the caller can pass it back as `thread_id` to ask a follow-up
+  // in the same conversation.
+  thread_id: z.string().nullable().optional(),
   // Mirrors the backend AgentRunStatus StrEnum exactly (api/ga/v1/agent/types.py)
   // — kept in lockstep on purpose. A new backend status must be added here too,
   // or the poll will reject the run as an "unexpected shape".
@@ -59,6 +70,10 @@ export const agentRunSchema = z.object({
     .object({
       answer: z.string().nullable().optional(),
       cards: z.array(takoCardSchema).default([]),
+      // Web sources backing the answer, carrying the 1-based citation_number
+      // that the answer's [N] markers map to. Dropping these loses all web
+      // citations, so they are captured here.
+      web_results: z.array(webResultSchema).default([]),
       request_id: z.string().nullable().optional(),
     })
     .nullable()
@@ -69,6 +84,7 @@ export const agentRunSchema = z.object({
 export type AgentRun = z.infer<typeof agentRunSchema>;
 type AgentRunWire = {
   run_id?: string;
+  thread_id?: string | null;
   status?: string;
   timed_out?: boolean;
   result?: unknown;
@@ -80,16 +96,20 @@ export async function dispatchAgentRun(
   ctx: ToolContext,
   query: string,
   sources: Array<"tako" | "web">,
+  threadId?: string,
 ): Promise<string> {
+  // AgentRunRequest (api/ga/v1/agent/types.py) takes a flat `source_indexes`
+  // list (defaults to ["tako","web"] server-side, mirrored by the schema
+  // default here). `effort` only accepts "medium" today (AgentEffortLevel) —
+  // the sole supported public level; add others here as the backend gains them.
+  // `thread_id`, when provided, continues a prior run's conversation.
+  const body: Record<string, unknown> = { query, effort: "medium", source_indexes: sources };
+  if (threadId !== undefined) body.thread_id = threadId;
   const data = await djangoPost<AgentRunWire>(
     ctx.env,
     ctx.token,
     "/api/v1/agent/runs",
-    // AgentRunRequest (api/ga/v1/agent/types.py) takes `source_indexes`; it
-    // defaults to ["tako"] server-side, mirrored by the schema default here.
-    // `effort` only accepts "medium" today (AgentEffortLevel) — the sole
-    // supported public level; add others here as the backend gains them.
-    { query, effort: "medium", source_indexes: sources },
+    body,
     { timeoutMs: 30_000 },
   );
   if (!data.run_id) {
@@ -124,6 +144,7 @@ export async function pollAgentRun(
     }
     const parsed = agentRunSchema.safeParse({
       run_id: wire.run_id ?? runId,
+      thread_id: wire.thread_id ?? null,
       status: wire.status ?? "running",
       timed_out: false,
       result: wire.result ?? null,
@@ -169,7 +190,7 @@ const takoAgent = {
     openWorldHint: true,
   },
   async handler(input, ctx): Promise<AgentRun> {
-    const runId = await dispatchAgentRun(ctx, input.query, input.sources);
+    const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);
     return pollAgentRun(ctx, runId, { budgetMs: AGENT_POLL_BUDGET_MS, onTimeout: "throw" });
   },
 } satisfies ToolModule<typeof inputSchema, AgentRun>;
