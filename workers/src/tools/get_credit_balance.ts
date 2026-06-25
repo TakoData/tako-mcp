@@ -20,19 +20,20 @@ import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({});
 
-// Hint at the field LLMs most care about (`credit_balance`) while staying
-// permissive on everything else — billing may add fields (subscription info,
-// usage aggregates, expiry) without needing a tool re-ship. Using `.loose()`
-// lets Zod accept additional keys; they still reach the LLM via
-// `structuredContent` because the adapter stringifies the whole payload.
+// Hint at the fields LLMs care about while staying permissive on everything
+// else — billing may add fields (subscription info, usage aggregates, expiry)
+// without needing a tool re-ship. Using `.loose()` lets Zod accept additional
+// keys; they still reach the LLM via `structuredContent` because the adapter
+// stringifies the whole payload.
 //
-// `credit_balance` is typed as `number | string` because DRF serializes
-// `DecimalField` as a string by default (`coerce_to_string=True`). The
-// backend payload shape is not catalogued in the audit, so we accept both
-// rather than break the tool on the first call if the field is a string.
+// The backend CreditBalanceResponse (users/usage/models.py) returns
+// `credit_balance` as a plain JSON number (Pydantic float via model_dump — not
+// a DRF DecimalField, so not string-coerced) plus a `formatted_credit_balance`
+// display string.
 const detailsSchema = z
   .object({
-    credit_balance: z.union([z.number(), z.string()]).optional(),
+    credit_balance: z.number().optional(),
+    formatted_credit_balance: z.string().optional(),
   })
   .loose();
 

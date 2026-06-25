@@ -13,7 +13,7 @@
  *   5. Per-tool MCP `tools/call` canaries:
  *        a. `tako_search "US GDP"`        — non-empty results (read-only)
  *        b. `tako_answer "US GDP"`        — answer text returned (read-only)
- *        c. `tako_contents {url from search}` — download_url returned (read-only)
+ *        c. `tako_contents {url from search}` — inline data (default) + presigned download_url (mode:"url"), both read-only
  *        d. `get_credit_balance`          — `details.credit_balance`
  *                                           must be a number or numeric string (read-only)
  *        e. `tako_visualize`              — creates a card (charges 1 credit)
@@ -234,17 +234,29 @@ try {
   ok(`tako_answer "${CANARY_QUERY}" → answer (${taStructured.answer.length} chars)`);
 
   // ----- c) tako_contents canary (chained from the top search result) ----
-  const tcResult = await callOk(client, "tako_contents", { url: topResultUrl });
-  const tcStructured = tcResult.structuredContent as
-    | { download_url?: string; text?: string | null }
+  // Default mode is "inline": the card's CSV comes back in `data` (capped at
+  // 1000 rows), with download_url null.
+  const tcInline = await callOk(client, "tako_contents", { url: topResultUrl });
+  const tcInlineStructured = tcInline.structuredContent as
+    | { download_url?: string | null; data?: string | null; total_rows?: number | null }
     | undefined;
-  assert(tcStructured, "tako_contents missing structuredContent");
+  assert(tcInlineStructured, "tako_contents (inline) missing structuredContent");
   assert(
-    typeof tcStructured.download_url === "string" &&
-      /^https?:\/\//.test(tcStructured.download_url),
-    `tako_contents.download_url is not http(s): ${JSON.stringify(tcStructured?.download_url)}`,
+    typeof tcInlineStructured.data === "string" && tcInlineStructured.data.length > 0,
+    `tako_contents inline mode returned no data: ${JSON.stringify(tcInlineStructured?.data)}`,
   );
-  ok(`tako_contents {url} → download_url present`);
+  ok(`tako_contents {url} → inline data present (${tcInlineStructured.total_rows ?? "?"} rows)`);
+
+  // mode:"url" returns a short-lived presigned download link instead.
+  const tcUrl = await callOk(client, "tako_contents", { url: topResultUrl, mode: "url" });
+  const tcUrlStructured = tcUrl.structuredContent as { download_url?: string | null } | undefined;
+  assert(tcUrlStructured, "tako_contents (url) missing structuredContent");
+  assert(
+    typeof tcUrlStructured.download_url === "string" &&
+      /^https?:\/\//.test(tcUrlStructured.download_url),
+    `tako_contents.download_url is not http(s): ${JSON.stringify(tcUrlStructured?.download_url)}`,
+  );
+  ok(`tako_contents {url, mode:"url"} → download_url present`);
 
   // ----- d) get_credit_balance ------------------------------------------
   // Asserts `credit_balance` is present and either a number or a numeric

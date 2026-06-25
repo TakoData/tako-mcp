@@ -2,8 +2,12 @@
  * `tako_contents` — fetch the downloadable content behind a result URL.
  * Wraps `POST /api/v1/contents`. A Tako card URL resolves to a CSV of the
  * card's data; any other URL resolves to the page's extracted text. One URL
- * per call. Returns a short-lived presigned download URL; for web-text we also
- * inline the text so the model can read it directly.
+ * per call. `mode` controls delivery: "inline" (default) returns the content
+ * in the response body (CSV capped at 1000 rows, with total_rows/truncated; or
+ * web text) so the model can read it directly; "url" returns a short-lived
+ * presigned download URL instead. The "inline" default is an intentional
+ * MCP-ergonomics divergence from the backend default ("url") — an agent almost
+ * always wants to read the data, not hand back a link.
  */
 import { z } from "zod";
 
@@ -11,32 +15,49 @@ import { djangoPost } from "../django.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Fetch the underlying content behind a result URL. A Tako card URL returns a CSV of the card's data; any other URL returns the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web result URL). Returns a short-lived `download_url`; for web pages the extracted `text` is also inlined so you can read it directly.";
-
-const MAX_INLINE_CHARS = 200_000; // cap inlined web text to keep responses sane
-const CONTENTS_FETCH_TIMEOUT_MS = 15_000;
+  "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). `mode` controls delivery: `inline` (default) returns the content directly in the response so you can read and reason over it — CSV is capped at 1000 rows, so check `total_rows` / `truncated` to know if it's partial; `url` instead returns a short-lived presigned `download_url` (no row cap), for handing the user a download/embed link or for large datasets you don't need to read yourself. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
 
 const inputSchema = z.object({
   url: z
     .string()
     .min(1)
     .describe("The result URL to fetch content for (a Tako card URL → CSV; any other URL → page text)."),
+  mode: z
+    .enum(["inline", "url"])
+    .default("inline")
+    .describe(
+      'Delivery mode: "inline" (default) returns the content in the response body (CSV capped at 1000 rows, with total_rows/truncated; or web text) so you can read it directly; "url" returns a short-lived presigned download_url (no row cap).',
+    ),
 });
 
 const outputSchema = z.object({
   format: z.string(),
-  download_url: z.string(),
-  expires_at: z.string(),
+  // Presigned download URL + expiry — populated in "url" mode, null in "inline" mode.
+  download_url: z.string().nullable(),
+  expires_at: z.string().nullable(),
   source_url: z.string(),
   // USD charged for this artifact (web text is metered ~$1/1k pages; Tako-card
   // CSV is free → 0). Surfaced so the agent can report what the call cost.
   cost: z.number(),
-  text: z.string().nullable(),
+  // Inline content — populated in "inline" mode (CSV text capped at 1000 rows, or
+  // web page text), null in "url" mode. total_rows/truncated describe CSV truncation.
+  data: z.string().nullable(),
+  total_rows: z.number().nullable(),
+  truncated: z.boolean(),
 });
 
 type Output = z.infer<typeof outputSchema>;
 
-type ContentItem = { format?: string; url?: string; expires_at?: string; cost?: number; source_url?: string };
+type ContentItem = {
+  format?: string;
+  url?: string | null;
+  expires_at?: string | null;
+  cost?: number;
+  source_url?: string;
+  data?: string | null;
+  total_rows?: number | null;
+  truncated?: boolean;
+};
 type ContentsPostResponse = { contents?: ContentItem[]; request_id?: string };
 
 const takoContents = {
@@ -55,37 +76,27 @@ const takoContents = {
       ctx.env,
       ctx.token,
       "/api/v1/contents/",
-      { url: input.url },
+      { url: input.url, mode: input.mode },
       { timeoutMs: 60_000 },
     );
     const item = data.contents?.[0];
-    if (!item || !item.url) {
+    if (!item) {
       throw new Error(
         "Tako contents endpoint returned no downloadable content for that URL.",
       );
     }
-    const isText = (item.format ?? "").toLowerCase() === "text";
-    let text: string | null = null;
-    if (isText) {
-      // Inline the extracted web text so the model can read it without a
-      // second tool call. Best-effort: a fetch failure still returns the URL.
-      try {
-        const resp = await fetch(item.url, { signal: AbortSignal.timeout(CONTENTS_FETCH_TIMEOUT_MS) });
-        if (resp.ok) {
-          const body = await resp.text();
-          text = body.length > MAX_INLINE_CHARS ? body.slice(0, MAX_INLINE_CHARS) + "\n...[truncated]" : body;
-        }
-      } catch {
-        text = null;
-      }
-    }
+    // inline mode → backend populates `data` (+ total_rows/truncated) and leaves
+    // url/expires_at null; url mode → backend returns a presigned url/expires_at
+    // and leaves the inline fields null. Pass both shapes through as-is.
     const parsed = outputSchema.safeParse({
       format: item.format ?? "",
-      download_url: item.url,
-      expires_at: item.expires_at ?? "",
+      download_url: item.url ?? null,
+      expires_at: item.expires_at ?? null,
       source_url: item.source_url ?? input.url,
       cost: item.cost ?? 0,
-      text,
+      data: item.data ?? null,
+      total_rows: item.total_rows ?? null,
+      truncated: item.truncated ?? false,
     });
     if (!parsed.success) {
       throw new Error("Tako contents endpoint returned an unexpected shape.");

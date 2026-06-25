@@ -13,6 +13,7 @@
 import { z } from "zod";
 
 import { djangoGet, djangoPost } from "../django.js";
+import { webResultSchema } from "./_search_results.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -26,16 +27,22 @@ export const AGENT_WAIT_CEILING_S = 40;
 const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 const DESCRIPTION =
-  "Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning that a single search/answer can't satisfy. Runs up to ~90s; returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search`/`tako_answer` for simple lookups; reach for this only when the question genuinely needs reasoning over multiple retrievals. Use `sources` to choose connected data (`[\"tako\"]`, default), open-web search (`[\"web\"]`), or both.";
+  "Run Tako's deep research agent for questions that require *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, multi-step aggregation or transformation, and multi-hop reasoning across many entities that a single search/answer can't satisfy. Returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search` / `tako_answer` for a specific, known thing (a value, a time series, a direct comparison of two named entities); reach for the agent when the question's *shape* needs reasoning over multiple retrievals. **Uses both Tako's connected data and the live web by default — pass `sources` to narrow to one (`[\"tako\"]` or `[\"web\"]`).** (Runs server-side, typically ~30–90s.)";
 
 export const inputSchema = z.object({
   query: z.string().min(1).describe("The deep/analytical question for the agent to work through."),
   sources: z
     .array(z.enum(["tako", "web"]))
     .min(1)
-    .default(["tako"])
+    .default(["tako", "web"])
     .describe(
-      'Which source(s) the agent may use: ["tako"] (connected data, default), ["web"] (open-web search), or ["tako","web"].',
+      'Which source(s) the agent may use. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for connected data only, or ["web"] for open-web search only.',
+    ),
+  thread_id: z
+    .uuid()
+    .optional()
+    .describe(
+      "Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread.",
     ),
 });
 
@@ -50,6 +57,9 @@ const takoCardSchema = z
 
 export const agentRunSchema = z.object({
   run_id: z.string(),
+  // Surfaced so the caller can pass it back as `thread_id` to ask a follow-up
+  // in the same conversation.
+  thread_id: z.string().nullable().optional(),
   // Mirrors the backend AgentRunStatus StrEnum exactly (api/ga/v1/agent/types.py)
   // — kept in lockstep on purpose. A new backend status must be added here too,
   // or the poll will reject the run as an "unexpected shape".
@@ -59,6 +69,10 @@ export const agentRunSchema = z.object({
     .object({
       answer: z.string().nullable().optional(),
       cards: z.array(takoCardSchema).default([]),
+      // Web sources backing the answer, carrying the 1-based citation_number
+      // that the answer's [N] markers map to. Dropping these loses all web
+      // citations, so they are captured here.
+      web_results: z.array(webResultSchema).default([]),
       request_id: z.string().nullable().optional(),
     })
     .nullable()
@@ -69,6 +83,7 @@ export const agentRunSchema = z.object({
 export type AgentRun = z.infer<typeof agentRunSchema>;
 type AgentRunWire = {
   run_id?: string;
+  thread_id?: string | null;
   status?: string;
   timed_out?: boolean;
   result?: unknown;
@@ -80,16 +95,20 @@ export async function dispatchAgentRun(
   ctx: ToolContext,
   query: string,
   sources: Array<"tako" | "web">,
+  threadId?: string,
 ): Promise<string> {
+  // AgentRunRequest (api/ga/v1/agent/types.py) takes a flat `source_indexes`
+  // list (defaults to ["tako","web"] server-side, mirrored by the schema
+  // default here). `effort` only accepts "medium" today (AgentEffortLevel) —
+  // the sole supported public level; add others here as the backend gains them.
+  // `thread_id`, when provided, continues a prior run's conversation.
+  const body: Record<string, unknown> = { query, effort: "medium", source_indexes: sources };
+  if (threadId !== undefined) body.thread_id = threadId;
   const data = await djangoPost<AgentRunWire>(
     ctx.env,
     ctx.token,
     "/api/v1/agent/runs",
-    // AgentRunRequest (api/ga/v1/agent/types.py) takes `source_indexes`; it
-    // defaults to ["tako"] server-side, mirrored by the schema default here.
-    // `effort` only accepts "medium" today (AgentEffortLevel) — the sole
-    // supported public level; add others here as the backend gains them.
-    { query, effort: "medium", source_indexes: sources },
+    body,
     { timeoutMs: 30_000 },
   );
   if (!data.run_id) {
@@ -124,6 +143,7 @@ export async function pollAgentRun(
     }
     const parsed = agentRunSchema.safeParse({
       run_id: wire.run_id ?? runId,
+      thread_id: wire.thread_id ?? null,
       status: wire.status ?? "running",
       timed_out: false,
       result: wire.result ?? null,
@@ -169,7 +189,7 @@ const takoAgent = {
     openWorldHint: true,
   },
   async handler(input, ctx): Promise<AgentRun> {
-    const runId = await dispatchAgentRun(ctx, input.query, input.sources);
+    const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);
     return pollAgentRun(ctx, runId, { budgetMs: AGENT_POLL_BUDGET_MS, onTimeout: "throw" });
   },
 } satisfies ToolModule<typeof inputSchema, AgentRun>;

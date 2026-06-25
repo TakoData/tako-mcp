@@ -37,7 +37,7 @@ const KICKOFF_MESSAGE =
 const tako_agent_start = {
   name: "tako_agent_start",
   description:
-    "Kick off a Tako deep agent run and return immediately with a `run_id`. Use this for complex, multi-step data questions requiring transformations, aggregations, and multi-hop reasoning. The agent runs server-side for 30–90 s; this tool returns in <1 s with the run handle. **Workflow:** (1) tell the user the agent run is starting; (2) call `tako_agent_wait` with the `run_id` to poll for results, chaining calls until `status` is `completed` or `failed`.",
+    "Kick off a Tako deep research agent run and return immediately with a `run_id`. Use this for questions that require *figuring something out* rather than retrieving a known value — cohort resolution, ranking or filtering a set by criteria, multi-step aggregation, and multi-hop reasoning across many entities (use `tako_search` / `tako_answer` for a specific, known thing). **Uses both Tako and the live web by default — pass `sources` to narrow to one.** The agent runs server-side (typically ~30–90s); this tool returns in <1s with the run handle. **Workflow:** (1) tell the user the agent run is starting; (2) call `tako_agent_wait` with the `run_id` to poll for results, chaining calls until `status` is `completed` or `failed`.",
   inputSchema,
   outputSchema,
   annotations: {
@@ -47,7 +47,7 @@ const tako_agent_start = {
     openWorldHint: true,
   },
   async handler(input, ctx): Promise<Output> {
-    const runId = await dispatchAgentRun(ctx, input.query, input.sources);
+    const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);
     return {
       run_id: runId,
       status: "queued",

@@ -5,7 +5,7 @@ import { takoCardSchema, webResultSchema } from "./_search_results.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Ask a factual question and get back a single grounded, citation-backed text answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct answer about current or historical values, statistics, schedules, scores, comparisons, prices, forecasts, polls, or prediction-market odds. The answer is synthesized by Tako's arbiter from its curated knowledge graph and/or the live web. Use `sources: [\"tako\"]` to ground only in curated data, `[\"web\"]` for live web only, or omit it to let the arbiter blend both (default). If you want a chart rendered inline instead of a prose answer, use `tako_search`.";
+  "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"tako\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako deep research agent instead.**";
 
 const inputSchema = z.object({
   query: z
@@ -16,7 +16,13 @@ const inputSchema = z.object({
     .array(z.enum(["tako", "web"]))
     .min(1)
     .default(["tako", "web"])
-    .describe('Which source(s) to ground in: ["tako"], ["web"], or ["tako","web"] (default).'),
+    .describe('Which source(s) to ground in. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for curated data only, or ["web"] for live web only.'),
+  include_contents: z
+    .boolean()
+    .default(false)
+    .describe(
+      "When true, inline the underlying data of each cited result directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call. Inlining web text is billed per page (Tako card CSV is free); the summed quote is returned in contents_total_cost.",
+    ),
   country_code: z
     .string()
     .default("US")
@@ -30,16 +36,19 @@ const outputSchema = z.object({
   answer: z.string(),
   cards: z.array(takoCardSchema),
   web_results: z.array(webResultSchema),
+  // Summed USD quote of all inlined results (0 when include_contents is off).
+  contents_total_cost: z.number(),
   request_id: z.string(),
 });
 
 type Output = z.infer<typeof outputSchema>;
 
-// Backend AnswerResponse (api/ga/v1/answer/types.py): { answer, cards, web_results, request_id }.
+// Backend AnswerResponse (api/ga/v1/answer/types.py): { answer, cards, web_results, contents_total_cost, request_id }.
 type AnswerPostResponse = {
   answer?: string;
   cards?: unknown[];
   web_results?: unknown[];
+  contents_total_cost?: number;
   request_id?: string;
 };
 
@@ -56,11 +65,18 @@ const takoAnswer = {
   },
   async handler(input, ctx): Promise<Output> {
     // GA /api/v1/answer takes the v3 SearchRequest shape: top-level `query`
-    // (NOT inputs.text) + `source_indexes`. Answer runs the fast pipeline +
+    // + a per-source `sources` OBJECT (an index is searched iff its key is
+    // present; include_contents is per-source). The old flat `source_indexes`
+    // is extra="forbid" rejected (400). Answer runs the fast pipeline +
     // arbiter (sync, ~120s ceiling) — no async/deep path, so no polling.
+    // No per-source `count` (answer exposes none): each source defaults to the
+    // backend's count (5) — intentional, unlike tako_search which sends 10.
+    const sources: Record<string, unknown> = {};
+    if (input.sources.includes("tako")) sources.tako = { include_contents: input.include_contents };
+    if (input.sources.includes("web")) sources.web = { include_contents: input.include_contents };
     const body = {
       query: input.query,
-      source_indexes: input.sources,
+      sources,
       country_code: input.country_code,
       locale: input.locale,
     };
@@ -75,6 +91,7 @@ const takoAnswer = {
       answer: data.answer ?? "",
       cards: data.cards ?? [],
       web_results: data.web_results ?? [],
+      contents_total_cost: data.contents_total_cost ?? 0,
       request_id: data.request_id ?? "",
     });
     if (!parsed.success) {
