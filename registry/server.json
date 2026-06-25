@@ -67,7 +67,7 @@
         },
         "thread_id": {
           "type": "string",
-          "description": "Optional thread ID from a prior agent run (its `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread."
+          "description": "Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread."
         }
       },
       "annotations": {
@@ -96,7 +96,7 @@
         },
         "thread_id": {
           "type": "string",
-          "description": "Optional thread ID from a prior agent run (its `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread."
+          "description": "Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread."
         }
       },
       "annotations": {
@@ -147,7 +147,7 @@
         },
         "include_contents": {
           "type": "boolean",
-          "description": "When true, inline the underlying data of each cited result directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call.",
+          "description": "When true, inline the underlying data of each cited result directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call. Inlining web text is billed per page (Tako card CSV is free); the summed quote is returned in contents_total_cost.",
           "default": false
         },
         "country_code": {
@@ -226,7 +226,7 @@
         },
         "include_contents": {
           "type": "boolean",
-          "description": "When true, inline each result's underlying data directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call.",
+          "description": "When true, inline each result's underlying data directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call. Inlining web text is billed per page (Tako card CSV is free); the summed quote is returned in contents_total_cost.",
           "default": false
         },
         "country_code": {

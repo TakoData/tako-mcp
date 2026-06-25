@@ -39,11 +39,10 @@ export const inputSchema = z.object({
       'Which source(s) the agent may use. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for connected data only, or ["web"] for open-web search only.',
     ),
   thread_id: z
-    .string()
-    .min(1)
+    .uuid()
     .optional()
     .describe(
-      "Optional thread ID from a prior agent run (its `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread.",
+      "Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread.",
     ),
 });
 

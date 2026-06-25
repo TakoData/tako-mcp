@@ -66,7 +66,7 @@ const inputSchema = z.object({
     .boolean()
     .default(false)
     .describe(
-      "When true, inline each result's underlying data directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call.",
+      "When true, inline each result's underlying data directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call. Inlining web text is billed per page (Tako card CSV is free); the summed quote is returned in contents_total_cost.",
     ),
   country_code: z
     .string()

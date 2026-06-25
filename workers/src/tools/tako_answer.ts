@@ -21,7 +21,7 @@ const inputSchema = z.object({
     .boolean()
     .default(false)
     .describe(
-      "When true, inline the underlying data of each cited result directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call.",
+      "When true, inline the underlying data of each cited result directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call. Inlining web text is billed per page (Tako card CSV is free); the summed quote is returned in contents_total_cost.",
     ),
   country_code: z
     .string()
@@ -69,10 +69,11 @@ const takoAnswer = {
     // present; include_contents is per-source). The old flat `source_indexes`
     // is extra="forbid" rejected (400). Answer runs the fast pipeline +
     // arbiter (sync, ~120s ceiling) — no async/deep path, so no polling.
-    const sourceSettings = { include_contents: input.include_contents };
+    // No per-source `count` (answer exposes none): each source defaults to the
+    // backend's count (5) — intentional, unlike tako_search which sends 10.
     const sources: Record<string, unknown> = {};
-    if (input.sources.includes("tako")) sources.tako = sourceSettings;
-    if (input.sources.includes("web")) sources.web = sourceSettings;
+    if (input.sources.includes("tako")) sources.tako = { include_contents: input.include_contents };
+    if (input.sources.includes("web")) sources.web = { include_contents: input.include_contents };
     const body = {
       query: input.query,
       sources,
