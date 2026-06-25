@@ -9,7 +9,7 @@
  * research is delegated to the Tako agent.
  *
  * Locked properties:
- *   1. `sources` → `source_indexes` pass-through, default `["tako"]`;
+ *   1. `sources` → `source_indexes` pass-through, default `["tako","web"]`;
  *      `count` → `output_settings.count`; path is `/api/v3/search`.
  *   2. `sources: ["tako","web"]` passed through verbatim.
  *   3. `effort` omitted → no `effort` key; `effort: "instant"` → passed;
@@ -63,10 +63,10 @@ describe("tako_search input schema", () => {
     if (parsed.success) expect(parsed.data.count).toBe(10);
   });
 
-  it("defaults sources to [\"tako\"]", () => {
+  it("defaults sources to [\"tako\",\"web\"]", () => {
     const parsed = tako_search.inputSchema.safeParse({ query: "x" });
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.sources).toEqual(["tako"]);
+    if (parsed.success) expect(parsed.data.sources).toEqual(["tako", "web"]);
   });
 
   it("accepts effort=fast", () => {
@@ -95,7 +95,7 @@ describe("tako_search input schema", () => {
 });
 
 describe("tako_search request body", () => {
-  it("posts to /api/v3/search with default source_indexes and output_settings.count", async () => {
+  it("posts to /api/v3/search with source_indexes and output_settings.count", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
     ]);

@@ -26,16 +26,16 @@ export const AGENT_WAIT_CEILING_S = 40;
 const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 const DESCRIPTION =
-  "Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning that a single search/answer can't satisfy. Runs up to ~90s; returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search`/`tako_answer` for simple lookups; reach for this only when the question genuinely needs reasoning over multiple retrievals. Use `sources` to choose connected data (`[\"tako\"]`, default), open-web search (`[\"web\"]`), or both.";
+  "Run Tako's deep research agent for questions that require *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, multi-step aggregation or transformation, and multi-hop reasoning across many entities that a single search/answer can't satisfy. Returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search` / `tako_answer` for a specific, known thing (a value, a time series, a direct comparison of two named entities); reach for the agent when the question's *shape* needs reasoning over multiple retrievals. **Uses both Tako's connected data and the live web by default — pass `sources` to narrow to one (`[\"tako\"]` or `[\"web\"]`).** (Runs server-side, typically ~30–90s.)";
 
 export const inputSchema = z.object({
   query: z.string().min(1).describe("The deep/analytical question for the agent to work through."),
   sources: z
     .array(z.enum(["tako", "web"]))
     .min(1)
-    .default(["tako"])
+    .default(["tako", "web"])
     .describe(
-      'Which source(s) the agent may use: ["tako"] (connected data, default), ["web"] (open-web search), or ["tako","web"].',
+      'Which source(s) the agent may use. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for connected data only, or ["web"] for open-web search only.',
     ),
 });
 

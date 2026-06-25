@@ -83,9 +83,9 @@ describe("tako_agent", () => {
 });
 
 describe("tako_agent input schema", () => {
-  it("defaults sources to tako-only (matches the backend default), preserving prior behavior", () => {
+  it("defaults sources to both tako and web (matches the backend default)", () => {
     const parsed = tool.inputSchema.parse({ query: "hello" });
-    expect(parsed.sources).toEqual(["tako"]);
+    expect(parsed.sources).toEqual(["tako", "web"]);
   });
 
   it("accepts web and both", () => {

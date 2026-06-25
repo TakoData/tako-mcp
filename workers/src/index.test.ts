@@ -150,7 +150,7 @@ describe("worker routing", () => {
     expect(body.jsonrpc).toBe("2.0");
     expect(body.id).toBe(1);
     expect(body.result.serverInfo.name).toBe("tako-mcp");
-    expect(body.result.serverInfo.version).toBe("0.4.0");
+    expect(body.result.serverInfo.version).toBe("0.5.0");
     // Guard against silent SDK negotiation regressions — a missing or
     // malformed protocolVersion should fail loudly. The regex tolerates
     // future SDK bumps without pinning to a specific release.
@@ -367,10 +367,12 @@ describe("worker routing", () => {
     expect(chatgptDesc).toBe(claudeDesc);
     expect(unknownDesc).toBe(claudeDesc);
 
-    // Promises the inline auto-render and routes deep / empty-result
-    // follow-ups to the Tako agent.
+    // Promises the inline auto-render and routes "figure-it-out" / empty-result
+    // follow-ups to the Tako agent. The cross-reference is client-agnostic
+    // (names "the Tako deep research agent", not the ChatGPT-only split tools)
+    // since this one description string is served verbatim to every host.
     expect(claudeDesc).toContain("auto-renders inline");
-    expect(claudeDesc).toContain("tako_agent_start");
+    expect(claudeDesc).toContain("Tako deep research agent");
 
     // No residue from the removed legacy deep/async machinery.
     expect(claudeDesc).not.toContain("auto-escalation");

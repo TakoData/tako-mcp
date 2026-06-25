@@ -32,7 +32,7 @@ import type { AnyToolModule, McpClientKind, ToolContext } from "./tools/types.js
  * returns, so a mismatch surfaces as "wrong server" in tooling.
  */
 export const SERVER_NAME = "tako-mcp";
-export const SERVER_VERSION = "0.4.0";
+export const SERVER_VERSION = "0.5.0";
 
 /**
  * MCP Apps UI resource MIME type. Hosts (claude.ai, ChatGPT Apps SDK, VS

@@ -5,7 +5,7 @@ import { takoCardSchema, webResultSchema } from "./_search_results.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Ask a factual question and get back a single grounded, citation-backed text answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct answer about current or historical values, statistics, schedules, scores, comparisons, prices, forecasts, polls, or prediction-market odds. The answer is synthesized by Tako's arbiter from its curated knowledge graph and/or the live web. Use `sources: [\"tako\"]` to ground only in curated data, `[\"web\"]` for live web only, or omit it to let the arbiter blend both (default). If you want a chart rendered inline instead of a prose answer, use `tako_search`.";
+  "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"tako\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako deep research agent instead.**";
 
 const inputSchema = z.object({
   query: z
@@ -16,7 +16,7 @@ const inputSchema = z.object({
     .array(z.enum(["tako", "web"]))
     .min(1)
     .default(["tako", "web"])
-    .describe('Which source(s) to ground in: ["tako"], ["web"], or ["tako","web"] (default).'),
+    .describe('Which source(s) to ground in. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for curated data only, or ["web"] for live web only.'),
   country_code: z
     .string()
     .default("US")

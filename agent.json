@@ -2,7 +2,7 @@
   "name": "Tako",
   "description": "Data intelligence agent that searches a knowledge base of 100K+ charts, answers data questions with citations, fetches underlying source content, and runs deep multi-step research.",
   "url": "https://mcp.tako.com",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "capabilities": {
     "streaming": true,
     "pushNotifications": false
@@ -24,7 +24,7 @@
     {
       "id": "search-data",
       "name": "Search Charts & Data",
-      "description": "Fast search over Tako's curated knowledge graph of 100K+ charts and live data — economics, finance, demographics, sports, markets, weather — plus the live web when asked.",
+      "description": "Fast search over Tako's curated knowledge graph of 100K+ charts and live data — economics, finance, demographics, sports, markets, weather — and the live web, both searched by default. Best for a specific, known value, series, or direct comparison of named entities.",
       "tags": ["search", "charts", "data", "live"],
       "examples": [
         "Find charts about US GDP growth",
@@ -67,7 +67,7 @@
     {
       "id": "deep-research",
       "name": "Deep Research Agent",
-      "description": "Run a deep multi-step research agent for complex analytical questions requiring transformations, aggregations, and multi-hop reasoning.",
+      "description": "Run a deep research agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup.",
       "tags": ["agent", "research", "analysis"],
       "examples": [
         "Compare revenue per employee across the Mag 7",
