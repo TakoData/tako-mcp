@@ -181,7 +181,10 @@ describe("discovery", () => {
       resource: string;
       authorization_servers: string[];
     };
-    expect(body.resource).toBe("https://mcp.example.com/mcp");
+    // Bare origin (not /mcp-suffixed) per OpenAI Apps SDK auth docs:
+    // "ChatGPT sends this exact value as the `resource` query parameter
+    // during OAuth." The classifier rejects path-suffixed values.
+    expect(body.resource).toBe("https://mcp.example.com");
     expect(body.authorization_servers).toEqual(["https://mcp.example.com"]);
   });
 

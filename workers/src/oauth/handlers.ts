@@ -228,7 +228,13 @@ export function handleProtectedResourceMetadata(
   }
   const origin = new URL(req.url).origin;
   return Response.json({
-    resource: `${origin}/mcp`,
+    // OpenAI Apps SDK auth docs explicitly state: "ChatGPT sends this
+    // exact value as the `resource` query parameter during OAuth." Their
+    // example uses the bare origin, not a path-suffixed URL — and the
+    // App Review classifier appears to require this shape. We previously
+    // advertised `${origin}/mcp` (RFC 9728 allows either) but that trips
+    // their "unsupported OAuth config type" rejection during submission.
+    resource: origin,
     authorization_servers: [origin],
     bearer_methods_supported: ["header"],
     scopes_supported: [...SUPPORTED_SCOPES],
