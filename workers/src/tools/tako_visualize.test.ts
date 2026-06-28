@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import takoVisualize from "./tako_visualize.js";
+import takoVisualize, { buildVisualizeBody } from "./tako_visualize.js";
+import { CreateCardRequest, KnowledgeCard } from "../generated/schemas.js";
 import {
   bodyOf,
   jsonResponse,
@@ -27,6 +28,9 @@ const CTX: ToolContext = {
   client: "claude",
 };
 
+// Full KnowledgeCard-shaped fixture matching the backend's actual response
+// from POST /api/v1/thin_viz/create/. All non-optional fields must be present
+// (they accept null, but must not be absent).
 const CARD_RESPONSE = {
   card_id: "card_abc123",
   title: "Monthly Revenue",
@@ -34,7 +38,13 @@ const CARD_RESPONSE = {
   webpage_url: "https://staging.trytako.com/charts/card_abc123",
   embed_url: "https://staging.trytako.com/embed/card_abc123/",
   image_url: "https://staging.trytako.com/api/v1/image/card_abc123/",
-  embed_mode: "post",
+  sources: null,
+  methodologies: null,
+  source_indexes: null,
+  card_type: "categorical_bar",
+  data_url: null,
+  relevance: null,
+  visualization_data: null,
 };
 
 const VALID_INPUT = {
@@ -128,7 +138,9 @@ describe("tako_visualize handler", () => {
   });
 
   it("throws an actionable error when the backend returns no card_id", async () => {
-    mockFetchSequence([jsonResponse(200, { title: "X" })]);
+    // A well-shaped KnowledgeCard response but with card_id: null — the
+    // handler must still throw a card_id-specific error.
+    mockFetchSequence([jsonResponse(200, { ...CARD_RESPONSE, card_id: null })]);
 
     await expect(takoVisualize.handler(VALID_INPUT, CTX)).rejects.toThrow(/card_id/);
   });
@@ -164,5 +176,92 @@ describe("tako_visualize input schema", () => {
       components: [{ component_type: "scatter", config: { anything: [1, 2, 3], nested: { a: 1 } } }],
     });
     expect(parsed.components[0]?.component_type).toBe("scatter");
+  });
+});
+
+// --- Contract guard tests (A7) ---
+
+// Representative thin_viz/create response that the backend returns
+// (a KnowledgeCard-shaped payload).
+const KNOWLEDGE_CARD_WIRE = {
+  card_id: "card_abc123",
+  title: "Monthly Revenue",
+  description: "Revenue by month",
+  webpage_url: "https://staging.trytako.com/charts/card_abc123",
+  embed_url: "https://staging.trytako.com/embed/card_abc123/",
+  image_url: "https://staging.trytako.com/api/v1/image/card_abc123/",
+  sources: null,
+  methodologies: null,
+  source_indexes: null,
+  card_type: "categorical_bar",
+  data_url: null,
+  relevance: null,
+  visualization_data: null,
+};
+
+describe("tako_visualize output contract guard (KnowledgeCard wire)", () => {
+  it("generated KnowledgeCard schema accepts a representative thin_viz/create response", () => {
+    expect(() => KnowledgeCard.parse(KNOWLEDGE_CARD_WIRE)).not.toThrow();
+  });
+
+  it("generated KnowledgeCard schema accepts the minimal CARD_RESPONSE (only card_id present)", () => {
+    // The real backend always includes card_id; most other fields are nullable.
+    const minimal = {
+      card_id: "card_abc123",
+      title: null,
+      description: null,
+      webpage_url: null,
+      embed_url: null,
+      image_url: null,
+      sources: null,
+      methodologies: null,
+      source_indexes: null,
+      card_type: null,
+      data_url: null,
+      relevance: null,
+      visualization_data: null,
+    };
+    expect(() => KnowledgeCard.parse(minimal)).not.toThrow();
+  });
+});
+
+describe("tako_visualize request contract guard (buildVisualizeBody)", () => {
+  it("buildVisualizeBody produces a body that satisfies the backend CreateCardRequest contract", () => {
+    const body = buildVisualizeBody({
+      components: [
+        { component_type: "header" as const, config: { title: "Monthly Revenue" } },
+        {
+          component_type: "categorical_bar" as const,
+          config: {
+            datasets: [
+              { label: "Sales", units: "USD", data: [{ x: "NA", y: 500 }, { x: "EU", y: 300 }] },
+            ],
+          },
+        },
+      ],
+      title: "Monthly Revenue",
+      description: "A revenue chart",
+      source: "Internal",
+      height: 600,
+      normalize_currencies: "USD",
+    });
+    expect(() => CreateCardRequest.parse(body)).not.toThrow();
+  });
+
+  it("buildVisualizeBody omits undefined optional fields (no null pollution)", () => {
+    const body = buildVisualizeBody({
+      components: [{ component_type: "header" as const, config: { title: "X" } }],
+    });
+    // Undefined optional fields should not appear in the body object at all
+    expect("title" in body).toBe(false);
+    expect("description" in body).toBe(false);
+    expect("source" in body).toBe(false);
+    expect("height" in body).toBe(false);
+    expect("normalize_currencies" in body).toBe(false);
+    // Excluded-by-design fields never appear
+    expect("postmessage_embed" in body).toBe(false);
+    expect("image_ttl_minutes" in body).toBe(false);
+    // Body still passes the contract
+    expect(() => CreateCardRequest.parse(body)).not.toThrow();
   });
 });

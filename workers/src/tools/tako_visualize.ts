@@ -11,6 +11,7 @@
 import { z } from "zod";
 
 import { djangoPost } from "../django.js";
+import { CreateCardRequest, KnowledgeCard } from "../generated/schemas.js";
 import {
   APP_UI_RESOURCE_URI,
   APP_UI_TEMPLATE_URI_PATTERN,
@@ -100,6 +101,18 @@ const inputSchema = z.object({
     ),
 });
 
+// Parity-check outcome: Path 2 — keep the hand-written outputSchema as the
+// MCP facade (always returns the card_id + widget fields for inline render)
+// and validate the raw wire against the generated KnowledgeCard contract
+// before extracting card_id.
+//
+// The generated KnowledgeCard has many fields the MCP tool does not surface
+// (sources, methodologies, source_indexes, card_type, data_url, relevance,
+// visualization_data) and lacks the auto-chain widget fields (pub_id,
+// embed_url, image_url, dark_mode, width, height) that are built from the
+// card_id by buildChartUrls. If we switched to outputSchema = KnowledgeCard
+// directly the inline render would break and the existing widget tests would
+// fail. KnowledgeCard is therefore used as the wire-guard only.
 const outputSchema = z.object({
   card_id: z.string(),
   title: z.string().optional(),
@@ -109,16 +122,30 @@ const outputSchema = z.object({
 });
 
 type Output = z.infer<typeof outputSchema>;
+type Input = z.infer<typeof inputSchema>;
 
-// Backend KnowledgeCard subset returned by /api/v1/thin_viz/create/.
-type CreateCardResponse = {
-  card_id?: string;
-  title?: string;
-  description?: string;
-  webpage_url?: string;
-  embed_url?: string;
-  image_url?: string;
-};
+/**
+ * Map the MCP input into the backend's CreateCardRequest body.
+ * Exported for the contract-guard test.
+ *
+ * The `satisfies z.input<typeof CreateCardRequest>` annotation is the
+ * build-time guard: if the backend request contract changes (new required
+ * field, renamed key, changed enum) this line fails to compile.
+ *
+ * postmessage_embed and image_ttl_minutes are intentionally excluded —
+ * the MCP tool does not expose them.
+ */
+export function buildVisualizeBody(input: Input): z.input<typeof CreateCardRequest> {
+  const body: z.input<typeof CreateCardRequest> = { components: input.components };
+  if (input.title !== undefined) body.title = input.title;
+  if (input.description !== undefined) body.description = input.description;
+  if (input.source !== undefined) body.source = input.source;
+  if (input.height !== undefined) body.height = input.height;
+  if (input.normalize_currencies !== undefined) {
+    body.normalize_currencies = input.normalize_currencies;
+  }
+  return body satisfies z.input<typeof CreateCardRequest>; // ← build-time guard: backend request drift breaks here
+}
 
 const tako_visualize = {
   name: "tako_visualize",
@@ -132,18 +159,9 @@ const tako_visualize = {
     openWorldHint: false,
   },
   async handler(input, ctx): Promise<Output> {
-    // Thin pass-through: send components + only the provided top-level
-    // fields. The backend validates configs and charges credits.
-    const body: Record<string, unknown> = { components: input.components };
-    if (input.title !== undefined) body.title = input.title;
-    if (input.description !== undefined) body.description = input.description;
-    if (input.source !== undefined) body.source = input.source;
-    if (input.height !== undefined) body.height = input.height;
-    if (input.normalize_currencies !== undefined) {
-      body.normalize_currencies = input.normalize_currencies;
-    }
+    const body = buildVisualizeBody(input);
 
-    const data = await djangoPost<CreateCardResponse>(
+    const data = await djangoPost<unknown>(
       ctx.env,
       ctx.token,
       "/api/v1/thin_viz/create/",
@@ -151,7 +169,17 @@ const tako_visualize = {
       { timeoutMs: 130_000 },
     );
 
-    const cardId = data.card_id ?? "";
+    // Wire-contract guard: validate against the generated KnowledgeCard
+    // before extracting card_id.
+    const wireCheck = KnowledgeCard.safeParse(data);
+    if (!wireCheck.success) {
+      throw new Error(
+        "Tako visualize endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
+      );
+    }
+    const wire = wireCheck.data;
+
+    const cardId = wire.card_id ?? "";
     if (cardId === "") {
       throw new Error(
         "Tako visualize endpoint did not return a card_id. Retry once; if it persists, flag it to the Tako team.",
@@ -163,9 +191,9 @@ const tako_visualize = {
     const { embed_url, image_url } = buildChartUrls(ctx.env, cardId, DEFAULT_DARK_MODE);
     const parsed = outputSchema.safeParse({
       card_id: cardId,
-      title: data.title,
-      description: data.description,
-      webpage_url: data.webpage_url,
+      title: wire.title ?? undefined,
+      description: wire.description ?? undefined,
+      webpage_url: wire.webpage_url ?? undefined,
       pub_id: cardId,
       embed_url,
       image_url,
