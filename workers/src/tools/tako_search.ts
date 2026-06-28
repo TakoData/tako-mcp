@@ -17,6 +17,7 @@
 import { z } from "zod";
 
 import { djangoPost } from "../django.js";
+import { SearchRequest, SearchResponse } from "../generated/schemas.js";
 import {
   APP_UI_RESOURCE_URI,
   APP_UI_TEMPLATE_URI_PATTERN,
@@ -75,9 +76,50 @@ const inputSchema = z.object({
   locale: z.string().default("en-US").describe("Locale for results."),
 });
 
+type Input = z.infer<typeof inputSchema>;
+
+// Parity-check outcome: Path 2 — keep the hand-written outputSchema as the
+// MCP facade and validate the raw wire against the generated SearchResponse
+// contract before mapping.
+//
+// The generated SearchResponse has cards/web_results as *optional* (may be
+// absent on the wire). The hand-written facade (searchOutputShape) normalises
+// them to required arrays (defaulting ?? []) and also includes auto-chain
+// widget fields (pub_id, embed_url, image_url, dark_mode, width, height) that
+// are not present in SearchResponse. If we switched to outputSchema =
+// SearchResponse directly, existing widget tests would fail and the inline
+// chart rendering would break. The generated SearchResponse is therefore used
+// as the wire-guard (SearchResponse.safeParse on raw data) while the
+// hand-written schema remains the tool's advertised output shape.
 const outputSchema = z.object(searchOutputShape);
 
 type Output = z.infer<typeof outputSchema>;
+
+/**
+ * Reshape the flat MCP input into the backend's nested SearchRequest body.
+ * Exported for the contract-guard test.
+ *
+ * The `satisfies z.input<typeof SearchRequest>` annotation is the build-time
+ * guard: if the backend request contract changes (new required field, renamed
+ * key, changed enum) this line fails to compile — the intended signal.
+ */
+export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
+  const sources: Record<string, { count: number; include_contents: boolean }> = {};
+  if (input.sources.includes("tako")) {
+    sources.tako = { count: input.count, include_contents: input.include_contents };
+  }
+  if (input.sources.includes("web")) {
+    sources.web = { count: input.count, include_contents: input.include_contents };
+  }
+  const body: z.input<typeof SearchRequest> = {
+    query: input.query,
+    sources,
+    country_code: input.country_code,
+    locale: input.locale,
+  };
+  if (input.effort !== undefined) body.effort = input.effort;
+  return body satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
+}
 
 const tako_search = {
   name: "tako_search",
@@ -95,32 +137,23 @@ const tako_search = {
     // searched iff its key is present, and `count` / `include_contents` are
     // per-source. The old flat `source_indexes` + `output_settings.count`
     // shape is extra="forbid" rejected (400) by the current backend.
-    const sources: Record<string, unknown> = {};
-    if (input.sources.includes("tako")) {
-      sources.tako = { count: input.count, include_contents: input.include_contents };
-    }
-    if (input.sources.includes("web")) {
-      sources.web = { count: input.count, include_contents: input.include_contents };
-    }
-    const body: Record<string, unknown> = {
-      query: input.query,
-      sources,
-      country_code: input.country_code,
-      locale: input.locale,
-    };
-    if (input.effort !== undefined) body.effort = input.effort;
+    const body = buildSearchBody(input);
     // v3 fast/instant is synchronous (~120s sync ceiling). No async/202,
     // no polling. Zero matches come back as 200 with empty `cards`.
-    const data = await djangoPost<{
-      cards?: unknown[];
-      web_results?: unknown[];
-      contents_total_cost?: number;
-      request_id?: string;
-    }>(ctx.env, ctx.token, "/api/v3/search/", body, { timeoutMs: 130_000 });
-    const cards = z.array(takoCardSchema).safeParse(data.cards ?? []);
-    const webResults = z
-      .array(webResultSchema)
-      .safeParse(data.web_results ?? []);
+    const data = await djangoPost<unknown>(ctx.env, ctx.token, "/api/v3/search/", body, { timeoutMs: 130_000 });
+
+    // Wire-contract guard: validate against the generated SearchResponse before
+    // mapping into the normalised MCP output shape.
+    const wireCheck = SearchResponse.safeParse(data);
+    if (!wireCheck.success) {
+      throw new Error(
+        "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
+      );
+    }
+    const wire = wireCheck.data;
+
+    const cards = z.array(takoCardSchema).safeParse(wire.cards ?? []);
+    const webResults = z.array(webResultSchema).safeParse(wire.web_results ?? []);
     if (!cards.success || !webResults.success) {
       throw new Error(
         "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
@@ -129,8 +162,8 @@ const tako_search = {
     return buildSearchOutput(
       cards.data,
       webResults.data,
-      data.request_id ?? "",
-      data.contents_total_cost ?? 0,
+      wire.request_id,
+      wire.contents_total_cost,
       ctx.env,
     );
   },
