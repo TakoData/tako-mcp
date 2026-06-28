@@ -61,7 +61,7 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 Source of truth: `workers/src/tools/*.ts`. Tools are discovered at runtime via the MCP `tools/list` handshake.
 
 1. `tako_search` — Search charts by natural-language query; supports `search_effort: fast | deep`
-2. `tako_answer` — Get a grounded prose answer; ground in `["tako"]`, `["web"]`, or both
+2. `tako_answer` — Get a grounded prose answer; ground in `["data"]`, `["web"]`, or both
 3. `tako_contents` — Fetch underlying content (CSV or text) behind a result URL
 4. `tako_agent` — Deep research agent for multi-step data questions (on ChatGPT split into `tako_agent_start` / `tako_agent_wait`)
 5. `get_credit_balance` — Current credit balance

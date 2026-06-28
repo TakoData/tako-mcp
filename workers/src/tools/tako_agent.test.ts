@@ -19,7 +19,7 @@ describe("tako_agent", () => {
       .mockResolvedValueOnce({ run_id: "run_1", status: "running" })
       .mockResolvedValueOnce({ run_id: "run_1", status: "completed", result: { answer: "42", cards: [] } });
 
-    const handlerPromise = tool.handler({ query: "analyze X", sources: ["tako", "web"] }, ctx);
+    const handlerPromise = tool.handler({ query: "analyze X", sources: ["data", "web"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
@@ -28,7 +28,7 @@ describe("tako_agent", () => {
     expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({
       query: "analyze X",
       effort: "medium",
-      source_indexes: ["tako", "web"],
+      source_indexes: ["data", "web"],
     });
     expect(ctx.sendProgress).toHaveBeenCalled();
     expect(out.status).toBe("completed");
@@ -41,7 +41,7 @@ describe("tako_agent", () => {
     vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_2", status: "queued" });
     vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_2", status: "failed", error: { code: "x", message: "boom" } });
 
-    const handlerPromise = tool.handler({ query: "q", sources: ["tako"] }, ctx);
+    const handlerPromise = tool.handler({ query: "q", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
@@ -85,15 +85,33 @@ describe("tako_agent", () => {
 describe("tako_agent input schema", () => {
   it("defaults sources to both tako and web (matches the backend default)", () => {
     const parsed = tool.inputSchema.parse({ query: "hello" });
-    expect(parsed.sources).toEqual(["tako", "web"]);
+    expect(parsed.sources).toEqual(["data", "web"]);
   });
 
   it("accepts web and both", () => {
     expect(tool.inputSchema.parse({ query: "q", sources: ["web"] }).sources).toEqual(["web"]);
-    expect(tool.inputSchema.parse({ query: "q", sources: ["tako", "web"] }).sources).toEqual([
-      "tako",
+    expect(tool.inputSchema.parse({ query: "q", sources: ["data", "web"] }).sources).toEqual([
+      "data",
       "web",
     ]);
+  });
+
+  it("accepts the legacy 'tako' synonym and normalizes it to 'data' on dispatch", async () => {
+    vi.useFakeTimers();
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_legacy", status: "queued" });
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "run_legacy",
+      status: "completed",
+      result: { answer: "ok", cards: [] },
+    });
+
+    const handlerPromise = tool.handler({ query: "q", sources: ["tako"] }, ctx);
+    await vi.runAllTimersAsync();
+    await handlerPromise;
+
+    expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({
+      source_indexes: ["data"],
+    });
   });
 
   it("rejects an empty sources array", () => {

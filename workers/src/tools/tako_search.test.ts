@@ -45,7 +45,7 @@ const CTX: ToolContext = {
 // schema defaults before invoking the handler, so direct handler calls
 // must pass the resolved shape — `sources` included).
 const DEFAULTS = {
-  sources: ["tako"] as ("tako" | "web")[],
+  sources: ["data"] as ("data" | "web")[],
   count: 10,
   include_contents: false,
   country_code: "US",
@@ -67,7 +67,7 @@ describe("tako_search input schema", () => {
   it("defaults sources to [\"tako\",\"web\"]", () => {
     const parsed = tako_search.inputSchema.safeParse({ query: "x" });
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.sources).toEqual(["tako", "web"]);
+    if (parsed.success) expect(parsed.data.sources).toEqual(["data", "web"]);
   });
 
   it("accepts effort=fast", () => {
@@ -107,7 +107,7 @@ describe("tako_search request body", () => {
     const req = requestFrom(fetchMock.mock.calls[0]);
     expect(new URL(req.url).pathname).toBe("/api/v3/search/");
     const body = await bodyOf(req);
-    expect(body.sources).toEqual({ tako: { count: 10, include_contents: false } });
+    expect(body.sources).toEqual({ data: { count: 10, include_contents: false } });
     expect(body.source_indexes).toBeUndefined();
     expect(body.output_settings).toBeUndefined();
     expect(body.query).toBe("gold price");
@@ -119,13 +119,13 @@ describe("tako_search request body", () => {
     ]);
 
     await tako_search.handler(
-      { query: "x", ...DEFAULTS, sources: ["tako", "web"] },
+      { query: "x", ...DEFAULTS, sources: ["data", "web"] },
       CTX,
     );
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
     expect(body.sources).toEqual({
-      tako: { count: 10, include_contents: false },
+      data: { count: 10, include_contents: false },
       web: { count: 10, include_contents: false },
     });
   });
@@ -136,13 +136,13 @@ describe("tako_search request body", () => {
     ]);
 
     await tako_search.handler(
-      { query: "x", ...DEFAULTS, sources: ["tako", "web"], include_contents: true },
+      { query: "x", ...DEFAULTS, sources: ["data", "web"], include_contents: true },
       CTX,
     );
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
     expect(body.sources).toEqual({
-      tako: { count: 10, include_contents: true },
+      data: { count: 10, include_contents: true },
       web: { count: 10, include_contents: true },
     });
   });
@@ -180,7 +180,7 @@ describe("tako_search request body", () => {
     await tako_search.handler({ query: "x", ...DEFAULTS, count: 5 }, CTX);
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.sources).toEqual({ tako: { count: 5, include_contents: false } });
+    expect(body.sources).toEqual({ data: { count: 5, include_contents: false } });
   });
 });
 
