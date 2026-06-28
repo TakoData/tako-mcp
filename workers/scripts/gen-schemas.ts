@@ -31,16 +31,58 @@ type JsonSchema = Record<string, unknown>;
 
 const REF_PREFIX = "#/components/schemas/";
 
+/**
+ * Recursively rewrite every `{ $ref, ...siblings }` node (siblings non-empty)
+ * into `{ allOf: [{ $ref }], ...siblings }`.
+ *
+ * In OpenAPI 3.1 a `$ref` may legally co-exist with sibling keywords
+ * (`default`, `description`, parent `required`, etc.). `json-schema-to-zod`'s
+ * `$ref` handling (which our parserOverride replaces with a `z.lazy(...)`)
+ * short-circuits the whole node and drops those siblings. Wrapping the bare
+ * `$ref` in a single-element `allOf` moves the keywords up one level so
+ * json-schema-to-zod applies them natively (`.default()` / `.describe()` /
+ * `.optional()`), while the now-pure inner `$ref` still hits the override and
+ * collapses to `z.lazy(() => Target)` — a single-element `allOf` over one
+ * parser-overridden ref does NOT produce a `z.intersection` wrapper.
+ */
+function liftRefSiblings(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(liftRefSiblings);
+  if (node === null || typeof node !== "object") return node;
+
+  const obj = node as JsonSchema;
+  const ref = obj["$ref"];
+  const keys = Object.keys(obj);
+  if (typeof ref === "string" && keys.length > 1) {
+    // Pull the `$ref` out into a single-element allOf and keep the siblings at
+    // this level. Recurse into the siblings first so nested refs are handled.
+    const { $ref, ...siblings } = obj;
+    const rewrittenSiblings: JsonSchema = {};
+    for (const [k, v] of Object.entries(siblings)) {
+      rewrittenSiblings[k] = liftRefSiblings(v);
+    }
+    return { allOf: [{ $ref }], ...rewrittenSiblings };
+  }
+
+  const out: JsonSchema = {};
+  for (const [k, v] of Object.entries(obj)) {
+    out[k] = liftRefSiblings(v);
+  }
+  return out;
+}
+
 /** Build the module text from a map of component schemas. Exported for tests. */
 export function generateZodModule(schemas: Record<string, JsonSchema>): string {
   const names = new Set(Object.keys(schemas));
   const parts: string[] = [HEADER];
 
   for (const [name, schema] of Object.entries(schemas)) {
+    // OpenAPI 3.1 allows `$ref` + sibling keywords; lift the siblings so
+    // json-schema-to-zod applies them natively (see liftRefSiblings).
+    const prepared = liftRefSiblings(schema);
     // json-schema-to-zod walks the schema; we intercept `$ref` nodes and emit a
     // reference to the sibling generated const (lazy, so declaration order and
     // cycles are safe).
-    const body = jsonSchemaToZod(schema as JsonSchemaObject, {
+    const body = jsonSchemaToZod(prepared as JsonSchemaObject, {
       module: "none", // emit only the expression; we wrap it ourselves
       zodVersion: 4,
       parserOverride: (node: JsonSchemaObject, _refs: Refs): string | void => {
