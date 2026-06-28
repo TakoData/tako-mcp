@@ -20,7 +20,9 @@ const DESCRIPTION =
 
 // Generated contract, with the one documented MCP divergence: default mode → inline.
 const inputSchema = ContentsRequest.extend({
-  mode: ContentsDeliveryMode.default("inline"),
+  mode: ContentsDeliveryMode
+    .default("inline")
+    .describe('Delivery mode: "inline" (default) returns the content in the response body (CSV capped at 1000 rows, with total_rows/truncated; or web text) so you can read it directly; "url" returns a short-lived presigned download_url (no row cap).'),
 });
 
 // NOTE: The generated ContentsResponse wraps items in a nested `contents` array

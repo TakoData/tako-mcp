@@ -179,7 +179,7 @@
         },
         "mode": {
           "type": "string",
-          "description": "How /contents returns the content. URL (default) is the existing\npresigned-download behavior; INLINE returns the content in the response body\n(CSV text capped at 1000 rows, or web text) and skips the S3 upload.",
+          "description": "Delivery mode: \"inline\" (default) returns the content in the response body (CSV capped at 1000 rows, with total_rows/truncated; or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url (no row cap).",
           "enum": [
             "url",
             "inline"
