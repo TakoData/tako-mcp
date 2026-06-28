@@ -12,7 +12,7 @@
 import { z } from "zod";
 
 import { djangoPost } from "../django.js";
-import { ContentsDeliveryMode, ContentsRequest } from "../generated/schemas.js";
+import { ContentsDeliveryMode, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
@@ -46,18 +46,6 @@ const outputSchema = z.object({
 
 type Output = z.infer<typeof outputSchema>;
 
-type ContentItem = {
-  format?: string;
-  url?: string | null;
-  expires_at?: string | null;
-  cost?: number;
-  source_url?: string;
-  data?: string | null;
-  total_rows?: number | null;
-  truncated?: boolean;
-};
-type ContentsPostResponse = { contents?: ContentItem[]; request_id?: string };
-
 const takoContents = {
   name: "tako_contents",
   description: DESCRIPTION,
@@ -72,14 +60,24 @@ const takoContents = {
   async handler(input, ctx): Promise<Output> {
     // input conforms to the generated ContentsRequest contract (url + mode).
     const body = input satisfies z.input<typeof ContentsRequest>;
-    const data = await djangoPost<ContentsPostResponse>(
+    const raw = await djangoPost<unknown>(
       ctx.env,
       ctx.token,
       "/api/v1/contents/",
       body,
       { timeoutMs: 60_000 },
     );
-    const item = data.contents?.[0];
+    // Validate the raw wire response against the generated ContentsResponse so
+    // backend drift (renamed fields, restructured contents array) throws here
+    // instead of silently mapping to nulls downstream.
+    const wireResult = ContentsResponse.safeParse(raw);
+    if (!wireResult.success) {
+      throw new Error(
+        `Tako contents endpoint returned an unexpected wire shape: ${wireResult.error.message}`,
+      );
+    }
+    const wire = wireResult.data;
+    const item = wire.contents?.[0];
     if (!item) {
       throw new Error(
         "Tako contents endpoint returned no downloadable content for that URL.",
