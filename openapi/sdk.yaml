@@ -1,0 +1,2014 @@
+# GENERATED - do not edit; synced from the Tako monorepo.
+# Produced by the Tako monorepo OpenAPI sync workflows.
+openapi: 3.1.0
+info:
+  title: Knowledge Search API
+  version: 1.0.0
+servers:
+- url: https://tako.com/api/
+  description: Tako Production API Server
+paths:
+  /v3/search:
+    post:
+      tags:
+      - tako
+      summary: Search
+      description: Fast-pipeline knowledge search. Returns Tako cards (and web results
+        when requested) with no LLM synthesis.
+      operationId: search
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Fast-pipeline search results (Tako cards + web results)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          description: Invalid request data (validation or malformed body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '408':
+          description: The request exceeded the processing time limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
+  /v1/answer:
+    post:
+      tags:
+      - tako
+      summary: Answer
+      description: Fast-pipeline retrieval plus an LLM-synthesized answer with confidence.
+        Replaces the grounding endpoint.
+      operationId: answer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Synthesized answer grounded in Tako and/or web results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerResponse'
+        '400':
+          description: Invalid request data (validation or malformed body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '408':
+          description: The request exceeded the processing time limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
+  /v1/classify:
+    post:
+      tags:
+      - tako
+      summary: Classify queries
+      description: Score a batch of queries for whether Tako search will return a
+        result. Returns a probability and a recall-skewed keep flag per query. Free;
+        intended for pre-filtering before /v3/search.
+      operationId: classify
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClassifyRequest'
+      responses:
+        '200':
+          description: A keep/score classification per input query, in order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassifyResponse'
+        '400':
+          description: Invalid request data (validation or malformed body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
+  /v1/contents:
+    post:
+      tags:
+      - tako
+      summary: Download content
+      description: 'Download the content behind a search result: a CSV of a Tako card''s
+        underlying data, or the full text of a web page. Returns a short-lived presigned
+        download URL. Protected-source cards (data export not available) return 403.'
+      operationId: contents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContentsRequest'
+      responses:
+        '200':
+          description: 'Downloadable content for a result: a presigned URL plus format
+            and cost metadata.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentsResponse'
+        '400':
+          description: Invalid request data (validation or malformed body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '403':
+          description: Action not permitted for this resource (e.g. protected-source
+            export).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '404':
+          description: The requested resource does not exist or has no exportable
+            data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
+  /v1/thin_viz/create/:
+    post:
+      tags:
+      - tako
+      description: 'Create a visualization card directly from component configurations.
+        Supported component types: header, generic_timeseries, categorical_bar, stock_boxes,
+        financial_boxes, table.'
+      operationId: createCard
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCardRequest'
+      responses:
+        '200':
+          description: Card created successfully from schema
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeCard'
+        '400':
+          description: Bad request - validation error or component mismatch
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    type: string
+                type: object
+                required:
+                - error
+        '404':
+          description: Schema not found
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    type: string
+                type: object
+                required:
+                - error
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    type: string
+                type: object
+                required:
+                - error
+      security:
+      - apiKey: []
+  /v1/agent/runs:
+    post:
+      tags:
+      - agent
+      summary: Dispatch an agent run
+      description: Dispatch a deep-research agent run. Returns 202 with an AgentRun
+        object; poll GET /v1/agent/runs/{run_id} until status is 'completed' or 'failed'.
+      operationId: createAgentRun
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentRunRequest'
+      responses:
+        '202':
+          description: 'Run dispatched. With Accept: application/json, poll GET /v1/agent/runs/{run_id}
+            for status. With Accept: text/event-stream, the response is an SSE stream
+            of AgentStreamEnvelope events terminating at stream_done; if the stream
+            ends without an agent_result event, poll GET /v1/agent/runs/{run_id} for
+            terminal status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AgentStreamEnvelope'
+        '400':
+          description: Invalid request (e.g. blank query or malformed body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: thread_id does not exist or is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '409':
+          description: thread_id has an in-flight run (single-flight conflict).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '500':
+          description: Failed to dispatch the agent run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
+  /v1/agent/runs/{run_id}:
+    get:
+      tags:
+      - agent
+      summary: Poll an agent run
+      description: Retrieve the current state of an agent run. Poll until status is
+        'completed' or 'failed'. result is populated when status is 'completed'.
+      operationId: getAgentRun
+      parameters:
+      - description: Run ID returned by POST /v1/agent/runs
+        required: true
+        schema:
+          type: string
+        name: run_id
+        in: path
+      - description: 'SSE resume cursor (Accept: text/event-stream only). Replay events
+          with seq strictly greater than this value. Equivalent to the Last-Event-ID
+          header.'
+        required: false
+        schema:
+          type: integer
+          minimum: 0.0
+        name: starting_after
+        in: query
+      responses:
+        '200':
+          description: 'Current state of the agent run. With Accept: text/event-stream,
+            resumes/tails the run as an SSE stream of AgentStreamEnvelope events (use
+            starting_after or Last-Event-ID to resume); if the stream ends without
+            an agent_result event, poll this endpoint with Accept: application/json
+            for terminal status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AgentStreamEnvelope'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '403':
+          description: The run is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: Run not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
+components:
+  schemas:
+    APIErrorType:
+      type: string
+      enum:
+      - BAD_REQUEST
+      - AUTHENTICATION_ERROR
+      - INTERNAL_SERVER_ERROR
+      - RELEVANT_RESULTS_NOT_FOUND
+      - RATE_LIMIT_EXCEEDED
+      - PAYMENT_REQUIRED
+      - REQUEST_TIMEOUT
+      - FORBIDDEN
+      - NOT_FOUND
+      title: APIErrorType
+    AgentEffortLevel:
+      type: string
+      enum:
+      - medium
+      title: AgentEffortLevel
+      description: 'Public effort taxonomy for the Agent API. Only MEDIUM is supported
+        in v1;
+
+        the generated OpenAPI/SDK advertises exactly these members, so we add values
+
+        (low/high) only as the agent gains public support for them.'
+    AgentOutputSettings:
+      properties:
+        image_dark_mode:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Image Dark Mode
+          description: Render card preview images in dark mode. Omit to use the default
+            (dark).
+      type: object
+      title: AgentOutputSettings
+    AgentResult:
+      properties:
+        answer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Answer
+        cards:
+          items:
+            $ref: '#/components/schemas/TakoCard'
+          type: array
+          title: Cards
+        web_results:
+          items:
+            $ref: '#/components/schemas/WebResult'
+          type: array
+          title: Web Results
+        request_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Request Id
+      type: object
+      title: AgentResult
+      description: Final agent output. answer is markdown; cards reuse the sibling
+        TakoCard.
+    AgentResultEvent:
+      properties:
+        kind:
+          type: string
+          const: agent_result
+          title: Kind
+          default: agent_result
+        id:
+          type: string
+          title: Id
+        data:
+          $ref: '#/components/schemas/AgentResult'
+      type: object
+      required:
+      - id
+      - data
+      title: AgentResultEvent
+    AgentRun:
+      properties:
+        run_id:
+          type: string
+          title: Run Id
+        object:
+          type: string
+          const: agent.run
+          title: Object
+          default: agent.run
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        status:
+          $ref: '#/components/schemas/AgentRunStatus'
+        created_at:
+          type: string
+          title: Created At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
+        result:
+          anyOf:
+          - $ref: '#/components/schemas/AgentResult'
+          - type: 'null'
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorObject'
+          - type: 'null'
+      type: object
+      required:
+      - run_id
+      - status
+      - created_at
+      title: AgentRun
+      description: The run resource returned by dispatch (202) and poll (GET).
+    AgentRunRequest:
+      properties:
+        query:
+          type: string
+          title: Query
+          description: Natural-language request for the agent.
+          examples:
+          - Compare Nvidia and AMD headcount since 2013
+        thread_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Thread Id
+          description: Existing thread to continue (follow-up). Omit to start a new
+            thread.
+        effort:
+          $ref: '#/components/schemas/AgentEffortLevel'
+          description: Agent effort level. Only 'medium' is currently supported.
+          default: medium
+        source_indexes:
+          items:
+            type: string
+            enum:
+            - tako
+            - web
+          type: array
+          title: Source Indexes
+          description: 'Which sources the agent may use: ''tako'' (connected data)
+            and/or ''web'' (open-web search). Defaults to [''tako'', ''web''].'
+          examples:
+          - - tako
+          - - web
+          - - tako
+            - web
+        locale:
+          type: string
+          title: Locale
+          description: BCP-47 locale. Drives the language of the agent's answer (a
+            non-English locale makes the agent respond in that language) and the locale
+            used when rendering card preview images. Defaults to en-US.
+          default: en-US
+        timezone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Timezone
+          description: IANA timezone (e.g. 'America/New_York') used to render dates/times
+            in card preview images. Does not affect the returned data.
+        output_settings:
+          anyOf:
+          - $ref: '#/components/schemas/AgentOutputSettings'
+          - type: 'null'
+          description: Settings controlling the response/rendering.
+      type: object
+      required:
+      - query
+      title: AgentRunRequest
+    AgentRunStatus:
+      type: string
+      enum:
+      - queued
+      - running
+      - completed
+      - failed
+      title: AgentRunStatus
+    AgentStreamEnvelope:
+      properties:
+        seq:
+          type: integer
+          minimum: 0.0
+          title: Seq
+          description: Monotonic event sequence number; use as the resume cursor.
+            Values are NOT contiguous — the public stream filters internal block kinds,
+            so gaps are expected and do not mean events were lost.
+        run_id:
+          type: string
+          title: Run Id
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        category:
+          $ref: '#/components/schemas/StreamCategory'
+        block:
+          oneOf:
+          - $ref: '#/components/schemas/ToolCallEvent'
+          - $ref: '#/components/schemas/ToolResultEvent'
+          - $ref: '#/components/schemas/ToolErrorEvent'
+          - $ref: '#/components/schemas/ToolRetryEvent'
+          - $ref: '#/components/schemas/StatusEvent'
+          - $ref: '#/components/schemas/SubagentEvent'
+          - $ref: '#/components/schemas/ReasoningEvent'
+          - $ref: '#/components/schemas/TextEvent'
+          - $ref: '#/components/schemas/DataPipelineAnswerEvent'
+          - $ref: '#/components/schemas/AgentResultEvent'
+          - $ref: '#/components/schemas/HeartbeatEvent'
+          - $ref: '#/components/schemas/StreamResetEvent'
+          - $ref: '#/components/schemas/StreamDoneEvent'
+          title: Block
+          discriminator:
+            propertyName: kind
+            mapping:
+              agent_result: '#/components/schemas/AgentResultEvent'
+              data_pipeline_answer: '#/components/schemas/DataPipelineAnswerEvent'
+              heartbeat: '#/components/schemas/HeartbeatEvent'
+              reasoning: '#/components/schemas/ReasoningEvent'
+              status: '#/components/schemas/StatusEvent'
+              stream_done: '#/components/schemas/StreamDoneEvent'
+              stream_reset: '#/components/schemas/StreamResetEvent'
+              subagent: '#/components/schemas/SubagentEvent'
+              text: '#/components/schemas/TextEvent'
+              tool_call: '#/components/schemas/ToolCallEvent'
+              tool_error: '#/components/schemas/ToolErrorEvent'
+              tool_result: '#/components/schemas/ToolResultEvent'
+              tool_retry: '#/components/schemas/ToolRetryEvent'
+      type: object
+      required:
+      - seq
+      - run_id
+      - category
+      - block
+      title: AgentStreamEnvelope
+      description: 'Public SSE envelope for the Agent run stream. `run_id` is the
+        run/task id
+
+        (renamed from the native envelope''s `task_id` for resource consistency).
+
+
+        `seq` is monotonically increasing but NOT contiguous: the public stream omits
+
+        internal block kinds, so gaps in `seq` are expected and do not indicate lost
+
+        events. Use `seq` only as the resume cursor (`starting_after` / `Last-Event-ID`),
+
+        not as a completeness check.'
+    AnswerResponse:
+      properties:
+        answer:
+          type: string
+          title: Answer
+          description: Synthesized text answer.
+        cards:
+          items:
+            $ref: '#/components/schemas/TakoCard'
+          type: array
+          title: Cards
+          description: Tako cards backing the answer; cards[0] is the lead card —
+            the best one to show alongside the answer.
+        web_results:
+          items:
+            $ref: '#/components/schemas/WebResult'
+          type: array
+          title: Web Results
+        contents_total_cost:
+          type: number
+          title: Contents Total Cost
+          description: 'Total quoted USD cost of the data inlined on this response
+            — the summed per-fetch price of the results whose payload was populated
+            (one charge per distinct extracted web URL; Tako card CSV is free). This
+            is the QUOTE, not necessarily the amount billed: on a depleted prepaid
+            (PAYG) balance the charge is clamped to the remaining balance, so the
+            amount actually drawn can be less. A result''s own `cost` is a per-fetch
+            quote present whenever it is downloadable, so a result that was requested
+            but whose extraction was skipped or failed still carries its quote; that
+            un-inlined quote is excluded here. 0 when no contents were inlined.'
+          default: 0.0
+        request_id:
+          type: string
+          title: Request Id
+      type: object
+      required:
+      - answer
+      - request_id
+      title: AnswerResponse
+      description: Response for POST /api/v1/answer — synthesized answer + retrieval.
+    BaseAPIError:
+      properties:
+        error_message:
+          type: string
+          title: Error Message
+        error_type:
+          $ref: '#/components/schemas/APIErrorType'
+      type: object
+      required:
+      - error_message
+      - error_type
+      title: BaseAPIError
+    CardSourceIndex:
+      type: string
+      enum:
+      - tako
+      - web
+      - connected_data
+      - tako_deep_v2
+      title: CardSourceIndex
+    CardSourceIndexSegment:
+      properties:
+        index_type:
+          $ref: '#/components/schemas/CardSourceIndex'
+        segment_id:
+          type: string
+          title: Segment Id
+          description: An ID for a segment of a source index
+          examples:
+          - '123'
+      type: object
+      required:
+      - index_type
+      - segment_id
+      title: CardSourceIndexSegment
+      description: 'A segment of a source index. Within a source index, a segment
+        is a subset of the data.
+
+        For connected data, a segment is a subset of connected files. A segment may
+        be used for
+
+        multi-tenant data e.g. using a segment per customer.'
+    CardSourcePrivateIndex:
+      properties:
+        index_type:
+          $ref: '#/components/schemas/CardSourceIndex'
+        segment_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Segment Id
+          description: An ID for a segment of a source index (optional for private
+            indexes)
+          examples:
+          - '123'
+        private_index_id:
+          type: string
+          title: Private Index Id
+          description: An ID for a private index
+          examples:
+          - '123'
+      type: object
+      required:
+      - index_type
+      - private_index_id
+      title: CardSourcePrivateIndex
+    ClassifyRequest:
+      properties:
+        queries:
+          items:
+            type: string
+          type: array
+          maxItems: 200
+          minItems: 1
+          title: Queries
+          description: Queries to classify (1..200). Each is scored independently.
+      type: object
+      required:
+      - queries
+      title: ClassifyRequest
+      description: Request for POST /api/v1/classify — a batch of queries to score.
+    ClassifyResponse:
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/QueryClassification'
+          type: array
+          title: Results
+      type: object
+      title: ClassifyResponse
+      description: 'Response for POST /api/v1/classify — one classification per input
+        query,
+
+        in request order.'
+    ComponentConfig:
+      properties:
+        component_type:
+          $ref: '#/components/schemas/ComponentTypeEnum'
+          description: 'Component type:
+
+            - bubble: Bubble chart (scatter plot with size dimension for 3-variable
+            data)
+
+            - categorical_bar: Bar chart with categorical x-axis (e.g., regions, products)
+
+            - choropleth: Choropleth map showing geographic data with color intensity
+            by region (US states or world)
+
+            - data_table_chart: Bar chart with auto-generated data table below showing
+            values
+
+            - financial_boxes: Financial metric boxes with values and growth indicators
+            (e.g., Revenue, EPS)
+
+            - generic_timeseries: timeseries chart
+
+            - header: Card header with title and description, automatically styled
+            with theme
+
+            - heatmap: 2D heatmap with color intensity representing values (e.g.,
+            correlation matrix)
+
+            - histogram: Histogram chart showing frequency distribution of values
+
+            - person_card: Person profile card from an Exa person search result (includes
+            career, education, and about tabs)
+
+            - pie: Pie chart showing proportional data as slices of a circle
+
+            - scatter: Scatter plot showing relationships between two continuous variables
+
+            - table: Data table with configurable columns and rows
+
+            - boxplot: Box plot showing statistical distributions (min, Q1, median,
+            Q3, max)
+
+            - treemap: Treemap chart showing hierarchical data as proportional rectangles
+
+            - waterfall: Waterfall chart showing incremental positive/negative changes
+            (e.g., income statement breakdown)'
+        component_variant:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Component Variant
+          description: Component variant (e.g., 'simple', 'financial')
+        config:
+          additionalProperties: true
+          type: object
+          title: Config
+          description: Component configuration data
+      type: object
+      required:
+      - component_type
+      - config
+      title: ComponentConfig
+      description: Configuration for a single component in a card.
+    ComponentTypeEnum:
+      type: string
+      enum:
+      - categorical_bar
+      - choropleth
+      - data_table_chart
+      - financial_boxes
+      - generic_timeseries
+      - header
+      - heatmap
+      - histogram
+      - marimekko
+      - pie
+      - scatter
+      - table
+      - boxplot
+      - treemap
+      - waterfall
+      - sankey
+      - bubble
+      - person_card
+      - timeline
+      - top_level_metric
+      title: ComponentTypeEnum
+      description: 'Component types supported for thin viz schemas with builder support.
+
+
+        These component types have dedicated builders that process configurations,
+
+        add defaults, and apply theme styling automatically.'
+    ContentFormat:
+      type: string
+      enum:
+      - csv
+      - text
+      title: ContentFormat
+    ContentItem:
+      properties:
+        format:
+          $ref: '#/components/schemas/ContentFormat'
+        cost:
+          type: number
+          title: Cost
+          default: 0.0
+        data:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Data
+        total_rows:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Total Rows
+        truncated:
+          type: boolean
+          title: Truncated
+          default: false
+        source_url:
+          type: string
+          title: Source Url
+          description: The originating result URL that was resolved.
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+          description: Presigned, short-lived URL to download the content.
+        expires_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Expires At
+          description: ISO-8601 UTC timestamp when `url` expires.
+      type: object
+      required:
+      - format
+      - source_url
+      title: ContentItem
+      description: 'A single downloadable artifact.
+
+
+        Inherits `format` + `cost` + the inline fields (`data`/`total_rows`/
+
+        `truncated`) from ResultContent. URL mode additionally populates
+
+        `url`/`expires_at` (a short-lived presigned download link); INLINE mode
+
+        populates the inherited inline fields and leaves `url`/`expires_at` null.'
+    ContentsDeliveryMode:
+      type: string
+      enum:
+      - url
+      - inline
+      title: ContentsDeliveryMode
+      description: 'How /contents returns the content. URL (default) is the existing
+
+        presigned-download behavior; INLINE returns the content in the response body
+
+        (CSV text capped at 1000 rows, or web text) and skips the S3 upload.'
+    ContentsRequest:
+      properties:
+        url:
+          type: string
+          title: Url
+          description: The result URL to fetch downloadable content for (a TakoCard.webpage_url
+            or a WebResult.url). A Tako card URL yields a CSV of the card's data;
+            any other URL yields the page's extracted text.
+          examples:
+          - https://tako.com/card/abc123
+        mode:
+          $ref: '#/components/schemas/ContentsDeliveryMode'
+          description: 'Delivery mode: ''url'' (default) returns a presigned download
+            link; ''inline'' returns the content in the response body (CSV capped
+            at 1000 rows, with total_rows; or web text).'
+          default: url
+      type: object
+      required:
+      - url
+      title: ContentsRequest
+      description: 'Request body for POST /api/v1/contents.
+
+
+        The caller passes the result URL it wants downloadable content for; the
+
+        endpoint detects the right content from the URL itself. A Tako card URL
+
+        resolves to a CSV of the card''s underlying data; any other URL resolves to
+
+        the page''s extracted full text. `mode` controls delivery: `url` (default)
+
+        returns a presigned download link; `inline` returns the content in the
+
+        response.'
+    ContentsResponse:
+      properties:
+        contents:
+          items:
+            $ref: '#/components/schemas/ContentItem'
+          type: array
+          title: Contents
+        request_id:
+          type: string
+          title: Request Id
+      type: object
+      required:
+      - request_id
+      title: ContentsResponse
+      description: 'Response for POST /api/v1/contents.
+
+
+        `contents` is a list so the contract stays stable if a single result ever
+
+        yields multiple artifacts; today it always carries exactly one item.'
+    CreateCardRequest:
+      properties:
+        components:
+          items:
+            $ref: '#/components/schemas/ComponentConfig'
+          type: array
+          title: Components
+          description: Full component configurations
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+          description: Card title (falls back to header component title)
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+          description: Card description
+        source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source
+          description: Data source attribution (displayed in footer)
+        height:
+          anyOf:
+          - type: integer
+            maximum: 2000.0
+            minimum: 100.0
+          - type: 'null'
+          title: Height
+          description: Chart height in pixels. When set, overrides the default aspect-ratio-based
+            height for all chart components in this card. Must be between 100 and
+            2000.
+        postmessage_embed:
+          type: boolean
+          title: Postmessage Embed
+          description: 'When True, the embed iframe operates in postMessage mode:
+            the parent page injects visualization_data via window.postMessage after
+            the iframe loads, rather than having data inlined in the embed URL. The
+            response will include embed_mode=''postmessage'' when this is True, or
+            embed_mode=''post'' otherwise.'
+          default: false
+        normalize_currencies:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Normalize Currencies
+          description: Target ISO 4217 currency code (e.g., 'USD', 'EUR'). When set,
+            datasets with recognized currency units are converted to this currency
+            using historical exchange rates. A methodology section is added explaining
+            the conversion.
+        image_ttl_minutes:
+          anyOf:
+          - type: integer
+            maximum: 1440.0
+            minimum: 1.0
+          - type: 'null'
+          title: Image Ttl Minutes
+          description: Minutes to keep preview image available for download (ZDR only).
+            Min 1, max 1440 (24h). When set on a ZDR card, a temporary preview image
+            is generated and available for download until the TTL expires. Ignored
+            for non-ZDR cards.
+      type: object
+      required:
+      - components
+      title: CreateCardRequest
+      description: Request model for creating a card directly with components.
+    DataPipelineAnswerEvent:
+      properties:
+        kind:
+          type: string
+          const: data_pipeline_answer
+          title: Kind
+          default: data_pipeline_answer
+        id:
+          type: string
+          title: Id
+        chart_refs:
+          items:
+            type: string
+          type: array
+          title: Chart Refs
+      type: object
+      required:
+      - id
+      title: DataPipelineAnswerEvent
+      description: 'Signals that the data pipeline produced chart(s) for the answer.
+        Carries
+
+        only chart references; the answer text streams in `text` events and the
+
+        structured result arrives in the terminal `agent_result` event, not here.'
+    ErrorObject:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - code
+      - message
+      title: ErrorObject
+    HeartbeatEvent:
+      properties:
+        kind:
+          type: string
+          const: heartbeat
+          title: Kind
+          default: heartbeat
+      type: object
+      title: HeartbeatEvent
+    IdealVizDecision:
+      properties:
+        property_path:
+          type: string
+          title: Property Path
+          description: ChartJS property path
+          examples:
+          - scales.y.ticks.color
+        property_path_display_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Property Path Display Name
+          description: Human-friendly display name for the property path
+          examples:
+          - Y-axis tick color
+          - Legend display
+          - Chart type
+        reason:
+          type: string
+          title: Reason
+          description: Why this decision was made
+          examples:
+          - Using bar instead of line because there are too few data points
+      type: object
+      required:
+      - property_path
+      - reason
+      title: IdealVizDecision
+      description: "Documents a decision made by Tako's ideal viz logic for a specific\
+        \ ChartJS property.\n\n.. deprecated::\n    This class is deprecated in favor\
+        \ of the structured VizDecisions system.\n    Use VizDecisions with specific\
+        \ decision types (AggregationDecision, VizTypeDecision, etc.)\n    instead.\
+        \ The new system provides:\n    - Structured decision tracking with typed\
+        \ fields\n    - Override support (apply_override, reset_to_default)\n    -\
+        \ Better LLM context generation (get_summary_for_llm)\n\n    Example migration:\n\
+        \        # Old way (deprecated):\n        decisions.append(IdealVizDecision(\n\
+        \            property_path=\"y_aggregation\",\n            reason=\"Applied\
+        \ PCSS due to different units\"\n        ))\n\n        # New way:\n      \
+        \  viz_decisions.set_decision(\n            DecisionType.LEFT_AXIS_AGGREGATION,\n\
+        \            AggregationDecision(\n                value=\"pcss\",\n     \
+        \           source=DecisionSource.DATA_DRIVEN,\n                reason_code=\"\
+        different_units\",\n                reason_display=\"Applied PCSS due to different\
+        \ units\",\n            )\n        )\n\n    This class will be removed in\
+        \ a future version."
+    KnowledgeCard:
+      properties:
+        card_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Card Id
+          description: The unique ID of the knowledge card
+          examples:
+          - jLmsqH4NfXFLqhWnZqhM
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+          description: The title of the knowledge card
+          examples:
+          - Nvidia, Advanced Micro Devices - Full Time Employees
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+          description: The description of the knowledge card
+          examples:
+          - This is a time series bar chart showing 2 series between 12:00AM UTC-04:00
+            on 04/01/2013 and 08:55PM UTC on 04/30/2025. Nvidia Full Time Employees
+            latest value was at 12:00AM UTC on 12-31-2024, and had a final value of
+            36.0K Employees, or 308.72% growth since 12:00AM UTC on 12-31-2013, with
+            a maximum value of 36.0K Employees at 12:00AM UTC on 12-31-2024 and a
+            minimum value of 8.81K Employees at 12:00AM UTC on 12-31-2013; Advanced
+            Micro Devices Full Time Employees latest value was at 12:00AM UTC on 12-31-2024,
+            and had a final value of 28.0K Employees, or 162.39% growth since 12:00AM
+            UTC on 12-31-2013, with a maximum value of 28.0K Employees at 12:00AM
+            UTC on 12-31-2024 and a minimum value of 8.2K Employees at 12:00AM UTC
+            on 12-31-2016. The source of the data is S&P Global. S&P Global is a US-based
+            financial data and analytics company that provides products and services
+            to the financial industry.
+        semantic_description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Semantic Description
+          description: A lightweight, data-free description of the card's subject
+            (metric, entities, time span, source). Present even when full data is
+            deferred, so consumers can judge relevance before fetching the chart.
+          examples:
+          - 'Quarterly revenue for Apple Inc., in USD, 2019 to 2024. Source: S&P Global.'
+        webpage_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webpage Url
+          description: URL of a webpage hosting the interactive knowledge card
+          examples:
+          - https://tako.com/card/jLmsqH4NfXFLqhWnZqhM/
+        image_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image Url
+          description: URL of a static image of the knowledge card
+          examples:
+          - https://tako.com/api/v1/image/jLmsqH4NfXFLqhWnZqhM/
+        embed_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Embed Url
+          description: URL of an embeddable iframe of the knowledge card
+          examples:
+          - https://tako.com/embed/jLmsqH4NfXFLqhWnZqhM/
+        sources:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/KnowledgeCardSource'
+            type: array
+          - type: 'null'
+          title: Sources
+          description: The sources of the knowledge card
+        methodologies:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/KnowledgeCardMethodology'
+            type: array
+          - type: 'null'
+          title: Methodologies
+          description: The methodologies of the knowledge card
+        source_indexes:
+          anyOf:
+          - items:
+              anyOf:
+              - $ref: '#/components/schemas/CardSourceIndex'
+              - $ref: '#/components/schemas/CardSourceIndexSegment'
+            type: array
+          - type: 'null'
+          title: Source Indexes
+          description: The source indexes of the knowledge card
+        card_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Card Type
+          description: The type of card
+          examples:
+          - company
+          - chart
+          - table
+          - text
+        data_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Data Url
+          description: URL of downloadable data of the knowledge card. This needs
+            to be enabled on an account level. Contact support to enable this feature.
+        relevance:
+          anyOf:
+          - $ref: '#/components/schemas/KnowledgeCardRelevance'
+          - type: 'null'
+          description: How relevant this knowledge card is to the search query
+          examples:
+          - High
+          - Medium
+          - Low
+        visualization_data:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Visualization Data
+          description: The visualization data of the knowledge card. Null when the
+            card's sources do not permit raw data export (protected sources); the
+            card remains renderable via embed_url.
+          examples:
+          - data:
+            - x: '2013'
+              y: 10000
+            - x: '2014'
+              y: 20000
+            viz_config:
+              title: Nvidia, Advanced Micro Devices - Full Time Employees
+        ideal_viz_decisions:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/IdealVizDecision'
+            type: array
+          - type: 'null'
+          title: Ideal Viz Decisions
+          description: 'Decisions made by Tako''s ideal viz logic when constructing
+            this visualization. DEPRECATED: Use ChartConfig.viz_decisions for the
+            new structured system with override support.'
+          deprecated: true
+      type: object
+      required:
+      - card_id
+      - title
+      - description
+      - webpage_url
+      - image_url
+      - embed_url
+      - sources
+      - methodologies
+      - source_indexes
+      - card_type
+      - data_url
+      - relevance
+      - visualization_data
+      title: KnowledgeCard
+    KnowledgeCardMethodology:
+      properties:
+        methodology_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Methodology Name
+          description: The name of the methodology
+          examples:
+          - Where the Data Comes From - S&P Global
+        methodology_description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Methodology Description
+          description: The description of the methodology
+          examples:
+          - The financial metrics are collected from S&P Global, where information
+            is sourced from original regulatory filings, press releases, and subsequent
+            restatements. Data points, including over 5,000 financial, supplemental,
+            segment, ratio, and industry-specific items, are standardized across over
+            180,000 companies to ensure consistency and comparability across different
+            reporting formats. This comprehensive and methodical process enables robust
+            historical analysis and back-testing by seamlessly integrating diverse
+            financial datasets while preserving the granularity of the original reports.
+      type: object
+      required:
+      - methodology_name
+      - methodology_description
+      title: KnowledgeCardMethodology
+    KnowledgeCardRelevance:
+      type: string
+      enum:
+      - High
+      - Medium
+      - Low
+      title: KnowledgeCardRelevance
+    KnowledgeCardSource:
+      properties:
+        source_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Name
+          description: The name of the source
+          examples:
+          - S&P Global
+          - The World Bank
+        source_description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Description
+          description: The description of the source
+          examples:
+          - S&P Global is a US-based financial data and analytics company that provides
+            products and services to the financial industry.
+          - The World Bank is an international financial institution that provides
+            financial and technical assistance to developing countries to help them
+            achieve sustainable economic growth and improve living conditions.
+        source_index:
+          anyOf:
+          - $ref: '#/components/schemas/CardSourceIndex'
+          - $ref: '#/components/schemas/CardSourceIndexSegment'
+          - $ref: '#/components/schemas/CardSourcePrivateIndex'
+          title: Source Index
+          description: The index of the source
+          examples:
+          - tako
+          - web
+          - connected_data
+          - index_type: connected_data
+            segment_id: '123'
+          - index_type: connected_data
+            private_index_id: '123'
+            segment_id: '123'
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+          description: The URL of the source
+          examples:
+          - https://xignite.com
+          - https://stats.com
+        source_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Text
+          description: Raw excerpt(s) retrieved from the source page — the unmodified
+            web content the answer was grounded in, NOT the synthesized answer. Populated
+            for WEB sources; null for sources that don't carry an extracted excerpt
+            (e.g. TAKO sources).
+          examples:
+          - Domestic (28.1%) $154,061,981 | International (71.9%) $394,144,531 | Worldwide
+            $548,206,512. Release Date Nov 7, 2025. Distributor 20th Century Studios.
+      type: object
+      required:
+      - source_name
+      - source_description
+      - source_index
+      - url
+      title: KnowledgeCardSource
+    OutputSettings:
+      properties:
+        image_dark_mode:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Image Dark Mode
+          description: Whether to render card preview images in dark mode.
+        force_refresh:
+          type: boolean
+          title: Force Refresh
+          description: Instant mode only. When false (default), instant returns existing
+            cached embeds as-is (fastest) and never writes. When true, instant retrieves
+            data for embeds that are missing or stale, then creates or refreshes their
+            static embeds — slower for those, but it writes the result. Embeds already
+            fresh (within the refresh cadence) are still served as-is, not re-retrieved
+            or updated.
+          default: false
+      additionalProperties: false
+      type: object
+      title: OutputSettings
+    QueryClassification:
+      properties:
+        query:
+          type: string
+          title: Query
+        score:
+          type: number
+          title: Score
+        keep:
+          type: boolean
+          title: Keep
+      type: object
+      required:
+      - query
+      - score
+      - keep
+      title: QueryClassification
+    ReasoningEvent:
+      properties:
+        kind:
+          type: string
+          const: reasoning
+          title: Kind
+          default: reasoning
+        id:
+          type: string
+          title: Id
+        delta:
+          type: string
+          title: Delta
+        done:
+          type: boolean
+          title: Done
+          default: false
+      type: object
+      required:
+      - id
+      - delta
+      title: ReasoningEvent
+    ResultContent:
+      properties:
+        format:
+          $ref: '#/components/schemas/ContentFormat'
+        cost:
+          type: number
+          title: Cost
+          default: 0.0
+        data:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Data
+        total_rows:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Total Rows
+        truncated:
+          type: boolean
+          title: Truncated
+          default: false
+      type: object
+      required:
+      - format
+      title: ResultContent
+      description: 'Describes the downloadable content behind a result. `cost` is
+        the USD the
+
+        /contents call will charge for this result (Tako card CSV is free; web text
+        is
+
+        the canonical Contents rate). The inline fields (`data`/`total_rows`/
+
+        `truncated`) are populated only by auto-contents / `/contents` inline mode;
+
+        when unset, this is just the quote (format + cost), fetched later via the
+
+        Contents endpoint (a Tako card URL -> ChartConfig -> CSV; any other URL ->
+
+        page text).'
+    SearchEffortLevel:
+      type: string
+      enum:
+      - fast
+      - instant
+      - deep
+      title: SearchEffortLevel
+      description: 'Public effort taxonomy for the new endpoints. FAST is the default.
+        INSTANT
+
+        serves cached embeds without re-running data retrieval and is available in
+        all
+
+        environments (cannot be combined with sources.tako.defer_data_retrieval).
+
+        DEEP widens TAKO retrieval and adds an LLM rerank for higher-quality results
+
+        (slower; billed at a premium tier). The generated OpenAPI/SDK advertises
+
+        exactly these members, so we add values only as the pipeline gains support.'
+    SearchRequest:
+      properties:
+        query:
+          type: string
+          title: Query
+          description: Natural language search query.
+          examples:
+          - Intel vs Nvidia headcount since 2013
+        effort:
+          $ref: '#/components/schemas/SearchEffortLevel'
+          description: 'Search effort level: ''fast'' (default), ''instant'', or ''deep''.'
+          default: fast
+        sources:
+          $ref: '#/components/schemas/Sources'
+          description: Per-source settings. An index is searched iff its key is present;
+            defaults to {tako:{}, web:{}} (tako + web, count 5 each).
+        country_code:
+          type: string
+          title: Country Code
+          description: ISO 3166-1 alpha-2 country code for localization.
+          default: US
+        locale:
+          type: string
+          title: Locale
+          description: BCP-47 locale tag for language/formatting.
+          default: en-US
+        timezone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Timezone
+          description: IANA timezone (e.g. 'America/New_York').
+        output_settings:
+          anyOf:
+          - $ref: '#/components/schemas/OutputSettings'
+          - type: 'null'
+          description: Settings controlling the response shape.
+      additionalProperties: false
+      type: object
+      required:
+      - query
+      title: SearchRequest
+    SearchResponse:
+      properties:
+        cards:
+          items:
+            $ref: '#/components/schemas/TakoCard'
+          type: array
+          title: Cards
+        web_results:
+          items:
+            $ref: '#/components/schemas/WebResult'
+          type: array
+          title: Web Results
+        contents_total_cost:
+          type: number
+          title: Contents Total Cost
+          description: 'Total quoted USD cost of the data inlined on this response
+            — the summed per-fetch price of the results whose payload was populated
+            (one charge per distinct extracted web URL; Tako card CSV is free). This
+            is the QUOTE, not necessarily the amount billed: on a depleted prepaid
+            (PAYG) balance the charge is clamped to the remaining balance, so the
+            amount actually drawn can be less. A result''s own `cost` is a per-fetch
+            quote present whenever it is downloadable, so a result that was requested
+            but whose extraction was skipped or failed still carries its quote; that
+            un-inlined quote is excluded here. 0 when no contents were inlined.'
+          default: 0.0
+        request_id:
+          type: string
+          title: Request Id
+      type: object
+      required:
+      - request_id
+      title: SearchResponse
+    SourceSettings:
+      properties:
+        count:
+          type: integer
+          maximum: 20.0
+          minimum: 1.0
+          title: Count
+          description: Maximum number of results to return for this source. 1-20.
+          default: 5
+        include_contents:
+          type: boolean
+          title: Include Contents
+          description: Inline this source's underlying data (CSV for Tako cards, extracted
+            text for web results) directly in the response.
+          default: false
+      additionalProperties: false
+      type: object
+      title: SourceSettings
+    Sources:
+      properties:
+        tako:
+          anyOf:
+          - $ref: '#/components/schemas/TakoSourceSettings'
+          - type: 'null'
+          description: Tako card source. Searched iff present.
+        web:
+          anyOf:
+          - $ref: '#/components/schemas/SourceSettings'
+          - type: 'null'
+          description: Web source. Searched iff present.
+      additionalProperties: false
+      type: object
+      title: Sources
+      description: Per-source settings. An index is searched iff its field is present.
+    StatusEvent:
+      properties:
+        kind:
+          type: string
+          const: status
+          title: Kind
+          default: status
+        message:
+          type: string
+          title: Message
+        parent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Id
+      type: object
+      required:
+      - message
+      title: StatusEvent
+    StreamCategory:
+      type: string
+      enum:
+      - content
+      - activity
+      - control
+      title: StreamCategory
+    StreamDoneEvent:
+      properties:
+        kind:
+          type: string
+          const: stream_done
+          title: Kind
+          default: stream_done
+      type: object
+      title: StreamDoneEvent
+    StreamResetEvent:
+      properties:
+        kind:
+          type: string
+          const: stream_reset
+          title: Kind
+          default: stream_reset
+      type: object
+      title: StreamResetEvent
+    SubagentEvent:
+      properties:
+        kind:
+          type: string
+          const: subagent
+          title: Kind
+          default: subagent
+        agent_id:
+          type: string
+          title: Agent Id
+        subagent_type:
+          type: string
+          title: Subagent Type
+        parent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Id
+        event:
+          type: string
+          enum:
+          - dispatch
+          - complete
+          title: Event
+      type: object
+      required:
+      - agent_id
+      - subagent_type
+      - event
+      title: SubagentEvent
+    TakoCard:
+      properties:
+        card_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Card Id
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        semantic_description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Semantic Description
+        webpage_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webpage Url
+        image_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image Url
+        embed_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Embed Url
+        sources:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/KnowledgeCardSource'
+            type: array
+          - type: 'null'
+          title: Sources
+        methodologies:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/KnowledgeCardMethodology'
+            type: array
+          - type: 'null'
+          title: Methodologies
+        source_indexes:
+          anyOf:
+          - items:
+              anyOf:
+              - $ref: '#/components/schemas/CardSourceIndex'
+              - $ref: '#/components/schemas/CardSourceIndexSegment'
+            type: array
+          - type: 'null'
+          title: Source Indexes
+        card_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Card Type
+        relevance:
+          anyOf:
+          - $ref: '#/components/schemas/KnowledgeCardRelevance'
+          - type: 'null'
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/ResultContent'
+          - type: 'null'
+        relevance_score:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Relevance Score
+          description: Numeric relevance of this card to the query on a 1.0-5.0 scale
+            (5.0 = exact match; higher is more relevant). Only populated for entitled
+            accounts; null otherwise.
+      type: object
+      title: TakoCard
+      description: 'A Tako knowledge card on the new search/answer surface. Mirrors
+        the
+
+        legacy KnowledgeCard minus data_url / visualization_data / ideal_viz_decisions,
+
+        plus a `content` download descriptor.'
+    TakoSourceSettings:
+      properties:
+        count:
+          type: integer
+          maximum: 20.0
+          minimum: 1.0
+          title: Count
+          description: Maximum number of results to return for this source. 1-20.
+          default: 5
+        include_contents:
+          type: boolean
+          title: Include Contents
+          description: Inline this source's underlying data (CSV for Tako cards, extracted
+            text for web results) directly in the response.
+          default: false
+        defer_data_retrieval:
+          type: boolean
+          title: Defer Data Retrieval
+          description: 'Defer the expensive data-retrieval step: cards return faster
+            with a semantic_description and a less detailed description. Mutually
+            exclusive with include_contents (cannot inline data that was not fetched).'
+          default: false
+      additionalProperties: false
+      type: object
+      title: TakoSourceSettings
+    TextEvent:
+      properties:
+        kind:
+          type: string
+          const: text
+          title: Kind
+          default: text
+        id:
+          type: string
+          title: Id
+        delta:
+          type: string
+          title: Delta
+        done:
+          type: boolean
+          title: Done
+          default: false
+      type: object
+      required:
+      - id
+      - delta
+      title: TextEvent
+    ToolCallEvent:
+      properties:
+        kind:
+          type: string
+          const: tool_call
+          title: Kind
+          default: tool_call
+        id:
+          type: string
+          title: Id
+        tool:
+          type: string
+          title: Tool
+        status_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status Message
+        parent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Id
+        done:
+          type: boolean
+          title: Done
+          default: false
+      type: object
+      required:
+      - id
+      - tool
+      title: ToolCallEvent
+    ToolErrorEvent:
+      properties:
+        kind:
+          type: string
+          const: tool_error
+          title: Kind
+          default: tool_error
+        id:
+          type: string
+          title: Id
+        tool:
+          type: string
+          title: Tool
+        error:
+          type: string
+          title: Error
+        parent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Id
+      type: object
+      required:
+      - id
+      - tool
+      - error
+      title: ToolErrorEvent
+    ToolResultEvent:
+      properties:
+        kind:
+          type: string
+          const: tool_result
+          title: Kind
+          default: tool_result
+        id:
+          type: string
+          title: Id
+        tool:
+          type: string
+          title: Tool
+        elapsed_ms:
+          type: integer
+          title: Elapsed Ms
+          default: 0
+        link:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Link
+        parent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Id
+      type: object
+      required:
+      - id
+      - tool
+      title: ToolResultEvent
+    ToolRetryEvent:
+      properties:
+        kind:
+          type: string
+          const: tool_retry
+          title: Kind
+          default: tool_retry
+        id:
+          type: string
+          title: Id
+        tool:
+          type: string
+          title: Tool
+        error:
+          type: string
+          title: Error
+        elapsed_ms:
+          type: integer
+          title: Elapsed Ms
+          default: 0
+        parent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Id
+      type: object
+      required:
+      - id
+      - tool
+      - error
+      title: ToolRetryEvent
+    WebResult:
+      properties:
+        title:
+          type: string
+          title: Title
+          description: Title of the web page.
+        url:
+          type: string
+          title: Url
+          description: URL of the web page.
+        snippet:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Snippet
+          description: Excerpt(s) from the page that matched the query.
+        source_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Name
+          description: Publisher / domain name, when extractable from the URL.
+        publish_date:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Publish Date
+          description: Publication date of the page, when available.
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/ResultContent'
+          - type: 'null'
+          description: Downloadable content descriptor for this result, fetched via
+            the Contents endpoint. Web results are always downloadable as text. None
+            for callers that do not populate it.
+        citation_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Citation Number
+          description: 1-based citation number that the answer's inline [N] markers
+            reference. Set only when the answer inline-cites this result (the Agent
+            API); None on raw-retrieval surfaces.
+      type: object
+      required:
+      - title
+      - url
+      title: WebResult
+      description: 'A single raw web search result returned by the WEB source index.
+
+
+        Distinct from `KnowledgeCardSource` (a citation inside a synthesized
+
+        answer) and `KnowledgeCard` (a Tako visualization). Web results are
+
+        raw retrieval output — title, URL, optional snippet — independent of
+
+        any LLM synthesis that may also happen over them.'
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      name: X-API-Key
+      in: header
