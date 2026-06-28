@@ -388,7 +388,10 @@ async function main(): Promise<void> {
   console.log(`(${modules.length} tools)`);
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run main() when invoked as a script, not when imported by tests.
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
