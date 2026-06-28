@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../django.js", () => ({ djangoPost: vi.fn(), djangoGet: vi.fn() }));
 import { djangoPost, djangoGet } from "../django.js";
-import tool, { AGENT_POLL_BUDGET_MS, AGENT_WAIT_CEILING_S, pollAgentRun } from "./tako_agent.js";
+import tool, { AGENT_POLL_BUDGET_MS, AGENT_WAIT_CEILING_S, buildAgentBody, pollAgentRun } from "./tako_agent.js";
+import { AgentRunRequest } from "../generated/schemas.js";
 
 const ctx = { token: "t", env: {} as never, client: "claude" as const, sendProgress: vi.fn() };
 
@@ -102,5 +103,17 @@ describe("tako_agent input schema", () => {
 
   it("rejects an unknown source", () => {
     expect(() => tool.inputSchema.parse({ query: "q", sources: ["bing"] })).toThrow();
+  });
+});
+
+describe("tako_agent contract guards", () => {
+  it("agent default sources mirror the backend (tako+web)", () => {
+    const parsed = tool.inputSchema.parse({ query: "compare cohorts" });
+    expect(parsed.sources).toEqual(["tako", "web"]);
+  });
+
+  it("reshapes into a contract-valid agent request", () => {
+    const body = buildAgentBody(tool.inputSchema.parse({ query: "x" }));
+    expect(() => AgentRunRequest.parse(body)).not.toThrow();
   });
 });

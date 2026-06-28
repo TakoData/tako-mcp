@@ -13,6 +13,7 @@
 import { z } from "zod";
 
 import { djangoGet, djangoPost } from "../django.js";
+import { AgentRun as AgentRunContract, AgentRunRequest } from "../generated/schemas.js";
 import { webResultSchema } from "./_search_results.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
@@ -90,6 +91,32 @@ type AgentRunWire = {
   error?: unknown;
 };
 
+type AgentInput = z.infer<typeof inputSchema>;
+
+/**
+ * Reshape the flat MCP input into the backend's AgentRunRequest body.
+ * Exported for the contract-guard test.
+ *
+ * The MCP flat `sources` array maps to the backend's `source_indexes` field
+ * (a rename, not a structural reshape). The `satisfies` annotation is the
+ * build-time guard: if the backend request contract changes (new required
+ * field, renamed key, changed enum), this line fails to compile.
+ *
+ * Parity note: the generated AgentRunRequest has `source_indexes` as optional
+ * (the backend defaults to ["tako","web"] when absent), but we always send it
+ * explicitly to keep the MCP behaviour predictable regardless of backend
+ * defaults.
+ */
+export function buildAgentBody(input: AgentInput): z.input<typeof AgentRunRequest> {
+  const body: z.input<typeof AgentRunRequest> = {
+    query: input.query,
+    source_indexes: input.sources,
+    effort: "medium",
+  };
+  if (input.thread_id !== undefined) body.thread_id = input.thread_id;
+  return body satisfies z.input<typeof AgentRunRequest>; // ← build-time guard: backend request drift breaks here
+}
+
 /** Dispatch a deep agent run. Returns the run_id. */
 export async function dispatchAgentRun(
   ctx: ToolContext,
@@ -102,8 +129,7 @@ export async function dispatchAgentRun(
   // default here). `effort` only accepts "medium" today (AgentEffortLevel) —
   // the sole supported public level; add others here as the backend gains them.
   // `thread_id`, when provided, continues a prior run's conversation.
-  const body: Record<string, unknown> = { query, effort: "medium", source_indexes: sources };
-  if (threadId !== undefined) body.thread_id = threadId;
+  const body = buildAgentBody({ query, sources, thread_id: threadId });
   const data = await djangoPost<AgentRunWire>(
     ctx.env,
     ctx.token,
@@ -140,6 +166,27 @@ export async function pollAgentRun(
       if (++transient > MAX_TRANSIENT_ERRORS) throw err;
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       continue;
+    }
+    // Wire-contract guard: validate the raw GET response against the generated
+    // AgentRun contract before mapping into the normalised MCP output shape.
+    //
+    // Parity decision (Path 2): the generated AgentRun requires `created_at`
+    // and `object` fields that the poll wire may omit, and it lacks the MCP-
+    // synthetic `timed_out` field that the split tools depend on. The hand-
+    // authored `agentRunSchema` therefore remains the tool's advertised output
+    // shape. We use the generated contract as a structural guard only — if the
+    // backend starts returning an incompatible shape (e.g. a renamed field), the
+    // guard fires before we silently mismap the response.
+    const wireGuard = AgentRunContract.safeParse(wire);
+    if (!wireGuard.success) {
+      // Tolerate missing created_at / object (poll wire may not include them);
+      // only hard-fail on structural mismatches that would break the mapping.
+      const issues = wireGuard.error.issues.map((i) => i.path.join("."));
+      const criticalFields = ["run_id", "status"];
+      const hasCritical = criticalFields.some((f) => issues.includes(f) || wire[f as keyof AgentRunWire] === undefined);
+      if (hasCritical) {
+        throw new Error("Tako agent run endpoint returned an unexpected shape.");
+      }
     }
     const parsed = agentRunSchema.safeParse({
       run_id: wire.run_id ?? runId,
