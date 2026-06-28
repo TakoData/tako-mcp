@@ -174,15 +174,15 @@
       "parameters": {
         "url": {
           "type": "string",
-          "description": "The result URL to fetch content for (a Tako card URL → CSV; any other URL → page text).",
+          "description": "The result URL to fetch downloadable content for (a TakoCard.webpage_url or a WebResult.url). A Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted text.",
           "required": true
         },
         "mode": {
           "type": "string",
-          "description": "Delivery mode: \"inline\" (default) returns the content in the response body (CSV capped at 1000 rows, with total_rows/truncated; or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url (no row cap).",
+          "description": "How /contents returns the content. URL (default) is the existing\npresigned-download behavior; INLINE returns the content in the response body\n(CSV text capped at 1000 rows, or web text) and skips the S3 upload.",
           "enum": [
-            "inline",
-            "url"
+            "url",
+            "inline"
           ],
           "default": "inline"
         }
