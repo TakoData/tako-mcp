@@ -18,8 +18,14 @@ import type { ToolModule } from "./types.js";
 const DESCRIPTION =
   "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). `mode` controls delivery: `inline` (default) returns the content directly in the response so you can read and reason over it — CSV is capped at 1000 rows, so check `total_rows` / `truncated` to know if it's partial; `url` instead returns a short-lived presigned `download_url` (no row cap), for handing the user a download/embed link or for large datasets you don't need to read yourself. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
 
-// Generated contract, with the one documented MCP divergence: default mode → inline.
-const inputSchema = ContentsRequest.extend({
+// Curate the input from the contract explicitly: `.pick` only the fields we
+// expose (so a new field added to ContentsRequest in the synced spec does NOT
+// silently join the MCP input surface), then add the one documented MCP
+// divergence — default mode → inline.
+const inputSchema = ContentsRequest.pick({ url: true }).extend({
+  // The spec has no minLength on `url`; re-add the prior local .min(1) guard so
+  // an empty-string url is rejected at the MCP layer instead of hitting the API.
+  url: ContentsRequest.shape.url.min(1),
   mode: ContentsDeliveryMode
     .default("inline")
     .describe('Delivery mode: "inline" (default) returns the content in the response body (CSV capped at 1000 rows, with total_rows/truncated; or web text) so you can read it directly; "url" returns a short-lived presigned download_url (no row cap).'),
@@ -29,7 +35,8 @@ const inputSchema = ContentsRequest.extend({
 // and uses `url` for the presigned download URL, while the current tool output
 // presents a single flat item with `download_url`. These shapes are incompatible,
 // so we keep the hand-written output schema to preserve the shipped API contract
-// for MCP consumers. See task-A3-report.md for details.
+// for MCP consumers. The raw wire is validated against the generated
+// ContentsResponse (in the handler) before it is mapped into this flat shape.
 const outputSchema = z.object({
   format: z.string(),
   // Presigned download URL + expiry — populated in "url" mode, null in "inline" mode.

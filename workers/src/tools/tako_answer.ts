@@ -65,9 +65,13 @@ type Output = z.infer<typeof outputSchema>;
  * key, changed enum) this line fails to compile — the intended signal.
  */
 export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
-  const sources: Record<string, { include_contents: boolean }> = {};
+  // Typed against the contract (not Record<string, …>) so a renamed/added
+  // `Sources` key or a new required per-source sub-field breaks compilation here.
+  const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
   if (input.sources.includes("tako")) sources.tako = { include_contents: input.include_contents };
   if (input.sources.includes("web")) sources.web = { include_contents: input.include_contents };
+  // No `effort`/per-source `count` (unlike buildSearchBody): answer is
+  // fast-pipeline + arbiter only, with no async/deep path (see handler).
   return {
     query: input.query,
     sources,
@@ -103,7 +107,7 @@ const takoAnswer = {
     const wireCheck = AnswerResponse.safeParse(data);
     if (!wireCheck.success) {
       throw new Error(
-        "Tako answer endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
+        "Tako answer endpoint returned an unexpected wire shape (failed the AnswerResponse contract). Retry once; if it persists, flag it to the Tako team.",
       );
     }
     const wire = wireCheck.data;
@@ -118,7 +122,7 @@ const takoAnswer = {
     });
     if (!parsed.success) {
       throw new Error(
-        "Tako answer endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
+        "Tako answer response could not be normalised into the expected output shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
     return parsed.data;

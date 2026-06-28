@@ -19,9 +19,7 @@ import { z } from "zod";
 import { djangoPost } from "../django.js";
 import { SearchRequest, SearchResponse } from "../generated/schemas.js";
 import {
-  APP_UI_RESOURCE_URI,
-  APP_UI_TEMPLATE_URI_PATTERN,
-  buildChartAppUiResource,
+  buildChartAppUiResourceFromOutputPubId,
   fetchImageDataUrlAndDims,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
@@ -104,7 +102,9 @@ type Output = z.infer<typeof outputSchema>;
  * key, changed enum) this line fails to compile — the intended signal.
  */
 export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
-  const sources: Record<string, { count: number; include_contents: boolean }> = {};
+  // Typed against the contract (not Record<string, …>) so a renamed/added
+  // `Sources` key or a new required per-source sub-field breaks compilation here.
+  const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
   if (input.sources.includes("tako")) {
     sources.tako = { count: input.count, include_contents: input.include_contents };
   }
@@ -191,18 +191,7 @@ const tako_search = {
     return fetchPngContentBlock(output.image_url);
   },
   appUiResource(env): AppUiResource {
-    return buildChartAppUiResource(env, (_input, output) => {
-      void _input;
-      const pubId =
-        typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
-          ? (output as { pub_id: string }).pub_id
-          : "";
-      if (pubId === "") return APP_UI_RESOURCE_URI;
-      return APP_UI_TEMPLATE_URI_PATTERN.replace(
-        "{pub_id}",
-        encodeURIComponent(pubId),
-      );
-    });
+    return buildChartAppUiResourceFromOutputPubId(env);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

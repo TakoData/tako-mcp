@@ -140,7 +140,7 @@ describe("tako_answer handler", () => {
 
     await expect(
       takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, country_code: "US", locale: "en-US" }, CTX),
-    ).rejects.toThrow(/unexpected shape/);
+    ).rejects.toThrow(/unexpected wire shape/);
   });
 });
 

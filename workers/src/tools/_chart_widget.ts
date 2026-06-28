@@ -1026,6 +1026,23 @@ export function buildChartAppUiResource(
   };
 }
 
+/**
+ * `appUiResource` variant that derives the per-call widget URI from the top
+ * card's `pub_id` on the tool OUTPUT (the input is a query/spec, not a pub_id).
+ * Falls back to the static URI when there's no renderable top card. Shared by
+ * tako_search and tako_visualize, which both render a chart widget this way.
+ */
+export function buildChartAppUiResourceFromOutputPubId(env: Env): AppUiResource {
+  return buildChartAppUiResource(env, (_input, output) => {
+    const pubId =
+      typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
+        ? (output as { pub_id: string }).pub_id
+        : "";
+    if (pubId === "") return APP_UI_RESOURCE_URI;
+    return APP_UI_TEMPLATE_URI_PATTERN.replace("{pub_id}", encodeURIComponent(pubId));
+  });
+}
+
 // Re-export for tests that want to assert the widget HTML contains
 // specific substrings (handshake method, scheme guard, etc.). The HTML
 // itself is module-private; `_chart_widget_test_only__` is the only

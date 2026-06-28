@@ -37,6 +37,10 @@ describe("tako_contents input schema", () => {
   it("rejects an unknown mode", () => {
     expect(() => tool.inputSchema.parse({ url: "https://x", mode: "stream" })).toThrow();
   });
+
+  it("rejects an empty url (local .min(1) guard; the spec has no minLength)", () => {
+    expect(() => tool.inputSchema.parse({ url: "" })).toThrow();
+  });
 });
 
 describe("tako_contents handler", () => {

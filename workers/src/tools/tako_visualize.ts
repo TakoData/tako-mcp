@@ -13,9 +13,7 @@ import { z } from "zod";
 import { djangoPost } from "../django.js";
 import { CreateCardRequest, KnowledgeCard } from "../generated/schemas.js";
 import {
-  APP_UI_RESOURCE_URI,
-  APP_UI_TEMPLATE_URI_PATTERN,
-  buildChartAppUiResource,
+  buildChartAppUiResourceFromOutputPubId,
   buildChartUrls,
   DEFAULT_DARK_MODE,
   DEFAULT_HEIGHT,
@@ -227,15 +225,7 @@ const tako_visualize = {
     return fetchPngContentBlock(output.image_url);
   },
   appUiResource(env): AppUiResource {
-    return buildChartAppUiResource(env, (_input, output) => {
-      void _input;
-      const pubId =
-        typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
-          ? (output as { pub_id: string }).pub_id
-          : "";
-      if (pubId === "") return APP_UI_RESOURCE_URI;
-      return APP_UI_TEMPLATE_URI_PATTERN.replace("{pub_id}", encodeURIComponent(pubId));
-    });
+    return buildChartAppUiResourceFromOutputPubId(env);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

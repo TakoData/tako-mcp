@@ -49,6 +49,15 @@ jobs:
           npm run typecheck
           npm test
 
+      # Push with the default GITHUB_TOKEN deliberately: commits it authors do
+      # NOT re-trigger `on: pull_request`/`push` workflows (GitHub anti-recursion),
+      # which is what keeps this job from re-triggering itself in a loop. The
+      # trade-off: `workers-ci.yml` does not re-run on this regen commit, so the
+      # final SHA is verified by the `Verify` step above (same checks) rather than
+      # by a separate `workers-ci` status. `main` has no required status checks
+      # today, so this does not block merge. If branch protection later requires
+      # `workers-ci`, switch this push to the OPENAPI_SYNC_APP installation token
+      # (needs the App id/key as repo secrets) so the standard checks re-fire.
       - name: Commit regenerated code
         working-directory: .
         env:
