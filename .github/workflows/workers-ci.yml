@@ -46,6 +46,14 @@ jobs:
       - name: Test
         run: npm test
 
+      # Schema drift guard. `schemas:gen` writes `workers/src/generated/schemas.ts`
+      # from the OpenAPI spec. Check mode regenerates in-memory and exits
+      # non-zero on any drift — so a spec edit that forgets to run
+      # `npm run schemas:gen` fails the PR here instead of shipping stale schemas.
+      - name: Check generated schemas are up to date
+        working-directory: workers
+        run: npm run schemas:check
+
       # Registry drift guard. `registry:gen` writes `registry/server.json`
       # and `workers/src/tools/_registry.ts` from the Zod schemas + annotations
       # in `workers/src/tools/*.ts`. Check mode regenerates in-memory and

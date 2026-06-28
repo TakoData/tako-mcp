@@ -13,6 +13,7 @@
 import { z } from "zod";
 
 import { djangoGet, djangoPost } from "../django.js";
+import { AgentResult as AgentResultContract, AgentRun as AgentRunContract, AgentRunRequest } from "../generated/schemas.js";
 import { webResultSchema } from "./_search_results.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
@@ -90,6 +91,32 @@ type AgentRunWire = {
   error?: unknown;
 };
 
+type AgentInput = z.infer<typeof inputSchema>;
+
+/**
+ * Reshape the flat MCP input into the backend's AgentRunRequest body.
+ * Exported for the contract-guard test.
+ *
+ * The MCP flat `sources` array maps to the backend's `source_indexes` field
+ * (a rename, not a structural reshape). The `satisfies` annotation is the
+ * build-time guard: if the backend request contract changes (new required
+ * field, renamed key, changed enum), this line fails to compile.
+ *
+ * Parity note: the generated AgentRunRequest has `source_indexes` as optional
+ * (the backend defaults to ["tako","web"] when absent), but we always send it
+ * explicitly to keep the MCP behaviour predictable regardless of backend
+ * defaults.
+ */
+export function buildAgentBody(input: AgentInput): z.input<typeof AgentRunRequest> {
+  const body: z.input<typeof AgentRunRequest> = {
+    query: input.query,
+    source_indexes: input.sources,
+    effort: "medium",
+  };
+  if (input.thread_id !== undefined) body.thread_id = input.thread_id;
+  return body satisfies z.input<typeof AgentRunRequest>; // ← build-time guard: backend request drift breaks here
+}
+
 /** Dispatch a deep agent run. Returns the run_id. */
 export async function dispatchAgentRun(
   ctx: ToolContext,
@@ -102,8 +129,7 @@ export async function dispatchAgentRun(
   // default here). `effort` only accepts "medium" today (AgentEffortLevel) —
   // the sole supported public level; add others here as the backend gains them.
   // `thread_id`, when provided, continues a prior run's conversation.
-  const body: Record<string, unknown> = { query, effort: "medium", source_indexes: sources };
-  if (threadId !== undefined) body.thread_id = threadId;
+  const body = buildAgentBody({ query, sources, thread_id: threadId });
   const data = await djangoPost<AgentRunWire>(
     ctx.env,
     ctx.token,
@@ -140,6 +166,52 @@ export async function pollAgentRun(
       if (++transient > MAX_TRANSIENT_ERRORS) throw err;
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       continue;
+    }
+    // Wire-contract guard: validate the raw GET response against the generated
+    // AgentRun contract before mapping into the normalised MCP output shape.
+    //
+    // Parity decision (Path 2): the generated AgentRun requires `created_at`
+    // and `object` fields that the poll wire may omit for in-flight runs, and
+    // it lacks the MCP-synthetic `timed_out` field the split tools depend on.
+    // The hand-authored `agentRunSchema` therefore remains the tool's advertised
+    // output shape. We use the generated contract as a structural guard that
+    // catches backend drift — renamed/missing fields that would otherwise be
+    // silently swallowed by the `wire.field ?? fallback` mapping below.
+    //
+    // Guard scope:
+    //   • run_id / status  — always required; absence → drift error.
+    //   • result           — when status is "completed", the field MUST be
+    //                        present (not renamed away) and, if non-null, MUST
+    //                        structurally match AgentResult from the generated
+    //                        contract. For in-flight (queued/running) runs,
+    //                        result is legitimately absent; no check is applied.
+    //   • created_at / object / timed_out — tolerated as absent (metadata
+    //                        fields the poll wire may omit; timed_out is MCP-
+    //                        synthetic and does not appear in the backend schema).
+    const lifecycleGuard = AgentRunContract.pick({ run_id: true, status: true }).safeParse(wire);
+    if (!lifecycleGuard.success) {
+      throw new Error(
+        `Agent run wire drifted from the backend contract: ${lifecycleGuard.error.issues.map((i) => i.path.join(".") + ": " + i.message).join("; ")}`,
+      );
+    }
+    // Terminal-state result guard: a completed run must carry a `result` field.
+    // If the backend renames `result` → `output` (or similar), `wire.result`
+    // becomes undefined here and the mapping below would silently return null —
+    // masking the drift entirely. We catch that case explicitly.
+    if (wire.status === "completed") {
+      if (wire.result === undefined) {
+        throw new Error(
+          "Agent run wire drifted from the backend contract: completed run is missing the `result` field.",
+        );
+      }
+      if (wire.result !== null) {
+        const resultGuard = AgentResultContract.safeParse(wire.result);
+        if (!resultGuard.success) {
+          throw new Error(
+            `Agent run wire drifted from the backend contract: result shape mismatch — ${resultGuard.error.issues.map((i) => i.path.join(".") + ": " + i.message).join("; ")}`,
+          );
+        }
+      }
     }
     const parsed = agentRunSchema.safeParse({
       run_id: wire.run_id ?? runId,

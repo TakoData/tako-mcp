@@ -25,6 +25,45 @@ import { z } from "zod";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 
 // ---------------------------------------------------------------------------
+// Curated tool surface
+// ---------------------------------------------------------------------------
+
+/**
+ * Curated MCP tool surface. `classify` is in the sdk spec but intentionally
+ * not a tool — it is an API operation only, not an MCP-callable tool.
+ *
+ * This list is the source-of-truth for which tool files are allowed to exist
+ * under `workers/src/tools/`. The generator asserts (both in write mode and
+ * in `--check`) that the discovered set equals this list exactly, so adding
+ * or removing a tool file without updating the allowlist fails the build.
+ */
+export const MCP_TOOL_ALLOWLIST = [
+  "get_credit_balance",
+  "tako_agent",
+  "tako_agent_start",
+  "tako_agent_wait",
+  "tako_answer",
+  "tako_contents",
+  "tako_search",
+  "tako_visualize",
+] as const;
+
+/**
+ * Assert that every tool in the registry has a non-empty description.
+ * Throws with the list of offending tool names if any are missing.
+ */
+export function assertAllToolsDescribed(
+  tools: ReadonlyArray<{ name: string; description?: string }>,
+): void {
+  const missing = tools
+    .filter((t) => !t.description || t.description.trim() === "")
+    .map((t) => t.name);
+  if (missing.length > 0) {
+    throw new Error(`MCP tools missing a description: ${missing.join(", ")}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
@@ -287,6 +326,28 @@ async function main(): Promise<void> {
     unknown
   >;
   const modules = await loadToolModules();
+
+  // --- Guards: run in both write and --check modes ---
+
+  // 1. Description completeness: every tool must have a non-empty description.
+  assertAllToolsDescribed(modules.map((m) => m.tool));
+
+  // 2. Allowlist parity: discovered tool names must equal MCP_TOOL_ALLOWLIST
+  //    exactly. Adding or removing a tool file without updating the allowlist
+  //    (or vice-versa) fails the build.
+  const discoveredNames = new Set(modules.map((m) => m.tool.name));
+  const allowlistNames = new Set<string>(MCP_TOOL_ALLOWLIST);
+  const extra = [...discoveredNames].filter((n) => !allowlistNames.has(n));
+  const missing = [...allowlistNames].filter((n) => !discoveredNames.has(n));
+  if (extra.length > 0 || missing.length > 0) {
+    const parts: string[] = [];
+    if (extra.length > 0) parts.push(`extra tool files not in allowlist: ${extra.join(", ")}`);
+    if (missing.length > 0) parts.push(`allowlist entries with no tool file: ${missing.join(", ")}`);
+    throw new Error(
+      `MCP_TOOL_ALLOWLIST mismatch — update the allowlist in gen-registry.ts.\n  ${parts.join("\n  ")}`,
+    );
+  }
+
   const registry = buildRegistry(
     metadata,
     modules.map((m) => buildTool(m.tool)),
@@ -327,7 +388,10 @@ async function main(): Promise<void> {
   console.log(`(${modules.length} tools)`);
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run main() when invoked as a script, not when imported by tests.
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

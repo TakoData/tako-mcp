@@ -15,6 +15,19 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+// --- A3: tests that validate the generated-contract schema wiring ---
+it("exposes a mode parameter sourced from the generated contract", () => {
+  const shape = tool.inputSchema.shape as Record<string, unknown>;
+  expect(shape).toHaveProperty("url");
+  expect(shape).toHaveProperty("mode");
+});
+
+it("defaults mode to inline (the documented MCP override of the contract default)", () => {
+  const parsed = tool.inputSchema.parse({ url: "https://example.com" });
+  expect(parsed.mode).toBe("inline");
+});
+// --- end A3 tests ---
+
 describe("tako_contents input schema", () => {
   it("defaults mode to \"inline\"", () => {
     const parsed = tool.inputSchema.parse({ url: "https://tako.com/card/abc" });
@@ -23,6 +36,10 @@ describe("tako_contents input schema", () => {
 
   it("rejects an unknown mode", () => {
     expect(() => tool.inputSchema.parse({ url: "https://x", mode: "stream" })).toThrow();
+  });
+
+  it("rejects an empty url (local .min(1) guard; the spec has no minLength)", () => {
+    expect(() => tool.inputSchema.parse({ url: "" })).toThrow();
   });
 });
 

@@ -15,7 +15,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import takoAnswer from "./tako_answer.js";
+import takoAnswer, { buildAnswerBody } from "./tako_answer.js";
+import { SearchRequest } from "../generated/schemas.js";
 import {
   bodyOf,
   jsonResponse,
@@ -139,7 +140,7 @@ describe("tako_answer handler", () => {
 
     await expect(
       takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, country_code: "US", locale: "en-US" }, CTX),
-    ).rejects.toThrow(/unexpected shape/);
+    ).rejects.toThrow(/unexpected wire shape/);
   });
 });
 
@@ -179,5 +180,23 @@ describe("tako_answer input schema", () => {
     const parsed = takoAnswer.inputSchema.parse({ query: "hello" });
     expect(parsed.country_code).toBe("US");
     expect(parsed.locale).toBe("en-US");
+  });
+});
+
+describe("tako_answer contract guards", () => {
+  it("keeps a flat sources array on the advertised input", () => {
+    const shape = takoAnswer.inputSchema.shape as Record<string, unknown>;
+    expect(shape).toHaveProperty("sources");
+    const parsed = takoAnswer.inputSchema.parse({ query: "US GDP" });
+    expect(parsed.sources).toEqual(["tako", "web"]); // mirrors backend default
+  });
+
+  it("reshapes the flat input into a body that satisfies the backend contract", () => {
+    const body = buildAnswerBody({
+      query: "US GDP", sources: ["tako", "web"], include_contents: true,
+      country_code: "US", locale: "en-US",
+    });
+    // The generated backend contract must accept the reshaped body.
+    expect(() => SearchRequest.parse(body)).not.toThrow();
   });
 });

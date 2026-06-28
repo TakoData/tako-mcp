@@ -23,8 +23,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
+import { SearchRequest } from "../generated/schemas.js";
 import type { ToolContext } from "./types.js";
-import tako_search from "./tako_search.js";
+import tako_search, { buildSearchBody } from "./tako_search.js";
 import {
   bodyOf,
   jsonResponse,
@@ -294,5 +295,16 @@ describe("tako_search response mapping", () => {
     expect(out.pub_id).toBeUndefined();
     expect(out.embed_url).toBeUndefined();
     expect(out.image_url).toBeUndefined();
+  });
+});
+
+describe("tako_search widget + contract guard", () => {
+  it("still advertises the inline-chart widget", () => {
+    expect(typeof tako_search.appUiResource).toBe("function");
+  });
+
+  it("reshapes flat input into a contract-valid search body", () => {
+    const body = buildSearchBody(tako_search.inputSchema.parse({ query: "US GDP" }));
+    expect(() => SearchRequest.parse(body)).not.toThrow();
   });
 });

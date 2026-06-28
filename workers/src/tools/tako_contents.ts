@@ -12,24 +12,31 @@
 import { z } from "zod";
 
 import { djangoPost } from "../django.js";
+import { ContentsDeliveryMode, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
   "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). `mode` controls delivery: `inline` (default) returns the content directly in the response so you can read and reason over it — CSV is capped at 1000 rows, so check `total_rows` / `truncated` to know if it's partial; `url` instead returns a short-lived presigned `download_url` (no row cap), for handing the user a download/embed link or for large datasets you don't need to read yourself. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
 
-const inputSchema = z.object({
-  url: z
-    .string()
-    .min(1)
-    .describe("The result URL to fetch content for (a Tako card URL → CSV; any other URL → page text)."),
-  mode: z
-    .enum(["inline", "url"])
+// Curate the input from the contract explicitly: `.pick` only the fields we
+// expose (so a new field added to ContentsRequest in the synced spec does NOT
+// silently join the MCP input surface), then add the one documented MCP
+// divergence — default mode → inline.
+const inputSchema = ContentsRequest.pick({ url: true }).extend({
+  // The spec has no minLength on `url`; re-add the prior local .min(1) guard so
+  // an empty-string url is rejected at the MCP layer instead of hitting the API.
+  url: ContentsRequest.shape.url.min(1),
+  mode: ContentsDeliveryMode
     .default("inline")
-    .describe(
-      'Delivery mode: "inline" (default) returns the content in the response body (CSV capped at 1000 rows, with total_rows/truncated; or web text) so you can read it directly; "url" returns a short-lived presigned download_url (no row cap).',
-    ),
+    .describe('Delivery mode: "inline" (default) returns the content in the response body (CSV capped at 1000 rows, with total_rows/truncated; or web text) so you can read it directly; "url" returns a short-lived presigned download_url (no row cap).'),
 });
 
+// NOTE: The generated ContentsResponse wraps items in a nested `contents` array
+// and uses `url` for the presigned download URL, while the current tool output
+// presents a single flat item with `download_url`. These shapes are incompatible,
+// so we keep the hand-written output schema to preserve the shipped API contract
+// for MCP consumers. The raw wire is validated against the generated
+// ContentsResponse (in the handler) before it is mapped into this flat shape.
 const outputSchema = z.object({
   format: z.string(),
   // Presigned download URL + expiry — populated in "url" mode, null in "inline" mode.
@@ -48,18 +55,6 @@ const outputSchema = z.object({
 
 type Output = z.infer<typeof outputSchema>;
 
-type ContentItem = {
-  format?: string;
-  url?: string | null;
-  expires_at?: string | null;
-  cost?: number;
-  source_url?: string;
-  data?: string | null;
-  total_rows?: number | null;
-  truncated?: boolean;
-};
-type ContentsPostResponse = { contents?: ContentItem[]; request_id?: string };
-
 const takoContents = {
   name: "tako_contents",
   description: DESCRIPTION,
@@ -72,14 +67,26 @@ const takoContents = {
     openWorldHint: true,
   },
   async handler(input, ctx): Promise<Output> {
-    const data = await djangoPost<ContentsPostResponse>(
+    // input conforms to the generated ContentsRequest contract (url + mode).
+    const body = input satisfies z.input<typeof ContentsRequest>;
+    const raw = await djangoPost<unknown>(
       ctx.env,
       ctx.token,
       "/api/v1/contents/",
-      { url: input.url, mode: input.mode },
+      body,
       { timeoutMs: 60_000 },
     );
-    const item = data.contents?.[0];
+    // Validate the raw wire response against the generated ContentsResponse so
+    // backend drift (renamed fields, restructured contents array) throws here
+    // instead of silently mapping to nulls downstream.
+    const wireResult = ContentsResponse.safeParse(raw);
+    if (!wireResult.success) {
+      throw new Error(
+        `Tako contents endpoint returned an unexpected wire shape: ${wireResult.error.message}`,
+      );
+    }
+    const wire = wireResult.data;
+    const item = wire.contents?.[0];
     if (!item) {
       throw new Error(
         "Tako contents endpoint returned no downloadable content for that URL.",
