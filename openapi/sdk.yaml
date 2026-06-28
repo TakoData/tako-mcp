@@ -489,16 +489,17 @@ components:
           items:
             type: string
             enum:
-            - tako
+            - data
             - web
           type: array
           title: Source Indexes
-          description: 'Which sources the agent may use: ''tako'' (connected data)
-            and/or ''web'' (open-web search). Defaults to [''tako'', ''web''].'
+          description: 'Which sources the agent may use: ''data'' (curated knowledge)
+            and/or ''web'' (open-web search). Defaults to [''data'', ''web'']. The
+            legacy value ''tako'' is accepted as a synonym for ''data''.'
           examples:
-          - - tako
+          - - data
           - - web
-          - - tako
+          - - data
             - web
         locale:
           type: string
@@ -1502,7 +1503,7 @@ components:
         serves cached embeds without re-running data retrieval and is available in
         all
 
-        environments (cannot be combined with sources.tako.defer_data_retrieval).
+        environments (cannot be combined with sources.data.defer_data_retrieval).
 
         DEEP widens TAKO retrieval and adds an LLM rerank for higher-quality results
 
@@ -1524,7 +1525,8 @@ components:
         sources:
           $ref: '#/components/schemas/Sources'
           description: Per-source settings. An index is searched iff its key is present;
-            defaults to {tako:{}, web:{}} (tako + web, count 5 each).
+            defaults to {data:{}, web:{}} (data + web, count 5 each). The legacy key
+            'tako' is accepted as a synonym for 'data'.
         country_code:
           type: string
           title: Country Code
@@ -1603,11 +1605,12 @@ components:
       title: SourceSettings
     Sources:
       properties:
-        tako:
+        data:
           anyOf:
           - $ref: '#/components/schemas/TakoSourceSettings'
           - type: 'null'
-          description: Tako card source. Searched iff present.
+          description: Tako data source (curated knowledge). Searched iff present.
+            The legacy key 'tako' is accepted as a synonym.
         web:
           anyOf:
           - $ref: '#/components/schemas/SourceSettings'
@@ -1616,7 +1619,12 @@ components:
       additionalProperties: false
       type: object
       title: Sources
-      description: Per-source settings. An index is searched iff its field is present.
+      description: 'Per-source settings. An index is searched iff its field is present.
+
+
+        The Tako data source is named `data`. The legacy key `tako` is still
+
+        accepted as a synonym (mapped to `data` before validation).'
     StatusEvent:
       properties:
         kind:

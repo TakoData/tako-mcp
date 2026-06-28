@@ -28,16 +28,16 @@ export const AGENT_WAIT_CEILING_S = 40;
 const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 const DESCRIPTION =
-  "Run Tako's deep research agent for questions that require *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, multi-step aggregation or transformation, and multi-hop reasoning across many entities that a single search/answer can't satisfy. Returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search` / `tako_answer` for a specific, known thing (a value, a time series, a direct comparison of two named entities); reach for the agent when the question's *shape* needs reasoning over multiple retrievals. **Uses both Tako's connected data and the live web by default — pass `sources` to narrow to one (`[\"tako\"]` or `[\"web\"]`).** (Runs server-side, typically ~30–90s.)";
+  "Run Tako's deep research agent for questions that require *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, multi-step aggregation or transformation, and multi-hop reasoning across many entities that a single search/answer can't satisfy. Returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search` / `tako_answer` for a specific, known thing (a value, a time series, a direct comparison of two named entities); reach for the agent when the question's *shape* needs reasoning over multiple retrievals. **Uses both Tako's connected data and the live web by default — pass `sources` to narrow to one (`[\"data\"]` or `[\"web\"]`).** (Runs server-side, typically ~30–90s.)";
 
 export const inputSchema = z.object({
   query: z.string().min(1).describe("The deep/analytical question for the agent to work through."),
   sources: z
-    .array(z.enum(["tako", "web"]))
+    .array(z.enum(["data", "web", "tako"]))
     .min(1)
-    .default(["tako", "web"])
+    .default(["data", "web"])
     .describe(
-      'Which source(s) the agent may use. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for connected data only, or ["web"] for open-web search only.',
+      'Which source(s) the agent may use. Defaults to both Tako data and the web (["data","web"]); pass ["data"] for connected data only, or ["web"] for open-web search only. ("tako" is accepted as a legacy synonym for "data".)',
     ),
   thread_id: z
     .uuid()
@@ -98,19 +98,20 @@ type AgentInput = z.infer<typeof inputSchema>;
  * Exported for the contract-guard test.
  *
  * The MCP flat `sources` array maps to the backend's `source_indexes` field
- * (a rename, not a structural reshape). The `satisfies` annotation is the
- * build-time guard: if the backend request contract changes (new required
- * field, renamed key, changed enum), this line fails to compile.
+ * (a rename). The legacy `"tako"` synonym is folded onto the canonical `"data"`
+ * here so the body matches the generated enum (["data","web"]). The `satisfies`
+ * annotation is the build-time guard: if the backend request contract changes
+ * (new required field, renamed key, changed enum), this line fails to compile.
  *
  * Parity note: the generated AgentRunRequest has `source_indexes` as optional
- * (the backend defaults to ["tako","web"] when absent), but we always send it
+ * (the backend defaults to ["data","web"] when absent), but we always send it
  * explicitly to keep the MCP behaviour predictable regardless of backend
  * defaults.
  */
 export function buildAgentBody(input: AgentInput): z.input<typeof AgentRunRequest> {
   const body: z.input<typeof AgentRunRequest> = {
     query: input.query,
-    source_indexes: input.sources,
+    source_indexes: input.sources.map((s) => (s === "tako" ? "data" : s)),
     effort: "medium",
   };
   if (input.thread_id !== undefined) body.thread_id = input.thread_id;
@@ -121,7 +122,7 @@ export function buildAgentBody(input: AgentInput): z.input<typeof AgentRunReques
 export async function dispatchAgentRun(
   ctx: ToolContext,
   query: string,
-  sources: Array<"tako" | "web">,
+  sources: Array<"data" | "web" | "tako">,
   threadId?: string,
 ): Promise<string> {
   // AgentRunRequest (api/ga/v1/agent/types.py) takes a flat `source_indexes`

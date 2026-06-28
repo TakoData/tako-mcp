@@ -20,7 +20,7 @@ describe("tako_agent", () => {
       .mockResolvedValueOnce({ run_id: "run_1", status: "running" })
       .mockResolvedValueOnce({ run_id: "run_1", status: "completed", result: { answer: "42", cards: [] } });
 
-    const handlerPromise = tool.handler({ query: "analyze X", sources: ["tako", "web"] }, ctx);
+    const handlerPromise = tool.handler({ query: "analyze X", sources: ["data", "web"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
@@ -29,7 +29,7 @@ describe("tako_agent", () => {
     expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({
       query: "analyze X",
       effort: "medium",
-      source_indexes: ["tako", "web"],
+      source_indexes: ["data", "web"],
     });
     expect(ctx.sendProgress).toHaveBeenCalled();
     expect(out.status).toBe("completed");
@@ -84,17 +84,19 @@ describe("tako_agent", () => {
 });
 
 describe("tako_agent input schema", () => {
-  it("defaults sources to both tako and web (matches the backend default)", () => {
+  it("defaults sources to both data and web (matches the backend default)", () => {
     const parsed = tool.inputSchema.parse({ query: "hello" });
-    expect(parsed.sources).toEqual(["tako", "web"]);
+    expect(parsed.sources).toEqual(["data", "web"]);
   });
 
-  it("accepts web and both", () => {
+  it("accepts web, data, and the legacy tako synonym", () => {
     expect(tool.inputSchema.parse({ query: "q", sources: ["web"] }).sources).toEqual(["web"]);
-    expect(tool.inputSchema.parse({ query: "q", sources: ["tako", "web"] }).sources).toEqual([
-      "tako",
+    expect(tool.inputSchema.parse({ query: "q", sources: ["data", "web"] }).sources).toEqual([
+      "data",
       "web",
     ]);
+    // "tako" is still accepted on input (folded onto "data" at the reshape).
+    expect(tool.inputSchema.parse({ query: "q", sources: ["tako"] }).sources).toEqual(["tako"]);
   });
 
   it("rejects an empty sources array", () => {
@@ -107,9 +109,14 @@ describe("tako_agent input schema", () => {
 });
 
 describe("tako_agent contract guards", () => {
-  it("agent default sources mirror the backend (tako+web)", () => {
+  it("agent default sources mirror the backend (data+web)", () => {
     const parsed = tool.inputSchema.parse({ query: "compare cohorts" });
-    expect(parsed.sources).toEqual(["tako", "web"]);
+    expect(parsed.sources).toEqual(["data", "web"]);
+  });
+
+  it("folds the legacy \"tako\" synonym onto \"data\" in source_indexes", () => {
+    const body = buildAgentBody(tool.inputSchema.parse({ query: "x", sources: ["tako"] }));
+    expect(body.source_indexes).toEqual(["data"]);
   });
 
   it("reshapes into a contract-valid agent request", () => {

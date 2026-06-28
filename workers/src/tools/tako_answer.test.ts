@@ -67,7 +67,7 @@ describe("tako_answer handler", () => {
     const out = await takoAnswer.handler(
       {
         query: "What was US GDP in 2024?",
-        sources: ["tako", "web"],
+        sources: ["data", "web"],
         include_contents: false,
         country_code: "US",
         locale: "en-US",
@@ -81,7 +81,7 @@ describe("tako_answer handler", () => {
     // v3 SearchRequest: top-level `query` + per-source `sources` object
     expect(body.query).toBe("What was US GDP in 2024?");
     expect(body.sources).toEqual({
-      tako: { include_contents: false },
+      data: { include_contents: false },
       web: { include_contents: false },
     });
     // old flat shape + grounding-era nested inputs must NOT be present
@@ -145,9 +145,19 @@ describe("tako_answer handler", () => {
 });
 
 describe("tako_answer input schema", () => {
-  it("defaults sources to both tako and web", () => {
+  it("defaults sources to both data and web", () => {
     const parsed = takoAnswer.inputSchema.parse({ query: "hello" });
-    expect(parsed.sources).toEqual(["tako", "web"]);
+    expect(parsed.sources).toEqual(["data", "web"]);
+  });
+
+  it("accepts the legacy \"tako\" synonym and folds it onto the data key", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
+    await takoAnswer.handler(
+      { query: "q", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US" },
+      CTX,
+    );
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
+    expect(body.sources).toEqual({ data: { include_contents: false } });
   });
 
   it("rejects an empty sources array", () => {
@@ -188,12 +198,12 @@ describe("tako_answer contract guards", () => {
     const shape = takoAnswer.inputSchema.shape as Record<string, unknown>;
     expect(shape).toHaveProperty("sources");
     const parsed = takoAnswer.inputSchema.parse({ query: "US GDP" });
-    expect(parsed.sources).toEqual(["tako", "web"]); // mirrors backend default
+    expect(parsed.sources).toEqual(["data", "web"]); // mirrors backend default
   });
 
   it("reshapes the flat input into a body that satisfies the backend contract", () => {
     const body = buildAnswerBody({
-      query: "US GDP", sources: ["tako", "web"], include_contents: true,
+      query: "US GDP", sources: ["data", "web"], include_contents: true,
       country_code: "US", locale: "en-US",
     });
     // The generated backend contract must accept the reshaped body.
