@@ -66,7 +66,7 @@ describe("tako_answer handler", () => {
     const out = await takoAnswer.handler(
       {
         query: "What was US GDP in 2024?",
-        sources: ["tako", "web"],
+        sources: ["data", "web"],
         include_contents: false,
         country_code: "US",
         locale: "en-US",
@@ -80,7 +80,7 @@ describe("tako_answer handler", () => {
     // v3 SearchRequest: top-level `query` + per-source `sources` object
     expect(body.query).toBe("What was US GDP in 2024?");
     expect(body.sources).toEqual({
-      tako: { include_contents: false },
+      data: { include_contents: false },
       web: { include_contents: false },
     });
     // old flat shape + grounding-era nested inputs must NOT be present
@@ -105,7 +105,7 @@ describe("tako_answer handler", () => {
     ]);
 
     const out = await takoAnswer.handler(
-      { query: "obscure query", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US" },
+      { query: "obscure query", sources: ["data"], include_contents: false, country_code: "US", locale: "en-US" },
       CTX,
     );
 
@@ -119,7 +119,7 @@ describe("tako_answer handler", () => {
     mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     const out = await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US" },
+      { query: "test", sources: ["data"], include_contents: false, country_code: "US", locale: "en-US" },
       CTX,
     ) as Record<string, unknown>;
 
@@ -138,7 +138,7 @@ describe("tako_answer handler", () => {
     ]);
 
     await expect(
-      takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, country_code: "US", locale: "en-US" }, CTX),
+      takoAnswer.handler({ query: "q", sources: ["data", "web"], include_contents: false, country_code: "US", locale: "en-US" }, CTX),
     ).rejects.toThrow(/unexpected shape/);
   });
 });
@@ -146,7 +146,7 @@ describe("tako_answer handler", () => {
 describe("tako_answer input schema", () => {
   it("defaults sources to both tako and web", () => {
     const parsed = takoAnswer.inputSchema.parse({ query: "hello" });
-    expect(parsed.sources).toEqual(["tako", "web"]);
+    expect(parsed.sources).toEqual(["data", "web"]);
   });
 
   it("rejects an empty sources array", () => {
@@ -165,7 +165,7 @@ describe("tako_answer input schema", () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, country_code: "GB", locale: "en-GB" },
+      { query: "test", sources: ["data"], include_contents: false, country_code: "GB", locale: "en-GB" },
       CTX,
     );
 

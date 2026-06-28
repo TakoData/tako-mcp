@@ -27,16 +27,18 @@ export const AGENT_WAIT_CEILING_S = 40;
 const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 const DESCRIPTION =
-  "Run Tako's deep research agent for questions that require *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, multi-step aggregation or transformation, and multi-hop reasoning across many entities that a single search/answer can't satisfy. Returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search` / `tako_answer` for a specific, known thing (a value, a time series, a direct comparison of two named entities); reach for the agent when the question's *shape* needs reasoning over multiple retrievals. **Uses both Tako's connected data and the live web by default — pass `sources` to narrow to one (`[\"tako\"]` or `[\"web\"]`).** (Runs server-side, typically ~30–90s.)";
+  "Run Tako's deep research agent for questions that require *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, multi-step aggregation or transformation, and multi-hop reasoning across many entities that a single search/answer can't satisfy. Returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search` / `tako_answer` for a specific, known thing (a value, a time series, a direct comparison of two named entities); reach for the agent when the question's *shape* needs reasoning over multiple retrievals. **Uses both Tako's connected data and the live web by default — pass `sources` to narrow to one (`[\"data\"]` or `[\"web\"]`).** (Runs server-side, typically ~30–90s.)";
 
 export const inputSchema = z.object({
   query: z.string().min(1).describe("The deep/analytical question for the agent to work through."),
   sources: z
-    .array(z.enum(["tako", "web"]))
+    // "data" is the curated-knowledge source; "tako" is the legacy synonym,
+    // still accepted and normalized to "data" before the request is built.
+    .array(z.enum(["data", "web", "tako"]))
     .min(1)
-    .default(["tako", "web"])
+    .default(["data", "web"])
     .describe(
-      'Which source(s) the agent may use. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for connected data only, or ["web"] for open-web search only.',
+      'Which source(s) the agent may use. Defaults to both Tako and the web (["data","web"]); pass ["data"] for connected data only, or ["web"] for open-web search only. (The legacy value "tako" is accepted as a synonym for "data".)',
     ),
   thread_id: z
     .uuid()
@@ -94,15 +96,17 @@ type AgentRunWire = {
 export async function dispatchAgentRun(
   ctx: ToolContext,
   query: string,
-  sources: Array<"tako" | "web">,
+  sources: Array<"data" | "web" | "tako">,
   threadId?: string,
 ): Promise<string> {
   // AgentRunRequest (api/ga/v1/agent/types.py) takes a flat `source_indexes`
-  // list (defaults to ["tako","web"] server-side, mirrored by the schema
+  // list (defaults to ["data","web"] server-side, mirrored by the schema
   // default here). `effort` only accepts "medium" today (AgentEffortLevel) —
   // the sole supported public level; add others here as the backend gains them.
-  // `thread_id`, when provided, continues a prior run's conversation.
-  const body: Record<string, unknown> = { query, effort: "medium", source_indexes: sources };
+  // `thread_id`, when provided, continues a prior run's conversation. The legacy
+  // "tako" value is normalized to "data" (the backend accepts both).
+  const source_indexes = sources.map((s) => (s === "tako" ? "data" : s));
+  const body: Record<string, unknown> = { query, effort: "medium", source_indexes };
   if (threadId !== undefined) body.thread_id = threadId;
   const data = await djangoPost<AgentRunWire>(
     ctx.env,

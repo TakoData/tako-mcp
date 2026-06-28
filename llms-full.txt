@@ -25,7 +25,7 @@ Fast search over Tako's curated knowledge graph (and the live web when asked) fo
 
 Parameters:
 - `query` (string, required): Natural-language search query
-- `sources` (array): `["tako"]` (curated, default), `["web"]` (live web), or `["tako","web"]`
+- `sources` (array): `["data"]` (curated, default), `["web"]` (live web), or `["data","web"]`. The legacy value `"tako"` is accepted as a synonym for `"data"`.
 - `effort` (string, "fast" | "instant"): Search effort; "fast" (default) or "instant" (fastest, cached embeds). Omit for fast.
 - `count` (integer, 1-20, default 10): Maximum results per source
 - `country_code` (string, default "US"): ISO country code
@@ -36,7 +36,7 @@ Ask a factual question and get back a single grounded, citation-backed text answ
 
 Parameters:
 - `query` (string, required): Natural-language question
-- `sources` (array, optional): `["tako"]`, `["web"]`, or `["tako","web"]` (default)
+- `sources` (array, optional): `["data"]`, `["web"]`, or `["data","web"]` (default)
 - `country_code` (string, default "US"): ISO country code
 - `locale` (string, default "en-US"): Locale
 
