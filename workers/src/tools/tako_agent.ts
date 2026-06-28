@@ -13,7 +13,7 @@
 import { z } from "zod";
 
 import { djangoGet, djangoPost } from "../django.js";
-import { AgentRun as AgentRunContract, AgentRunRequest } from "../generated/schemas.js";
+import { AgentResult as AgentResultContract, AgentRun as AgentRunContract, AgentRunRequest } from "../generated/schemas.js";
 import { webResultSchema } from "./_search_results.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
@@ -171,21 +171,46 @@ export async function pollAgentRun(
     // AgentRun contract before mapping into the normalised MCP output shape.
     //
     // Parity decision (Path 2): the generated AgentRun requires `created_at`
-    // and `object` fields that the poll wire may omit, and it lacks the MCP-
-    // synthetic `timed_out` field that the split tools depend on. The hand-
-    // authored `agentRunSchema` therefore remains the tool's advertised output
-    // shape. We use the generated contract as a structural guard only — if the
-    // backend starts returning an incompatible shape (e.g. a renamed field), the
-    // guard fires before we silently mismap the response.
-    const wireGuard = AgentRunContract.safeParse(wire);
-    if (!wireGuard.success) {
-      // Tolerate missing created_at / object (poll wire may not include them);
-      // only hard-fail on structural mismatches that would break the mapping.
-      const issues = wireGuard.error.issues.map((i) => i.path.join("."));
-      const criticalFields = ["run_id", "status"];
-      const hasCritical = criticalFields.some((f) => issues.includes(f) || wire[f as keyof AgentRunWire] === undefined);
-      if (hasCritical) {
-        throw new Error("Tako agent run endpoint returned an unexpected shape.");
+    // and `object` fields that the poll wire may omit for in-flight runs, and
+    // it lacks the MCP-synthetic `timed_out` field the split tools depend on.
+    // The hand-authored `agentRunSchema` therefore remains the tool's advertised
+    // output shape. We use the generated contract as a structural guard that
+    // catches backend drift — renamed/missing fields that would otherwise be
+    // silently swallowed by the `wire.field ?? fallback` mapping below.
+    //
+    // Guard scope:
+    //   • run_id / status  — always required; absence → drift error.
+    //   • result           — when status is "completed", the field MUST be
+    //                        present (not renamed away) and, if non-null, MUST
+    //                        structurally match AgentResult from the generated
+    //                        contract. For in-flight (queued/running) runs,
+    //                        result is legitimately absent; no check is applied.
+    //   • created_at / object / timed_out — tolerated as absent (metadata
+    //                        fields the poll wire may omit; timed_out is MCP-
+    //                        synthetic and does not appear in the backend schema).
+    const lifecycleGuard = AgentRunContract.pick({ run_id: true, status: true }).safeParse(wire);
+    if (!lifecycleGuard.success) {
+      throw new Error(
+        `Agent run wire drifted from the backend contract: ${lifecycleGuard.error.issues.map((i) => i.path.join(".") + ": " + i.message).join("; ")}`,
+      );
+    }
+    // Terminal-state result guard: a completed run must carry a `result` field.
+    // If the backend renames `result` → `output` (or similar), `wire.result`
+    // becomes undefined here and the mapping below would silently return null —
+    // masking the drift entirely. We catch that case explicitly.
+    if (wire.status === "completed") {
+      if (wire.result === undefined) {
+        throw new Error(
+          "Agent run wire drifted from the backend contract: completed run is missing the `result` field.",
+        );
+      }
+      if (wire.result !== null) {
+        const resultGuard = AgentResultContract.safeParse(wire.result);
+        if (!resultGuard.success) {
+          throw new Error(
+            `Agent run wire drifted from the backend contract: result shape mismatch — ${resultGuard.error.issues.map((i) => i.path.join(".") + ": " + i.message).join("; ")}`,
+          );
+        }
       }
     }
     const parsed = agentRunSchema.safeParse({
