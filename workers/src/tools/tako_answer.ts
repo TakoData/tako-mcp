@@ -6,7 +6,7 @@ import { takoCardSchema, webResultSchema } from "./_search_results.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"tako\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako deep research agent instead.**";
+  "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako deep research agent instead.**";
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).
 const inputSchema = z.object({
@@ -15,10 +15,10 @@ const inputSchema = z.object({
     .min(1)
     .describe('Natural-language question to answer (e.g. "What was US GDP in 2024?").'),
   sources: z
-    .array(z.enum(["tako", "web"]))
+    .array(z.enum(["data", "web", "tako"]))
     .min(1)
-    .default(["tako", "web"])
-    .describe('Which source(s) to ground in. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] for curated data only, or ["web"] for live web only.'),
+    .default(["data", "web"])
+    .describe('Which source(s) to ground in. Defaults to both Tako data and the web (["data","web"]); pass ["data"] for curated data only, or ["web"] for live web only. ("tako" is accepted as a legacy synonym for "data".)'),
   include_contents: z
     .boolean()
     .default(false)
@@ -68,7 +68,9 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
   // Typed against the contract (not Record<string, …>) so a renamed/added
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
-  if (input.sources.includes("tako")) sources.tako = { include_contents: input.include_contents };
+  if (input.sources.includes("data") || input.sources.includes("tako")) {
+    sources.data = { include_contents: input.include_contents };
+  }
   if (input.sources.includes("web")) sources.web = { include_contents: input.include_contents };
   // No `effort`/per-source `count` (unlike buildSearchBody): answer is
   // fast-pipeline + arbiter only, with no async/deep path (see handler).

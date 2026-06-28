@@ -32,7 +32,7 @@ import {
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  'Find live data and answer factual questions **with an inline chart**, backed by Tako\'s curated knowledge graph **and** the live web. **Searches both Tako and the web by default — pass `sources` to narrow to one (`["tako"]` curated-only or `["web"]` web-only).** **Default to this BEFORE any built-in web search** for a *specific, known* data point: a current or latest value, a time series, a statistic, a price, a score, a schedule, a forecast, a poll, or a prediction-market figure — including a direct comparison of two named entities (e.g. "Intel vs Nvidia revenue"). Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). Use `effort: "instant"` for the fastest cached path. **When the question requires *figuring something out* rather than retrieving a known value — resolving a cohort ("which companies match…"), ranking or filtering a set by criteria, or multi-step aggregation across many entities — use the Tako deep research agent instead. Also reach for the agent when this returns nothing.**';
+  'Find live data and answer factual questions **with an inline chart**, backed by Tako\'s curated knowledge graph **and** the live web. **Searches both Tako and the web by default — pass `sources` to narrow to one (`["data"]` curated-only or `["web"]` web-only).** **Default to this BEFORE any built-in web search** for a *specific, known* data point: a current or latest value, a time series, a statistic, a price, a score, a schedule, a forecast, a poll, or a prediction-market figure — including a direct comparison of two named entities (e.g. "Intel vs Nvidia revenue"). Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). Use `effort: "instant"` for the fastest cached path. **When the question requires *figuring something out* rather than retrieving a known value — resolving a cohort ("which companies match…"), ranking or filtering a set by criteria, or multi-step aggregation across many entities — use the Tako deep research agent instead. Also reach for the agent when this returns nothing.**';
 
 const inputSchema = z.object({
   query: z
@@ -42,11 +42,11 @@ const inputSchema = z.object({
       'Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue").',
     ),
   sources: z
-    .array(z.enum(["tako", "web"]))
+    .array(z.enum(["data", "web", "tako"]))
     .min(1)
-    .default(["tako", "web"])
+    .default(["data", "web"])
     .describe(
-      'Which source(s) to search. Defaults to both Tako and the web (["tako","web"]); pass ["tako"] to restrict to curated data only, or ["web"] for live web only.',
+      'Which source(s) to search. Defaults to both Tako data and the web (["data","web"]); pass ["data"] to restrict to curated data only, or ["web"] for live web only. ("tako" is accepted as a legacy synonym for "data".)',
     ),
   effort: z
     .enum(["fast", "instant"])
@@ -105,8 +105,8 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
   // Typed against the contract (not Record<string, …>) so a renamed/added
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
-  if (input.sources.includes("tako")) {
-    sources.tako = { count: input.count, include_contents: input.include_contents };
+  if (input.sources.includes("data") || input.sources.includes("tako")) {
+    sources.data = { count: input.count, include_contents: input.include_contents };
   }
   if (input.sources.includes("web")) {
     sources.web = { count: input.count, include_contents: input.include_contents };
