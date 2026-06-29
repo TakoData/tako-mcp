@@ -363,14 +363,16 @@ components:
     AgentEffortLevel:
       type: string
       enum:
+      - low
       - medium
       title: AgentEffortLevel
-      description: 'Public effort taxonomy for the Agent API. Only MEDIUM is supported
-        in v1;
+      description: 'Public effort taxonomy for the Agent API. `low` runs the fast
+        data-pipeline
 
-        the generated OpenAPI/SDK advertises exactly these members, so we add values
+        retriever (the default); `medium` runs the analytical orchestrator. `high`
+        is
 
-        (low/high) only as the agent gains public support for them.'
+        not yet exposed.'
     AgentOutputSettings:
       properties:
         image_dark_mode:
@@ -483,8 +485,9 @@ components:
             thread.
         effort:
           $ref: '#/components/schemas/AgentEffortLevel'
-          description: Agent effort level. Only 'medium' is currently supported.
-          default: medium
+          description: Agent effort. 'low' (default) returns fast factual results;
+            'medium' returns deeper analytical answers (slower).
+          default: low
         source_indexes:
           items:
             type: string
