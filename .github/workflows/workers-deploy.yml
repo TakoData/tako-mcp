@@ -1,10 +1,22 @@
 name: workers-deploy
 
+# Deploy targets by trigger:
+#   - push to main touching workers/**  -> staging  (unchanged)
+#   - GitHub Release published          -> production (new; gated by the
+#                                          `production` environment reviewer)
+#   - workflow_dispatch                 -> the chosen input env (unchanged)
+#
+# The `release: published` event only fires a run because the Release is
+# created by release-please's GitHub App token, not GITHUB_TOKEN
+# (GITHUB_TOKEN-authored events do not trigger workflows).
+
 on:
   push:
     branches: [main]
     paths:
       - 'workers/**'
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       environment:
@@ -19,7 +31,7 @@ on:
 # false` intentionally differs from `workers-ci.yml` — a deploy must not be cut
 # off mid-upload.
 concurrency:
-  group: workers-deploy-${{ github.event.inputs.environment || 'staging' }}
+  group: workers-deploy-${{ github.event_name == 'release' && 'production' || github.event.inputs.environment || 'staging' }}
   cancel-in-progress: false
 
 permissions:
@@ -27,12 +39,13 @@ permissions:
 
 jobs:
   deploy:
-    name: deploy (${{ github.event.inputs.environment || 'staging' }})
+    name: deploy (${{ github.event_name == 'release' && 'production' || github.event.inputs.environment || 'staging' }})
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'release' || github.event_name == 'push' || github.ref == 'refs/heads/main'
     # GitHub Environments: surfaces deployment URL + history in the Actions UI.
-    # No protection rules; manual-dispatch is the gate for production.
-    environment: ${{ github.event.inputs.environment || 'staging' }}
+    # The `production` environment carries a required-reviewer rule (added in
+    # rollout), so a release-triggered prod deploy waits for one approval.
+    environment: ${{ github.event_name == 'release' && 'production' || github.event.inputs.environment || 'staging' }}
     defaults:
       run:
         working-directory: workers
@@ -57,8 +70,7 @@ jobs:
         run: npm test
 
       # Registry drift guard — fails the deploy if `workers/src/tools/_registry.ts`
-      # or `registry/server.json` is out of sync with the tool modules. Script
-      # is introduced by TAKO-2600; this workflow must merge after PR #44.
+      # or `registry/server.json` is out of sync with the tool modules.
       - name: Registry check
         run: npm run registry:check
 
@@ -71,5 +83,5 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers
-          command: deploy --env ${{ github.event.inputs.environment || 'staging' }}
+          command: deploy --env ${{ github.event_name == 'release' && 'production' || github.event.inputs.environment || 'staging' }}
           packageManager: npm

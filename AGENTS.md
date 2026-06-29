@@ -39,7 +39,7 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 - **Endpoint**: `POST /mcp` (single-route streamable HTTP), plus `GET /health`
 - **Auth**: `Authorization: Bearer <TAKO_API_TOKEN>` extracted at request boundary, forwarded to Django as `X-API-Key`; OAuth 2.1 flow for Claude.ai / ChatGPT
 - **Tool registry**: auto-generated from `workers/src/tools/*.ts` via `workers/scripts/gen-registry.ts`; outputs `workers/src/tools/_registry.ts` + `registry/server.json` in lockstep (CI checks for drift)
-- **CI**: `.github/workflows/workers-ci.yml` (typecheck + tests on PRs), `workers-deploy.yml` (auto-deploy staging on push to `main`, manual prod), `workers-smoke.yml` (auto-smoke after successful staging deploys)
+- **CI**: `.github/workflows/workers-ci.yml` (typecheck + tests on PRs), `workers-deploy.yml` (staging on push to `main`; production on published GitHub Release, gated by the `production` environment; manual `workflow_dispatch` for either env), `workers-smoke.yml` (auto-smoke after successful staging deploys)
 
 ### Key Files
 
@@ -100,3 +100,24 @@ Source of truth: `workers/src/tools/*.ts`. Tools are discovered at runtime via t
 - Never modify production infrastructure configs without an explicit ticket
 - All tool functions must validate inputs before making API calls
 - Error responses must never expose internal URLs or stack traces
+
+## Releases
+
+Releases are automated with [release-please](https://github.com/googleapis/release-please).
+
+- **Conventional Commits are required.** Merges are **squash-only** and the squash
+  commit uses the **PR title**, which `pr-title-lint` validates. Use `feat:` (minor),
+  `fix:` (patch), `chore:`/`docs:`/`refactor:`/etc. Below 1.0, breaking changes bump
+  the minor, not the major.
+- **Do not hand-edit the version.** release-please owns it across `version.txt` (the anchor) and the seven tracked files:
+  `server.json`, `agent.json`, `workers/package.json`, `workers/src/mcp.ts`
+  (`SERVER_VERSION`), `registry/metadata.json`, `registry/server.json`, and
+  `registry/smithery.yaml`. (`registry/server.json` is generated from
+  `registry/metadata.json`; release-please bumps its `version` directly so
+  `npm run registry:check` stays green.)
+- **How a release flows:** release-please keeps a "release: X.Y.Z" PR open on `main`.
+  Merging it bumps the versions + `CHANGELOG.md`, tags `vX.Y.Z`, and publishes a
+  GitHub Release. That merge also: publishes to the MCP registry (`publish-mcp.yml`,
+  on the `server.json` bump) and deploys the Worker to **staging**
+  (`workers-deploy.yml`). The GitHub Release then triggers the **production** deploy,
+  which waits for one approval on the `production` environment.

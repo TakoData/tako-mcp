@@ -2,6 +2,7 @@ import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Env } from "./env.js";
 import worker from "./index.js";
+import { SERVER_VERSION } from "./mcp.js";
 
 // Valid RFC 6750 b64token — any non-empty ASCII token works for these tests
 // because `extractBearer` only validates shape, not value. Django's the one
@@ -150,7 +151,7 @@ describe("worker routing", () => {
     expect(body.jsonrpc).toBe("2.0");
     expect(body.id).toBe(1);
     expect(body.result.serverInfo.name).toBe("tako-mcp");
-    expect(body.result.serverInfo.version).toBe("0.5.0");
+    expect(body.result.serverInfo.version).toBe(SERVER_VERSION);
     // Guard against silent SDK negotiation regressions — a missing or
     // malformed protocolVersion should fail loudly. The regex tolerates
     // future SDK bumps without pinning to a specific release.
