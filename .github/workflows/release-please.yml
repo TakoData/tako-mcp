@@ -1,0 +1,32 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read # the App token below performs the writes
+
+jobs:
+  release-please:
+    if: github.repository == 'TakoData/tako-mcp'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.OPENAPI_SYNC_APP_ID }}
+          private-key: ${{ secrets.OPENAPI_SYNC_APP_PRIVATE_KEY }}
+          owner: TakoData
+          repositories: tako-mcp
+      # The App token (not GITHUB_TOKEN) is required so (a) the Release PR
+      # triggers workers-ci / pr-title-lint, and (b) the GitHub Release it
+      # creates triggers workers-deploy's `release: published` prod path.
+      - name: Run release-please
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -256,6 +256,12 @@ as a remote server under the name `io.github.TakoData/tako-mcp`.
   `tako.com`, and swap the workflow's `login github-oidc` step for
   `login dns --domain tako.com --private-key ${{ secrets.MCP_PRIVATE_KEY }}`.
 
+## Releases
+
+Versioning and changelog are automated via release-please. Contributors use
+Conventional Commit PR titles (squash-merge); maintainers cut a release by merging
+the bot's "release: X.Y.Z" PR. See `AGENTS.md` → Releases.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.

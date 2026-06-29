@@ -1,0 +1,38 @@
+name: pr-title-lint
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: pr-title-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    # release-please's own "release: X.Y.Z" PR is intentionally not a
+    # Conventional Commit type — skip the lint for it. Its head branch is
+    # release-please--* (release-please-action@v4 default).
+    if: ${{ !startsWith(github.event.pull_request.head.ref, 'release-please--') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Mirror the changelog-sections types in release-please-config.json.
+          types: |
+            feat
+            fix
+            perf
+            revert
+            chore
+            docs
+            style
+            refactor
+            test
+            build
+            ci

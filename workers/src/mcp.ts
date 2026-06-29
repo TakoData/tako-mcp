@@ -26,13 +26,13 @@ import { TOOL_REGISTRY } from "./tools/_registry.js";
 import type { AnyToolModule, McpClientKind, ToolContext } from "./tools/types.js";
 
 /**
- * Server identity. `registry/server.json` is the canonical source — keep this
- * constant and `workers/package.json#version` aligned with it when bumping.
+ * Server identity. `registry/server.json` is the canonical source — versions are
+ * managed by release-please (see release-please-config.json extra-files); do not hand-edit.
  * Clients compare what they read from the registry against what `initialize`
  * returns, so a mismatch surfaces as "wrong server" in tooling.
  */
 export const SERVER_NAME = "tako-mcp";
-export const SERVER_VERSION = "0.5.0";
+export const SERVER_VERSION = "0.5.0"; // x-release-please-version
 
 /**
  * MCP Apps UI resource MIME type. Hosts (claude.ai, ChatGPT Apps SDK, VS

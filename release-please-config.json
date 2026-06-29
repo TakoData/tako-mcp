@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "extra-files": [
+        { "type": "json", "path": "server.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "agent.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "workers/package.json", "jsonpath": "$.version" },
+        "workers/src/mcp.ts",
+        { "type": "json", "path": "registry/metadata.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "registry/server.json", "jsonpath": "$.version" },
+        { "type": "yaml", "path": "registry/smithery.yaml", "jsonpath": "$.version" }
+      ]
+    }
+  },
+  "bootstrap-sha": "dc9c99c7a0d92d165df6d1178659d7d7334b2ec9",
+  "include-v-in-tag": true,
+  "include-component-in-tag": false,
+  "prerelease": false,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "pull-request-header": "Automated Release PR",
+  "pull-request-title-pattern": "release: ${version}",
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance Improvements" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "chore", "section": "Chores" },
+    { "type": "docs", "section": "Documentation" },
+    { "type": "style", "section": "Styles" },
+    { "type": "refactor", "section": "Refactors" },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "build", "section": "Build System" },
+    { "type": "ci", "section": "Continuous Integration", "hidden": true }
+  ]
+}
