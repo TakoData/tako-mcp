@@ -359,6 +359,7 @@ components:
       - REQUEST_TIMEOUT
       - FORBIDDEN
       - NOT_FOUND
+      - SERVICE_UNAVAILABLE
       title: APIErrorType
     AgentEffortLevel:
       type: string
@@ -460,6 +461,14 @@ components:
           anyOf:
           - $ref: '#/components/schemas/ErrorObject'
           - type: 'null'
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/AgentUsage'
+          - type: 'null'
+        request:
+          anyOf:
+          - $ref: '#/components/schemas/AgentRunRequest'
+          - type: 'null'
       type: object
       required:
       - run_id
@@ -527,6 +536,7 @@ components:
       required:
       - query
       title: AgentRunRequest
+      description: Request body for POST /api/v1/agent/runs.
     AgentRunStatus:
       type: string
       enum:
@@ -606,6 +616,24 @@ components:
         events. Use `seq` only as the resume cursor (`starting_after` / `Last-Event-ID`),
 
         not as a completeness check.'
+    AgentUsage:
+      properties:
+        usd_cost:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Usd Cost
+      type: object
+      title: AgentUsage
+      description: 'Cost-plus usage for an agent run. usd_cost is the run''s COGS
+        x the agent
+
+        multiplier — the price the run was charged. Present only on metered/PAYG runs
+        that
+
+        were actually billed; absent for subscription/enterprise/free runs. No
+
+        token/tool-call/latency telemetry.'
     AnswerResponse:
       properties:
         answer:
