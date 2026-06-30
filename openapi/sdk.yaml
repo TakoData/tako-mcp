@@ -123,6 +123,129 @@ paths:
                 $ref: '#/components/schemas/BaseAPIError'
       security:
       - apiKey: []
+  /beta/graph/search:
+    get:
+      tags:
+      - tako
+      summary: Search the data graph
+      description: 'Resolve a data source, metric, or entity in Tako''s data graph
+        by name. Use this to discover and confirm what data exists before querying
+        — e.g. resolve the metric and the entity you care about here, then ask /v3/search
+        or /v1/answer for that specific entity + metric combination. Public and unauthenticated.
+        Note: results are not yet filtered to the production-ready inventory, so a
+        returned metric or entity that is not backed by a production fact table may
+        404 when passed to /beta/graph/related.'
+      operationId: graphSearch
+      parameters:
+      - description: Search text (min 2 chars).
+        required: true
+        schema:
+          type: string
+        name: q
+        in: query
+      - description: 'Comma-separated facets: source,metric,entity.'
+        required: false
+        schema:
+          type: string
+        name: types
+        in: query
+      - description: Max results (default 20, max 50).
+        required: false
+        schema:
+          type: integer
+        name: limit
+        in: query
+      responses:
+        '200':
+          description: Matching sources, metrics, and entities
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphSearchResponse'
+        '400':
+          description: Invalid request data (validation or malformed body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '503':
+          description: A backing data store is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+  /beta/graph/related:
+    get:
+      tags:
+      - tako
+      summary: Get a graph node's related nodes
+      description: 'Explore what a node connects to: a source''s metrics and entities,
+        a metric''s sources and the entities it''s tracked for, or an entity''s available
+        metrics. Use it to find which entity + metric combinations Tako covers, then
+        query /v3/search or /v1/answer for that combination. Pass relation_type +
+        cursor to paginate one facet, and the optional q to narrow that facet by a
+        case-insensitive substring on name/aliases (e.g. metrics for an entity matching
+        ''gdp''). Public and unauthenticated.'
+      operationId: graphRelated
+      parameters:
+      - description: Opaque public id of the node or source.
+        required: true
+        schema:
+          type: string
+        name: node_id
+        in: query
+      - description: 'Paginate one facet: source, metric, or entity.'
+        required: false
+        schema:
+          type: string
+        name: relation_type
+        in: query
+      - description: Optional case-insensitive substring filter on the related nodes'
+          name/aliases. Filters every facet of the overview, or the single paginated
+          facet when relation_type is set.
+        required: false
+        schema:
+          type: string
+        name: q
+        in: query
+      - description: Opaque pagination cursor.
+        required: false
+        schema:
+          type: string
+        name: cursor
+        in: query
+      - description: Page size (default 50, max 100).
+        required: false
+        schema:
+          type: integer
+        name: limit
+        in: query
+      responses:
+        '200':
+          description: A node's details plus related nodes by facet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphRelatedResponse'
+        '400':
+          description: Invalid request data (validation or malformed body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '404':
+          description: The requested resource does not exist or has no exportable
+            data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '503':
+          description: A backing data store is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
   /v1/contents:
     post:
       tags:
@@ -1039,6 +1162,90 @@ components:
       - code
       - message
       title: ErrorObject
+    GraphNode:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: Opaque, human-friendly public id (<name-slug>-<token>).
+        type:
+          $ref: '#/components/schemas/GraphNodeType'
+        name:
+          type: string
+          title: Name
+        aliases:
+          items:
+            type: string
+          type: array
+          title: Aliases
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+      type: object
+      required:
+      - id
+      - type
+      - name
+      title: GraphNode
+    GraphNodeType:
+      type: string
+      enum:
+      - source
+      - metric
+      - entity
+      title: GraphNodeType
+    GraphRelatedResponse:
+      properties:
+        node:
+          $ref: '#/components/schemas/GraphNode'
+        related:
+          anyOf:
+          - $ref: '#/components/schemas/RelatedGroups'
+          - type: 'null'
+        relation:
+          anyOf:
+          - $ref: '#/components/schemas/GraphRelationPage'
+          - type: 'null'
+      type: object
+      required:
+      - node
+      title: GraphRelatedResponse
+    GraphRelationPage:
+      properties:
+        relation_type:
+          $ref: '#/components/schemas/GraphNodeType'
+        items:
+          items:
+            $ref: '#/components/schemas/GraphNode'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      type: object
+      required:
+      - relation_type
+      - items
+      - total
+      title: GraphRelationPage
+    GraphSearchResponse:
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/GraphNode'
+          type: array
+          title: Results
+      type: object
+      required:
+      - results
+      title: GraphSearchResponse
     HeartbeatEvent:
       properties:
         kind:
@@ -1145,6 +1352,35 @@ components:
       - id
       - delta
       title: ReasoningEvent
+    RelatedGroups:
+      properties:
+        sources:
+          $ref: '#/components/schemas/RelationGroup'
+        metrics:
+          $ref: '#/components/schemas/RelationGroup'
+        entities:
+          $ref: '#/components/schemas/RelationGroup'
+      type: object
+      required:
+      - sources
+      - metrics
+      - entities
+      title: RelatedGroups
+    RelationGroup:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/GraphNode'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+      type: object
+      required:
+      - items
+      - total
+      title: RelationGroup
     ResultContent:
       properties:
         format:
@@ -1199,9 +1435,8 @@ components:
         serves cached embeds without re-running data retrieval and is available in
         all
 
-        environments (cannot be combined with sources.data.defer_data_retrieval).
-
-        DEEP widens TAKO retrieval and adds an LLM rerank for higher-quality results
+        environments. DEEP widens TAKO retrieval and adds an LLM rerank for higher-quality
+        results
 
         (slower; billed at a premium tier). The generated OpenAPI/SDK advertises
 
@@ -1303,7 +1538,7 @@ components:
       properties:
         data:
           anyOf:
-          - $ref: '#/components/schemas/TakoSourceSettings'
+          - $ref: '#/components/schemas/SourceSettings'
           - type: 'null'
           description: Tako data source (curated knowledge). Searched iff present.
             The legacy key 'tako' is accepted as a synonym.
@@ -1546,31 +1781,6 @@ components:
         internal/legacy CardSourceIndex used by the internal /v1/knowledge_search
 
         path, which carries additional internal-only index names.'
-    TakoSourceSettings:
-      properties:
-        count:
-          type: integer
-          maximum: 20.0
-          minimum: 1.0
-          title: Count
-          description: Maximum number of results to return for this source. 1-20.
-          default: 5
-        include_contents:
-          type: boolean
-          title: Include Contents
-          description: Inline this source's underlying data (CSV for Tako cards, extracted
-            text for web results) directly in the response.
-          default: false
-        defer_data_retrieval:
-          type: boolean
-          title: Defer Data Retrieval
-          description: 'Defer the expensive data-retrieval step: cards return faster
-            with a semantic_description and a less detailed description. Mutually
-            exclusive with include_contents (cannot inline data that was not fetched).'
-          default: false
-      additionalProperties: false
-      type: object
-      title: TakoSourceSettings
     TextEvent:
       properties:
         kind:
