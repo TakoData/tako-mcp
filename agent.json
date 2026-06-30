@@ -2,13 +2,16 @@
   "name": "Tako",
   "description": "Data intelligence agent that searches a knowledge base of 100K+ charts, answers data questions with citations, fetches underlying source content, and runs deep multi-step research.",
   "url": "https://mcp.tako.com",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "capabilities": {
     "streaming": true,
     "pushNotifications": false
   },
   "authentication": {
-    "schemes": ["oauth2", "apiKey"],
+    "schemes": [
+      "oauth2",
+      "apiKey"
+    ],
     "credentials": {
       "oauth2": {
         "description": "Web hosts (Claude.ai, ChatGPT) authenticate via the server's OAuth flow."
@@ -18,14 +21,24 @@
       }
     }
   },
-  "defaultInputModes": ["text"],
-  "defaultOutputModes": ["text", "image"],
+  "defaultInputModes": [
+    "text"
+  ],
+  "defaultOutputModes": [
+    "text",
+    "image"
+  ],
   "skills": [
     {
       "id": "search-data",
       "name": "Search Charts & Data",
       "description": "Fast search over Tako's curated knowledge graph of 100K+ charts and live data — economics, finance, demographics, sports, markets, weather — and the live web, both searched by default. Best for a specific, known value, series, or direct comparison of named entities.",
-      "tags": ["search", "charts", "data", "live"],
+      "tags": [
+        "search",
+        "charts",
+        "data",
+        "live"
+      ],
       "examples": [
         "Find charts about US GDP growth",
         "Search for Intel vs Nvidia revenue",
@@ -36,7 +49,11 @@
       "id": "answer-question",
       "name": "Answer Data Questions",
       "description": "Get a grounded, citation-backed answer to a factual data question, drawn from Tako's knowledge graph and/or the live web.",
-      "tags": ["answer", "grounded", "citations"],
+      "tags": [
+        "answer",
+        "grounded",
+        "citations"
+      ],
       "examples": [
         "What was US GDP in 2024?",
         "How have mortgage rates moved this year?",
@@ -47,7 +64,11 @@
       "id": "fetch-contents",
       "name": "Fetch Source Contents",
       "description": "Fetch the underlying data (CSV) or extracted page text behind any result URL.",
-      "tags": ["contents", "csv", "extract"],
+      "tags": [
+        "contents",
+        "csv",
+        "extract"
+      ],
       "examples": [
         "Get the CSV behind this Tako chart",
         "Extract the text from this article"
@@ -57,7 +78,12 @@
       "id": "visualize-data",
       "name": "Visualize Your Data",
       "description": "Create an embeddable Tako chart/card directly from your own structured data — timeseries, bar, table, financial boxes, and more. The card auto-renders as an interactive chart.",
-      "tags": ["visualize", "charts", "create", "embed"],
+      "tags": [
+        "visualize",
+        "charts",
+        "create",
+        "embed"
+      ],
       "examples": [
         "Chart this monthly revenue: Jan 50k, Feb 62k, Mar 71k",
         "Make a bar chart of sales by region from my data",
@@ -68,7 +94,11 @@
       "id": "deep-research",
       "name": "Deep Research Agent",
       "description": "Run a deep research agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup.",
-      "tags": ["agent", "research", "analysis"],
+      "tags": [
+        "agent",
+        "research",
+        "analysis"
+      ],
       "examples": [
         "Compare revenue per employee across the Mag 7",
         "Analyze the correlation between rates and housing starts"
