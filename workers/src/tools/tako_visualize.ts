@@ -11,7 +11,7 @@
 import { z } from "zod";
 
 import { djangoPost } from "../django.js";
-import { CreateCardRequest, KnowledgeCard } from "../generated/schemas.js";
+import { CreateCardRequest, ThinVizCard } from "../generated/schemas.js";
 import {
   buildChartAppUiResourceFromOutputPubId,
   buildChartUrls,
@@ -101,16 +101,16 @@ const inputSchema = z.object({
 
 // Parity-check outcome: Path 2 — keep the hand-written outputSchema as the
 // MCP facade (always returns the card_id + widget fields for inline render)
-// and validate the raw wire against the generated KnowledgeCard contract
+// and validate the raw wire against the generated ThinVizCard contract
 // before extracting card_id.
 //
-// The generated KnowledgeCard has many fields the MCP tool does not surface
-// (sources, methodologies, source_indexes, card_type, data_url, relevance,
-// visualization_data) and lacks the auto-chain widget fields (pub_id,
-// embed_url, image_url, dark_mode, width, height) that are built from the
-// card_id by buildChartUrls. If we switched to outputSchema = KnowledgeCard
-// directly the inline render would break and the existing widget tests would
-// fail. KnowledgeCard is therefore used as the wire-guard only.
+// The generated ThinVizCard documents the create response (card_id, title,
+// description, webpage_url, image_url, embed_url, card_type,
+// visualization_data, embed_mode) but lacks the auto-chain widget fields
+// (pub_id, dark_mode, width, height) that are built from the card_id by
+// buildChartUrls. If we switched to outputSchema = ThinVizCard directly the
+// inline render would break and the existing widget tests would fail.
+// ThinVizCard is therefore used as the wire-guard only.
 const outputSchema = z.object({
   card_id: z.string(),
   title: z.string().optional(),
@@ -167,9 +167,9 @@ const tako_visualize = {
       { timeoutMs: 130_000 },
     );
 
-    // Wire-contract guard: validate against the generated KnowledgeCard
+    // Wire-contract guard: validate against the generated ThinVizCard
     // before extracting card_id.
-    const wireCheck = KnowledgeCard.safeParse(data);
+    const wireCheck = ThinVizCard.safeParse(data);
     if (!wireCheck.success) {
       throw new Error(
         "Tako visualize endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
