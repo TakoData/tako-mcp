@@ -2,7 +2,7 @@
   "name": "Tako",
   "description": "Data intelligence agent that searches a knowledge base of 100K+ charts, answers data questions with citations, fetches underlying source content, and runs deep multi-step research.",
   "url": "https://mcp.tako.com",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "capabilities": {
     "streaming": true,
     "pushNotifications": false

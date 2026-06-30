@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/TakoData/tako-mcp/compare/v0.6.0...v0.6.1) (2026-06-30)
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#104](https://github.com/TakoData/tako-mcp/issues/104)) ([e1d462d](https://github.com/TakoData/tako-mcp/commit/e1d462def9b810e9789ef7dd4845b2e0be14d4a2))
+
 ## [0.6.0](https://github.com/TakoData/tako-mcp/compare/v0.5.0...v0.6.0) (2026-06-30)
 
 

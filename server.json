@@ -3,7 +3,7 @@
   "name": "io.github.TakoData/tako-mcp",
   "title": "Tako",
   "description": "Search, answer, and fetch Tako's knowledge base of 100K+ data charts, plus deep research agents.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
     "source": "github"
