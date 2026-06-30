@@ -4,7 +4,7 @@ description: |
   Search, answer, and fetch data from Tako's knowledge base of 100K+ charts
   covering economics, finance, demographics, sports, markets, and weather; and
   run deep multi-step research agents.
-version: 0.6.0
+version: 0.6.1
 license: MIT
 author:
   name: Tako
