@@ -108,6 +108,21 @@ export type DataPipelineAnswerEvent = z.infer<typeof DataPipelineAnswerEvent>;
 export const ErrorObject = z.object({ "code": z.string(), "message": z.string() });
 export type ErrorObject = z.infer<typeof ErrorObject>;
 
+export const GraphNode = z.object({ "id": z.string().describe("Opaque, human-friendly public id (<name-slug>-<token>)."), "type": z.lazy(() => GraphNodeType), "name": z.string(), "aliases": z.array(z.string()).optional(), "description": z.union([z.string(), z.null()]).optional() });
+export type GraphNode = z.infer<typeof GraphNode>;
+
+export const GraphNodeType = z.enum(["source","metric","entity"]);
+export type GraphNodeType = z.infer<typeof GraphNodeType>;
+
+export const GraphRelatedResponse = z.object({ "node": z.lazy(() => GraphNode), "related": z.union([z.lazy(() => RelatedGroups), z.null()]).optional(), "relation": z.union([z.lazy(() => GraphRelationPage), z.null()]).optional() });
+export type GraphRelatedResponse = z.infer<typeof GraphRelatedResponse>;
+
+export const GraphRelationPage = z.object({ "relation_type": z.lazy(() => GraphNodeType), "items": z.array(z.lazy(() => GraphNode)), "total": z.number().int(), "next_cursor": z.union([z.string(), z.null()]).optional() });
+export type GraphRelationPage = z.infer<typeof GraphRelationPage>;
+
+export const GraphSearchResponse = z.object({ "results": z.array(z.lazy(() => GraphNode)) });
+export type GraphSearchResponse = z.infer<typeof GraphSearchResponse>;
+
 export const HeartbeatEvent = z.object({ "kind": z.literal("heartbeat").default("heartbeat") });
 export type HeartbeatEvent = z.infer<typeof HeartbeatEvent>;
 
@@ -126,10 +141,16 @@ export type QueryClassification = z.infer<typeof QueryClassification>;
 export const ReasoningEvent = z.object({ "kind": z.literal("reasoning").default("reasoning"), "id": z.string(), "delta": z.string(), "done": z.boolean().default(false) });
 export type ReasoningEvent = z.infer<typeof ReasoningEvent>;
 
+export const RelatedGroups = z.object({ "sources": z.lazy(() => RelationGroup), "metrics": z.lazy(() => RelationGroup), "entities": z.lazy(() => RelationGroup) });
+export type RelatedGroups = z.infer<typeof RelatedGroups>;
+
+export const RelationGroup = z.object({ "items": z.array(z.lazy(() => GraphNode)), "total": z.number().int() });
+export type RelationGroup = z.infer<typeof RelationGroup>;
+
 export const ResultContent = z.object({ "format": z.lazy(() => ContentFormat), "cost": z.number().default(0), "data": z.union([z.string(), z.null()]).optional(), "total_rows": z.union([z.number().int(), z.null()]).optional(), "truncated": z.boolean().default(false) }).describe("Describes the downloadable content behind a result. `cost` is the USD the\n/contents call will charge for this result (Tako card CSV is free; web text is\nthe canonical Contents rate). The inline fields (`data`/`total_rows`/\n`truncated`) are populated only by auto-contents / `/contents` inline mode;\nwhen unset, this is just the quote (format + cost), fetched later via the\nContents endpoint (a Tako card URL -> ChartConfig -> CSV; any other URL ->\npage text).");
 export type ResultContent = z.infer<typeof ResultContent>;
 
-export const SearchEffortLevel = z.enum(["fast","instant","deep"]).describe("Public effort taxonomy for the new endpoints. FAST is the default. INSTANT\nserves cached embeds without re-running data retrieval and is available in all\nenvironments (cannot be combined with sources.data.defer_data_retrieval).\nDEEP widens TAKO retrieval and adds an LLM rerank for higher-quality results\n(slower; billed at a premium tier). The generated OpenAPI/SDK advertises\nexactly these members, so we add values only as the pipeline gains support.");
+export const SearchEffortLevel = z.enum(["fast","instant","deep"]).describe("Public effort taxonomy for the new endpoints. FAST is the default. INSTANT\nserves cached embeds without re-running data retrieval and is available in all\nenvironments. DEEP widens TAKO retrieval and adds an LLM rerank for higher-quality results\n(slower; billed at a premium tier). The generated OpenAPI/SDK advertises\nexactly these members, so we add values only as the pipeline gains support.");
 export type SearchEffortLevel = z.infer<typeof SearchEffortLevel>;
 
 export const SearchRequest = z.object({ "query": z.string().describe("Natural language search query."), "effort": z.lazy(() => SearchEffortLevel).describe("Search effort level: 'fast' (default), 'instant', or 'deep'.").default("fast"), "sources": z.lazy(() => Sources).describe("Per-source settings. An index is searched iff its key is present; defaults to {data:{}, web:{}} (data + web, count 5 each). The legacy key 'tako' is accepted as a synonym for 'data'.").optional(), "country_code": z.string().describe("ISO 3166-1 alpha-2 country code for localization.").default("US"), "locale": z.string().describe("BCP-47 locale tag for language/formatting.").default("en-US"), "timezone": z.union([z.string(), z.null()]).describe("IANA timezone (e.g. 'America/New_York').").optional(), "output_settings": z.union([z.lazy(() => OutputSettings), z.null()]).describe("Settings controlling the response shape.").optional() }).strict();
@@ -141,7 +162,7 @@ export type SearchResponse = z.infer<typeof SearchResponse>;
 export const SourceSettings = z.object({ "count": z.number().int().gte(1).lte(20).describe("Maximum number of results to return for this source. 1-20.").default(5), "include_contents": z.boolean().describe("Inline this source's underlying data (CSV for Tako cards, extracted text for web results) directly in the response.").default(false) }).strict();
 export type SourceSettings = z.infer<typeof SourceSettings>;
 
-export const Sources = z.object({ "data": z.union([z.lazy(() => TakoSourceSettings), z.null()]).describe("Tako data source (curated knowledge). Searched iff present. The legacy key 'tako' is accepted as a synonym.").optional(), "web": z.union([z.lazy(() => SourceSettings), z.null()]).describe("Web source. Searched iff present.").optional() }).strict().describe("Per-source settings. An index is searched iff its field is present.\n\nThe Tako data source is named `data`. The legacy key `tako` is still\naccepted as a synonym (mapped to `data` before validation).");
+export const Sources = z.object({ "data": z.union([z.lazy(() => SourceSettings), z.null()]).describe("Tako data source (curated knowledge). Searched iff present. The legacy key 'tako' is accepted as a synonym.").optional(), "web": z.union([z.lazy(() => SourceSettings), z.null()]).describe("Web source. Searched iff present.").optional() }).strict().describe("Per-source settings. An index is searched iff its field is present.\n\nThe Tako data source is named `data`. The legacy key `tako` is still\naccepted as a synonym (mapped to `data` before validation).");
 export type Sources = z.infer<typeof Sources>;
 
 export const StatusEvent = z.object({ "kind": z.literal("status").default("status"), "message": z.string(), "parent_id": z.union([z.string(), z.null()]).optional() });
@@ -167,9 +188,6 @@ export type TakoCardSource = z.infer<typeof TakoCardSource>;
 
 export const TakoSourceIndex = z.enum(["data","web"]).describe("Public source taxonomy for the SDK card surfaces (v3 search, v1 answer,\nagent). Symmetric with the request taxonomy {data, web}. Distinct from the\ninternal/legacy CardSourceIndex used by the internal /v1/knowledge_search\npath, which carries additional internal-only index names.");
 export type TakoSourceIndex = z.infer<typeof TakoSourceIndex>;
-
-export const TakoSourceSettings = z.object({ "count": z.number().int().gte(1).lte(20).describe("Maximum number of results to return for this source. 1-20.").default(5), "include_contents": z.boolean().describe("Inline this source's underlying data (CSV for Tako cards, extracted text for web results) directly in the response.").default(false), "defer_data_retrieval": z.boolean().describe("Defer the expensive data-retrieval step: cards return faster with a semantic_description and a less detailed description. Mutually exclusive with include_contents (cannot inline data that was not fetched).").default(false) }).strict();
-export type TakoSourceSettings = z.infer<typeof TakoSourceSettings>;
 
 export const TextEvent = z.object({ "kind": z.literal("text").default("text"), "id": z.string(), "delta": z.string(), "done": z.boolean().default(false) });
 export type TextEvent = z.infer<typeof TextEvent>;
