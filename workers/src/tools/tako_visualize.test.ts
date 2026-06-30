@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import takoVisualize, { buildVisualizeBody } from "./tako_visualize.js";
-import { CreateCardRequest, KnowledgeCard } from "../generated/schemas.js";
+import { CreateCardRequest, ThinVizCard } from "../generated/schemas.js";
 import {
   bodyOf,
   jsonResponse,
@@ -28,9 +28,10 @@ const CTX: ToolContext = {
   client: "claude",
 };
 
-// Full KnowledgeCard-shaped fixture matching the backend's actual response
-// from POST /api/v1/thin_viz/create/. All non-optional fields must be present
-// (they accept null, but must not be absent).
+// Full thin_viz/create wire fixture matching the backend's actual response.
+// The view emits a full card dump, so the legacy KnowledgeCard fields
+// (sources, methodologies, source_indexes, data_url, relevance) are still
+// present as null even though ThinVizCard documents only the populated subset.
 const CARD_RESPONSE = {
   card_id: "card_abc123",
   title: "Monthly Revenue",
@@ -138,7 +139,7 @@ describe("tako_visualize handler", () => {
   });
 
   it("throws an actionable error when the backend returns no card_id", async () => {
-    // A well-shaped KnowledgeCard response but with card_id: null — the
+    // A well-shaped ThinVizCard response but with card_id: null — the
     // handler must still throw a card_id-specific error.
     mockFetchSequence([jsonResponse(200, { ...CARD_RESPONSE, card_id: null })]);
 
@@ -182,7 +183,7 @@ describe("tako_visualize input schema", () => {
 // --- Contract guard tests (A7) ---
 
 // Representative thin_viz/create response that the backend returns
-// (a KnowledgeCard-shaped payload).
+// (a full card dump; ThinVizCard documents only the populated subset).
 const KNOWLEDGE_CARD_WIRE = {
   card_id: "card_abc123",
   title: "Monthly Revenue",
@@ -199,12 +200,12 @@ const KNOWLEDGE_CARD_WIRE = {
   visualization_data: null,
 };
 
-describe("tako_visualize output contract guard (KnowledgeCard wire)", () => {
-  it("generated KnowledgeCard schema accepts a representative thin_viz/create response", () => {
-    expect(() => KnowledgeCard.parse(KNOWLEDGE_CARD_WIRE)).not.toThrow();
+describe("tako_visualize output contract guard (ThinVizCard wire)", () => {
+  it("generated ThinVizCard schema accepts a representative thin_viz/create response", () => {
+    expect(() => ThinVizCard.parse(KNOWLEDGE_CARD_WIRE)).not.toThrow();
   });
 
-  it("generated KnowledgeCard schema accepts the minimal CARD_RESPONSE (only card_id present)", () => {
+  it("generated ThinVizCard schema accepts the minimal CARD_RESPONSE (only card_id present)", () => {
     // The real backend always includes card_id; most other fields are nullable.
     const minimal = {
       card_id: "card_abc123",
@@ -221,7 +222,7 @@ describe("tako_visualize output contract guard (KnowledgeCard wire)", () => {
       relevance: null,
       visualization_data: null,
     };
-    expect(() => KnowledgeCard.parse(minimal)).not.toThrow();
+    expect(() => ThinVizCard.parse(minimal)).not.toThrow();
   });
 });
 
