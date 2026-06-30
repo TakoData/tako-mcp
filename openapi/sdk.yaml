@@ -192,7 +192,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/KnowledgeCard'
+                $ref: '#/components/schemas/ThinVizCard'
         '400':
           description: Bad request - validation error or component mismatch
           content:
@@ -686,60 +686,6 @@ components:
       - error_message
       - error_type
       title: BaseAPIError
-    CardSourceIndex:
-      type: string
-      enum:
-      - tako
-      - web
-      - connected_data
-      - tako_deep_v2
-      title: CardSourceIndex
-    CardSourceIndexSegment:
-      properties:
-        index_type:
-          $ref: '#/components/schemas/CardSourceIndex'
-        segment_id:
-          type: string
-          title: Segment Id
-          description: An ID for a segment of a source index
-          examples:
-          - '123'
-      type: object
-      required:
-      - index_type
-      - segment_id
-      title: CardSourceIndexSegment
-      description: 'A segment of a source index. Within a source index, a segment
-        is a subset of the data.
-
-        For connected data, a segment is a subset of connected files. A segment may
-        be used for
-
-        multi-tenant data e.g. using a segment per customer.'
-    CardSourcePrivateIndex:
-      properties:
-        index_type:
-          $ref: '#/components/schemas/CardSourceIndex'
-        segment_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Segment Id
-          description: An ID for a segment of a source index (optional for private
-            indexes)
-          examples:
-          - '123'
-        private_index_id:
-          type: string
-          title: Private Index Id
-          description: An ID for a private index
-          examples:
-          - '123'
-      type: object
-      required:
-      - index_type
-      - private_index_id
-      title: CardSourcePrivateIndex
     ClassifyRequest:
       properties:
         queries:
@@ -1102,220 +1048,6 @@ components:
           default: heartbeat
       type: object
       title: HeartbeatEvent
-    IdealVizDecision:
-      properties:
-        property_path:
-          type: string
-          title: Property Path
-          description: ChartJS property path
-          examples:
-          - scales.y.ticks.color
-        property_path_display_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Property Path Display Name
-          description: Human-friendly display name for the property path
-          examples:
-          - Y-axis tick color
-          - Legend display
-          - Chart type
-        reason:
-          type: string
-          title: Reason
-          description: Why this decision was made
-          examples:
-          - Using bar instead of line because there are too few data points
-      type: object
-      required:
-      - property_path
-      - reason
-      title: IdealVizDecision
-      description: "Documents a decision made by Tako's ideal viz logic for a specific\
-        \ ChartJS property.\n\n.. deprecated::\n    This class is deprecated in favor\
-        \ of the structured VizDecisions system.\n    Use VizDecisions with specific\
-        \ decision types (AggregationDecision, VizTypeDecision, etc.)\n    instead.\
-        \ The new system provides:\n    - Structured decision tracking with typed\
-        \ fields\n    - Override support (apply_override, reset_to_default)\n    -\
-        \ Better LLM context generation (get_summary_for_llm)\n\n    Example migration:\n\
-        \        # Old way (deprecated):\n        decisions.append(IdealVizDecision(\n\
-        \            property_path=\"y_aggregation\",\n            reason=\"Applied\
-        \ PCSS due to different units\"\n        ))\n\n        # New way:\n      \
-        \  viz_decisions.set_decision(\n            DecisionType.LEFT_AXIS_AGGREGATION,\n\
-        \            AggregationDecision(\n                value=\"pcss\",\n     \
-        \           source=DecisionSource.DATA_DRIVEN,\n                reason_code=\"\
-        different_units\",\n                reason_display=\"Applied PCSS due to different\
-        \ units\",\n            )\n        )\n\n    This class will be removed in\
-        \ a future version."
-    KnowledgeCard:
-      properties:
-        card_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Card Id
-          description: The unique ID of the knowledge card
-          examples:
-          - jLmsqH4NfXFLqhWnZqhM
-        title:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Title
-          description: The title of the knowledge card
-          examples:
-          - Nvidia, Advanced Micro Devices - Full Time Employees
-        description:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Description
-          description: The description of the knowledge card
-          examples:
-          - This is a time series bar chart showing 2 series between 12:00AM UTC-04:00
-            on 04/01/2013 and 08:55PM UTC on 04/30/2025. Nvidia Full Time Employees
-            latest value was at 12:00AM UTC on 12-31-2024, and had a final value of
-            36.0K Employees, or 308.72% growth since 12:00AM UTC on 12-31-2013, with
-            a maximum value of 36.0K Employees at 12:00AM UTC on 12-31-2024 and a
-            minimum value of 8.81K Employees at 12:00AM UTC on 12-31-2013; Advanced
-            Micro Devices Full Time Employees latest value was at 12:00AM UTC on 12-31-2024,
-            and had a final value of 28.0K Employees, or 162.39% growth since 12:00AM
-            UTC on 12-31-2013, with a maximum value of 28.0K Employees at 12:00AM
-            UTC on 12-31-2024 and a minimum value of 8.2K Employees at 12:00AM UTC
-            on 12-31-2016. The source of the data is S&P Global. S&P Global is a US-based
-            financial data and analytics company that provides products and services
-            to the financial industry.
-        semantic_description:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Semantic Description
-          description: A lightweight, data-free description of the card's subject
-            (metric, entities, time span, source). Present even when full data is
-            deferred, so consumers can judge relevance before fetching the chart.
-          examples:
-          - 'Quarterly revenue for Apple Inc., in USD, 2019 to 2024. Source: S&P Global.'
-        webpage_url:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Webpage Url
-          description: URL of a webpage hosting the interactive knowledge card
-          examples:
-          - https://tako.com/card/jLmsqH4NfXFLqhWnZqhM/
-        image_url:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Image Url
-          description: URL of a static image of the knowledge card
-          examples:
-          - https://tako.com/api/v1/image/jLmsqH4NfXFLqhWnZqhM/
-        embed_url:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Embed Url
-          description: URL of an embeddable iframe of the knowledge card
-          examples:
-          - https://tako.com/embed/jLmsqH4NfXFLqhWnZqhM/
-        sources:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/KnowledgeCardSource'
-            type: array
-          - type: 'null'
-          title: Sources
-          description: The sources of the knowledge card
-        methodologies:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/KnowledgeCardMethodology'
-            type: array
-          - type: 'null'
-          title: Methodologies
-          description: The methodologies of the knowledge card
-        source_indexes:
-          anyOf:
-          - items:
-              anyOf:
-              - $ref: '#/components/schemas/CardSourceIndex'
-              - $ref: '#/components/schemas/CardSourceIndexSegment'
-            type: array
-          - type: 'null'
-          title: Source Indexes
-          description: The source indexes of the knowledge card
-        card_type:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Card Type
-          description: The type of card
-          examples:
-          - company
-          - chart
-          - table
-          - text
-        data_url:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Data Url
-          description: URL of downloadable data of the knowledge card. This needs
-            to be enabled on an account level. Contact support to enable this feature.
-        relevance:
-          anyOf:
-          - $ref: '#/components/schemas/KnowledgeCardRelevance'
-          - type: 'null'
-          description: How relevant this knowledge card is to the search query
-          examples:
-          - High
-          - Medium
-          - Low
-        visualization_data:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Visualization Data
-          description: The visualization data of the knowledge card. Null when the
-            card's sources do not permit raw data export (protected sources); the
-            card remains renderable via embed_url.
-          examples:
-          - data:
-            - x: '2013'
-              y: 10000
-            - x: '2014'
-              y: 20000
-            viz_config:
-              title: Nvidia, Advanced Micro Devices - Full Time Employees
-        ideal_viz_decisions:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/IdealVizDecision'
-            type: array
-          - type: 'null'
-          title: Ideal Viz Decisions
-          description: 'Decisions made by Tako''s ideal viz logic when constructing
-            this visualization. DEPRECATED: Use ChartConfig.viz_decisions for the
-            new structured system with override support.'
-          deprecated: true
-      type: object
-      required:
-      - card_id
-      - title
-      - description
-      - webpage_url
-      - image_url
-      - embed_url
-      - sources
-      - methodologies
-      - source_indexes
-      - card_type
-      - data_url
-      - relevance
-      - visualization_data
-      title: KnowledgeCard
     KnowledgeCardMethodology:
       properties:
         methodology_name:
@@ -1353,73 +1085,6 @@ components:
       - Medium
       - Low
       title: KnowledgeCardRelevance
-    KnowledgeCardSource:
-      properties:
-        source_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Source Name
-          description: The name of the source
-          examples:
-          - S&P Global
-          - The World Bank
-        source_description:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Source Description
-          description: The description of the source
-          examples:
-          - S&P Global is a US-based financial data and analytics company that provides
-            products and services to the financial industry.
-          - The World Bank is an international financial institution that provides
-            financial and technical assistance to developing countries to help them
-            achieve sustainable economic growth and improve living conditions.
-        source_index:
-          anyOf:
-          - $ref: '#/components/schemas/CardSourceIndex'
-          - $ref: '#/components/schemas/CardSourceIndexSegment'
-          - $ref: '#/components/schemas/CardSourcePrivateIndex'
-          title: Source Index
-          description: The index of the source
-          examples:
-          - tako
-          - web
-          - connected_data
-          - index_type: connected_data
-            segment_id: '123'
-          - index_type: connected_data
-            private_index_id: '123'
-            segment_id: '123'
-        url:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Url
-          description: The URL of the source
-          examples:
-          - https://xignite.com
-          - https://stats.com
-        source_text:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Source Text
-          description: Raw excerpt(s) retrieved from the source page — the unmodified
-            web content the answer was grounded in, NOT the synthesized answer. Populated
-            for WEB sources; null for sources that don't carry an extracted excerpt
-            (e.g. TAKO sources).
-          examples:
-          - Domestic (28.1%) $154,061,981 | International (71.9%) $394,144,531 | Worldwide
-            $548,206,512. Release Date Nov 7, 2025. Distributor 20th Century Studios.
-      type: object
-      required:
-      - source_name
-      - source_description
-      - source_index
-      - url
-      title: KnowledgeCardSource
     OutputSettings:
       properties:
         image_dark_mode:
@@ -1770,7 +1435,7 @@ components:
         sources:
           anyOf:
           - items:
-              $ref: '#/components/schemas/KnowledgeCardSource'
+              $ref: '#/components/schemas/TakoCardSource'
             type: array
           - type: 'null'
           title: Sources
@@ -1784,9 +1449,7 @@ components:
         source_indexes:
           anyOf:
           - items:
-              anyOf:
-              - $ref: '#/components/schemas/CardSourceIndex'
-              - $ref: '#/components/schemas/CardSourceIndexSegment'
+              $ref: '#/components/schemas/TakoSourceIndex'
             type: array
           - type: 'null'
           title: Source Indexes
@@ -1819,6 +1482,70 @@ components:
         legacy KnowledgeCard minus data_url / visualization_data / ideal_viz_decisions,
 
         plus a `content` download descriptor.'
+    TakoCardSource:
+      properties:
+        source_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Name
+          description: The name of the source
+          examples:
+          - S&P Global
+          - The World Bank
+        source_description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Description
+          description: The description of the source
+        source_index:
+          $ref: '#/components/schemas/TakoSourceIndex'
+          description: The index of the source
+          examples:
+          - data
+          - web
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+          description: The URL of the source
+          examples:
+          - https://xignite.com
+        source_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Text
+          description: Raw excerpt(s) retrieved from the source page — the unmodified
+            web content the answer was grounded in. Populated for WEB sources; null
+            for DATA sources.
+      type: object
+      required:
+      - source_index
+      title: TakoCardSource
+      description: 'A source backing a TakoCard, on the SDK surfaces. Mirrors the
+        legacy
+
+        KnowledgeCardSource minus the segment/private-index variants (unreachable
+        on
+
+        these surfaces) and using the {data, web} TakoSourceIndex taxonomy.'
+    TakoSourceIndex:
+      type: string
+      enum:
+      - data
+      - web
+      title: TakoSourceIndex
+      description: 'Public source taxonomy for the SDK card surfaces (v3 search, v1
+        answer,
+
+        agent). Symmetric with the request taxonomy {data, web}. Distinct from the
+
+        internal/legacy CardSourceIndex used by the internal /v1/knowledge_search
+
+        path, which carries additional internal-only index names.'
     TakoSourceSettings:
       properties:
         count:
@@ -1866,6 +1593,100 @@ components:
       - id
       - delta
       title: TextEvent
+    ThinVizCard:
+      properties:
+        card_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Card Id
+          description: Public ID of the created card.
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+          description: Card title.
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+          description: Card description.
+        webpage_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webpage Url
+          description: Hosted page URL for the card.
+        image_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image Url
+          description: Static preview image URL for the card.
+        embed_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Embed Url
+          description: Embeddable URL for the card.
+        card_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Card Type
+          description: The card/chart type (e.g. 'bar').
+        visualization_data:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Visualization Data
+          description: Inline chart config + data for rendering the card.
+          examples:
+          - data:
+            - x: '2013'
+              y: 10000
+            viz_config:
+              title: Revenue
+        embed_mode:
+          anyOf:
+          - type: string
+            enum:
+            - post
+            - postmessage
+          - type: 'null'
+          title: Embed Mode
+          description: 'How the embed is delivered: ''postmessage'' for postMessage
+            embeds, ''post'' otherwise.'
+      type: object
+      title: ThinVizCard
+      description: 'Response for POST /api/v1/thin_viz/create — a created visualization
+        card.
+
+
+        Distinct from KnowledgeCard: thin_viz builds a self-contained chart from a
+
+        caller-supplied component schema, so it never carries retrieval provenance
+
+        (sources / source_indexes) or downloadable raw data. The card is rendered
+        via
+
+        `embed_url` and previewed via `image_url`; `visualization_data` carries the
+
+        inline chart config + data.
+
+
+        Documents the populated subset of the response. The view emits a full
+
+        KnowledgeCard dump, so the wire payload also includes the remaining
+
+        KnowledgeCard fields (sources, source_indexes, methodologies, data_url, etc.)
+
+        as null; those are intentionally undocumented here (always null for thin_viz)
+
+        so the public schema does not pull in the internal CardSourceIndex taxonomy.'
     ToolCallEvent:
       properties:
         kind:
