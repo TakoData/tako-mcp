@@ -88,41 +88,6 @@ paths:
                 $ref: '#/components/schemas/BaseAPIError'
       security:
       - apiKey: []
-  /v1/classify:
-    post:
-      tags:
-      - tako
-      summary: Classify queries
-      description: Score a batch of queries for whether Tako search will return a
-        result. Returns a probability and a recall-skewed keep flag per query. Free;
-        intended for pre-filtering before /v3/search.
-      operationId: classify
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ClassifyRequest'
-      responses:
-        '200':
-          description: A keep/score classification per input query, in order
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClassifyResponse'
-        '400':
-          description: Invalid request data (validation or malformed body).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BaseAPIError'
-        '401':
-          description: Missing or invalid API key.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BaseAPIError'
-      security:
-      - apiKey: []
   /beta/graph/search:
     get:
       tags:
@@ -134,7 +99,8 @@ paths:
         or /v1/answer for that specific entity + metric combination. Public and unauthenticated.
         Note: results are not yet filtered to the production-ready inventory, so a
         returned metric or entity that is not backed by a production fact table may
-        404 when passed to /beta/graph/related.'
+        404 when passed to /beta/graph/related. Pass subtype to scope results to one
+        entity class (see the subtype enum).'
       operationId: graphSearch
       parameters:
       - description: Search text (min 2 chars).
@@ -154,6 +120,101 @@ paths:
         schema:
           type: integer
         name: limit
+        in: query
+      - description: 'Filter to a single entity class (e.g. Countries, Companies).
+          Implies entity-only results; an explicit non-entity ''types'' is a 400.
+          Note: results are drawn from a bounded candidate window (min(limit*5, 200))
+          before filtering, so a response shorter than `limit` does not imply no further
+          matches exist.'
+        required: false
+        schema:
+          type: string
+          enum:
+          - Companies
+          - Cryptocurrencies
+          - Financial Instruments
+          - Internet Browsers
+          - Commodities
+          - People
+          - Currencies
+          - Stock Exchanges
+          - Securities
+          - IPOs
+          - Government Debt Instruments
+          - Treasury Securities
+          - Airports
+          - Airlines
+          - Vehicle Types
+          - Transportation Modes
+          - Drugs
+          - Drug Categories
+          - Diseases
+          - Chemical Elements
+          - Chemical Compounds
+          - Celestial Bodies
+          - Occupations
+          - Social Media Platforms
+          - Operating Systems
+          - Search Engines
+          - Device Types
+          - LLMs
+          - LLM Families
+          - LLM Benchmarks
+          - Industries
+          - NAICS Industries
+          - BLS Industries
+          - PSC Categories
+          - Federal Contractors
+          - Federal Agencies
+          - Federal Subagencies
+          - ICE Contracts
+          - ICE Contractors
+          - Elections
+          - Political Offices
+          - Pollsters
+          - Agricultural Products
+          - Tobacco Products
+          - Prediction Markets
+          - Prediction Events
+          - Real Estate Property Types
+          - Continents
+          - World Regions
+          - Countries
+          - States
+          - Counties
+          - Metro Areas
+          - Cities
+          - F1 Drivers
+          - F1 Teams
+          - F1 Circuits
+          - F1 Events
+          - NASCAR Drivers
+          - NASCAR Teams
+          - NASCAR Tracks
+          - NASCAR Events
+          - NASCAR Races
+          - NASCAR Owners
+          - NASCAR Manufacturers
+          - Soccer Teams
+          - Soccer Players
+          - Soccer Competitions
+          - Soccer Conferences
+          - Basketball Teams
+          - Basketball Players
+          - Basketball Conferences
+          - Basketball Divisions
+          - Baseball Teams
+          - Baseball Players
+          - Baseball Conferences
+          - Baseball Divisions
+          - Baseball Competitions
+          - Football Teams
+          - Football Players
+          - Football Conferences
+          - Football Divisions
+          - Sports
+          - Sports Leagues
+        name: subtype
         in: query
       responses:
         '200':
@@ -809,34 +870,6 @@ components:
       - error_message
       - error_type
       title: BaseAPIError
-    ClassifyRequest:
-      properties:
-        queries:
-          items:
-            type: string
-          type: array
-          maxItems: 200
-          minItems: 1
-          title: Queries
-          description: Queries to classify (1..200). Each is scored independently.
-      type: object
-      required:
-      - queries
-      title: ClassifyRequest
-      description: Request for POST /api/v1/classify — a batch of queries to score.
-    ClassifyResponse:
-      properties:
-        results:
-          items:
-            $ref: '#/components/schemas/QueryClassification'
-          type: array
-          title: Results
-      type: object
-      title: ClassifyResponse
-      description: 'Response for POST /api/v1/classify — one classification per input
-        query,
-
-        in request order.'
     ComponentConfig:
       properties:
         component_type:
@@ -1149,6 +1182,94 @@ components:
         only chart references; the answer text streams in `text` events and the
 
         structured result arrives in the terminal `agent_result` event, not here.'
+    EntityClassName:
+      type: string
+      enum:
+      - Companies
+      - Cryptocurrencies
+      - Financial Instruments
+      - Internet Browsers
+      - Commodities
+      - People
+      - Currencies
+      - Stock Exchanges
+      - Securities
+      - IPOs
+      - Government Debt Instruments
+      - Treasury Securities
+      - Airports
+      - Airlines
+      - Vehicle Types
+      - Transportation Modes
+      - Drugs
+      - Drug Categories
+      - Diseases
+      - Chemical Elements
+      - Chemical Compounds
+      - Celestial Bodies
+      - Occupations
+      - Social Media Platforms
+      - Operating Systems
+      - Search Engines
+      - Device Types
+      - LLMs
+      - LLM Families
+      - LLM Benchmarks
+      - Industries
+      - NAICS Industries
+      - BLS Industries
+      - PSC Categories
+      - Federal Contractors
+      - Federal Agencies
+      - Federal Subagencies
+      - ICE Contracts
+      - ICE Contractors
+      - Elections
+      - Political Offices
+      - Pollsters
+      - Agricultural Products
+      - Tobacco Products
+      - Prediction Markets
+      - Prediction Events
+      - Real Estate Property Types
+      - Continents
+      - World Regions
+      - Countries
+      - States
+      - Counties
+      - Metro Areas
+      - Cities
+      - F1 Drivers
+      - F1 Teams
+      - F1 Circuits
+      - F1 Events
+      - NASCAR Drivers
+      - NASCAR Teams
+      - NASCAR Tracks
+      - NASCAR Events
+      - NASCAR Races
+      - NASCAR Owners
+      - NASCAR Manufacturers
+      - Soccer Teams
+      - Soccer Players
+      - Soccer Competitions
+      - Soccer Conferences
+      - Basketball Teams
+      - Basketball Players
+      - Basketball Conferences
+      - Basketball Divisions
+      - Baseball Teams
+      - Baseball Players
+      - Baseball Conferences
+      - Baseball Divisions
+      - Baseball Competitions
+      - Football Teams
+      - Football Players
+      - Football Conferences
+      - Football Divisions
+      - Sports
+      - Sports Leagues
+      title: EntityClassName
     ErrorObject:
       properties:
         code:
@@ -1183,6 +1304,10 @@ components:
           - type: string
           - type: 'null'
           title: Description
+        subtype:
+          anyOf:
+          - $ref: '#/components/schemas/EntityClassName'
+          - type: 'null'
       type: object
       required:
       - id
@@ -1313,23 +1438,6 @@ components:
       additionalProperties: false
       type: object
       title: OutputSettings
-    QueryClassification:
-      properties:
-        query:
-          type: string
-          title: Query
-        score:
-          type: number
-          title: Score
-        keep:
-          type: boolean
-          title: Keep
-      type: object
-      required:
-      - query
-      - score
-      - keep
-      title: QueryClassification
     ReasoningEvent:
       properties:
         kind:
