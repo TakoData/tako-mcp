@@ -72,12 +72,6 @@ export type AnswerResponse = z.infer<typeof AnswerResponse>;
 export const BaseAPIError = z.object({ "error_message": z.string(), "error_type": z.lazy(() => APIErrorType) });
 export type BaseAPIError = z.infer<typeof BaseAPIError>;
 
-export const ClassifyRequest = z.object({ "queries": z.array(z.string()).min(1).max(200).describe("Queries to classify (1..200). Each is scored independently.") }).describe("Request for POST /api/v1/classify — a batch of queries to score.");
-export type ClassifyRequest = z.infer<typeof ClassifyRequest>;
-
-export const ClassifyResponse = z.object({ "results": z.array(z.lazy(() => QueryClassification)).optional() }).describe("Response for POST /api/v1/classify — one classification per input query,\nin request order.");
-export type ClassifyResponse = z.infer<typeof ClassifyResponse>;
-
 export const ComponentConfig = z.object({ "component_type": z.lazy(() => ComponentTypeEnum).describe("Component type:\n- bubble: Bubble chart (scatter plot with size dimension for 3-variable data)\n- categorical_bar: Bar chart with categorical x-axis (e.g., regions, products)\n- choropleth: Choropleth map showing geographic data with color intensity by region (US states or world)\n- data_table_chart: Bar chart with auto-generated data table below showing values\n- financial_boxes: Financial metric boxes with values and growth indicators (e.g., Revenue, EPS)\n- generic_timeseries: timeseries chart\n- header: Card header with title and description, automatically styled with theme\n- heatmap: 2D heatmap with color intensity representing values (e.g., correlation matrix)\n- histogram: Histogram chart showing frequency distribution of values\n- person_card: Person profile card from an Exa person search result (includes career, education, and about tabs)\n- pie: Pie chart showing proportional data as slices of a circle\n- scatter: Scatter plot showing relationships between two continuous variables\n- table: Data table with configurable columns and rows\n- boxplot: Box plot showing statistical distributions (min, Q1, median, Q3, max)\n- treemap: Treemap chart showing hierarchical data as proportional rectangles\n- waterfall: Waterfall chart showing incremental positive/negative changes (e.g., income statement breakdown)"), "component_variant": z.union([z.string(), z.null()]).describe("Component variant (e.g., 'simple', 'financial')").optional(), "config": z.record(z.string(), z.any()).describe("Component configuration data") }).describe("Configuration for a single component in a card.");
 export type ComponentConfig = z.infer<typeof ComponentConfig>;
 
@@ -105,10 +99,13 @@ export type CreateCardRequest = z.infer<typeof CreateCardRequest>;
 export const DataPipelineAnswerEvent = z.object({ "kind": z.literal("data_pipeline_answer").default("data_pipeline_answer"), "id": z.string(), "chart_refs": z.array(z.string()).optional() }).describe("Signals that the data pipeline produced chart(s) for the answer. Carries\nonly chart references; the answer text streams in `text` events and the\nstructured result arrives in the terminal `agent_result` event, not here.");
 export type DataPipelineAnswerEvent = z.infer<typeof DataPipelineAnswerEvent>;
 
+export const EntityClassName = z.enum(["Companies","Cryptocurrencies","Financial Instruments","Internet Browsers","Commodities","People","Currencies","Stock Exchanges","Securities","IPOs","Government Debt Instruments","Treasury Securities","Airports","Airlines","Vehicle Types","Transportation Modes","Drugs","Drug Categories","Diseases","Chemical Elements","Chemical Compounds","Celestial Bodies","Occupations","Social Media Platforms","Operating Systems","Search Engines","Device Types","LLMs","LLM Families","LLM Benchmarks","Industries","NAICS Industries","BLS Industries","PSC Categories","Federal Contractors","Federal Agencies","Federal Subagencies","ICE Contracts","ICE Contractors","Elections","Political Offices","Pollsters","Agricultural Products","Tobacco Products","Prediction Markets","Prediction Events","Real Estate Property Types","Continents","World Regions","Countries","States","Counties","Metro Areas","Cities","F1 Drivers","F1 Teams","F1 Circuits","F1 Events","NASCAR Drivers","NASCAR Teams","NASCAR Tracks","NASCAR Events","NASCAR Races","NASCAR Owners","NASCAR Manufacturers","Soccer Teams","Soccer Players","Soccer Competitions","Soccer Conferences","Basketball Teams","Basketball Players","Basketball Conferences","Basketball Divisions","Baseball Teams","Baseball Players","Baseball Conferences","Baseball Divisions","Baseball Competitions","Football Teams","Football Players","Football Conferences","Football Divisions","Sports","Sports Leagues"]);
+export type EntityClassName = z.infer<typeof EntityClassName>;
+
 export const ErrorObject = z.object({ "code": z.string(), "message": z.string() });
 export type ErrorObject = z.infer<typeof ErrorObject>;
 
-export const GraphNode = z.object({ "id": z.string().describe("Opaque, human-friendly public id (<name-slug>-<token>)."), "type": z.lazy(() => GraphNodeType), "name": z.string(), "aliases": z.array(z.string()).optional(), "description": z.union([z.string(), z.null()]).optional() });
+export const GraphNode = z.object({ "id": z.string().describe("Opaque, human-friendly public id (<name-slug>-<token>)."), "type": z.lazy(() => GraphNodeType), "name": z.string(), "aliases": z.array(z.string()).optional(), "description": z.union([z.string(), z.null()]).optional(), "subtype": z.union([z.lazy(() => EntityClassName), z.null()]).optional() });
 export type GraphNode = z.infer<typeof GraphNode>;
 
 export const GraphNodeType = z.enum(["source","metric","entity"]);
@@ -134,9 +131,6 @@ export type KnowledgeCardRelevance = z.infer<typeof KnowledgeCardRelevance>;
 
 export const OutputSettings = z.object({ "image_dark_mode": z.union([z.boolean(), z.null()]).describe("Whether to render card preview images in dark mode.").optional(), "force_refresh": z.boolean().describe("Instant mode only. When false (default), instant returns existing cached embeds as-is (fastest) and never writes. When true, instant retrieves data for embeds that are missing or stale, then creates or refreshes their static embeds — slower for those, but it writes the result. Embeds already fresh (within the refresh cadence) are still served as-is, not re-retrieved or updated.").default(false) }).strict();
 export type OutputSettings = z.infer<typeof OutputSettings>;
-
-export const QueryClassification = z.object({ "query": z.string(), "score": z.number(), "keep": z.boolean() });
-export type QueryClassification = z.infer<typeof QueryClassification>;
 
 export const ReasoningEvent = z.object({ "kind": z.literal("reasoning").default("reasoning"), "id": z.string(), "delta": z.string(), "done": z.boolean().default(false) });
 export type ReasoningEvent = z.infer<typeof ReasoningEvent>;
