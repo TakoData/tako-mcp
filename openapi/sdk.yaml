@@ -545,6 +545,129 @@ components:
       - NOT_FOUND
       - SERVICE_UNAVAILABLE
       title: APIErrorType
+    AgentAnswerAssumption:
+      properties:
+        title:
+          type: string
+          title: Title
+        description:
+          type: string
+          title: Description
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        source_ref:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Source Ref
+      type: object
+      required:
+      - title
+      - description
+      title: AgentAnswerAssumption
+    AgentAnswerCitation:
+      properties:
+        index:
+          type: integer
+          title: Index
+        title:
+          type: string
+          title: Title
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+        source_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Name
+      type: object
+      required:
+      - index
+      - title
+      title: AgentAnswerCitation
+      description: 'One indexed source behind the answer. Every inline [n] marker
+        in
+
+        AgentResult.answer joins to a citation''s index, but a citation may also
+
+        back a chart/card without an inline marker — markers map to citations,
+
+        not 1:1. Covers web and Tako sources alike.'
+    AgentAnswerDefinition:
+      properties:
+        term:
+          type: string
+          title: Term
+        definition:
+          type: string
+          title: Definition
+        source_ref:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Source Ref
+      type: object
+      required:
+      - term
+      - definition
+      title: AgentAnswerDefinition
+    AgentAnswerMetadata:
+      properties:
+        citations:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/AgentAnswerCitation'
+            type: array
+          - type: 'null'
+          title: Citations
+        definitions:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/AgentAnswerDefinition'
+            type: array
+          - type: 'null'
+          title: Definitions
+        assumptions:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/AgentAnswerAssumption'
+            type: array
+          - type: 'null'
+          title: Assumptions
+        methodology:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/AgentAnswerMethodologyNote'
+            type: array
+          - type: 'null'
+          title: Methodology
+      type: object
+      title: AgentAnswerMetadata
+      description: 'Supplementary answer metadata. All fields optional — population
+        varies
+
+        by effort/engine (low fills citations only today); new components are
+
+        added here additively.'
+    AgentAnswerMethodologyNote:
+      properties:
+        title:
+          type: string
+          title: Title
+        description:
+          type: string
+          title: Description
+      type: object
+      required:
+      - title
+      - description
+      title: AgentAnswerMethodologyNote
     AgentEffortLevel:
       type: string
       enum:
@@ -586,6 +709,10 @@ components:
             $ref: '#/components/schemas/WebResult'
           type: array
           title: Web Results
+        metadata:
+          anyOf:
+          - $ref: '#/components/schemas/AgentAnswerMetadata'
+          - type: 'null'
         request_id:
           anyOf:
           - type: string
@@ -593,8 +720,12 @@ components:
           title: Request Id
       type: object
       title: AgentResult
-      description: Final agent output. answer is markdown; cards reuse the sibling
-        TakoCard.
+      description: 'Final agent output. answer is markdown prose with [n] citation
+        markers;
+
+        cards reuse the sibling TakoCard; metadata carries the structured
+
+        components behind the answer.'
     AgentResultEvent:
       properties:
         kind:

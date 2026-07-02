@@ -7,13 +7,28 @@ import { z } from "zod";
 export const APIErrorType = z.enum(["BAD_REQUEST","AUTHENTICATION_ERROR","INTERNAL_SERVER_ERROR","RELEVANT_RESULTS_NOT_FOUND","RATE_LIMIT_EXCEEDED","PAYMENT_REQUIRED","REQUEST_TIMEOUT","FORBIDDEN","NOT_FOUND","SERVICE_UNAVAILABLE"]);
 export type APIErrorType = z.infer<typeof APIErrorType>;
 
+export const AgentAnswerAssumption = z.object({ "title": z.string(), "description": z.string(), "category": z.union([z.string(), z.null()]).optional(), "source_ref": z.union([z.number().int(), z.null()]).optional() });
+export type AgentAnswerAssumption = z.infer<typeof AgentAnswerAssumption>;
+
+export const AgentAnswerCitation = z.object({ "index": z.number().int(), "title": z.string(), "url": z.union([z.string(), z.null()]).optional(), "source_name": z.union([z.string(), z.null()]).optional() }).describe("One indexed source behind the answer. Every inline [n] marker in\nAgentResult.answer joins to a citation's index, but a citation may also\nback a chart/card without an inline marker — markers map to citations,\nnot 1:1. Covers web and Tako sources alike.");
+export type AgentAnswerCitation = z.infer<typeof AgentAnswerCitation>;
+
+export const AgentAnswerDefinition = z.object({ "term": z.string(), "definition": z.string(), "source_ref": z.union([z.number().int(), z.null()]).optional() });
+export type AgentAnswerDefinition = z.infer<typeof AgentAnswerDefinition>;
+
+export const AgentAnswerMetadata = z.object({ "citations": z.union([z.array(z.lazy(() => AgentAnswerCitation)), z.null()]).optional(), "definitions": z.union([z.array(z.lazy(() => AgentAnswerDefinition)), z.null()]).optional(), "assumptions": z.union([z.array(z.lazy(() => AgentAnswerAssumption)), z.null()]).optional(), "methodology": z.union([z.array(z.lazy(() => AgentAnswerMethodologyNote)), z.null()]).optional() }).describe("Supplementary answer metadata. All fields optional — population varies\nby effort/engine (low fills citations only today); new components are\nadded here additively.");
+export type AgentAnswerMetadata = z.infer<typeof AgentAnswerMetadata>;
+
+export const AgentAnswerMethodologyNote = z.object({ "title": z.string(), "description": z.string() });
+export type AgentAnswerMethodologyNote = z.infer<typeof AgentAnswerMethodologyNote>;
+
 export const AgentEffortLevel = z.enum(["low","medium"]).describe("Public effort taxonomy for the Agent API. `low` runs the fast data-pipeline\nretriever; `medium` (the default) runs the analytical orchestrator. `high` is\nnot yet exposed.");
 export type AgentEffortLevel = z.infer<typeof AgentEffortLevel>;
 
 export const AgentOutputSettings = z.object({ "image_dark_mode": z.union([z.boolean(), z.null()]).describe("Render card preview images in dark mode. Omit to use the default (dark).").optional() });
 export type AgentOutputSettings = z.infer<typeof AgentOutputSettings>;
 
-export const AgentResult = z.object({ "answer": z.union([z.string(), z.null()]).optional(), "cards": z.array(z.lazy(() => TakoCard)).optional(), "web_results": z.array(z.lazy(() => WebResult)).optional(), "request_id": z.union([z.string(), z.null()]).optional() }).describe("Final agent output. answer is markdown; cards reuse the sibling TakoCard.");
+export const AgentResult = z.object({ "answer": z.union([z.string(), z.null()]).optional(), "cards": z.array(z.lazy(() => TakoCard)).optional(), "web_results": z.array(z.lazy(() => WebResult)).optional(), "metadata": z.union([z.lazy(() => AgentAnswerMetadata), z.null()]).optional(), "request_id": z.union([z.string(), z.null()]).optional() }).describe("Final agent output. answer is markdown prose with [n] citation markers;\ncards reuse the sibling TakoCard; metadata carries the structured\ncomponents behind the answer.");
 export type AgentResult = z.infer<typeof AgentResult>;
 
 export const AgentResultEvent = z.object({ "kind": z.literal("agent_result").default("agent_result"), "id": z.string(), "data": z.lazy(() => AgentResult) });
