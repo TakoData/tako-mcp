@@ -554,7 +554,7 @@ components:
       description: 'Public effort taxonomy for the Agent API. `low` runs the fast
         data-pipeline
 
-        retriever (the default); `medium` runs the analytical orchestrator. `high`
+        retriever; `medium` (the default) runs the analytical orchestrator. `high`
         is
 
         not yet exposed.'
@@ -678,9 +678,10 @@ components:
             thread.
         effort:
           $ref: '#/components/schemas/AgentEffortLevel'
-          description: Agent effort. 'low' (default) returns fast factual results;
-            'medium' returns deeper analytical answers (slower).
-          default: low
+          description: Agent effort. 'low' returns fast results for simple queries;
+            'medium' (default) returns deeper analysis across multiple entities and
+            metrics (slower).
+          default: medium
         source_indexes:
           items:
             type: string
