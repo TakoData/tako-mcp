@@ -93,10 +93,10 @@ paths:
       tags:
       - tako
       summary: Search the data graph
-      description: 'Resolve a data source, metric, or entity in Tako''s data graph
-        by name. Use this to discover and confirm what data exists before querying
-        — e.g. resolve the metric and the entity you care about here, then ask /v3/search
-        or /v1/answer for that specific entity + metric combination. Public and unauthenticated.
+      description: 'Resolve a metric or entity in Tako''s data graph by name. Use
+        this to discover and confirm what data exists before querying — e.g. resolve
+        the metric and the entity you care about here, then ask /v3/search or /v1/answer
+        for that specific entity + metric combination. Public and unauthenticated.
         Note: results are not yet filtered to the production-ready inventory, so a
         returned metric or entity that is not backed by a production fact table may
         404 when passed to /beta/graph/related. Pass subtype to scope results to one
@@ -109,7 +109,7 @@ paths:
           type: string
         name: q
         in: query
-      - description: 'Comma-separated facets: source,metric,entity.'
+      - description: 'Comma-separated facets: metric,entity.'
         required: false
         schema:
           type: string
@@ -218,7 +218,7 @@ paths:
         in: query
       responses:
         '200':
-          description: Matching sources, metrics, and entities
+          description: Matching metrics and entities
           content:
             application/json:
               schema:
@@ -240,22 +240,21 @@ paths:
       tags:
       - tako
       summary: Get a graph node's related nodes
-      description: 'Explore what a node connects to: a source''s metrics and entities,
-        a metric''s sources and the entities it''s tracked for, or an entity''s available
-        metrics. Use it to find which entity + metric combinations Tako covers, then
-        query /v3/search or /v1/answer for that combination. Pass relation_type +
-        cursor to paginate one facet, and the optional q to narrow that facet by a
-        case-insensitive substring on name/aliases (e.g. metrics for an entity matching
-        ''gdp''). Public and unauthenticated.'
+      description: 'Explore what a node connects to: a metric''s entities (the things
+        it''s tracked for), or an entity''s available metrics. Use it to find which
+        entity + metric combinations Tako covers, then query /v3/search or /v1/answer
+        for that combination. Pass relation_type + cursor to paginate one facet, and
+        the optional q to narrow that facet by a case-insensitive substring on name/aliases
+        (e.g. metrics for an entity matching ''gdp''). Public and unauthenticated.'
       operationId: graphRelated
       parameters:
-      - description: Opaque public id of the node or source.
+      - description: Opaque public id of the node.
         required: true
         schema:
           type: string
         name: node_id
         in: query
-      - description: 'Paginate one facet: source, metric, or entity.'
+      - description: 'Paginate one facet: metric or entity.'
         required: false
         schema:
           type: string
@@ -1449,7 +1448,6 @@ components:
     GraphNodeType:
       type: string
       enum:
-      - source
       - metric
       - entity
       title: GraphNodeType
@@ -1594,15 +1592,12 @@ components:
       title: ReasoningEvent
     RelatedGroups:
       properties:
-        sources:
-          $ref: '#/components/schemas/RelationGroup'
         metrics:
           $ref: '#/components/schemas/RelationGroup'
         entities:
           $ref: '#/components/schemas/RelationGroup'
       type: object
       required:
-      - sources
       - metrics
       - entities
       title: RelatedGroups

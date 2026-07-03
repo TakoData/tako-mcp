@@ -123,7 +123,7 @@ export type ErrorObject = z.infer<typeof ErrorObject>;
 export const GraphNode = z.object({ "id": z.string().describe("Opaque, human-friendly public id (<name-slug>-<token>)."), "type": z.lazy(() => GraphNodeType), "name": z.string(), "aliases": z.array(z.string()).optional(), "description": z.union([z.string(), z.null()]).optional(), "subtype": z.union([z.lazy(() => EntityClassName), z.null()]).optional() });
 export type GraphNode = z.infer<typeof GraphNode>;
 
-export const GraphNodeType = z.enum(["source","metric","entity"]);
+export const GraphNodeType = z.enum(["metric","entity"]);
 export type GraphNodeType = z.infer<typeof GraphNodeType>;
 
 export const GraphRelatedResponse = z.object({ "node": z.lazy(() => GraphNode), "related": z.union([z.lazy(() => RelatedGroups), z.null()]).optional(), "relation": z.union([z.lazy(() => GraphRelationPage), z.null()]).optional() });
@@ -150,7 +150,7 @@ export type OutputSettings = z.infer<typeof OutputSettings>;
 export const ReasoningEvent = z.object({ "kind": z.literal("reasoning").default("reasoning"), "id": z.string(), "delta": z.string(), "done": z.boolean().default(false) });
 export type ReasoningEvent = z.infer<typeof ReasoningEvent>;
 
-export const RelatedGroups = z.object({ "sources": z.lazy(() => RelationGroup), "metrics": z.lazy(() => RelationGroup), "entities": z.lazy(() => RelationGroup) });
+export const RelatedGroups = z.object({ "metrics": z.lazy(() => RelationGroup), "entities": z.lazy(() => RelationGroup) });
 export type RelatedGroups = z.infer<typeof RelatedGroups>;
 
 export const RelationGroup = z.object({ "items": z.array(z.lazy(() => GraphNode)), "total": z.number().int() });
