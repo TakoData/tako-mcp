@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.2](https://github.com/TakoData/tako-mcp/compare/v0.7.1...v0.7.2) (2026-07-03)
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([911293c](https://github.com/TakoData/tako-mcp/commit/911293ca24fe74d9793efb06f7cada7faabfcd4b))
+* sync OpenAPI spec from monorepo ([a037307](https://github.com/TakoData/tako-mcp/commit/a0373072db7758dd6e4e2a188f1a07461c040b06))
+* sync OpenAPI spec from TakoData/tako ([087c1a9](https://github.com/TakoData/tako-mcp/commit/087c1a90314f84a5aa46283470c2cbb033715352))
+
 ## [0.7.1](https://github.com/TakoData/tako-mcp/compare/v0.7.0...v0.7.1) (2026-07-02)
 
 
