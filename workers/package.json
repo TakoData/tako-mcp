@@ -31,7 +31,7 @@
     "json-schema-to-zod": "^2.6.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.2",
-    "vitest": "3.2.4",
+    "vitest": "3.2.6",
     "wrangler": "^4.40.3"
   },
   "dependencies": {
