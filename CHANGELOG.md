@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.3](https://github.com/TakoData/tako-mcp/compare/v0.7.2...v0.7.3) (2026-07-07)
+
+
+### Bug Fixes
+
+* **deps:** bump vitest to 3.2.6 (CVE-2026-47429) ([f53315c](https://github.com/TakoData/tako-mcp/commit/f53315c6ed94e2911f7dcc938fbb8a95df493142))
+* **deps:** bump vitest to 3.2.6 to patch CVE-2026-47429 ([6642521](https://github.com/TakoData/tako-mcp/commit/6642521aa3ce1cfcb62ef5a9c0e37ee8a4e82ed5))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([8de2365](https://github.com/TakoData/tako-mcp/commit/8de23658eb91c704871380da8d25b0cf4939e759))
+* sync OpenAPI spec from monorepo ([31684b3](https://github.com/TakoData/tako-mcp/commit/31684b3cf30b7456ba0774a79d5630d9e43ed2ce))
+* sync OpenAPI spec from TakoData/tako ([3c3ae9e](https://github.com/TakoData/tako-mcp/commit/3c3ae9ebb50b1f9b56c8cd36b2ac9844aec372db))
+
 ## [0.7.2](https://github.com/TakoData/tako-mcp/compare/v0.7.1...v0.7.2) (2026-07-03)
 
 
