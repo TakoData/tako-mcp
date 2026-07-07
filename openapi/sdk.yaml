@@ -245,7 +245,10 @@ paths:
         entity + metric combinations Tako covers, then query /v3/search or /v1/answer
         for that combination. Pass relation_type + cursor to paginate one facet, and
         the optional q to narrow that facet by a case-insensitive substring on name/aliases
-        (e.g. metrics for an entity matching ''gdp''). Public and unauthenticated.'
+        (e.g. metrics for an entity matching ''gdp''). Entity hubs also carry membership
+        relations: part_of lists the cohorts or regions the node belongs to (always
+        inlined), and members lists the node''s members or contained places (paginate
+        with relation_type=member). Public and unauthenticated.'
       operationId: graphRelated
       parameters:
       - description: Opaque public id of the node.
@@ -254,7 +257,7 @@ paths:
           type: string
         name: node_id
         in: query
-      - description: 'Paginate one facet: metric or entity.'
+      - description: 'Paginate one facet: metric, entity, or member.'
         required: false
         schema:
           type: string
@@ -528,6 +531,133 @@ paths:
                 $ref: '#/components/schemas/ErrorObject'
       security:
       - apiKey: []
+  /v1/agent/answer/runs:
+    post:
+      tags:
+      - agent
+      summary: Dispatch an answer agent run
+      description: Dispatch an answer agent run. Returns 202 with an AnswerAgentRun
+        object; poll GET /v1/agent/answer/runs/{run_id} until status is 'completed'
+        or 'failed'.
+      operationId: createAnswerAgentRun
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnswerAgentRunRequest'
+      responses:
+        '202':
+          description: 'Run dispatched. With Accept: application/json, poll GET /v1/agent/answer/runs/{run_id}
+            for status. With Accept: text/event-stream, the response is an SSE stream
+            of AgentStreamEnvelope events terminating at stream_done; if the stream
+            ends without an agent_result event, poll GET /v1/agent/answer/runs/{run_id}
+            for terminal status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerAgentRun'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AgentStreamEnvelope'
+        '400':
+          description: Invalid request (e.g. blank query or malformed body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '402':
+          description: Insufficient API credit balance (PAYG pre-dispatch gate).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: thread_id does not exist or is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '409':
+          description: 'Conflict. code is one of: ''conflict'' (the thread has an
+            in-flight run — single-flight); ''thread_product_mismatch'' (the thread
+            was started on a different agent product); ''source_indexes_mismatch''
+            (a follow-up changed the thread''s pinned source_indexes).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '500':
+          description: Failed to dispatch the agent run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
+  /v1/agent/answer/runs/{run_id}:
+    get:
+      tags:
+      - agent
+      summary: Poll an answer agent run
+      description: Retrieve the current state of an answer agent run. Poll until status
+        is 'completed' or 'failed'. result is populated when status is 'completed'.
+      operationId: getAnswerAgentRun
+      parameters:
+      - description: Run ID returned by POST /v1/agent/answer/runs
+        required: true
+        schema:
+          type: string
+        name: run_id
+        in: path
+      - description: 'SSE resume cursor (Accept: text/event-stream only). Replay events
+          with seq strictly greater than this value. Equivalent to the Last-Event-ID
+          header.'
+        required: false
+        schema:
+          type: integer
+          minimum: 0.0
+        name: starting_after
+        in: query
+      responses:
+        '200':
+          description: 'Current state of the agent run. With Accept: text/event-stream,
+            resumes/tails the run as an SSE stream of AgentStreamEnvelope events (use
+            starting_after or Last-Event-ID to resume); if the stream ends without
+            an agent_result event, poll this endpoint with Accept: application/json
+            for terminal status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerAgentRun'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AgentStreamEnvelope'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '403':
+          description: The run is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: Run not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
 components:
   schemas:
     APIErrorType:
@@ -585,19 +715,48 @@ components:
           - type: string
           - type: 'null'
           title: Source Name
+        source_index:
+          anyOf:
+          - $ref: '#/components/schemas/TakoSourceIndex'
+          - type: 'null'
+        excerpt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Excerpt
+        publish_date:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Publish Date
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/ResultContent'
+          - type: 'null'
       type: object
       required:
       - index
       - title
       title: AgentAnswerCitation
       description: 'One indexed source behind the answer. Every inline [n] marker
-        in
+        in the
 
-        AgentResult.answer joins to a citation''s index, but a citation may also
+        answer joins to a citation''s index, but a citation may also back the answer
 
-        back a chart/card without an inline marker — markers map to citations,
+        without a surviving inline marker — markers map to citations, not 1:1.
 
-        not 1:1. Covers web and Tako sources alike.'
+        Covers web and Tako sources alike. This is the single shared top-level
+
+        citation leaf across both agent products (S1 §5.2); the extended fields
+
+        (source_index/excerpt/publish_date/content) are additive and nullable. The
+
+        Answer Agent populates source_index and leaves the rest null at launch
+
+        (TAKO-3385); the Search Agent additionally populates excerpt/publish_date
+        for
+
+        web sources.'
     AgentAnswerDefinition:
       properties:
         term:
@@ -949,6 +1108,207 @@ components:
         were actually billed; absent for subscription/enterprise/free runs. No
 
         token/tool-call/latency telemetry.'
+    AnswerAgentEffort:
+      type: string
+      enum:
+      - medium
+      title: AnswerAgentEffort
+      description: 'Effort taxonomy for the Answer Agent (POST /v1/agent/answer/runs).
+
+
+        Shares the low/medium/high vocabulary with the Search Agent, but only
+
+        MEDIUM is wired at launch (-> orchestrator_medium_config). LOW/HIGH are
+
+        reserved and added when the fast/deep orchestrator configs are wired to the
+
+        public path. Unsupported values 400 (Pydantic StrEnum rejection). Effort no
+
+        longer selects an engine (the endpoint pins ORCHESTRATOR); it is a
+
+        forward-compat quality/pricing knob.'
+    AnswerAgentMetadata:
+      properties:
+        definitions:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/AgentAnswerDefinition'
+            type: array
+          - type: 'null'
+          title: Definitions
+        assumptions:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/AgentAnswerAssumption'
+            type: array
+          - type: 'null'
+          title: Assumptions
+        methodology:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/AgentAnswerMethodologyNote'
+            type: array
+          - type: 'null'
+          title: Methodology
+      type: object
+      title: AnswerAgentMetadata
+      description: 'Answer-agent metadata. Citations moved to the top-level `citations`
+
+        registry (TAKO-3385), so this carries only definitions/assumptions/
+
+        methodology. Distinct from the shared AgentAnswerMetadata (which retains
+
+        citations for the legacy AgentResult until A3).'
+    AnswerAgentResult:
+      properties:
+        answer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Answer
+        cards:
+          items:
+            $ref: '#/components/schemas/TakoCard'
+          type: array
+          title: Cards
+        citations:
+          items:
+            $ref: '#/components/schemas/AgentAnswerCitation'
+          type: array
+          title: Citations
+        metadata:
+          anyOf:
+          - $ref: '#/components/schemas/AnswerAgentMetadata'
+          - type: 'null'
+        request_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Request Id
+      type: object
+      title: AnswerAgentResult
+      description: 'Final answer-agent output. answer is markdown prose with [n] citation
+
+        markers; citations is the unified top-level registry the [n] markers join;
+
+        cards reuse the sibling TakoCard; metadata carries definitions/assumptions/
+
+        methodology. NO inline data, NO structured output, NO web_results — ever.
+
+        Prose-only (empty cards) is legitimate.'
+    AnswerAgentRun:
+      properties:
+        run_id:
+          type: string
+          title: Run Id
+        object:
+          type: string
+          const: agent.run
+          title: Object
+          default: agent.run
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        status:
+          $ref: '#/components/schemas/AgentRunStatus'
+        created_at:
+          type: string
+          title: Created At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
+        result:
+          anyOf:
+          - $ref: '#/components/schemas/AnswerAgentResult'
+          - type: 'null'
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorObject'
+          - type: 'null'
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/AgentUsage'
+          - type: 'null'
+        request:
+          anyOf:
+          - $ref: '#/components/schemas/AnswerAgentRunRequest'
+          - type: 'null'
+      type: object
+      required:
+      - run_id
+      - status
+      - created_at
+      title: AnswerAgentRun
+      description: The answer-agent run resource returned by dispatch (202) and poll
+        (GET).
+    AnswerAgentRunRequest:
+      properties:
+        query:
+          type: string
+          title: Query
+          description: Natural-language request for the answer agent.
+          examples:
+          - How have American Airlines' margins held up against fuel shocks?
+        thread_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Thread Id
+          description: Existing thread to continue (follow-up). Omit to start a new
+            thread.
+        effort:
+          $ref: '#/components/schemas/AnswerAgentEffort'
+          description: Answer-agent effort. Only 'medium' is currently supported.
+          default: medium
+        source_indexes:
+          items:
+            type: string
+            enum:
+            - data
+            - web
+          type: array
+          title: Source Indexes
+          description: 'Which sources the agent may use: ''data'' (curated knowledge)
+            and/or ''web'' (open-web search). Defaults to [''data'', ''web'']. The
+            legacy value ''tako'' is accepted as a synonym for ''data''.'
+          examples:
+          - - data
+          - - web
+          - - data
+            - web
+        locale:
+          type: string
+          title: Locale
+          description: BCP-47 locale. Drives the language of the agent's answer and
+            the locale used when rendering card preview images. Defaults to en-US.
+          default: en-US
+        timezone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Timezone
+          description: IANA timezone (e.g. 'America/New_York') used to render dates/times
+            in card preview images. Does not affect the returned data.
+        output_settings:
+          anyOf:
+          - $ref: '#/components/schemas/AgentOutputSettings'
+          - type: 'null'
+          description: Settings controlling the response/rendering.
+      type: object
+      required:
+      - query
+      title: AnswerAgentRunRequest
+      description: 'Request body for POST /v1/agent/answer/runs.
+
+
+        Frozen contract: NO output_schema / structured outputs, NO inline data —
+
+        ever. Cards are the only data-export path (via /v1/contents).'
     AnswerResponse:
       properties:
         answer:
@@ -1470,7 +1830,7 @@ components:
     GraphRelationPage:
       properties:
         relation_type:
-          $ref: '#/components/schemas/GraphNodeType'
+          $ref: '#/components/schemas/GraphRelationType'
         items:
           items:
             $ref: '#/components/schemas/GraphNode'
@@ -1479,6 +1839,13 @@ components:
         total:
           type: integer
           title: Total
+        total_capped:
+          type: boolean
+          title: Total Capped
+          description: True when `total` hit the server-side counting cap; the true
+            count is at least `total`. Pagination ends at the cap — narrow with `q`
+            to reach the tail.
+          default: false
         next_cursor:
           anyOf:
           - type: string
@@ -1490,6 +1857,13 @@ components:
       - items
       - total
       title: GraphRelationPage
+    GraphRelationType:
+      type: string
+      enum:
+      - metric
+      - entity
+      - member
+      title: GraphRelationType
     GraphSearchResponse:
       properties:
         results:
@@ -1596,10 +1970,16 @@ components:
           $ref: '#/components/schemas/RelationGroup'
         entities:
           $ref: '#/components/schemas/RelationGroup'
+        part_of:
+          $ref: '#/components/schemas/RelationGroup'
+        members:
+          $ref: '#/components/schemas/RelationGroup'
       type: object
       required:
       - metrics
       - entities
+      - part_of
+      - members
       title: RelatedGroups
     RelationGroup:
       properties:
@@ -1611,6 +1991,12 @@ components:
         total:
           type: integer
           title: Total
+        total_capped:
+          type: boolean
+          title: Total Capped
+          description: True when `total` hit the server-side counting cap; the true
+            count is at least `total`. Render as '>total'.
+          default: false
       type: object
       required:
       - items
