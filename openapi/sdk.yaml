@@ -1097,17 +1097,37 @@ components:
           - type: number
           - type: 'null'
           title: Usd Cost
+        compute_usd:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Compute Usd
+        data_output_usd:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Data Output Usd
+        data_output_datasets:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Data Output Datasets
       type: object
       title: AgentUsage
-      description: 'Cost-plus usage for an agent run. usd_cost is the run''s COGS
-        x the agent
+      description: 'Cost-plus usage for an agent run. usd_cost is the TOTAL charged
+        (compute +
 
-        multiplier — the price the run was charged. Present only on metered/PAYG runs
-        that
+        data-output surcharge) — its meaning is unchanged from v1. The breakdown is
 
-        were actually billed; absent for subscription/enterprise/free runs. No
+        additive (TAKO-3376): compute_usd = COGS x AGENT_COST_MULTIPLIER;
 
-        token/tool-call/latency telemetry.'
+        data_output_usd = the per-source data-output surcharge (0 today);
+
+        data_output_datasets = the billing quantity (distinct datasets charged).
+
+        Present only on metered/PAYG runs that were actually billed; absent otherwise.
+
+        No token/tool-call/latency telemetry.'
     AnswerAgentEffort:
       type: string
       enum:
