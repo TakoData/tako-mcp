@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../django.js", () => ({ djangoPost: vi.fn(), djangoGet: vi.fn() }));
 import { djangoPost, djangoGet } from "../django.js";
 import tool, { AGENT_POLL_BUDGET_MS, AGENT_WAIT_CEILING_S, buildAgentBody, pollAgentRun } from "./tako_agent.js";
-import { AgentRunRequest } from "../generated/schemas.js";
+import { AnswerAgentRunRequest } from "../generated/schemas.js";
 
 const ctx = { token: "t", env: {} as never, client: "claude" as const, sendProgress: vi.fn() };
 
@@ -18,14 +18,22 @@ describe("tako_agent", () => {
     vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_1", status: "queued" });
     vi.mocked(djangoGet)
       .mockResolvedValueOnce({ run_id: "run_1", status: "running" })
-      .mockResolvedValueOnce({ run_id: "run_1", status: "completed", result: { answer: "42", cards: [] } });
+      .mockResolvedValueOnce({
+        run_id: "run_1",
+        status: "completed",
+        result: {
+          answer: "42",
+          cards: [],
+          citations: [{ index: 1, title: "Source", url: "https://example.com" }],
+        },
+      });
 
     const handlerPromise = tool.handler({ query: "analyze X", sources: ["data", "web"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
     expect(tool.name).toBe("tako_agent");
-    expect(vi.mocked(djangoPost).mock.calls[0]![2]).toBe("/api/v1/agent/runs");
+    expect(vi.mocked(djangoPost).mock.calls[0]![2]).toBe("/api/v1/agent/answer/runs");
     expect(vi.mocked(djangoPost).mock.calls[0]![3]).toMatchObject({
       query: "analyze X",
       effort: "medium",
@@ -35,6 +43,37 @@ describe("tako_agent", () => {
     expect(out.status).toBe("completed");
     expect(out.timed_out).toBe(false);
     expect(out.result?.answer).toBe("42");
+    // The Answer Agent's unified citation registry flows through (replacing the
+    // generic agent's web_results).
+    expect(out.result?.citations).toHaveLength(1);
+    expect(out.result?.citations?.[0]?.index).toBe(1);
+  });
+
+  it("surfaces the Answer Agent metadata (definitions/assumptions/methodology) instead of dropping it", async () => {
+    vi.useFakeTimers();
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_meta", status: "queued" });
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "run_meta",
+      status: "completed",
+      result: {
+        answer: "a",
+        cards: [],
+        citations: [],
+        metadata: {
+          definitions: [{ term: "GDP", definition: "gross domestic product" }],
+          assumptions: [{ title: "nominal", description: "not inflation-adjusted" }],
+          methodology: [{ title: "sources", description: "world bank" }],
+        },
+      },
+    });
+
+    const handlerPromise = tool.handler({ query: "q", sources: ["data"] }, ctx);
+    await vi.runAllTimersAsync();
+    const out = await handlerPromise;
+
+    expect(out.result?.metadata?.definitions?.[0]?.term).toBe("GDP");
+    expect(out.result?.metadata?.assumptions?.[0]?.title).toBe("nominal");
+    expect(out.result?.metadata?.methodology?.[0]?.title).toBe("sources");
   });
 
   it("surfaces a failed run with its error", async () => {
@@ -119,9 +158,9 @@ describe("tako_agent contract guards", () => {
     expect(body.source_indexes).toEqual(["data"]);
   });
 
-  it("reshapes into a contract-valid agent request", () => {
+  it("reshapes into a contract-valid answer-agent request", () => {
     const body = buildAgentBody(tool.inputSchema.parse({ query: "x" }));
-    expect(() => AgentRunRequest.parse(body)).not.toThrow();
+    expect(() => AnswerAgentRunRequest.parse(body)).not.toThrow();
   });
 });
 
@@ -181,5 +220,22 @@ describe("tako_agent wire-drift guard", () => {
     const out = await handlerPromise;
     expect(out.status).toBe("completed");
     expect(out.result).toBeNull();
+  });
+
+  it("throws a contract-drift error when a completed run's citation is missing the required `title`", async () => {
+    vi.useFakeTimers();
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_cite_drift", status: "queued" });
+    // `title` is required non-null on the generated AgentAnswerCitation, so a
+    // title-less citation is backend drift. The result-shape guard must reject
+    // the run rather than silently drop the field (citationSchema mirrors this).
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "run_cite_drift",
+      status: "completed",
+      result: { answer: "x", cards: [], citations: [{ index: 1 }] }, // title missing
+    } as never);
+
+    const handlerPromise = tool.handler({ query: "citation drift", sources: ["tako"] }, ctx);
+    await vi.runAllTimersAsync();
+    await expect(handlerPromise).rejects.toThrow(/drifted from the backend contract.*result shape mismatch/);
   });
 });

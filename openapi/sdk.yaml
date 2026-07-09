@@ -532,6 +532,49 @@ paths:
       security:
       - apiKey: []
   /v1/agent/answer/runs:
+    get:
+      tags:
+      - agent
+      summary: List answer agent runs
+      description: List the authenticated caller's answer agent runs, newest first.
+        Returns trimmed run summaries; fetch full detail via GET /v1/agent/answer/runs/{run_id}.
+      operationId: listAnswerAgentRuns
+      parameters:
+      - description: Opaque pagination cursor from a previous response's next_cursor.
+        required: false
+        schema:
+          type: string
+        name: cursor
+        in: query
+      - description: Max runs to return (default 20, max 100).
+        required: false
+        schema:
+          type: integer
+          maximum: 100.0
+          minimum: 1.0
+        name: limit
+        in: query
+      responses:
+        '200':
+          description: A page of the caller's answer agent runs, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerAgentRunList'
+        '400':
+          description: Invalid pagination parameter (limit or cursor).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
     post:
       tags:
       - agent
@@ -549,8 +592,8 @@ paths:
         '202':
           description: 'Run dispatched. With Accept: application/json, poll GET /v1/agent/answer/runs/{run_id}
             for status. With Accept: text/event-stream, the response is an SSE stream
-            of AgentStreamEnvelope events terminating at stream_done; if the stream
-            ends without an agent_result event, poll GET /v1/agent/answer/runs/{run_id}
+            of AnswerAgentStreamEnvelope events terminating at stream_done; if the
+            stream ends without an agent_result event, poll GET /v1/agent/answer/runs/{run_id}
             for terminal status.'
           content:
             application/json:
@@ -558,7 +601,7 @@ paths:
                 $ref: '#/components/schemas/AnswerAgentRun'
             text/event-stream:
               schema:
-                $ref: '#/components/schemas/AgentStreamEnvelope'
+                $ref: '#/components/schemas/AnswerAgentStreamEnvelope'
         '400':
           description: Invalid request (e.g. blank query or malformed body).
           content:
@@ -627,8 +670,8 @@ paths:
       responses:
         '200':
           description: 'Current state of the agent run. With Accept: text/event-stream,
-            resumes/tails the run as an SSE stream of AgentStreamEnvelope events (use
-            starting_after or Last-Event-ID to resume); if the stream ends without
+            resumes/tails the run as an SSE stream of AnswerAgentStreamEnvelope events
+            (use starting_after or Last-Event-ID to resume); if the stream ends without
             an agent_result event, poll this endpoint with Accept: application/json
             for terminal status.'
           content:
@@ -637,7 +680,177 @@ paths:
                 $ref: '#/components/schemas/AnswerAgentRun'
             text/event-stream:
               schema:
-                $ref: '#/components/schemas/AgentStreamEnvelope'
+                $ref: '#/components/schemas/AnswerAgentStreamEnvelope'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '403':
+          description: The run is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: Run not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
+  /v1/agent/search/runs:
+    get:
+      tags:
+      - agent
+      summary: List search agent runs
+      description: List the authenticated caller's search agent runs, newest first.
+        Returns trimmed run summaries; fetch full detail via GET /v1/agent/search/runs/{run_id}.
+      operationId: listSearchAgentRuns
+      parameters:
+      - description: Opaque pagination cursor from a previous response's next_cursor.
+        required: false
+        schema:
+          type: string
+        name: cursor
+        in: query
+      - description: Max runs to return (default 20, max 100).
+        required: false
+        schema:
+          type: integer
+          maximum: 100.0
+          minimum: 1.0
+        name: limit
+        in: query
+      responses:
+        '200':
+          description: A page of the caller's search agent runs, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchAgentRunList'
+        '400':
+          description: Invalid pagination parameter (limit or cursor).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
+    post:
+      tags:
+      - agent
+      summary: Dispatch a search agent run
+      description: Dispatch a search agent run. Returns 202 with a SearchAgentRun
+        object; poll GET /v1/agent/search/runs/{run_id} until status is 'completed'
+        or 'failed'.
+      operationId: createSearchAgentRun
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchAgentRunRequest'
+      responses:
+        '202':
+          description: 'Run dispatched. With Accept: application/json, poll GET /v1/agent/search/runs/{run_id}
+            for status. With Accept: text/event-stream, the response is an SSE stream
+            of SearchAgentStreamEnvelope events terminating at stream_done; if the
+            stream ends without an agent_result event, poll GET /v1/agent/search/runs/{run_id}
+            for terminal status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchAgentRun'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/SearchAgentStreamEnvelope'
+        '400':
+          description: Invalid request (e.g. blank query or malformed body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '402':
+          description: Insufficient API credit balance (PAYG pre-dispatch gate).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '404':
+          description: thread_id does not exist or is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '409':
+          description: 'Conflict. code is one of: ''conflict'' (the thread has an
+            in-flight run — single-flight); ''thread_product_mismatch'' (the thread
+            was started on a different agent product); ''source_indexes_mismatch''
+            (a follow-up changed the thread''s pinned source_indexes).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+        '500':
+          description: Failed to dispatch the agent run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+      security:
+      - apiKey: []
+  /v1/agent/search/runs/{run_id}:
+    get:
+      tags:
+      - agent
+      summary: Poll a search agent run
+      description: Retrieve the current state of a search agent run. Poll until status
+        is 'completed' or 'failed'. result is populated when status is 'completed'.
+      operationId: getSearchAgentRun
+      parameters:
+      - description: Run ID returned by POST /v1/agent/search/runs
+        required: true
+        schema:
+          type: string
+        name: run_id
+        in: path
+      - description: 'SSE resume cursor (Accept: text/event-stream only). Replay events
+          with seq strictly greater than this value. Equivalent to the Last-Event-ID
+          header.'
+        required: false
+        schema:
+          type: integer
+          minimum: 0.0
+        name: starting_after
+        in: query
+      responses:
+        '200':
+          description: 'Current state of the agent run. With Accept: text/event-stream,
+            resumes/tails the run as an SSE stream of SearchAgentStreamEnvelope events
+            (use starting_after or Last-Event-ID to resume); if the stream ends without
+            an agent_result event, poll this endpoint with Accept: application/json
+            for terminal status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchAgentRun'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/SearchAgentStreamEnvelope'
         '401':
           description: Missing or invalid API key.
           content:
@@ -660,6 +873,61 @@ paths:
       - apiKey: []
 components:
   schemas:
+    TakoDataset:
+      properties:
+        columns:
+          items:
+            $ref: '#/components/schemas/TakoDatasetColumn'
+          type: array
+          title: Columns
+        rows:
+          items:
+            items:
+              anyOf:
+              - type: string
+              - type: number
+              - type: integer
+              - type: boolean
+              - type: 'null'
+            type: array
+          type: array
+          title: Rows
+        total_rows:
+          type: integer
+          title: Total Rows
+        truncated:
+          type: boolean
+          title: Truncated
+        ref:
+          type: string
+          title: Ref
+        sources:
+          items:
+            $ref: '#/components/schemas/TakoDatasetSource'
+          type: array
+          title: Sources
+        provenance:
+          type: string
+          enum:
+          - query
+          - web_extraction
+          title: Provenance
+          default: query
+      type: object
+      required:
+      - columns
+      - rows
+      - total_rows
+      - truncated
+      - ref
+      - sources
+      title: TakoDataset
+      description: 'The slot envelope (S1 contract section 5.3): exact spliced rows
+        as
+
+        positional arrays in `columns` order — never LLM-transcribed.
+
+        download_url/expires_at are reserved (full pulls, deferred).'
     APIErrorType:
       type: string
       enum:
@@ -1216,6 +1484,23 @@ components:
         methodology. NO inline data, NO structured output, NO web_results — ever.
 
         Prose-only (empty cards) is legitimate.'
+    AnswerAgentResultEvent:
+      properties:
+        kind:
+          type: string
+          const: agent_result
+          title: Kind
+          default: agent_result
+        id:
+          type: string
+          title: Id
+        data:
+          $ref: '#/components/schemas/AnswerAgentResult'
+      type: object
+      required:
+      - id
+      - data
+      title: AnswerAgentResultEvent
     AnswerAgentRun:
       properties:
         run_id:
@@ -1265,6 +1550,32 @@ components:
       title: AnswerAgentRun
       description: The answer-agent run resource returned by dispatch (202) and poll
         (GET).
+    AnswerAgentRunList:
+      properties:
+        object:
+          type: string
+          const: list
+          title: Object
+          default: list
+        data:
+          items:
+            $ref: '#/components/schemas/AnswerAgentRunSummary'
+          type: array
+          title: Data
+        has_more:
+          type: boolean
+          title: Has More
+          default: false
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      type: object
+      required:
+      - data
+      title: AnswerAgentRunList
+      description: OpenAI/Exa-style list envelope for GET /v1/agent/answer/runs (TAKO-3384).
     AnswerAgentRunRequest:
       properties:
         query:
@@ -1329,6 +1640,102 @@ components:
         Frozen contract: NO output_schema / structured outputs, NO inline data —
 
         ever. Cards are the only data-export path (via /v1/contents).'
+    AnswerAgentRunSummary:
+      properties:
+        run_id:
+          type: string
+          title: Run Id
+        status:
+          $ref: '#/components/schemas/AgentRunStatus'
+        created_at:
+          type: string
+          title: Created At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/AgentUsage'
+          - type: 'null'
+        object:
+          type: string
+          const: agent.run
+          title: Object
+          default: agent.run
+      type: object
+      required:
+      - run_id
+      - status
+      - created_at
+      title: AnswerAgentRunSummary
+    AnswerAgentStreamEnvelope:
+      properties:
+        seq:
+          type: integer
+          minimum: 0.0
+          title: Seq
+        run_id:
+          type: string
+          title: Run Id
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        category:
+          $ref: '#/components/schemas/StreamCategory'
+        block:
+          oneOf:
+          - $ref: '#/components/schemas/ToolCallEvent'
+          - $ref: '#/components/schemas/ToolResultEvent'
+          - $ref: '#/components/schemas/ToolErrorEvent'
+          - $ref: '#/components/schemas/ToolRetryEvent'
+          - $ref: '#/components/schemas/StatusEvent'
+          - $ref: '#/components/schemas/SubagentEvent'
+          - $ref: '#/components/schemas/ReasoningEvent'
+          - $ref: '#/components/schemas/TextEvent'
+          - $ref: '#/components/schemas/DataPipelineAnswerEvent'
+          - $ref: '#/components/schemas/AnswerAgentResultEvent'
+          - $ref: '#/components/schemas/HeartbeatEvent'
+          - $ref: '#/components/schemas/StreamResetEvent'
+          - $ref: '#/components/schemas/StreamDoneEvent'
+          title: Block
+          discriminator:
+            propertyName: kind
+            mapping:
+              agent_result: '#/components/schemas/AnswerAgentResultEvent'
+              data_pipeline_answer: '#/components/schemas/DataPipelineAnswerEvent'
+              heartbeat: '#/components/schemas/HeartbeatEvent'
+              reasoning: '#/components/schemas/ReasoningEvent'
+              status: '#/components/schemas/StatusEvent'
+              stream_done: '#/components/schemas/StreamDoneEvent'
+              stream_reset: '#/components/schemas/StreamResetEvent'
+              subagent: '#/components/schemas/SubagentEvent'
+              text: '#/components/schemas/TextEvent'
+              tool_call: '#/components/schemas/ToolCallEvent'
+              tool_error: '#/components/schemas/ToolErrorEvent'
+              tool_result: '#/components/schemas/ToolResultEvent'
+              tool_retry: '#/components/schemas/ToolRetryEvent'
+      type: object
+      required:
+      - seq
+      - run_id
+      - category
+      - block
+      title: AnswerAgentStreamEnvelope
+      description: 'Public SSE envelope for the Answer Agent run stream. Identical
+        wire shape
+
+        to AgentStreamEnvelope; the only difference is the terminal agent_result
+
+        block carries AnswerAgentResult (top-level citations, no web_results).'
     AnswerResponse:
       properties:
         answer:
@@ -2063,6 +2470,380 @@ components:
         Contents endpoint (a Tako card URL -> ChartConfig -> CSV; any other URL ->
 
         page text).'
+    SearchAgentEffort:
+      type: string
+      enum:
+      - medium
+      title: SearchAgentEffort
+      description: 'Effort taxonomy for the Search Agent (POST /v1/agent/search/runs).
+
+
+        Launches single-tier: only MEDIUM is exposed (-> data_pipeline_medium_config).
+
+        The low/high data-pipeline configs exist but are deliberately not launched
+        on
+
+        the public surface (S2 design / TAKO-3375, 2026-07-06). `effort` stays a
+
+        request field for forward-compat + family parity with AnswerAgentEffort;
+
+        low/high 400 at validation. If tiers return, add the members here plus the
+
+        effort pin + thread-context effort stamping.'
+    SearchAgentResult:
+      properties:
+        answer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Answer
+        cards:
+          items:
+            $ref: '#/components/schemas/TakoCard'
+          type: array
+          title: Cards
+        citations:
+          items:
+            $ref: '#/components/schemas/AgentAnswerCitation'
+          type: array
+          title: Citations
+        metadata:
+          anyOf:
+          - $ref: '#/components/schemas/AgentAnswerMetadata'
+          - type: 'null'
+        structured_output:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Structured Output
+          description: Caller-shaped structured output (present iff the request carried
+            output_schema and status is not 'failed'). Dataset slots contain a TakoDataset
+            envelope of exact retrieved rows, or null when honestly unfilled.
+        structured_output_status:
+          anyOf:
+          - $ref: '#/components/schemas/StructuredOutputStatus'
+          - type: 'null'
+          description: complete | partial | failed. Present when output_schema was
+            supplied and the run reached finalize. May be absent if the whole run
+            failed or timed out before finalize — the run-level status + error convey
+            that, and the echoed request.output_schema still identifies it as a structured
+            run.
+        structured_output_citations:
+          anyOf:
+          - additionalProperties:
+              items:
+                type: integer
+              type: array
+            type: object
+          - type: 'null'
+          title: Structured Output Citations
+          description: Best-effort field-path -> citation-index map joining the top-level
+            citations registry (same [n] index space as the answer). Absent when status
+            is 'failed'.
+        unfilled_fields:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Unfilled Fields
+          description: Dot-separated paths of honestly-unfilled dataset slots; present
+            iff status is 'partial'.
+        structured_output_error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorObject'
+          - type: 'null'
+          description: Why structured output failed; present iff status is 'failed'.
+        request_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Request Id
+      type: object
+      title: SearchAgentResult
+      description: 'Final search-agent output. answer is markdown prose with [n] citation
+
+        markers; cards reuse the sibling TakoCard; citations is the unified
+
+        top-level registry (data + web, S1 §5.2) — there is no web_results field;
+
+        metadata carries definitions/assumptions/methodology (citations lifted out).
+
+        structured_output_* fields carry the caller-shaped output_schema result
+
+        (S3 §5.1) — present iff the request supplied output_schema; see each
+
+        field''s description for the exact presence matrix.'
+    SearchAgentResultEvent:
+      properties:
+        kind:
+          type: string
+          const: agent_result
+          title: Kind
+          default: agent_result
+        id:
+          type: string
+          title: Id
+        data:
+          $ref: '#/components/schemas/SearchAgentResult'
+      type: object
+      required:
+      - id
+      - data
+      title: SearchAgentResultEvent
+    SearchAgentRun:
+      properties:
+        run_id:
+          type: string
+          title: Run Id
+        object:
+          type: string
+          const: agent.search.run
+          title: Object
+          default: agent.search.run
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        status:
+          $ref: '#/components/schemas/AgentRunStatus'
+        created_at:
+          type: string
+          title: Created At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
+        result:
+          anyOf:
+          - $ref: '#/components/schemas/SearchAgentResult'
+          - type: 'null'
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorObject'
+          - type: 'null'
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/AgentUsage'
+          - type: 'null'
+        request:
+          anyOf:
+          - $ref: '#/components/schemas/SearchAgentRunRequest'
+          - type: 'null'
+      type: object
+      required:
+      - run_id
+      - status
+      - created_at
+      title: SearchAgentRun
+      description: The search-agent run resource returned by dispatch (202) and poll
+        (GET).
+    SearchAgentRunList:
+      properties:
+        object:
+          type: string
+          const: list
+          title: Object
+          default: list
+        data:
+          items:
+            $ref: '#/components/schemas/SearchAgentRunSummary'
+          type: array
+          title: Data
+        has_more:
+          type: boolean
+          title: Has More
+          default: false
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      type: object
+      required:
+      - data
+      title: SearchAgentRunList
+      description: OpenAI/Exa-style list envelope for GET /v1/agent/search/runs (TAKO-3384).
+    SearchAgentRunRequest:
+      properties:
+        query:
+          type: string
+          title: Query
+          description: Natural-language data-retrieval request for the search agent.
+          examples:
+          - S&P 500 semiconductor companies' 2024 revenue and YoY growth
+        thread_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Thread Id
+          description: Existing thread to continue (follow-up). Omit to start a new
+            thread.
+        effort:
+          $ref: '#/components/schemas/SearchAgentEffort'
+          description: Search-agent effort. Only 'medium' is currently supported.
+          default: medium
+        source_indexes:
+          items:
+            type: string
+            enum:
+            - data
+            - web
+          type: array
+          title: Source Indexes
+          description: 'Which sources the agent may use: ''data'' (curated knowledge)
+            and/or ''web'' (open-web search). Defaults to [''data'', ''web'']. The
+            legacy value ''tako'' is accepted as a synonym for ''data''.'
+          examples:
+          - - data
+          - - web
+          - - data
+            - web
+        cards:
+          type: boolean
+          title: Cards
+          description: 'Whether the agent may build visualization cards. Default true
+            and permissive: true means the agent MAY build cards, not that it must
+            (a completed run with no cards is legitimate). false suppresses card building
+            entirely.'
+          default: true
+        output_schema:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Output Schema
+          description: 'JSON Schema for structured output. Synthesized fields are
+            written by the agent; dataset slots (marked with x-tako-dataset: true)
+            are filled with exact retrieved rows as a TakoDataset. Supported subset:
+            object/array/string/number/integer/boolean types, enum, required, description;
+            caps: 16KB, depth 5, 64 properties, 4 dataset slots. Violations return
+            400 output_schema_invalid.'
+        locale:
+          type: string
+          title: Locale
+          description: BCP-47 locale. Drives the language of the agent's answer and
+            the locale used when rendering card preview images. Defaults to en-US.
+          default: en-US
+        timezone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Timezone
+          description: IANA timezone (e.g. 'America/New_York') used to render dates/times
+            in card preview images. Does not affect the returned data.
+        output_settings:
+          anyOf:
+          - $ref: '#/components/schemas/AgentOutputSettings'
+          - type: 'null'
+          description: Settings controlling the response/rendering.
+      type: object
+      required:
+      - query
+      title: SearchAgentRunRequest
+      description: Request body for POST /v1/agent/search/runs.
+    SearchAgentRunSummary:
+      properties:
+        run_id:
+          type: string
+          title: Run Id
+        status:
+          $ref: '#/components/schemas/AgentRunStatus'
+        created_at:
+          type: string
+          title: Created At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/AgentUsage'
+          - type: 'null'
+        object:
+          type: string
+          const: agent.search.run
+          title: Object
+          default: agent.search.run
+      type: object
+      required:
+      - run_id
+      - status
+      - created_at
+      title: SearchAgentRunSummary
+    SearchAgentStreamEnvelope:
+      properties:
+        seq:
+          type: integer
+          minimum: 0.0
+          title: Seq
+        run_id:
+          type: string
+          title: Run Id
+        thread_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thread Id
+        category:
+          $ref: '#/components/schemas/StreamCategory'
+        block:
+          oneOf:
+          - $ref: '#/components/schemas/ToolCallEvent'
+          - $ref: '#/components/schemas/ToolResultEvent'
+          - $ref: '#/components/schemas/ToolErrorEvent'
+          - $ref: '#/components/schemas/ToolRetryEvent'
+          - $ref: '#/components/schemas/StatusEvent'
+          - $ref: '#/components/schemas/SubagentEvent'
+          - $ref: '#/components/schemas/ReasoningEvent'
+          - $ref: '#/components/schemas/TextEvent'
+          - $ref: '#/components/schemas/DataPipelineAnswerEvent'
+          - $ref: '#/components/schemas/SearchAgentResultEvent'
+          - $ref: '#/components/schemas/HeartbeatEvent'
+          - $ref: '#/components/schemas/StreamResetEvent'
+          - $ref: '#/components/schemas/StreamDoneEvent'
+          title: Block
+          discriminator:
+            propertyName: kind
+            mapping:
+              agent_result: '#/components/schemas/SearchAgentResultEvent'
+              data_pipeline_answer: '#/components/schemas/DataPipelineAnswerEvent'
+              heartbeat: '#/components/schemas/HeartbeatEvent'
+              reasoning: '#/components/schemas/ReasoningEvent'
+              status: '#/components/schemas/StatusEvent'
+              stream_done: '#/components/schemas/StreamDoneEvent'
+              stream_reset: '#/components/schemas/StreamResetEvent'
+              subagent: '#/components/schemas/SubagentEvent'
+              text: '#/components/schemas/TextEvent'
+              tool_call: '#/components/schemas/ToolCallEvent'
+              tool_error: '#/components/schemas/ToolErrorEvent'
+              tool_result: '#/components/schemas/ToolResultEvent'
+              tool_retry: '#/components/schemas/ToolRetryEvent'
+      type: object
+      required:
+      - seq
+      - run_id
+      - category
+      - block
+      title: SearchAgentStreamEnvelope
+      description: 'Public SSE envelope for the Search Agent run stream. Identical
+        wire shape
+
+        to AgentStreamEnvelope; the only difference is the terminal agent_result
+
+        block carries SearchAgentResult (unified top-level citations, no
+
+        web_results) — so the SSE terminal matches the GET poll projection.'
     SearchEffortLevel:
       type: string
       enum:
@@ -2241,6 +3022,15 @@ components:
           default: stream_reset
       type: object
       title: StreamResetEvent
+    StructuredOutputStatus:
+      type: string
+      enum:
+      - complete
+      - partial
+      - failed
+      title: StructuredOutputStatus
+      description: Terminal status of the structured-output channel (S1 contract section
+        12).
     SubagentEvent:
       properties:
         kind:
@@ -2408,6 +3198,58 @@ components:
         on
 
         these surfaces) and using the {data, web} TakoSourceIndex taxonomy.'
+    TakoDatasetColumn:
+      properties:
+        name:
+          type: string
+          title: Name
+        type:
+          $ref: '#/components/schemas/TakoDatasetColumnType'
+      type: object
+      required:
+      - name
+      - type
+      title: TakoDatasetColumn
+      description: Typed header entry; `type` is the JSON-facing column type.
+    TakoDatasetColumnType:
+      type: string
+      enum:
+      - string
+      - number
+      - boolean
+      - date
+      - datetime
+      title: TakoDatasetColumnType
+      description: 'Logical column type declared in a TakoDataset header. Temporal
+        cells are
+
+        ISO-8601 strings; date vs datetime is decided per column (a temporal column
+
+        whose non-null values are all tz-naive midnights declares ''date'').'
+    TakoDatasetSource:
+      properties:
+        name:
+          type: string
+          title: Name
+        index:
+          type: string
+          enum:
+          - data
+          - web
+          title: Index
+          default: data
+      type: object
+      required:
+      - name
+      title: TakoDatasetSource
+      description: 'Per-dataset provenance entry. `index` is the SOURCE index ("data"
+        for
+
+        every v1 splice — web never splices, S1 contract section 7), not a citation
+
+        display number. Mirrors the public TakoSourceIndex taxonomy as a plain
+
+        Literal; S7 revisits naming when the component goes public.'
     TakoSourceIndex:
       type: string
       enum:

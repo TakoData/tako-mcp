@@ -1,6 +1,6 @@
 {
   "name": "Tako",
-  "description": "Data intelligence agent that searches a knowledge base of 100K+ charts, answers data questions with citations, fetches underlying source content, and runs deep multi-step research.",
+  "description": "Data intelligence agent that searches a knowledge base of 100K+ charts, answers data questions with citations, fetches underlying source content, and runs a multi-step Answer Agent for deeper questions.",
   "url": "https://mcp.tako.com",
   "version": "0.7.4",
   "capabilities": {
@@ -92,8 +92,8 @@
     },
     {
       "id": "deep-research",
-      "name": "Deep Research Agent",
-      "description": "Run a deep research agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup.",
+      "name": "Answer Agent",
+      "description": "Run Tako's Answer Agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup.",
       "tags": [
         "agent",
         "research",

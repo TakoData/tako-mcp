@@ -1,20 +1,33 @@
 /**
- * `tako_agent` — run Tako's deep data-pipeline agent (transformations,
- * aggregations, multi-hop reasoning). Wraps the Agent API:
- *   POST /api/v1/agent/runs            (dispatch; returns { run_id, status })
- *   GET  /api/v1/agent/runs/{run_id}   (poll until completed|failed)
+ * `tako_agent` — run Tako's Answer Agent: opinionated, multi-step agentic
+ * research that returns a synthesized, citation-backed prose answer plus
+ * supporting chart cards. Wraps the Answer Agent API:
+ *   POST /api/v1/agent/answer/runs           (dispatch; returns { run_id, status })
+ *   GET  /api/v1/agent/answer/runs/{run_id}  (poll until completed|failed)
  * Runs ~30-90s, so we poll and emit notifications/progress each iteration to
  * keep the per-call timeout fresh (clients with resetTimeoutOnProgress). For
  * ChatGPT (no progress support) a split tako_agent_start/tako_agent_wait pair
  * is registered instead (see mcp.ts).
+ *
+ * PRODUCT: the public agent split (TAKO-3371) has two products — the Answer
+ * Agent (cited prose + cards; this tool) and the Search Agent (structured
+ * output / dataset slots). MCP exposes ONLY the Answer Agent: chat hosts want
+ * a synthesized answer, and the Search Agent's structured-output feature has
+ * no chat-host consumer (it lives in the SDK). `effort: "medium"` already
+ * routed to the Answer Agent (ORCHESTRATOR) on the retired generic
+ * `/v1/agent/runs`, so pointing at `/v1/agent/answer/runs` is
+ * behaviour-preserving.
  *
  * BILLING: agent runs over MCP are not yet metered for PAYG orgs (TAKO-3245).
  */
 import { z } from "zod";
 
 import { djangoGet, djangoPost } from "../django.js";
-import { AgentResult as AgentResultContract, AgentRun as AgentRunContract, AgentRunRequest } from "../generated/schemas.js";
-import { webResultSchema } from "./_search_results.js";
+import {
+  AnswerAgentResult as AnswerAgentResultContract,
+  AnswerAgentRun as AnswerAgentRunContract,
+  AnswerAgentRunRequest,
+} from "../generated/schemas.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -28,7 +41,7 @@ export const AGENT_WAIT_CEILING_S = 40;
 const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 const DESCRIPTION =
-  "Run Tako's deep research agent for questions that require *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, multi-step aggregation or transformation, and multi-hop reasoning across many entities that a single search/answer can't satisfy. Returns a synthesized `answer` plus supporting Tako chart `cards`. Use `tako_search` / `tako_answer` for a specific, known thing (a value, a time series, a direct comparison of two named entities); reach for the agent when the question's *shape* needs reasoning over multiple retrievals. **Uses both Tako's connected data and the live web by default — pass `sources` to narrow to one (`[\"data\"]` or `[\"web\"]`).** (Runs server-side, typically ~30–90s.)";
+  "Run Tako's Answer Agent — opinionated, multi-step research that reasons across many retrievals and returns a synthesized, citation-backed `answer` plus supporting Tako chart `cards`. Reach for it when a question's *shape* needs figuring out rather than a single lookup: resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, multi-step aggregation or transformation, and multi-hop reasoning across many entities that one search/answer can't satisfy — or when `tako_search` / `tako_answer` come back empty. For a specific, known thing (a value, a time series, a direct comparison of two named entities) prefer one-shot `tako_search` (inline chart) or `tako_answer` (prose); this agent is slower (~30–90s server-side) but far more thorough. **Uses both Tako's connected data and the live web by default — pass `sources` to narrow to one (`[\"data\"]` or `[\"web\"]`).**";
 
 export const inputSchema = z.object({
   query: z.string().min(1).describe("The deep/analytical question for the agent to work through."),
@@ -56,6 +69,47 @@ const takoCardSchema = z
   })
   .loose();
 
+// One indexed source behind the answer. The answer's inline [n] markers join
+// to a citation's `index`. Mirrors the generated AgentAnswerCitation — the
+// unified top-level registry (Answer Agent, S1 §5.2) that replaced the generic
+// agent's per-answer `web_results`. The required fields (`index`, `title`) match
+// the contract non-null; the object stays `.loose()` so additive backend fields
+// (source_index, content, …) pass through untouched.
+const citationSchema = z
+  .object({
+    index: z.number().int(),
+    title: z.string(),
+    url: z.string().nullable().optional(),
+    source_name: z.string().nullable().optional(),
+    excerpt: z.string().nullable().optional(),
+    publish_date: z.string().nullable().optional(),
+  })
+  .loose();
+
+// The answer's reasoning scaffolding (Answer Agent, AnswerAgentMetadata): term
+// definitions, stated assumptions, and methodology notes behind the prose.
+// Surfaced so chat hosts can show *why* the answer holds, not just the text.
+// Leaves stay `.loose()` so additive backend fields pass through.
+const definitionSchema = z
+  .object({ term: z.string(), definition: z.string(), source_ref: z.number().int().nullable().optional() })
+  .loose();
+const assumptionSchema = z
+  .object({
+    title: z.string(),
+    description: z.string(),
+    category: z.string().nullable().optional(),
+    source_ref: z.number().int().nullable().optional(),
+  })
+  .loose();
+const methodologyNoteSchema = z.object({ title: z.string(), description: z.string() }).loose();
+const metadataSchema = z
+  .object({
+    definitions: z.array(definitionSchema).nullable().optional(),
+    assumptions: z.array(assumptionSchema).nullable().optional(),
+    methodology: z.array(methodologyNoteSchema).nullable().optional(),
+  })
+  .loose();
+
 export const agentRunSchema = z.object({
   run_id: z.string(),
   // Surfaced so the caller can pass it back as `thread_id` to ask a follow-up
@@ -70,10 +124,13 @@ export const agentRunSchema = z.object({
     .object({
       answer: z.string().nullable().optional(),
       cards: z.array(takoCardSchema).default([]),
-      // Web sources backing the answer, carrying the 1-based citation_number
-      // that the answer's [N] markers map to. Dropping these loses all web
-      // citations, so they are captured here.
-      web_results: z.array(webResultSchema).default([]),
+      // The unified top-level citation registry (Answer Agent, S1 §5.2): the
+      // indexed sources the answer's [n] markers join to. This replaced the
+      // generic agent's `web_results` — dropping it loses all citations.
+      citations: z.array(citationSchema).default([]),
+      // Definitions / assumptions / methodology behind the answer
+      // (AnswerAgentMetadata); a plain z.object would otherwise strip it.
+      metadata: metadataSchema.nullable().optional(),
       request_id: z.string().nullable().optional(),
     })
     .nullable()
@@ -94,7 +151,7 @@ type AgentRunWire = {
 type AgentInput = z.infer<typeof inputSchema>;
 
 /**
- * Reshape the flat MCP input into the backend's AgentRunRequest body.
+ * Reshape the flat MCP input into the backend's AnswerAgentRunRequest body.
  * Exported for the contract-guard test.
  *
  * The MCP flat `sources` array maps to the backend's `source_indexes` field
@@ -103,38 +160,38 @@ type AgentInput = z.infer<typeof inputSchema>;
  * annotation is the build-time guard: if the backend request contract changes
  * (new required field, renamed key, changed enum), this line fails to compile.
  *
- * Parity note: the generated AgentRunRequest has `source_indexes` as optional
- * (the backend defaults to ["data","web"] when absent), but we always send it
- * explicitly to keep the MCP behaviour predictable regardless of backend
- * defaults.
+ * Parity note: the generated AnswerAgentRunRequest has `source_indexes` as
+ * optional (the backend defaults to ["data","web"] when absent), but we always
+ * send it explicitly to keep the MCP behaviour predictable regardless of
+ * backend defaults. `effort` only accepts the literal "medium" on the Answer
+ * Agent (AnswerAgentEffort) — the sole launched level.
  */
-export function buildAgentBody(input: AgentInput): z.input<typeof AgentRunRequest> {
-  const body: z.input<typeof AgentRunRequest> = {
+export function buildAgentBody(input: AgentInput): z.input<typeof AnswerAgentRunRequest> {
+  const body: z.input<typeof AnswerAgentRunRequest> = {
     query: input.query,
     source_indexes: input.sources.map((s) => (s === "tako" ? "data" : s)),
     effort: "medium",
   };
   if (input.thread_id !== undefined) body.thread_id = input.thread_id;
-  return body satisfies z.input<typeof AgentRunRequest>; // ← build-time guard: backend request drift breaks here
+  return body satisfies z.input<typeof AnswerAgentRunRequest>; // ← build-time guard: backend request drift breaks here
 }
 
-/** Dispatch a deep agent run. Returns the run_id. */
+/** Dispatch an Answer Agent run. Returns the run_id. */
 export async function dispatchAgentRun(
   ctx: ToolContext,
   query: string,
   sources: Array<"data" | "web" | "tako">,
   threadId?: string,
 ): Promise<string> {
-  // AgentRunRequest (api/ga/v1/agent/types.py) takes a flat `source_indexes`
-  // list (defaults to ["tako","web"] server-side, mirrored by the schema
-  // default here). `effort` only accepts "medium" today (AgentEffortLevel) —
-  // the sole supported public level; add others here as the backend gains them.
+  // AnswerAgentRunRequest takes a flat `source_indexes` list (defaults to
+  // ["data","web"] server-side, mirrored by the schema default here). `effort`
+  // only accepts the literal "medium" on the Answer Agent (AnswerAgentEffort).
   // `thread_id`, when provided, continues a prior run's conversation.
   const body = buildAgentBody({ query, sources, thread_id: threadId });
   const data = await djangoPost<AgentRunWire>(
     ctx.env,
     ctx.token,
-    "/api/v1/agent/runs",
+    "/api/v1/agent/answer/runs",
     body,
     { timeoutMs: 30_000 },
   );
@@ -158,7 +215,7 @@ export async function pollAgentRun(
   while (true) {
     let wire: AgentRunWire;
     try {
-      wire = await djangoGet<AgentRunWire>(ctx.env, ctx.token, `/api/v1/agent/runs/${runId}`, {
+      wire = await djangoGet<AgentRunWire>(ctx.env, ctx.token, `/api/v1/agent/answer/runs/${runId}`, {
         timeoutMs: AGENT_POLL_REQUEST_TIMEOUT_MS,
       });
       transient = 0;
@@ -169,9 +226,9 @@ export async function pollAgentRun(
       continue;
     }
     // Wire-contract guard: validate the raw GET response against the generated
-    // AgentRun contract before mapping into the normalised MCP output shape.
+    // AnswerAgentRun contract before mapping into the normalised MCP output shape.
     //
-    // Parity decision (Path 2): the generated AgentRun requires `created_at`
+    // Parity decision (Path 2): the generated AnswerAgentRun requires `created_at`
     // and `object` fields that the poll wire may omit for in-flight runs, and
     // it lacks the MCP-synthetic `timed_out` field the split tools depend on.
     // The hand-authored `agentRunSchema` therefore remains the tool's advertised
@@ -183,13 +240,13 @@ export async function pollAgentRun(
     //   • run_id / status  — always required; absence → drift error.
     //   • result           — when status is "completed", the field MUST be
     //                        present (not renamed away) and, if non-null, MUST
-    //                        structurally match AgentResult from the generated
-    //                        contract. For in-flight (queued/running) runs,
-    //                        result is legitimately absent; no check is applied.
+    //                        structurally match AnswerAgentResult from the
+    //                        generated contract. For in-flight (queued/running)
+    //                        runs, result is legitimately absent; no check runs.
     //   • created_at / object / timed_out — tolerated as absent (metadata
     //                        fields the poll wire may omit; timed_out is MCP-
     //                        synthetic and does not appear in the backend schema).
-    const lifecycleGuard = AgentRunContract.pick({ run_id: true, status: true }).safeParse(wire);
+    const lifecycleGuard = AnswerAgentRunContract.pick({ run_id: true, status: true }).safeParse(wire);
     if (!lifecycleGuard.success) {
       throw new Error(
         `Agent run wire drifted from the backend contract: ${lifecycleGuard.error.issues.map((i) => i.path.join(".") + ": " + i.message).join("; ")}`,
@@ -206,7 +263,7 @@ export async function pollAgentRun(
         );
       }
       if (wire.result !== null) {
-        const resultGuard = AgentResultContract.safeParse(wire.result);
+        const resultGuard = AnswerAgentResultContract.safeParse(wire.result);
         if (!resultGuard.success) {
           throw new Error(
             `Agent run wire drifted from the backend contract: result shape mismatch — ${resultGuard.error.issues.map((i) => i.path.join(".") + ": " + i.message).join("; ")}`,
@@ -256,7 +313,7 @@ const takoAgent = {
   inputSchema,
   outputSchema: agentRunSchema,
   annotations: {
-    title: "Tako: Deep Agent",
+    title: "Tako: Answer Agent",
     readOnlyHint: true,
     destructiveHint: false,
     openWorldHint: true,

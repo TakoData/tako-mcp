@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.TakoData/tako-mcp",
   "title": "Tako",
-  "description": "Search, answer, and fetch Tako's knowledge base of 100K+ data charts, plus deep research agents.",
+  "description": "Search, answer, and fetch Tako's knowledge base of 100K+ data charts, plus a multi-step Answer Agent.",
   "version": "0.7.4",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",

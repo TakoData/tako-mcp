@@ -4,6 +4,9 @@
  */
 import { z } from "zod";
 
+export const TakoDataset = z.object({ "columns": z.array(z.lazy(() => TakoDatasetColumn)), "rows": z.array(z.array(z.union([z.string(), z.number(), z.number().int(), z.boolean(), z.null()]))), "total_rows": z.number().int(), "truncated": z.boolean(), "ref": z.string(), "sources": z.array(z.lazy(() => TakoDatasetSource)), "provenance": z.enum(["query","web_extraction"]).default("query") }).describe("The slot envelope (S1 contract section 5.3): exact spliced rows as\npositional arrays in `columns` order — never LLM-transcribed.\ndownload_url/expires_at are reserved (full pulls, deferred).");
+export type TakoDataset = z.infer<typeof TakoDataset>;
+
 export const APIErrorType = z.enum(["BAD_REQUEST","AUTHENTICATION_ERROR","INTERNAL_SERVER_ERROR","RELEVANT_RESULTS_NOT_FOUND","RATE_LIMIT_EXCEEDED","PAYMENT_REQUIRED","REQUEST_TIMEOUT","FORBIDDEN","NOT_FOUND","SERVICE_UNAVAILABLE"]);
 export type APIErrorType = z.infer<typeof APIErrorType>;
 
@@ -90,11 +93,55 @@ export type AnswerAgentMetadata = z.infer<typeof AnswerAgentMetadata>;
 export const AnswerAgentResult = z.object({ "answer": z.union([z.string(), z.null()]).optional(), "cards": z.array(z.lazy(() => TakoCard)).optional(), "citations": z.array(z.lazy(() => AgentAnswerCitation)).optional(), "metadata": z.union([z.lazy(() => AnswerAgentMetadata), z.null()]).optional(), "request_id": z.union([z.string(), z.null()]).optional() }).describe("Final answer-agent output. answer is markdown prose with [n] citation\nmarkers; citations is the unified top-level registry the [n] markers join;\ncards reuse the sibling TakoCard; metadata carries definitions/assumptions/\nmethodology. NO inline data, NO structured output, NO web_results — ever.\nProse-only (empty cards) is legitimate.");
 export type AnswerAgentResult = z.infer<typeof AnswerAgentResult>;
 
+export const AnswerAgentResultEvent = z.object({ "kind": z.literal("agent_result").default("agent_result"), "id": z.string(), "data": z.lazy(() => AnswerAgentResult) });
+export type AnswerAgentResultEvent = z.infer<typeof AnswerAgentResultEvent>;
+
 export const AnswerAgentRun = z.object({ "run_id": z.string(), "object": z.literal("agent.run").default("agent.run"), "thread_id": z.union([z.string(), z.null()]).optional(), "status": z.lazy(() => AgentRunStatus), "created_at": z.string(), "completed_at": z.union([z.string(), z.null()]).optional(), "result": z.union([z.lazy(() => AnswerAgentResult), z.null()]).optional(), "error": z.union([z.lazy(() => ErrorObject), z.null()]).optional(), "usage": z.union([z.lazy(() => AgentUsage), z.null()]).optional(), "request": z.union([z.lazy(() => AnswerAgentRunRequest), z.null()]).optional() }).describe("The answer-agent run resource returned by dispatch (202) and poll (GET).");
 export type AnswerAgentRun = z.infer<typeof AnswerAgentRun>;
 
+export const AnswerAgentRunList = z.object({ "object": z.literal("list").default("list"), "data": z.array(z.lazy(() => AnswerAgentRunSummary)), "has_more": z.boolean().default(false), "next_cursor": z.union([z.string(), z.null()]).optional() }).describe("OpenAI/Exa-style list envelope for GET /v1/agent/answer/runs (TAKO-3384).");
+export type AnswerAgentRunList = z.infer<typeof AnswerAgentRunList>;
+
 export const AnswerAgentRunRequest = z.object({ "query": z.string().describe("Natural-language request for the answer agent."), "thread_id": z.union([z.string().uuid(), z.null()]).describe("Existing thread to continue (follow-up). Omit to start a new thread.").optional(), "effort": z.lazy(() => AnswerAgentEffort).describe("Answer-agent effort. Only 'medium' is currently supported.").default("medium"), "source_indexes": z.array(z.enum(["data","web"])).describe("Which sources the agent may use: 'data' (curated knowledge) and/or 'web' (open-web search). Defaults to ['data', 'web']. The legacy value 'tako' is accepted as a synonym for 'data'.").optional(), "locale": z.string().describe("BCP-47 locale. Drives the language of the agent's answer and the locale used when rendering card preview images. Defaults to en-US.").default("en-US"), "timezone": z.union([z.string(), z.null()]).describe("IANA timezone (e.g. 'America/New_York') used to render dates/times in card preview images. Does not affect the returned data.").optional(), "output_settings": z.union([z.lazy(() => AgentOutputSettings), z.null()]).describe("Settings controlling the response/rendering.").optional() }).describe("Request body for POST /v1/agent/answer/runs.\n\nFrozen contract: NO output_schema / structured outputs, NO inline data —\never. Cards are the only data-export path (via /v1/contents).");
 export type AnswerAgentRunRequest = z.infer<typeof AnswerAgentRunRequest>;
+
+export const AnswerAgentRunSummary = z.object({ "run_id": z.string(), "status": z.lazy(() => AgentRunStatus), "created_at": z.string(), "completed_at": z.union([z.string(), z.null()]).optional(), "thread_id": z.union([z.string(), z.null()]).optional(), "usage": z.union([z.lazy(() => AgentUsage), z.null()]).optional(), "object": z.literal("agent.run").default("agent.run") });
+export type AnswerAgentRunSummary = z.infer<typeof AnswerAgentRunSummary>;
+
+export const AnswerAgentStreamEnvelope = z.object({ "seq": z.number().int().gte(0), "run_id": z.string(), "thread_id": z.union([z.string(), z.null()]).optional(), "category": z.lazy(() => StreamCategory), "block": z.any().superRefine((x, ctx) => {
+    const schemas = [z.lazy(() => ToolCallEvent), z.lazy(() => ToolResultEvent), z.lazy(() => ToolErrorEvent), z.lazy(() => ToolRetryEvent), z.lazy(() => StatusEvent), z.lazy(() => SubagentEvent), z.lazy(() => ReasoningEvent), z.lazy(() => TextEvent), z.lazy(() => DataPipelineAnswerEvent), z.lazy(() => AnswerAgentResultEvent), z.lazy(() => HeartbeatEvent), z.lazy(() => StreamResetEvent), z.lazy(() => StreamDoneEvent)];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }) }).describe("Public SSE envelope for the Answer Agent run stream. Identical wire shape\nto AgentStreamEnvelope; the only difference is the terminal agent_result\nblock carries AnswerAgentResult (top-level citations, no web_results).");
+export type AnswerAgentStreamEnvelope = z.infer<typeof AnswerAgentStreamEnvelope>;
 
 export const AnswerResponse = z.object({ "answer": z.string().describe("Synthesized text answer."), "cards": z.array(z.lazy(() => TakoCard)).describe("Tako cards backing the answer; cards[0] is the lead card — the best one to show alongside the answer.").optional(), "web_results": z.array(z.lazy(() => WebResult)).optional(), "contents_total_cost": z.number().describe("Total quoted USD cost of the data inlined on this response — the summed per-fetch price of the results whose payload was populated (one charge per distinct extracted web URL; Tako card CSV is free). This is the QUOTE, not necessarily the amount billed: on a depleted prepaid (PAYG) balance the charge is clamped to the remaining balance, so the amount actually drawn can be less. A result's own `cost` is a per-fetch quote present whenever it is downloadable, so a result that was requested but whose extraction was skipped or failed still carries its quote; that un-inlined quote is excluded here. 0 when no contents were inlined.").default(0), "request_id": z.string() }).describe("Response for POST /api/v1/answer — synthesized answer + retrieval.");
 export type AnswerResponse = z.infer<typeof AnswerResponse>;
@@ -177,6 +224,62 @@ export type RelationGroup = z.infer<typeof RelationGroup>;
 export const ResultContent = z.object({ "format": z.lazy(() => ContentFormat), "cost": z.number().default(0), "data": z.union([z.string(), z.null()]).optional(), "total_rows": z.union([z.number().int(), z.null()]).optional(), "truncated": z.boolean().default(false) }).describe("Describes the downloadable content behind a result. `cost` is the USD the\n/contents call will charge for this result (Tako card CSV is free; web text is\nthe canonical Contents rate). The inline fields (`data`/`total_rows`/\n`truncated`) are populated only by auto-contents / `/contents` inline mode;\nwhen unset, this is just the quote (format + cost), fetched later via the\nContents endpoint (a Tako card URL -> ChartConfig -> CSV; any other URL ->\npage text).");
 export type ResultContent = z.infer<typeof ResultContent>;
 
+export const SearchAgentEffort = z.literal("medium").describe("Effort taxonomy for the Search Agent (POST /v1/agent/search/runs).\n\nLaunches single-tier: only MEDIUM is exposed (-> data_pipeline_medium_config).\nThe low/high data-pipeline configs exist but are deliberately not launched on\nthe public surface (S2 design / TAKO-3375, 2026-07-06). `effort` stays a\nrequest field for forward-compat + family parity with AnswerAgentEffort;\nlow/high 400 at validation. If tiers return, add the members here plus the\neffort pin + thread-context effort stamping.");
+export type SearchAgentEffort = z.infer<typeof SearchAgentEffort>;
+
+export const SearchAgentResult = z.object({ "answer": z.union([z.string(), z.null()]).optional(), "cards": z.array(z.lazy(() => TakoCard)).optional(), "citations": z.array(z.lazy(() => AgentAnswerCitation)).optional(), "metadata": z.union([z.lazy(() => AgentAnswerMetadata), z.null()]).optional(), "structured_output": z.union([z.record(z.string(), z.any()), z.null()]).describe("Caller-shaped structured output (present iff the request carried output_schema and status is not 'failed'). Dataset slots contain a TakoDataset envelope of exact retrieved rows, or null when honestly unfilled.").optional(), "structured_output_status": z.union([z.lazy(() => StructuredOutputStatus), z.null()]).describe("complete | partial | failed. Present when output_schema was supplied and the run reached finalize. May be absent if the whole run failed or timed out before finalize — the run-level status + error convey that, and the echoed request.output_schema still identifies it as a structured run.").optional(), "structured_output_citations": z.union([z.record(z.string(), z.array(z.number().int())), z.null()]).describe("Best-effort field-path -> citation-index map joining the top-level citations registry (same [n] index space as the answer). Absent when status is 'failed'.").optional(), "unfilled_fields": z.union([z.array(z.string()), z.null()]).describe("Dot-separated paths of honestly-unfilled dataset slots; present iff status is 'partial'.").optional(), "structured_output_error": z.union([z.lazy(() => ErrorObject), z.null()]).describe("Why structured output failed; present iff status is 'failed'.").optional(), "request_id": z.union([z.string(), z.null()]).optional() }).describe("Final search-agent output. answer is markdown prose with [n] citation\nmarkers; cards reuse the sibling TakoCard; citations is the unified\ntop-level registry (data + web, S1 §5.2) — there is no web_results field;\nmetadata carries definitions/assumptions/methodology (citations lifted out).\nstructured_output_* fields carry the caller-shaped output_schema result\n(S3 §5.1) — present iff the request supplied output_schema; see each\nfield's description for the exact presence matrix.");
+export type SearchAgentResult = z.infer<typeof SearchAgentResult>;
+
+export const SearchAgentResultEvent = z.object({ "kind": z.literal("agent_result").default("agent_result"), "id": z.string(), "data": z.lazy(() => SearchAgentResult) });
+export type SearchAgentResultEvent = z.infer<typeof SearchAgentResultEvent>;
+
+export const SearchAgentRun = z.object({ "run_id": z.string(), "object": z.literal("agent.search.run").default("agent.search.run"), "thread_id": z.union([z.string(), z.null()]).optional(), "status": z.lazy(() => AgentRunStatus), "created_at": z.string(), "completed_at": z.union([z.string(), z.null()]).optional(), "result": z.union([z.lazy(() => SearchAgentResult), z.null()]).optional(), "error": z.union([z.lazy(() => ErrorObject), z.null()]).optional(), "usage": z.union([z.lazy(() => AgentUsage), z.null()]).optional(), "request": z.union([z.lazy(() => SearchAgentRunRequest), z.null()]).optional() }).describe("The search-agent run resource returned by dispatch (202) and poll (GET).");
+export type SearchAgentRun = z.infer<typeof SearchAgentRun>;
+
+export const SearchAgentRunList = z.object({ "object": z.literal("list").default("list"), "data": z.array(z.lazy(() => SearchAgentRunSummary)), "has_more": z.boolean().default(false), "next_cursor": z.union([z.string(), z.null()]).optional() }).describe("OpenAI/Exa-style list envelope for GET /v1/agent/search/runs (TAKO-3384).");
+export type SearchAgentRunList = z.infer<typeof SearchAgentRunList>;
+
+export const SearchAgentRunRequest = z.object({ "query": z.string().describe("Natural-language data-retrieval request for the search agent."), "thread_id": z.union([z.string().uuid(), z.null()]).describe("Existing thread to continue (follow-up). Omit to start a new thread.").optional(), "effort": z.lazy(() => SearchAgentEffort).describe("Search-agent effort. Only 'medium' is currently supported.").default("medium"), "source_indexes": z.array(z.enum(["data","web"])).describe("Which sources the agent may use: 'data' (curated knowledge) and/or 'web' (open-web search). Defaults to ['data', 'web']. The legacy value 'tako' is accepted as a synonym for 'data'.").optional(), "cards": z.boolean().describe("Whether the agent may build visualization cards. Default true and permissive: true means the agent MAY build cards, not that it must (a completed run with no cards is legitimate). false suppresses card building entirely.").default(true), "output_schema": z.union([z.record(z.string(), z.any()), z.null()]).describe("JSON Schema for structured output. Synthesized fields are written by the agent; dataset slots (marked with x-tako-dataset: true) are filled with exact retrieved rows as a TakoDataset. Supported subset: object/array/string/number/integer/boolean types, enum, required, description; caps: 16KB, depth 5, 64 properties, 4 dataset slots. Violations return 400 output_schema_invalid.").optional(), "locale": z.string().describe("BCP-47 locale. Drives the language of the agent's answer and the locale used when rendering card preview images. Defaults to en-US.").default("en-US"), "timezone": z.union([z.string(), z.null()]).describe("IANA timezone (e.g. 'America/New_York') used to render dates/times in card preview images. Does not affect the returned data.").optional(), "output_settings": z.union([z.lazy(() => AgentOutputSettings), z.null()]).describe("Settings controlling the response/rendering.").optional() }).describe("Request body for POST /v1/agent/search/runs.");
+export type SearchAgentRunRequest = z.infer<typeof SearchAgentRunRequest>;
+
+export const SearchAgentRunSummary = z.object({ "run_id": z.string(), "status": z.lazy(() => AgentRunStatus), "created_at": z.string(), "completed_at": z.union([z.string(), z.null()]).optional(), "thread_id": z.union([z.string(), z.null()]).optional(), "usage": z.union([z.lazy(() => AgentUsage), z.null()]).optional(), "object": z.literal("agent.search.run").default("agent.search.run") });
+export type SearchAgentRunSummary = z.infer<typeof SearchAgentRunSummary>;
+
+export const SearchAgentStreamEnvelope = z.object({ "seq": z.number().int().gte(0), "run_id": z.string(), "thread_id": z.union([z.string(), z.null()]).optional(), "category": z.lazy(() => StreamCategory), "block": z.any().superRefine((x, ctx) => {
+    const schemas = [z.lazy(() => ToolCallEvent), z.lazy(() => ToolResultEvent), z.lazy(() => ToolErrorEvent), z.lazy(() => ToolRetryEvent), z.lazy(() => StatusEvent), z.lazy(() => SubagentEvent), z.lazy(() => ReasoningEvent), z.lazy(() => TextEvent), z.lazy(() => DataPipelineAnswerEvent), z.lazy(() => SearchAgentResultEvent), z.lazy(() => HeartbeatEvent), z.lazy(() => StreamResetEvent), z.lazy(() => StreamDoneEvent)];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }) }).describe("Public SSE envelope for the Search Agent run stream. Identical wire shape\nto AgentStreamEnvelope; the only difference is the terminal agent_result\nblock carries SearchAgentResult (unified top-level citations, no\nweb_results) — so the SSE terminal matches the GET poll projection.");
+export type SearchAgentStreamEnvelope = z.infer<typeof SearchAgentStreamEnvelope>;
+
 export const SearchEffortLevel = z.enum(["fast","instant","deep"]).describe("Public effort taxonomy for the new endpoints. FAST is the default. INSTANT\nserves cached embeds without re-running data retrieval and is available in all\nenvironments. DEEP widens TAKO retrieval and adds an LLM rerank for higher-quality results\n(slower; billed at a premium tier). The generated OpenAPI/SDK advertises\nexactly these members, so we add values only as the pipeline gains support.");
 export type SearchEffortLevel = z.infer<typeof SearchEffortLevel>;
 
@@ -204,6 +307,9 @@ export type StreamDoneEvent = z.infer<typeof StreamDoneEvent>;
 export const StreamResetEvent = z.object({ "kind": z.literal("stream_reset").default("stream_reset") });
 export type StreamResetEvent = z.infer<typeof StreamResetEvent>;
 
+export const StructuredOutputStatus = z.enum(["complete","partial","failed"]).describe("Terminal status of the structured-output channel (S1 contract section 12).");
+export type StructuredOutputStatus = z.infer<typeof StructuredOutputStatus>;
+
 export const SubagentEvent = z.object({ "kind": z.literal("subagent").default("subagent"), "agent_id": z.string(), "subagent_type": z.string(), "parent_id": z.union([z.string(), z.null()]).optional(), "event": z.enum(["dispatch","complete"]) });
 export type SubagentEvent = z.infer<typeof SubagentEvent>;
 
@@ -212,6 +318,15 @@ export type TakoCard = z.infer<typeof TakoCard>;
 
 export const TakoCardSource = z.object({ "source_name": z.union([z.string(), z.null()]).describe("The name of the source").optional(), "source_description": z.union([z.string(), z.null()]).describe("The description of the source").optional(), "source_index": z.lazy(() => TakoSourceIndex).describe("The index of the source"), "url": z.union([z.string(), z.null()]).describe("The URL of the source").optional(), "source_text": z.union([z.string(), z.null()]).describe("Raw excerpt(s) retrieved from the source page — the unmodified web content the answer was grounded in. Populated for WEB sources; null for DATA sources.").optional() }).describe("A source backing a TakoCard, on the SDK surfaces. Mirrors the legacy\nKnowledgeCardSource minus the segment/private-index variants (unreachable on\nthese surfaces) and using the {data, web} TakoSourceIndex taxonomy.");
 export type TakoCardSource = z.infer<typeof TakoCardSource>;
+
+export const TakoDatasetColumn = z.object({ "name": z.string(), "type": z.lazy(() => TakoDatasetColumnType) }).describe("Typed header entry; `type` is the JSON-facing column type.");
+export type TakoDatasetColumn = z.infer<typeof TakoDatasetColumn>;
+
+export const TakoDatasetColumnType = z.enum(["string","number","boolean","date","datetime"]).describe("Logical column type declared in a TakoDataset header. Temporal cells are\nISO-8601 strings; date vs datetime is decided per column (a temporal column\nwhose non-null values are all tz-naive midnights declares 'date').");
+export type TakoDatasetColumnType = z.infer<typeof TakoDatasetColumnType>;
+
+export const TakoDatasetSource = z.object({ "name": z.string(), "index": z.enum(["data","web"]).default("data") }).describe("Per-dataset provenance entry. `index` is the SOURCE index (\"data\" for\nevery v1 splice — web never splices, S1 contract section 7), not a citation\ndisplay number. Mirrors the public TakoSourceIndex taxonomy as a plain\nLiteral; S7 revisits naming when the component goes public.");
+export type TakoDatasetSource = z.infer<typeof TakoDatasetSource>;
 
 export const TakoSourceIndex = z.enum(["data","web"]).describe("Public source taxonomy for the SDK card surfaces (v3 search, v1 answer,\nagent). Symmetric with the request taxonomy {data, web}. Distinct from the\ninternal/legacy CardSourceIndex used by the internal /v1/knowledge_search\npath, which carries additional internal-only index names.");
 export type TakoSourceIndex = z.infer<typeof TakoSourceIndex>;

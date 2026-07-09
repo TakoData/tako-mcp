@@ -7,8 +7,9 @@
  * ChatGPT). See `mcp.ts`'s `CHATGPT_ONLY_TOOL_NAMES` set and
  * `tako_agent_start` for the full rationale.
  *
- * Internally calls `pollAgentRun`, which polls `GET /api/v1/agent/runs/{run_id}`
- * with a 5 s interval until the run reaches `completed` or `failed`, or until
+ * Internally calls `pollAgentRun`, which polls
+ * `GET /api/v1/agent/answer/runs/{run_id}` (Tako's Answer Agent) with a 5 s
+ * interval until the run reaches `completed` or `failed`, or until
  * `max_wait_seconds` elapses. If `timed_out` is true, call again with the same
  * `run_id` to continue polling — agent runs are typically 30–90 s.
  *

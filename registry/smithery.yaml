@@ -3,7 +3,7 @@ title: Tako MCP Server
 description: |
   Search, answer, and fetch data from Tako's knowledge base of 100K+ charts
   covering economics, finance, demographics, sports, markets, and weather; and
-  run deep multi-step research agents.
+  run a multi-step Answer Agent for deeper questions.
 version: 0.7.4
 license: MIT
 author:
@@ -51,7 +51,7 @@ tools:
   - name: tako_visualize
     description: Create an embeddable chart/card from your own structured data
   - name: tako_agent
-    description: Run Tako's deep research agent for complex, multi-step data questions
+    description: Run Tako's Answer Agent — multi-step research for complex questions; returns a cited answer plus chart cards
   - name: get_credit_balance
     description: Check the connected account's API credit balance
 examples:

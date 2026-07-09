@@ -370,10 +370,10 @@ describe("worker routing", () => {
 
     // Promises the inline auto-render and routes "figure-it-out" / empty-result
     // follow-ups to the Tako agent. The cross-reference is client-agnostic
-    // (names "the Tako deep research agent", not the ChatGPT-only split tools)
+    // (names "the Tako Answer Agent", not the ChatGPT-only split tools)
     // since this one description string is served verbatim to every host.
     expect(claudeDesc).toContain("auto-renders inline");
-    expect(claudeDesc).toContain("Tako deep research agent");
+    expect(claudeDesc).toContain("Tako Answer Agent");
 
     // No residue from the removed legacy deep/async machinery.
     expect(claudeDesc).not.toContain("auto-escalation");
