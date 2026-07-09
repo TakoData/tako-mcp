@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/TakoData/tako-mcp/compare/v0.7.4...v0.8.0) (2026-07-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* tako_agent now calls /v1/agent/answer/runs and its result no longer includes web_results (use the citations field instead).
+
+### Features
+
+* repoint tako_agent to the Answer Agent API; web_results → citations ([#119](https://github.com/TakoData/tako-mcp/issues/119)) ([c8e0f2a](https://github.com/TakoData/tako-mcp/commit/c8e0f2a5b67e614e9aaeba5f9a71a4f8c94644d6))
+
 ## [0.7.4](https://github.com/TakoData/tako-mcp/compare/v0.7.3...v0.7.4) (2026-07-08)
 
 
