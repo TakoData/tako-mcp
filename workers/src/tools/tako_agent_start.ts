@@ -1,5 +1,5 @@
 /**
- * `tako_agent_start` — kick off a Tako deep agent run asynchronously and
+ * `tako_agent_start` — kick off a Tako Answer Agent run asynchronously and
  * return a `run_id` immediately.
  *
  * Registered ONLY on clients that don't honor MCP

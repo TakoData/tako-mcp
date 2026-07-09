@@ -49,6 +49,33 @@ describe("tako_agent", () => {
     expect(out.result?.citations?.[0]?.index).toBe(1);
   });
 
+  it("surfaces the Answer Agent metadata (definitions/assumptions/methodology) instead of dropping it", async () => {
+    vi.useFakeTimers();
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_meta", status: "queued" });
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "run_meta",
+      status: "completed",
+      result: {
+        answer: "a",
+        cards: [],
+        citations: [],
+        metadata: {
+          definitions: [{ term: "GDP", definition: "gross domestic product" }],
+          assumptions: [{ title: "nominal", description: "not inflation-adjusted" }],
+          methodology: [{ title: "sources", description: "world bank" }],
+        },
+      },
+    });
+
+    const handlerPromise = tool.handler({ query: "q", sources: ["data"] }, ctx);
+    await vi.runAllTimersAsync();
+    const out = await handlerPromise;
+
+    expect(out.result?.metadata?.definitions?.[0]?.term).toBe("GDP");
+    expect(out.result?.metadata?.assumptions?.[0]?.title).toBe("nominal");
+    expect(out.result?.metadata?.methodology?.[0]?.title).toBe("sources");
+  });
+
   it("surfaces a failed run with its error", async () => {
     vi.useFakeTimers();
     vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_2", status: "queued" });

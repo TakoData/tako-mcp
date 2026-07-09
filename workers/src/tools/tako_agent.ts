@@ -86,6 +86,30 @@ const citationSchema = z
   })
   .loose();
 
+// The answer's reasoning scaffolding (Answer Agent, AnswerAgentMetadata): term
+// definitions, stated assumptions, and methodology notes behind the prose.
+// Surfaced so chat hosts can show *why* the answer holds, not just the text.
+// Leaves stay `.loose()` so additive backend fields pass through.
+const definitionSchema = z
+  .object({ term: z.string(), definition: z.string(), source_ref: z.number().int().nullable().optional() })
+  .loose();
+const assumptionSchema = z
+  .object({
+    title: z.string(),
+    description: z.string(),
+    category: z.string().nullable().optional(),
+    source_ref: z.number().int().nullable().optional(),
+  })
+  .loose();
+const methodologyNoteSchema = z.object({ title: z.string(), description: z.string() }).loose();
+const metadataSchema = z
+  .object({
+    definitions: z.array(definitionSchema).nullable().optional(),
+    assumptions: z.array(assumptionSchema).nullable().optional(),
+    methodology: z.array(methodologyNoteSchema).nullable().optional(),
+  })
+  .loose();
+
 export const agentRunSchema = z.object({
   run_id: z.string(),
   // Surfaced so the caller can pass it back as `thread_id` to ask a follow-up
@@ -104,6 +128,9 @@ export const agentRunSchema = z.object({
       // indexed sources the answer's [n] markers join to. This replaced the
       // generic agent's `web_results` — dropping it loses all citations.
       citations: z.array(citationSchema).default([]),
+      // Definitions / assumptions / methodology behind the answer
+      // (AnswerAgentMetadata); a plain z.object would otherwise strip it.
+      metadata: metadataSchema.nullable().optional(),
       request_id: z.string().nullable().optional(),
     })
     .nullable()
@@ -149,7 +176,7 @@ export function buildAgentBody(input: AgentInput): z.input<typeof AnswerAgentRun
   return body satisfies z.input<typeof AnswerAgentRunRequest>; // ← build-time guard: backend request drift breaks here
 }
 
-/** Dispatch a deep agent run. Returns the run_id. */
+/** Dispatch an Answer Agent run. Returns the run_id. */
 export async function dispatchAgentRun(
   ctx: ToolContext,
   query: string,
