@@ -9,7 +9,7 @@ This MCP server enables AI agents to:
 - **Search** Tako's knowledge base for charts and data visualizations
 - **Answer** data questions with grounded, citation-backed prose
 - **Fetch** underlying content (CSV or text) behind result URLs
-- **Run** deep multi-step research with Tako's agent
+- **Run** Tako's Answer Agent for deep, multi-step research
 
 ## Quick start
 

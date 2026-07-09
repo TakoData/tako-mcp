@@ -1,6 +1,6 @@
 # Tako
 
-> Tako is a data intelligence platform. The Tako MCP server lets AI agents search a knowledge base of 100K+ curated charts, get grounded answers, fetch underlying source content, and run a deep research agent. It is a hosted remote MCP server on Cloudflare Workers.
+> Tako is a data intelligence platform. The Tako MCP server lets AI agents search a knowledge base of 100K+ curated charts, get grounded answers, fetch underlying source content, and run a multi-step Answer Agent. It is a hosted remote MCP server on Cloudflare Workers.
 
 ## Documentation
 
@@ -58,7 +58,7 @@ Parameters:
 - `normalize_currencies` (string, optional): Target ISO 4217 code to convert currency-denominated datasets
 
 ### tako_agent
-Run Tako's deep research agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning. Returns a synthesized answer plus supporting chart cards. On ChatGPT, exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.
+Run Tako's Answer Agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning. Returns a synthesized answer plus supporting chart cards. On ChatGPT, exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.
 
 Parameters:
 - `query` (string, required): The deep/analytical question

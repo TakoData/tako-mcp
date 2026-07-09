@@ -38,7 +38,7 @@ const KICKOFF_MESSAGE =
 const tako_agent_start = {
   name: "tako_agent_start",
   description:
-    "Kick off a Tako deep research agent run and return immediately with a `run_id`. Use this for questions that require *figuring something out* rather than retrieving a known value — cohort resolution, ranking or filtering a set by criteria, multi-step aggregation, and multi-hop reasoning across many entities (use `tako_search` / `tako_answer` for a specific, known thing). **Uses both Tako and the live web by default — pass `sources` to narrow to one.** The agent runs server-side (typically ~30–90s); this tool returns in <1s with the run handle. **Workflow:** (1) tell the user the agent run is starting; (2) call `tako_agent_wait` with the `run_id` to poll for results, chaining calls until `status` is `completed` or `failed`.",
+    "Kick off a Tako Answer Agent run and return immediately with a `run_id`. The Answer Agent does opinionated, multi-step research for questions whose *shape* needs figuring out rather than a known value — cohort resolution, ranking or filtering a set by criteria, multi-step aggregation, and multi-hop reasoning across many entities (use one-shot `tako_search` / `tako_answer` for a specific, known thing, or when this would be overkill). **Uses both Tako's connected data and the live web by default — pass `sources` to narrow to one.** The agent runs server-side (typically ~30–90s); this tool returns in <1s with the run handle. **Workflow:** (1) tell the user the agent run is starting; (2) call `tako_agent_wait` with the `run_id` to poll for results, chaining calls until `status` is `completed` or `failed`.",
   inputSchema,
   outputSchema,
   annotations: {

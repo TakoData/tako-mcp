@@ -72,12 +72,13 @@ const takoCardSchema = z
 // One indexed source behind the answer. The answer's inline [n] markers join
 // to a citation's `index`. Mirrors the generated AgentAnswerCitation — the
 // unified top-level registry (Answer Agent, S1 §5.2) that replaced the generic
-// agent's per-answer `web_results`. Kept loose so additive backend fields
+// agent's per-answer `web_results`. The required fields (`index`, `title`) match
+// the contract non-null; the object stays `.loose()` so additive backend fields
 // (source_index, content, …) pass through untouched.
 const citationSchema = z
   .object({
     index: z.number().int(),
-    title: z.string().nullable().optional(),
+    title: z.string(),
     url: z.string().nullable().optional(),
     source_name: z.string().nullable().optional(),
     excerpt: z.string().nullable().optional(),
@@ -285,7 +286,7 @@ const takoAgent = {
   inputSchema,
   outputSchema: agentRunSchema,
   annotations: {
-    title: "Tako: Deep Agent",
+    title: "Tako: Answer Agent",
     readOnlyHint: true,
     destructiveHint: false,
     openWorldHint: true,

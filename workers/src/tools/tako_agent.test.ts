@@ -194,4 +194,21 @@ describe("tako_agent wire-drift guard", () => {
     expect(out.status).toBe("completed");
     expect(out.result).toBeNull();
   });
+
+  it("throws a contract-drift error when a completed run's citation is missing the required `title`", async () => {
+    vi.useFakeTimers();
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_cite_drift", status: "queued" });
+    // `title` is required non-null on the generated AgentAnswerCitation, so a
+    // title-less citation is backend drift. The result-shape guard must reject
+    // the run rather than silently drop the field (citationSchema mirrors this).
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "run_cite_drift",
+      status: "completed",
+      result: { answer: "x", cards: [], citations: [{ index: 1 }] }, // title missing
+    } as never);
+
+    const handlerPromise = tool.handler({ query: "citation drift", sources: ["tako"] }, ctx);
+    await vi.runAllTimersAsync();
+    await expect(handlerPromise).rejects.toThrow(/drifted from the backend contract.*result shape mismatch/);
+  });
 });
