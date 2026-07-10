@@ -96,7 +96,10 @@ const takoContents = {
     // url/expires_at null; url mode → backend returns a presigned url/expires_at
     // and leaves the inline fields null. Pass both shapes through as-is.
     const parsed = outputSchema.safeParse({
-      format: item.format ?? "",
+      // Card data carries a content_format (csv/json_*); web text carries null.
+      // Preserve the prior flat-contract value ("text" for web) so MCP consumers
+      // that key off `format` don't see behavior change from the spec rename.
+      format: item.content_format ?? "text",
       download_url: item.url ?? null,
       expires_at: item.expires_at ?? null,
       source_url: item.source_url ?? input.url,

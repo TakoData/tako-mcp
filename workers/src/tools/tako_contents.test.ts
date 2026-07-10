@@ -48,7 +48,7 @@ describe("tako_contents handler", () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [
         {
-          format: "csv",
+          content_format: "csv",
           data: "name,value\nA,1\nB,2",
           total_rows: 1500,
           truncated: true,
@@ -75,7 +75,7 @@ describe("tako_contents handler", () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [
         {
-          format: "text",
+          content_format: null,
           data: "hello world",
           total_rows: null,
           truncated: false,
@@ -98,7 +98,7 @@ describe("tako_contents handler", () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [
         {
-          format: "csv",
+          content_format: "csv",
           url: "https://signed/csv",
           expires_at: "2026-06-26T00:00:00Z",
           cost: 0,
@@ -117,7 +117,7 @@ describe("tako_contents handler", () => {
 
   it("passes url + mode through to POST /api/v1/contents/", async () => {
     vi.mocked(djangoPost).mockResolvedValue({
-      contents: [{ format: "text", data: "x", cost: 0, source_url: "https://example.com/a" }],
+      contents: [{ content_format: null, data: "x", cost: 0, source_url: "https://example.com/a" }],
       request_id: "r4",
     });
     await tool.handler({ url: "https://example.com/a", mode: "url" }, ctx);
