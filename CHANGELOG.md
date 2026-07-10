@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.1](https://github.com/TakoData/tako-mcp/compare/v0.8.0...v0.8.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* **contents:** track spec rename format -&gt; content_format ([d21b000](https://github.com/TakoData/tako-mcp/commit/d21b000b461280c0f7e8b96a4efc0c4637f558f2))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([9215de3](https://github.com/TakoData/tako-mcp/commit/9215de339161960a97c09d5d3ef385d4fccff502))
+* sync OpenAPI spec from TakoData/tako ([ea99d19](https://github.com/TakoData/tako-mcp/commit/ea99d197271e9d55d591fd80285ba84231521f28))
+
 ## [0.8.0](https://github.com/TakoData/tako-mcp/compare/v0.7.4...v0.8.0) (2026-07-09)
 
 
