@@ -257,7 +257,7 @@ paths:
           type: string
         name: node_id
         in: query
-      - description: 'Paginate one facet: metric, entity, or member.'
+      - description: 'Paginate one facet: metric, entity, sibling, or member.'
         required: false
         schema:
           type: string
@@ -296,6 +296,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '404':
+          description: The requested resource does not exist or has no exportable
+            data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '503':
+          description: A backing data store is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+  /beta/graph/node/{id}:
+    get:
+      tags:
+      - tako
+      summary: Get a graph node by id
+      description: Resolve a single node by its opaque public id (as returned on search
+        cards or by /beta/graph/search and /beta/graph/related). Returns the node's
+        name, type, aliases, and description. Public and unauthenticated.
+      operationId: graphNode
+      parameters:
+      - description: Opaque public id of the node.
+        required: true
+        schema:
+          type: string
+        name: id
+        in: path
+      responses:
+        '200':
+          description: A single graph node
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphNode'
         '404':
           description: The requested resource does not exist or has no exportable
             data.
@@ -412,123 +448,6 @@ paths:
                 type: object
                 required:
                 - error
-      security:
-      - apiKey: []
-  /v1/agent/runs:
-    post:
-      tags:
-      - agent
-      summary: Dispatch an agent run
-      description: Dispatch a deep-research agent run. Returns 202 with an AgentRun
-        object; poll GET /v1/agent/runs/{run_id} until status is 'completed' or 'failed'.
-      operationId: createAgentRun
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AgentRunRequest'
-      responses:
-        '202':
-          description: 'Run dispatched. With Accept: application/json, poll GET /v1/agent/runs/{run_id}
-            for status. With Accept: text/event-stream, the response is an SSE stream
-            of AgentStreamEnvelope events terminating at stream_done; if the stream
-            ends without an agent_result event, poll GET /v1/agent/runs/{run_id} for
-            terminal status.'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentRun'
-            text/event-stream:
-              schema:
-                $ref: '#/components/schemas/AgentStreamEnvelope'
-        '400':
-          description: Invalid request (e.g. blank query or malformed body).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-        '401':
-          description: Missing or invalid API key.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-        '404':
-          description: thread_id does not exist or is not owned by the caller.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-        '409':
-          description: thread_id has an in-flight run (single-flight conflict).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-        '500':
-          description: Failed to dispatch the agent run.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-      security:
-      - apiKey: []
-  /v1/agent/runs/{run_id}:
-    get:
-      tags:
-      - agent
-      summary: Poll an agent run
-      description: Retrieve the current state of an agent run. Poll until status is
-        'completed' or 'failed'. result is populated when status is 'completed'.
-      operationId: getAgentRun
-      parameters:
-      - description: Run ID returned by POST /v1/agent/runs
-        required: true
-        schema:
-          type: string
-        name: run_id
-        in: path
-      - description: 'SSE resume cursor (Accept: text/event-stream only). Replay events
-          with seq strictly greater than this value. Equivalent to the Last-Event-ID
-          header.'
-        required: false
-        schema:
-          type: integer
-          minimum: 0.0
-        name: starting_after
-        in: query
-      responses:
-        '200':
-          description: 'Current state of the agent run. With Accept: text/event-stream,
-            resumes/tails the run as an SSE stream of AgentStreamEnvelope events (use
-            starting_after or Last-Event-ID to resume); if the stream ends without
-            an agent_result event, poll this endpoint with Accept: application/json
-            for terminal status.'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentRun'
-            text/event-stream:
-              schema:
-                $ref: '#/components/schemas/AgentStreamEnvelope'
-        '401':
-          description: Missing or invalid API key.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-        '403':
-          description: The run is not owned by the caller.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
-        '404':
-          description: Run not found.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorObject'
       security:
       - apiKey: []
   /v1/agent/answer/runs:
@@ -1094,19 +1013,6 @@ components:
       - title
       - description
       title: AgentAnswerMethodologyNote
-    AgentEffortLevel:
-      type: string
-      enum:
-      - low
-      - medium
-      title: AgentEffortLevel
-      description: 'Public effort taxonomy for the Agent API. `low` runs the fast
-        data-pipeline
-
-        retriever; `medium` (the default) runs the analytical orchestrator. `high`
-        is
-
-        not yet exposed.'
     AgentOutputSettings:
       properties:
         image_dark_mode:
@@ -1118,167 +1024,6 @@ components:
             (dark).
       type: object
       title: AgentOutputSettings
-    AgentResult:
-      properties:
-        answer:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Answer
-        cards:
-          items:
-            $ref: '#/components/schemas/TakoCard'
-          type: array
-          title: Cards
-        web_results:
-          items:
-            $ref: '#/components/schemas/WebResult'
-          type: array
-          title: Web Results
-        metadata:
-          anyOf:
-          - $ref: '#/components/schemas/AgentAnswerMetadata'
-          - type: 'null'
-        request_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Request Id
-      type: object
-      title: AgentResult
-      description: 'Final agent output. answer is markdown prose with [n] citation
-        markers;
-
-        cards reuse the sibling TakoCard; metadata carries the structured
-
-        components behind the answer.'
-    AgentResultEvent:
-      properties:
-        kind:
-          type: string
-          const: agent_result
-          title: Kind
-          default: agent_result
-        id:
-          type: string
-          title: Id
-        data:
-          $ref: '#/components/schemas/AgentResult'
-      type: object
-      required:
-      - id
-      - data
-      title: AgentResultEvent
-    AgentRun:
-      properties:
-        run_id:
-          type: string
-          title: Run Id
-        object:
-          type: string
-          const: agent.run
-          title: Object
-          default: agent.run
-        thread_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Thread Id
-        status:
-          $ref: '#/components/schemas/AgentRunStatus'
-        created_at:
-          type: string
-          title: Created At
-        completed_at:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Completed At
-        result:
-          anyOf:
-          - $ref: '#/components/schemas/AgentResult'
-          - type: 'null'
-        error:
-          anyOf:
-          - $ref: '#/components/schemas/ErrorObject'
-          - type: 'null'
-        usage:
-          anyOf:
-          - $ref: '#/components/schemas/AgentUsage'
-          - type: 'null'
-        request:
-          anyOf:
-          - $ref: '#/components/schemas/AgentRunRequest'
-          - type: 'null'
-      type: object
-      required:
-      - run_id
-      - status
-      - created_at
-      title: AgentRun
-      description: The run resource returned by dispatch (202) and poll (GET).
-    AgentRunRequest:
-      properties:
-        query:
-          type: string
-          title: Query
-          description: Natural-language request for the agent.
-          examples:
-          - Compare Nvidia and AMD headcount since 2013
-        thread_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Thread Id
-          description: Existing thread to continue (follow-up). Omit to start a new
-            thread.
-        effort:
-          $ref: '#/components/schemas/AgentEffortLevel'
-          description: Agent effort. 'low' returns fast results for simple queries;
-            'medium' (default) returns deeper analysis across multiple entities and
-            metrics (slower).
-          default: medium
-        source_indexes:
-          items:
-            type: string
-            enum:
-            - data
-            - web
-          type: array
-          title: Source Indexes
-          description: 'Which sources the agent may use: ''data'' (curated knowledge)
-            and/or ''web'' (open-web search). Defaults to [''data'', ''web'']. The
-            legacy value ''tako'' is accepted as a synonym for ''data''.'
-          examples:
-          - - data
-          - - web
-          - - data
-            - web
-        locale:
-          type: string
-          title: Locale
-          description: BCP-47 locale. Drives the language of the agent's answer (a
-            non-English locale makes the agent respond in that language) and the locale
-            used when rendering card preview images. Defaults to en-US.
-          default: en-US
-        timezone:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Timezone
-          description: IANA timezone (e.g. 'America/New_York') used to render dates/times
-            in card preview images. Does not affect the returned data.
-        output_settings:
-          anyOf:
-          - $ref: '#/components/schemas/AgentOutputSettings'
-          - type: 'null'
-          description: Settings controlling the response/rendering.
-      type: object
-      required:
-      - query
-      title: AgentRunRequest
-      description: Request body for POST /api/v1/agent/runs.
     AgentRunStatus:
       type: string
       enum:
@@ -1287,77 +1032,6 @@ components:
       - completed
       - failed
       title: AgentRunStatus
-    AgentStreamEnvelope:
-      properties:
-        seq:
-          type: integer
-          minimum: 0.0
-          title: Seq
-          description: Monotonic event sequence number; use as the resume cursor.
-            Values are NOT contiguous — the public stream filters internal block kinds,
-            so gaps are expected and do not mean events were lost.
-        run_id:
-          type: string
-          title: Run Id
-        thread_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Thread Id
-        category:
-          $ref: '#/components/schemas/StreamCategory'
-        block:
-          oneOf:
-          - $ref: '#/components/schemas/ToolCallEvent'
-          - $ref: '#/components/schemas/ToolResultEvent'
-          - $ref: '#/components/schemas/ToolErrorEvent'
-          - $ref: '#/components/schemas/ToolRetryEvent'
-          - $ref: '#/components/schemas/StatusEvent'
-          - $ref: '#/components/schemas/SubagentEvent'
-          - $ref: '#/components/schemas/ReasoningEvent'
-          - $ref: '#/components/schemas/TextEvent'
-          - $ref: '#/components/schemas/DataPipelineAnswerEvent'
-          - $ref: '#/components/schemas/AgentResultEvent'
-          - $ref: '#/components/schemas/HeartbeatEvent'
-          - $ref: '#/components/schemas/StreamResetEvent'
-          - $ref: '#/components/schemas/StreamDoneEvent'
-          title: Block
-          discriminator:
-            propertyName: kind
-            mapping:
-              agent_result: '#/components/schemas/AgentResultEvent'
-              data_pipeline_answer: '#/components/schemas/DataPipelineAnswerEvent'
-              heartbeat: '#/components/schemas/HeartbeatEvent'
-              reasoning: '#/components/schemas/ReasoningEvent'
-              status: '#/components/schemas/StatusEvent'
-              stream_done: '#/components/schemas/StreamDoneEvent'
-              stream_reset: '#/components/schemas/StreamResetEvent'
-              subagent: '#/components/schemas/SubagentEvent'
-              text: '#/components/schemas/TextEvent'
-              tool_call: '#/components/schemas/ToolCallEvent'
-              tool_error: '#/components/schemas/ToolErrorEvent'
-              tool_result: '#/components/schemas/ToolResultEvent'
-              tool_retry: '#/components/schemas/ToolRetryEvent'
-      type: object
-      required:
-      - seq
-      - run_id
-      - category
-      - block
-      title: AgentStreamEnvelope
-      description: 'Public SSE envelope for the Agent run stream. `run_id` is the
-        run/task id
-
-        (renamed from the native envelope''s `task_id` for resource consistency).
-
-
-        `seq` is monotonically increasing but NOT contiguous: the public stream omits
-
-        internal block kinds, so gaps in `seq` are expected and do not indicate lost
-
-        events. Use `seq` only as the resume cursor (`starting_after` / `Last-Event-ID`),
-
-        not as a completeness check.'
     AgentUsage:
       properties:
         usd_cost:
@@ -1391,7 +1065,9 @@ components:
 
         data_output_usd = the per-source data-output surcharge (0 today);
 
-        data_output_datasets = the billing quantity (distinct datasets charged).
+        data_output_datasets = the billing quantity (distinct finalized, data-bearing
+
+        datasets charged — S6a/TAKO-3406; was distinct filled slots pre-S6a).
 
         Present only on metered/PAYG runs that were actually billed; absent otherwise.
 
@@ -1703,6 +1379,7 @@ components:
           - $ref: '#/components/schemas/TextEvent'
           - $ref: '#/components/schemas/DataPipelineAnswerEvent'
           - $ref: '#/components/schemas/AnswerAgentResultEvent'
+          - $ref: '#/components/schemas/RunSummaryEvent'
           - $ref: '#/components/schemas/HeartbeatEvent'
           - $ref: '#/components/schemas/StreamResetEvent'
           - $ref: '#/components/schemas/StreamDoneEvent'
@@ -1714,6 +1391,7 @@ components:
               data_pipeline_answer: '#/components/schemas/DataPipelineAnswerEvent'
               heartbeat: '#/components/schemas/HeartbeatEvent'
               reasoning: '#/components/schemas/ReasoningEvent'
+              run_summary: '#/components/schemas/RunSummaryEvent'
               status: '#/components/schemas/StatusEvent'
               stream_done: '#/components/schemas/StreamDoneEvent'
               stream_reset: '#/components/schemas/StreamResetEvent'
@@ -1881,16 +1559,12 @@ components:
         These component types have dedicated builders that process configurations,
 
         add defaults, and apply theme styling automatically.'
-    ContentFormat:
-      type: string
-      enum:
-      - csv
-      - text
-      title: ContentFormat
     ContentItem:
       properties:
-        format:
-          $ref: '#/components/schemas/ContentFormat'
+        content_format:
+          anyOf:
+          - $ref: '#/components/schemas/ContentsFormat'
+          - type: 'null'
         cost:
           type: number
           title: Cost
@@ -1900,6 +1574,34 @@ components:
           - type: string
           - type: 'null'
           title: Data
+        records:
+          anyOf:
+          - items:
+              additionalProperties:
+                anyOf:
+                - type: string
+                - type: number
+                - type: integer
+                - type: boolean
+                - type: 'null'
+              type: object
+            type: array
+          - type: 'null'
+          title: Records
+        dataset:
+          anyOf:
+          - $ref: '#/components/schemas/TakoDataset'
+          - type: 'null'
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+        expires_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Expires At
         total_rows:
           anyOf:
           - type: integer
@@ -1913,44 +1615,41 @@ components:
           type: string
           title: Source Url
           description: The originating result URL that was resolved.
-        url:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Url
-          description: Presigned, short-lived URL to download the content.
-        expires_at:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Expires At
-          description: ISO-8601 UTC timestamp when `url` expires.
       type: object
       required:
-      - format
       - source_url
       title: ContentItem
       description: 'A single downloadable artifact.
 
 
-        Inherits `format` + `cost` + the inline fields (`data`/`total_rows`/
+        Inherits `content_format` + `cost` + the payload fields (`data`/`records`/
 
-        `truncated`) from ResultContent. URL mode additionally populates
+        `dataset`/`total_rows`/`truncated`) and the presigned `url`/`expires_at`
 
-        `url`/`expires_at` (a short-lived presigned download link); INLINE mode
+        from ResultContent. URL mode populates `url`/`expires_at`; INLINE mode
 
-        populates the inherited inline fields and leaves `url`/`expires_at` null.'
+        populates one of the payload fields and leaves `url`/`expires_at` null.'
     ContentsDeliveryMode:
       type: string
       enum:
       - url
       - inline
       title: ContentsDeliveryMode
-      description: 'How /contents returns the content. URL (default) is the existing
+      description: 'How contents reach the caller. URL returns a short-lived presigned
+        file
 
-        presigned-download behavior; INLINE returns the content in the response body
+        download; INLINE returns the content in the response body.'
+    ContentsFormat:
+      type: string
+      enum:
+      - csv
+      - json_records
+      - json_compact
+      title: ContentsFormat
+      description: 'Serialization of tabular (Tako card) data. Web content is always
+        raw text
 
-        (CSV text capped at 1000 rows, or web text) and skips the S3 upload.'
+        and carries no content format (content_format is null).'
     ContentsRequest:
       properties:
         url:
@@ -1967,6 +1666,11 @@ components:
             link; ''inline'' returns the content in the response body (CSV capped
             at 1000 rows, with total_rows; or web text).'
           default: url
+        content_format:
+          $ref: '#/components/schemas/ContentsFormat'
+          description: 'Serialization for Tako card data: ''csv'' (default), ''json_records'',
+            or ''json_compact''. Ignored for web URLs (always text).'
+          default: csv
       type: object
       required:
       - url
@@ -1978,13 +1682,15 @@ components:
 
         endpoint detects the right content from the URL itself. A Tako card URL
 
-        resolves to a CSV of the card''s underlying data; any other URL resolves to
+        resolves to the card''s underlying data; any other URL resolves to
 
         the page''s extracted full text. `mode` controls delivery: `url` (default)
 
         returns a presigned download link; `inline` returns the content in the
 
-        response.'
+        response. `content_format` selects the card serialization (csv /
+
+        json_records / json_compact) and is ignored for web URLs (always text).'
     ContentsResponse:
       properties:
         contents:
@@ -2100,6 +1806,63 @@ components:
         only chart references; the answer text streams in `text` events and the
 
         structured result arrives in the terminal `agent_result` event, not here.'
+    DataSourceSettings:
+      properties:
+        count:
+          type: integer
+          maximum: 20.0
+          minimum: 1.0
+          title: Count
+          description: Maximum number of results to return for this source. 1-20.
+          default: 5
+        include_contents:
+          type: boolean
+          title: Include Contents
+          description: Inline this source's underlying data directly in the response
+            (serialized card data — see content_format — for the Tako data source;
+            extracted text for web results).
+          default: false
+        mode:
+          $ref: '#/components/schemas/ContentsDeliveryMode'
+          description: 'Delivery for inlined card data when include_contents is true:
+            ''inline'' (in the response body) or ''url'' (per-card presigned download
+            link).'
+          default: inline
+        content_format:
+          $ref: '#/components/schemas/ContentsFormat'
+          description: 'Serialization for card data: ''json_compact'' (default), ''json_records'',
+            or ''csv''.'
+          default: json_compact
+        node_ids:
+          items:
+            type: string
+          type: array
+          maxItems: 20
+          title: Node Ids
+          description: 'Graph node ids (as returned by the /beta/graph endpoints)
+            to pin into the search. Pinned nodes are guaranteed retrieval candidacy
+            with a strong boost; organic results are unaffected. Ids are NOT durable
+            across knowledge-graph rebuilds: an id that no longer resolves is skipped
+            (and in strict mode simply cannot match). Malformed ids fail the request
+            with a 400. Max 20.'
+        strict:
+          type: boolean
+          title: Strict
+          description: When true, only return data cards that match at least one node
+            in node_ids (which must then be non-empty). When false (default), pinned
+            nodes are preferred but organic results still return. Web results are
+            unaffected either way.
+          default: false
+      additionalProperties: false
+      type: object
+      title: DataSourceSettings
+      description: 'Tako data (card) source settings. Adds the two contents-export
+        axes on top
+
+        of the base count/include_contents. Web sources use the base SourceSettings
+        —
+
+        web is always inlined as raw text and carries neither knob.'
     EntityClassName:
       type: string
       enum:
@@ -2273,6 +2036,14 @@ components:
             count is at least `total`. Pagination ends at the cap — narrow with `q`
             to reach the tail.
           default: false
+        label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Label
+          description: Human-readable group label (set for siblings, e.g. 'Other Geographies'),
+            matching the overview group's label so the drill view stays consistent
+            with the hub.
         next_cursor:
           anyOf:
           - type: string
@@ -2290,6 +2061,7 @@ components:
       - metric
       - entity
       - member
+      - sibling
       title: GraphRelationType
     GraphSearchResponse:
       properties:
@@ -2397,6 +2169,8 @@ components:
           $ref: '#/components/schemas/RelationGroup'
         entities:
           $ref: '#/components/schemas/RelationGroup'
+        siblings:
+          $ref: '#/components/schemas/RelationGroup'
         part_of:
           $ref: '#/components/schemas/RelationGroup'
         members:
@@ -2405,6 +2179,7 @@ components:
       required:
       - metrics
       - entities
+      - siblings
       - part_of
       - members
       title: RelatedGroups
@@ -2424,6 +2199,12 @@ components:
           description: True when `total` hit the server-side counting cap; the true
             count is at least `total`. Render as '>total'.
           default: false
+        label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Label
+          description: Human-readable group label (set for siblings, e.g. 'Other Geographies').
       type: object
       required:
       - items
@@ -2431,8 +2212,10 @@ components:
       title: RelationGroup
     ResultContent:
       properties:
-        format:
-          $ref: '#/components/schemas/ContentFormat'
+        content_format:
+          anyOf:
+          - $ref: '#/components/schemas/ContentsFormat'
+          - type: 'null'
         cost:
           type: number
           title: Cost
@@ -2442,6 +2225,34 @@ components:
           - type: string
           - type: 'null'
           title: Data
+        records:
+          anyOf:
+          - items:
+              additionalProperties:
+                anyOf:
+                - type: string
+                - type: number
+                - type: integer
+                - type: boolean
+                - type: 'null'
+              type: object
+            type: array
+          - type: 'null'
+          title: Records
+        dataset:
+          anyOf:
+          - $ref: '#/components/schemas/TakoDataset'
+          - type: 'null'
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+        expires_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Expires At
         total_rows:
           anyOf:
           - type: integer
@@ -2452,8 +2263,6 @@ components:
           title: Truncated
           default: false
       type: object
-      required:
-      - format
       title: ResultContent
       description: 'Describes the downloadable content behind a result. `cost` is
         the USD the
@@ -2461,15 +2270,74 @@ components:
         /contents call will charge for this result (Tako card CSV is free; web text
         is
 
-        the canonical Contents rate). The inline fields (`data`/`total_rows`/
+        the canonical Contents rate). Exactly one payload group is populated once
 
-        `truncated`) are populated only by auto-contents / `/contents` inline mode;
+        contents are delivered: `data` (CSV/web text), `records` (verbose JSON),
 
-        when unset, this is just the quote (format + cost), fetched later via the
+        `dataset` (compact TakoDataset), or `url`+`expires_at` (presigned download);
 
-        Contents endpoint (a Tako card URL -> ChartConfig -> CSV; any other URL ->
+        `content_format` names the serialization (null for web text and for an
 
-        page text).'
+        undelivered quote). When every payload field is unset this is just the quote
+
+        (cost), fetched later via the Contents endpoint (a Tako card URL ->
+
+        ChartConfig -> data; any other URL -> page text).'
+    RunSummaryEvent:
+      properties:
+        kind:
+          type: string
+          const: run_summary
+          title: Kind
+          default: run_summary
+        status:
+          $ref: '#/components/schemas/AgentRunStatus'
+        created_at:
+          type: string
+          title: Created At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorObject'
+          - type: 'null'
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/AgentUsage'
+          - type: 'null'
+      type: object
+      required:
+      - status
+      - created_at
+      title: RunSummaryEvent
+      description: 'Terminal run metadata, emitted once immediately before stream_done.
+        Mirrors
+
+        the GET-poll AgentRun fields the stream otherwise lacks; the result stays
+        in the
+
+        agent_result event. status/created_at/completed_at always present; error only
+        on
+
+        failure; usage only on metered/PAYG runs (null otherwise). Sourced from the
+        same
+
+        projection as the poll (run_projection.project_run), so
+
+        agent_result + run_summary == the GET poll object. Synthesized by the stream
+
+        generator — NOT a native block kind, so it is absent from PUBLIC_STREAM_KINDS.
+
+
+        It carries the SAME envelope `seq` as the stream_done it precedes (it has
+        no
+
+        seq of its own) and its SSE `id:` is suppressed, so it advances no resume
+
+        cursor — identify it by `kind`, never by assuming `seq` is unique per frame.'
     SearchAgentEffort:
       type: string
       enum:
@@ -2809,6 +2677,7 @@ components:
           - $ref: '#/components/schemas/TextEvent'
           - $ref: '#/components/schemas/DataPipelineAnswerEvent'
           - $ref: '#/components/schemas/SearchAgentResultEvent'
+          - $ref: '#/components/schemas/RunSummaryEvent'
           - $ref: '#/components/schemas/HeartbeatEvent'
           - $ref: '#/components/schemas/StreamResetEvent'
           - $ref: '#/components/schemas/StreamDoneEvent'
@@ -2820,6 +2689,7 @@ components:
               data_pipeline_answer: '#/components/schemas/DataPipelineAnswerEvent'
               heartbeat: '#/components/schemas/HeartbeatEvent'
               reasoning: '#/components/schemas/ReasoningEvent'
+              run_summary: '#/components/schemas/RunSummaryEvent'
               status: '#/components/schemas/StatusEvent'
               stream_done: '#/components/schemas/StreamDoneEvent'
               stream_reset: '#/components/schemas/StreamResetEvent'
@@ -2950,8 +2820,9 @@ components:
         include_contents:
           type: boolean
           title: Include Contents
-          description: Inline this source's underlying data (CSV for Tako cards, extracted
-            text for web results) directly in the response.
+          description: Inline this source's underlying data directly in the response
+            (serialized card data — see content_format — for the Tako data source;
+            extracted text for web results).
           default: false
       additionalProperties: false
       type: object
@@ -2960,7 +2831,7 @@ components:
       properties:
         data:
           anyOf:
-          - $ref: '#/components/schemas/SourceSettings'
+          - $ref: '#/components/schemas/DataSourceSettings'
           - type: 'null'
           description: Tako data source (curated knowledge). Searched iff present.
             The legacy key 'tako' is accepted as a synonym.
@@ -3140,6 +3011,15 @@ components:
           description: Numeric relevance of this card to the query on a 1.0-5.0 scale
             (5.0 = exact match; higher is more relevant). Only populated for entitled
             accounts; null otherwise.
+        nodes:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/GraphNode'
+            type: array
+          - type: 'null'
+          title: Nodes
+          description: Graph nodes (entities and metrics) this card was built from.
+            Present only when requested. Use each id with /beta/graph/node/{id}.
       type: object
       title: TakoCard
       description: 'A Tako knowledge card on the new search/answer surface. Mirrors
