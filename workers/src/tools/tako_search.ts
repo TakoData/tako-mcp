@@ -65,7 +65,7 @@ const inputSchema = z.object({
     .boolean()
     .default(false)
     .describe(
-      "When true, inline each result's underlying data directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call. Inlining web text is billed per page (Tako card CSV is free); the summed quote is returned in contents_total_cost.",
+      "When true, inline each result's underlying data directly in the response so you can read it without a follow-up tako_contents call. Tako cards return a small FREE inline preview of the most-recent rows (call tako_contents for the full, priced export); inlined web page text is billed per page. Any per-request charge is reported in the response's `usage` object.",
     ),
   country_code: z
     .string()
@@ -163,7 +163,7 @@ const tako_search = {
       cards.data,
       webResults.data,
       wire.request_id,
-      wire.contents_total_cost,
+      wire.usage ?? null,
       ctx.env,
     );
   },

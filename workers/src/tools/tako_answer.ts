@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { djangoPost } from "../django.js";
 import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
-import { takoCardSchema, webResultSchema } from "./_search_results.js";
+import { takoCardSchema, usageSchema, webResultSchema } from "./_search_results.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
@@ -23,7 +23,7 @@ const inputSchema = z.object({
     .boolean()
     .default(false)
     .describe(
-      "When true, inline the underlying data of each cited result directly in the response (Tako card CSV capped at 1000 rows, or web page text) so you can read it without a follow-up tako_contents call. Inlining web text is billed per page (Tako card CSV is free); the summed quote is returned in contents_total_cost.",
+      "When true, inline the underlying data of each cited result directly in the response so you can read it without a follow-up tako_contents call. Tako cards return a small FREE inline preview of the most-recent rows (call tako_contents for the full, priced export); inlined web page text is billed per page. Any per-request charge is reported in the response's `usage` object.",
     ),
   country_code: z
     .string()
@@ -49,8 +49,8 @@ const outputSchema = z.object({
   answer: z.string(),
   cards: z.array(takoCardSchema),
   web_results: z.array(webResultSchema),
-  // Summed USD quote of all inlined results (0 when include_contents is off).
-  contents_total_cost: z.number(),
+  // Cost-plus usage for this request (null when it was not metered/billed).
+  usage: usageSchema.nullable(),
   request_id: z.string(),
 });
 
@@ -119,7 +119,7 @@ const takoAnswer = {
       answer: wire.answer,
       cards: wire.cards ?? [],
       web_results: wire.web_results ?? [],
-      contents_total_cost: wire.contents_total_cost,
+      usage: wire.usage ?? null,
       request_id: wire.request_id,
     });
     if (!parsed.success) {
