@@ -1032,46 +1032,6 @@ components:
       - completed
       - failed
       title: AgentRunStatus
-    AgentUsage:
-      properties:
-        usd_cost:
-          anyOf:
-          - type: number
-          - type: 'null'
-          title: Usd Cost
-        compute_usd:
-          anyOf:
-          - type: number
-          - type: 'null'
-          title: Compute Usd
-        data_output_usd:
-          anyOf:
-          - type: number
-          - type: 'null'
-          title: Data Output Usd
-        data_output_datasets:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: Data Output Datasets
-      type: object
-      title: AgentUsage
-      description: 'Cost-plus usage for an agent run. usd_cost is the TOTAL charged
-        (compute +
-
-        data-output surcharge) — its meaning is unchanged from v1. The breakdown is
-
-        additive (TAKO-3376): compute_usd = COGS x AGENT_COST_MULTIPLIER;
-
-        data_output_usd = the per-source data-output surcharge (0 today);
-
-        data_output_datasets = the billing quantity (distinct finalized, data-bearing
-
-        datasets charged — S6a/TAKO-3406; was distinct filled slots pre-S6a).
-
-        Present only on metered/PAYG runs that were actually billed; absent otherwise.
-
-        No token/tool-call/latency telemetry.'
     AnswerAgentEffort:
       type: string
       enum:
@@ -1212,7 +1172,7 @@ components:
           - type: 'null'
         usage:
           anyOf:
-          - $ref: '#/components/schemas/AgentUsage'
+          - $ref: '#/components/schemas/Usage'
           - type: 'null'
         request:
           anyOf:
@@ -1338,7 +1298,7 @@ components:
           title: Thread Id
         usage:
           anyOf:
-          - $ref: '#/components/schemas/AgentUsage'
+          - $ref: '#/components/schemas/Usage'
           - type: 'null'
         object:
           type: string
@@ -1432,22 +1392,13 @@ components:
             $ref: '#/components/schemas/WebResult'
           type: array
           title: Web Results
-        contents_total_cost:
-          type: number
-          title: Contents Total Cost
-          description: 'Total quoted USD cost of the data inlined on this response
-            — the summed per-fetch price of the results whose payload was populated
-            (one charge per distinct extracted web URL; Tako card CSV is free). This
-            is the QUOTE, not necessarily the amount billed: on a depleted prepaid
-            (PAYG) balance the charge is clamped to the remaining balance, so the
-            amount actually drawn can be less. A result''s own `cost` is a per-fetch
-            quote present whenever it is downloadable, so a result that was requested
-            but whose extraction was skipped or failed still carries its quote; that
-            un-inlined quote is excluded here. 0 when no contents were inlined.'
-          default: 0.0
         request_id:
           type: string
           title: Request Id
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/Usage'
+          - type: 'null'
       type: object
       required:
       - answer
@@ -1663,14 +1614,29 @@ components:
         mode:
           $ref: '#/components/schemas/ContentsDeliveryMode'
           description: 'Delivery mode: ''url'' (default) returns a presigned download
-            link; ''inline'' returns the content in the response body (CSV capped
-            at 1000 rows, with total_rows; or web text).'
+            link; ''inline'' returns the content in the response body (CSV returns
+            up to the 2,000-row system ceiling, with total_rows/truncated reported;
+            or web text).'
           default: url
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
           description: 'Serialization for Tako card data: ''csv'' (default), ''json_records'',
             or ''json_compact''. Ignored for web URLs (always text).'
           default: csv
+        max_rows:
+          anyOf:
+          - type: integer
+            minimum: 1.0
+          - type: 'null'
+          title: Max Rows
+          description: Optional cap on rows returned for a Tako card CSV export. Omitted,
+            it defaults to the free-row allowance (20 rows), billed at the baseline
+            only; raise it (up to the 2,000-row system ceiling, above which values
+            are clamped) to export more, which bills the per-1,000-row rate on rows
+            beyond the free allowance. Billing is on rows actually returned. Ignored
+            for web URLs.
+          examples:
+          - 100
       type: object
       required:
       - url
@@ -1701,6 +1667,10 @@ components:
         request_id:
           type: string
           title: Request Id
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/Usage'
+          - type: 'null'
       type: object
       required:
       - request_id
@@ -1824,9 +1794,13 @@ components:
           default: false
         mode:
           $ref: '#/components/schemas/ContentsDeliveryMode'
-          description: 'Delivery for inlined card data when include_contents is true:
-            ''inline'' (in the response body) or ''url'' (per-card presigned download
-            link).'
+          description: Delivery for inlined card data when include_contents is true.
+            For Tako cards, include_contents always returns a small FREE inline preview
+            of the most-recent rows in the response body, so this field has no effect
+            on Tako cards (kept for schema stability); total_rows/truncated on the
+            returned content indicate when more data is available. For the full, priced
+            export/download, call POST /api/v1/contents (which supports mode='url'
+            for a presigned download link).
           default: inline
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
@@ -2267,10 +2241,22 @@ components:
       description: 'Describes the downloadable content behind a result. `cost` is
         the USD the
 
-        /contents call will charge for this result (Tako card CSV is free; web text
-        is
+        /contents call will charge for this result (a Tako card CSV export is billed
 
-        the canonical Contents rate). Exactly one payload group is populated once
+        a flat per-export baseline plus, for licensed sources, a per-source per-row
+
+        CPM on the rows returned; web text is the canonical Contents rate). On
+
+        search/answer results and other pre-fetch quotes this `cost` is the legacy
+
+        per-source-flat estimate (it does NOT yet include the per-row CPM), so for
+        a
+
+        licensed per-row-priced card it can understate the actual /contents charge
+
+        until a source-aware quote lands (tracked follow-up). Exactly
+
+        one payload group is populated once
 
         contents are delivered: `data` (CSV/web text), `records` (verbose JSON),
 
@@ -2306,7 +2292,7 @@ components:
           - type: 'null'
         usage:
           anyOf:
-          - $ref: '#/components/schemas/AgentUsage'
+          - $ref: '#/components/schemas/Usage'
           - type: 'null'
       type: object
       required:
@@ -2495,7 +2481,7 @@ components:
           - type: 'null'
         usage:
           anyOf:
-          - $ref: '#/components/schemas/AgentUsage'
+          - $ref: '#/components/schemas/Usage'
           - type: 'null'
         request:
           anyOf:
@@ -2636,7 +2622,7 @@ components:
           title: Thread Id
         usage:
           anyOf:
-          - $ref: '#/components/schemas/AgentUsage'
+          - $ref: '#/components/schemas/Usage'
           - type: 'null'
         object:
           type: string
@@ -2788,22 +2774,13 @@ components:
             $ref: '#/components/schemas/WebResult'
           type: array
           title: Web Results
-        contents_total_cost:
-          type: number
-          title: Contents Total Cost
-          description: 'Total quoted USD cost of the data inlined on this response
-            — the summed per-fetch price of the results whose payload was populated
-            (one charge per distinct extracted web URL; Tako card CSV is free). This
-            is the QUOTE, not necessarily the amount billed: on a depleted prepaid
-            (PAYG) balance the charge is clamped to the remaining balance, so the
-            amount actually drawn can be less. A result''s own `cost` is a per-fetch
-            quote present whenever it is downloadable, so a result that was requested
-            but whose extraction was skipped or failed still carries its quote; that
-            un-inlined quote is excluded here. 0 when no contents were inlined.'
-          default: 0.0
         request_id:
           type: string
           title: Request Id
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/Usage'
+          - type: 'null'
       type: object
       required:
       - request_id
@@ -3382,6 +3359,67 @@ components:
       - tool
       - error
       title: ToolRetryEvent
+    Usage:
+      properties:
+        total_cost_usd:
+          type: number
+          title: Total Cost Usd
+        compute:
+          anyOf:
+          - $ref: '#/components/schemas/UsageCompute'
+          - type: 'null'
+        data:
+          anyOf:
+          - $ref: '#/components/schemas/UsageData'
+          - type: 'null'
+      type: object
+      required:
+      - total_cost_usd
+      title: Usage
+      description: 'Cost-plus usage for one metered request. `total_cost_usd` is always
+        present
+
+        (the total quoted charge). `compute` / `data` are the additive breakdown and
+
+        appear only where they apply. See module docstring for the quote-vs-drawdown
+
+        caveat and the total == compute + data invariant.'
+    UsageCompute:
+      properties:
+        cost_usd:
+          type: number
+          title: Cost Usd
+      type: object
+      required:
+      - cost_usd
+      title: UsageCompute
+      description: 'Cost of running the operation (agent COGS x multiplier, or the
+        flat
+
+        search/answer per-request rate). Absent on surfaces with no compute step
+
+        (contents).'
+    UsageData:
+      properties:
+        cost_usd:
+          type: number
+          title: Cost Usd
+        datasets:
+          type: integer
+          title: Datasets
+      type: object
+      required:
+      - cost_usd
+      - datasets
+      title: UsageData
+      description: 'Cost + quantity of inline data delivered in the response (agent
+        per-dataset
+
+        surcharge, search/answer include_contents charge, or the contents per-item
+
+        cost). `datasets` is the count of billed data units. Absent when the surface
+
+        did not / cannot emit inline data (e.g. the answer agent).'
     WebResult:
       properties:
         title:

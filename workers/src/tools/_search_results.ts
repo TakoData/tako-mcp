@@ -65,6 +65,21 @@ export const webResultSchema = z
   .loose();
 export type WebResult = z.infer<typeof webResultSchema>;
 
+// Backend Usage — cost-plus usage for one metered request (mirrors the generated
+// `Usage` in generated/schemas.ts). `total_cost_usd` is the total quoted charge;
+// `compute` (the flat search/answer per-request rate) and `data` (the
+// include_contents inline-data charge) are the additive breakdown and appear only
+// where they apply. Null on the output when the request was not metered/billed.
+// Loose so a richer usage payload doesn't break parsing.
+export const usageSchema = z
+  .object({
+    total_cost_usd: z.number(),
+    compute: z.object({ cost_usd: z.number() }).loose().nullable().optional(),
+    data: z.object({ cost_usd: z.number(), datasets: z.number().int() }).loose().nullable().optional(),
+  })
+  .loose();
+export type Usage = z.infer<typeof usageSchema>;
+
 // Auto-chain widget fields lifted to the output root when the top card
 // has a card_id. Read by the chart widget (tako_search inline render).
 export const autoChainShape = {
@@ -88,8 +103,8 @@ export const autoChainShape = {
 export const searchOutputShape = {
   cards: z.array(takoCardSchema),
   web_results: z.array(webResultSchema),
-  // Summed USD quote of all inlined results (0 when include_contents is off).
-  contents_total_cost: z.number(),
+  // Cost-plus usage for this request (null when it was not metered/billed).
+  usage: usageSchema.nullable(),
   request_id: z.string(),
   ...autoChainShape,
 } as const;
@@ -97,7 +112,7 @@ export const searchOutputShape = {
 export type SearchOutput = {
   cards: TakoCard[];
   web_results: WebResult[];
-  contents_total_cost: number;
+  usage: Usage | null;
   request_id: string;
   pub_id?: string;
   embed_url?: string;
@@ -117,13 +132,13 @@ export function buildSearchOutput(
   cards: TakoCard[],
   webResults: WebResult[],
   requestId: string,
-  contentsTotalCost: number,
+  usage: Usage | null,
   env: Env,
 ): SearchOutput {
   const base: SearchOutput = {
     cards,
     web_results: webResults,
-    contents_total_cost: contentsTotalCost,
+    usage,
     request_id: requestId,
   };
   const topCardId = cards[0]?.card_id;
