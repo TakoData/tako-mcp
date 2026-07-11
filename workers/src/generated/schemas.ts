@@ -138,14 +138,14 @@ export type GraphNode = z.infer<typeof GraphNode>;
 export const GraphNodeType = z.enum(["metric","entity"]);
 export type GraphNodeType = z.infer<typeof GraphNodeType>;
 
-export const GraphRelatedResponse = z.object({ "node": z.lazy(() => GraphNode), "related": z.union([z.lazy(() => RelatedGroups), z.null()]).optional(), "relation": z.union([z.lazy(() => GraphRelationPage), z.null()]).optional() });
+export const GraphRelatedResponse = z.object({ "node": z.lazy(() => GraphNode), "relations": z.union([z.array(z.lazy(() => GraphRelation)), z.null()]).optional(), "relation": z.union([z.lazy(() => GraphRelationPage), z.null()]).optional() });
 export type GraphRelatedResponse = z.infer<typeof GraphRelatedResponse>;
 
-export const GraphRelationPage = z.object({ "relation_type": z.lazy(() => GraphRelationType), "items": z.array(z.lazy(() => GraphNode)), "total": z.number().int(), "total_capped": z.boolean().describe("True when `total` hit the server-side counting cap; the true count is at least `total`. Pagination ends at the cap — narrow with `q` to reach the tail.").default(false), "label": z.union([z.string(), z.null()]).describe("Human-readable group label (set for siblings, e.g. 'Other Geographies'), matching the overview group's label so the drill view stays consistent with the hub.").optional(), "next_cursor": z.union([z.string(), z.null()]).optional() });
-export type GraphRelationPage = z.infer<typeof GraphRelationPage>;
+export const GraphRelation = z.object({ "key": z.string().describe("Stable pagination handle. Fixed keys: metrics, entities, siblings, part_of, members. Named relations: rel:<phrase>."), "kind": z.lazy(() => RelationKind), "label": z.string().describe("Human-readable group label."), "items": z.array(z.lazy(() => GraphNode)), "total": z.number().int(), "total_capped": z.boolean().describe("True when `total` hit the server-side counting cap; the true count is at least `total`. Render as '>total'.").default(false) });
+export type GraphRelation = z.infer<typeof GraphRelation>;
 
-export const GraphRelationType = z.enum(["metric","entity","member","sibling"]);
-export type GraphRelationType = z.infer<typeof GraphRelationType>;
+export const GraphRelationPage = z.object({ "key": z.string().describe("The relation key that was paginated."), "kind": z.lazy(() => RelationKind), "label": z.string().describe("Human-readable group label."), "items": z.array(z.lazy(() => GraphNode)), "total": z.number().int(), "total_capped": z.boolean().describe("True when `total` hit the server-side counting cap; the true count is at least `total`. Pagination ends at the cap — narrow with `q` to reach the tail.").default(false), "next_cursor": z.union([z.string(), z.null()]).optional() });
+export type GraphRelationPage = z.infer<typeof GraphRelationPage>;
 
 export const GraphSearchResponse = z.object({ "results": z.array(z.lazy(() => GraphNode)) });
 export type GraphSearchResponse = z.infer<typeof GraphSearchResponse>;
@@ -165,11 +165,8 @@ export type OutputSettings = z.infer<typeof OutputSettings>;
 export const ReasoningEvent = z.object({ "kind": z.literal("reasoning").default("reasoning"), "id": z.string(), "delta": z.string(), "done": z.boolean().default(false) });
 export type ReasoningEvent = z.infer<typeof ReasoningEvent>;
 
-export const RelatedGroups = z.object({ "metrics": z.lazy(() => RelationGroup), "entities": z.lazy(() => RelationGroup), "siblings": z.lazy(() => RelationGroup), "part_of": z.lazy(() => RelationGroup), "members": z.lazy(() => RelationGroup) });
-export type RelatedGroups = z.infer<typeof RelatedGroups>;
-
-export const RelationGroup = z.object({ "items": z.array(z.lazy(() => GraphNode)), "total": z.number().int(), "total_capped": z.boolean().describe("True when `total` hit the server-side counting cap; the true count is at least `total`. Render as '>total'.").default(false), "label": z.union([z.string(), z.null()]).describe("Human-readable group label (set for siblings, e.g. 'Other Geographies').").optional() });
-export type RelationGroup = z.infer<typeof RelationGroup>;
+export const RelationKind = z.enum(["related","data","sibling","membership"]).describe("How a relation group was derived. The SOURCE kind is Tako-internal only\nand intentionally absent from this public twin.");
+export type RelationKind = z.infer<typeof RelationKind>;
 
 export const ResultContent = z.object({ "content_format": z.union([z.lazy(() => ContentsFormat), z.null()]).optional(), "cost": z.number().default(0), "data": z.union([z.string(), z.null()]).optional(), "records": z.union([z.array(z.record(z.string(), z.union([z.string(), z.number(), z.number().int(), z.boolean(), z.null()]))), z.null()]).optional(), "dataset": z.union([z.lazy(() => TakoDataset), z.null()]).optional(), "url": z.union([z.string(), z.null()]).optional(), "expires_at": z.union([z.string(), z.null()]).optional(), "total_rows": z.union([z.number().int(), z.null()]).optional(), "truncated": z.boolean().default(false) }).describe("Describes the downloadable content behind a result. `cost` is the USD the\n/contents call will charge for this result (a Tako card CSV export is billed\na flat per-export baseline plus, for licensed sources, a per-source per-row\nCPM on the rows returned; web text is the canonical Contents rate). On\nsearch/answer results and other pre-fetch quotes this `cost` is the legacy\nper-source-flat estimate (it does NOT yet include the per-row CPM), so for a\nlicensed per-row-priced card it can understate the actual /contents charge\nuntil a source-aware quote lands (tracked follow-up). Exactly\none payload group is populated once\ncontents are delivered: `data` (CSV/web text), `records` (verbose JSON),\n`dataset` (compact TakoDataset), or `url`+`expires_at` (presigned download);\n`content_format` names the serialization (null for web text and for an\nundelivered quote). When every payload field is unset this is just the quote\n(cost), fetched later via the Contents endpoint (a Tako card URL ->\nChartConfig -> data; any other URL -> page text).");
 export type ResultContent = z.infer<typeof ResultContent>;
