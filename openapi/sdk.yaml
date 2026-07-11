@@ -240,15 +240,14 @@ paths:
       tags:
       - tako
       summary: Get a graph node's related nodes
-      description: 'Explore what a node connects to: a metric''s entities (the things
-        it''s tracked for), or an entity''s available metrics. Use it to find which
-        entity + metric combinations Tako covers, then query /v3/search or /v1/answer
-        for that combination. Pass relation_type + cursor to paginate one facet, and
-        the optional q to narrow that facet by a case-insensitive substring on name/aliases
-        (e.g. metrics for an entity matching ''gdp''). Entity hubs also carry membership
-        relations: part_of lists the cohorts or regions the node belongs to (always
-        inlined), and members lists the node''s members or contained places (paginate
-        with relation_type=member). Public and unauthenticated.'
+      description: 'Explore what a node connects to. The overview returns an ordered
+        `relations` list: named relationships (e.g. `rel:competes_with`, `rel:in_industry`)
+        first, then a node''s metrics and entities (the entity + metric combinations
+        Tako covers — query /v3/search or /v1/answer for one), then similar nodes
+        and membership (part_of / members). Each group carries a stable `key`; pass
+        `relation`=<key> + cursor to paginate that one group, and the optional q to
+        narrow by a case-insensitive substring on name/aliases (e.g. metrics for an
+        entity matching ''gdp''). Public and unauthenticated.'
       operationId: graphRelated
       parameters:
       - description: Opaque public id of the node.
@@ -257,15 +256,24 @@ paths:
           type: string
         name: node_id
         in: query
-      - description: 'Paginate one facet: metric, entity, sibling, or member.'
+      - description: Relation key to paginate, e.g. `rel:competes_with`, `metrics`,
+          `entities`, `siblings`, or `members`.
         required: false
+        schema:
+          type: string
+        name: relation
+        in: query
+      - description: 'Deprecated: use `relation`. Legacy facet (metric/entity/sibling/member)
+          mapped to a key.'
+        required: false
+        deprecated: true
         schema:
           type: string
         name: relation_type
         in: query
       - description: Optional case-insensitive substring filter on the related nodes'
-          name/aliases. Filters every facet of the overview, or the single paginated
-          facet when relation_type is set.
+          name/aliases. Filters every group of the overview, or the single paginated
+          group when `relation` is set.
         required: false
         schema:
           type: string
@@ -1979,10 +1987,13 @@ components:
       properties:
         node:
           $ref: '#/components/schemas/GraphNode'
-        related:
+        relations:
           anyOf:
-          - $ref: '#/components/schemas/RelatedGroups'
+          - items:
+              $ref: '#/components/schemas/GraphRelation'
+            type: array
           - type: 'null'
+          title: Relations
         relation:
           anyOf:
           - $ref: '#/components/schemas/GraphRelationPage'
@@ -1991,10 +2002,53 @@ components:
       required:
       - node
       title: GraphRelatedResponse
+    GraphRelation:
+      properties:
+        key:
+          type: string
+          title: Key
+          description: 'Stable pagination handle. Fixed keys: metrics, entities, siblings,
+            part_of, members. Named relations: rel:<phrase>.'
+        kind:
+          $ref: '#/components/schemas/RelationKind'
+        label:
+          type: string
+          title: Label
+          description: Human-readable group label.
+        items:
+          items:
+            $ref: '#/components/schemas/GraphNode'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        total_capped:
+          type: boolean
+          title: Total Capped
+          description: True when `total` hit the server-side counting cap; the true
+            count is at least `total`. Render as '>total'.
+          default: false
+      type: object
+      required:
+      - key
+      - kind
+      - label
+      - items
+      - total
+      title: GraphRelation
     GraphRelationPage:
       properties:
-        relation_type:
-          $ref: '#/components/schemas/GraphRelationType'
+        key:
+          type: string
+          title: Key
+          description: The relation key that was paginated.
+        kind:
+          $ref: '#/components/schemas/RelationKind'
+        label:
+          type: string
+          title: Label
+          description: Human-readable group label.
         items:
           items:
             $ref: '#/components/schemas/GraphNode'
@@ -2010,14 +2064,6 @@ components:
             count is at least `total`. Pagination ends at the cap — narrow with `q`
             to reach the tail.
           default: false
-        label:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Label
-          description: Human-readable group label (set for siblings, e.g. 'Other Geographies'),
-            matching the overview group's label so the drill view stays consistent
-            with the hub.
         next_cursor:
           anyOf:
           - type: string
@@ -2025,18 +2071,12 @@ components:
           title: Next Cursor
       type: object
       required:
-      - relation_type
+      - key
+      - kind
+      - label
       - items
       - total
       title: GraphRelationPage
-    GraphRelationType:
-      type: string
-      enum:
-      - metric
-      - entity
-      - member
-      - sibling
-      title: GraphRelationType
     GraphSearchResponse:
       properties:
         results:
@@ -2137,53 +2177,18 @@ components:
       - id
       - delta
       title: ReasoningEvent
-    RelatedGroups:
-      properties:
-        metrics:
-          $ref: '#/components/schemas/RelationGroup'
-        entities:
-          $ref: '#/components/schemas/RelationGroup'
-        siblings:
-          $ref: '#/components/schemas/RelationGroup'
-        part_of:
-          $ref: '#/components/schemas/RelationGroup'
-        members:
-          $ref: '#/components/schemas/RelationGroup'
-      type: object
-      required:
-      - metrics
-      - entities
-      - siblings
-      - part_of
-      - members
-      title: RelatedGroups
-    RelationGroup:
-      properties:
-        items:
-          items:
-            $ref: '#/components/schemas/GraphNode'
-          type: array
-          title: Items
-        total:
-          type: integer
-          title: Total
-        total_capped:
-          type: boolean
-          title: Total Capped
-          description: True when `total` hit the server-side counting cap; the true
-            count is at least `total`. Render as '>total'.
-          default: false
-        label:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Label
-          description: Human-readable group label (set for siblings, e.g. 'Other Geographies').
-      type: object
-      required:
-      - items
-      - total
-      title: RelationGroup
+    RelationKind:
+      type: string
+      enum:
+      - related
+      - data
+      - sibling
+      - membership
+      title: RelationKind
+      description: 'How a relation group was derived. The SOURCE kind is Tako-internal
+        only
+
+        and intentionally absent from this public twin.'
     ResultContent:
       properties:
         content_format:
