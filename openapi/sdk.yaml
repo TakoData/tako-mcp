@@ -99,8 +99,8 @@ paths:
         for that specific entity + metric combination. Public and unauthenticated.
         Note: results are not yet filtered to the production-ready inventory, so a
         returned metric or entity that is not backed by a production fact table may
-        404 when passed to /beta/graph/related. Pass subtype to scope results to one
-        entity class (see the subtype enum).'
+        404 when passed to /beta/graph/related. Pass label to prefer a NER label (a
+        ranking boost, not a filter); by default the label is inferred from q.'
       operationId: graphSearch
       parameters:
       - description: Search text (min 2 chars).
@@ -121,100 +121,31 @@ paths:
           type: integer
         name: limit
         in: query
-      - description: 'Filter to a single entity class (e.g. Countries, Companies).
-          Implies entity-only results; an explicit non-entity ''types'' is a 400.
-          Note: results are drawn from a bounded candidate window (min(limit*5, 200))
-          before filtering, so a response shorter than `limit` does not imply no further
-          matches exist.'
+      - description: Prefer results with this NER label (boost, not a filter — matching
+          nodes rank higher; others still return). Supplying label disables inference.
         required: false
         schema:
           type: string
           enum:
-          - Companies
-          - Cryptocurrencies
-          - Financial Instruments
-          - Internet Browsers
-          - Commodities
-          - People
-          - Currencies
-          - Stock Exchanges
-          - Securities
-          - IPOs
-          - Government Debt Instruments
-          - Treasury Securities
-          - Airports
-          - Airlines
-          - Vehicle Types
-          - Transportation Modes
-          - Drugs
-          - Drug Categories
-          - Diseases
-          - Chemical Elements
-          - Chemical Compounds
-          - Celestial Bodies
-          - Occupations
-          - Social Media Platforms
-          - Operating Systems
-          - Search Engines
-          - Device Types
-          - LLMs
-          - LLM Families
-          - LLM Benchmarks
-          - Industries
-          - NAICS Industries
-          - BLS Industries
-          - PSC Categories
-          - Federal Contractors
-          - Federal Agencies
-          - Federal Subagencies
-          - ICE Contracts
-          - ICE Contractors
-          - Elections
-          - Political Offices
-          - Pollsters
-          - Agricultural Products
-          - Tobacco Products
-          - Prediction Markets
-          - Prediction Events
-          - Real Estate Property Types
-          - Continents
-          - World Regions
-          - Countries
-          - States
-          - Counties
-          - Metro Areas
-          - Cities
-          - F1 Drivers
-          - F1 Teams
-          - F1 Circuits
-          - F1 Events
-          - NASCAR Drivers
-          - NASCAR Teams
-          - NASCAR Tracks
-          - NASCAR Events
-          - NASCAR Races
-          - NASCAR Owners
-          - NASCAR Manufacturers
-          - Soccer Teams
-          - Soccer Players
-          - Soccer Competitions
-          - Soccer Conferences
-          - Basketball Teams
-          - Basketball Players
-          - Basketball Conferences
-          - Basketball Divisions
-          - Baseball Teams
-          - Baseball Players
-          - Baseball Conferences
-          - Baseball Divisions
-          - Baseball Competitions
-          - Football Teams
-          - Football Players
-          - Football Conferences
-          - Football Divisions
-          - Sports
-          - Sports Leagues
-        name: subtype
+          - PERSON
+          - ORG
+          - GPE
+          - LOC
+          - PRODUCT
+          - EVENT
+          - LANGUAGE
+          - MONEY
+          - METRIC
+          - STOCK_TICKER
+          - WEBSITE
+        name: label
+        in: query
+      - description: Infer label and grounded-node boosts from q via Tako NER; set
+          false to disable. Ignored when label is supplied. Default true.
+        required: false
+        schema:
+          type: boolean
+        name: infer_label
         in: query
       responses:
         '200':
@@ -291,6 +222,34 @@ paths:
           type: integer
         name: limit
         in: query
+      - description: Prefer related nodes with this NER label (boost, not a filter
+          — matching nodes rank higher within each relation; totals are unchanged).
+          Supplying label disables inference.
+        required: false
+        schema:
+          type: string
+          enum:
+          - PERSON
+          - ORG
+          - GPE
+          - LOC
+          - PRODUCT
+          - EVENT
+          - LANGUAGE
+          - MONEY
+          - METRIC
+          - STOCK_TICKER
+          - WEBSITE
+        name: label
+        in: query
+      - description: Infer label and grounded-node boosts from q via Tako NER; set
+          false to disable. Ignored when label is supplied; applies only when q is
+          present. Default true.
+        required: false
+        schema:
+          type: boolean
+        name: infer_label
+        in: query
       responses:
         '200':
           description: A node's details plus related nodes by facet
@@ -360,7 +319,10 @@ paths:
       summary: Download content
       description: 'Download the content behind a search result: a CSV of a Tako card''s
         underlying data, or the full text of a web page. Returns a short-lived presigned
-        download URL. Protected-source cards (data export not available) return 403.'
+        download URL. Protected-source cards (data export not available) return 403.
+        Send `quote_only: true` to instead get only the export''s price (`cost` +
+        `export_pricing`) with an empty payload, for free and without fetching or
+        charging.'
       operationId: contents
       requestBody:
         content:
@@ -370,7 +332,9 @@ paths:
       responses:
         '200':
           description: 'Downloadable content for a result: a presigned URL plus format
-            and cost metadata.'
+            and cost metadata. For a `quote_only` request the item instead carries
+            only the price (`cost` + `export_pricing`) with all payload and url fields
+            null.'
           content:
             application/json:
               schema:
@@ -1570,6 +1534,10 @@ components:
           type: boolean
           title: Truncated
           default: false
+        export_pricing:
+          anyOf:
+          - $ref: '#/components/schemas/ExportPricing'
+          - type: 'null'
         source_url:
           type: string
           title: Source Url
@@ -1587,7 +1555,14 @@ components:
 
         from ResultContent. URL mode populates `url`/`expires_at`; INLINE mode
 
-        populates one of the payload fields and leaves `url`/`expires_at` null.'
+        populates one of the payload fields and leaves `url`/`expires_at` null. A
+
+        `quote_only` request yields a third shape: `cost` (+ `export_pricing` for
+        a
+
+        card) with every payload/url field null and `content_format` null — the price
+
+        of the export, nothing fetched or charged.'
     ContentsDeliveryMode:
       type: string
       enum:
@@ -1645,6 +1620,16 @@ components:
             for web URLs.
           examples:
           - 100
+        quote_only:
+          type: boolean
+          title: Quote Only
+          description: 'When true, return only the PRICE of the export (cost + export_pricing)
+            without fetching content or charging: the response item''s payload/url
+            fields are null and the request is free. `max_rows` shapes the quote (defaults
+            to the 20-row free allowance, as a real export does); `mode` and `content_format`
+            are ignored. The same export-safe gate applies, so an unexportable card
+            still returns 403.'
+          default: false
       type: object
       required:
       - url
@@ -1946,6 +1931,37 @@ components:
       - code
       - message
       title: ErrorObject
+    ExportPricing:
+      properties:
+        baseline_usd:
+          type: number
+          title: Baseline Usd
+        row_cpm_usd:
+          type: number
+          title: Row Cpm Usd
+        free_rows:
+          type: integer
+          title: Free Rows
+        max_rows_ceiling:
+          type: integer
+          title: Max Rows Ceiling
+      type: object
+      required:
+      - baseline_usd
+      - row_cpm_usd
+      - free_rows
+      - max_rows_ceiling
+      title: ExportPricing
+      description: 'Card-CSV export pricing RATE, published so a caller can compute
+        an export''s
+
+        cost before fetching. Full charge =
+
+        baseline_usd + row_cpm_usd * max(0, rows - free_rows) / 1000, rows <= max_rows_ceiling.
+
+        row_cpm_usd is the card-level total (sum of the card''s distinct priced sources''
+
+        per-1,000-row rate); no per-source breakdown.'
     GraphNode:
       properties:
         id:
@@ -1971,6 +1987,13 @@ components:
           anyOf:
           - $ref: '#/components/schemas/EntityClassName'
           - type: 'null'
+        label:
+          anyOf:
+          - $ref: '#/components/schemas/NerLabel'
+          - type: 'null'
+          description: Public NER label of the node (PERSON, ORG, GPE, ...). Derived
+            from the node's stored annotation; null when the internal annotation has
+            no public equivalent.
       type: object
       required:
       - id
@@ -1998,6 +2021,16 @@ components:
           anyOf:
           - $ref: '#/components/schemas/GraphRelationPage'
           - type: 'null'
+        inferred_labels:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/NerLabel'
+            type: array
+          - type: 'null'
+          title: Inferred Labels
+          description: 'Labels inferred from `q` when infer_label ran (boost applied).
+            Empty list: inference ran and found nothing. Absent: an explicit `label`
+            was given, infer_label=false, or there was no q.'
       type: object
       required:
       - node
@@ -2026,8 +2059,8 @@ components:
         total_capped:
           type: boolean
           title: Total Capped
-          description: True when `total` hit the server-side counting cap; the true
-            count is at least `total`. Render as '>total'.
+          description: True when `total` hit the server-side fetch cap; the true count
+            is at least `total`. Render as 'total+'.
           default: false
       type: object
       required:
@@ -2060,9 +2093,9 @@ components:
         total_capped:
           type: boolean
           title: Total Capped
-          description: True when `total` hit the server-side counting cap; the true
-            count is at least `total`. Pagination ends at the cap — narrow with `q`
-            to reach the tail.
+          description: True when `total` hit the server-side fetch cap; the true count
+            is at least `total`. Pagination ends at the cap — narrow with `q` to reach
+            the tail.
           default: false
         next_cursor:
           anyOf:
@@ -2084,6 +2117,16 @@ components:
             $ref: '#/components/schemas/GraphNode'
           type: array
           title: Results
+        inferred_labels:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/NerLabel'
+            type: array
+          - type: 'null'
+          title: Inferred Labels
+          description: 'Labels inferred from `q` when infer_label ran (boost applied).
+            Empty list: inference ran and found nothing. Absent: an explicit `label`
+            was given, infer_label=false, or there was no q.'
       type: object
       required:
       - results
@@ -2134,6 +2177,21 @@ components:
       - Medium
       - Low
       title: KnowledgeCardRelevance
+    NerLabel:
+      type: string
+      enum:
+      - PERSON
+      - ORG
+      - GPE
+      - LOC
+      - PRODUCT
+      - EVENT
+      - LANGUAGE
+      - MONEY
+      - METRIC
+      - STOCK_TICKER
+      - WEBSITE
+      title: NerLabel
     OutputSettings:
       properties:
         image_dark_mode:
@@ -2241,25 +2299,46 @@ components:
           type: boolean
           title: Truncated
           default: false
+        export_pricing:
+          anyOf:
+          - $ref: '#/components/schemas/ExportPricing'
+          - type: 'null'
       type: object
       title: ResultContent
-      description: 'Describes the downloadable content behind a result. `cost` is
-        the USD the
+      description: 'Describes the downloadable content behind a result. For a Tako
+        card CSV
 
-        /contents call will charge for this result (a Tako card CSV export is billed
+        export the charge is a flat per-export baseline plus a per-source per-row
+        CPM
 
-        a flat per-export baseline plus, for licensed sources, a per-source per-row
+        on the rows returned (beyond the free-row allowance); web text is the canonical
 
-        CPM on the rows returned; web text is the canonical Contents rate). On
+        Contents rate. On `/contents` responses `cost` is the ACTUAL charge and still
 
-        search/answer results and other pre-fetch quotes this `cost` is the legacy
+        reconciles with what that response billed — EXCEPT a `quote_only` response,
 
-        per-source-flat estimate (it does NOT yet include the per-row CPM), so for
-        a
+        where `cost` is a prospective price (the export was neither fetched nor billed;
 
-        licensed per-row-priced card it can understate the actual /contents charge
+        payload/url are null). On search/answer downloadable cards
 
-        until a source-aware quote lands (tracked follow-up). Exactly
+        `cost` is a PROSPECTIVE `/contents` quote (the per-export baseline floor),
+        NOT
+
+        what this response billed — so on a metered `include_contents` request the
+
+        per-card `cost` diverges from `usage.total_cost_usd` (the inline preview bills
+
+        ≈$0) and summing per-card `cost` will not reconcile with `usage`; treat `cost`
+
+        +`export_pricing` as "what a `/contents` export of this card would cost."
+
+        `export_pricing` carries the rate so a caller can compute the full charge
+
+        before fetching: baseline_usd + row_cpm_usd * max(0, rows - free_rows) / 1000
+
+        (rows <= max_rows_ceiling). `export_pricing` is null for web text and
+
+        non-downloadable content. Exactly
 
         one payload group is populated once
 
@@ -2996,12 +3075,15 @@ components:
         nodes:
           anyOf:
           - items:
-              $ref: '#/components/schemas/GraphNode'
+              $ref: '#/components/schemas/TakoCardNode'
             type: array
           - type: 'null'
           title: Nodes
-          description: Graph nodes (entities and metrics) this card was built from.
-            Present only when requested. Use each id with /beta/graph/node/{id}.
+          description: Graph nodes (entities and metrics) this card was built from,
+            returned by default. Absent for web-only cards or when node resolution
+            was unavailable. Use each id with /beta/graph/node/{id} for full detail
+            (aliases, subtype), or pass ids in sources.data.node_ids to pin these
+            nodes in future searches.
       type: object
       title: TakoCard
       description: 'A Tako knowledge card on the new search/answer surface. Mirrors
@@ -3010,6 +3092,42 @@ components:
         legacy KnowledgeCard minus data_url / visualization_data / ideal_viz_decisions,
 
         plus a `content` download descriptor.'
+    TakoCardNode:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: Opaque, human-friendly public id (<name-slug>-<token>).
+        type:
+          $ref: '#/components/schemas/GraphNodeType'
+        name:
+          type: string
+          title: Name
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+      type: object
+      required:
+      - id
+      - type
+      - name
+      title: TakoCardNode
+      description: 'Slim graph node for the search/answer card surface (TakoCard.nodes)
+        and
+
+        its internal carrier. Deliberately narrower than GraphNode: no `aliases`
+
+        (bulky, and the card surface never needs them) and no `subtype` (the search
+
+        hydration path resolves ids in one batch KG fetch and does not pay the
+
+        second EntityClassResolver round-trip that subtype would require). Callers
+
+        that need the full node — aliases, subtype — resolve the id via
+
+        /beta/graph/node/{id}.'
     TakoCardSource:
       properties:
         source_name:
