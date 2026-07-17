@@ -69,7 +69,7 @@ describe("tako_graph_related", () => {
     expect(url.searchParams.get("infer_label")).toBe("false");
   });
 
-  it("single q string: one call, response returned unchanged", async () => {
+  it("single q string: one call, forwards q + relation, returns the response", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, metricsPage([{ id: "rev-1", name: "Revenue" }], true)),
     ]);
@@ -80,31 +80,12 @@ describe("tako_graph_related", () => {
     const url = new URL(requestFrom(fetchMock.mock.calls[0]).url);
     expect(url.searchParams.get("q")).toBe("revenue");
     expect(url.searchParams.get("relation")).toBe("metrics");
-    expect(out.relation?.total_capped).toBe(true); // unchanged passthrough
+    expect(out.relation?.total_capped).toBe(true);
   });
 
-  it("multi q array: fans out one call per value and unions/dedupes items", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, metricsPage([
-        { id: "rev-1", name: "Revenue" }, { id: "shared-9", name: "Average Wages" },
-      ])),
-      jsonResponse(200, metricsPage([
-        { id: "sales-2", name: "Sales" }, { id: "shared-9", name: "Average Wages" },
-      ])),
-    ]);
-    const out = await takoGraphRelated.handler(
-      { node_id: "tesla-x1", relation: "metrics", q: ["revenue", "sales"] }, CTX,
-    );
-    expect(fetchMock.mock.calls).toHaveLength(2);
-    expect(out.relation?.items.map((n) => n.id)).toEqual([
-      "rev-1", "shared-9", "sales-2",
-    ]);
-    expect(out.relation?.total).toBe(3);
-  });
-
-  it("rejects an empty q array", () => {
+  it("rejects an array q (single string only)", () => {
     expect(() =>
-      takoGraphRelated.inputSchema.parse({ node_id: "x", q: [] }),
+      takoGraphRelated.inputSchema.parse({ node_id: "x", q: ["a", "b"] }),
     ).toThrow();
   });
 

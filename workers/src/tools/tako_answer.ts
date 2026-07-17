@@ -6,7 +6,7 @@ import { takoCardSchema, usageSchema, webResultSchema } from "./_search_results.
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent instead.** **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). `strict` is documented to hard-filter to pinned nodes but is NOT reliably enforced — rely on the pin boost. Skip `web` when you're confident Tako has the data.";
+  "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent instead.** **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). Set `strict: true` to hard-filter to only cards matching a pinned node (requires non-empty `node_ids`); leave it false (default) to boost pinned nodes while still returning organic results. Skip `web` when you're confident Tako has the data.";
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).
 const inputSchema = z.object({
@@ -41,7 +41,7 @@ const inputSchema = z.object({
     .boolean()
     .default(false)
     .describe(
-      "Documented to return only cards matching a pinned node (requires node_ids). NOTE: not reliably enforced upstream — rely on the pin boost, not strict, for hard exclusion.",
+      "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
     ),
 });
 type Input = z.infer<typeof inputSchema>;

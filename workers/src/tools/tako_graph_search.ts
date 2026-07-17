@@ -19,7 +19,7 @@ const NER_LABELS = [
 ] as const;
 
 const DESCRIPTION =
-  "Resolve a name to Tako data-graph node(s) so you can see **what data Tako has** and pin exact nodes into `tako_search`/`tako_answer`. Decide up front whether you're resolving a **thing** (`types: \"entity\"`) or a **measure** (`types: \"metric\"`) — don't mix them in one call. Results are popularity-ordered; read each node's `subtype`/`label`/`description` to pick the right one. `label` is a ranking **boost, not a filter** (off-label nodes still return) — omit it to let `infer_label` auto-detect from `q`. Graph calls are free and efficient: for a narrow 1-entity/1-metric question, run this **in parallel** with your `tako_search`/`tako_answer`; for broader questions, resolve entities here then call `tako_graph_related` to discover their metrics. Each node's `id` pins into `sources.data.node_ids`.";
+  "Resolve a name to Tako data-graph node(s) so you can see **what data Tako has** and pin exact nodes into `tako_search`/`tako_answer`. Decide up front whether you're resolving a **thing** (`types: \"entity\"`) or a **measure** (`types: \"metric\"`) — don't mix them in one call. Results are popularity-ordered; read each node's `subtype`/`label`/`description` to pick the right one. **Prefer passing an explicit `label` whenever you can tell the entity's category** (e.g. a company → `ORG`, a country → `GPE`, a person → `PERSON`) — it's a strong disambiguation boost you're usually well-placed to supply. It's a **boost, not a filter** (off-label nodes still return). Only omit `label` when you genuinely can't categorize the term; `infer_label` (on by default) is the fallback that guesses from `q`. Graph calls are free and efficient: for a narrow 1-entity/1-metric question, run this **in parallel** with your `tako_search`/`tako_answer`; for broader questions, resolve entities here then call `tako_graph_related` to discover their metrics. Each node's `id` pins into `sources.data.node_ids`.";
 
 const inputSchema = z.object({
   q: z.string().min(2).describe("Search text (min 2 chars)."),
@@ -27,7 +27,7 @@ const inputSchema = z.object({
     'Resolve a "thing" ("entity") or a "measure" ("metric"). Omit to search both.',
   ),
   label: z.enum(NER_LABELS).optional().describe(
-    "NER label to prefer (boost, not a filter). Omit to let infer_label run.",
+    "NER label to prefer (boost, not a filter). PREFER supplying this when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...); omit only when unsure, and infer_label will guess from q.",
   ),
   infer_label: z.boolean().optional().describe(
     "Auto-detect labels from q (default true server-side). Set false to disable.",

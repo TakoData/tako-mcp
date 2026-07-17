@@ -164,9 +164,10 @@ Maps to `GET /api/beta/graph/node/{id}`.
   (matching the API's `TakoCardNode` shape). This closes the discovery loop —
   even a plain `tako_search` reveals pinnable ids for a refined follow-up.
 - **Description encodes:** pin the ids you resolved via the graph tools; the
-  `strict` caveat — it is *documented* as a hard filter to pinned nodes but was
-  **not enforced in staging tests**, so rely on the pin boost, not on `strict`
-  for exclusion; skip `web` when confident Tako has the data.
+  `strict` — a hard filter: `true` returns only cards matching ≥1 pinned node
+  (`node_ids` must be non-empty; empty + strict → 400), `false` (default) boosts
+  pinned nodes while still returning organic results (verified live on prod);
+  skip `web` when confident Tako has the data.
 
 ### 3.5 `tako_answer` extension
 
@@ -257,8 +258,10 @@ project's 80% coverage bar.
 
 - **Trailing-slash convention** for `/api/beta/graph/*` — verify against
   staging during implementation.
-- **`strict` semantics** — documented as a hard filter but unverified in
-  staging; descriptions must not over-promise exclusion.
+- **`strict` semantics** — RESOLVED: verified live on prod that `strict: true`
+  hard-filters to cards matching a pinned node (organic non-matches excluded)
+  and empty `node_ids` + strict → 400. Descriptions describe it as the hard
+  filter it is.
 - **Multi-`q` merge semantics** — the union/dedupe is defined per relation
   group by node id; confirm the overview merge reads well when different `q`
   values hit different groups.

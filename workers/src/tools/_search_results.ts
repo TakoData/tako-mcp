@@ -63,7 +63,13 @@ export const takoCardSchema = z
         z.object({
           id: z.string(),
           name: z.string(),
-          type: z.enum(["metric", "entity"]),
+          // Loose string, NOT a strict enum: nothing branches on this (it is
+          // surfaced read-only to the model), and hard-coding the node-type
+          // enum here would reintroduce the exact drift failure this file's
+          // content_format fix removed — a new backend node type would pass the
+          // generated wire guard but fail this hand-written facade, throwing
+          // "unexpected shape" on every response.
+          type: z.string(),
         }),
       )
       .nullable()
