@@ -60,7 +60,7 @@ function dedupeNodes(nodes: GraphNode[]): GraphNode[] {
   return out;
 }
 
-function dedupeStrings<T>(values: T[]): T[] {
+function dedupeValues<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
@@ -81,7 +81,7 @@ export function mergeRelatedResponses(
     throw new Error("mergeRelatedResponses: empty response list");
   }
 
-  const inferredFlat = dedupeStrings(
+  const inferredFlat = dedupeValues(
     responses.flatMap((r) => r.inferred_labels ?? []),
   );
   const inferred_labels = inferredFlat.length > 0 ? inferredFlat : undefined;

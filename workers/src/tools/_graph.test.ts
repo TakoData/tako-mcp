@@ -69,6 +69,24 @@ describe("mergeRelatedResponses — overview mode", () => {
     expect(merged.relations?.map((g) => g.key)).toEqual(["metrics", "entities"]);
   });
 
+  it("merges 3+ responses (drill), unioning and deduping across all of them", () => {
+    const mk = (id: string, name: string): GraphRelatedResponse => ({
+      node: hub,
+      relation: {
+        key: "metrics", kind: "data", label: "Metrics",
+        items: [node(id, name), node("shared-9", "Average Wages")],
+        total: 2, total_capped: false, next_cursor: null,
+      },
+    });
+    const merged = mergeRelatedResponses([
+      mk("rev-1", "Revenue"), mk("sales-2", "Sales"), mk("net-3", "Net Income"),
+    ]);
+    expect(merged.relation?.items.map((n) => n.id)).toEqual([
+      "rev-1", "shared-9", "sales-2", "net-3",
+    ]);
+    expect(merged.relation?.total).toBe(4);
+  });
+
   it("unions and dedupes inferred_labels", () => {
     const a: GraphRelatedResponse = { node: hub, relations: [], inferred_labels: ["ORG"] };
     const b: GraphRelatedResponse = { node: hub, relations: [], inferred_labels: ["ORG", "PRODUCT"] };

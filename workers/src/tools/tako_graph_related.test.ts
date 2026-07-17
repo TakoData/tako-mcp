@@ -47,6 +47,28 @@ describe("tako_graph_related", () => {
     expect(url.searchParams.has("relation")).toBe(false);
   });
 
+  it("forwards cursor/limit/label/infer_label as query params", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { node: hub, relation: { key: "metrics", kind: "data", label: "Metrics", items: [], total: 0, total_capped: false, next_cursor: null } }),
+    ]);
+    await takoGraphRelated.handler(
+      {
+        node_id: "tesla-x1",
+        relation: "metrics",
+        cursor: "cur-123",
+        limit: 100,
+        label: "ORG",
+        infer_label: false,
+      },
+      CTX,
+    );
+    const url = new URL(requestFrom(fetchMock.mock.calls[0]).url);
+    expect(url.searchParams.get("cursor")).toBe("cur-123");
+    expect(url.searchParams.get("limit")).toBe("100");
+    expect(url.searchParams.get("label")).toBe("ORG");
+    expect(url.searchParams.get("infer_label")).toBe("false");
+  });
+
   it("single q string: one call, response returned unchanged", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, metricsPage([{ id: "rev-1", name: "Revenue" }], true)),

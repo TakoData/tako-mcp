@@ -49,6 +49,7 @@ describe("tako_graph_search", () => {
     expect(url.searchParams.get("types")).toBe("entity");
     expect(url.searchParams.get("label")).toBe("ORG");
     expect(url.searchParams.get("limit")).toBe("5");
+    expect(url.searchParams.get("infer_label")).toBe("true");
     expect(req.headers.get("X-API-Key")).toBe("sk-test");
 
     expect(out.results).toHaveLength(1);
