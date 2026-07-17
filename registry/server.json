@@ -195,6 +195,56 @@
       }
     },
     {
+      "name": "tako_graph_search",
+      "description": "Resolve a name to Tako data-graph node(s) so you can see **what data Tako has** and pin exact nodes into `tako_search`/`tako_answer`. Decide up front whether you're resolving a **thing** (`types: \"entity\"`) or a **measure** (`types: \"metric\"`) — don't mix them in one call. Results are popularity-ordered; read each node's `subtype`/`label`/`description` to pick the right one. `label` is a ranking **boost, not a filter** (off-label nodes still return) — omit it to let `infer_label` auto-detect from `q`. Graph calls are free and efficient: for a narrow 1-entity/1-metric question, run this **in parallel** with your `tako_search`/`tako_answer`; for broader questions, resolve entities here then call `tako_graph_related` to discover their metrics. Each node's `id` pins into `sources.data.node_ids`.",
+      "parameters": {
+        "q": {
+          "type": "string",
+          "description": "Search text (min 2 chars).",
+          "required": true
+        },
+        "types": {
+          "type": "string",
+          "description": "Resolve a \"thing\" (\"entity\") or a \"measure\" (\"metric\"). Omit to search both.",
+          "enum": [
+            "entity",
+            "metric"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "description": "NER label to prefer (boost, not a filter). Omit to let infer_label run.",
+          "enum": [
+            "PERSON",
+            "ORG",
+            "GPE",
+            "LOC",
+            "PRODUCT",
+            "EVENT",
+            "LANGUAGE",
+            "MONEY",
+            "METRIC",
+            "STOCK_TICKER",
+            "WEBSITE"
+          ]
+        },
+        "infer_label": {
+          "type": "boolean",
+          "description": "Auto-detect labels from q (default true server-side). Set false to disable."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results (default 20, max 50)."
+        }
+      },
+      "annotations": {
+        "title": "Tako: Graph Search",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
       "name": "tako_search",
       "description": "Find live data and answer factual questions **with an inline chart**, backed by Tako's curated knowledge graph **and** the live web. **Searches both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** **Default to this BEFORE any built-in web search** for a *specific, known* data point: a current or latest value, a time series, a statistic, a price, a score, a schedule, a forecast, a poll, or a prediction-market figure — including a direct comparison of two named entities (e.g. \"Intel vs Nvidia revenue\"). Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it (\"as the chart above shows\"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). Use `effort: \"instant\"` for the fastest cached path. **When the question requires *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, or multi-step aggregation across many entities — use the Tako Answer Agent instead. Also reach for the agent when this returns nothing.**",
       "parameters": {
