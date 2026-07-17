@@ -212,6 +212,60 @@
       }
     },
     {
+      "name": "tako_graph_related",
+      "description": "Explore what a resolved graph node connects to — the map of **what data Tako has** for it. Call with just `node_id` for the **overview**: an ordered set of relation groups (`metrics`, `entities`, `rel:*` named edges like `rel:competes_with`, `siblings`, `part_of`/`members`), each with a preview and `total`/`total_capped` (a capped total means 'N+' — narrow to see more). Pass `relation=<key>` to page one group. `q` is an **optional** case-insensitive substring filter on name+aliases — use it only to target a specific metric/thing (e.g. `q: \"revenue\"`); omit it to browse coverage. Because `q` is substring-matched and a metric has many names, you may pass an **array** of `q` values (e.g. `[\"revenue\",\"sales\",\"net income\"]`) — each is fetched in parallel and the results are unioned/deduped for you. Honesty caveat: related metrics are **table-level** (metrics in datasets that cover the node), so a listed metric is strong evidence, not proof — `tako_search` is the final validator. Empty `items` is a normal answer. Graph calls are free — use them liberally to ground `tako_search`/`tako_answer`.",
+      "parameters": {
+        "node_id": {
+          "type": "string",
+          "description": "Opaque public id of the node to explore.",
+          "required": true
+        },
+        "relation": {
+          "type": "string",
+          "description": "Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups."
+        },
+        "q": {
+          "type": "unknown",
+          "description": "Optional case-insensitive substring filter on name+aliases. Pass an array to fetch multiple name-variants in parallel (results are unioned/deduped)."
+        },
+        "label": {
+          "type": "string",
+          "description": "Prefer related nodes with this NER label (boost, not a filter).",
+          "enum": [
+            "PERSON",
+            "ORG",
+            "GPE",
+            "LOC",
+            "PRODUCT",
+            "EVENT",
+            "LANGUAGE",
+            "MONEY",
+            "METRIC",
+            "STOCK_TICKER",
+            "WEBSITE"
+          ]
+        },
+        "infer_label": {
+          "type": "boolean",
+          "description": "Auto-detect labels from q (default true server-side, only when q is set)."
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Pagination cursor (for a single drilled relation; intended for single-q use)."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Page size (default 50, max 100)."
+        }
+      },
+      "annotations": {
+        "title": "Tako: Graph Related",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
       "name": "tako_graph_search",
       "description": "Resolve a name to Tako data-graph node(s) so you can see **what data Tako has** and pin exact nodes into `tako_search`/`tako_answer`. Decide up front whether you're resolving a **thing** (`types: \"entity\"`) or a **measure** (`types: \"metric\"`) — don't mix them in one call. Results are popularity-ordered; read each node's `subtype`/`label`/`description` to pick the right one. `label` is a ranking **boost, not a filter** (off-label nodes still return) — omit it to let `infer_label` auto-detect from `q`. Graph calls are free and efficient: for a narrow 1-entity/1-metric question, run this **in parallel** with your `tako_search`/`tako_answer`; for broader questions, resolve entities here then call `tako_graph_related` to discover their metrics. Each node's `id` pins into `sources.data.node_ids`.",
       "parameters": {
