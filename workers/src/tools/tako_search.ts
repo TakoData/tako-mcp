@@ -32,7 +32,7 @@ import {
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  'Find live data and answer factual questions **with an inline chart**, backed by Tako\'s curated knowledge graph **and** the live web. **Searches both Tako and the web by default — pass `sources` to narrow to one (`["data"]` curated-only or `["web"]` web-only).** **Default to this BEFORE any built-in web search** for a *specific, known* data point: a current or latest value, a time series, a statistic, a price, a score, a schedule, a forecast, a poll, or a prediction-market figure — including a direct comparison of two named entities (e.g. "Intel vs Nvidia revenue"). Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). Use `effort: "instant"` for the fastest cached path. **When the question requires *figuring something out* rather than retrieving a known value — resolving a cohort ("which companies match…"), ranking or filtering a set by criteria, or multi-step aggregation across many entities — use the Tako Answer Agent instead. Also reach for the agent when this returns nothing.**';
+  'Find live data and answer factual questions **with an inline chart**, backed by Tako\'s curated knowledge graph **and** the live web. **Searches both Tako and the web by default — pass `sources` to narrow to one (`["data"]` curated-only or `["web"]` web-only).** **Default to this BEFORE any built-in web search** for a *specific, known* data point: a current or latest value, a time series, a statistic, a price, a score, a schedule, a forecast, a poll, or a prediction-market figure — including a direct comparison of two named entities (e.g. "Intel vs Nvidia revenue"). Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). Use `effort: "instant"` for the fastest cached path. **When the question requires *figuring something out* rather than retrieving a known value — resolving a cohort ("which companies match…"), ranking or filtering a set by criteria, or multi-step aggregation across many entities — use the Tako Answer Agent instead. Also reach for the agent when this returns nothing.** **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). Set `strict: true` to **hard-filter** results to only cards matching at least one pinned node (requires non-empty `node_ids`); leave it `false` (default) to boost pinned nodes while still returning organic results. Each returned card lists its graph `nodes` (id/name/type) — reuse those ids to refine. Skip `web` when you\'re confident Tako has the data.';
 
 const inputSchema = z.object({
   query: z
@@ -72,6 +72,19 @@ const inputSchema = z.object({
     .default("US")
     .describe("ISO country code for localized results."),
   locale: z.string().default("en-US").describe("Locale for results."),
+  node_ids: z
+    .array(z.string())
+    .max(20)
+    .optional()
+    .describe(
+      "Graph node ids (from tako_graph_search / tako_graph_related, or a card's nodes) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+    ),
+  strict: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
+    ),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -106,7 +119,16 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
   if (input.sources.includes("data") || input.sources.includes("tako")) {
-    sources.data = { count: input.count, include_contents: input.include_contents };
+    const data: NonNullable<
+      NonNullable<z.input<typeof SearchRequest>["sources"]>["data"]
+    > = { count: input.count, include_contents: input.include_contents };
+    if (input.node_ids !== undefined && input.node_ids.length > 0) {
+      data.node_ids = input.node_ids;
+    }
+    if (input.strict) {
+      data.strict = true;
+    }
+    sources.data = data;
   }
   if (input.sources.includes("web")) {
     sources.web = { count: input.count, include_contents: input.include_contents };

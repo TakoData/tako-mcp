@@ -56,6 +56,62 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// Regression: same root cause as the tako_search content-shape outage — cards
+// and web results carry a `content` preview object whose backend field `format`
+// was renamed to `content_format`. tako_answer reuses takoCardSchema /
+// webResultSchema, so a hard-required `format` there also made every
+// content-bearing answer throw. Fixture is the real live content shape.
+describe("tako_answer content-shape regression (format -> content_format)", () => {
+  const LIVE_CONTENT = {
+    content_format: null,
+    cost: 0.001,
+    data: null,
+    records: null,
+    dataset: null,
+    url: null,
+    expires_at: null,
+    total_rows: null,
+    truncated: false,
+    export_pricing: null,
+  };
+
+  it("does not throw when cards/web results carry the current content shape", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        answer: "US GDP was about $29 trillion.",
+        cards: [
+          {
+            card_id: "abc123",
+            title: "US GDP",
+            embed_url: "https://trytako.com/embed/abc123/",
+            content: LIVE_CONTENT,
+          },
+        ],
+        web_results: [
+          { title: "US GDP", url: "https://example.com/gdp", content: LIVE_CONTENT },
+        ],
+        request_id: "req-content",
+      }),
+    ]);
+
+    const out = await takoAnswer.handler(
+      {
+        query: "US GDP",
+        sources: ["data", "web"],
+        include_contents: false,
+        country_code: "US",
+        locale: "en-US",
+        strict: false,
+      },
+      CTX,
+    );
+
+    expect(out.cards).toHaveLength(1);
+    expect(out.web_results).toHaveLength(1);
+    expect(out.cards[0]?.content?.content_format).toBeNull();
+  });
+});
+
 describe("tako_answer handler", () => {
   it("tool name is tako_answer", () => {
     expect(takoAnswer.name).toBe("tako_answer");
@@ -71,6 +127,7 @@ describe("tako_answer handler", () => {
         include_contents: false,
         country_code: "US",
         locale: "en-US",
+        strict: false,
       },
       CTX,
     );
@@ -106,7 +163,7 @@ describe("tako_answer handler", () => {
     ]);
 
     const out = await takoAnswer.handler(
-      { query: "obscure query", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US" },
+      { query: "obscure query", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
 
@@ -120,7 +177,7 @@ describe("tako_answer handler", () => {
     mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     const out = await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US" },
+      { query: "test", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US", strict: false },
       CTX,
     ) as Record<string, unknown>;
 
@@ -139,7 +196,7 @@ describe("tako_answer handler", () => {
     ]);
 
     await expect(
-      takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, country_code: "US", locale: "en-US" }, CTX),
+      takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, country_code: "US", locale: "en-US", strict: false }, CTX),
     ).rejects.toThrow(/unexpected wire shape/);
   });
 });
@@ -153,7 +210,7 @@ describe("tako_answer input schema", () => {
   it("accepts the legacy \"tako\" synonym and folds it onto the data key", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
     await takoAnswer.handler(
-      { query: "q", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US" },
+      { query: "q", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
@@ -176,7 +233,7 @@ describe("tako_answer input schema", () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, country_code: "GB", locale: "en-GB" },
+      { query: "test", sources: ["tako"], include_contents: false, country_code: "GB", locale: "en-GB", strict: false },
       CTX,
     );
 
@@ -204,9 +261,44 @@ describe("tako_answer contract guards", () => {
   it("reshapes the flat input into a body that satisfies the backend contract", () => {
     const body = buildAnswerBody({
       query: "US GDP", sources: ["data", "web"], include_contents: true,
-      country_code: "US", locale: "en-US",
+      country_code: "US", locale: "en-US", strict: false,
     });
     // The generated backend contract must accept the reshaped body.
     expect(() => SearchRequest.parse(body)).not.toThrow();
+  });
+});
+
+describe("tako_answer graph grounding", () => {
+  it("maps node_ids + strict into sources.data", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
+
+    await takoAnswer.handler(
+      {
+        query: "Tesla revenue",
+        sources: ["data"],
+        include_contents: false,
+        country_code: "US",
+        locale: "en-US",
+        node_ids: ["tesla-x1"],
+        strict: true,
+      },
+      CTX,
+    );
+
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
+    expect(body.sources).toEqual({
+      data: { include_contents: false, node_ids: ["tesla-x1"], strict: true },
+    });
+  });
+
+  it("omits node_ids/strict when not provided", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
+    await takoAnswer.handler(
+      { query: "q", sources: ["data"], include_contents: false,
+        country_code: "US", locale: "en-US", strict: false },
+      CTX,
+    );
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
+    expect(body.sources).toEqual({ data: { include_contents: false } });
   });
 });

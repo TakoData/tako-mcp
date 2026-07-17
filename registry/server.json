@@ -130,7 +130,7 @@
     },
     {
       "name": "tako_answer",
-      "description": "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent instead.**",
+      "description": "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent instead.** **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). Set `strict: true` to hard-filter to only cards matching a pinned node (requires non-empty `node_ids`); leave it false (default) to boost pinned nodes while still returning organic results. Skip `web` when you're confident Tako has the data.",
       "parameters": {
         "query": {
           "type": "string",
@@ -159,6 +159,15 @@
           "type": "string",
           "description": "Locale for results.",
           "default": "en-US"
+        },
+        "node_ids": {
+          "type": "array",
+          "description": "Graph node ids (from tako_graph_search / tako_graph_related) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source."
+        },
+        "strict": {
+          "type": "boolean",
+          "description": "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
+          "default": false
         }
       },
       "annotations": {
@@ -209,8 +218,129 @@
       }
     },
     {
+      "name": "tako_graph_node",
+      "description": "Hydrate a single graph-node `id` into full detail (name, `aliases`, `subtype`, `label`, `description`). Use it when you have a bare node id — e.g. one returned on a `tako_search` card's `nodes` (which carry only id/name/type) — and need its aliases/subtype to compose a grounded query or confirm what it is. Free and efficient.",
+      "parameters": {
+        "id": {
+          "type": "string",
+          "description": "Opaque public node id (as returned by graph search/related or on a card's nodes).",
+          "required": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Graph Node",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "tako_graph_related",
+      "description": "Explore what a resolved graph node connects to — the map of **what data Tako has** for it. Call with just `node_id` for the **overview**: an ordered set of relation groups (`metrics`, `entities`, `rel:*` named edges like `rel:competes_with`, `siblings`, `part_of`/`members`), each with a preview and `total`/`total_capped` (a capped total means 'N+' — narrow to see more). Pass `relation=<key>` to page one group. `q` is an **optional** case-insensitive substring filter on name+aliases — use it only to target a specific metric/thing (e.g. `q: \"revenue\"`); omit it to browse coverage. `q` takes a single string; if a metric goes by several names (e.g. \"revenue\", \"sales\", \"net income\"), just call this tool once per name — graph calls are free. Honesty caveat: related metrics are **table-level** (metrics in datasets that cover the node), so a listed metric is strong evidence, not proof — `tako_search` is the final validator. Empty `items` is a normal answer. Graph calls are free — use them liberally to ground `tako_search`/`tako_answer`.",
+      "parameters": {
+        "node_id": {
+          "type": "string",
+          "description": "Opaque public id of the node to explore.",
+          "required": true
+        },
+        "relation": {
+          "type": "string",
+          "description": "Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups."
+        },
+        "q": {
+          "type": "string",
+          "description": "Optional case-insensitive substring filter on name+aliases (single string). For several name-variants of a metric, call the tool once per variant."
+        },
+        "label": {
+          "type": "string",
+          "description": "Prefer related nodes with this NER label (boost, not a filter).",
+          "enum": [
+            "PERSON",
+            "ORG",
+            "GPE",
+            "LOC",
+            "PRODUCT",
+            "EVENT",
+            "LANGUAGE",
+            "MONEY",
+            "METRIC",
+            "STOCK_TICKER",
+            "WEBSITE"
+          ]
+        },
+        "infer_label": {
+          "type": "boolean",
+          "description": "Auto-detect labels from q (default true server-side, only when q is set)."
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Pagination cursor (for a single drilled relation; intended for single-q use)."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Page size (default 50, max 100)."
+        }
+      },
+      "annotations": {
+        "title": "Tako: Graph Related",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "tako_graph_search",
+      "description": "Resolve a name to Tako data-graph node(s) so you can see **what data Tako has** and pin exact nodes into `tako_search`/`tako_answer`. Decide up front whether you're resolving a **thing** (`types: \"entity\"`) or a **measure** (`types: \"metric\"`) — don't mix them in one call. Results are popularity-ordered; read each node's `subtype`/`label`/`description` to pick the right one. **Prefer passing an explicit `label` whenever you can tell the entity's category** (e.g. a company → `ORG`, a country → `GPE`, a person → `PERSON`) — it's a strong disambiguation boost you're usually well-placed to supply. It's a **boost, not a filter** (off-label nodes still return). Only omit `label` when you genuinely can't categorize the term; `infer_label` (on by default) is the fallback that guesses from `q`. Graph calls are free and efficient: for a narrow 1-entity/1-metric question, run this **in parallel** with your `tako_search`/`tako_answer`; for broader questions, resolve entities here then call `tako_graph_related` to discover their metrics. Each node's `id` pins into `sources.data.node_ids`.",
+      "parameters": {
+        "q": {
+          "type": "string",
+          "description": "Search text (min 2 chars).",
+          "required": true
+        },
+        "types": {
+          "type": "string",
+          "description": "Resolve a \"thing\" (\"entity\") or a \"measure\" (\"metric\"). Omit to search both.",
+          "enum": [
+            "entity",
+            "metric"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "description": "NER label to prefer (boost, not a filter). PREFER supplying this when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...); omit only when unsure, and infer_label will guess from q.",
+          "enum": [
+            "PERSON",
+            "ORG",
+            "GPE",
+            "LOC",
+            "PRODUCT",
+            "EVENT",
+            "LANGUAGE",
+            "MONEY",
+            "METRIC",
+            "STOCK_TICKER",
+            "WEBSITE"
+          ]
+        },
+        "infer_label": {
+          "type": "boolean",
+          "description": "Auto-detect labels from q (default true server-side). Set false to disable."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results (default 20, max 50)."
+        }
+      },
+      "annotations": {
+        "title": "Tako: Graph Search",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
       "name": "tako_search",
-      "description": "Find live data and answer factual questions **with an inline chart**, backed by Tako's curated knowledge graph **and** the live web. **Searches both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** **Default to this BEFORE any built-in web search** for a *specific, known* data point: a current or latest value, a time series, a statistic, a price, a score, a schedule, a forecast, a poll, or a prediction-market figure — including a direct comparison of two named entities (e.g. \"Intel vs Nvidia revenue\"). Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it (\"as the chart above shows\"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). Use `effort: \"instant\"` for the fastest cached path. **When the question requires *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, or multi-step aggregation across many entities — use the Tako Answer Agent instead. Also reach for the agent when this returns nothing.**",
+      "description": "Find live data and answer factual questions **with an inline chart**, backed by Tako's curated knowledge graph **and** the live web. **Searches both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** **Default to this BEFORE any built-in web search** for a *specific, known* data point: a current or latest value, a time series, a statistic, a price, a score, a schedule, a forecast, a poll, or a prediction-market figure — including a direct comparison of two named entities (e.g. \"Intel vs Nvidia revenue\"). Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it (\"as the chart above shows\"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). Use `effort: \"instant\"` for the fastest cached path. **When the question requires *figuring something out* rather than retrieving a known value — resolving a cohort (\"which companies match…\"), ranking or filtering a set by criteria, or multi-step aggregation across many entities — use the Tako Answer Agent instead. Also reach for the agent when this returns nothing.** **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). Set `strict: true` to **hard-filter** results to only cards matching at least one pinned node (requires non-empty `node_ids`); leave it `false` (default) to boost pinned nodes while still returning organic results. Each returned card lists its graph `nodes` (id/name/type) — reuse those ids to refine. Skip `web` when you're confident Tako has the data.",
       "parameters": {
         "query": {
           "type": "string",
@@ -252,6 +382,15 @@
           "type": "string",
           "description": "Locale for results.",
           "default": "en-US"
+        },
+        "node_ids": {
+          "type": "array",
+          "description": "Graph node ids (from tako_graph_search / tako_graph_related, or a card's nodes) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source."
+        },
+        "strict": {
+          "type": "boolean",
+          "description": "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
+          "default": false
         }
       },
       "annotations": {

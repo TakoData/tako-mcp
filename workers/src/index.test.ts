@@ -231,6 +231,9 @@ describe("worker routing", () => {
       "tako_agent",
       "tako_answer",
       "tako_contents",
+      "tako_graph_node",
+      "tako_graph_related",
+      "tako_graph_search",
       "tako_search",
       "tako_visualize",
     ]);
@@ -309,10 +312,10 @@ describe("worker routing", () => {
     expect(names.has("tako_agent")).toBe(false);
     // The default tools (minus tako_agent) are still present alongside.
     expect(names.has("tako_search")).toBe(true);
-    // 8 total tools − 1 (tako_agent excluded) + 2 chatgpt-only − 2 (those same
-    // chatgpt-only are in the 8) = 8 − 1 = 7
-    // More directly: 6 default-client tools − tako_agent + tako_agent_start + tako_agent_wait = 7
-    expect(body.result.tools).toHaveLength(7);
+    // 11 total tools − 1 (tako_agent excluded) + 2 chatgpt-only − 2 (those same
+    // chatgpt-only are in the 11) = 11 − 1 = 10
+    // More directly: 9 default-client tools − tako_agent + tako_agent_start + tako_agent_wait = 10
+    expect(body.result.tools).toHaveLength(10);
 
     // `tako_search` is the sole chart-widget tool on ChatGPT after 0.3.0.
     // The empty-fast widget-gap problem (ChatGPT pins widget container
