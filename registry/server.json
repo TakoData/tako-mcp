@@ -195,6 +195,23 @@
       }
     },
     {
+      "name": "tako_graph_node",
+      "description": "Hydrate a single graph-node `id` into full detail (name, `aliases`, `subtype`, `label`, `description`). Use it when you have a bare node id — e.g. one returned on a `tako_search` card's `nodes` (which carry only id/name/type) — and need its aliases/subtype to compose a grounded query or confirm what it is. Free and efficient.",
+      "parameters": {
+        "id": {
+          "type": "string",
+          "description": "Opaque public node id (as returned by graph search/related or on a card's nodes).",
+          "required": true
+        }
+      },
+      "annotations": {
+        "title": "Tako: Graph Node",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
       "name": "tako_graph_search",
       "description": "Resolve a name to Tako data-graph node(s) so you can see **what data Tako has** and pin exact nodes into `tako_search`/`tako_answer`. Decide up front whether you're resolving a **thing** (`types: \"entity\"`) or a **measure** (`types: \"metric\"`) — don't mix them in one call. Results are popularity-ordered; read each node's `subtype`/`label`/`description` to pick the right one. `label` is a ranking **boost, not a filter** (off-label nodes still return) — omit it to let `infer_label` auto-detect from `q`. Graph calls are free and efficient: for a narrow 1-entity/1-metric question, run this **in parallel** with your `tako_search`/`tako_answer`; for broader questions, resolve entities here then call `tako_graph_related` to discover their metrics. Each node's `id` pins into `sources.data.node_ids`.",
       "parameters": {
