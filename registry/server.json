@@ -130,7 +130,7 @@
     },
     {
       "name": "tako_answer",
-      "description": "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent instead.**",
+      "description": "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent instead.** **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). `strict` is documented to hard-filter to pinned nodes but is NOT reliably enforced — rely on the pin boost. Skip `web` when you're confident Tako has the data.",
       "parameters": {
         "query": {
           "type": "string",
@@ -159,6 +159,15 @@
           "type": "string",
           "description": "Locale for results.",
           "default": "en-US"
+        },
+        "node_ids": {
+          "type": "array",
+          "description": "Graph node ids (from tako_graph_search / tako_graph_related) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source."
+        },
+        "strict": {
+          "type": "boolean",
+          "description": "Documented to return only cards matching a pinned node (requires node_ids). NOTE: not reliably enforced upstream — rely on the pin boost, not strict, for hard exclusion.",
+          "default": false
         }
       },
       "annotations": {
@@ -170,7 +179,7 @@
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). `mode` controls delivery: `inline` (default) returns the content directly in the response so you can read and reason over it — CSV is capped at 1000 rows, so check `total_rows` / `truncated` to know if it's partial; `url` instead returns a short-lived presigned `download_url` (no row cap), for handing the user a download/embed link or for large datasets you don't need to read yourself. Use `inline` when you need the numbers; use `url` when the user just wants the file.",
+      "description": "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). `mode` controls delivery: `inline` (default) returns the content directly in the response so you can read and reason over it — for a Tako card this returns only the free 20-row preview unless you raise `max_rows` (up to 2,000; billed per 1,000 rows beyond the free 20), so always check `total_rows` / `truncated` to know if it's partial; `url` instead returns a short-lived presigned `download_url` (no row cap), for handing the user a download/embed link or for large datasets you don't need to read yourself. Use `inline` when you need the numbers; use `url` when the user just wants the file or the full dataset.",
       "parameters": {
         "url": {
           "type": "string",
@@ -179,12 +188,16 @@
         },
         "mode": {
           "type": "string",
-          "description": "Delivery mode: \"inline\" (default) returns the content in the response body (CSV capped at 1000 rows, with total_rows/truncated; or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url (no row cap).",
+          "description": "Delivery mode: \"inline\" (default) returns the content in the response body (for a Tako card, only the free 20-row preview unless you raise max_rows; with total_rows/truncated; or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url (no row cap).",
           "enum": [
             "url",
             "inline"
           ],
           "default": "inline"
+        },
+        "max_rows": {
+          "type": "unknown",
+          "description": "Inline mode, Tako cards only: max CSV rows to return. Omit for the free 20-row preview (baseline charge only); raise up to the 2,000-row ceiling to export more, billed per 1,000 rows beyond the free 20 (values above 2,000 are clamped). Ignored in url mode (full download) and for web URLs (always full text)."
         }
       },
       "annotations": {

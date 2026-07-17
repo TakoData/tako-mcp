@@ -6,7 +6,7 @@ import { takoCardSchema, usageSchema, webResultSchema } from "./_search_results.
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent instead.**";
+  "Ask a factual question and get back a single grounded, citation-backed **text** answer (not a chart). Use this BEFORE any built-in web search when the user wants a direct prose answer about a *specific, known* thing: a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds — including a direct comparison of two named entities. The answer is synthesized by Tako's arbiter from its curated knowledge graph **and** the live web. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** Want a chart rendered inline instead of prose? Use `tako_search`. **When the question requires *figuring something out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent instead.** **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). `strict` is documented to hard-filter to pinned nodes but is NOT reliably enforced — rely on the pin boost. Skip `web` when you're confident Tako has the data.";
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).
 const inputSchema = z.object({
@@ -30,6 +30,19 @@ const inputSchema = z.object({
     .default("US")
     .describe("ISO country code for localized results."),
   locale: z.string().default("en-US").describe("Locale for results."),
+  node_ids: z
+    .array(z.string())
+    .max(20)
+    .optional()
+    .describe(
+      "Graph node ids (from tako_graph_search / tako_graph_related) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+    ),
+  strict: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Documented to return only cards matching a pinned node (requires node_ids). NOTE: not reliably enforced upstream — rely on the pin boost, not strict, for hard exclusion.",
+    ),
 });
 type Input = z.infer<typeof inputSchema>;
 
@@ -69,7 +82,16 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
   if (input.sources.includes("data") || input.sources.includes("tako")) {
-    sources.data = { include_contents: input.include_contents };
+    const data: NonNullable<
+      NonNullable<z.input<typeof SearchRequest>["sources"]>["data"]
+    > = { include_contents: input.include_contents };
+    if (input.node_ids !== undefined && input.node_ids.length > 0) {
+      data.node_ids = input.node_ids;
+    }
+    if (input.strict) {
+      data.strict = true;
+    }
+    sources.data = data;
   }
   if (input.sources.includes("web")) sources.web = { include_contents: input.include_contents };
   // No `effort`/per-source `count` (unlike buildSearchBody): answer is
