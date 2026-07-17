@@ -1744,6 +1744,32 @@ components:
       - components
       title: CreateCardRequest
       description: Request model for creating a card directly with components.
+    DataFreshness:
+      properties:
+        data_as_of:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Data As Of
+          description: Date of the most recent observation in the card's data, as
+            an ISO date (YYYY-MM-DD). Null for card types without a coverage date.
+          examples:
+          - '2026-06-30'
+        last_updated:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Updated
+          description: Date Tako last refreshed the underlying data, as an ISO date
+            (YYYY-MM-DD).
+          examples:
+          - '2026-07-14'
+      type: object
+      title: DataFreshness
+      description: 'When the card''s data was last observed and last refreshed. Either
+        field
+
+        may be null when that date isn''t available for the card type.'
     DataPipelineAnswerEvent:
       properties:
         kind:
@@ -2155,16 +2181,12 @@ components:
           - type: string
           - type: 'null'
           title: Methodology Description
-          description: The description of the methodology
+          description: A concise, one-sentence summary of the methodology (source
+            and what is measured). Falls back to the full methodology text when no
+            concise summary is available.
           examples:
-          - The financial metrics are collected from S&P Global, where information
-            is sourced from original regulatory filings, press releases, and subsequent
-            restatements. Data points, including over 5,000 financial, supplemental,
-            segment, ratio, and industry-specific items, are standardized across over
-            180,000 companies to ensure consistency and comparability across different
-            reporting formats. This comprehensive and methodical process enables robust
-            historical analysis and back-testing by seamlessly integrating diverse
-            financial datasets while preserving the granularity of the original reports.
+          - Financial metrics standardized by S&P Global from company regulatory filings,
+            press releases, and restatements.
       type: object
       required:
       - methodology_name
@@ -2177,6 +2199,28 @@ components:
       - Medium
       - Low
       title: KnowledgeCardRelevance
+    MetricDefinition:
+      properties:
+        name:
+          type: string
+          title: Name
+          description: The metric's display name
+          examples:
+          - Gross Domestic Product (current US$)
+        definition:
+          type: string
+          title: Definition
+          description: Human-readable definition of the metric
+      type: object
+      required:
+      - name
+      - definition
+      title: MetricDefinition
+      description: 'Definition of a metric shown on a card. Sourced from the metric''s
+
+        ValueType definition — the same text as the in-app methodology ''Metrics''
+
+        tab.'
     NerLabel:
       type: string
       enum:
@@ -3084,6 +3128,21 @@ components:
             was unavailable. Use each id with /beta/graph/node/{id} for full detail
             (aliases, subtype), or pass ids in sources.data.node_ids to pin these
             nodes in future searches.
+        metric_definitions:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/MetricDefinition'
+            type: array
+          - type: 'null'
+          title: Metric Definitions
+          description: Definitions of the metrics this card displays (name + definition).
+            Null when no displayed metric has a definition available.
+        data_freshness:
+          anyOf:
+          - $ref: '#/components/schemas/DataFreshness'
+          - type: 'null'
+          description: 'Freshness dates for the card''s data: the coverage date (data_as_of)
+            and the last refresh date (last_updated). Null when neither date is available.'
       type: object
       title: TakoCard
       description: 'A Tako knowledge card on the new search/answer surface. Mirrors
