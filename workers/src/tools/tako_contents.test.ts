@@ -41,6 +41,31 @@ describe("tako_contents input schema", () => {
   it("rejects an empty url (local .min(1) guard; the spec has no minLength)", () => {
     expect(() => tool.inputSchema.parse({ url: "" })).toThrow();
   });
+
+  it("exposes an optional max_rows", () => {
+    const shape = tool.inputSchema.shape as Record<string, unknown>;
+    expect(shape).toHaveProperty("max_rows");
+    // Omitted → absent from parsed input (backend applies its 20-row default).
+    const parsed = tool.inputSchema.parse({ url: "https://tako.com/card/abc" }) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty("max_rows");
+  });
+
+  it("accepts a max_rows within 1..2000 and rejects out-of-range values", () => {
+    expect(tool.inputSchema.parse({ url: "https://x", max_rows: 500 }).max_rows).toBe(500);
+    expect(tool.inputSchema.parse({ url: "https://x", max_rows: 2000 }).max_rows).toBe(2000);
+    expect(() => tool.inputSchema.parse({ url: "https://x", max_rows: 0 })).toThrow();
+    expect(() => tool.inputSchema.parse({ url: "https://x", max_rows: 2001 })).toThrow();
+  });
+
+  it("exposes content_format (enum) defaulting to csv", () => {
+    const shape = tool.inputSchema.shape as Record<string, unknown>;
+    expect(shape).toHaveProperty("content_format");
+    expect(tool.inputSchema.parse({ url: "https://tako.com/card/abc" }).content_format).toBe("csv");
+    expect(
+      tool.inputSchema.parse({ url: "https://x", content_format: "json_records" }).content_format,
+    ).toBe("json_records");
+    expect(() => tool.inputSchema.parse({ url: "https://x", content_format: "xml" })).toThrow();
+  });
 });
 
 describe("tako_contents handler", () => {
@@ -60,7 +85,10 @@ describe("tako_contents handler", () => {
       ],
       request_id: "r1",
     });
-    const out = await tool.handler({ url: "https://tako.com/card/abc", mode: "inline" }, ctx);
+    const out = await tool.handler(
+      { url: "https://tako.com/card/abc", mode: "inline", content_format: "csv" },
+      ctx,
+    );
     expect(tool.name).toBe("tako_contents");
     expect(out.format).toBe("csv");
     expect(out.data).toBe("name,value\nA,1\nB,2");
@@ -87,7 +115,10 @@ describe("tako_contents handler", () => {
       ],
       request_id: "r2",
     });
-    const out = await tool.handler({ url: "https://example.com/a", mode: "inline" }, ctx);
+    const out = await tool.handler(
+      { url: "https://example.com/a", mode: "inline", content_format: "csv" },
+      ctx,
+    );
     expect(out.format).toBe("text");
     expect(out.data).toBe("hello world");
     expect(out.download_url).toBeNull();
@@ -107,7 +138,10 @@ describe("tako_contents handler", () => {
       ],
       request_id: "r3",
     });
-    const out = await tool.handler({ url: "https://tako.com/card/abc", mode: "url" }, ctx);
+    const out = await tool.handler(
+      { url: "https://tako.com/card/abc", mode: "url", content_format: "csv" },
+      ctx,
+    );
     expect(out.download_url).toBe("https://signed/csv");
     expect(out.expires_at).toBe("2026-06-26T00:00:00Z");
     expect(out.data).toBeNull();
@@ -120,16 +154,119 @@ describe("tako_contents handler", () => {
       contents: [{ content_format: null, data: "x", cost: 0, source_url: "https://example.com/a" }],
       request_id: "r4",
     });
-    await tool.handler({ url: "https://example.com/a", mode: "url" }, ctx);
+    await tool.handler(
+      { url: "https://example.com/a", mode: "url", content_format: "csv" },
+      ctx,
+    );
     const call = vi.mocked(djangoPost).mock.calls[0]!;
     expect(call[2]).toBe("/api/v1/contents/");
-    expect(call[3]).toEqual({ url: "https://example.com/a", mode: "url" });
+    expect(call[3]).toEqual({ url: "https://example.com/a", mode: "url", content_format: "csv" });
+  });
+
+  it("passes max_rows through to the POST body when provided", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [
+        {
+          content_format: "csv",
+          data: "name,value\nA,1",
+          total_rows: 300,
+          truncated: true,
+          cost: 0.001,
+          source_url: "https://tako.com/card/abc",
+        },
+      ],
+      request_id: "r6",
+    });
+    const parsed = tool.inputSchema.parse({ url: "https://tako.com/card/abc", max_rows: 1000 });
+    await tool.handler(parsed, ctx);
+    const call = vi.mocked(djangoPost).mock.calls[0]!;
+    expect(call[3]).toEqual({
+      url: "https://tako.com/card/abc",
+      mode: "inline",
+      max_rows: 1000,
+      content_format: "csv",
+    });
+  });
+
+  it("json_records: maps records (data/dataset null) and passes content_format through", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [
+        {
+          content_format: "json_records",
+          records: [
+            { name: "A", value: 1 },
+            { name: "B", value: 2 },
+          ],
+          total_rows: 2,
+          truncated: false,
+          cost: 0.001,
+          source_url: "https://tako.com/card/abc",
+        },
+      ],
+      request_id: "r7",
+    });
+    const parsed = tool.inputSchema.parse({
+      url: "https://tako.com/card/abc",
+      content_format: "json_records",
+    });
+    const out = await tool.handler(parsed, ctx);
+    expect(out.format).toBe("json_records");
+    expect(out.records).toEqual([
+      { name: "A", value: 1 },
+      { name: "B", value: 2 },
+    ]);
+    expect(out.data).toBeNull();
+    expect(out.dataset).toBeNull();
+    const call = vi.mocked(djangoPost).mock.calls[0]!;
+    expect((call[3] as { content_format?: string }).content_format).toBe("json_records");
+  });
+
+  it("json_compact: maps dataset (data/records null)", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [
+        {
+          content_format: "json_compact",
+          dataset: {
+            columns: [
+              { name: "name", type: "string" },
+              { name: "value", type: "number" },
+            ],
+            rows: [
+              ["A", 1],
+              ["B", 2],
+            ],
+            total_rows: 2,
+            truncated: false,
+            ref: "ds_1",
+            sources: [{ name: "Tako", index: "data" }],
+            provenance: "query",
+          },
+          total_rows: 2,
+          truncated: false,
+          cost: 0.001,
+          source_url: "https://tako.com/card/abc",
+        },
+      ],
+      request_id: "r8",
+    });
+    const parsed = tool.inputSchema.parse({
+      url: "https://tako.com/card/abc",
+      content_format: "json_compact",
+    });
+    const out = await tool.handler(parsed, ctx);
+    expect(out.format).toBe("json_compact");
+    expect(out.dataset?.rows).toEqual([
+      ["A", 1],
+      ["B", 2],
+    ]);
+    expect(out.data).toBeNull();
+    expect(out.records).toBeNull();
   });
 
   it("throws when the endpoint returns no content item", async () => {
     vi.mocked(djangoPost).mockResolvedValue({ contents: [], request_id: "r5" });
-    await expect(tool.handler({ url: "https://tako.com/card/x", mode: "inline" }, ctx)).rejects.toThrow(
-      /no downloadable content/,
-    );
+    await expect(
+      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx),
+    ).rejects.toThrow(/no downloadable content/);
   });
 });
