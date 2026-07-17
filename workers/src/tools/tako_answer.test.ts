@@ -56,6 +56,62 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// Regression: same root cause as the tako_search content-shape outage — cards
+// and web results carry a `content` preview object whose backend field `format`
+// was renamed to `content_format`. tako_answer reuses takoCardSchema /
+// webResultSchema, so a hard-required `format` there also made every
+// content-bearing answer throw. Fixture is the real live content shape.
+describe("tako_answer content-shape regression (format -> content_format)", () => {
+  const LIVE_CONTENT = {
+    content_format: null,
+    cost: 0.001,
+    data: null,
+    records: null,
+    dataset: null,
+    url: null,
+    expires_at: null,
+    total_rows: null,
+    truncated: false,
+    export_pricing: null,
+  };
+
+  it("does not throw when cards/web results carry the current content shape", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        answer: "US GDP was about $29 trillion.",
+        cards: [
+          {
+            card_id: "abc123",
+            title: "US GDP",
+            embed_url: "https://trytako.com/embed/abc123/",
+            content: LIVE_CONTENT,
+          },
+        ],
+        web_results: [
+          { title: "US GDP", url: "https://example.com/gdp", content: LIVE_CONTENT },
+        ],
+        request_id: "req-content",
+      }),
+    ]);
+
+    const out = await takoAnswer.handler(
+      {
+        query: "US GDP",
+        sources: ["data", "web"],
+        include_contents: false,
+        country_code: "US",
+        locale: "en-US",
+        strict: false,
+      },
+      CTX,
+    );
+
+    expect(out.cards).toHaveLength(1);
+    expect(out.web_results).toHaveLength(1);
+    expect(out.cards[0]?.content?.content_format).toBeNull();
+  });
+});
+
 describe("tako_answer handler", () => {
   it("tool name is tako_answer", () => {
     expect(takoAnswer.name).toBe("tako_answer");

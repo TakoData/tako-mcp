@@ -18,18 +18,26 @@ import {
   buildChartUrls,
 } from "./_chart_widget.js";
 
-// Backend ResultContent (api/ga/content_types.py) — a result's inline data,
-// populated only when include_contents was requested for that source. format is
-// "csv" (Tako card data) or "text" (web page text); data is null unless inlined;
-// CSV is capped at 1000 rows (total_rows is the true count, truncated flags the
-// cap). cost is the USD quote for fetching this result.
+// Backend ResultContent (api/ga/content_types.py) — a result's inline data.
+// A preview `content` object rides on every result (even when include_contents
+// is false, carrying just the cost quote); `data` is populated only when
+// contents were requested. `content_format` ("csv" for Tako card data, "text"
+// for web page text) is null when no payload is delivered.
+//
+// Every field is optional/nullable on purpose: this is a RESPONSE the tool only
+// surfaces for the model to read (nothing in code branches on it), and the
+// backend evolves its shape independently. Hard-requiring a field here turns a
+// benign backend change into a total-outage second-stage guard failure — which
+// is exactly what the `format` -> `content_format` rename did in prod. Mirror
+// the generated ResultContent's optionality and stay loose so new fields
+// (records/dataset/url/export_pricing/…) pass through untouched.
 export const resultContentSchema = z
   .object({
-    format: z.string(),
-    cost: z.number(),
-    data: z.string().nullable(),
-    total_rows: z.number().nullable(),
-    truncated: z.boolean(),
+    content_format: z.string().nullable().optional(),
+    cost: z.number().nullable().optional(),
+    data: z.string().nullable().optional(),
+    total_rows: z.number().nullable().optional(),
+    truncated: z.boolean().nullable().optional(),
   })
   .loose();
 export type ResultContent = z.infer<typeof resultContentSchema>;

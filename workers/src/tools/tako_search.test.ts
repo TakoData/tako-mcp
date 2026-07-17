@@ -59,6 +59,64 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// Regression: the live /api/v3/search response attaches a per-result `content`
+// preview object even when include_contents is false, and the backend renamed
+// its `format` field to `content_format`. The hand-written resultContentSchema
+// must not hard-require the old `format` name — otherwise EVERY result trips the
+// handler's second-stage guard and it throws "unexpected shape" (a prod outage
+// reproduced against the live API on 2026-07-17). Fixture is the real live shape.
+describe("tako_search content-shape regression (format -> content_format)", () => {
+  const LIVE_CONTENT = {
+    content_format: null,
+    cost: 0.001,
+    data: null,
+    records: null,
+    dataset: null,
+    url: null,
+    expires_at: null,
+    total_rows: null,
+    truncated: false,
+    export_pricing: {
+      baseline_usd: 0.001,
+      row_cpm_usd: 1,
+      free_rows: 20,
+      max_rows_ceiling: 2000,
+    },
+  };
+
+  it("does not throw when results carry the current content shape (content_format, no `format`)", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [
+          {
+            card_id: "c1",
+            title: "US GDP",
+            embed_url: "https://trytako.com/embed/c1/",
+            content: LIVE_CONTENT,
+          },
+        ],
+        web_results: [
+          { title: "GDP", url: "https://example.com", content: LIVE_CONTENT },
+        ],
+        request_id: "req-content",
+      }),
+    ]);
+
+    const out = await tako_search.handler(
+      { ...DEFAULTS, query: "US GDP growth", sources: ["data", "web"] },
+      CTX,
+    );
+
+    expect(out.cards).toHaveLength(1);
+    expect(out.web_results).toHaveLength(1);
+    // content is surfaced under the new name; the old `format` key is absent.
+    expect(out.cards[0]?.content?.content_format).toBeNull();
+    expect(
+      (out.cards[0]?.content as Record<string, unknown> | undefined)?.format,
+    ).toBeUndefined();
+  });
+});
+
 describe("tako_search input schema", () => {
   it("defaults count to 10", () => {
     const parsed = tako_search.inputSchema.safeParse({ query: "x" });
