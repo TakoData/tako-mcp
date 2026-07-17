@@ -71,7 +71,9 @@ const tako_graph_search = {
         "Tako graph/search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
-    return wire.data as Output;
+    // Re-validate through the advertised facade (parse-don't-cast) so a future
+    // facade/wire drift is caught at runtime, matching the sibling tools.
+    return outputSchema.parse(wire.data);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 
