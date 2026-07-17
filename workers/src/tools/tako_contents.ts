@@ -1,8 +1,9 @@
 /**
  * `tako_contents` — fetch the downloadable content behind a result URL.
- * Wraps `POST /api/v1/contents`. A Tako card URL resolves to a CSV of the
- * card's data; any other URL resolves to the page's extracted text. One URL
- * per call. A Tako card CSV is capped at a 20-row free default in BOTH modes;
+ * Wraps `POST /api/v1/contents`. A Tako card URL resolves to the card's data —
+ * CSV by default, or JSON via `content_format` (json_records → `records`,
+ * json_compact → `dataset`); any other URL resolves to the page's extracted
+ * text. One URL per call. A Tako card CSV is capped at a 20-row free default in BOTH modes;
  * `max_rows` raises that up to a 2000-row ceiling — there is no uncapped export.
  * `mode` controls only delivery, not the row count: "inline" (default) returns
  * the (capped) content in the response body — total_rows/truncated report the
@@ -15,24 +16,31 @@
 import { z } from "zod";
 
 import { djangoPost } from "../django.js";
-import { ContentsDeliveryMode, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
+import { ContentsDeliveryMode, ContentsRequest, ContentsResponse, TakoDataset } from "../generated/schemas.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). A Tako card CSV is capped at a 20-row default in both delivery modes; raise `max_rows` (up to 2,000) to get more — there is no uncapped export. `mode` controls only how the content is delivered, not how many rows come back: `inline` (default) returns the CSV/web text directly in the response so you can read and reason over it — always check `total_rows` / `truncated` to know if it's partial; `url` returns a short-lived presigned `download_url` to the same (capped) file, for handing the user a download/embed link or when you don't need to read it inline. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
+  "Fetch the underlying data behind a result URL — a Tako card URL yields the card's data (CSV by default; request JSON via `content_format`), any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). For a Tako card, `content_format` picks the serialization: `csv` (default, text in `data`), `json_records` (row objects in `records`), or `json_compact` (compact columns+rows in `dataset`). A Tako card is capped at a 20-row default in both delivery modes; raise `max_rows` (up to 2,000) to get more — there is no uncapped export. `mode` controls only how the content is delivered, not how many rows come back: `inline` (default) returns the data/web text directly in the response so you can read and reason over it — always check `total_rows` / `truncated` to know if it's partial; `url` returns a short-lived presigned `download_url` to the same (capped) file, for handing the user a download/embed link or when you don't need to read it inline. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
 
 // Curate the input from the contract explicitly: `.pick` only the fields we
 // expose (so a new field added to ContentsRequest in the synced spec does NOT
 // silently join the MCP input surface), then re-describe them for the MCP
-// surface — including the one documented divergence (default mode → inline)
-// and the `max_rows` row cap.
+// surface — including the one documented divergence (default mode → inline),
+// the `max_rows` row cap, and the `content_format` serialization.
 const inputSchema = ContentsRequest.pick({ url: true }).extend({
   // The spec has no minLength on `url`; re-add the prior local .min(1) guard so
   // an empty-string url is rejected at the MCP layer instead of hitting the API.
   url: ContentsRequest.shape.url.min(1),
   mode: ContentsDeliveryMode
     .default("inline")
-    .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card CSV — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
+    .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
+  // Serialization of a Tako card's data. parse-don't-cast: reuse the generated
+  // shape (keeps the enum + "csv" default) and re-describe for the MCP surface.
+  // Which output field carries the payload depends on this: csv→data,
+  // json_records→records, json_compact→dataset (see outputSchema/handler).
+  content_format: ContentsRequest.shape.content_format.describe(
+    "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
+  ),
   // Expose the row cap so an agent can pull more than the 20-row default.
   // Applies in BOTH delivery modes (url mode is capped too — there is no
   // uncapped export). Bound it to the backend's 2,000-row ceiling here so the
@@ -65,9 +73,20 @@ const outputSchema = z.object({
   // Tako-card CSV bills a per-export baseline plus a per-1,000-row rate on rows
   // beyond the free 20-row allowance. Surfaced so the agent can report the cost.
   cost: z.number(),
-  // Inline content — populated in "inline" mode (CSV text, up to max_rows / the
-  // 20-row free default, or web page text), null in "url" mode. total_rows/truncated describe CSV truncation.
+  // Inline payload — populated in "inline" mode, null in "url" mode. Exactly one
+  // of data / records / dataset is populated per call, selected by content_format:
+  //   csv          → `data`    (CSV text, or web page text — the only web shape)
+  //   json_records → `records` (one object per row)
+  //   json_compact → `dataset` (compact columns+rows TakoDataset)
+  // total_rows/truncated describe the row cap (up to max_rows / the 20-row default).
   data: z.string().nullable(),
+  // json_records payload: rows as objects. Null unless content_format=json_records.
+  records: z
+    .array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])))
+    .nullable(),
+  // json_compact payload: TakoDataset (columns + positional rows). Null unless
+  // content_format=json_compact. Reuses the generated schema (parse-don't-cast).
+  dataset: TakoDataset.nullable(),
   total_rows: z.number().nullable(),
   truncated: z.boolean(),
 });
@@ -125,7 +144,11 @@ const takoContents = {
       expires_at: item.expires_at ?? null,
       source_url: item.source_url ?? input.url,
       cost: item.cost ?? 0,
+      // Exactly one of these is populated per call (per content_format); the
+      // other two stay null. Pass each through as-is.
       data: item.data ?? null,
+      records: item.records ?? null,
+      dataset: item.dataset ?? null,
       total_rows: item.total_rows ?? null,
       truncated: item.truncated ?? false,
     });

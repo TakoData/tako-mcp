@@ -170,7 +170,7 @@
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). A Tako card CSV is capped at a 20-row default in both delivery modes; raise `max_rows` (up to 2,000) to get more — there is no uncapped export. `mode` controls only how the content is delivered, not how many rows come back: `inline` (default) returns the CSV/web text directly in the response so you can read and reason over it — always check `total_rows` / `truncated` to know if it's partial; `url` returns a short-lived presigned `download_url` to the same (capped) file, for handing the user a download/embed link or when you don't need to read it inline. Use `inline` when you need the numbers; use `url` when the user just wants the file.",
+      "description": "Fetch the underlying data behind a result URL — a Tako card URL yields the card's data (CSV by default; request JSON via `content_format`), any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). For a Tako card, `content_format` picks the serialization: `csv` (default, text in `data`), `json_records` (row objects in `records`), or `json_compact` (compact columns+rows in `dataset`). A Tako card is capped at a 20-row default in both delivery modes; raise `max_rows` (up to 2,000) to get more — there is no uncapped export. `mode` controls only how the content is delivered, not how many rows come back: `inline` (default) returns the data/web text directly in the response so you can read and reason over it — always check `total_rows` / `truncated` to know if it's partial; `url` returns a short-lived presigned `download_url` to the same (capped) file, for handing the user a download/embed link or when you don't need to read it inline. Use `inline` when you need the numbers; use `url` when the user just wants the file.",
       "parameters": {
         "url": {
           "type": "string",
@@ -179,12 +179,22 @@
         },
         "mode": {
           "type": "string",
-          "description": "Delivery only — does NOT change the row cap: \"inline\" (default) returns the content in the response body (a Tako card CSV — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url to the same capped file.",
+          "description": "Delivery only — does NOT change the row cap: \"inline\" (default) returns the content in the response body (a Tako card — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url to the same capped file.",
           "enum": [
             "url",
             "inline"
           ],
           "default": "inline"
+        },
+        "content_format": {
+          "type": "string",
+          "description": "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
+          "enum": [
+            "csv",
+            "json_records",
+            "json_compact"
+          ],
+          "default": "csv"
         },
         "max_rows": {
           "type": "integer",
