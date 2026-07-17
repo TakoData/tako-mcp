@@ -46,6 +46,20 @@ export const takoCardSchema = z
     embed_url: z.string().nullable().optional(),
     // Inline card CSV — present only when include_contents was set for the tako source.
     content: resultContentSchema.nullable().optional(),
+    // Graph nodes (entities/metrics) this card was built from, returned by the
+    // backend by default. Slim shape (id/name/type) — pass these ids into
+    // sources.data.node_ids to pin the same nodes in a follow-up search, or
+    // hydrate with tako_graph_node for full detail.
+    nodes: z
+      .array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          type: z.enum(["metric", "entity"]),
+        }),
+      )
+      .nullable()
+      .optional(),
   })
   .loose();
 export type TakoCard = z.infer<typeof takoCardSchema>;

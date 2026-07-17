@@ -51,6 +51,7 @@ const DEFAULTS = {
   include_contents: false,
   country_code: "US",
   locale: "en-US",
+  strict: false,
 };
 
 afterEach(() => {
@@ -322,5 +323,77 @@ describe("tako_search widget + contract guard", () => {
   it("reshapes flat input into a contract-valid search body", () => {
     const body = buildSearchBody(tako_search.inputSchema.parse({ query: "US GDP" }));
     expect(() => SearchRequest.parse(body)).not.toThrow();
+  });
+});
+
+describe("tako_search graph grounding", () => {
+  it("maps node_ids + strict into sources.data", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-g" }),
+    ]);
+
+    await tako_search.handler(
+      {
+        query: "Tesla revenue",
+        sources: ["data"],
+        count: 10,
+        include_contents: false,
+        country_code: "US",
+        locale: "en-US",
+        node_ids: ["tesla-x1", "rev-9"],
+        strict: true,
+      },
+      CTX,
+    );
+
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
+    expect(body.sources).toEqual({
+      data: {
+        count: 10,
+        include_contents: false,
+        node_ids: ["tesla-x1", "rev-9"],
+        strict: true,
+      },
+    });
+  });
+
+  it("omits node_ids/strict when not provided", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-h" }),
+    ]);
+    await tako_search.handler(
+      { query: "q", ...DEFAULTS },
+      CTX,
+    );
+    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
+    expect(body.sources).toEqual({ data: { count: 10, include_contents: false } });
+  });
+
+  it("surfaces each card's graph nodes in the output", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [
+          {
+            card_id: "abc123",
+            title: "Tesla Revenue",
+            embed_url: "https://trytako.com/embed/abc123/",
+            nodes: [
+              { id: "tesla-x1", name: "Tesla", type: "entity" },
+              { id: "rev-9", name: "Revenue", type: "metric" },
+            ],
+          },
+        ],
+        web_results: [],
+        request_id: "req-n",
+      }),
+    ]);
+    const out = await tako_search.handler(
+      { query: "Tesla revenue", ...DEFAULTS },
+      CTX,
+    );
+    expect(out.cards[0]?.nodes).toEqual([
+      { id: "tesla-x1", name: "Tesla", type: "entity" },
+      { id: "rev-9", name: "Revenue", type: "metric" },
+    ]);
   });
 });
