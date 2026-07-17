@@ -170,7 +170,7 @@
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). `mode` controls delivery: `inline` (default) returns the content directly in the response so you can read and reason over it — CSV is capped at 1000 rows, so check `total_rows` / `truncated` to know if it's partial; `url` instead returns a short-lived presigned `download_url` (no row cap), for handing the user a download/embed link or for large datasets you don't need to read yourself. Use `inline` when you need the numbers; use `url` when the user just wants the file.",
+      "description": "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). `mode` controls delivery: `inline` (default) returns the content directly in the response so you can read and reason over it — for a Tako card this returns only the free 20-row preview unless you raise `max_rows` (up to 2,000; billed per 1,000 rows beyond the free 20), so always check `total_rows` / `truncated` to know if it's partial; `url` instead returns a short-lived presigned `download_url` (no row cap), for handing the user a download/embed link or for large datasets you don't need to read yourself. Use `inline` when you need the numbers; use `url` when the user just wants the file or the full dataset.",
       "parameters": {
         "url": {
           "type": "string",
@@ -179,12 +179,16 @@
         },
         "mode": {
           "type": "string",
-          "description": "Delivery mode: \"inline\" (default) returns the content in the response body (CSV capped at 1000 rows, with total_rows/truncated; or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url (no row cap).",
+          "description": "Delivery mode: \"inline\" (default) returns the content in the response body (for a Tako card, only the free 20-row preview unless you raise max_rows; with total_rows/truncated; or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url (no row cap).",
           "enum": [
             "url",
             "inline"
           ],
           "default": "inline"
+        },
+        "max_rows": {
+          "type": "unknown",
+          "description": "Inline mode, Tako cards only: max CSV rows to return. Omit for the free 20-row preview (baseline charge only); raise up to the 2,000-row ceiling to export more, billed per 1,000 rows beyond the free 20 (values above 2,000 are clamped). Ignored in url mode (full download) and for web URLs (always full text)."
         }
       },
       "annotations": {
