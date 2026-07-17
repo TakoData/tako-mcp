@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { djangoGet } from "../django.js";
 import { GraphNode } from "../generated/schemas.js";
-import { graphNodeSchema } from "./_graph.js";
+import { graphErrorMessage, graphNodeSchema } from "./_graph.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
@@ -37,9 +37,14 @@ const tako_graph_node = {
   },
   async handler(input: Input, ctx): Promise<Output> {
     const path = `/api/beta/graph/node/${encodeURIComponent(input.id)}`;
-    const data = await djangoGet<unknown>(ctx.env, ctx.token, path, {
-      timeoutMs: 15_000,
-    });
+    let data: unknown;
+    try {
+      data = await djangoGet<unknown>(ctx.env, ctx.token, path, {
+        timeoutMs: 15_000,
+      });
+    } catch (err) {
+      throw new Error(graphErrorMessage(err, "node", input.id));
+    }
 
     const wire = GraphNode.safeParse(data);
     if (!wire.success) {

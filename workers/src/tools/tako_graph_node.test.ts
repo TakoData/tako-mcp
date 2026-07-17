@@ -50,4 +50,11 @@ describe("tako_graph_node", () => {
       /unexpected shape/,
     );
   });
+
+  it("maps a 404 into a message that echoes the id and explains where ids come from", async () => {
+    mockFetchSequence([jsonResponse(404, { detail: "not found" })]);
+    await expect(
+      takoGraphNode.handler({ id: "not-a-real-id" }, CTX),
+    ).rejects.toThrow(/no graph node with id "not-a-real-id" \(404\)/);
+  });
 });

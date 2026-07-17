@@ -114,4 +114,11 @@ describe("tako_graph_related", () => {
       takoGraphRelated.handler({ node_id: "tesla-x1" }, CTX),
     ).rejects.toThrow(/unexpected shape/);
   });
+
+  it("maps a 404 into a node_id-focused message that distinguishes it from a bad relation", async () => {
+    mockFetchSequence([jsonResponse(404, { detail: "not found" })]);
+    await expect(
+      takoGraphRelated.handler({ node_id: "bogus-node-9" }, CTX),
+    ).rejects.toThrow(/no graph node with id "bogus-node-9" \(404\)/);
+  });
 });

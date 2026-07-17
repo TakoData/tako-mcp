@@ -12,7 +12,7 @@ import { z } from "zod";
 
 import { djangoGet } from "../django.js";
 import { GraphRelatedResponse } from "../generated/schemas.js";
-import { graphRelatedOutputShape, mergeRelatedResponses } from "./_graph.js";
+import { graphErrorMessage, graphRelatedOutputShape, mergeRelatedResponses } from "./_graph.js";
 import type { ToolModule } from "./types.js";
 
 const NER_LABELS = [
@@ -83,10 +83,15 @@ const tako_graph_related = {
         if (input.cursor !== undefined) query.cursor = input.cursor;
         if (input.limit !== undefined) query.limit = input.limit;
 
-        const data = await djangoGet<unknown>(
-          ctx.env, ctx.token, "/api/beta/graph/related",
-          { query, timeoutMs: 15_000 },
-        );
+        let data: unknown;
+        try {
+          data = await djangoGet<unknown>(
+            ctx.env, ctx.token, "/api/beta/graph/related",
+            { query, timeoutMs: 15_000 },
+          );
+        } catch (err) {
+          throw new Error(graphErrorMessage(err, "related", input.node_id));
+        }
         const wire = GraphRelatedResponse.safeParse(data);
         if (!wire.success) {
           throw new Error(

@@ -75,4 +75,11 @@ describe("tako_graph_search", () => {
       /unexpected shape/,
     );
   });
+
+  it("maps a 400 into an actionable, label-guiding message (not the raw Django error)", async () => {
+    mockFetchSequence([jsonResponse(400, { label: ["invalid"] })]);
+    await expect(
+      takoGraphSearch.handler({ q: "Tesla", label: "ORG" }, CTX),
+    ).rejects.toThrow(/valid values are PERSON, ORG/);
+  });
 });

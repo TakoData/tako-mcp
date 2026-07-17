@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { djangoGet } from "../django.js";
 import { GraphSearchResponse } from "../generated/schemas.js";
-import { graphSearchOutputShape } from "./_graph.js";
+import { graphErrorMessage, graphSearchOutputShape } from "./_graph.js";
 import type { ToolModule } from "./types.js";
 
 const NER_LABELS = [
@@ -60,10 +60,15 @@ const tako_graph_search = {
     if (input.infer_label !== undefined) query.infer_label = input.infer_label;
     if (input.limit !== undefined) query.limit = input.limit;
 
-    const data = await djangoGet<unknown>(
-      ctx.env, ctx.token, "/api/beta/graph/search",
-      { query, timeoutMs: 15_000 },
-    );
+    let data: unknown;
+    try {
+      data = await djangoGet<unknown>(
+        ctx.env, ctx.token, "/api/beta/graph/search",
+        { query, timeoutMs: 15_000 },
+      );
+    } catch (err) {
+      throw new Error(graphErrorMessage(err, "search"));
+    }
 
     const wire = GraphSearchResponse.safeParse(data);
     if (!wire.success) {
