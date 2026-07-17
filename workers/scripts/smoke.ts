@@ -234,8 +234,8 @@ try {
   ok(`tako_answer "${CANARY_QUERY}" → answer (${taStructured.answer.length} chars)`);
 
   // ----- c) tako_contents canary (chained from the top search result) ----
-  // Default mode is "inline": the card's CSV comes back in `data` (capped at
-  // 1000 rows), with download_url null.
+  // Default mode is "inline": the card's CSV comes back in `data` (20-row
+  // default; raise max_rows up to 2,000), with download_url null.
   const tcInline = await callOk(client, "tako_contents", { url: topResultUrl });
   const tcInlineStructured = tcInline.structuredContent as
     | { download_url?: string | null; data?: string | null; total_rows?: number | null }

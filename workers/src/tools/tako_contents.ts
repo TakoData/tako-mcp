@@ -2,11 +2,13 @@
  * `tako_contents` — fetch the downloadable content behind a result URL.
  * Wraps `POST /api/v1/contents`. A Tako card URL resolves to a CSV of the
  * card's data; any other URL resolves to the page's extracted text. One URL
- * per call. `mode` controls delivery: "inline" (default) returns the content
- * in the response body (for a Tako card, only the free 20-row preview unless
- * `max_rows` is raised — up to a 2000-row ceiling — with total_rows/truncated;
- * or web text) so the model can read it directly; "url" returns a short-lived
- * presigned download URL instead. The "inline" default is an intentional
+ * per call. A Tako card CSV is capped at a 20-row free default in BOTH modes;
+ * `max_rows` raises that up to a 2000-row ceiling — there is no uncapped export.
+ * `mode` controls only delivery, not the row count: "inline" (default) returns
+ * the (capped) content in the response body — total_rows/truncated report the
+ * true size — so the model can read it directly; "url" returns a short-lived
+ * presigned download URL to the same capped CSV instead. The "inline" default is
+ * an intentional
  * MCP-ergonomics divergence from the backend default ("url") — an agent almost
  * always wants to read the data, not hand back a link.
  */
@@ -17,7 +19,7 @@ import { ContentsDeliveryMode, ContentsRequest, ContentsResponse } from "../gene
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). `mode` controls delivery: `inline` (default) returns the content directly in the response so you can read and reason over it — for a Tako card this returns only the free 20-row preview unless you raise `max_rows` (up to 2,000; billed per 1,000 rows beyond the free 20), so always check `total_rows` / `truncated` to know if it's partial; `url` instead returns a short-lived presigned `download_url` (no row cap), for handing the user a download/embed link or for large datasets you don't need to read yourself. Use `inline` when you need the numbers; use `url` when the user just wants the file or the full dataset.";
+  "Fetch the underlying data behind a result URL — a Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted full text. Pass a single `url` (a TakoCard.webpage_url or a web-result URL). A Tako card CSV is capped at a 20-row default in both delivery modes; raise `max_rows` (up to 2,000) to get more — there is no uncapped export. `mode` controls only how the content is delivered, not how many rows come back: `inline` (default) returns the CSV/web text directly in the response so you can read and reason over it — always check `total_rows` / `truncated` to know if it's partial; `url` returns a short-lived presigned `download_url` to the same (capped) file, for handing the user a download/embed link or when you don't need to read it inline. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
 
 // Curate the input from the contract explicitly: `.pick` only the fields we
 // expose (so a new field added to ContentsRequest in the synced spec does NOT
@@ -30,13 +32,21 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
   url: ContentsRequest.shape.url.min(1),
   mode: ContentsDeliveryMode
     .default("inline")
-    .describe('Delivery mode: "inline" (default) returns the content in the response body (for a Tako card, only the free 20-row preview unless you raise max_rows; with total_rows/truncated; or web text) so you can read it directly; "url" returns a short-lived presigned download_url (no row cap).'),
-  // Expose the contract's row cap so an agent can pull more than the 20-row free
-  // preview inline. parse-don't-cast: reuse the generated shape (carries the
-  // .gte(1) guard) and just re-describe it for the MCP surface.
-  max_rows: ContentsRequest.shape.max_rows.describe(
-    "Inline mode, Tako cards only: max CSV rows to return. Omit for the free 20-row preview (baseline charge only); raise up to the 2,000-row ceiling to export more, billed per 1,000 rows beyond the free 20 (values above 2,000 are clamped). Ignored in url mode (full download) and for web URLs (always full text).",
-  ),
+    .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card CSV — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
+  // Expose the row cap so an agent can pull more than the 20-row default.
+  // Applies in BOTH delivery modes (url mode is capped too — there is no
+  // uncapped export). Bound it to the backend's 2,000-row ceiling here so the
+  // cap is explicit in the discovery card and over-asks fail fast at the MCP
+  // layer instead of being silently clamped server-side.
+  max_rows: z
+    .number()
+    .int()
+    .gte(1)
+    .lte(2000)
+    .optional()
+    .describe(
+      "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (always full text).",
+    ),
 });
 
 // NOTE: The generated ContentsResponse wraps items in a nested `contents` array

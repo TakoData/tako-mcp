@@ -42,7 +42,7 @@ describe("tako_contents input schema", () => {
     expect(() => tool.inputSchema.parse({ url: "" })).toThrow();
   });
 
-  it("exposes an optional max_rows sourced from the contract", () => {
+  it("exposes an optional max_rows", () => {
     const shape = tool.inputSchema.shape as Record<string, unknown>;
     expect(shape).toHaveProperty("max_rows");
     // Omitted → absent from parsed input (backend applies its 20-row default).
@@ -50,9 +50,11 @@ describe("tako_contents input schema", () => {
     expect(parsed).not.toHaveProperty("max_rows");
   });
 
-  it("accepts a max_rows value and carries the contract's .gte(1) guard", () => {
+  it("accepts a max_rows within 1..2000 and rejects out-of-range values", () => {
     expect(tool.inputSchema.parse({ url: "https://x", max_rows: 500 }).max_rows).toBe(500);
+    expect(tool.inputSchema.parse({ url: "https://x", max_rows: 2000 }).max_rows).toBe(2000);
     expect(() => tool.inputSchema.parse({ url: "https://x", max_rows: 0 })).toThrow();
+    expect(() => tool.inputSchema.parse({ url: "https://x", max_rows: 2001 })).toThrow();
   });
 });
 
