@@ -36,7 +36,7 @@
     "staging": {
       "name": "tako-mcp-staging",
       "vars": {
-        "DJANGO_BASE_URL": "https://staging.trytako.com",
+        "DJANGO_BASE_URL": "https://staging.tako.com",
         "PUBLIC_BASE_URL": "https://staging.tako.com",
         // OpenAI connector-directory token issued for
         // `mcp.staging.tako.com`. Served as plain text from
@@ -60,7 +60,7 @@
     "production": {
       "name": "tako-mcp-production",
       "vars": {
-        "DJANGO_BASE_URL": "https://trytako.com",
+        "DJANGO_BASE_URL": "https://tako.com",
         "PUBLIC_BASE_URL": "https://tako.com",
         // OpenAI connector-directory domain-verification token issued
         // for `mcp.tako.com`. Served as plain text from
