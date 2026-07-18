@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.9.0](https://github.com/TakoData/tako-mcp/compare/v0.8.3...v0.9.0) (2026-07-18)
+
+
+### Features
+
+* expose content_format in tako_contents (json_records / json_compact) ([b42e8f7](https://github.com/TakoData/tako-mcp/commit/b42e8f75d9e62bb000137c0e1ad1899d8a76715f))
+* **graph:** actionable error messages that guide agents to the fix ([0b8a0e6](https://github.com/TakoData/tako-mcp/commit/0b8a0e6607a2aa8717e0b818a1a2c3291520f0e0))
+* pin graph node_ids/strict in tako_answer ([a507ed5](https://github.com/TakoData/tako-mcp/commit/a507ed5a421135fd22dcaa4d9780cf043fa58bf9))
+* pin graph node_ids/strict in tako_search and surface card nodes ([a089ae2](https://github.com/TakoData/tako-mcp/commit/a089ae27d3dcb34397f865b53ba20f65d943a8b5))
+* shared graph facades + multi-q merge helper ([91e8726](https://github.com/TakoData/tako-mcp/commit/91e8726d415c0484c7a5f5ebbe54d5add355aee6))
+* Tako data-graph tools (search/related/node) + node pinning; fix search 'unexpected shape' outage ([46ee65a](https://github.com/TakoData/tako-mcp/commit/46ee65abaf6209482e4bb11eee37b98c3f5634c2))
+* tako_graph_node tool ([1ad50ee](https://github.com/TakoData/tako-mcp/commit/1ad50eef048b822510b7ac5d03f5f48c3471e992))
+* tako_graph_related tool with multi-q fan-out ([88e0cb6](https://github.com/TakoData/tako-mcp/commit/88e0cb6e4cf05ea75b3b7072be3121978f93412f))
+* tako_graph_search tool ([be8538d](https://github.com/TakoData/tako-mcp/commit/be8538de9a9b3754c203a0141beccb9c7f7f8009))
+
+
+### Bug Fixes
+
+* **config:** point DJANGO_BASE_URL at tako.com (was trytako.com) ([413e06f](https://github.com/TakoData/tako-mcp/commit/413e06fd2559dc5e89e5caa0da3efa7ebb4bafd9))
+* **config:** point DJANGO_BASE_URL at tako.com to unblock graph tools (403/WAF) ([8cb964a](https://github.com/TakoData/tako-mcp/commit/8cb964aaaee9b1c117154f9f1ea41c035bcd9b58))
+* correct tako_contents row-cap docs (both modes cap at 20; max_rows→2000) ([93a06b8](https://github.com/TakoData/tako-mcp/commit/93a06b804eeba125d98fd495b9baf94d55fa14b6))
+* **deps:** patch hono/undici/vite CVEs (CVE-2026-54290, -9697, -6734, -53571) ([7ddd354](https://github.com/TakoData/tako-mcp/commit/7ddd3548156f01829f337ca872a54f09e4d06365))
+* **deps:** patch hono/undici/vite CVEs via overrides ([f6c4b60](https://github.com/TakoData/tako-mcp/commit/f6c4b60a1335a4c5d5cc18123bf1f5bc388d1a13))
+* expose max_rows in tako_contents (inline mode was silently capped at 20 rows) ([43b7891](https://github.com/TakoData/tako-mcp/commit/43b7891f9c1b8fb094bc621db30ef06f3b0e249d))
+* expose max_rows in tako_contents so inline mode isn't capped at 20 rows ([6286989](https://github.com/TakoData/tako-mcp/commit/628698969d2dc5f77dd8e77c348ae2b1920e7bb8))
+* **graph:** validate responses via loose facade, not strict generated schema ([84215b0](https://github.com/TakoData/tako-mcp/commit/84215b0c555fdc9ade44df668ead1cd38193b370))
+* **graph:** validate responses via loose facade, not strict generated schema (fixes 'unexpected shape' on kind:source) ([db7f716](https://github.com/TakoData/tako-mcp/commit/db7f71653eebde50dd11552ddd865ec58a96a43d))
+* regenerate registry/server.json without unrelated tako_contents drift ([3765dc3](https://github.com/TakoData/tako-mcp/commit/3765dc35266466a4ae97e42bf34e6cf73b5bd308))
+* **search:** tolerate renamed content_format field to fix prod 'unexpected shape' outage ([344ad81](https://github.com/TakoData/tako-mcp/commit/344ad8161346a7d6689c7e37de9c7a88b5d89118))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([a694625](https://github.com/TakoData/tako-mcp/commit/a6946251a13759c88797874d04611a4cc86c7833))
+* sync OpenAPI spec from monorepo ([7e0aa82](https://github.com/TakoData/tako-mcp/commit/7e0aa826f01adb9f436689be0f13e87c212da1ec))
+* sync OpenAPI spec from TakoData/tako ([f493618](https://github.com/TakoData/tako-mcp/commit/f493618179c399ae184ae833ee370a2410f9274c))
+
+
+### Documentation
+
+* graph API integration design spec ([efbe2fe](https://github.com/TakoData/tako-mcp/commit/efbe2fe8b9525d21c565d4de0d6a6d5d3aaa37c8))
+* graph API integration implementation plan ([0ae177d](https://github.com/TakoData/tako-mcp/commit/0ae177d3ffe594dd92a2c1d83d807b419ea19ca9))
+* use parse-don't-cast in graph tool plan snippets ([b8dd5be](https://github.com/TakoData/tako-mcp/commit/b8dd5bee2a134b930c7b076fee3393c0c7505a47))
+
+
+### Refactors
+
+* re-validate tako_graph_search output through facade ([8738eee](https://github.com/TakoData/tako-mcp/commit/8738eee2a7c6c6ced1984c00bc7cad6fcc8484f4))
+
 ## [0.8.3](https://github.com/TakoData/tako-mcp/compare/v0.8.2...v0.8.3) (2026-07-14)
 
 
