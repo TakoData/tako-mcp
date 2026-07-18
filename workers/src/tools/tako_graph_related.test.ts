@@ -96,6 +96,42 @@ describe("tako_graph_related", () => {
     ).rejects.toThrow(/unexpected shape/);
   });
 
+  // Regression: the live API returns relation groups with kind:"source" (and can
+  // return new subtype/label values), which the generated RelationKind /
+  // EntityClassName / NerLabel enums don't list. Validating through the loose
+  // facade must accept these instead of throwing "unexpected shape". (Verified
+  // live on tako.com: Tesla's overview includes a kind:"source" group.)
+  it("accepts enum values the generated schema lacks (kind:source, exotic subtype/label)", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        node: hub,
+        relations: [
+          {
+            key: "rel:sourced_from",
+            kind: "source", // NOT in the generated RelationKind enum
+            label: "Sourced from",
+            items: [
+              {
+                id: "ent::x::1",
+                type: "entity",
+                name: "Some Source",
+                subtype: "Brand New Entity Class", // not in EntityClassName
+                label: "NEW_NER_LABEL", // not in NerLabel
+              },
+            ],
+            total: 1,
+            total_capped: false,
+          },
+        ],
+      }),
+    ]);
+
+    const out = await takoGraphRelated.handler({ node_id: "tesla-x1" }, CTX);
+    expect(out.relations?.[0]?.kind).toBe("source");
+    expect(out.relations?.[0]?.items[0]?.subtype).toBe("Brand New Entity Class");
+    expect(out.relations?.[0]?.items[0]?.label).toBe("NEW_NER_LABEL");
+  });
+
   it("maps a 404 into a node_id-focused message that distinguishes it from a bad relation", async () => {
     mockFetchSequence([jsonResponse(404, { detail: "not found" })]);
     await expect(

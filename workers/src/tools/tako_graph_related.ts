@@ -5,12 +5,12 @@
  * coverage map; drill mode (relation=<key>) pages one group. `q` is a single
  * substring filter — to cover several name-variants of a metric, call this
  * tool once per variant (graph calls are free). Wire-guarded against the
- * generated GraphRelatedResponse.
+ * loose graphRelatedOutputShape facade (not the strict generated schema, whose
+ * RelationKind enum drifts — see the handler note).
  */
 import { z } from "zod";
 
 import { djangoGet } from "../django.js";
-import { GraphRelatedResponse } from "../generated/schemas.js";
 import { graphErrorMessage, graphRelatedOutputShape } from "./_graph.js";
 import type { ToolModule } from "./types.js";
 
@@ -80,15 +80,20 @@ const tako_graph_related = {
     } catch (err) {
       throw new Error(graphErrorMessage(err, "related", input.node_id));
     }
-    const wire = GraphRelatedResponse.safeParse(data);
-    if (!wire.success) {
+    // Validate against the LOOSE advertised facade, NOT the generated schema.
+    // The generated GraphRelatedResponse enforces a strict RelationKind enum
+    // (related|data|sibling|membership) — but the live API also returns
+    // kind:"source", which a strict guard rejects as "unexpected shape" even
+    // though the response is fine. Same drift class as content_format. The
+    // facade keeps kind/type/subtype/label as loose strings, so a new enum
+    // value passes while genuine structural breaks still throw.
+    const parsed = outputSchema.safeParse(data);
+    if (!parsed.success) {
       throw new Error(
         "Tako graph/related endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
-    // Re-validate through the advertised facade (parse-don't-cast) so a future
-    // facade/wire drift is caught at runtime, matching the sibling tools.
-    return outputSchema.parse(wire.data);
+    return parsed.data;
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

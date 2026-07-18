@@ -2,14 +2,13 @@
  * `tako_graph_search` — resolve a name to Tako data-graph node(s).
  *
  * Wraps `GET /api/beta/graph/search`. Free + fast. The resolved node ids pin
- * into tako_search / tako_answer (sources.data.node_ids). Wire-guarded against
- * the generated GraphSearchResponse; returns the flat graphSearchOutputShape
- * facade.
+ * into tako_search / tako_answer (sources.data.node_ids). Validated against the
+ * loose graphSearchOutputShape facade (not the strict generated schema, whose
+ * enums drift — see the handler note).
  */
 import { z } from "zod";
 
 import { djangoGet } from "../django.js";
-import { GraphSearchResponse } from "../generated/schemas.js";
 import { graphErrorMessage, graphSearchOutputShape } from "./_graph.js";
 import type { ToolModule } from "./types.js";
 
@@ -70,15 +69,20 @@ const tako_graph_search = {
       throw new Error(graphErrorMessage(err, "search"));
     }
 
-    const wire = GraphSearchResponse.safeParse(data);
-    if (!wire.success) {
+    // Validate against the LOOSE advertised facade, NOT the generated schema.
+    // The generated GraphSearchResponse enforces strict enums (NerLabel,
+    // EntityClassName, ...) that drift: when the backend adds a value the
+    // committed enum lacks, a strict guard turns a benign addition into a total
+    // "unexpected shape" outage (already seen with content_format and with a
+    // graph/related kind of "source"). The facade keeps these fields as loose
+    // strings, so structural breaks still throw but new enum values pass.
+    const parsed = outputSchema.safeParse(data);
+    if (!parsed.success) {
       throw new Error(
         "Tako graph/search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
-    // Re-validate through the advertised facade (parse-don't-cast) so a future
-    // facade/wire drift is caught at runtime, matching the sibling tools.
-    return outputSchema.parse(wire.data);
+    return parsed.data;
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 
