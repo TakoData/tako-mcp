@@ -3,12 +3,12 @@
  *
  * Wraps `GET /api/beta/graph/node/{id}`. Use it when you hold a bare node id
  * (e.g. from a tako_search card's slim `nodes`) and need aliases/subtype/label
- * to compose a grounded query. Wire-guarded against the generated GraphNode.
+ * to compose a grounded query. Validated against the loose graphNodeSchema
+ * facade (not the strict generated GraphNode, whose enums drift).
  */
 import { z } from "zod";
 
 import { djangoGet } from "../django.js";
-import { GraphNode } from "../generated/schemas.js";
 import { graphErrorMessage, graphNodeSchema } from "./_graph.js";
 import type { ToolModule } from "./types.js";
 
@@ -46,15 +46,17 @@ const tako_graph_node = {
       throw new Error(graphErrorMessage(err, "node", input.id));
     }
 
-    const wire = GraphNode.safeParse(data);
-    if (!wire.success) {
+    // Validate against the LOOSE advertised facade, NOT the generated GraphNode
+    // (whose subtype/label enums drift — a new EntityClassName/NerLabel would
+    // make a strict guard throw "unexpected shape" on a valid node). The facade
+    // keeps those as loose strings; structural breaks still throw.
+    const parsed = outputSchema.safeParse(data);
+    if (!parsed.success) {
       throw new Error(
         "Tako graph/node endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
-    // Re-validate through the advertised facade (parse-don't-cast) so a future
-    // facade/wire drift is caught at runtime, matching the sibling tools.
-    return outputSchema.parse(wire.data);
+    return parsed.data;
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 
