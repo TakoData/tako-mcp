@@ -168,21 +168,18 @@ agent.
 - `"agent,nope"` → the three agent names (unknown dropped).
 - `OPTIONAL_TOOL_NAMES` equals the flattened alias values.
 
-### Integration — `workers/src/mcp.test.ts` (extend)
-Assert on the tool names the server registers (via the existing test harness
-for `createMcpServer` / a `tools/list` call):
-- No `enabledOptionalToolNames` (default): none of the three agent tools appear
-  for `client: claude`, `chatgpt`, or `unknown`; all non-agent defaults do.
-- `enabledOptionalToolNames = {agent tools}`, `client: claude` → `tako_agent`
-  present; split pair absent.
-- Same set, `client: unknown` → `tako_agent` present; split pair absent.
-- Same set, `client: chatgpt` → `tako_agent_start` + `tako_agent_wait` present;
-  `tako_agent` absent (existing exclusion still applies).
+### Integration — `workers/src/index.test.ts` (extend)
+The end-to-end `tools/list` assertions live here (not `mcp.test.ts`, which only
+covers `djangoErrorToToolResult`) — this is where the existing default-set and
+ChatGPT-split tests already drive `POST /mcp` via `SELF.fetch`. Extend / update
+those to reflect opt-in behavior:
+- No `?tools=` (default), non-ChatGPT UA: none of the three agent tools appear;
+  the 8 non-agent defaults do. (Updates the existing default-set test.)
+- No `?tools=`, ChatGPT UA: no agent tools at all (8 defaults only).
+- `?tools=agent`, non-ChatGPT UA → `tako_agent` present; split pair absent (9).
+- `?tools=agent`, ChatGPT UA → `tako_agent_start` + `tako_agent_wait` present;
+  `tako_agent` absent — existing exclusion still applies (10).
 - Non-agent defaults present in every case above.
-
-If `index.test.ts` covers `handleMcpRequest` end-to-end, add a case that a POST
-to `/mcp?tools=agent` surfaces the agent tool for a non-ChatGPT UA, and a POST
-to `/mcp` does not.
 
 ## Files touched
 
@@ -192,9 +189,8 @@ to `/mcp` does not.
 - `workers/src/mcp.ts` — import from `_optional`, add `enabledOptionalToolNames`
   to `createMcpServer` options + the opt-in gate; parse the param in
   `handleMcpRequest`.
-- `workers/src/mcp.test.ts` — integration assertions.
-- `workers/src/index.test.ts` — optional end-to-end assertion (if the harness
-  supports it).
+- `workers/src/index.test.ts` — end-to-end `tools/list` assertions (updated the
+  default-set + ChatGPT-split tests; added no-param and `?tools=agent` cases).
 - `README.md`, `llms.txt`, `llms-full.txt`, `AGENTS.md` — enabling docs.
 
 ## Open questions
