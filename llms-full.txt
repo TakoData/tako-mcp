@@ -16,12 +16,14 @@ Hosted endpoint: `https://mcp.tako.com/mcp` (Streamable HTTP).
 - CLI/desktop hosts (Claude Code, Claude Desktop, Cursor, Windsurf): pass `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at tako.com -> account settings -> API tokens.
 - Web hosts (Claude.ai, ChatGPT): connect via the server's OAuth flow; no token config needed.
 
+Optional tools: the Answer Agent (`tako_agent`) is opt-in and off by default. Enable it by adding `?tools=agent` to the endpoint URL: `https://mcp.tako.com/mcp?tools=agent`. `agent` is an alias — the server picks the single-call `tako_agent` on most clients and the `tako_agent_start` / `tako_agent_wait` pair on ChatGPT. Unknown `?tools=` values are ignored, so a typo never breaks the connection.
+
 Tools are discovered at runtime via `tools/list`. There is no per-call `api_token` argument — auth is connection-level.
 
 ## Available Tools
 
 ### tako_search
-Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on MCP Apps hosts. Returns `cards` (structured Tako cards) plus `web_results` and a `request_id`. For deep, multi-step research — or when search returns nothing — use `tako_agent`.
+Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on MCP Apps hosts. Returns `cards` (structured Tako cards) plus `web_results` and a `request_id`. For deep, multi-step research — or when search returns nothing — use `tako_agent` (opt-in; enable with `?tools=agent`).
 
 Parameters:
 - `query` (string, required): Natural-language search query
@@ -58,7 +60,7 @@ Parameters:
 - `normalize_currencies` (string, optional): Target ISO 4217 code to convert currency-denominated datasets
 
 ### tako_agent
-Run Tako's Answer Agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning. Returns a synthesized answer plus supporting chart cards. On ChatGPT, exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.
+Opt-in tool — off by default; enable with `?tools=agent` on the endpoint URL (see Connecting). Run Tako's Answer Agent for complex, multi-step data questions — transformations, aggregations, comparisons across many entities, and multi-hop reasoning. Returns a synthesized answer plus supporting chart cards. On ChatGPT, exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.
 
 Parameters:
 - `query` (string, required): The deep/analytical question

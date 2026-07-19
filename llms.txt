@@ -13,11 +13,13 @@
 
 Connect your MCP client to `https://mcp.tako.com/mcp` with `Authorization: Bearer <TAKO_API_TOKEN>` (CLI/desktop), or via the server's OAuth flow (Claude.ai, ChatGPT).
 
+The Answer Agent (`tako_agent`) is opt-in — off by default. Enable it by adding `?tools=agent` to the URL: `https://mcp.tako.com/mcp?tools=agent`.
+
 ## Capabilities
 
-- Fast search over 100K+ curated charts and live data — economics, finance, demographics, sports, markets, weather — plus the live web on request (`tako_search`); the top result auto-renders as an interactive chart. Deep multi-step research is the Answer Agent (`tako_agent`).
+- Fast search over 100K+ curated charts and live data — economics, finance, demographics, sports, markets, weather — plus the live web on request (`tako_search`); the top result auto-renders as an interactive chart. Deep multi-step research is the opt-in Answer Agent (`tako_agent`, enable with `?tools=agent`).
 - Get grounded, citation-backed prose answers from Tako's knowledge graph and/or the live web (`tako_answer`)
 - Fetch the underlying data (CSV) or page text behind any result URL (`tako_contents`)
 - Create an embeddable chart/card directly from your own structured data — timeseries, bar, table, financial boxes, and more (`tako_visualize`); the card auto-renders as an interactive chart.
-- Run a multi-step Answer Agent for complex analytical questions (`tako_agent`)
+- Run a multi-step Answer Agent for complex analytical questions (`tako_agent`; opt-in, enable with `?tools=agent`)
 - Check API credit balance (`get_credit_balance`)

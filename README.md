@@ -191,12 +191,29 @@ There are two ways to break the connection, and they have different blast radius
 
 Tools are discovered automatically via the MCP `tools/list` handshake; your client always sees the live surface. Auth is connection-level (Bearer token or OAuth) — there is no per-call `api_token` argument.
 
-- **`tako_search`** — Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on hosts that support MCP Apps (Claude.ai, ChatGPT). Choose `sources` (`["tako"]` default, `["web"]`, or both) and `effort` (`fast` default | `instant`). For deep, multi-step research — or when search returns nothing — use `tako_agent`.
+- **`tako_search`** — Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on hosts that support MCP Apps (Claude.ai, ChatGPT). Choose `sources` (`["tako"]` default, `["web"]`, or both) and `effort` (`fast` default | `instant`). For deep, multi-step research — or when search returns nothing — use `tako_agent` (an [opt-in tool](#enabling-the-tako-agent-opt-in)).
 - **`tako_answer`** — Get a single grounded, citation-backed prose answer. Ground in `["tako"]`, `["web"]`, or both (default).
 - **`tako_contents`** — Fetch the content behind a result URL: a Tako card URL returns a CSV; any other URL returns the page's extracted text.
 - **`tako_visualize`** — Create an embeddable chart/card directly from your own structured data (Tako's [Thin-Viz](https://tako.com/docs/) API). Supply typed `components` (timeseries, bar, table, financial boxes, …); the card auto-renders inline and returns `webpage_url` / `embed_url`.
-- **`tako_agent`** — Run Tako's **Answer Agent**: opinionated, multi-step research for complex questions that need reasoning across many retrievals. Returns a synthesized, citation-backed answer plus supporting chart cards. Distinct from one-shot `tako_answer` (a single grounded lookup) — the agent is slower (~30–90s) but far more thorough. (On ChatGPT this is exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.)
+- **`tako_agent`** — _Opt-in tool ([enable it](#enabling-the-tako-agent-opt-in))._ Run Tako's **Answer Agent**: opinionated, multi-step research for complex questions that need reasoning across many retrievals. Returns a synthesized, citation-backed answer plus supporting chart cards. Distinct from one-shot `tako_answer` (a single grounded lookup) — the agent is slower (~30–90s) but far more thorough. (On ChatGPT this is exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.)
 - **`get_credit_balance`** — Check the connected account's API credit balance.
+
+### Enabling the Tako agent (opt-in)
+
+The Answer Agent is **off by default** — the everyday tools (`tako_search`, `tako_answer`, `tako_contents`, …) cover most questions, and the agent is a slower, heavier tool you turn on when you want it. Enable it by adding `?tools=agent` to the MCP URL:
+
+```
+https://mcp.tako.com/mcp?tools=agent
+```
+
+For example, with the CLI:
+
+```bash
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" \
+  --header "Authorization: Bearer $TAKO_API_TOKEN"
+```
+
+`agent` is an alias — with it enabled, the server exposes the single-call `tako_agent` on most clients and automatically switches to the `tako_agent_start` / `tako_agent_wait` pair on ChatGPT. Unknown values in `?tools=` are ignored, so a typo never breaks the connection. Omit the parameter entirely to run without the agent.
 
 ## Example Flow
 
@@ -207,7 +224,7 @@ Tools are discovered automatically via the MCP `tools/list` handshake; your clie
 
 ## Breaking changes (v0.3.0)
 
-- The current tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_visualize`**, **`tako_agent`** (plus the ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), and **`get_credit_balance`**.
+- The current tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_visualize`**, and **`get_credit_balance`** by default, plus the opt-in **`tako_agent`** (the ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), enabled with [`?tools=agent`](#enabling-the-tako-agent-opt-in).
 - The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
 - The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
 
