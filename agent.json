@@ -1,6 +1,6 @@
 {
   "name": "Tako",
-  "description": "Data intelligence agent that searches a knowledge base of 100K+ charts, answers data questions with citations, fetches underlying source content, and runs a multi-step Answer Agent for deeper questions.",
+  "description": "Data intelligence agent. Ask a specific data question and get a grounded, citation-backed answer (tako_answer), or pull the actual rows/charts to work with yourself (tako_search) — over a knowledge graph of 100K+ charts plus the live web. Also explores its data graph, fetches underlying source content, and runs a multi-step Answer Agent for deeper questions.",
   "url": "https://mcp.tako.com",
   "version": "0.9.0",
   "capabilities": {
@@ -30,25 +30,9 @@
   ],
   "skills": [
     {
-      "id": "search-data",
-      "name": "Search Charts & Data",
-      "description": "Fast search over Tako's curated knowledge graph of 100K+ charts and live data — economics, finance, demographics, sports, markets, weather — and the live web, both searched by default. Best for a specific, known value, series, or direct comparison of named entities.",
-      "tags": [
-        "search",
-        "charts",
-        "data",
-        "live"
-      ],
-      "examples": [
-        "Find charts about US GDP growth",
-        "Search for Intel vs Nvidia revenue",
-        "Latest mortgage rates"
-      ]
-    },
-    {
       "id": "answer-question",
-      "name": "Answer Data Questions",
-      "description": "Get a grounded, citation-backed answer to a factual data question, drawn from Tako's knowledge graph and/or the live web.",
+      "name": "Answer a Specific Data Question",
+      "description": "Get THE answer to one specific, self-contained data question — a single grounded, citation-backed prose answer, already synthesized for you (relay it directly). Best for a known value, statistic, price, rate, or a direct comparison of two named entities. For broad or multi-part needs, or when you want the raw data to work with yourself, use Search instead.",
       "tags": [
         "answer",
         "grounded",
@@ -56,14 +40,49 @@
       ],
       "examples": [
         "What was US GDP in 2024?",
-        "How have mortgage rates moved this year?",
-        "Who leads the AL East?"
+        "What was the US core CPI inflation rate in June 2026?",
+        "What was Nvidia's revenue in its most recent quarter?",
+        "What is the current US 30-year fixed mortgage rate?"
+      ]
+    },
+    {
+      "id": "search-data",
+      "name": "Search Charts & Pull Data",
+      "description": "Pull the actual data to work with — real rows/time-series and charts over Tako's curated knowledge graph of 100K+ charts (economics, finance, demographics, sports, markets, weather) and the live web, both searched by default. Reach for this when you want the underlying data to compute over, compare, or synthesize into your own thesis. Parallelize it: decompose a broad or multi-part request into several narrow single entity+metric searches run concurrently, rather than one broad query.",
+      "tags": [
+        "search",
+        "charts",
+        "data",
+        "live",
+        "parallel"
+      ],
+      "examples": [
+        "US CPI inflation rate",
+        "US core PCE inflation rate",
+        "Nvidia quarterly revenue",
+        "Intel vs Nvidia revenue"
+      ]
+    },
+    {
+      "id": "explore-graph",
+      "name": "Explore the Data Graph",
+      "description": "Resolve an entity or metric name to Tako data-graph node IDs, see exactly what data Tako holds for it (available metrics, related entities, named relationships), and pin those IDs into Search or Answer for a strong retrieval boost. Use it to check whether Tako has the data before querying, and to disambiguate names. Graph calls are free.",
+      "tags": [
+        "graph",
+        "entities",
+        "metrics",
+        "grounding"
+      ],
+      "examples": [
+        "What metrics does Tako have for Tesla?",
+        "Resolve 'core CPI' to a data-graph node",
+        "What entities and metrics are related to the S&P 500?"
       ]
     },
     {
       "id": "fetch-contents",
       "name": "Fetch Source Contents",
-      "description": "Fetch the underlying data (CSV) or extracted page text behind any result URL.",
+      "description": "Fetch the actual rows or data (CSV/JSON) behind a Tako card, or the extracted text behind a web result — the step after Search or Answer when you need the real underlying data to compute over, quote, or reason about. One result URL per call.",
       "tags": [
         "contents",
         "csv",
@@ -71,6 +90,7 @@
       ],
       "examples": [
         "Get the CSV behind this Tako chart",
+        "Pull the full rows behind this card",
         "Extract the text from this article"
       ]
     },
@@ -93,7 +113,7 @@
     {
       "id": "deep-research",
       "name": "Answer Agent",
-      "description": "Run Tako's Answer Agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup.",
+      "description": "Run Tako's Answer Agent for questions that require figuring something out — cohort resolution, ranking or filtering a set by criteria, aggregation, and multi-hop reasoning across many entities — beyond a single lookup. Slower and more thorough than a one-shot Answer. Opt-in (enable with ?tools=agent).",
       "tags": [
         "agent",
         "research",
@@ -101,6 +121,7 @@
       ],
       "examples": [
         "Compare revenue per employee across the Mag 7",
+        "Which S&P 500 companies grew revenue over 20% last year?",
         "Analyze the correlation between rates and housing starts"
       ]
     }
