@@ -196,6 +196,21 @@ Tools are discovered automatically via the MCP `tools/list` handshake; your clie
 - **`tako_agent`** — _Opt-in tool ([enable it](#enabling-the-tako-agent-opt-in))._ Run Tako's **Answer Agent**: opinionated, multi-step research for complex questions that need reasoning across many retrievals. Returns a synthesized, citation-backed answer plus supporting chart cards. Distinct from one-shot `tako_answer` (a single grounded lookup) — the agent is slower (~30–90s) but far more thorough. (On ChatGPT this is exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.)
 - **`get_credit_balance`** — Check the connected account's API credit balance.
 
+### Answer vs. Search — the core distinction
+
+`tako_answer` and `tako_search` look similar but serve **opposite** needs. Pick by *what you want back*:
+
+| You want… | Use | What you get back |
+|---|---|---|
+| **The answer** to one specific, self-contained data question | **`tako_answer`** | A single synthesized, citation-backed prose answer — **already written for you.** Relay it directly; no need to re-derive or double-check it. |
+| **The data itself** — rows/time-series to compute over, chart, or turn into your own thesis | **`tako_search`** | Structured cards (each with a free row preview) + an inline chart. *You* do the synthesis. |
+
+Rules of thumb:
+
+- **One narrow, known question → `tako_answer`.** e.g. *"What was US GDP in 2024?"* The `answer` field comes back already LLM-synthesized and grounded in its citations — **surface it as-is**; you don't need to recompute it or call `tako_contents` to verify it.
+- **Broad or multi-part → `tako_search`, parallelized.** Don't send a multi-part question to *either* tool as one call. Decompose it into narrow single **entity + metric** searches and fire them concurrently — e.g. *"US CPI inflation"*, *"US core CPI inflation"*, *"US PCE inflation"*, *"US core PCE inflation"* — then synthesize the four results yourself. Narrow queries retrieve far more accurately.
+- In one line: **`tako_answer` hands you a conclusion; `tako_search` hands you the evidence.**
+
 ### Enabling the Tako agent (opt-in)
 
 The Answer Agent is **off by default** — the everyday tools (`tako_search`, `tako_answer`, `tako_contents`, …) cover most questions, and the agent is a slower, heavier tool you turn on when you want it. Enable it by adding `?tools=agent` to the MCP URL:
@@ -213,12 +228,18 @@ claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" 
 
 `agent` is an alias — with it enabled, the server exposes the single-call `tako_agent` on most clients and automatically switches to the `tako_agent_start` / `tako_agent_wait` pair on ChatGPT. Unknown values in `?tools=` are ignored, so a typo never breaks the connection. Omit the parameter entirely to run without the agent.
 
-## Example Flow
+## Example Flows
 
-1. User asks: "Show me a chart about Intel vs Nvidia headcount"
-2. Agent calls `tako_search` with the query
-3. Agent receives chart results with IDs and URLs; the top result renders inline on supported hosts
-4. Agent calls `tako_answer` to get a grounded prose answer with citations
+**Specific question → `tako_answer` (relay the answer):**
+1. User asks: *"What was US GDP in 2024?"*
+2. Agent calls `tako_answer` with the question
+3. Agent receives a synthesized, citation-backed `answer` — and surfaces it directly, no further work needed
+
+**Data to work with → parallel `tako_search` (synthesize yourself):**
+1. User asks: *"Compare US CPI, core CPI, PCE, and core PCE inflation."*
+2. Agent fires **four** narrow `tako_search` calls concurrently — one per entity+metric — instead of one broad query
+3. Each returns a card with a free row preview (top result renders inline as a chart)
+4. Agent synthesizes the four results into the comparison; calls `tako_contents` on a card's `webpage_url` if it needs the full rows
 
 ## Breaking changes (v0.3.0)
 
