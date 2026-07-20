@@ -16,40 +16,60 @@ Hosted endpoint: `https://mcp.tako.com/mcp` (Streamable HTTP).
 - CLI/desktop hosts (Claude Code, Claude Desktop, Cursor, Windsurf): pass `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at tako.com -> account settings -> API tokens.
 - Web hosts (Claude.ai, ChatGPT): connect via the server's OAuth flow; no token config needed.
 
-Optional tools: the Answer Agent (`tako_agent`) is opt-in and off by default. Enable it by adding `?tools=agent` to the endpoint URL: `https://mcp.tako.com/mcp?tools=agent`. `agent` is an alias — the server picks the single-call `tako_agent` on most clients and the `tako_agent_start` / `tako_agent_wait` pair on ChatGPT. Unknown `?tools=` values are ignored, so a typo never breaks the connection.
+Optional tools: some tools are opt-in and off by default, to keep the default surface small. Enable them by adding `?tools=` to the endpoint URL with comma-separated aliases, e.g. `https://mcp.tako.com/mcp?tools=agent,visualize`. Aliases: `agent` (Answer Agent — the server picks the single-call `tako_agent` on most clients and the `tako_agent_start` / `tako_agent_wait` pair on ChatGPT), `visualize` (`tako_visualize`; already on by default for ChatGPT, where it powers the chart widget), `graph_node` (`tako_graph_node`), `credits` (`get_credit_balance`). Only aliases are recognized (not raw tool names); unknown `?tools=` values are ignored, so a typo never breaks the connection.
 
 Tools are discovered at runtime via `tools/list`. There is no per-call `api_token` argument — auth is connection-level.
 
 ## Available Tools
 
+### Answer vs. Search — the core distinction
+
+`tako_answer` and `tako_search` look similar but serve opposite needs. Choose by what you want back:
+
+- **Want THE answer to one specific, self-contained question?** Use `tako_answer`. It returns a single synthesized, citation-backed prose answer — already written for you. Relay it directly; you do not need to re-derive it or verify it.
+- **Want the actual DATA to work with** — rows/time-series to compute over, chart, or synthesize into your own thesis? Use `tako_search`. It returns structured cards (with a free row preview) + a chart; you do the synthesis.
+
+Rules of thumb:
+- One narrow, known question (e.g. "What was US GDP in 2024?") → `tako_answer`, and surface its `answer` as-is.
+- Broad or multi-part → `tako_search`, PARALLELIZED. Never send a multi-part question to either tool as one call. Decompose it into narrow single entity+metric searches and run them concurrently (e.g. "US CPI inflation", "US core CPI inflation", "US PCE inflation", "US core PCE inflation"), then synthesize yourself.
+- In one line: `tako_answer` hands you a conclusion; `tako_search` hands you the evidence.
+
 ### tako_search
-Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on MCP Apps hosts. Returns `cards` (structured Tako cards) plus `web_results` and a `request_id`. For deep, multi-step research — or when search returns nothing — use `tako_agent` (opt-in; enable with `?tools=agent`).
+Use this to **pull the actual data** — the real rows/time-series to compute over, compare, or synthesize into your own thesis. Fast search over Tako's curated knowledge graph (and the live web when asked); the top result auto-renders inline as an interactive chart on MCP Apps hosts. Returns `cards` (structured Tako cards, each with a free inline preview of its latest rows by default) plus `web_results` and a `request_id`.
+
+**Parallelize it.** Decompose a broad or multi-part request into several NARROW, single entity+metric queries and run them concurrently — one metric for one entity per query. For "US CPI, core CPI, PCE and core PCE inflation", send four separate searches ("US CPI inflation", "US core CPI inflation", "US PCE inflation", "US core PCE inflation"), NOT one broad multi-part query. Narrow queries retrieve far more accurately; you assemble the combined result from the data. For the FULL data (or a web page's text) call `tako_contents` on the result URL. For deep, multi-step research — or when search returns nothing — use `tako_agent` (opt-in; enable with `?tools=agent`).
 
 Parameters:
-- `query` (string, required): Natural-language search query
+- `query` (string, required): Natural-language search query — keep it narrow (one entity + one metric); parallelize multiple.
 - `sources` (array): both by default (`["data","web"]`); pass `["data"]` for curated data only or `["web"]` for live web only. (`"tako"` is a legacy synonym for `"data"`.)
 - `effort` (string, "fast" | "instant"): Search effort; "fast" (default) or "instant" (fastest, cached embeds). Omit for fast.
 - `count` (integer, 1-20, default 10): Maximum results per source
+- `include_contents` (boolean, default **true**): Controls the Tako **data** source only. When true (default), each Tako card inlines a small FREE preview of its 5 most-recent rows so you can read real numbers immediately. Set false for a pointers-only response (title/chart/nodes, no rows) — useful when fanning out many parallel queries and minimizing tokens. Either way the FULL export is a separate (priced) `tako_contents` call. Web page text is NEVER auto-inlined (it is billed per page); fetch it with `tako_contents` on the web result's url.
 - `country_code` (string, default "US"): ISO country code
 - `locale` (string, default "en-US"): Locale
 
 ### tako_answer
-Ask a factual question and get back a single grounded, citation-backed text answer.
+Ask a **single, specific, self-contained** data question and get back one grounded, citation-backed prose answer — written for you, so you don't touch the underlying rows. Best when you want THE answer to a known question (a current/historical value, a statistic, a price, a comparison of two named entities). **The `answer` is already LLM-synthesized and grounded in its citations — trust it and relay it to the user directly; you don't need to re-derive it, second-guess the numbers, or call `tako_contents` to verify it.** Also returns the supporting cards it cited (metadata + chart + pointers; no inline rows). If you instead want the actual data to work with, or your question is broad/multi-part, use `tako_search` and parallelize it (see above) — do NOT send a broad multi-part question here. There is no `include_contents`: to dig into a cited card's rows or a cited web page's text, call `tako_contents` on that result's url.
 
 Parameters:
-- `query` (string, required): Natural-language question
+- `query` (string, required): Natural-language question — one specific, self-contained question.
 - `sources` (array, optional): both by default (`["data","web"]`); pass `["data"]` for curated data only or `["web"]` for live web only. (`"tako"` is a legacy synonym for `"data"`.)
 - `country_code` (string, default "US"): ISO country code
 - `locale` (string, default "en-US"): Locale
 
 ### tako_contents
-Fetch the underlying content behind a result URL. A Tako card URL returns a CSV of the card's data; any other URL returns the page's extracted full text.
+Fetch the actual rows or data behind a result URL — the step after `tako_search`/`tako_answer` when you need the real underlying data to compute over, quote, or reason about (a search result carries only metadata and a chart, not its data). A Tako card URL returns that card's data (CSV by default, or JSON); any other URL — a web result — returns that page's extracted full text. One URL per call.
 
 Parameters:
-- `url` (string, required): The result URL to fetch content for
+- `url` (string, required): The result URL to fetch — a Tako card's `webpage_url`, or a web-result URL
+- `content_format` (string, optional): Tako cards only — serialization of the data: `csv` (default, text in `data`), `json_records` (row objects in `records`), or `json_compact` (compact columns+rows in `dataset`). Ignored for web URLs (always text).
+- `max_rows` (integer, 1-2000, optional): Tako cards only — max rows to return. Omit for the free 20-row default; raise up to 2,000 for a larger (priced) export. Ignored for web URLs (always full text).
+- `mode` (string, "inline" | "url", default "inline"): Delivery only, not row count — `inline` returns the data in the response so you can read it; `url` returns a short-lived presigned `download_url` to the same file.
+
+Typical flow: `tako_search` to find cards/results → `tako_contents` on a result URL to pull the actual rows or data for analysis.
 
 ### tako_visualize
-Create an embeddable Tako card directly from your OWN structured data (not from search), backed by Tako's Thin-Viz API. Provide one or more typed components; the card auto-renders inline as a chart and returns share/embed URLs.
+Opt-in tool — off by default; enable with `?tools=visualize` on the endpoint URL (see Connecting; already on by default for ChatGPT). Create an embeddable Tako card directly from your OWN structured data (not from search), backed by Tako's Thin-Viz API. Provide one or more typed components; the card auto-renders inline as a chart and returns share/embed URLs.
 
 Parameters:
 - `components` (array, required): One or more `{ component_type, config, component_variant? }` objects. `component_type` is one of: header, generic_timeseries, categorical_bar, choropleth, data_table_chart, histogram, pie, table, financial_boxes, timeline, treemap, heatmap, marimekko, boxplot, waterfall, sankey, scatter, bubble, top_level_metric, person_card. `config` holds that type's data (validated server-side). The optional `component_variant` string selects a type variant (e.g. 'simple', 'financial'). `person_card` must be the only component.
@@ -66,6 +86,6 @@ Parameters:
 - `query` (string, required): The deep/analytical question
 
 ### get_credit_balance
-Check the connected account's API credit balance.
+Opt-in tool — off by default; enable with `?tools=credits` on the endpoint URL (see Connecting). Check the connected account's API credit balance.
 
 Parameters: none.

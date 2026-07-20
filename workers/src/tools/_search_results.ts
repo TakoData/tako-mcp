@@ -93,6 +93,185 @@ export const webResultSchema = z
   .loose();
 export type WebResult = z.infer<typeof webResultSchema>;
 
+// The most-recent-rows cap for the FREE inline card preview. A card's data
+// preview (dataset.rows / records) can arrive with hundreds of rows; capping
+// keeps the model-facing peek bounded. The full, priced export is always a
+// separate tako_contents call.
+export const INLINE_PREVIEW_ROW_CAP = 5;
+
+// `content` carries the heavy inline row payload under keys the hand-written
+// resultContentSchema passes through loosely (records/dataset are not in its
+// explicit shape). Type them here so the slim helpers can touch them.
+type LooseContent = ResultContent & {
+  records?: Array<Record<string, unknown>> | null;
+  dataset?: { columns?: unknown; rows?: unknown[] } | null;
+};
+
+// Column types the backend uses for the temporal axis of a dataset. Detecting
+// this column lets the cap keep the *newest* rows regardless of sort order.
+const TEMPORAL_COL_TYPES = new Set(["datetime", "date", "timestamp", "time"]);
+
+// Parse a cell into a comparable epoch magnitude, or null when it isn't
+// date-like. Numbers pass through (epoch/serial); strings must parse as a date.
+// Returning null on non-dates is what keeps a plain numeric value column from
+// being mistaken for a timestamp.
+function temporalMagnitude(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const t = Date.parse(v);
+    return Number.isNaN(t) ? null : t;
+  }
+  return null;
+}
+
+// Order of a row sequence from the temporal value of its first vs last row:
+//   +1 descending (newest first) · -1 ascending (newest last) · 0 unknown.
+function orderDirection(firstVal: unknown, lastVal: unknown): 1 | -1 | 0 {
+  const a = temporalMagnitude(firstVal);
+  const b = temporalMagnitude(lastVal);
+  if (a === null || b === null || a === b) return 0;
+  return a > b ? 1 : -1;
+}
+
+/**
+ * Keep the `cap` MOST-RECENT rows of an already-sorted sequence.
+ *
+ * Backend row order is card-type-dependent (timeseries ascending, stock cards
+ * descending / newest-first), so a blind tail slice would hand a stock card its
+ * OLDEST rows and drop the latest value. We detect the direction from a temporal
+ * accessor and slice the end that holds the newest rows; when the accessor gives
+ * no date signal we fall back to the tail (the prior behavior).
+ */
+function capRecentRows<T>(rows: T[], cap: number, temporalOf: (r: T) => unknown): T[] {
+  if (rows.length <= cap) return rows;
+  const dir = orderDirection(temporalOf(rows[0] as T), temporalOf(rows[rows.length - 1] as T));
+  return dir > 0 ? rows.slice(0, cap) : rows.slice(-cap);
+}
+
+type DatasetColumn = { name?: unknown; type?: unknown };
+
+// Index of the dataset's temporal column (by declared type), or -1.
+function temporalColumnIndex(columns: unknown): number {
+  if (!Array.isArray(columns)) return -1;
+  return columns.findIndex(
+    (c) =>
+      !!c &&
+      typeof (c as DatasetColumn).type === "string" &&
+      TEMPORAL_COL_TYPES.has(((c as DatasetColumn).type as string).toLowerCase()),
+  );
+}
+
+// Best-effort temporal key for json_records rows (which carry no column types):
+// the first key whose value is a NON-numeric string that parses as a date.
+function recordDateKey(records: Array<Record<string, unknown>>): string | undefined {
+  const first = records[0];
+  if (!first) return undefined;
+  for (const [k, v] of Object.entries(first)) {
+    if (typeof v === "string" && !/^-?\d+(\.\d+)?$/.test(v.trim()) && temporalMagnitude(v) !== null) {
+      return k;
+    }
+  }
+  return undefined;
+}
+
+// Cap a CSV payload to the header + the `cap` most-recent data lines, instead of
+// dropping it. Direction is detected from the first column (the temporal/label
+// column in Tako's timeseries CSVs); falls back to the tail otherwise. A simple
+// comma split — not a full CSV parser — which is fine for a bounded preview
+// (the exact, full export is always a separate tako_contents call).
+function capCsv(csv: string, cap: number): { data: string; truncated: boolean } {
+  const lines = csv.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  if (lines.length <= 1) return { data: csv, truncated: false };
+  const header = lines[0] as string;
+  const dataLines = lines.slice(1);
+  if (dataLines.length <= cap) return { data: csv, truncated: false };
+  const kept = capRecentRows(dataLines, cap, (line) => line.split(",")[0]);
+  return { data: [header, ...kept].join("\n"), truncated: true };
+}
+
+/**
+ * Slim a Tako card's `content` for the model-facing response.
+ *
+ * The inline row payload (`data`/`records`/`dataset`) is what bloats the
+ * model's context — and BOTH channels the model can see derive from the tool
+ * output (mcp.ts stringifies `output` into `content.text` AND sets it as
+ * `structuredContent`, which counts toward context on claude.ai), so removing
+ * rows here shrinks both at once. Metadata (content_format / cost / total_rows
+ * / truncated / export_pricing / url) is always kept so the "N rows available,
+ * priced — call tako_contents" signal survives.
+ *
+ *   capRows === null → drop all rows (the model fetches via tako_contents).
+ *   capRows === N    → keep the N most-recent rows (order-aware, a bounded peek).
+ */
+export function slimCardContent(
+  content: ResultContent | null | undefined,
+  capRows: number | null,
+): ResultContent | null | undefined {
+  if (content == null) return content;
+  // Strip the three row-payload keys out; `meta` keeps everything else
+  // (content_format/cost/total_rows/truncated/export_pricing/url/…).
+  const { data: rawData, records, dataset, ...meta } = content as LooseContent;
+  if (capRows === null) {
+    return { ...meta, data: null, records: null, dataset: null } as ResultContent;
+  }
+
+  // CSV payload lives in `data` — cap it in place rather than blanking it, so an
+  // include_contents caller still gets rows if a csv content_format is ever
+  // threaded through (today the worker never requests csv, so this is inert).
+  const isCsv = typeof meta.content_format === "string" && meta.content_format.toLowerCase() === "csv";
+  let cappedData: string | null = null;
+  let csvTruncated = false;
+  if (isCsv && typeof rawData === "string") {
+    const r = capCsv(rawData, capRows);
+    cappedData = r.data;
+    csvTruncated = r.truncated;
+  }
+
+  // json_records: keep the newest `capRows`, order detected from a date-valued key.
+  const dateKey = Array.isArray(records) ? recordDateKey(records) : undefined;
+  const cappedRecords = Array.isArray(records)
+    ? capRecentRows(records, capRows, (r) => (dateKey ? r[dateKey] : undefined))
+    : (records ?? null);
+  const slicedRecords = Array.isArray(records) && records.length > capRows;
+
+  // json_compact dataset: keep the newest `capRows`, order detected from the
+  // declared temporal column.
+  let cappedDataset = dataset ?? null;
+  let slicedRows = false;
+  if (dataset && Array.isArray(dataset.rows)) {
+    const idx = temporalColumnIndex(dataset.columns);
+    const temporalOf = (row: unknown) => (idx >= 0 && Array.isArray(row) ? row[idx] : undefined);
+    slicedRows = dataset.rows.length > capRows;
+    cappedDataset = { ...dataset, rows: capRecentRows(dataset.rows, capRows, temporalOf) };
+  }
+
+  return {
+    ...meta,
+    data: cappedData,
+    records: cappedRecords,
+    dataset: cappedDataset,
+    truncated: slicedRecords || slicedRows || csvTruncated || meta.truncated || false,
+  } as ResultContent;
+}
+
+/** Immutable: return a new card with its `content` slimmed (rows dropped/capped). */
+export const slimCard = (card: TakoCard, capRows: number | null): TakoCard =>
+  card.content == null
+    ? card
+    : { ...card, content: slimCardContent(card.content, capRows) };
+
+/**
+ * Slim a web result's `content`. Web `content.data` is the page's full
+ * extracted text — always dropped: it is billed per page AND is a large prose
+ * blob, so it is never auto-inlined. The model pulls it via tako_contents(url)
+ * when it actually needs the page text (title/url/snippet stay for citation).
+ */
+export const slimWebResult = (w: WebResult): WebResult =>
+  w.content == null
+    ? w
+    : { ...w, content: slimCardContent(w.content, null) };
+
 // Backend Usage — cost-plus usage for one metered request (mirrors the generated
 // `Usage` in generated/schemas.ts). `total_cost_usd` is the total quoted charge;
 // `compute` (the flat search/answer per-request rate) and `data` (the

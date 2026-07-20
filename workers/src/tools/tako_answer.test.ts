@@ -97,9 +97,7 @@ describe("tako_answer content-shape regression (format -> content_format)", () =
     const out = await takoAnswer.handler(
       {
         query: "US GDP",
-        sources: ["data", "web"],
-        include_contents: false,
-        country_code: "US",
+        sources: ["data", "web"],        country_code: "US",
         locale: "en-US",
         strict: false,
       },
@@ -123,9 +121,7 @@ describe("tako_answer handler", () => {
     const out = await takoAnswer.handler(
       {
         query: "What was US GDP in 2024?",
-        sources: ["data", "web"],
-        include_contents: false,
-        country_code: "US",
+        sources: ["data", "web"],        country_code: "US",
         locale: "en-US",
         strict: false,
       },
@@ -163,7 +159,7 @@ describe("tako_answer handler", () => {
     ]);
 
     const out = await takoAnswer.handler(
-      { query: "obscure query", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US", strict: false },
+      { query: "obscure query", sources: ["tako"], country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
 
@@ -177,7 +173,7 @@ describe("tako_answer handler", () => {
     mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     const out = await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US", strict: false },
+      { query: "test", sources: ["tako"], country_code: "US", locale: "en-US", strict: false },
       CTX,
     ) as Record<string, unknown>;
 
@@ -196,7 +192,7 @@ describe("tako_answer handler", () => {
     ]);
 
     await expect(
-      takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, country_code: "US", locale: "en-US", strict: false }, CTX),
+      takoAnswer.handler({ query: "q", sources: ["tako", "web"], country_code: "US", locale: "en-US", strict: false }, CTX),
     ).rejects.toThrow(/unexpected wire shape/);
   });
 });
@@ -210,7 +206,7 @@ describe("tako_answer input schema", () => {
   it("accepts the legacy \"tako\" synonym and folds it onto the data key", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
     await takoAnswer.handler(
-      { query: "q", sources: ["tako"], include_contents: false, country_code: "US", locale: "en-US", strict: false },
+      { query: "q", sources: ["tako"], country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
@@ -233,7 +229,7 @@ describe("tako_answer input schema", () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, country_code: "GB", locale: "en-GB", strict: false },
+      { query: "test", sources: ["tako"], country_code: "GB", locale: "en-GB", strict: false },
       CTX,
     );
 
@@ -260,7 +256,7 @@ describe("tako_answer contract guards", () => {
 
   it("reshapes the flat input into a body that satisfies the backend contract", () => {
     const body = buildAnswerBody({
-      query: "US GDP", sources: ["data", "web"], include_contents: true,
+      query: "US GDP", sources: ["data", "web"],
       country_code: "US", locale: "en-US", strict: false,
     });
     // The generated backend contract must accept the reshaped body.
@@ -276,7 +272,6 @@ describe("tako_answer graph grounding", () => {
       {
         query: "Tesla revenue",
         sources: ["data"],
-        include_contents: false,
         country_code: "US",
         locale: "en-US",
         node_ids: ["tesla-x1"],
@@ -294,11 +289,78 @@ describe("tako_answer graph grounding", () => {
   it("omits node_ids/strict when not provided", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
     await takoAnswer.handler(
-      { query: "q", sources: ["data"], include_contents: false,
+      { query: "q", sources: ["data"],
         country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
     expect(body.sources).toEqual({ data: { include_contents: false } });
+  });
+});
+
+describe("tako_answer strips inline row data (prose-first, fetch rows via tako_contents)", () => {
+  // A card the backend attached a full data preview to, plus a web result with
+  // inlined page text. answer must drop both — the synthesized prose is the
+  // payload — while keeping metadata (total_rows/content_format) + pointers.
+  const CARD_WITH_ROWS = {
+    card_id: "cpi-1",
+    title: "US Core CPI",
+    webpage_url: "https://trytako.com/c/cpi-1",
+    embed_url: "https://trytako.com/embed/cpi-1/",
+    nodes: [{ id: "cpi-x1", name: "Core CPI", type: "metric" }],
+    content: {
+      content_format: "json_compact",
+      cost: 0.001,
+      total_rows: 300,
+      truncated: true,
+      data: null,
+      records: null,
+      dataset: {
+        columns: [{ name: "Timestamp", type: "datetime" }, { name: "v", type: "number" }],
+        rows: Array.from({ length: 300 }, (_v, i) => [`2000-01-${i}`, i]),
+        total_rows: 300,
+        truncated: true,
+        ref: "cpi-ref",
+        sources: [],
+        provenance: "query",
+      },
+    },
+  };
+
+  it("nulls dataset/records/data on cited cards and drops web page text", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        answer: "Core CPI was 2.6% in Jun 2026.",
+        cards: [CARD_WITH_ROWS],
+        web_results: [
+          {
+            title: "CPI report",
+            url: "https://example.com/cpi",
+            snippet: "summary",
+            content: { content_format: null, cost: 0.02, data: "…full page text…" },
+          },
+        ],
+        request_id: "req-slim",
+      }),
+    ]);
+
+    const out = await takoAnswer.handler(
+      { query: "US core CPI", sources: ["data", "web"], country_code: "US", locale: "en-US", strict: false },
+      CTX,
+    );
+
+    const content = out.cards[0]?.content as Record<string, unknown>;
+    // Row payload dropped from all three shapes...
+    expect(content.dataset).toBeNull();
+    expect(content.records).toBeNull();
+    expect(content.data).toBeNull();
+    // ...but the "more data available, priced" signal + pointers survive.
+    expect(content.total_rows).toBe(300);
+    expect(content.content_format).toBe("json_compact");
+    expect(out.cards[0]?.webpage_url).toBe("https://trytako.com/c/cpi-1");
+    expect(out.cards[0]?.nodes).toHaveLength(1);
+    // Web page text dropped; snippet/url kept.
+    expect((out.web_results[0]?.content as Record<string, unknown>).data).toBeNull();
+    expect(out.web_results[0]?.snippet).toBe("summary");
   });
 });
