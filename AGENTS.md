@@ -63,7 +63,7 @@ Source of truth: `workers/src/tools/*.ts`. Tools are discovered at runtime via t
 1. `tako_search` — Fast retrieval of a **list of structured cards** (top renders as an inline chart); `effort: fast | instant`, `count` up to 20/source. Reach for it when you want data *outputs* to work with, or when fanning out queries in parallel to gather lots of results.
 2. `tako_answer` — Get **one** synthesized, citation-backed prose answer (arbiter over data + web) to a specific data question; ground in `["data"]`, `["web"]`, or both. Use when you want a direct written answer in a single call rather than a list of cards.
 3. `tako_contents` — Fetch underlying content (CSV or text) behind a result URL
-4. `tako_agent` — Answer Agent for multi-step data questions (on ChatGPT split into `tako_agent_start` / `tako_agent_wait`)
+4. `tako_agent` — Answer Agent for multi-step data questions (on ChatGPT split into `tako_agent_start` / `tako_agent_wait`). **Opt-in** — off by default; enabled per-connection via `?tools=agent` (see `workers/src/tools/_optional.ts`).
 5. `get_credit_balance` — Current credit balance
 
 ### Endpoints

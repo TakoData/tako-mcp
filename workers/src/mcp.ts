@@ -22,6 +22,10 @@ import {
 } from "./django.js";
 import type { Env } from "./env.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
+import {
+  OPTIONAL_TOOL_NAMES,
+  parseEnabledOptionalToolNames,
+} from "./tools/_optional.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import type { AnyToolModule, McpClientKind, ToolContext } from "./tools/types.js";
 
@@ -100,7 +104,18 @@ export function detectMcpClient(userAgent: string | null): McpClientKind {
 
 export function createMcpServer(
   ctx: ToolContext,
-  options: { iconsBaseUrl?: string; client?: McpClientKind } = {},
+  options: {
+    iconsBaseUrl?: string;
+    client?: McpClientKind;
+    /**
+     * Opt-in tool names the caller enabled for this request via the `tools`
+     * query param (resolved by `parseEnabledOptionalToolNames`). Tools in
+     * `OPTIONAL_TOOL_NAMES` are excluded from the default surface and
+     * registered only when their name appears here. Omitted → nothing opted
+     * in (the default surface), which is what tests and non-HTTP callers want.
+     */
+    enabledOptionalToolNames?: Set<string>;
+  } = {},
 ): McpServer {
   // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
   // one entry per the spec's matching rules: theme first, then size.
@@ -213,8 +228,22 @@ export function createMcpServer(
   // throw-on-empty pattern instead.
   const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
   const client = options.client ?? "unknown";
+  // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
+  // Empty by default → the default surface excludes every optional tool.
+  const enabledOptionalToolNames =
+    options.enabledOptionalToolNames ?? new Set<string>();
 
   for (const tool of TOOL_REGISTRY) {
+    // Opt-in gate: optional tools (currently the agent trio) are excluded
+    // from the default surface and registered only when enabled via the
+    // `tools` query param. Applied BEFORE the per-client filters below so a
+    // disabled tool never reaches client-variant selection.
+    if (
+      OPTIONAL_TOOL_NAMES.has(tool.name) &&
+      !enabledOptionalToolNames.has(tool.name)
+    ) {
+      continue;
+    }
     if (CHATGPT_ONLY_TOOL_NAMES.has(tool.name) && client !== "chatgpt") {
       continue;
     }
@@ -845,15 +874,30 @@ export async function handleMcpRequest(
     // env (mcp.tako.com, mcp.staging.tako.com, *.workers.dev) advertises
     // icons it itself serves under `/icons/*`. Prevents staging
     // connectors from referencing prod URLs and vice versa.
-    const requestOrigin = new URL(request.url).origin;
+    const url = new URL(request.url);
+    const requestOrigin = url.origin;
     // Detect calling client from User-Agent so we can suppress the
     // chart widget on claude.ai (constrained iframe container) and
     // route ChatGPT through the agent split pair. See
     // `detectMcpClient` for the matching rules.
     const client = detectMcpClient(request.headers.get("user-agent"));
+    // Opt-in tools: the agent is off by default and enabled per-connection
+    // via `?tools=agent` (see `_optional.ts`). Parsing is tolerant — unknown
+    // tokens are ignored, never fatal. Log the raw value and resolved set so
+    // `wrangler tail` shows what a given connector asked for.
+    const rawToolsParam = url.searchParams.get("tools");
+    const enabledOptionalToolNames = parseEnabledOptionalToolNames(rawToolsParam);
+    if (rawToolsParam !== null) {
+      console.log(
+        `[mcp] tools param=${JSON.stringify(rawToolsParam)} enabled=${
+          [...enabledOptionalToolNames].join(",") || "(none)"
+        }`,
+      );
+    }
     const server = createMcpServer(ctx, {
       iconsBaseUrl: requestOrigin,
       client,
+      enabledOptionalToolNames,
     });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker

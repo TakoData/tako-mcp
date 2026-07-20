@@ -216,19 +216,15 @@ describe("worker routing", () => {
       };
     };
     const names = body.result.tools.map((t) => t.name).sort();
-    // Default tool set — NO `start_deep_knowledge_search`,
-    // `wait_for_knowledge_search`, `tako_agent_start`, or
-    // `tako_agent_wait`. Those are ChatGPT-only (see
-    // `mcp.ts`'s `CHATGPT_ONLY_TOOL_NAMES`); on Claude.ai and other
-    // clients with `resetTimeoutOnProgress` support, deep search
-    // happens inside `tako_search`'s auto-escalation path and
-    // agent runs use the single `tako_agent` tool.
-    // Chart-authoring tools (`create_chart`, `get_chart_image`,
-    // `open_chart_ui`) were removed in 0.3.0; `tako_search` is the
-    // sole owner of the chart widget (auto-renders the top card inline).
+    // Default tool set with NO `tools` query param — the agent is opt-in and
+    // therefore absent. `tako_agent` (single-call) and the ChatGPT split pair
+    // `tako_agent_start` / `tako_agent_wait` are all in `OPTIONAL_TOOL_NAMES`
+    // (see `_optional.ts`) and only appear when the connector adds
+    // `?tools=agent`. Chart-authoring tools (`create_chart`, `get_chart_image`,
+    // `open_chart_ui`) were removed in 0.3.0; `tako_search` is the sole owner
+    // of the chart widget (auto-renders the top card inline).
     expect(names).toEqual([
       "get_credit_balance",
-      "tako_agent",
       "tako_answer",
       "tako_contents",
       "tako_graph_node",
@@ -278,8 +274,8 @@ describe("worker routing", () => {
     }
   });
 
-  it("POST /mcp tools/list adds the agent split pair on ChatGPT clients", async () => {
-    const res = await SELF.fetch("https://example.com/mcp", {
+  it("POST /mcp?tools=agent adds the agent split pair on ChatGPT clients", async () => {
+    const res = await SELF.fetch("https://example.com/mcp?tools=agent", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -305,16 +301,14 @@ describe("worker routing", () => {
       };
     };
     const names = new Set(body.result.tools.map((t) => t.name));
-    // ChatGPT agent split tools are present.
+    // With the agent opted in, ChatGPT gets the split pair...
     expect(names.has("tako_agent_start")).toBe(true);
     expect(names.has("tako_agent_wait")).toBe(true);
-    // The single tako_agent tool is excluded for chatgpt.
+    // ...and NOT the single tako_agent tool (excluded for chatgpt).
     expect(names.has("tako_agent")).toBe(false);
-    // The default tools (minus tako_agent) are still present alongside.
+    // The default tools are still present alongside.
     expect(names.has("tako_search")).toBe(true);
-    // 11 total tools − 1 (tako_agent excluded) + 2 chatgpt-only − 2 (those same
-    // chatgpt-only are in the 11) = 11 − 1 = 10
-    // More directly: 9 default-client tools − tako_agent + tako_agent_start + tako_agent_wait = 10
+    // 8 default tools + tako_agent_start + tako_agent_wait = 10.
     expect(body.result.tools).toHaveLength(10);
 
     // `tako_search` is the sole chart-widget tool on ChatGPT after 0.3.0.
@@ -330,6 +324,104 @@ describe("worker routing", () => {
       "ui/resourceUri": "ui://tako/embed/chart",
       "openai/outputTemplate": "ui://tako/embed/chart",
     });
+  });
+
+  it("POST /mcp (no tools param) omits every agent tool on ChatGPT clients", async () => {
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "ChatGPT/1.0 (+https://chatgpt.com)",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    const names = new Set(body.result.tools.map((t) => t.name));
+    // The agent is opt-in: without `?tools=agent`, ChatGPT gets neither the
+    // split pair nor the single tool — just the 8 default tools.
+    expect(names.has("tako_agent_start")).toBe(false);
+    expect(names.has("tako_agent_wait")).toBe(false);
+    expect(names.has("tako_agent")).toBe(false);
+    expect(names.has("tako_search")).toBe(true);
+    expect(body.result.tools).toHaveLength(8);
+  });
+
+  it("POST /mcp?tools=agent adds the single tako_agent tool on non-ChatGPT clients", async () => {
+    const res = await SELF.fetch("https://example.com/mcp?tools=agent", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        // Non-ChatGPT UA → single-call `tako_agent`, not the split pair.
+        "user-agent": "claude-mcp-client/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    const names = new Set(body.result.tools.map((t) => t.name));
+    // Claude / unknown clients get the single-call tool...
+    expect(names.has("tako_agent")).toBe(true);
+    // ...and never the ChatGPT-only split pair.
+    expect(names.has("tako_agent_start")).toBe(false);
+    expect(names.has("tako_agent_wait")).toBe(false);
+    expect(names.has("tako_search")).toBe(true);
+    // 8 default tools + tako_agent = 9.
+    expect(body.result.tools).toHaveLength(9);
+  });
+
+  it("POST /mcp?tools=<unknown> ignores the bad value and serves the default 8 tools", async () => {
+    // A typo (or any unrecognized alias) in `?tools=` must never break the
+    // connection: unknown tokens are dropped, no optional tool is enabled, and
+    // the request layer still returns exactly the 8 defaults. This guards the
+    // parser's "unknown token is never fatal" promise end-to-end.
+    const res = await SELF.fetch("https://example.com/mcp?tools=nope", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "claude-mcp-client/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    const names = new Set(body.result.tools.map((t) => t.name));
+    // No agent tool sneaks in from an unrecognized alias.
+    expect(names.has("tako_agent")).toBe(false);
+    expect(names.has("tako_agent_start")).toBe(false);
+    expect(names.has("tako_agent_wait")).toBe(false);
+    expect(names.has("tako_search")).toBe(true);
+    expect(body.result.tools).toHaveLength(8);
   });
 
   it("POST /mcp tools/list serves one client-agnostic tako_search description", async () => {

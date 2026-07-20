@@ -6,10 +6,12 @@ An MCP (Model Context Protocol) server that provides access to Tako's knowledge 
 
 This MCP server enables AI agents to:
 
-- **Search** Tako's knowledge base for charts and data visualizations
+- **Search** Tako's knowledge base for charts and live data, rendered as interactive charts
 - **Answer** data questions with grounded, citation-backed prose
 - **Fetch** underlying content (CSV or text) behind result URLs
-- **Run** Tako's Answer Agent for deep, multi-step research
+- **Explore** Tako's data graph to see exactly what data exists for an entity or metric
+- **Visualize** your own structured data as an embeddable chart
+- **Run** Tako's Answer Agent for deep, multi-step research (opt-in — [enable it](#enabling-the-tako-agent-opt-in))
 
 ## Quick start
 
@@ -99,19 +101,16 @@ Use this if you're connecting Tako from **Claude.ai** or **ChatGPT** — the con
 
 ### Prerequisites
 
-Before connecting from Claude.ai or ChatGPT:
+Before connecting from Claude.ai or ChatGPT, just **sign up or sign in at [tako.com](https://tako.com)** with the identity you'll use to authorize.
 
-1. **Sign up or sign in at [tako.com](https://tako.com).**
-2. **Mint an API token** at tako.com → settings → API tokens.
+You do **not** need to mint an API token yourself. The consent flow mints a
+per-host Tako API key for you on first authorize (named "MCP: <client>", visible
+and revocable at tako.com → settings → API tokens). Minting is additive —
+connecting a new host never rotates another host's key — and Tako trims your
+oldest MCP key once you exceed ten. You only see a "too many API keys" page if
+your account is at the overall key cap, in which case revoke one and reconnect.
 
-Step 2 is no longer required: the consent flow mints a per-host Tako API key for
-you on first authorize (named "MCP: <client>", visible and revocable at
-trytako.com → settings → API tokens). Minting is additive — connecting a new
-host never rotates another host's key — and Tako trims your oldest MCP key once
-you exceed ten. You only see a "too many API keys" page if your account is at
-the overall key cap, in which case revoke one and reconnect.
-
-![tako.com Settings → API Key with Regenerate button](docs/images/tako-api-token-generate.png)
+![tako.com Settings → API tokens](docs/images/tako-api-token-generate.png)
 
 ### What you'll see during connect
 
@@ -139,15 +138,11 @@ The host itself (Claude.ai or ChatGPT) may also display its own consent prompt b
 
 2. Click **Add custom connector**.
 
-   > _[Screenshot: Claude.ai "Add custom connector" dialog]_
-
 3. Paste `https://mcp.tako.com/mcp` and click **Connect**.
 
 4. You'll be taken through the Tako sign-in flow described above.
 
 5. After consent, **Tako** appears in your connector list as connected.
-
-   ![Claude.ai connector list showing Tako connected](docs/images/claude-connectors-landing.png)
 
 ### ChatGPT
 
@@ -191,12 +186,32 @@ There are two ways to break the connection, and they have different blast radius
 
 Tools are discovered automatically via the MCP `tools/list` handshake; your client always sees the live surface. Auth is connection-level (Bearer token or OAuth) — there is no per-call `api_token` argument.
 
-- **`tako_search`** — Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on hosts that support MCP Apps (Claude.ai, ChatGPT). Choose `sources` (`["tako"]` default, `["web"]`, or both) and `effort` (`fast` default | `instant`). For deep, multi-step research — or when search returns nothing — use `tako_agent`.
-- **`tako_answer`** — Get a single grounded, citation-backed prose answer. Ground in `["tako"]`, `["web"]`, or both (default).
+- **`tako_search`** — Fast search over Tako's curated knowledge graph and the live web for charts and live data on any topic. The top result renders as an interactive chart — inline as an MCP Apps widget on ChatGPT, and with an **Open in Tako** link everywhere. Choose `sources` (`["data"]`, `["web"]`, or **both by default**) and `effort` (`fast` default | `instant`). For deep, multi-step research — or when search returns nothing — use `tako_agent` (an [opt-in tool](#enabling-the-tako-agent-opt-in)).
+- **`tako_answer`** — Get a single grounded, citation-backed prose answer. Ground in `["data"]`, `["web"]`, or **both (default)**.
 - **`tako_contents`** — Fetch the content behind a result URL: a Tako card URL returns a CSV; any other URL returns the page's extracted text.
+- **`tako_graph_search`** — Resolve a name (an entity or a metric) to Tako data-graph node IDs, so you can see **what data Tako has** for it and pin those IDs into `tako_search` / `tako_answer` for a strong retrieval boost. Graph calls are free.
+- **`tako_graph_related`** — Explore what a resolved node connects to — its available metrics, related entities, and named relationships. This is the map of what data Tako actually holds for an entity.
+- **`tako_graph_node`** — Hydrate a bare node ID into full detail (name, aliases, subtype, description) — useful for confirming what a node returned on a search card actually is.
 - **`tako_visualize`** — Create an embeddable chart/card directly from your own structured data (Tako's [Thin-Viz](https://tako.com/docs/) API). Supply typed `components` (timeseries, bar, table, financial boxes, …); the card auto-renders inline and returns `webpage_url` / `embed_url`.
-- **`tako_agent`** — Run Tako's **Answer Agent**: opinionated, multi-step research for complex questions that need reasoning across many retrievals. Returns a synthesized, citation-backed answer plus supporting chart cards. Distinct from one-shot `tako_answer` (a single grounded lookup) — the agent is slower (~30–90s) but far more thorough. (On ChatGPT this is exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.)
+- **`tako_agent`** — _Opt-in tool ([enable it](#enabling-the-tako-agent-opt-in))._ Run Tako's **Answer Agent**: opinionated, multi-step research for complex questions that need reasoning across many retrievals. Returns a synthesized, citation-backed answer plus supporting chart cards. Distinct from one-shot `tako_answer` (a single grounded lookup) — the agent is slower (~30–90s) but far more thorough. (On ChatGPT this is exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.)
 - **`get_credit_balance`** — Check the connected account's API credit balance.
+
+### Enabling the Tako agent (opt-in)
+
+The Answer Agent is **off by default** — the everyday tools (`tako_search`, `tako_answer`, `tako_contents`, …) cover most questions, and the agent is a slower, heavier tool you turn on when you want it. Enable it by adding `?tools=agent` to the MCP URL:
+
+```
+https://mcp.tako.com/mcp?tools=agent
+```
+
+For example, with the CLI:
+
+```bash
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" \
+  --header "Authorization: Bearer $TAKO_API_TOKEN"
+```
+
+`agent` is an alias — with it enabled, the server exposes the single-call `tako_agent` on most clients and automatically switches to the `tako_agent_start` / `tako_agent_wait` pair on ChatGPT. Unknown values in `?tools=` are ignored, so a typo never breaks the connection. Omit the parameter entirely to run without the agent.
 
 ## Example Flow
 
@@ -207,7 +222,7 @@ Tools are discovered automatically via the MCP `tools/list` handshake; your clie
 
 ## Breaking changes (v0.3.0)
 
-- The current tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_visualize`**, **`tako_agent`** (plus the ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), and **`get_credit_balance`**.
+- The default tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_graph_search`**, **`tako_graph_related`**, **`tako_graph_node`**, **`tako_visualize`**, and **`get_credit_balance`**, plus the opt-in **`tako_agent`** (the ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), enabled with [`?tools=agent`](#enabling-the-tako-agent-opt-in).
 - The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
 - The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
 
@@ -228,7 +243,7 @@ AI Agent (Claude Code/Desktop, Cursor, Claude.ai, ChatGPT, etc.)
     ↓
 Cloudflare Worker  ──  Bearer auth / OAuth, tool dispatch
     ↓
-Tako Django API  (api.tako.com)
+Tako Django API  (tako.com)
 ```
 
 The Worker extracts the Bearer token (or OAuth-derived token), validates the MCP request, calls the appropriate Django endpoint with the user's token forwarded as `X-API-Key`, and returns structured tool results. Code lives in `workers/` of this repo.
