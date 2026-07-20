@@ -13,6 +13,10 @@
 .env.*
 .venv/
 
+# Superpowers specs/plans are internal working docs — this repo is public, so
+# keep them local-only (never commit them).
+docs/superpowers/
+
 # Workers / Node
 node_modules/
 .wrangler/

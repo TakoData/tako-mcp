@@ -390,6 +390,40 @@ describe("worker routing", () => {
     expect(body.result.tools).toHaveLength(9);
   });
 
+  it("POST /mcp?tools=<unknown> ignores the bad value and serves the default 8 tools", async () => {
+    // A typo (or any unrecognized alias) in `?tools=` must never break the
+    // connection: unknown tokens are dropped, no optional tool is enabled, and
+    // the request layer still returns exactly the 8 defaults. This guards the
+    // parser's "unknown token is never fatal" promise end-to-end.
+    const res = await SELF.fetch("https://example.com/mcp?tools=nope", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "claude-mcp-client/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    const names = new Set(body.result.tools.map((t) => t.name));
+    // No agent tool sneaks in from an unrecognized alias.
+    expect(names.has("tako_agent")).toBe(false);
+    expect(names.has("tako_agent_start")).toBe(false);
+    expect(names.has("tako_agent_wait")).toBe(false);
+    expect(names.has("tako_search")).toBe(true);
+    expect(body.result.tools).toHaveLength(8);
+  });
+
   it("POST /mcp tools/list serves one client-agnostic tako_search description", async () => {
     // `tako_search` is now fast-only (`/api/v3/search`) with no in-tool
     // deep path, so the per-client description split is gone: every host
