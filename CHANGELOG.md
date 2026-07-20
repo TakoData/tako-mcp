@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.10.0](https://github.com/TakoData/tako-mcp/compare/v0.9.0...v0.10.0) (2026-07-20)
+
+
+### Features
+
+* make the Tako agent an opt-in tool via the tools query parameter ([c5815ac](https://github.com/TakoData/tako-mcp/commit/c5815ac28c8df02189108f308f40f18055793acb))
+* **tools:** make Tako agent opt-in via ?tools=agent ([8713944](https://github.com/TakoData/tako-mcp/commit/871394480e4e9abe591fef89a5266197be3a5fc7))
+* **tools:** make tako_visualize, tako_graph_node, get_credit_balance opt-in ([5c7ea64](https://github.com/TakoData/tako-mcp/commit/5c7ea64cf29c11064eb813664ed336760b50621f))
+* **tools:** make tako_visualize, tako_graph_node, get_credit_balance opt-in ([92d0c73](https://github.com/TakoData/tako-mcp/commit/92d0c73df783a0a9a6c7d27650f0c5cc8002239a))
+* **tools:** slim inline data + clarify search vs answer routing ([dbba122](https://github.com/TakoData/tako-mcp/commit/dbba1220218dcccb98cac2aa435ea7e0e48b87ac))
+* **tools:** slim inline data for token efficiency + clarify search vs answer ([0e03e91](https://github.com/TakoData/tako-mcp/commit/0e03e91bb7260e9011e116b31ac65c2bcb564cc1))
+
+
+### Bug Fixes
+
+* **search:** make inline preview cap order-aware; guard CSV path ([8baa624](https://github.com/TakoData/tako-mcp/commit/8baa624001d454a9cad3883ee80ffc56588b5f12))
+
+
+### Chores
+
+* address PR [#136](https://github.com/TakoData/tako-mcp/issues/136) review comments ([1712b33](https://github.com/TakoData/tako-mcp/commit/1712b33de40bfef64ffda53c82f846c46bbb5ad1))
+* sync OpenAPI spec from monorepo ([#140](https://github.com/TakoData/tako-mcp/issues/140)) ([c254a90](https://github.com/TakoData/tako-mcp/commit/c254a9046c2e5f9938233e25f3f7b5fb9ec6839d))
+
+
+### Documentation
+
+* **agent-card:** align agent.json with answer-vs-search model + add graph skill ([fb11b8e](https://github.com/TakoData/tako-mcp/commit/fb11b8e202e3b5d6c505272969bed2b8dd9d5588))
+* **readme:** thorough accuracy pass ([9c20fbe](https://github.com/TakoData/tako-mcp/commit/9c20fbe1c81b36b609e4fc69edd66e76e739a8d0))
+* **spec:** correct test-plan to match implementation (index.test.ts) ([4d6e85c](https://github.com/TakoData/tako-mcp/commit/4d6e85cff0b093e2d554d0c50f5d8097d58cd0ee))
+* **spec:** opt-in Tako agent via the tools parameter ([96d5d8e](https://github.com/TakoData/tako-mcp/commit/96d5d8e47bca961830cdacad5cf7c944c20468e1))
+* **tools:** clarify when to escalate from search to tako_contents ([b85350e](https://github.com/TakoData/tako-mcp/commit/b85350e91d04bcf8b21affa1b7a59a82a863a74b))
+* **tools:** differentiate tako_answer vs tako_search routing by output ([a153b42](https://github.com/TakoData/tako-mcp/commit/a153b42e769e49e776acabe99e27214b38aa9140))
+* **tools:** make answer-vs-search distinction explicit + tell model to trust tako_answer ([eac9b1f](https://github.com/TakoData/tako-mcp/commit/eac9b1f133f36802bd4186bec5b2e1ac72bacd06))
+* **tools:** reference the Answer Agent only when it's an available tool ([de43c37](https://github.com/TakoData/tako-mcp/commit/de43c37d32b5f30ae9be006d4aadf862c0f5ca0c))
+* **tools:** reference the Answer Agent only when it's an available tool ([5ac76d3](https://github.com/TakoData/tako-mcp/commit/5ac76d3066824dcf45ca146158fa06c1e38500ef))
+
+
+### Refactors
+
+* **tools:** tighten tako_search description to cut per-session context ([3031630](https://github.com/TakoData/tako-mcp/commit/3031630e426ea50459d2e93545bd08f8e79368e7))
+
 ## [0.9.0](https://github.com/TakoData/tako-mcp/compare/v0.8.3...v0.9.0) (2026-07-18)
 
 
