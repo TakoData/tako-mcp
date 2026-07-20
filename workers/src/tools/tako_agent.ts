@@ -10,9 +10,9 @@
  * is registered instead (see mcp.ts).
  *
  * PRODUCT: the public agent split (TAKO-3371) has two products — the Answer
- * Agent (cited prose + cards; this tool) and the Search Agent (structured
+ * Agent (cited prose + cards; this tool) and the Retrieval Agent (structured
  * output / dataset slots). MCP exposes ONLY the Answer Agent: chat hosts want
- * a synthesized answer, and the Search Agent's structured-output feature has
+ * a synthesized answer, and the Retrieval Agent's structured-output feature has
  * no chat-host consumer (it lives in the SDK). `effort: "medium"` already
  * routed to the Answer Agent (ORCHESTRATOR) on the retired generic
  * `/v1/agent/runs`, so pointing at `/v1/agent/answer/runs` is
