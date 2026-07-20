@@ -227,6 +227,12 @@ export function createMcpServer(
   // success state. Most chart-conditional tools should rely on the
   // throw-on-empty pattern instead.
   const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
+  // Optional tools that stay on the DEFAULT surface for ChatGPT only.
+  // `tako_visualize` ships the chart widget ChatGPT renders; hiding it
+  // behind `?tools=` would silently break the ChatGPT app experience,
+  // so ChatGPT keeps it without opting in. Every other client must
+  // enable it via `?tools=visualize`.
+  const CHATGPT_DEFAULT_ON_TOOL_NAMES = new Set(["tako_visualize"]);
   const client = options.client ?? "unknown";
   // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
   // Empty by default → the default surface excludes every optional tool.
@@ -234,13 +240,16 @@ export function createMcpServer(
     options.enabledOptionalToolNames ?? new Set<string>();
 
   for (const tool of TOOL_REGISTRY) {
-    // Opt-in gate: optional tools (currently the agent trio) are excluded
-    // from the default surface and registered only when enabled via the
-    // `tools` query param. Applied BEFORE the per-client filters below so a
-    // disabled tool never reaches client-variant selection.
+    // Opt-in gate: optional tools (see `OPTIONAL_TOOL_ALIASES` in
+    // `_optional.ts`) are excluded from the default surface and registered
+    // only when enabled via the `tools` query param — except tools ChatGPT
+    // keeps by default (`CHATGPT_DEFAULT_ON_TOOL_NAMES`). Applied BEFORE the
+    // per-client filters below so a disabled tool never reaches
+    // client-variant selection.
     if (
       OPTIONAL_TOOL_NAMES.has(tool.name) &&
-      !enabledOptionalToolNames.has(tool.name)
+      !enabledOptionalToolNames.has(tool.name) &&
+      !(client === "chatgpt" && CHATGPT_DEFAULT_ON_TOOL_NAMES.has(tool.name))
     ) {
       continue;
     }
