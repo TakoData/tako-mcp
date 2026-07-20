@@ -23,22 +23,24 @@ Tools are discovered at runtime via `tools/list`. There is no per-call `api_toke
 ## Available Tools
 
 ### tako_search
-Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on MCP Apps hosts. Returns `cards` (structured Tako cards) plus `web_results` and a `request_id`. A card is metadata plus a chart, NOT its underlying rows — to read or analyze the actual rows or data, pass `include_contents: true` for a small free inline preview, or call `tako_contents` on the result URL for the full data. For deep, multi-step research — or when search returns nothing — use `tako_agent` (opt-in; enable with `?tools=agent`).
+Use this to **pull the actual data** — the real rows/time-series to compute over, compare, or synthesize into your own thesis. Fast search over Tako's curated knowledge graph (and the live web when asked); the top result auto-renders inline as an interactive chart on MCP Apps hosts. Returns `cards` (structured Tako cards, each with a free inline preview of its latest rows by default) plus `web_results` and a `request_id`.
+
+**Parallelize it.** Decompose a broad or multi-part request into several NARROW, single entity+metric queries and run them concurrently — one metric for one entity per query. For "US CPI, core CPI, PCE and core PCE inflation", send four separate searches ("US CPI inflation", "US core CPI inflation", "US PCE inflation", "US core PCE inflation"), NOT one broad multi-part query. Narrow queries retrieve far more accurately; you assemble the combined result from the data. For the FULL data (or a web page's text) call `tako_contents` on the result URL. For deep, multi-step research — or when search returns nothing — use `tako_agent` (opt-in; enable with `?tools=agent`).
 
 Parameters:
-- `query` (string, required): Natural-language search query
+- `query` (string, required): Natural-language search query — keep it narrow (one entity + one metric); parallelize multiple.
 - `sources` (array): both by default (`["data","web"]`); pass `["data"]` for curated data only or `["web"]` for live web only. (`"tako"` is a legacy synonym for `"data"`.)
 - `effort` (string, "fast" | "instant"): Search effort; "fast" (default) or "instant" (fastest, cached embeds). Omit for fast.
 - `count` (integer, 1-20, default 10): Maximum results per source
-- `include_contents` (boolean, default false): When true, inline each result's data directly in the response (Tako cards: a small FREE preview of the most-recent rows — call `tako_contents` for the full, priced export; web results: page text, billed per page) so you can read it without a follow-up `tako_contents` call.
+- `include_contents` (boolean, default **true**): Controls the Tako **data** source only. When true (default), each Tako card inlines a small FREE preview of its 5 most-recent rows so you can read real numbers immediately. Set false for a pointers-only response (title/chart/nodes, no rows) — useful when fanning out many parallel queries and minimizing tokens. Either way the FULL export is a separate (priced) `tako_contents` call. Web page text is NEVER auto-inlined (it is billed per page); fetch it with `tako_contents` on the web result's url.
 - `country_code` (string, default "US"): ISO country code
 - `locale` (string, default "en-US"): Locale
 
 ### tako_answer
-Ask a factual question and get back a single grounded, citation-backed text answer.
+Ask a **single, specific, self-contained** data question and get back one grounded, citation-backed prose answer — written for you, so you don't touch the underlying rows. Best when you want THE answer to a known question (a current/historical value, a statistic, a price, a comparison of two named entities). Also returns the supporting cards it cited (metadata + chart + pointers; no inline rows). If you instead want the actual data to work with, or your question is broad/multi-part, use `tako_search` and parallelize it (see above) — do NOT send a broad multi-part question here. There is no `include_contents`: to dig into a cited card's rows or a cited web page's text, call `tako_contents` on that result's url.
 
 Parameters:
-- `query` (string, required): Natural-language question
+- `query` (string, required): Natural-language question — one specific, self-contained question.
 - `sources` (array, optional): both by default (`["data","web"]`); pass `["data"]` for curated data only or `["web"]` for live web only. (`"tako"` is a legacy synonym for `"data"`.)
 - `country_code` (string, default "US"): ISO country code
 - `locale` (string, default "en-US"): Locale

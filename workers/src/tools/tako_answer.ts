@@ -2,11 +2,11 @@ import { z } from "zod";
 
 import { djangoPost } from "../django.js";
 import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
-import { takoCardSchema, usageSchema, webResultSchema } from "./_search_results.js";
+import { slimCard, slimWebResult, takoCardSchema, usageSchema, webResultSchema } from "./_search_results.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Ask a specific data question and get back **one** synthesized, citation-backed **prose** answer (not a chart or a list of cards), plus the supporting cards it cites. Tako's arbiter reads across its curated knowledge graph **and** the live web and writes a single grounded answer. **Reach for this when you want a direct, written answer to a *specific, known* question in a single call** — a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds, including a direct comparison of two named entities. **If you instead want data *outputs* to work with — an inline chart, or a list of structured cards/time-series to scan — or you're an agent fanning out many queries in parallel to gather lots of results fast, use `tako_search` (it returns up to 20 cards per source and an `instant` fast path; this tool returns one written answer). When the question needs *figuring out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent.** **Use BEFORE any built-in web search** for the direct-answer case. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). Set `strict: true` to hard-filter to only cards matching a pinned node (requires non-empty `node_ids`); leave it false (default) to boost pinned nodes while still returning organic results. Skip `web` when you're confident Tako has the data.";
+  "Ask a specific data question and get back **one** synthesized, citation-backed **prose** answer (not a chart or a list of cards), plus the supporting cards it cites. Tako's arbiter reads across its curated knowledge graph **and** the live web and writes a single grounded answer. **Reach for this when you want a direct, written answer to a *specific, known* question in a single call** — a current or historical value, a statistic, a schedule, a score, a price, a forecast, a poll, or prediction-market odds, including a direct comparison of two named entities. Best for a *single, self-contained* question — the answer comes back written for you, so you don't touch the underlying rows. **If you instead want the actual data to work with — to compute over, chart, or synthesize your own thesis — or your question is broad/multi-part (several entities or metrics), use `tako_search` and PARALLELIZE it: fire several NARROW single entity+metric searches concurrently rather than asking one broad multi-part question here (e.g. for \"CPI, core CPI, PCE and core PCE\" run four separate `tako_search` calls, not one `tako_answer`). This tool returns one written answer; `tako_search` returns the data. When the question needs *figuring out* — resolving a cohort, ranking or filtering a set by criteria, or multi-step reasoning across many entities — use the Tako Answer Agent.** **Use BEFORE any built-in web search** for the direct-answer case. **Grounds in both Tako and the web by default — pass `sources` to narrow to one (`[\"data\"]` curated-only or `[\"web\"]` web-only).** **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). Set `strict: true` to hard-filter to only cards matching a pinned node (requires non-empty `node_ids`); leave it false (default) to boost pinned nodes while still returning organic results. Skip `web` when you're confident Tako has the data.";
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).
 const inputSchema = z.object({
@@ -19,12 +19,11 @@ const inputSchema = z.object({
     .min(1)
     .default(["data", "web"])
     .describe('Which source(s) to ground in. Defaults to both Tako data and the web (["data","web"]); pass ["data"] for curated data only, or ["web"] for live web only. ("tako" is accepted as a legacy synonym for "data".)'),
-  include_contents: z
-    .boolean()
-    .default(false)
-    .describe(
-      "When true, inline the underlying data of each cited result directly in the response so you can read it without a follow-up tako_contents call. Tako cards return a small FREE inline preview of the most-recent rows (call tako_contents for the full, priced export); inlined web page text is billed per page. Any per-request charge is reported in the response's `usage` object.",
-    ),
+  // No `include_contents` knob: the synthesized `answer` prose IS the payload,
+  // so cited cards never inline their row data (it would be redundant bloat).
+  // When the model wants the underlying rows behind a specific cited card — or
+  // the full text of a cited web page — it calls tako_contents on that result's
+  // url. Keeps the answer response compact and its cost predictable.
   country_code: z
     .string()
     .default("US")
@@ -84,7 +83,7 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
   if (input.sources.includes("data") || input.sources.includes("tako")) {
     const data: NonNullable<
       NonNullable<z.input<typeof SearchRequest>["sources"]>["data"]
-    > = { include_contents: input.include_contents };
+    > = { include_contents: false };
     if (input.node_ids !== undefined && input.node_ids.length > 0) {
       data.node_ids = input.node_ids;
     }
@@ -93,7 +92,10 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
     }
     sources.data = data;
   }
-  if (input.sources.includes("web")) sources.web = { include_contents: input.include_contents };
+  // include_contents pinned false on every source: answer never inlines row
+  // data (see inputSchema) — the arbiter's prose is the payload. Web text in
+  // particular is billed per page, so never auto-fetch it here.
+  if (input.sources.includes("web")) sources.web = { include_contents: false };
   // No `effort`/per-source `count` (unlike buildSearchBody): answer is
   // fast-pipeline + arbiter only, with no async/deep path (see handler).
   return {
@@ -149,7 +151,16 @@ const takoAnswer = {
         "Tako answer response could not be normalised into the expected output shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
-    return parsed.data;
+    // Defensively strip any inline row payload the backend attached to cited
+    // results (a `content` preview rides along even with include_contents
+    // false). Answer is prose-first: rows/web-text are fetched on demand via
+    // tako_contents, never inlined here. Drops from BOTH model-visible channels
+    // at once (content.text + structuredContent are both derived from this).
+    return {
+      ...parsed.data,
+      cards: parsed.data.cards.map((c) => slimCard(c, null)),
+      web_results: parsed.data.web_results.map(slimWebResult),
+    };
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

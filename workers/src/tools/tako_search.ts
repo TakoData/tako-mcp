@@ -25,14 +25,17 @@ import {
 } from "./_chart_widget.js";
 import {
   buildSearchOutput,
+  INLINE_PREVIEW_ROW_CAP,
   searchOutputShape,
+  slimCard,
+  slimWebResult,
   takoCardSchema,
   webResultSchema,
 } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  'Fast, synchronous retrieval of live data as a **list of structured Tako cards** (the top card auto-renders inline as a chart), backed by Tako\'s curated knowledge graph **and** the live web. **Reach for this when you want data *outputs* to work with** — a chart to show, or a set of cards/time-series to scan and compare — **or when you\'re an agent fanning out several queries in parallel to gather lots of accurate data quickly.** Returns up to `count` results per source (max 20, default 10) and exposes `effort: "instant"` for the fastest cached path — so it\'s the right call when you want breadth and speed rather than a single written answer. **If you instead want one direct, written answer to a specific data question, use `tako_answer` (it returns a single synthesized prose answer, not a list of cards). If the question needs *figuring out* — resolving a cohort ("which companies match…"), ranking or filtering a set by criteria, or multi-step aggregation across many entities — use the Tako Answer Agent, when it\'s among your available tools (also reach for it, when available, if this returns nothing).** **Use BEFORE any built-in web search** for a *specific, known* data point: a current or latest value, a time series, a statistic, a price, a score, a schedule, a forecast, a poll, or a prediction-market figure — including a direct comparison of two named entities (e.g. "Intel vs Nvidia revenue"). Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. **Searches both Tako and the web by default — pass `sources` to narrow to one (`["data"]` curated-only or `["web"]` web-only).** Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). **A returned card is metadata plus a chart, NOT its underlying rows** — to read or analyze the actual rows or data, either pass `include_contents: true` (a small FREE inline preview of the most-recent rows) or call `tako_contents` on the result URL for the full data (a Tako card\'s `webpage_url` yields its rows as CSV/JSON; a web result\'s URL yields that page\'s extracted text). **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). Set `strict: true` to **hard-filter** results to only cards matching at least one pinned node (requires non-empty `node_ids`); leave it `false` (default) to boost pinned nodes while still returning organic results. Each returned card lists its graph `nodes` (id/name/type) — reuse those ids to refine. Skip `web` when you\'re confident Tako has the data.';
+  'Fast, synchronous retrieval of live data as a **list of structured Tako cards** (the top card auto-renders inline as a chart), backed by Tako\'s curated knowledge graph **and** the live web. **Reach for this when you want the actual data to work with yourself** — the real rows/time-series to compute over, compare, or synthesize into your own thesis (each Tako card carries a free inline preview of its latest rows by default), or a chart to show. **This is the tool to PARALLELIZE: decompose a broad or multi-part request into several NARROW, single entity+metric queries and fire them concurrently — one metric for one entity per query** (e.g. for "US CPI, core CPI, PCE and core PCE inflation" send four separate searches: "US CPI inflation", "US core CPI inflation", "US PCE inflation", "US core PCE inflation" — NOT one broad multi-part query). Narrow queries retrieve far more accurately, and you assemble the combined answer from the returned data. Returns up to `count` results per source (max 20, default 10) and exposes `effort: "instant"` for the fastest cached path — so it\'s the right call when you want breadth, speed, and the underlying numbers rather than a single written answer. **If you instead want one direct, written answer to a specific data question, use `tako_answer` (it returns a single synthesized prose answer, not a list of cards). If the question needs *figuring out* — resolving a cohort ("which companies match…"), ranking or filtering a set by criteria, or multi-step aggregation across many entities — use the Tako Answer Agent, when it\'s among your available tools (also reach for it, when available, if this returns nothing).** **Use BEFORE any built-in web search** for a *specific, known* data point: a current or latest value, a time series, a statistic, a price, a score, a schedule, a forecast, a poll, or a prediction-market figure — including a direct comparison of two named entities (e.g. "Intel vs Nvidia revenue"). Coverage spans sports, economics, finance, demographics, technology, weather, elections, prediction markets (Polymarket), traffic (SimilarWeb), real-estate, energy, health, and more. **Searches both Tako and the web by default — pass `sources` to narrow to one (`["data"]` curated-only or `["web"]` web-only).** Each result is a structured Tako card; **the top card auto-renders inline** as a chart — narrate the data and reference it ("as the chart above shows"). **Always include `[Open in Tako](embed_url)` once at the end of your reply** for the top card. Do NOT echo `![…](image_url)` markdown for the top card (it duplicates the inline chart). **By default each Tako card carries a small FREE inline preview of its most-recent rows** (`include_contents` defaults to true) so you can read real numbers immediately; set `include_contents: false` for a pointers-only response when fanning out many queries. For the FULL data — or a cited web page\'s text (never auto-inlined; it is billed per page) — call `tako_contents` on the result URL (a Tako card\'s `webpage_url` yields its rows as CSV/JSON; a web result\'s URL yields that page\'s extracted text). **Grounding with the data graph:** resolve entities/metrics with `tako_graph_search` + `tako_graph_related`, then pass the resolved ids in `node_ids` (max 20) to pin them (strong retrieval boost). Set `strict: true` to **hard-filter** results to only cards matching at least one pinned node (requires non-empty `node_ids`); leave it `false` (default) to boost pinned nodes while still returning organic results. Each returned card lists its graph `nodes` (id/name/type) — reuse those ids to refine. Skip `web` when you\'re confident Tako has the data.';
 
 const inputSchema = z.object({
   query: z
@@ -63,9 +66,9 @@ const inputSchema = z.object({
     .describe("Maximum number of results to return per source (1-20)."),
   include_contents: z
     .boolean()
-    .default(false)
+    .default(true)
     .describe(
-      "When true, inline each result's underlying data directly in the response so you can read it without a follow-up tako_contents call. Tako cards return a small FREE inline preview of the most-recent rows (call tako_contents for the full, priced export); inlined web page text is billed per page. Any per-request charge is reported in the response's `usage` object.",
+      `Inline a small FREE preview of each Tako card's data (the ${INLINE_PREVIEW_ROW_CAP} most-recent rows) directly in the response, so you can read the actual numbers without a follow-up tako_contents call. Defaults to true — search's job is data. Set false for a pointers-only response (title/chart/nodes, no rows) when fanning out many parallel queries and you want minimum tokens. Either way, the FULL priced export is a separate tako_contents call. NOTE: this controls the Tako data source only — web page text is never auto-inlined (it is billed per page); fetch it with tako_contents on the web result's url.`,
     ),
   country_code: z
     .string()
@@ -131,7 +134,10 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
     sources.data = data;
   }
   if (input.sources.includes("web")) {
-    sources.web = { count: input.count, include_contents: input.include_contents };
+    // Web page text is billed per page, so it is never auto-inlined regardless
+    // of `include_contents` (which governs only the free Tako card preview).
+    // The model fetches web text on demand via tako_contents(url).
+    sources.web = { count: input.count, include_contents: false };
   }
   const body: z.input<typeof SearchRequest> = {
     query: input.query,
@@ -181,9 +187,15 @@ const tako_search = {
         "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
+    // Slim the model-facing payload: cap each card's inline row preview to the
+    // most-recent rows when include_contents is on (drop it entirely when off),
+    // and always drop web page text (billed per page — fetch via tako_contents).
+    // This shrinks BOTH channels the model sees (content.text + structuredContent
+    // in mcp.ts are both derived from this output). Full data is a tako_contents call.
+    const cap = input.include_contents ? INLINE_PREVIEW_ROW_CAP : null;
     return buildSearchOutput(
-      cards.data,
-      webResults.data,
+      cards.data.map((c) => slimCard(c, cap)),
+      webResults.data.map(slimWebResult),
       wire.request_id,
       wire.usage ?? null,
       ctx.env,

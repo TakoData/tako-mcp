@@ -93,6 +93,79 @@ export const webResultSchema = z
   .loose();
 export type WebResult = z.infer<typeof webResultSchema>;
 
+// The most-recent-rows cap for the FREE inline card preview. A card's data
+// preview (dataset.rows / records) can arrive with hundreds of rows; capping
+// keeps the model-facing peek bounded. The full, priced export is always a
+// separate tako_contents call.
+export const INLINE_PREVIEW_ROW_CAP = 5;
+
+// `content` carries the heavy inline row payload under keys the hand-written
+// resultContentSchema passes through loosely (records/dataset are not in its
+// explicit shape). Type them here so the slim helpers can touch them.
+type LooseContent = ResultContent & {
+  records?: Array<Record<string, unknown>> | null;
+  dataset?: { columns?: unknown; rows?: unknown[] } | null;
+};
+
+/**
+ * Slim a Tako card's `content` for the model-facing response.
+ *
+ * The inline row payload (`data`/`records`/`dataset`) is what bloats the
+ * model's context — and BOTH channels the model can see derive from the tool
+ * output (mcp.ts stringifies `output` into `content.text` AND sets it as
+ * `structuredContent`, which counts toward context on claude.ai), so removing
+ * rows here shrinks both at once. Metadata (content_format / cost / total_rows
+ * / truncated / export_pricing / url) is always kept so the "N rows available,
+ * priced — call tako_contents" signal survives.
+ *
+ *   capRows === null → drop all rows (the model fetches via tako_contents).
+ *   capRows === N    → keep the N most-recent structured rows (a bounded peek).
+ */
+export function slimCardContent(
+  content: ResultContent | null | undefined,
+  capRows: number | null,
+): ResultContent | null | undefined {
+  if (content == null) return content;
+  // Strip the three row-payload keys out; `meta` keeps everything else
+  // (content_format/cost/total_rows/truncated/export_pricing/url/…).
+  const { data: _data, records, dataset, ...meta } = content as LooseContent;
+  if (capRows === null) {
+    return { ...meta, data: null, records: null, dataset: null } as ResultContent;
+  }
+  const slicedRecords = Array.isArray(records) && records.length > capRows;
+  const slicedRows =
+    !!dataset && Array.isArray(dataset.rows) && dataset.rows.length > capRows;
+  return {
+    ...meta,
+    // CSV text is always dropped on a cap — the structured rows are the
+    // cheaper, cleaner peek; a caller wanting CSV calls tako_contents.
+    data: null,
+    records: Array.isArray(records) ? records.slice(-capRows) : (records ?? null),
+    dataset:
+      dataset && Array.isArray(dataset.rows)
+        ? { ...dataset, rows: dataset.rows.slice(-capRows) }
+        : (dataset ?? null),
+    truncated: slicedRecords || slicedRows || meta.truncated || false,
+  } as ResultContent;
+}
+
+/** Immutable: return a new card with its `content` slimmed (rows dropped/capped). */
+export const slimCard = (card: TakoCard, capRows: number | null): TakoCard =>
+  card.content == null
+    ? card
+    : { ...card, content: slimCardContent(card.content, capRows) };
+
+/**
+ * Slim a web result's `content`. Web `content.data` is the page's full
+ * extracted text — always dropped: it is billed per page AND is a large prose
+ * blob, so it is never auto-inlined. The model pulls it via tako_contents(url)
+ * when it actually needs the page text (title/url/snippet stay for citation).
+ */
+export const slimWebResult = (w: WebResult): WebResult =>
+  w.content == null
+    ? w
+    : { ...w, content: slimCardContent(w.content, null) };
+
 // Backend Usage — cost-plus usage for one metered request (mirrors the generated
 // `Usage` in generated/schemas.ts). `total_cost_usd` is the total quoted charge;
 // `compute` (the flat search/answer per-request rate) and `data` (the

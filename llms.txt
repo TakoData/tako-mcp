@@ -17,8 +17,8 @@ The Answer Agent (`tako_agent`) is opt-in — off by default. Enable it by addin
 
 ## Capabilities
 
-- Fast search over 100K+ curated charts and live data — economics, finance, demographics, sports, markets, weather — plus the live web on request (`tako_search`); the top result auto-renders as an interactive chart. Deep multi-step research is the opt-in Answer Agent (`tako_agent`, enable with `?tools=agent`).
-- Get grounded, citation-backed prose answers from Tako's knowledge graph and/or the live web (`tako_answer`)
+- Pull the actual data to work with — real rows/time-series over 100K+ curated charts (economics, finance, demographics, sports, markets, weather) plus the live web on request (`tako_search`); cards carry a free inline row preview by default and the top result auto-renders as an interactive chart. Parallelize it: fire several narrow single entity+metric searches rather than one broad multi-part query. Deep multi-step research is the opt-in Answer Agent (`tako_agent`, enable with `?tools=agent`).
+- Ask a single specific data question and get a grounded, citation-backed prose answer written for you (`tako_answer`) — for broad or multi-part needs, or when you want the underlying data, use `tako_search` instead.
 - Fetch the actual rows or data (CSV/JSON) behind a Tako card, or the extracted text behind a web result — the step after search when you need real data to analyze (`tako_contents`)
 - Create an embeddable chart/card directly from your own structured data — timeseries, bar, table, financial boxes, and more (`tako_visualize`); the card auto-renders as an interactive chart.
 - Run a multi-step Answer Agent for complex analytical questions (`tako_agent`; opt-in, enable with `?tools=agent`)
