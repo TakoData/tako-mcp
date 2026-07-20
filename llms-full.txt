@@ -23,13 +23,14 @@ Tools are discovered at runtime via `tools/list`. There is no per-call `api_toke
 ## Available Tools
 
 ### tako_search
-Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on MCP Apps hosts. Returns `cards` (structured Tako cards) plus `web_results` and a `request_id`. For deep, multi-step research — or when search returns nothing — use `tako_agent` (opt-in; enable with `?tools=agent`).
+Fast search over Tako's curated knowledge graph (and the live web when asked) for charts and live data on any topic. The top result auto-renders inline as an interactive chart on MCP Apps hosts. Returns `cards` (structured Tako cards) plus `web_results` and a `request_id`. A card is metadata plus a chart, NOT its underlying rows — to read or analyze the actual rows or data, pass `include_contents: true` for a small free inline preview, or call `tako_contents` on the result URL for the full data. For deep, multi-step research — or when search returns nothing — use `tako_agent` (opt-in; enable with `?tools=agent`).
 
 Parameters:
 - `query` (string, required): Natural-language search query
 - `sources` (array): both by default (`["data","web"]`); pass `["data"]` for curated data only or `["web"]` for live web only. (`"tako"` is a legacy synonym for `"data"`.)
 - `effort` (string, "fast" | "instant"): Search effort; "fast" (default) or "instant" (fastest, cached embeds). Omit for fast.
 - `count` (integer, 1-20, default 10): Maximum results per source
+- `include_contents` (boolean, default false): When true, inline each result's data directly in the response (Tako cards: a small FREE preview of the most-recent rows — call `tako_contents` for the full, priced export; web results: page text, billed per page) so you can read it without a follow-up `tako_contents` call.
 - `country_code` (string, default "US"): ISO country code
 - `locale` (string, default "en-US"): Locale
 
@@ -43,10 +44,15 @@ Parameters:
 - `locale` (string, default "en-US"): Locale
 
 ### tako_contents
-Fetch the underlying content behind a result URL. A Tako card URL returns a CSV of the card's data; any other URL returns the page's extracted full text.
+Fetch the actual rows or data behind a result URL — the step after `tako_search`/`tako_answer` when you need the real underlying data to compute over, quote, or reason about (a search result carries only metadata and a chart, not its data). A Tako card URL returns that card's data (CSV by default, or JSON); any other URL — a web result — returns that page's extracted full text. One URL per call.
 
 Parameters:
-- `url` (string, required): The result URL to fetch content for
+- `url` (string, required): The result URL to fetch — a Tako card's `webpage_url`, or a web-result URL
+- `content_format` (string, optional): Tako cards only — serialization of the data: `csv` (default, text in `data`), `json_records` (row objects in `records`), or `json_compact` (compact columns+rows in `dataset`). Ignored for web URLs (always text).
+- `max_rows` (integer, 1-2000, optional): Tako cards only — max rows to return. Omit for the free 20-row default; raise up to 2,000 for a larger (priced) export. Ignored for web URLs (always full text).
+- `mode` (string, "inline" | "url", default "inline"): Delivery only, not row count — `inline` returns the data in the response so you can read it; `url` returns a short-lived presigned `download_url` to the same file.
+
+Typical flow: `tako_search` to find cards/results → `tako_contents` on a result URL to pull the actual rows or data for analysis.
 
 ### tako_visualize
 Create an embeddable Tako card directly from your OWN structured data (not from search), backed by Tako's Thin-Viz API. Provide one or more typed components; the card auto-renders inline as a chart and returns share/embed URLs.
