@@ -107,6 +107,89 @@ type LooseContent = ResultContent & {
   dataset?: { columns?: unknown; rows?: unknown[] } | null;
 };
 
+// Column types the backend uses for the temporal axis of a dataset. Detecting
+// this column lets the cap keep the *newest* rows regardless of sort order.
+const TEMPORAL_COL_TYPES = new Set(["datetime", "date", "timestamp", "time"]);
+
+// Parse a cell into a comparable epoch magnitude, or null when it isn't
+// date-like. Numbers pass through (epoch/serial); strings must parse as a date.
+// Returning null on non-dates is what keeps a plain numeric value column from
+// being mistaken for a timestamp.
+function temporalMagnitude(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const t = Date.parse(v);
+    return Number.isNaN(t) ? null : t;
+  }
+  return null;
+}
+
+// Order of a row sequence from the temporal value of its first vs last row:
+//   +1 descending (newest first) · -1 ascending (newest last) · 0 unknown.
+function orderDirection(firstVal: unknown, lastVal: unknown): 1 | -1 | 0 {
+  const a = temporalMagnitude(firstVal);
+  const b = temporalMagnitude(lastVal);
+  if (a === null || b === null || a === b) return 0;
+  return a > b ? 1 : -1;
+}
+
+/**
+ * Keep the `cap` MOST-RECENT rows of an already-sorted sequence.
+ *
+ * Backend row order is card-type-dependent (timeseries ascending, stock cards
+ * descending / newest-first), so a blind tail slice would hand a stock card its
+ * OLDEST rows and drop the latest value. We detect the direction from a temporal
+ * accessor and slice the end that holds the newest rows; when the accessor gives
+ * no date signal we fall back to the tail (the prior behavior).
+ */
+function capRecentRows<T>(rows: T[], cap: number, temporalOf: (r: T) => unknown): T[] {
+  if (rows.length <= cap) return rows;
+  const dir = orderDirection(temporalOf(rows[0] as T), temporalOf(rows[rows.length - 1] as T));
+  return dir > 0 ? rows.slice(0, cap) : rows.slice(-cap);
+}
+
+type DatasetColumn = { name?: unknown; type?: unknown };
+
+// Index of the dataset's temporal column (by declared type), or -1.
+function temporalColumnIndex(columns: unknown): number {
+  if (!Array.isArray(columns)) return -1;
+  return columns.findIndex(
+    (c) =>
+      !!c &&
+      typeof (c as DatasetColumn).type === "string" &&
+      TEMPORAL_COL_TYPES.has(((c as DatasetColumn).type as string).toLowerCase()),
+  );
+}
+
+// Best-effort temporal key for json_records rows (which carry no column types):
+// the first key whose value is a NON-numeric string that parses as a date.
+function recordDateKey(records: Array<Record<string, unknown>>): string | undefined {
+  const first = records[0];
+  if (!first) return undefined;
+  for (const [k, v] of Object.entries(first)) {
+    if (typeof v === "string" && !/^-?\d+(\.\d+)?$/.test(v.trim()) && temporalMagnitude(v) !== null) {
+      return k;
+    }
+  }
+  return undefined;
+}
+
+// Cap a CSV payload to the header + the `cap` most-recent data lines, instead of
+// dropping it. Direction is detected from the first column (the temporal/label
+// column in Tako's timeseries CSVs); falls back to the tail otherwise. A simple
+// comma split — not a full CSV parser — which is fine for a bounded preview
+// (the exact, full export is always a separate tako_contents call).
+function capCsv(csv: string, cap: number): { data: string; truncated: boolean } {
+  const lines = csv.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  if (lines.length <= 1) return { data: csv, truncated: false };
+  const header = lines[0] as string;
+  const dataLines = lines.slice(1);
+  if (dataLines.length <= cap) return { data: csv, truncated: false };
+  const kept = capRecentRows(dataLines, cap, (line) => line.split(",")[0]);
+  return { data: [header, ...kept].join("\n"), truncated: true };
+}
+
 /**
  * Slim a Tako card's `content` for the model-facing response.
  *
@@ -119,7 +202,7 @@ type LooseContent = ResultContent & {
  * priced — call tako_contents" signal survives.
  *
  *   capRows === null → drop all rows (the model fetches via tako_contents).
- *   capRows === N    → keep the N most-recent structured rows (a bounded peek).
+ *   capRows === N    → keep the N most-recent rows (order-aware, a bounded peek).
  */
 export function slimCardContent(
   content: ResultContent | null | undefined,
@@ -128,24 +211,47 @@ export function slimCardContent(
   if (content == null) return content;
   // Strip the three row-payload keys out; `meta` keeps everything else
   // (content_format/cost/total_rows/truncated/export_pricing/url/…).
-  const { data: _data, records, dataset, ...meta } = content as LooseContent;
+  const { data: rawData, records, dataset, ...meta } = content as LooseContent;
   if (capRows === null) {
     return { ...meta, data: null, records: null, dataset: null } as ResultContent;
   }
+
+  // CSV payload lives in `data` — cap it in place rather than blanking it, so an
+  // include_contents caller still gets rows if a csv content_format is ever
+  // threaded through (today the worker never requests csv, so this is inert).
+  const isCsv = typeof meta.content_format === "string" && meta.content_format.toLowerCase() === "csv";
+  let cappedData: string | null = null;
+  let csvTruncated = false;
+  if (isCsv && typeof rawData === "string") {
+    const r = capCsv(rawData, capRows);
+    cappedData = r.data;
+    csvTruncated = r.truncated;
+  }
+
+  // json_records: keep the newest `capRows`, order detected from a date-valued key.
+  const dateKey = Array.isArray(records) ? recordDateKey(records) : undefined;
+  const cappedRecords = Array.isArray(records)
+    ? capRecentRows(records, capRows, (r) => (dateKey ? r[dateKey] : undefined))
+    : (records ?? null);
   const slicedRecords = Array.isArray(records) && records.length > capRows;
-  const slicedRows =
-    !!dataset && Array.isArray(dataset.rows) && dataset.rows.length > capRows;
+
+  // json_compact dataset: keep the newest `capRows`, order detected from the
+  // declared temporal column.
+  let cappedDataset = dataset ?? null;
+  let slicedRows = false;
+  if (dataset && Array.isArray(dataset.rows)) {
+    const idx = temporalColumnIndex(dataset.columns);
+    const temporalOf = (row: unknown) => (idx >= 0 && Array.isArray(row) ? row[idx] : undefined);
+    slicedRows = dataset.rows.length > capRows;
+    cappedDataset = { ...dataset, rows: capRecentRows(dataset.rows, capRows, temporalOf) };
+  }
+
   return {
     ...meta,
-    // CSV text is always dropped on a cap — the structured rows are the
-    // cheaper, cleaner peek; a caller wanting CSV calls tako_contents.
-    data: null,
-    records: Array.isArray(records) ? records.slice(-capRows) : (records ?? null),
-    dataset:
-      dataset && Array.isArray(dataset.rows)
-        ? { ...dataset, rows: dataset.rows.slice(-capRows) }
-        : (dataset ?? null),
-    truncated: slicedRecords || slicedRows || meta.truncated || false,
+    data: cappedData,
+    records: cappedRecords,
+    dataset: cappedDataset,
+    truncated: slicedRecords || slicedRows || csvTruncated || meta.truncated || false,
   } as ResultContent;
 }
 
