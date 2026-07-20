@@ -64,7 +64,9 @@ Source of truth: `workers/src/tools/*.ts`. Tools are discovered at runtime via t
 2. `tako_answer` — Get **one** synthesized, citation-backed prose answer (arbiter over data + web) to a specific data question; ground in `["data"]`, `["web"]`, or both. Use when you want a direct written answer in a single call rather than a list of cards.
 3. `tako_contents` — Fetch underlying content (CSV or text) behind a result URL
 4. `tako_agent` — Answer Agent for multi-step data questions (on ChatGPT split into `tako_agent_start` / `tako_agent_wait`). **Opt-in** — off by default; enabled per-connection via `?tools=agent` (see `workers/src/tools/_optional.ts`).
-5. `get_credit_balance` — Current credit balance
+5. `tako_visualize` — Create an embeddable chart/card from your own structured data. **Opt-in** — `?tools=visualize`; stays default-on for ChatGPT (it powers the widget — see `CHATGPT_DEFAULT_ON_TOOL_NAMES` in `workers/src/mcp.ts`).
+6. `tako_graph_node` — Hydrate a graph node ID into full detail. **Opt-in** — `?tools=graph_node`.
+7. `get_credit_balance` — Current credit balance. **Opt-in** — `?tools=credits`.
 
 ### Endpoints
 

@@ -6,8 +6,9 @@
  *
  *   1. `GET /health`           → expect HTTP 200 with body "ok"
  *   2. MCP `initialize`        → handshake completes
- *   3. MCP `tools/list`        → 8-tool surface present; hard-asserts
- *                                 the 5 non-gated canary tools; loosely
+ *   3. MCP `tools/list`        → connects with `?tools=agent,visualize,credits`
+ *                                 (those tools are opt-in — see `_optional.ts`);
+ *                                 hard-asserts the 5 canary tools; loosely
  *                                 asserts at least one agent tool is present
  *   4. MCP Apps widget assertion on `tako_search` (soft-warn on miss)
  *   5. Per-tool MCP `tools/call` canaries:
@@ -117,11 +118,17 @@ ok(`/health → 200 "ok"`);
 // ---------------------------------------------------------------------------
 // 2-5. MCP protocol via the SDK client
 // ---------------------------------------------------------------------------
-const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-  requestInit: {
-    headers: { authorization: `Bearer ${apiToken}` },
+// Opt in to the optional tools the smoke exercises (see `_optional.ts`):
+// `agent` for the agent-presence assert, `visualize` and `credits` for the
+// tool calls below. This also smoke-tests the `?tools=` opt-in path itself.
+const transport = new StreamableHTTPClientTransport(
+  new URL(`${baseUrl}/mcp?tools=agent,visualize,credits`),
+  {
+    requestInit: {
+      headers: { authorization: `Bearer ${apiToken}` },
+    },
   },
-});
+);
 const client = new Client({ name: "tako-mcp-smoke", version: "1.0.0" });
 
 try {

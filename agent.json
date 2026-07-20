@@ -97,7 +97,7 @@
     {
       "id": "visualize-data",
       "name": "Visualize Your Data",
-      "description": "Create an embeddable Tako chart/card directly from your own structured data — timeseries, bar, table, financial boxes, and more. The card auto-renders as an interactive chart.",
+      "description": "Create an embeddable Tako chart/card directly from your own structured data — timeseries, bar, table, financial boxes, and more. The card auto-renders as an interactive chart. Opt-in (enable with ?tools=visualize; on by default for ChatGPT).",
       "tags": [
         "visualize",
         "charts",
