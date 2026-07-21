@@ -734,25 +734,32 @@ function registerTool(
  */
 /**
  * Lift a human-readable message out of an upstream error body for the
- * model-visible text channel. Django/DRF errors arrive as JSON envelopes —
- * `{"detail": "…"}` (APIException), `{"error": "…"}` (custom handlers), or
- * `{"detail": ["…"]}` — and the raw JSON reads poorly to the model. When the
- * shape is recognisable we return just the message; otherwise (unrecognised
- * keys like a field-keyed 400 validation map, non-JSON text, or a body
- * `safeReadText` truncated so `JSON.parse` fails) we fall back to the raw body.
+ * model-visible text channel, or `undefined` when the body is NOT a
+ * recognisable structured envelope.
  *
- * Best-effort only: the full raw body always stays on
+ * Django/DRF errors arrive as JSON envelopes — `{"detail": "…"}`
+ * (APIException), `{"error": "…"}` / `{"message": "…"}` (custom handlers),
+ * `{"detail": ["…"]}` (nested list), or a field-keyed validation map
+ * `{"field": ["…"], …}`. We lift the message out of those.
+ *
+ * Anything else returns `undefined` so the caller keeps it OUT of the text
+ * channel: non-JSON bodies (e.g. a Cloudflare/edge HTML challenge or block
+ * page on a 4xx, or a body `safeReadText` truncated so `JSON.parse` fails)
+ * and JSON objects with no recognisable message (e.g. a bare discriminator
+ * like `{"error_type": "RELEVANT_RESULTS_NOT_FOUND"}`) would otherwise flood
+ * the model with raw HTML/JSON. The full raw body always stays on
  * `_meta["tako/error"].body` for clients that want the untouched envelope.
  */
-export function extractErrorDetail(body: string): string {
+export function extractErrorDetail(body: string): string | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    return body;
+    // Not JSON — an HTML edge page or truncated body. Don't surface it.
+    return undefined;
   }
-  if (typeof parsed === "string" && parsed !== "") return parsed;
-  if (parsed === null || typeof parsed !== "object") return body;
+  if (typeof parsed === "string") return parsed !== "" ? parsed : undefined;
+  if (parsed === null || typeof parsed !== "object") return undefined;
   const obj = parsed as Record<string, unknown>;
   for (const key of ["detail", "error", "message"]) {
     const value = obj[key];
@@ -762,7 +769,24 @@ export function extractErrorDetail(body: string): string {
       return value.join(" ");
     }
   }
-  return body;
+  // DRF field-keyed validation map: {"field": ["msg", …], …}. Flatten to
+  // "field: msg; …" so the LLM sees which field failed without raw JSON.
+  const entries = Object.entries(obj);
+  if (
+    entries.length > 0 &&
+    entries.every(
+      ([, value]) =>
+        Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((v) => typeof v === "string"),
+    )
+  ) {
+    return entries
+      .map(([key, value]) => `${key}: ${(value as string[]).join(" ")}`)
+      .join("; ");
+  }
+  // A JSON object with no recognisable message (e.g. a bare discriminator).
+  return undefined;
 }
 
 export function djangoErrorToToolResult(err: DjangoError): {
@@ -796,15 +820,22 @@ export function djangoErrorToToolResult(err: DjangoError): {
   //
   // SERVER errors (5xx) and transport errors (timeout — no status) stay
   // body-free: no LLM-actionable detail, and 5xx bodies are often noisy HTML
-  // error pages that would flood the text channel. `extractErrorDetail` lifts
-  // the message out of DRF JSON envelopes; `err.message` stays body-free by
-  // construction (log-injection guard in `django.ts`), so the splice happens
-  // only here at the MCP boundary.
+  // error pages that would flood the text channel.
+  //
+  // The splice is ALSO gated on `extractErrorDetail` recognising a structured
+  // message: a 4xx can still carry a raw HTML page (a Cloudflare/edge WAF 403
+  // or rate-limit 429) or a bare discriminator JSON, and we don't want that
+  // flooding the text channel either — same failure mode as a 5xx HTML body,
+  // just on a 4xx. Only DRF-shaped detail reaches the model; everything else
+  // stays on `_meta.body` only. `err.message` stays body-free by construction
+  // (log-injection guard in `django.ts`), so the splice happens only here at
+  // the MCP boundary.
   const is4xx =
     err.status !== undefined && err.status >= 400 && err.status < 500;
+  const detailText = body !== undefined ? extractErrorDetail(body) : undefined;
   const text =
-    is4xx && body !== undefined
-      ? `${err.message}: ${extractErrorDetail(body)}`
+    is4xx && detailText !== undefined
+      ? `${err.message}: ${detailText}`
       : err.message;
   return {
     content: [{ type: "text", text }],

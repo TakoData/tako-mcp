@@ -140,12 +140,12 @@ describe("djangoErrorToToolResult", () => {
       status: 400,
       body: '{"query":["this field is required"]}',
     });
-    // 400s are the only subtype whose body is spliced into `content[0].text`:
-    // DRF validation errors carry the guidance the LLM needs to retry, and
-    // not every MCP client surfaces structured detail to the model.
+    // A field-keyed DRF validation map is flattened to readable text (which
+    // field failed) rather than spliced as raw JSON — the guidance the LLM
+    // needs to retry, and not every MCP client surfaces structured detail.
     expect(result.content[0]).toEqual({
       type: "text",
-      text: `${err.message}: {"query":["this field is required"]}`,
+      text: `${err.message}: query: this field is required`,
     });
   });
 
@@ -219,18 +219,21 @@ describe("djangoErrorToToolResult", () => {
     expect(result.content[0]?.text).not.toContain('{"detail"');
   });
 
-  it("falls back to the raw body when a 4xx body is not a recognised JSON envelope", () => {
+  it("does NOT splice a non-JSON 4xx body (e.g. a Cloudflare HTML block page)", () => {
+    // A 4xx can carry a raw HTML edge/WAF page (403 block, 429 challenge).
+    // It stays on `_meta` for debugging but must not flood the model text —
+    // same failure mode the 5xx exclusion guards against, just on a 4xx.
+    const body = "<!DOCTYPE html><html><body>Access denied (Error 1020)</body></html>";
     const err = new DjangoHttpError({
       path: "/api/v1/contents/",
       method: "POST",
-      status: 429,
-      body: "Too Many Requests",
+      status: 403,
+      body,
     });
     const result = djangoErrorToToolResult(err);
-    expect(result.content[0]).toEqual({
-      type: "text",
-      text: `${err.message}: Too Many Requests`,
-    });
+    expect(result._meta["tako/error"]).toMatchObject({ status: 403, body });
+    expect(result.content[0]).toEqual({ type: "text", text: err.message });
+    expect(result.content[0]?.text).not.toContain("DOCTYPE");
   });
 });
 
@@ -241,18 +244,30 @@ describe("extractErrorDetail", () => {
   it("lifts `error`", () => {
     expect(extractErrorDetail('{"error":"boom"}')).toBe("boom");
   });
+  it("lifts `message`", () => {
+    expect(extractErrorDetail('{"message":"kaboom"}')).toBe("kaboom");
+  });
   it("joins a nested list of detail strings", () => {
     expect(extractErrorDetail('{"detail":["a","b"]}')).toBe("a b");
   });
-  it("returns the raw body for a field-keyed 400 validation map", () => {
-    const body = '{"query":["this field is required"]}';
-    expect(extractErrorDetail(body)).toBe(body);
+  it("flattens a field-keyed 400 validation map to readable text", () => {
+    expect(extractErrorDetail('{"query":["this field is required"]}')).toBe(
+      "query: this field is required",
+    );
+    expect(
+      extractErrorDetail('{"query":["required"],"count":["must be an integer"]}'),
+    ).toBe("query: required; count: must be an integer");
   });
-  it("returns the raw body for non-JSON text", () => {
-    expect(extractErrorDetail("service unavailable")).toBe("service unavailable");
+  it("returns undefined for non-JSON text (e.g. an HTML edge page)", () => {
+    expect(extractErrorDetail("service unavailable")).toBeUndefined();
+    expect(extractErrorDetail("<html>Access denied</html>")).toBeUndefined();
   });
-  it("returns the raw body for a truncated (unparseable) JSON body", () => {
-    const body = '{"detail":"long messag...[truncated]';
-    expect(extractErrorDetail(body)).toBe(body);
+  it("returns undefined for a truncated (unparseable) JSON body", () => {
+    expect(extractErrorDetail('{"detail":"long messag...[truncated]')).toBeUndefined();
+  });
+  it("returns undefined for a JSON object with no recognised message (bare discriminator)", () => {
+    expect(
+      extractErrorDetail('{"error_type":"RELEVANT_RESULTS_NOT_FOUND"}'),
+    ).toBeUndefined();
   });
 });
