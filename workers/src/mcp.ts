@@ -157,7 +157,7 @@ export function createMcpServer(
       title: "Tako",
       websiteUrl: "https://tako.com",
       description:
-        "Interactive charts and live-data visualizations for finance, economics, demographics, prediction markets, and more.",
+        "Proprietary, continuously-updated live data — plus interactive charts and visualizations — for finance, economics, demographics, prediction markets, and more. Covers the latest reported quarter, same-day market prices, and official releases as they publish.",
       ...(icons !== undefined ? { icons } : {}),
     },
     {

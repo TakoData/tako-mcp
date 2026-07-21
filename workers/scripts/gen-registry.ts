@@ -66,6 +66,55 @@ export function assertAllToolsDescribed(
   }
 }
 
+/**
+ * Assert that the hand-written `llms-full.txt` covers the live tool surface.
+ *
+ * `registry/server.json` and `_registry.ts` are generated so they cannot
+ * drift, but `llms-full.txt` restates tools and params by hand and has
+ * already drifted silently once (the graph tools had no sections and
+ * search/answer were missing `node_ids`/`strict`). This is the lighter
+ * guard: every tool name must be mentioned (a `### <name>` section or an
+ * inline `` `name` `` reference), and any tool that HAS a section must
+ * mention every input param inside it. Prose-only mentions (e.g. the
+ * ChatGPT-only `tako_agent_start`/`tako_agent_wait` pair) need no section.
+ */
+export function assertLlmsFullCoverage(
+  tools: ReadonlyArray<{ name: string; parameters: Record<string, unknown> }>,
+  llmsFull: string,
+): void {
+  const sections = new Map<string, string>();
+  for (const part of llmsFull.split(/^### /m).slice(1)) {
+    const nl = part.indexOf("\n");
+    const heading = (nl === -1 ? part : part.slice(0, nl)).trim();
+    sections.set(heading, nl === -1 ? "" : part.slice(nl + 1));
+  }
+
+  const problems: string[] = [];
+  for (const tool of tools) {
+    const section = sections.get(tool.name);
+    if (section === undefined) {
+      if (!llmsFull.includes(`\`${tool.name}\``)) {
+        problems.push(`tool "${tool.name}" is never mentioned`);
+      }
+      continue;
+    }
+    for (const param of Object.keys(tool.parameters)) {
+      if (!section.includes(`\`${param}\``)) {
+        problems.push(
+          `section "### ${tool.name}" does not mention param \`${param}\``,
+        );
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `llms-full.txt drift — hand-written docs out of sync with tool modules:\n  ${problems.join(
+        "\n  ",
+      )}\nUpdate llms-full.txt to match the tool surface.`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -77,6 +126,7 @@ const TOOLS_DIR = resolve(WORKERS_DIR, "src", "tools");
 const METADATA_PATH = resolve(REPO_ROOT, "registry", "metadata.json");
 const REGISTRY_PATH = resolve(REPO_ROOT, "registry", "server.json");
 const BARREL_PATH = resolve(TOOLS_DIR, "_registry.ts");
+const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 
 // Filename conventions for the tools/ directory. A tool module is any `.ts`
 // file that does NOT match one of the following:
@@ -351,10 +401,13 @@ async function main(): Promise<void> {
     );
   }
 
-  const registry = buildRegistry(
-    metadata,
-    modules.map((m) => buildTool(m.tool)),
-  );
+  const registryTools = modules.map((m) => buildTool(m.tool));
+
+  // 3. llms-full.txt coverage: the hand-written doc must mention every tool,
+  //    and any tool with a `### <name>` section must document all its params.
+  assertLlmsFullCoverage(registryTools, readFileSync(LLMS_FULL_PATH, "utf8"));
+
+  const registry = buildRegistry(metadata, registryTools);
   const registryJson = serializeJson(registry);
   const barrel = buildBarrel(modules);
 
