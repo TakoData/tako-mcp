@@ -24,8 +24,11 @@ import {
 // populated only when contents were requested. `content_format` ("csv" for
 // Tako card data, "text" for web page text) is null when no payload is
 // delivered. A card with NO `content` (missing or null) is not exportable:
-// the backend's export-safe gate 403s a tako_contents call on its URL, so its
-// presence is the model-facing "tako_contents will work here" signal and must
+// the backend's export-safe gate 403s a tako_contents call on its URL. Its
+// presence is necessary but NOT sufficient — the adapter sets `content` via
+// the lenient supports_data_export() while /api/v1/contents gates on the
+// stricter export_safe(), so a content-bearing card can still 403 (rare;
+// tako_contents maps it to a self-correcting message). The descriptor must
 // survive slimming (slimCardContent strips rows but always keeps the object).
 //
 // Every field is optional/nullable on purpose: this is a RESPONSE the tool only
@@ -56,14 +59,14 @@ export const takoCardSchema = z
     webpage_url: z.string().nullable().optional(),
     image_url: z.string().nullable().optional(),
     embed_url: z.string().nullable().optional(),
-    // Export descriptor + inline preview. Present iff this card's data is
-    // exportable via tako_contents (it rides along even with include_contents
-    // off, carrying the cost quote). Missing/null → NOT exportable (403).
+    // Export descriptor + inline preview. Rides on exportable cards even with
+    // include_contents off (carrying the cost quote). Missing/null → NOT
+    // exportable (403); present → necessary for export, not a guarantee.
     content: resultContentSchema
       .nullable()
       .optional()
       .describe(
-        "Export descriptor + inline data preview. Present (non-null) ONLY when this card's underlying data is exportable via tako_contents. Missing or null means the card has NO exportable data — do NOT call tako_contents on its URL (the export gate rejects it).",
+        "Export descriptor + inline data preview. Missing or null means the card has NO exportable data — do NOT call tako_contents on its URL (the export gate rejects it). Presence is required for a tako_contents export but is not a guarantee: the export gate can still refuse a rare card (a self-correcting 403 — fall back to the card's preview/chart).",
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into

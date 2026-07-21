@@ -385,6 +385,63 @@ function isAbortError(err: unknown): boolean {
   return false;
 }
 
+/**
+ * Lift a human-readable message out of an upstream error body for the
+ * model-visible text channel, or `undefined` when the body is NOT a
+ * recognisable structured envelope.
+ *
+ * Django/DRF errors arrive as JSON envelopes — `{"detail": "…"}`
+ * (APIException), `{"error": "…"}` / `{"message": "…"}` (custom handlers),
+ * `{"detail": ["…"]}` (nested list), or a field-keyed validation map
+ * `{"field": ["…"], …}`. We lift the message out of those.
+ *
+ * Anything else returns `undefined` so the caller keeps it OUT of the text
+ * channel: non-JSON bodies (e.g. a Cloudflare/edge HTML challenge or block
+ * page on a 4xx, or a body `safeReadText` truncated so `JSON.parse` fails)
+ * and JSON objects with no recognisable message (e.g. a bare discriminator
+ * like `{"error_type": "RELEVANT_RESULTS_NOT_FOUND"}`) would otherwise flood
+ * the model with raw HTML/JSON. The full raw body always stays on
+ * `_meta["tako/error"].body` for clients that want the untouched envelope.
+ */
+export function extractErrorDetail(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // Not JSON — an HTML edge page or truncated body. Don't surface it.
+    return undefined;
+  }
+  if (typeof parsed === "string") return parsed !== "" ? parsed : undefined;
+  if (parsed === null || typeof parsed !== "object") return undefined;
+  const obj = parsed as Record<string, unknown>;
+  for (const key of ["detail", "error", "message"]) {
+    const value = obj[key];
+    if (typeof value === "string" && value !== "") return value;
+    // DRF sometimes nests a list of strings, e.g. {"detail": ["…", "…"]}.
+    if (Array.isArray(value) && value.every((v) => typeof v === "string") && value.length > 0) {
+      return value.join(" ");
+    }
+  }
+  // DRF field-keyed validation map: {"field": ["msg", …], …}. Flatten to
+  // "field: msg; …" so the LLM sees which field failed without raw JSON.
+  const entries = Object.entries(obj);
+  if (
+    entries.length > 0 &&
+    entries.every(
+      ([, value]) =>
+        Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((v) => typeof v === "string"),
+    )
+  ) {
+    return entries
+      .map(([key, value]) => `${key}: ${(value as string[]).join(" ")}`)
+      .join("; ");
+  }
+  // A JSON object with no recognisable message (e.g. a bare discriminator).
+  return undefined;
+}
+
 async function safeReadText(response: Response): Promise<string> {
   // Cap the body read at `ERROR_BODY_MAX_CHARS`. A hostile or
   // misconfigured upstream could otherwise return an arbitrarily large

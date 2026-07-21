@@ -3,9 +3,13 @@
  * Wraps `POST /api/v1/contents`. A Tako card URL resolves to the card's data —
  * CSV by default, or JSON via `content_format` (json_records → `records`,
  * json_compact → `dataset`); any other URL resolves to the page's extracted
- * text. Not every card is exportable: the backend's export-safe gate 403s a
- * card that did not carry a `content` descriptor in its search/answer result,
- * so the tool description tells the model to check `content` presence first. One URL per call. A Tako card CSV is capped at a 20-row free default in BOTH modes;
+ * text. Not every card is exportable: the backend's export-safe gate 403s
+ * cards without exportable data, so the tool description tells the model to
+ * check `content` presence first. That check is necessary, not sufficient —
+ * search/answer set `content` via the lenient supports_data_export() while
+ * this endpoint gates on the stricter export_safe(), so a content-bearing
+ * card can still 403 (the handler maps that to a self-correcting message).
+ * One URL per call. A Tako card CSV is capped at a 20-row free default in BOTH modes;
  * `max_rows` raises that up to a 2000-row ceiling — there is no uncapped export.
  * `mode` controls only delivery, not the row count: "inline" (default) returns
  * the (capped) content in the response body — total_rows/truncated report the
@@ -17,12 +21,12 @@
  */
 import { z } from "zod";
 
-import { DjangoHttpError, DjangoNotFoundError, djangoPost } from "../django.js";
+import { DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } from "../django.js";
 import { ContentsDeliveryMode, ContentsRequest, ContentsResponse, TakoDataset } from "../generated/schemas.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Fetch the actual rows or data behind a result URL — reach for this after `tako_search` or `tako_answer` whenever you need the real underlying data to compute over, quote, or reason about, because a search result by itself carries only metadata and a chart, NOT its data. Pass a single `url` (a TakoCard.webpage_url or a web-result URL): a Tako card URL yields that card's data (CSV by default; request JSON via `content_format`), any other URL — a web result — yields that page's extracted full text. **Precondition for Tako cards: only a card whose search/answer result carried a `content` attribute (non-null) is exportable — `content` is the export descriptor. If the card came back with `content` missing or null it has NO exportable data and this call is rejected; don't attempt it, use the card's title/preview/chart instead. Web result URLs are exempt from this gate.** For a Tako card, `content_format` picks the serialization: `csv` (default, text in `data`), `json_records` (row objects in `records`), or `json_compact` (compact columns+rows in `dataset`). A Tako card is capped at a 20-row default in both delivery modes; raise `max_rows` (up to 2,000) to get more — there is no uncapped export. `mode` controls only how the content is delivered, not how many rows come back: `inline` (default) returns the data/web text directly in the response so you can read and reason over it — always check `total_rows` / `truncated` to know if it's partial; `url` returns a short-lived presigned `download_url` to the same (capped) file, for handing the user a download/embed link or when you don't need to read it inline. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
+  "Fetch the actual rows or data behind a result URL — reach for this after `tako_search` or `tako_answer` whenever you need the real underlying data to compute over, quote, or reason about, because a search result by itself carries only metadata and a chart, NOT its data. Pass a single `url` (a TakoCard.webpage_url or a web-result URL): a Tako card URL yields that card's data (CSV by default; request JSON via `content_format`), any other URL — a web result — yields that page's extracted full text. **Precondition for Tako cards: only a card whose search/answer result carried a `content` attribute (non-null) is exportable — `content` is the export descriptor. If the card came back with `content` missing or null it has NO exportable data and this call is rejected; don't attempt it, use the card's title/preview/chart instead. Presence is required but not a guarantee — the export gate can still refuse a rare card (a self-correcting 403; fall back to its preview/chart, don't retry). Web result URLs are exempt from this gate.** For a Tako card, `content_format` picks the serialization: `csv` (default, text in `data`), `json_records` (row objects in `records`), or `json_compact` (compact columns+rows in `dataset`). A Tako card is capped at a 20-row default in both delivery modes; raise `max_rows` (up to 2,000) to get more — there is no uncapped export. `mode` controls only how the content is delivered, not how many rows come back: `inline` (default) returns the data/web text directly in the response so you can read and reason over it — always check `total_rows` / `truncated` to know if it's partial; `url` returns a short-lived presigned `download_url` to the same (capped) file, for handing the user a download/embed link or when you don't need to read it inline. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
 
 // Curate the input from the contract explicitly: `.pick` only the fields we
 // expose (so a new field added to ContentsRequest in the synced spec does NOT
@@ -126,19 +130,27 @@ const takoContents = {
       // to the card's preview/metadata. Per the OpenAPI contract: 403 is the
       // export-safe gate (e.g. protected-source export); 404 is "does not
       // exist or has no exportable data". Both are framed as the LIKELY
-      // cause — not asserted fact — and carry the backend's own detail,
-      // since 403 in particular can have other causes (cf. _graph.ts, where
-      // a 403 on /beta/graph is an edge block, not a query problem).
+      // cause — not asserted fact — since 403 in particular can have other
+      // causes (cf. _graph.ts, where a 403 on /beta/graph is an edge block,
+      // not a query problem). The backend's detail is spliced in only when
+      // extractErrorDetail recognises a structured envelope — a raw slice
+      // would flood the model text with an edge/WAF HTML block page.
+      //
+      // Note the 403 message does NOT claim the card lacked a `content`
+      // attribute: the search/answer adapter sets `content` via the lenient
+      // supports_data_export(), while this endpoint gates on the stricter
+      // export_safe() — so the card that lands here may well have carried
+      // one (presence is necessary for export, not sufficient).
       if (err instanceof DjangoHttpError && err.status === 403) {
-        const detail = err.body.slice(0, 200);
+        const detail = extractErrorDetail(err.body);
         throw new Error(
-          `The contents endpoint refused this export (403${detail ? `: ${detail}` : ""}). For a Tako card this usually means the card is not exportable — its search/answer result carried no \`content\` attribute (the export descriptor). Don't retry or rephrase; use the card's title, inline preview, and chart instead. Only call tako_contents on cards whose \`content\` attribute is present (non-null).`,
+          `The contents endpoint refused this export (403${detail !== undefined ? `: ${detail}` : ""}). For a Tako card this usually means the export gate rejected it as unexportable — possible even when the card carried a \`content\` attribute (the export descriptor), since presence is required for export but does not guarantee it. Don't retry or rephrase; use the card's title, inline preview, and chart instead. Never call tako_contents on a card whose \`content\` attribute is missing or null.`,
         );
       }
       if (err instanceof DjangoNotFoundError) {
-        const detail = err.body.slice(0, 200);
+        const detail = extractErrorDetail(err.body);
         throw new Error(
-          `The contents endpoint found nothing downloadable at that URL (404${detail ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result carried a \`content\` attribute (non-null) are exportable.`,
+          `The contents endpoint found nothing downloadable at that URL (404${detail !== undefined ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result carried a \`content\` attribute (non-null) are exportable.`,
         );
       }
       throw err;
