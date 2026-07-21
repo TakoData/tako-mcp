@@ -372,35 +372,40 @@ function registerTool(
   // dynamic-resource path.
   //
   // Two independent gates control whether the chart shows up inline
-  // for this tool call. They're computed identically today (both
-  // fire when the client is claude.ai OR a per-tool ChatGPT
-  // suppression is set), but kept as separate variables so a future
-  // case that wants one without the other (e.g. "ship the widget
-  // but no PNG fallback" or "ship the PNG but no widget") becomes
-  // a one-line gate change rather than a refactor.
+  // for this tool call.
   //
   //   - `widgetSuppressed` → skip `appUiResource`. The host won't
   //     get a widget URI in the tool's `_meta`, so it won't load
   //     the chart bundle. Used on claude.ai (constrained iframe
   //     container clips the chart and exposes an awkward
-  //     scrollbar — markdown-link UX is strictly better). On
-  //     ChatGPT, `tako_search` keeps its widget; the empty-result
-  //     case is handled by throwing a tool-call error instead.
+  //     scrollbar). On ChatGPT, `tako_search` keeps its widget; the
+  //     empty-result case is handled by throwing a tool-call error
+  //     instead.
   //
   //   - `inlinePngFallbackSuppressed` → skip the
   //     `extraContentBlocks` PNG image content block. Without
   //     suppression, that hook fires on tools that have no
   //     `appUiResource` to provide a "render the chart inline as
   //     an image" fallback for hosts that don't support MCP UI.
-  //     Today we always couple PNG suppression to widget
-  //     suppression because the markdown-link directive in the
-  //     chart-bearing tool descriptions is the agreed
-  //     fallback — shipping a PNG too is redundant and (on
-  //     claude.ai) renders cropped the same way the widget
-  //     does.
+  //
+  // The gates are DECOUPLED for Claude clients: the widget stays
+  // suppressed (see above), but the PNG content block ships — so
+  // claude.ai / Claude desktop / Claude Code render the chart inline
+  // as an image instead of a bare markdown link, and the model can
+  // see the chart while composing its answer. The `embed_url` in the
+  // structured content stays the click-through to the interactive
+  // chart. (Historically both gates fired together on claude and the
+  // agreed fallback was the markdown-link directive in the tool
+  // descriptions.)
+  //
+  // Per-tool ChatGPT suppression (`widgetSuppressedForTool`) still
+  // fires both gates: pairing image content blocks with widget
+  // metadata in one result silently disabled ChatGPT's widget data
+  // flow, so content-block images stay off wherever widget metadata
+  // may still be in play for the same client.
   const widgetSuppressed =
     options.client === "claude" || options.widgetSuppressedForTool === true;
-  const inlinePngFallbackSuppressed = widgetSuppressed;
+  const inlinePngFallbackSuppressed = options.widgetSuppressedForTool === true;
   const ui =
     tool.appUiResource !== undefined && !widgetSuppressed
       ? tool.appUiResource(ctx.env)
@@ -644,21 +649,19 @@ function registerTool(
       // + structuredContent that's already there rather than failing the
       // call.
       //
-      // Fires only when the tool genuinely doesn't define a widget
-      // (`appUiResource === undefined`) AND inline PNG fallback
-      // hasn't been independently suppressed for this client/tool.
-      // On claude.ai the PNG content-block fallback rendered cropped
-      // / awkward, and the LLM's `[Open in Tako](embed_url)` link is
-      // a strictly cleaner answer; we don't want a redundant PNG the
-      // user can't really interact with. `inlinePngFallbackSuppressed`
-      // is the explicit, separate gate for that — kept distinct from
-      // `widgetSuppressed` (the gate above) so a future case that
-      // wants one without the other is a one-line change.
+      // Fires only when this registration carries no widget
+      // (`ui === undefined` — widget-less tools everywhere, and ALL
+      // chart tools on Claude clients, where the widget is suppressed)
+      // AND the inline PNG fallback hasn't been independently
+      // suppressed for this tool. This is how Claude clients get the
+      // chart inline: the PNG image content block renders in-chat on
+      // claude.ai / Claude desktop / Claude Code, with `embed_url` in
+      // the structured content as the interactive click-through.
       //
       // Pairing image content blocks with widget metadata in the
-      // same result also silently disabled ChatGPT's widget data
-      // flow, so the gate keeps content-block image fallbacks and
-      // widget metadata mutually exclusive.
+      // same result silently disabled ChatGPT's widget data flow, so
+      // the `ui === undefined` condition keeps content-block image
+      // fallbacks and widget metadata mutually exclusive.
       if (
         tool.extraContentBlocks !== undefined &&
         ui === undefined &&

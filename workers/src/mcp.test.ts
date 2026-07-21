@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   DjangoBadRequestError,
@@ -9,7 +12,14 @@ import {
   DjangoUnauthorizedError,
   extractErrorDetail,
 } from "./django.js";
-import { djangoErrorToToolResult } from "./mcp.js";
+import type { Env } from "./env.js";
+import { createMcpServer, djangoErrorToToolResult } from "./mcp.js";
+import {
+  jsonResponse,
+  mockFetchSequence,
+  noopSendProgress,
+} from "./tools/__test_helpers.js";
+import type { McpClientKind, ToolContext } from "./tools/types.js";
 
 describe("djangoErrorToToolResult", () => {
   // Read tools (tako_search/tako_answer/tako_contents) declare an
@@ -270,5 +280,146 @@ describe("extractErrorDetail", () => {
     expect(
       extractErrorDetail('{"error_type":"RELEVANT_RESULTS_NOT_FOUND"}'),
     ).toBeUndefined();
+  });
+});
+
+/**
+ * Per-client chart rendering gates in `registerTool`.
+ *
+ * Two independent gates decide how a chart-bearing tool result renders:
+ *
+ *   - `widgetSuppressed` — skip the MCP Apps widget (`appUiResource`).
+ *     Claude clients keep this ON: claude.ai's widget container clips
+ *     the chart iframe, so no widget `_meta` ships there.
+ *   - `inlinePngFallbackSuppressed` — skip the `extraContentBlocks`
+ *     PNG image content block. Claude clients keep this OFF so charts
+ *     render inline as images (claude.ai, Claude desktop, and Claude
+ *     Code all render `image` content blocks in-chat, and the model
+ *     can see the chart while composing its answer).
+ *
+ * Exercised end-to-end over an in-memory MCP transport: real server,
+ * real tool registration, real `tools/call` — only the upstream
+ * Django/PNG `fetch` is stubbed.
+ */
+describe("chart render gates per client", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+
+  function makeCtx(client: McpClientKind): ToolContext {
+    return {
+      token: "sk-test",
+      env: ENV,
+      sendProgress: noopSendProgress,
+      client,
+    };
+  }
+
+  /** A v3 search response whose top card auto-chains the chart widget. */
+  function searchResponse(): Response {
+    return jsonResponse(200, {
+      cards: [
+        {
+          card_id: "c1",
+          title: "US GDP",
+          embed_url: "https://trytako.com/embed/c1/",
+        },
+      ],
+      web_results: [],
+      request_id: "req-1",
+    });
+  }
+
+  /**
+   * Stand-in chart PNG. `fetchPngContentBlock` validates content-type
+   * and size only (not PNG structure), so a tiny body is enough for the
+   * image-content-block path. (`fetchImageDataUrlAndDims` — the widget
+   * `_meta` path — DOES parse the IHDR and degrades to undefined on
+   * this body, which is also fine for these tests.)
+   */
+  function pngResponse(): Response {
+    return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    });
+  }
+
+  type ContentBlock = { type: string; [key: string]: unknown };
+
+  /**
+   * Spin up the real MCP server for `client`, call `tako_search` over
+   * an in-memory transport, and return the raw tool result.
+   */
+  async function callSearch(
+    client: McpClientKind,
+  ): Promise<{ content: ContentBlock[]; _meta?: Record<string, unknown> }> {
+    const server = createMcpServer(makeCtx(client), { client });
+    // The test runtime stubs `ajv` (see vitest.config.ts) — the SDK
+    // Client must get the same Workers-safe validator the server uses.
+    const mcpClient = new Client(
+      { name: "gate-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      return (await mcpClient.callTool({
+        name: "tako_search",
+        arguments: { query: "US GDP" },
+      })) as { content: ContentBlock[]; _meta?: Record<string, unknown> };
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("claude client: chart ships as an inline image content block (widget stays suppressed)", async () => {
+    // Call 1: v3 search. Call 2: chart PNG for the image content block.
+    mockFetchSequence([searchResponse(), pngResponse()]);
+
+    const result = await callSearch("claude");
+
+    const imageBlocks = result.content.filter((b) => b.type === "image");
+    expect(imageBlocks).toHaveLength(1);
+    expect(imageBlocks[0]?.mimeType).toBe("image/png");
+    expect(typeof imageBlocks[0]?.data).toBe("string");
+    expect((imageBlocks[0]?.data as string).length).toBeGreaterThan(0);
+    // Widget stays suppressed for claude — no MCP Apps resource URI in
+    // the result `_meta` (claude.ai's widget container clips charts).
+    expect(
+      (result._meta as { ui?: unknown } | undefined)?.ui,
+    ).toBeUndefined();
+  });
+
+  it("unknown client: widget metadata ships and no inline image block is added", async () => {
+    // Call 1: v3 search. Call 2: `extraMeta`'s PNG prefetch for the
+    // widget's baked `image_data_url` (degrades gracefully on the stub
+    // body — irrelevant to this assertion).
+    mockFetchSequence([searchResponse(), pngResponse()]);
+
+    const result = await callSearch("unknown");
+
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    expect(
+      (result._meta as { ui?: unknown } | undefined)?.ui,
+    ).toBeDefined();
+  });
+
+  it("claude client: no image block when the search returns zero cards", async () => {
+    // Empty result → no top card → no image_url → the PNG hook must not
+    // fire (queue holds only the search response; an unexpected second
+    // fetch would throw loudly).
+    mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-2" }),
+    ]);
+
+    const result = await callSearch("claude");
+
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
   });
 });
