@@ -123,11 +123,21 @@ export class DjangoBadRequestError extends DjangoError {
 }
 
 export class DjangoUnauthorizedError extends DjangoError {
-  constructor(opts: { path: string; method: HttpMethod }) {
+  /**
+   * Response body as a string — the backend's auth-failure reason (e.g.
+   * DRF's `{"detail":"Invalid token."}` or "Authentication credentials were
+   * not provided."). Empty when no body was sent. Surfaced so the user can
+   * tell "bad/expired key" from "wrong environment" instead of an opaque 401.
+   */
+  readonly body: string;
+
+  constructor(opts: { path: string; method: HttpMethod; body?: string }) {
     super(`Django returned 401 for ${opts.method} ${opts.path}`, {
-      ...opts,
+      path: opts.path,
+      method: opts.method,
       status: 401,
     });
+    this.body = opts.body ?? "";
   }
 }
 
@@ -331,18 +341,20 @@ async function executeRequest<T>(
     }
   }
 
-  // Only read the body for error types that actually surface it.
-  // `DjangoUnauthorizedError` doesn't expose the body, so reading it
-  // would be wasted work. `DjangoNotFoundError` DOES carry the body
-  // now — Tako's `/api/v1/knowledge_search` overloads 404 to mean
-  // "search ran, 0 cards" (with an `error_type` discriminator in the
-  // payload) and callers need that body to distinguish the
-  // application-level no-results 404 from a real routing 404.
+  // Read the response body for every error subtype that surfaces it.
+  // `DjangoUnauthorizedError` carries it so the caller can relay the
+  // backend's auth-failure reason (bad key vs. wrong environment) rather
+  // than an opaque 401. `DjangoNotFoundError` carries it because Tako's
+  // `/api/v1/knowledge_search` overloads 404 to mean "search ran, 0 cards"
+  // (with an `error_type` discriminator in the payload) and callers need
+  // that body to distinguish the application-level no-results 404 from a
+  // real routing 404.
   switch (response.status) {
     case 401:
       throw new DjangoUnauthorizedError({
         path: ctx.path,
         method: ctx.method,
+        body: await safeReadText(response),
       });
     case 404:
       throw new DjangoNotFoundError({

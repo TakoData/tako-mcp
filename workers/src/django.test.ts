@@ -136,11 +136,15 @@ describe("djangoGet", () => {
     expect((err as DjangoBadRequestError).body).toBe("bad field: foo");
   });
 
-  it("throws DjangoUnauthorizedError on 401", async () => {
-    mockFetchOnce(new Response("unauthorized", { status: 401 }));
+  it("throws DjangoUnauthorizedError on 401 carrying the body", async () => {
+    mockFetchOnce(
+      new Response('{"detail":"Invalid token."}', { status: 401 }),
+    );
     const err = await djangoGet(ENV, TOKEN, "/api/v1/x").catch((e) => e);
     expect(err).toBeInstanceOf(DjangoUnauthorizedError);
     expect((err as DjangoUnauthorizedError).status).toBe(401);
+    // The auth-failure reason is captured so the MCP boundary can relay it.
+    expect((err as DjangoUnauthorizedError).body).toBe('{"detail":"Invalid token."}');
   });
 
   it("throws DjangoResponseParseError when a 2xx body is not valid JSON", async () => {
