@@ -116,6 +116,8 @@ Opt-in tool — off by default; enable with `?tools=agent` on the endpoint URL (
 
 Parameters:
 - `query` (string, required): The deep/analytical question
+- `sources` (array, optional): both by default (`["data","web"]`); pass `["data"]` for connected data only or `["web"]` for open-web search only. (`"tako"` is a legacy synonym for `"data"`.)
+- `thread_id` (string UUID, optional): Continue a prior agent run's thread as a follow-up; omit to start a new thread.
 
 ### get_credit_balance
 Opt-in tool — off by default; enable with `?tools=credits` on the endpoint URL (see Connecting). Check the connected account's API credit balance.

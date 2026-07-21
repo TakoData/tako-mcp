@@ -59,7 +59,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which source(s) the agent may use. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] for connected data only, or [\"web\"] for open-web search only. Tako's data is continuously updated — it includes the latest reported quarter, same-day market prices, and official releases as they publish, so it is not just historical reference data; prefer it for latest/official figures. (\"tako\" is accepted as a legacy synonym for \"data\".)",
+          "description": "Which source(s) the agent may use. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] for connected data only, or [\"web\"] for open-web search only. (\"tako\" is accepted as a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -88,7 +88,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which source(s) the agent may use. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] for connected data only, or [\"web\"] for open-web search only. Tako's data is continuously updated — it includes the latest reported quarter, same-day market prices, and official releases as they publish, so it is not just historical reference data; prefer it for latest/official figures. (\"tako\" is accepted as a legacy synonym for \"data\".)",
+          "description": "Which source(s) the agent may use. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] for connected data only, or [\"web\"] for open-web search only. (\"tako\" is accepted as a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -139,7 +139,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which source(s) to ground in. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] for curated data only, or [\"web\"] for live web only. Tako's data is continuously updated — it includes the latest reported quarter, same-day market prices, and official releases as they publish, so it is not just historical reference data; prefer it for latest/official figures. (\"tako\" is accepted as a legacy synonym for \"data\".)",
+          "description": "Which source(s) to ground in. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] for curated data only, or [\"web\"] for live web only. (\"tako\" is accepted as a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -344,7 +344,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which source(s) to search. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] to restrict to curated data only, or [\"web\"] for live web only. Tako's data is continuously updated — it includes the latest reported quarter, same-day market prices, and official releases as they publish, so it is not just historical reference data; prefer it for latest/official figures. (\"tako\" is accepted as a legacy synonym for \"data\".)",
+          "description": "Which source(s) to search. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] to restrict to curated data only, or [\"web\"] for live web only. (\"tako\" is accepted as a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"

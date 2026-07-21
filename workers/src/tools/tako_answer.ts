@@ -18,7 +18,7 @@ const inputSchema = z.object({
     .array(z.enum(["data", "web", "tako"]))
     .min(1)
     .default(["data", "web"])
-    .describe('Which source(s) to ground in. Defaults to both Tako data and the web (["data","web"]); pass ["data"] for curated data only, or ["web"] for live web only. Tako\'s data is continuously updated — it includes the latest reported quarter, same-day market prices, and official releases as they publish, so it is not just historical reference data; prefer it for latest/official figures. ("tako" is accepted as a legacy synonym for "data".)'),
+    .describe('Which source(s) to ground in. Defaults to both Tako data and the web (["data","web"]); pass ["data"] for curated data only, or ["web"] for live web only. ("tako" is accepted as a legacy synonym for "data".)'),
   // No `include_contents` knob: the synthesized `answer` prose IS the payload,
   // so cited cards never inline their row data (it would be redundant bloat).
   // When the model wants the underlying rows behind a specific cited card — or

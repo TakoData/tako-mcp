@@ -49,7 +49,7 @@ const inputSchema = z.object({
     .min(1)
     .default(["data", "web"])
     .describe(
-      'Which source(s) to search. Defaults to both Tako data and the web (["data","web"]); pass ["data"] to restrict to curated data only, or ["web"] for live web only. Tako\'s data is continuously updated — it includes the latest reported quarter, same-day market prices, and official releases as they publish, so it is not just historical reference data; prefer it for latest/official figures. ("tako" is accepted as a legacy synonym for "data".)',
+      'Which source(s) to search. Defaults to both Tako data and the web (["data","web"]); pass ["data"] to restrict to curated data only, or ["web"] for live web only. ("tako" is accepted as a legacy synonym for "data".)',
     ),
   effort: z
     .enum(["fast", "instant"])

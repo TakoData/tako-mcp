@@ -50,7 +50,7 @@ export const inputSchema = z.object({
     .min(1)
     .default(["data", "web"])
     .describe(
-      'Which source(s) the agent may use. Defaults to both Tako data and the web (["data","web"]); pass ["data"] for connected data only, or ["web"] for open-web search only. Tako\'s data is continuously updated — it includes the latest reported quarter, same-day market prices, and official releases as they publish, so it is not just historical reference data; prefer it for latest/official figures. ("tako" is accepted as a legacy synonym for "data".)',
+      'Which source(s) the agent may use. Defaults to both Tako data and the web (["data","web"]); pass ["data"] for connected data only, or ["web"] for open-web search only. ("tako" is accepted as a legacy synonym for "data".)',
     ),
   thread_id: z
     .uuid()
