@@ -815,10 +815,16 @@ export function djangoErrorToToolResult(err: DjangoError): {
   const is4xx =
     err.status !== undefined && err.status >= 400 && err.status < 500;
   const detailText = body !== undefined ? extractErrorDetail(body) : undefined;
+  // A handler-supplied `modelGuidance` (e.g. tako_contents' self-correcting
+  // 403/404 text) wins and is used verbatim — it already folds in any backend
+  // detail, so it must NOT be re-spliced. Otherwise fall back to `err.message`,
+  // splicing the recognised 4xx detail as usual.
   const text =
-    is4xx && detailText !== undefined
-      ? `${err.message}: ${detailText}`
-      : err.message;
+    err.modelGuidance !== undefined
+      ? err.modelGuidance
+      : is4xx && detailText !== undefined
+        ? `${err.message}: ${detailText}`
+        : err.message;
   return {
     content: [{ type: "text", text }],
     _meta: { "tako/error": detail },

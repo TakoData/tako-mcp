@@ -146,17 +146,22 @@ const takoContents = {
       // supports_data_export(), while this endpoint gates on the stricter
       // export_safe() — so the card that lands here may well have carried
       // one (presence is necessary for export, not sufficient).
+      // Attach a self-correcting message via `modelGuidance` and re-throw the
+      // ORIGINAL DjangoError (rather than a plain Error). registerTool then
+      // routes it through djangoErrorToToolResult, so contents 403/404 keep the
+      // same `_meta["tako/error"]` envelope (kind/status/body) every other tool
+      // emits, while the model still sees the guidance in the text channel.
+      // The guidance already splices the recognised backend detail, so
+      // djangoErrorToToolResult uses it verbatim (no second splice).
       if (err instanceof DjangoHttpError && err.status === 403) {
         const detail = extractErrorDetail(err.body);
-        throw new Error(
-          `The contents endpoint refused this export (403${detail !== undefined ? `: ${detail}` : ""}). For a Tako card this usually means the export gate rejected it as unexportable — possible even when the card carried a \`content\` attribute (the export descriptor), since presence is required for export but does not guarantee it. Don't retry or rephrase; use the card's title, inline preview, and chart instead. Never call tako_contents on a card whose \`content\` attribute is missing or null.`,
-        );
+        err.modelGuidance = `The contents endpoint refused this export (403${detail !== undefined ? `: ${detail}` : ""}). For a Tako card this usually means the export gate rejected it as unexportable — possible even when the card carried a \`content\` attribute (the export descriptor), since presence is required for export but does not guarantee it. Don't retry or rephrase; use the card's title, inline preview, and chart instead. Never call tako_contents on a card whose \`content\` attribute is missing or null.`;
+        throw err;
       }
       if (err instanceof DjangoNotFoundError) {
         const detail = extractErrorDetail(err.body);
-        throw new Error(
-          `The contents endpoint found nothing downloadable at that URL (404${detail !== undefined ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result carried a \`content\` attribute (non-null) are exportable.`,
-        );
+        err.modelGuidance = `The contents endpoint found nothing downloadable at that URL (404${detail !== undefined ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result carried a \`content\` attribute (non-null) are exportable.`;
+        throw err;
       }
       throw err;
     }

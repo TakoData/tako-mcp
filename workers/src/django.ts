@@ -71,6 +71,16 @@ export abstract class DjangoError extends Error {
   readonly method: HttpMethod;
   /** HTTP status, or `undefined` for transport errors (e.g. timeout). */
   readonly status: number | undefined;
+  /**
+   * Optional model-facing guidance that OVERRIDES the default model-visible
+   * text when this error is mapped to a tool result (see
+   * `djangoErrorToToolResult`). A handler sets it to a self-correcting message
+   * and re-throws the ORIGINAL error, so the full `_meta["tako/error"]`
+   * envelope (kind/status/body) is still emitted while the text channel shows
+   * the guidance. When set it is used VERBATIM — no 4xx body splice — so build
+   * any backend detail you want into it (e.g. via `extractErrorDetail`).
+   */
+  modelGuidance?: string;
 
   constructor(
     message: string,

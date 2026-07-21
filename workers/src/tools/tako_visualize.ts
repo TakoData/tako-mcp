@@ -57,7 +57,7 @@ const DESCRIPTION = [
   "Input: one or more typed `components`, each `{component_type, config}` — e.g. `header`, `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`.",
   "",
   "Example — a titled bar chart is two components:",
-  '{"components": [{"component_type": "header", "config": {"title": "Revenue"}}, {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Sales", "data": [{"x": "NA", "y": 500}, {"x": "EU", "y": 300}]}]}}]}',
+  '{"components": [{"component_type": "header", "config": {"title": "Revenue"}}, {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Sales", "units": "USD", "data": [{"x": "NA", "y": 500}, {"x": "EU", "y": 300}]}]}}]}',
   "",
   "Tip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.",
 ].join("\n");

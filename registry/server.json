@@ -397,7 +397,7 @@
     },
     {
       "name": "tako_visualize",
-      "description": "Create an embeddable Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. Auto-renders inline; returns `webpage_url` / `embed_url`.\n\nInput: one or more typed `components`, each `{component_type, config}` — e.g. `header`, `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`.\n\nExample — a titled bar chart is two components:\n{\"components\": [{\"component_type\": \"header\", \"config\": {\"title\": \"Revenue\"}}, {\"component_type\": \"categorical_bar\", \"config\": {\"datasets\": [{\"label\": \"Sales\", \"data\": [{\"x\": \"NA\", \"y\": 500}, {\"x\": \"EU\", \"y\": 300}]}]}}]}\n\nTip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.",
+      "description": "Create an embeddable Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. Auto-renders inline; returns `webpage_url` / `embed_url`.\n\nInput: one or more typed `components`, each `{component_type, config}` — e.g. `header`, `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`.\n\nExample — a titled bar chart is two components:\n{\"components\": [{\"component_type\": \"header\", \"config\": {\"title\": \"Revenue\"}}, {\"component_type\": \"categorical_bar\", \"config\": {\"datasets\": [{\"label\": \"Sales\", \"units\": \"USD\", \"data\": [{\"x\": \"NA\", \"y\": 500}, {\"x\": \"EU\", \"y\": 300}]}]}}]}\n\nTip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.",
       "parameters": {
         "components": {
           "type": "array",
