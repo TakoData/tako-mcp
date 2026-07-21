@@ -410,6 +410,21 @@ describe("chart render gates per client", () => {
     ).toBeDefined();
   });
 
+  it("chatgpt client: widget metadata ships, no image block, and no PNG prefetch", async () => {
+    // Exactly ONE response queued: the v3 search. ChatGPT keeps the
+    // interactive widget (which loads `embed_url` itself), so neither
+    // the image-content-block fetch nor `extraMeta`'s PNG prefetch may
+    // fire — `mockFetchSequence` throws loudly on any second call.
+    mockFetchSequence([searchResponse()]);
+
+    const result = await callSearch("chatgpt");
+
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    expect(
+      (result._meta as { ui?: unknown } | undefined)?.ui,
+    ).toBeDefined();
+  });
+
   it("claude client: no image block when the search returns zero cards", async () => {
     // Empty result → no top card → no image_url → the PNG hook must not
     // fire (queue holds only the search response; an unexpected second

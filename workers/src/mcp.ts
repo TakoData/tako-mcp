@@ -399,10 +399,12 @@ function registerTool(
   // descriptions.)
   //
   // Per-tool ChatGPT suppression (`widgetSuppressedForTool`) still
-  // fires both gates: pairing image content blocks with widget
-  // metadata in one result silently disabled ChatGPT's widget data
-  // flow, so content-block images stay off wherever widget metadata
-  // may still be in play for the same client.
+  // fires both gates. That set exists for tools whose widget renders
+  // blank/broken on ChatGPT in some legitimate success state — the
+  // intended fallback there is the plain text + markdown-link answer,
+  // not a PNG. (The image-block/widget mutual exclusion is separately
+  // guaranteed by the `ui === undefined` condition at the call-time
+  // `extraContentBlocks` gate.)
   const widgetSuppressed =
     options.client === "claude" || options.widgetSuppressedForTool === true;
   const inlinePngFallbackSuppressed = options.widgetSuppressedForTool === true;
