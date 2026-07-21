@@ -67,7 +67,7 @@ const NER_LABEL_LIST =
   "PERSON, ORG, GPE, LOC, PRODUCT, EVENT, LANGUAGE, MONEY, METRIC, STOCK_TICKER, WEBSITE";
 
 const NODE_ID_HINT =
-  "Node ids come from tako_graph_search / tako_graph_related results or a tako_search card's `nodes` — never a plain name; resolve the name first.";
+  "Node ids come from tako_available_data results or a tako_search card's `nodes` — never a plain name; resolve the name first.";
 
 /**
  * Translate a transport/HTTP error from a `/beta/graph/*` call into an
@@ -96,8 +96,11 @@ export function graphErrorMessage(
   err: unknown,
   op: GraphOp,
   ref?: string,
+  toolName?: string,
 ): string {
-  const tool = `tako_graph_${op}`;
+  // `toolName` lets a composite caller (tako_available_data) label the error
+  // with its own name; the demoted primitives fall back to `tako_graph_<op>`.
+  const tool = toolName ?? `tako_graph_${op}`;
   const idOf = ref ? `"${ref}"` : "the given id";
 
   if (err instanceof DjangoUnauthorizedError) {
@@ -117,7 +120,7 @@ export function graphErrorMessage(
 
   if (err instanceof DjangoNotFoundError) {
     if (op === "related") {
-      return `${tool}: no graph node with id ${idOf} (404). Resolve the entity/metric with tako_graph_search first and pass the \`id\` it returns. (An unknown \`relation\` is NOT a 404 — it returns empty items, so this means the node id itself.)`;
+      return `${tool}: no graph node with id ${idOf} (404). Resolve the entity/metric with tako_available_data first and pass the \`id\` it returns. (An unknown \`relation\` is NOT a 404 — it returns empty items, so this means the node id itself.)`;
     }
     if (op === "node") {
       return `${tool}: no graph node with id ${idOf} (404). ${NODE_ID_HINT}`;

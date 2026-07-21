@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import takoGraphRelated from "./tako_graph_related.js";
+import takoGraphRelated from "./_tako_graph_related.js";
 import {
   jsonResponse,
   mockFetchSequence,

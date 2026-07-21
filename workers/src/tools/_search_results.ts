@@ -70,8 +70,7 @@ export const takoCardSchema = z
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
-    // sources.data.node_ids to pin the same nodes in a follow-up search, or
-    // hydrate with tako_graph_node for full detail.
+    // sources.data.node_ids to pin the same nodes in a follow-up search.
     nodes: z
       .array(
         z.object({

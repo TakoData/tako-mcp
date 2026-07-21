@@ -14,7 +14,6 @@ const AGENT_TOOLS = ["tako_agent", "tako_agent_start", "tako_agent_wait"];
 // default surface. Same loud-failure rationale as AGENT_TOOLS.
 const SINGLE_TOOL_ALIASES: Record<string, string> = {
   visualize: "tako_visualize",
-  graph_node: "tako_graph_node",
   credits: "get_credit_balance",
 };
 

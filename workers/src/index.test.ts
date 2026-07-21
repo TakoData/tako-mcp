@@ -218,18 +218,16 @@ describe("worker routing", () => {
     const names = body.result.tools.map((t) => t.name).sort();
     // Default tool set with NO `tools` query param — every opt-in tool is
     // absent. The agent trio (`?tools=agent`), `tako_visualize`
-    // (`?tools=visualize`), `tako_graph_node` (`?tools=graph_node`), and
-    // `get_credit_balance` (`?tools=credits`) are all in
-    // `OPTIONAL_TOOL_NAMES` (see `_optional.ts`) and only appear when the
-    // connector opts in. Chart-authoring tools (`create_chart`,
+    // (`?tools=visualize`), and `get_credit_balance` (`?tools=credits`)
+    // are all in `OPTIONAL_TOOL_NAMES` (see `_optional.ts`) and only appear
+    // when the connector opts in. Chart-authoring tools (`create_chart`,
     // `get_chart_image`, `open_chart_ui`) were removed in 0.3.0;
     // `tako_search` is the sole owner of the chart widget on the default
     // surface (auto-renders the top card inline).
     expect(names).toEqual([
       "tako_answer",
+      "tako_available_data",
       "tako_contents",
-      "tako_graph_related",
-      "tako_graph_search",
       "tako_search",
     ]);
 
@@ -312,8 +310,8 @@ describe("worker routing", () => {
     // `tako_visualize` is opt-in for other clients but default-on for
     // ChatGPT (`CHATGPT_DEFAULT_ON_TOOL_NAMES`) — it powers the widget.
     expect(names.has("tako_visualize")).toBe(true);
-    // 5 defaults + tako_visualize (ChatGPT default-on) + the split pair = 8.
-    expect(body.result.tools).toHaveLength(8);
+    // 4 defaults + tako_visualize (ChatGPT default-on) + the split pair = 7.
+    expect(body.result.tools).toHaveLength(7);
 
     // `tako_search` is the sole chart-widget tool on ChatGPT after 0.3.0.
     // The empty-fast widget-gap problem (ChatGPT pins widget container
@@ -364,8 +362,8 @@ describe("worker routing", () => {
     // The other opt-in tools stay absent for ChatGPT too.
     expect(names.has("tako_graph_node")).toBe(false);
     expect(names.has("get_credit_balance")).toBe(false);
-    // 5 defaults + tako_visualize = 6.
-    expect(body.result.tools).toHaveLength(6);
+    // 4 defaults + tako_visualize = 5.
+    expect(body.result.tools).toHaveLength(5);
   });
 
   it("POST /mcp?tools=agent adds the single tako_agent tool on non-ChatGPT clients", async () => {
@@ -399,14 +397,14 @@ describe("worker routing", () => {
     expect(names.has("tako_search")).toBe(true);
     // Other opt-in tools stay absent — `?tools=agent` enables only the agent.
     expect(names.has("tako_visualize")).toBe(false);
-    // 5 default tools + tako_agent = 6.
-    expect(body.result.tools).toHaveLength(6);
+    // 4 default tools + tako_agent = 5.
+    expect(body.result.tools).toHaveLength(5);
   });
 
-  it("POST /mcp?tools=<unknown> ignores the bad value and serves the default 5 tools", async () => {
+  it("POST /mcp?tools=<unknown> ignores the bad value and serves the default 4 tools", async () => {
     // A typo (or any unrecognized alias) in `?tools=` must never break the
     // connection: unknown tokens are dropped, no optional tool is enabled, and
-    // the request layer still returns exactly the 5 defaults. This guards the
+    // the request layer still returns exactly the 4 defaults. This guards the
     // parser's "unknown token is never fatal" promise end-to-end.
     const res = await SELF.fetch("https://example.com/mcp?tools=nope", {
       method: "POST",
@@ -435,7 +433,7 @@ describe("worker routing", () => {
     expect(names.has("tako_agent_wait")).toBe(false);
     expect(names.has("tako_visualize")).toBe(false);
     expect(names.has("tako_search")).toBe(true);
-    expect(body.result.tools).toHaveLength(5);
+    expect(body.result.tools).toHaveLength(4);
   });
 
   it("POST /mcp?tools=visualize adds tako_visualize with its widget metadata (non-ChatGPT)", async () => {
@@ -469,8 +467,8 @@ describe("worker routing", () => {
     expect(names.has("tako_graph_node")).toBe(false);
     expect(names.has("get_credit_balance")).toBe(false);
     expect(names.has("tako_agent")).toBe(false);
-    // 5 default tools + tako_visualize = 6.
-    expect(body.result.tools).toHaveLength(6);
+    // 4 default tools + tako_visualize = 5.
+    expect(body.result.tools).toHaveLength(5);
 
     // Opting in must not strip the widget: the listing still declares the
     // chart resource under all three metadata keys (see the default-set test
@@ -485,9 +483,9 @@ describe("worker routing", () => {
     });
   });
 
-  it("POST /mcp?tools=graph_node,credits composes multiple single-tool aliases", async () => {
+  it("POST /mcp?tools=visualize,credits composes multiple single-tool aliases", async () => {
     const res = await SELF.fetch(
-      "https://example.com/mcp?tools=graph_node,credits",
+      "https://example.com/mcp?tools=visualize,credits",
       {
         method: "POST",
         headers: {
@@ -510,13 +508,12 @@ describe("worker routing", () => {
       result: { tools: Array<{ name: string }> };
     };
     const names = new Set(body.result.tools.map((t) => t.name));
-    expect(names.has("tako_graph_node")).toBe(true);
+    expect(names.has("tako_visualize")).toBe(true);
     expect(names.has("get_credit_balance")).toBe(true);
     // Aliases not in the list stay off.
-    expect(names.has("tako_visualize")).toBe(false);
     expect(names.has("tako_agent")).toBe(false);
-    // 5 default tools + tako_graph_node + get_credit_balance = 7.
-    expect(body.result.tools).toHaveLength(7);
+    // 4 default tools + tako_visualize + get_credit_balance = 6.
+    expect(body.result.tools).toHaveLength(6);
   });
 
   it("POST /mcp tools/list serves one client-agnostic tako_search description", async () => {

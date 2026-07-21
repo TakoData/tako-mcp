@@ -35,11 +35,11 @@ import {
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Fast, direct retrieval of a data point from Tako's data graph and the live web, returned as structured cards; the top card auto-renders inline as a chart. It replaces a generic web search for data lookups.",
+  "Fastest, direct retrieval of data or metrics from the live web and Tako's data graph, returned as structured cards; the top card auto-renders inline as a chart. It replaces a generic web search for data lookups.",
   "",
   "Best for: grabbing a known figure or metric — a value, time series, price, score, schedule, forecast, poll, or prediction-market number. It is cheap and fast, built to fan out: many narrow queries fired in parallel retrieve far better than one broad query, and you assemble the multi-part result yourself.",
   "",
-  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. Listing what Tako covers is a `tako_graph_search` + `tako_graph_related` job, not a keyword search.',
+  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. Listing what Tako covers is a `tako_available_data` job, not a keyword search.',
   "",
   "Returns: cards (up to `count`) with preview rows, chart URLs, and web links. Full csv data content is available via `tako_contents` only if the card has a `content` field or the web result includes page text.",
   "",
@@ -58,7 +58,7 @@ const inputSchema = z.object({
     .min(1)
     .default(["data", "web"])
     .describe(
-      'Source(s) to search. Default ["data","web"] (both) — keep web enabled. Only narrow to ["data"] once `tako_graph_search` / `tako_graph_related` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass ["web"] for live web only. ("tako" is a legacy synonym for "data".)',
+      'Source(s) to search. Default ["data","web"] (both) — keep web enabled. Only narrow to ["data"] once `tako_available_data` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass ["web"] for live web only. ("tako" is a legacy synonym for "data".)',
     ),
   effort: z
     .enum(["fast", "instant"])
@@ -89,7 +89,7 @@ const inputSchema = z.object({
     .max(20)
     .optional()
     .describe(
-      "Graph node ids (from tako_graph_search / tako_graph_related, or a card's nodes) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+      "Graph node ids (from tako_available_data, or a card's nodes) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
     ),
   strict: z
     .boolean()

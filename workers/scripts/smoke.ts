@@ -8,11 +8,12 @@
  *   2. MCP `initialize`        → handshake completes
  *   3. MCP `tools/list`        → connects with `?tools=agent,visualize,credits`
  *                                 (those tools are opt-in — see `_optional.ts`);
- *                                 hard-asserts the 5 canary tools; loosely
+ *                                 hard-asserts the 6 canary tools; loosely
  *                                 asserts at least one agent tool is present
  *   4. MCP Apps widget assertion on `tako_search` (soft-warn on miss)
  *   5. Per-tool MCP `tools/call` canaries:
  *        a. `tako_search "US GDP"`        — non-empty results (read-only)
+ *        a2. `tako_available_data "US GDP"` — summary + a match with node_id (read-only)
  *        b. `tako_answer "US GDP"`        — answer text returned (read-only)
  *        c. `tako_contents {url from search}` — inline data (default) + presigned download_url (mode:"url"), both read-only
  *        d. `get_credit_balance`          — `details.credit_balance`
@@ -150,7 +151,7 @@ try {
   // with a useful diff if a registry change drops one of them. We don't
   // assert on the *full* tool list because the surface evolves (e.g.
   // explore_knowledge_graph removal in PR #47).
-  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_visualize", "get_credit_balance"];
+  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_available_data", "tako_visualize", "get_credit_balance"];
   for (const required of requiredTools) {
     if (!toolNames.includes(required)) {
       fail(
@@ -225,6 +226,31 @@ try {
     typeof topResultUrl === "string" && topResultUrl.length > 0,
     "tako_search top card has no webpage_url to feed tako_contents",
   );
+
+  // ----- a2) tako_available_data canary ---------------------------------
+  // Free graph pipeline (search → related). Assert the natural-language
+  // summary and at least one resolved match with a node_id.
+  const adResult = await callOk(client, "tako_available_data", {
+    q: CANARY_QUERY,
+  });
+  const adStructured = adResult.structuredContent as
+    | {
+        found?: boolean;
+        summary?: string;
+        matches?: Array<{ node_id?: string }>;
+      }
+    | undefined;
+  assert(adStructured, "tako_available_data missing structuredContent");
+  assert(
+    typeof adStructured.summary === "string" && adStructured.summary.length > 0,
+    "tako_available_data returned an empty summary",
+  );
+  assert(
+    Array.isArray(adStructured.matches) && adStructured.matches.length > 0 &&
+      typeof adStructured.matches[0]?.node_id === "string",
+    "tako_available_data returned no matches with a node_id",
+  );
+  ok(`tako_available_data "${CANARY_QUERY}" → ${adStructured.matches.length} matches, summary present`);
 
   // ----- b) tako_answer canary ------------------------------------------
   const taResult = await callOk(client, "tako_answer", {
