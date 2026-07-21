@@ -18,11 +18,15 @@ import {
   buildChartUrls,
 } from "./_chart_widget.js";
 
-// Backend ResultContent (api/ga/content_types.py) — a result's inline data.
-// A preview `content` object rides on every result (even when include_contents
-// is false, carrying just the cost quote); `data` is populated only when
-// contents were requested. `content_format` ("csv" for Tako card data, "text"
-// for web page text) is null when no payload is delivered.
+// Backend ResultContent (api/ga/content_types.py) — a result's export
+// descriptor + inline data. It rides on every EXPORTABLE result (even when
+// include_contents is false, carrying just the cost quote); `data` is
+// populated only when contents were requested. `content_format` ("csv" for
+// Tako card data, "text" for web page text) is null when no payload is
+// delivered. A card with NO `content` (missing or null) is not exportable:
+// the backend's export-safe gate 403s a tako_contents call on its URL, so its
+// presence is the model-facing "tako_contents will work here" signal and must
+// survive slimming (slimCardContent strips rows but always keeps the object).
 //
 // Every field is optional/nullable on purpose: this is a RESPONSE the tool only
 // surfaces for the model to read (nothing in code branches on it), and the
@@ -52,8 +56,15 @@ export const takoCardSchema = z
     webpage_url: z.string().nullable().optional(),
     image_url: z.string().nullable().optional(),
     embed_url: z.string().nullable().optional(),
-    // Inline card CSV — present only when include_contents was set for the tako source.
-    content: resultContentSchema.nullable().optional(),
+    // Export descriptor + inline preview. Present iff this card's data is
+    // exportable via tako_contents (it rides along even with include_contents
+    // off, carrying the cost quote). Missing/null → NOT exportable (403).
+    content: resultContentSchema
+      .nullable()
+      .optional()
+      .describe(
+        "Export descriptor + inline data preview. Present (non-null) ONLY when this card's underlying data is exportable via tako_contents. Missing or null means the card has NO exportable data — do NOT call tako_contents on its URL (the export gate rejects it).",
+      ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
     // sources.data.node_ids to pin the same nodes in a follow-up search, or
@@ -87,7 +98,10 @@ export const webResultSchema = z
     publish_date: z.string().nullable().optional(),
     // 1-based citation index — set on Agent API results, null on raw retrieval.
     citation_number: z.number().nullable().optional(),
-    // Inline web page text — present only when include_contents was set for the web source.
+    // Inline web page text — present only when include_contents was set for the
+    // web source. Unlike Tako cards, a web URL is exempt from the export gate:
+    // it can be passed to tako_contents (extracted page text) whether or not
+    // this descriptor rides along.
     content: resultContentSchema.nullable().optional(),
   })
   .loose();
