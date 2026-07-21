@@ -63,7 +63,7 @@ export interface CoverageGroup {
   names: string[];
   /** Server-reported total. A floor when `capped` is true. */
   total: number;
-  /** Whether more names exist than are shown (`total > names.length`). */
+  /** More names exist than are shown (`total > names.length`, or `capped`). */
   truncated: boolean;
   /** Server hit its fetch cap — the true count is at least `total` ("N+"). */
   capped: boolean;
@@ -117,12 +117,16 @@ export function selectCoverage(
   const raw = group.items.map((i) => i.name);
   const ordered = kind === "metrics" ? orderMetricNames(raw) : raw;
   const total = group.total ?? ordered.length;
+  const names = ordered.slice(0, PREVIEW);
+  const capped = group.total_capped ?? false;
   return {
     kind,
-    names: ordered.slice(0, PREVIEW),
+    names,
     total,
-    truncated: total > Math.min(ordered.length, PREVIEW),
-    capped: group.total_capped ?? false,
+    // Capped means the server stopped counting — more names always exist
+    // beyond the floor, even if `total` happens to equal the shown count.
+    truncated: capped || total > names.length,
+    capped,
   };
 }
 
@@ -135,6 +139,16 @@ export function buildMatch(node: GraphNode, group: GraphRelation | null | undefi
     label: node.label ?? null,
     coverage: selectCoverage(group, coverageKindFor(node.type)),
   };
+}
+
+/**
+ * Whether a match carries real, loaded coverage — resolved AND its drill
+ * succeeded AND the coverage is non-empty. Drives both the summary header and
+ * the tool's `found` flag, so "found" always means "Tako has data", never
+ * merely "a node matched".
+ */
+export function hasLiveCoverage(m: CoverageMatch): boolean {
+  return !m.unavailable && m.coverage.total > 0;
 }
 
 /** A match whose coverage lookup failed — resolved, but coverage unavailable. */
@@ -193,12 +207,12 @@ function matchLine(m: CoverageMatch): string {
 
 // Pick a real next-step example. For an entity's metrics: "Tesla, Inc. Revenue".
 // For a metric's entities: "United States Inflation Rate" (entity + metric).
+// Only matches with actual coverage qualify — no fallback, or the summary
+// would steer the agent into a priced tako_search for a name it just
+// reported as having no data.
 function nextStepExample(matches: CoverageMatch[]): string | null {
   const m = matches.find((x) => !x.unavailable && x.coverage.names.length > 0);
-  if (!m) {
-    const any = matches.find((x) => !x.unavailable);
-    return any ? any.name : null;
-  }
+  if (!m) return null;
   const first = m.coverage.names[0];
   return m.coverage.kind === "entities" ? `${first} ${m.name}` : `${m.name} ${first}`;
 }
@@ -220,7 +234,20 @@ export function buildSummary(input: {
   }
 
   const n = matches.length;
-  const header = `Tako has live data on ${n} ${plural(n, "match", "matches")} for "${query}":`;
+  // The header only claims "live data" for matches that actually have some —
+  // a resolved node with no coverage (or a failed drill) must not be
+  // advertised as data, per the tool's contract ("a match with no coverage is
+  // a real answer — report the gap").
+  const withData = matches.filter(hasLiveCoverage).length;
+  const matchesOf = `${n} ${plural(n, "match", "matches")} for "${query}"`;
+  let header: string;
+  if (withData === 0) {
+    header = `Resolved ${matchesOf}, but none with live data coverage:`;
+  } else if (withData < n) {
+    header = `Tako has live data on ${withData} of ${matchesOf}:`;
+  } else {
+    header = `Tako has live data on ${matchesOf}:`;
+  }
   const lines = matches.map(matchLine);
 
   const blocks: string[] = [header, "", lines.join("\n\n")];

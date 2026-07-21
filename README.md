@@ -193,6 +193,7 @@ Tools are discovered automatically via the MCP `tools/list` handshake; your clie
 - **`tako_visualize`** — _Opt-in tool ([enable with `?tools=visualize`](#optional-tools-opt-in); on by default for ChatGPT)._ Create an embeddable chart/card directly from your own structured data (Tako's [Thin-Viz](https://tako.com/docs/) API). Supply typed `components` (timeseries, bar, table, financial boxes, …); the card auto-renders inline and returns `webpage_url` / `embed_url`.
 - **`tako_agent`** — _Opt-in tool ([enable with `?tools=agent`](#optional-tools-opt-in))._ Run Tako's **Answer Agent**: opinionated, multi-step research for complex questions that need reasoning across many retrievals. Returns a synthesized, citation-backed answer plus supporting chart cards. Distinct from one-shot `tako_answer` (a single grounded lookup) — the agent is slower (~30–90s) but far more thorough. (On ChatGPT this is exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.)
 - **`get_credit_balance`** — _Opt-in tool ([enable with `?tools=credits`](#optional-tools-opt-in))._ Check the connected account's API credit balance.
+- **`tako_graph_search`** / **`tako_graph_related`** / **`tako_graph_node`** — _Opt-in tools ([enable with `?tools=graph`](#optional-tools-opt-in))._ The low-level graph primitives behind `tako_available_data`, for power users who need what the one-call summary doesn't expose: traversal relations (`siblings`, `part_of`, `members`, `rel:*` named edges like `rel:competes_with`), server-side `q` filtering within a relation, cursor paging, and full node detail (aliases, subtype, description). Graph calls are free.
 
 ### Answer vs. Search — the core distinction
 
@@ -218,6 +219,7 @@ To keep the default tool surface small (less context loaded into every session, 
 | `agent` | `tako_agent` (ChatGPT: `tako_agent_start` / `tako_agent_wait`) | Deep, multi-step Answer Agent research |
 | `visualize` | `tako_visualize` | Author charts from your own data (already on by default for ChatGPT, where it powers the widget) |
 | `credits` | `get_credit_balance` | Check API credit balance |
+| `graph` | `tako_graph_search`, `tako_graph_related`, `tako_graph_node` | Low-level graph traversal beyond `tako_available_data` (relations, filtering, paging, node detail) |
 
 Aliases compose as a comma-separated list:
 
@@ -249,7 +251,7 @@ Only alias names are recognized (not raw tool names), and unknown values in `?to
 
 ## Breaking changes (v0.3.0)
 
-- The default tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, and **`tako_available_data`**. Everything else is [opt-in via `?tools=`](#optional-tools-opt-in): **`tako_agent`** (`agent`; on ChatGPT the split pair **`tako_agent_start`** / **`tako_agent_wait`**), **`tako_visualize`** (`visualize`; default-on for ChatGPT), and **`get_credit_balance`** (`credits`).
+- The default tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, and **`tako_available_data`**. Everything else is [opt-in via `?tools=`](#optional-tools-opt-in): **`tako_agent`** (`agent`; on ChatGPT the split pair **`tako_agent_start`** / **`tako_agent_wait`**), **`tako_visualize`** (`visualize`; default-on for ChatGPT), **`get_credit_balance`** (`credits`), and the graph primitives **`tako_graph_search`** / **`tako_graph_related`** / **`tako_graph_node`** (`graph`).
 - The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
 - The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
 

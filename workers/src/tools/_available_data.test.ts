@@ -4,6 +4,7 @@ import {
   buildMatch,
   buildSummary,
   coverageKindFor,
+  hasLiveCoverage,
   OTHER_MATCH_PREVIEW,
   orderMetricNames,
   PREVIEW,
@@ -117,6 +118,23 @@ describe("selectCoverage", () => {
     expect(g.truncated).toBe(false);
     expect(g.capped).toBe(false);
   });
+
+  it("capped always implies truncated, even when total equals the shown count", () => {
+    // A capped total is a floor — more names exist beyond it by definition,
+    // so `truncated` must hold even in the degenerate total === shown case.
+    const g = selectCoverage(group("metrics", ["Revenue", "Net Income"], 2, true), "metrics");
+    expect(g.truncated).toBe(true);
+  });
+});
+
+// --- hasLiveCoverage --------------------------------------------------------
+
+describe("hasLiveCoverage", () => {
+  it("true only for a resolved match with non-empty coverage", () => {
+    expect(hasLiveCoverage(buildMatch(entityNode(), group("metrics", ["Revenue"], 1)))).toBe(true);
+    expect(hasLiveCoverage(buildMatch(entityNode(), group("metrics", [], 0)))).toBe(false);
+    expect(hasLiveCoverage(unavailableMatch(entityNode()))).toBe(false);
+  });
 });
 
 // --- buildMatch / unavailableMatch ---------------------------------------
@@ -214,6 +232,39 @@ describe("buildSummary", () => {
   it("unavailable node renders the temporary-failure line", () => {
     const s = buildSummary({ query: "apple", matches: [unavailableMatch(entityNode())], otherMatches: [] });
     expect(s).toContain("couldn't load its coverage right now");
+  });
+
+  it("all matches empty → header reports the gap, never 'live data'", () => {
+    // Regression: the header used to assert "Tako has live data on N matches"
+    // over a body saying there is none — contradicting the tool's contract.
+    const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
+    const s = buildSummary({ query: "tesla", matches: [bare], otherMatches: [] });
+    expect(s).not.toContain("live data on");
+    expect(s).toContain('Resolved 1 match for "tesla", but none with live data coverage:');
+  });
+
+  it("all matches unavailable → header reports the gap, never 'live data'", () => {
+    const s = buildSummary({
+      query: "apple",
+      matches: [unavailableMatch(entityNode()), unavailableMatch(metricNode())],
+      otherMatches: [],
+    });
+    expect(s).not.toContain("live data on");
+    expect(s).toContain('Resolved 2 matches for "apple", but none with live data coverage:');
+  });
+
+  it("mixed coverage → header counts only the matches with data", () => {
+    const bare = buildMatch(entityNode({ id: "tsla", name: "Tesla", label: "" }), group("metrics", [], 0));
+    const s = buildSummary({ query: "apple", matches: [appleMatch, bare], otherMatches: [] });
+    expect(s).toContain('Tako has live data on 1 of 2 matches for "apple":');
+  });
+
+  it("suppresses the tako_search next-step hint when no match has coverage", () => {
+    // Regression: the fallback used to suggest a priced tako_search for the
+    // very entity the summary just reported as having no data.
+    const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
+    const s = buildSummary({ query: "tesla", matches: [bare], otherMatches: [] });
+    expect(s).not.toContain("call tako_search using");
   });
 
   it("lists other matches capped at OTHER_MATCH_PREVIEW with a tail", () => {

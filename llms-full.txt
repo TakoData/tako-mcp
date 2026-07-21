@@ -16,7 +16,7 @@ Hosted endpoint: `https://mcp.tako.com/mcp` (Streamable HTTP).
 - CLI/desktop hosts (Claude Code, Claude Desktop, Cursor, Windsurf): pass `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at tako.com -> account settings -> API tokens.
 - Web hosts (Claude.ai, ChatGPT): connect via the server's OAuth flow; no token config needed.
 
-Optional tools: some tools are opt-in and off by default, to keep the default surface small. Enable them by adding `?tools=` to the endpoint URL with comma-separated aliases, e.g. `https://mcp.tako.com/mcp?tools=agent,visualize`. Aliases: `agent` (Answer Agent — the server picks the single-call `tako_agent` on most clients and the `tako_agent_start` / `tako_agent_wait` pair on ChatGPT), `visualize` (`tako_visualize`; already on by default for ChatGPT, where it powers the chart widget), `credits` (`get_credit_balance`). Only aliases are recognized (not raw tool names); unknown `?tools=` values are ignored, so a typo never breaks the connection.
+Optional tools: some tools are opt-in and off by default, to keep the default surface small. Enable them by adding `?tools=` to the endpoint URL with comma-separated aliases, e.g. `https://mcp.tako.com/mcp?tools=agent,visualize`. Aliases: `agent` (Answer Agent — the server picks the single-call `tako_agent` on most clients and the `tako_agent_start` / `tako_agent_wait` pair on ChatGPT), `visualize` (`tako_visualize`; already on by default for ChatGPT, where it powers the chart widget), `credits` (`get_credit_balance`), `graph` (the low-level graph primitives `tako_graph_search` / `tako_graph_related` / `tako_graph_node` — power-user traversal beyond what `tako_available_data` covers). Only aliases are recognized (not raw tool names); unknown `?tools=` values are ignored, so a typo never breaks the connection.
 
 Tools are discovered at runtime via `tools/list`. There is no per-call `api_token` argument — auth is connection-level.
 
@@ -76,6 +76,32 @@ Parameters:
 - `q` (string, required, min 2 chars): Entity or metric name to look up.
 - `types` (string, "entity" | "metric", optional): Narrow resolution to a thing ("entity") or a measure ("metric"); omit to search both.
 - `label` (string, optional): NER label to prefer — a boost, not a filter. Supply it when you can categorize the term (company→ORG, country→GPE, person→PERSON, metric→METRIC, …).
+
+### tako_graph_search
+Opt-in tool — off by default; enable with `?tools=graph` on the endpoint URL (see Connecting). Low-level primitive behind `tako_available_data` — prefer that tool for everyday coverage discovery. Resolve a name to Tako data-graph node ids with full control over the search: one kind per call — a thing (`types: "entity"`) or a measure (`types: "metric"`). Results are popularity-ordered; read each node's `subtype`/`label`/`description` to pick the right one. To explore a resolved node's connections, call `tako_graph_related` on its id.
+
+Parameters:
+- `q` (string, required): Search text (min 2 chars).
+- `types` (string, "entity" | "metric", optional): Resolve a thing ("entity") or a measure ("metric"); omit to search both — but decide up front, don't mix the two in one call.
+- `label` (string, optional): NER label to prefer — a boost, not a filter. Supply it when you can categorize the term (company→ORG, country→GPE, person→PERSON, metric→METRIC, …).
+- `infer_label` (boolean, optional, default true): Auto-detect the label from `q`.
+- `limit` (integer, 1-50, default 20): Max results.
+
+### tako_graph_related
+Opt-in tool — off by default; enable with `?tools=graph` on the endpoint URL (see Connecting). Explore what a resolved graph node connects to — the map of what data Tako has for it. Free. Covers what `tako_available_data` does not: traversal relations (siblings, part_of, members, `rel:*` named edges like `rel:competes_with`), server-side `q` filtering within a relation, and cursor paging past the first page. Drilling `relation: "metrics"` returns only that node's metrics group — the smallest, cheapest view of its coverage; the overview (`node_id` alone) also returns entities, siblings, and named edges at more tokens. A listed metric is table-level evidence, not proof — `tako_search` is the final validator. Empty `items` is a normal answer: report the gap instead of silently falling back to web.
+
+Parameters:
+- `node_id` (string, required): Node id from `tako_graph_search`, `tako_available_data`, or a card's `nodes`.
+- `relation` (string, optional): Relation key to page — metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview.
+- `q` (string, optional): Case-insensitive substring filter on name+aliases — one string per call; for several name-variants of a metric ("revenue", "sales"), call once per variant.
+- `label` (string, optional) / `infer_label` (boolean, optional): NER-label preference, as in `tako_graph_search`.
+- `cursor` (string, optional) / `limit` (integer, 1-100, default 50): Pagination within a drilled relation.
+
+### tako_graph_node
+Opt-in tool — off by default; enable with `?tools=graph` on the endpoint URL (see Connecting). Get full detail for one graph-node `id` — name, aliases, subtype, label, description. Use it when you hold a bare node id (e.g. from a `tako_search` card's `nodes`, which carry only id/name/type) and need more to compose a grounded query or confirm what it is.
+
+Parameters:
+- `id` (string, required): Opaque public node id.
 
 ### tako_visualize
 Opt-in tool — off by default; enable with `?tools=visualize` on the endpoint URL (see Connecting; already on by default for ChatGPT). Create an embeddable Tako card from your OWN structured data (not from search), backed by Tako's Thin-Viz API. Provide one or more typed components; the card auto-renders inline as a chart and returns share/embed URLs.

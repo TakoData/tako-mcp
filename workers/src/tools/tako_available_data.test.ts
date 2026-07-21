@@ -59,6 +59,14 @@ describe("tako_available_data", () => {
     expect(url.searchParams.get("label")).toBe("ORG");
   });
 
+  it("omits types and label from graph/search when the caller omits them", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, { results: [] })]);
+    await takoAvailableData.handler({ q: "apple" }, CTX);
+    const url = new URL(requestFrom(fetchMock.mock.calls[0]).url);
+    expect(url.searchParams.has("types")).toBe(false);
+    expect(url.searchParams.has("label")).toBe(false);
+  });
+
   it("entity hit drills relation=metrics; lists the rest as other_matches", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, {
@@ -127,6 +135,46 @@ describe("tako_available_data", () => {
     expect(out.matches).toHaveLength(2);
     expect(out.matches.find((m) => m.node_id === "b")?.unavailable).toBe(true);
     expect(out.matches.find((m) => m.node_id === "a")?.coverage.total).toBe(1);
+  });
+
+  it("resolved node with empty coverage → found:false and a gap summary, not 'live data'", async () => {
+    // Regression (end-to-end): node resolution alone must not read as "Tako
+    // has data" — neither in `found` nor in the summary header.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("tsla", "Tesla, Inc.")] }),
+      jsonResponse(200, drill("tsla", "Tesla, Inc.", "metrics", [])),
+    ]);
+    const out = await takoAvailableData.handler({ q: "tesla" }, CTX);
+    expect(out.found).toBe(false);
+    expect(out.summary).not.toContain("live data on");
+    expect(out.summary).toContain("no metrics for it yet");
+  });
+
+  it("all coverage drills failing → found:false, gap summary over unavailable lines", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("a", "A"), searchHit("b", "B")] }),
+      jsonResponse(503, { detail: "down" }),
+      jsonResponse(503, { detail: "down" }),
+    ]);
+    const out = await takoAvailableData.handler({ q: "x" }, CTX);
+    expect(out.found).toBe(false);
+    expect(out.summary).not.toContain("live data on");
+    expect(out.matches.every((m) => m.unavailable)).toBe(true);
+  });
+
+  it("a node type that is neither entity nor metric drills relation=metrics end-to-end", async () => {
+    // coverageKindFor defaults unknown types to "metrics"; prove the handler
+    // routes such a node through the full pipeline, not just the unit helper.
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("sp-500", "S&P 500", "index", "PRODUCT")] }),
+      jsonResponse(200, drill("sp-500", "S&P 500", "metrics", ["Price", "P/E Ratio"], 12)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "s&p 500" }, CTX);
+    const drillUrl = new URL(requestFrom(fetchMock.mock.calls[1]).url);
+    expect(drillUrl.searchParams.get("relation")).toBe("metrics");
+    expect(out.found).toBe(true);
+    expect(out.matches[0]?.coverage.kind).toBe("metrics");
+    expect(out.summary).toContain("12 metrics incl. Price, P/E Ratio");
   });
 
   it("treats a malformed coverage payload as unavailable, not a hard failure", async () => {

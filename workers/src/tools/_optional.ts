@@ -28,6 +28,13 @@
  * default surface for ChatGPT clients (it powers the chart widget) — see
  * `CHATGPT_DEFAULT_ON_TOOL_NAMES` in `mcp.ts`.
  *
+ * `graph` enables the three low-level graph primitives (search / related /
+ * node). `tako_available_data` covers the common discovery path in one call,
+ * so these are off the default surface — but the primitives expose
+ * capabilities it does not (traversal relations like `siblings`/`members`,
+ * server-side `q` filtering within a relation, cursor paging, full node
+ * detail), so power users get them back with `?tools=graph`.
+ *
  * Only aliases are recognized on the wire (not raw tool names), so this table
  * is also the complete, closed set of tokens `?tools=` accepts.
  */
@@ -37,6 +44,7 @@ export const OPTIONAL_TOOL_ALIASES: Readonly<
   agent: ["tako_agent", "tako_agent_start", "tako_agent_wait"],
   visualize: ["tako_visualize"],
   credits: ["get_credit_balance"],
+  graph: ["tako_graph_search", "tako_graph_related", "tako_graph_node"],
 };
 
 /**

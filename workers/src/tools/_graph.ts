@@ -99,7 +99,8 @@ export function graphErrorMessage(
   toolName?: string,
 ): string {
   // `toolName` lets a composite caller (tako_available_data) label the error
-  // with its own name; the demoted primitives fall back to `tako_graph_<op>`.
+  // with its own name; the opt-in primitives (`?tools=graph`) fall back to
+  // `tako_graph_<op>`.
   const tool = toolName ?? `tako_graph_${op}`;
   const idOf = ref ? `"${ref}"` : "the given id";
 

@@ -67,6 +67,7 @@ Source of truth: `workers/src/tools/*.ts`. Tools are discovered at runtime via t
 5. `tako_agent` — Answer Agent for multi-step data questions (on ChatGPT split into `tako_agent_start` / `tako_agent_wait`). **Opt-in** — off by default; enabled per-connection via `?tools=agent` (see `workers/src/tools/_optional.ts`).
 6. `tako_visualize` — Create an embeddable chart/card from your own structured data. **Opt-in** — `?tools=visualize`; stays default-on for ChatGPT (it powers the widget — see `CHATGPT_DEFAULT_ON_TOOL_NAMES` in `workers/src/mcp.ts`).
 7. `get_credit_balance` — Current credit balance. **Opt-in** — `?tools=credits`.
+8. `tako_graph_search` / `tako_graph_related` / `tako_graph_node` — Low-level graph primitives behind `tako_available_data`, for power users who need traversal relations (siblings, members, `rel:*` edges), in-relation `q` filtering, cursor paging, or full node detail. **Opt-in** — `?tools=graph` enables all three.
 
 ### Endpoints
 

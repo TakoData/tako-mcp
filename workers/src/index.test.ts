@@ -359,8 +359,9 @@ describe("worker routing", () => {
     // `tako_visualize` IS present without opting in — ChatGPT keeps it on
     // the default surface (`CHATGPT_DEFAULT_ON_TOOL_NAMES`) for the widget.
     expect(names.has("tako_visualize")).toBe(true);
-    // The other opt-in tools stay absent for ChatGPT too.
-    expect(names.has("tako_graph_node")).toBe(false);
+    // The other opt-in tools stay absent for ChatGPT too; the default
+    // discovery tool is present.
+    expect(names.has("tako_available_data")).toBe(true);
     expect(names.has("get_credit_balance")).toBe(false);
     // 4 defaults + tako_visualize = 5.
     expect(body.result.tools).toHaveLength(5);
@@ -463,8 +464,9 @@ describe("worker routing", () => {
     };
     const names = new Set(body.result.tools.map((t) => t.name));
     expect(names.has("tako_visualize")).toBe(true);
-    // Only the requested alias is enabled — the other opt-ins stay off.
-    expect(names.has("tako_graph_node")).toBe(false);
+    // Only the requested alias is enabled — the other opt-ins stay off — and
+    // the default discovery tool is present.
+    expect(names.has("tako_available_data")).toBe(true);
     expect(names.has("get_credit_balance")).toBe(false);
     expect(names.has("tako_agent")).toBe(false);
     // 4 default tools + tako_visualize = 5.
@@ -481,6 +483,42 @@ describe("worker routing", () => {
       "ui/resourceUri": "ui://tako/embed/chart",
       "openai/outputTemplate": "ui://tako/embed/chart",
     });
+  });
+
+  it("POST /mcp?tools=graph adds the three graph primitives (off by default)", async () => {
+    const res = await SELF.fetch("https://example.com/mcp?tools=graph", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "claude-mcp-client/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    const names = new Set(body.result.tools.map((t) => t.name));
+    // The alias enables all three low-level primitives together — the
+    // power-user escape hatch behind the default tako_available_data.
+    expect(names.has("tako_graph_search")).toBe(true);
+    expect(names.has("tako_graph_related")).toBe(true);
+    expect(names.has("tako_graph_node")).toBe(true);
+    expect(names.has("tako_available_data")).toBe(true);
+    // Other opt-ins stay off.
+    expect(names.has("tako_agent")).toBe(false);
+    expect(names.has("tako_visualize")).toBe(false);
+    expect(names.has("get_credit_balance")).toBe(false);
+    // 4 default tools + the 3 graph primitives = 7.
+    expect(body.result.tools).toHaveLength(7);
   });
 
   it("POST /mcp?tools=visualize,credits composes multiple single-tool aliases", async () => {

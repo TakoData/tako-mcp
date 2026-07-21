@@ -6,10 +6,11 @@
  *
  *   1. `GET /health`           → expect HTTP 200 with body "ok"
  *   2. MCP `initialize`        → handshake completes
- *   3. MCP `tools/list`        → connects with `?tools=agent,visualize,credits`
+ *   3. MCP `tools/list`        → connects with `?tools=agent,visualize,credits,graph`
  *                                 (those tools are opt-in — see `_optional.ts`);
- *                                 hard-asserts the 6 canary tools; loosely
- *                                 asserts at least one agent tool is present
+ *                                 hard-asserts the canary tools incl. the three
+ *                                 graph primitives; loosely asserts at least
+ *                                 one agent tool is present
  *   4. MCP Apps widget assertion on `tako_search` (soft-warn on miss)
  *   5. Per-tool MCP `tools/call` canaries:
  *        a. `tako_search "US GDP"`        — non-empty results (read-only)
@@ -121,9 +122,10 @@ ok(`/health → 200 "ok"`);
 // ---------------------------------------------------------------------------
 // Opt in to the optional tools the smoke exercises (see `_optional.ts`):
 // `agent` for the agent-presence assert, `visualize` and `credits` for the
-// tool calls below. This also smoke-tests the `?tools=` opt-in path itself.
+// tool calls below, `graph` for the primitives' presence assert. This also
+// smoke-tests the `?tools=` opt-in path itself.
 const transport = new StreamableHTTPClientTransport(
-  new URL(`${baseUrl}/mcp?tools=agent,visualize,credits`),
+  new URL(`${baseUrl}/mcp?tools=agent,visualize,credits,graph`),
   {
     requestInit: {
       headers: { authorization: `Bearer ${apiToken}` },
@@ -151,7 +153,7 @@ try {
   // with a useful diff if a registry change drops one of them. We don't
   // assert on the *full* tool list because the surface evolves (e.g.
   // explore_knowledge_graph removal in PR #47).
-  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_available_data", "tako_visualize", "get_credit_balance"];
+  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_available_data", "tako_visualize", "get_credit_balance", "tako_graph_search", "tako_graph_related", "tako_graph_node"];
   for (const required of requiredTools) {
     if (!toolNames.includes(required)) {
       fail(

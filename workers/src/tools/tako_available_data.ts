@@ -2,10 +2,10 @@
  * `tako_available_data` — the one-shot "what data does Tako have on X?" tool.
  *
  * Runs graph/search → graph/related as a single free, low-latency pipeline and
- * returns a natural-language coverage summary. It is the discovery entry point
- * that replaces manual chaining of the (now-demoted) graph primitives
- * (tako_graph_search / tako_graph_related / tako_graph_node), which are kept
- * in the tree but no longer registered as MCP tools.
+ * returns a natural-language coverage summary. It is the default discovery
+ * entry point that replaces manual chaining of the low-level graph primitives
+ * (tako_graph_search / tako_graph_related / tako_graph_node), which are off
+ * the default surface and opt-in via `?tools=graph` (see `_optional.ts`).
  *
  * Pipeline: one graph/search, then a parallel batch of graph/related drills for
  * the top EXPAND_TOP_N hits. The drill is type-aware: an entity node → its
@@ -24,6 +24,7 @@ import {
   buildSummary,
   coverageKindFor,
   EXPAND_TOP_N,
+  hasLiveCoverage,
   unavailableMatch,
 } from "./_available_data.js";
 import type { OtherMatch } from "./_available_data.js";
@@ -81,7 +82,9 @@ const coverageMatchSchema = z.object({
 });
 
 const outputSchema = z.object({
-  found: z.boolean(),
+  found: z.boolean().describe(
+    "True when at least one match has live data coverage — not mere node resolution. A resolved node with no coverage (or whose coverage lookup failed) yields false.",
+  ),
   query: z.string(),
   summary: z.string(),
   matches: z.array(coverageMatchSchema),
@@ -171,7 +174,10 @@ const tako_available_data = {
     );
 
     return {
-      found: true,
+      // `found` mirrors the summary header: true only when some match carries
+      // real coverage. Node resolution alone is not "data" — consumers key off
+      // this to narrow `sources` to ["data"].
+      found: matches.some(hasLiveCoverage),
       query: input.q,
       summary: buildSummary({ query: input.q, matches, otherMatches: other_matches }),
       matches,
