@@ -26,13 +26,13 @@ Tools are discovered at runtime via `tools/list`. There is no per-call `api_toke
 
 `tako_search` and `tako_answer` both read Tako's data graph and the live web, but return opposite things:
 
-- **Want the DATA** — cards, rows, or a chart to work with or show? Use `tako_search`. It is fast and built to fan out: fire many narrow one-entity+one-metric queries in parallel and assemble the result yourself. The top card auto-renders as an interactive chart.
+- **Want the DATA** — cards, rows, or a chart to work with or show? Use `tako_search`. It is fast and built to fan out: fire many narrow one-entity+one-metric queries in parallel and assemble the result yourself. The top card auto-renders inline as a chart.
 - **Want one written ANSWER** to a single, specific data question? Use `tako_answer`. It returns one synthesized answer grounded in the cards it cites.
 
 Never send a broad or multi-part question to either tool as one call — split it into narrow entity+metric searches (e.g. "US CPI inflation", "US core CPI inflation", "US PCE inflation", "US core PCE inflation"). In one line: `tako_search` hands you the evidence, `tako_answer` hands you the conclusion. For open-ended, multi-step research use `tako_agent` (opt-in).
 
 ### tako_search
-Fast, direct retrieval of a data point from Tako's data graph and the live web, returned as structured `cards` (each with a free preview of its latest rows) plus `web_results`; the top card auto-renders inline as an interactive chart. It replaces a generic web search for data lookups.
+Fast, direct retrieval of a data point from Tako's data graph and the live web, returned as structured `cards` (each with a free preview of its latest rows) plus `web_results`; the top card auto-renders inline as a chart (interactive widget on ChatGPT, chart image on other hosts). It replaces a generic web search for data lookups.
 
 Built to fan out: each query should resolve one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"), and many narrow queries fired in parallel retrieve far better than one broad or compound query. Listing what Tako covers is a `tako_available_data` job, not a keyword search. Ground a query by pinning resolved graph ids. For a card's full rows call `tako_contents` — only when the card exposes a `content` attribute (non-null); without it the preview and chart are all there is. For one written answer use `tako_answer`; for open-ended research use `tako_agent` (opt-in).
 

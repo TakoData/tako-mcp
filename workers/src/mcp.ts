@@ -4,7 +4,14 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 // `./validation/cfworker`, unlike the other server subpaths which do ship
 // `.js` entries. Adding the extension here breaks module resolution.
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
-import { ListPromptsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  ErrorCode,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  McpError,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 import {
   BearerAuthError,
@@ -216,7 +223,8 @@ export function createMcpServer(
     "tako_agent",
   ]);
   // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
-  // from the blanket claude.ai suppression in `widgetSuppressed`).
+  // from the blanket non-ChatGPT suppression in `widgetSuppressed` —
+  // ChatGPT is the only client that gets the widget at all).
   // The mechanism is kept in place for future per-tool gating, but
   // is currently empty: `tako_search` ships its widget on ChatGPT
   // and handles the empty-result case by throwing an actionable
@@ -266,6 +274,32 @@ export function createMcpServer(
         client === "chatgpt" && CHATGPT_NO_WIDGET_TOOL_NAMES.has(tool.name),
       registeredResourceUris,
       registeredTemplateNames,
+    });
+  }
+
+  // Resources parity for server instances that registered NO widget
+  // resource (every non-ChatGPT client, since the chart widget is
+  // ChatGPT-only). The SDK only wires the `resources` capability and its
+  // request handlers on the first `registerResource` call — without this
+  // block, `resources/list` / `resources/read` answer JSON-RPC -32601 on
+  // non-ChatGPT instances, which capability-probing clients (Smithery's
+  // scan, some hosts) surface as a failure. Same rationale as the empty
+  // `prompts` registration above: an empty list is the spec-clean answer.
+  // `resources/read` still errors (there is nothing to read) but with the
+  // spec's "resource not found" shape instead of "method not found".
+  if (registeredResourceUris.size === 0) {
+    server.server.registerCapabilities({ resources: {} });
+    server.server.setRequestHandler(ListResourcesRequestSchema, () => ({
+      resources: [],
+    }));
+    server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
+      resourceTemplates: [],
+    }));
+    server.server.setRequestHandler(ReadResourceRequestSchema, (request) => {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Resource ${request.params.uri} not found`,
+      );
     });
   }
 
@@ -372,35 +406,45 @@ function registerTool(
   // dynamic-resource path.
   //
   // Two independent gates control whether the chart shows up inline
-  // for this tool call. They're computed identically today (both
-  // fire when the client is claude.ai OR a per-tool ChatGPT
-  // suppression is set), but kept as separate variables so a future
-  // case that wants one without the other (e.g. "ship the widget
-  // but no PNG fallback" or "ship the PNG but no widget") becomes
-  // a one-line gate change rather than a refactor.
+  // for this tool call.
   //
   //   - `widgetSuppressed` → skip `appUiResource`. The host won't
   //     get a widget URI in the tool's `_meta`, so it won't load
-  //     the chart bundle. Used on claude.ai (constrained iframe
-  //     container clips the chart and exposes an awkward
-  //     scrollbar — markdown-link UX is strictly better). On
-  //     ChatGPT, `tako_search` keeps its widget; the empty-result
-  //     case is handled by throwing a tool-call error instead.
+  //     the chart bundle. ChatGPT is the ONLY client that keeps the
+  //     widget: its Apps SDK renders the fully interactive iframe.
+  //     Claude clients suppress it (claude.ai's constrained iframe
+  //     container clips the chart and exposes an awkward scrollbar),
+  //     and unknown clients suppress it too — the long tail of MCP
+  //     hosts (Cursor, Windsurf, Gemini CLI, LibreChat, …) almost
+  //     never implements the MCP Apps spec, so shipping widget
+  //     metadata there just blocks the far more portable image
+  //     fallback below.
   //
   //   - `inlinePngFallbackSuppressed` → skip the
   //     `extraContentBlocks` PNG image content block. Without
   //     suppression, that hook fires on tools that have no
   //     `appUiResource` to provide a "render the chart inline as
   //     an image" fallback for hosts that don't support MCP UI.
-  //     Today we always couple PNG suppression to widget
-  //     suppression because the markdown-link directive in the
-  //     chart-bearing tool descriptions is the agreed
-  //     fallback — shipping a PNG too is redundant and (on
-  //     claude.ai) renders cropped the same way the widget
-  //     does.
+  //
+  // Net effect: ChatGPT renders the interactive widget; every other
+  // client gets the chart inline as an `image` content block —
+  // rendered in-chat by claude.ai / Claude desktop / Claude Code and
+  // most generic MCP hosts, and visible to the model while it
+  // composes its answer. The `embed_url` in the structured content
+  // stays the click-through to the interactive chart everywhere.
+  // (Historically both gates fired together on claude — link-only —
+  // and unknown clients got widget metadata they couldn't render.)
+  //
+  // Per-tool ChatGPT suppression (`widgetSuppressedForTool`) still
+  // fires both gates. That set exists for tools whose widget renders
+  // blank/broken on ChatGPT in some legitimate success state — the
+  // intended fallback there is the plain text + markdown-link answer,
+  // not a PNG. (The image-block/widget mutual exclusion is separately
+  // guaranteed by the `ui === undefined` condition at the call-time
+  // `extraContentBlocks` gate.)
   const widgetSuppressed =
-    options.client === "claude" || options.widgetSuppressedForTool === true;
-  const inlinePngFallbackSuppressed = widgetSuppressed;
+    options.client !== "chatgpt" || options.widgetSuppressedForTool === true;
+  const inlinePngFallbackSuppressed = options.widgetSuppressedForTool === true;
   const ui =
     tool.appUiResource !== undefined && !widgetSuppressed
       ? tool.appUiResource(ctx.env)
@@ -644,21 +688,19 @@ function registerTool(
       // + structuredContent that's already there rather than failing the
       // call.
       //
-      // Fires only when the tool genuinely doesn't define a widget
-      // (`appUiResource === undefined`) AND inline PNG fallback
-      // hasn't been independently suppressed for this client/tool.
-      // On claude.ai the PNG content-block fallback rendered cropped
-      // / awkward, and the LLM's `[Open in Tako](embed_url)` link is
-      // a strictly cleaner answer; we don't want a redundant PNG the
-      // user can't really interact with. `inlinePngFallbackSuppressed`
-      // is the explicit, separate gate for that — kept distinct from
-      // `widgetSuppressed` (the gate above) so a future case that
-      // wants one without the other is a one-line change.
+      // Fires only when this registration carries no widget
+      // (`ui === undefined` — widget-less tools everywhere, and ALL
+      // chart tools on Claude clients, where the widget is suppressed)
+      // AND the inline PNG fallback hasn't been independently
+      // suppressed for this tool. This is how Claude clients get the
+      // chart inline: the PNG image content block renders in-chat on
+      // claude.ai / Claude desktop / Claude Code, with `embed_url` in
+      // the structured content as the interactive click-through.
       //
       // Pairing image content blocks with widget metadata in the
-      // same result also silently disabled ChatGPT's widget data
-      // flow, so the gate keeps content-block image fallbacks and
-      // widget metadata mutually exclusive.
+      // same result silently disabled ChatGPT's widget data flow, so
+      // the `ui === undefined` condition keeps content-block image
+      // fallbacks and widget metadata mutually exclusive.
       if (
         tool.extraContentBlocks !== undefined &&
         ui === undefined &&
@@ -685,11 +727,18 @@ function registerTool(
       // context" guard.
       //
       // Gated on `ui !== undefined` — the inverse of `extraContentBlocks`
-      // above. `tako_search` uses `extraMeta` to ship `image_data_url`
-      // for the widget to read via `params._meta`. When the widget is
-      // suppressed (claude.ai), no widget will consume `_meta`, so
-      // running this hook would inflate the JSON-RPC response with a
-      // ~330 KB unused data URL.
+      // above. When the widget is suppressed (every non-ChatGPT client),
+      // no widget will consume `_meta`, so running this hook would
+      // inflate the JSON-RPC response with a ~330 KB unused data URL.
+      //
+      // NB: with the widget now ChatGPT-only, this hook only fires for
+      // ChatGPT — and both chart tools' `extraMeta` implementations bail
+      // early on `ctx.client === "chatgpt"` (its widget loads `embed_url`
+      // directly and never reads the baked image). The `image_data_url`
+      // plumbing (here, in the tools' `extraMeta`, and the widget's
+      // baked-image render branch) is therefore currently unreachable;
+      // it's retained for a future re-enable of the widget on MCP-Apps
+      // hosts. Remove it if that plan is dropped.
       let resultMeta: Record<string, unknown> | undefined;
       if (tool.extraMeta !== undefined && ui !== undefined) {
         try {
