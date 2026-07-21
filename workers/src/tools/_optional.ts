@@ -21,12 +21,19 @@
  * then narrow to the correct variant for the calling client. Users never need
  * to know the split exists — they enable `agent` and get the right tool.
  *
- * `visualize`, `graph_node`, and `credits` are single-tool aliases: these
+ * `visualize` and `credits` are single-tool aliases: these
  * tools are useful but rarely needed, so they are kept off the default
  * surface to save per-session context. They compose freely, e.g.
  * `?tools=visualize,credits`. Exception: `tako_visualize` stays on the
  * default surface for ChatGPT clients (it powers the chart widget) — see
  * `CHATGPT_DEFAULT_ON_TOOL_NAMES` in `mcp.ts`.
+ *
+ * `graph` enables the three low-level graph primitives (search / related /
+ * node). `tako_available_data` covers the common discovery path in one call,
+ * so these are off the default surface — but the primitives expose
+ * capabilities it does not (traversal relations like `siblings`/`members`,
+ * server-side `q` filtering within a relation, cursor paging, full node
+ * detail), so power users get them back with `?tools=graph`.
  *
  * Only aliases are recognized on the wire (not raw tool names), so this table
  * is also the complete, closed set of tokens `?tools=` accepts.
@@ -36,8 +43,8 @@ export const OPTIONAL_TOOL_ALIASES: Readonly<
 > = {
   agent: ["tako_agent", "tako_agent_start", "tako_agent_wait"],
   visualize: ["tako_visualize"],
-  graph_node: ["tako_graph_node"],
   credits: ["get_credit_balance"],
+  graph: ["tako_graph_search", "tako_graph_related", "tako_graph_node"],
 };
 
 /**

@@ -10,16 +10,21 @@ import {
 // mapping fails these tests loudly rather than silently passing.
 const AGENT_TOOLS = ["tako_agent", "tako_agent_start", "tako_agent_wait"];
 
+// The three low-level graph primitives the `graph` alias spans — the
+// power-user escape hatch behind `tako_available_data`. Same loud-failure
+// rationale as AGENT_TOOLS.
+const GRAPH_TOOLS = ["tako_graph_search", "tako_graph_related", "tako_graph_node"];
+
 // The single-tool aliases: context-heavy or rarely-needed tools kept off the
 // default surface. Same loud-failure rationale as AGENT_TOOLS.
 const SINGLE_TOOL_ALIASES: Record<string, string> = {
   visualize: "tako_visualize",
-  graph_node: "tako_graph_node",
   credits: "get_credit_balance",
 };
 
 const ALL_OPTIONAL_TOOLS = [
   ...AGENT_TOOLS,
+  ...GRAPH_TOOLS,
   ...Object.values(SINGLE_TOOL_ALIASES),
 ];
 
@@ -44,6 +49,12 @@ describe("parseEnabledOptionalToolNames", () => {
   it("expands the `agent` alias to all three agent tools", () => {
     expect([...parseEnabledOptionalToolNames("agent")].sort()).toEqual(
       [...AGENT_TOOLS].sort(),
+    );
+  });
+
+  it("expands the `graph` alias to all three graph primitives", () => {
+    expect([...parseEnabledOptionalToolNames("graph")].sort()).toEqual(
+      [...GRAPH_TOOLS].sort(),
     );
   });
 

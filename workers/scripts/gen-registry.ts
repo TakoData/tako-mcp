@@ -43,6 +43,7 @@ export const MCP_TOOL_ALLOWLIST = [
   "tako_agent_start",
   "tako_agent_wait",
   "tako_answer",
+  "tako_available_data",
   "tako_contents",
   "tako_graph_node",
   "tako_graph_related",

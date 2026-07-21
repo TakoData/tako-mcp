@@ -6,7 +6,7 @@ import { slimCard, slimWebResult, takoCardSchema, usageSchema, webResultSchema }
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Ask one specific data question; get one synthesized answer grounded in the cards it cites. It replaces a generic web search when you want the answer written out rather than a list of results.",
+  "Ask one specific data question; get one synthesized answer grounded in the data or web tako cites.",
   "",
   "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations.",
   "",
@@ -23,7 +23,7 @@ const inputSchema = z.object({
     .array(z.enum(["data", "web", "tako"]))
     .min(1)
     .default(["data", "web"])
-    .describe('Source(s) to ground in. Default ["data","web"] (both) — keep web enabled. Only narrow to ["data"] once `tako_graph_search` / `tako_graph_related` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass ["web"] for live web only. ("tako" is a legacy synonym for "data".)'),
+    .describe('Source(s) to ground in. Default ["data","web"] (both) — keep web enabled. Only narrow to ["data"] once `tako_available_data` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass ["web"] for live web only. ("tako" is a legacy synonym for "data".)'),
   // No `include_contents` knob: the synthesized `answer` prose IS the payload,
   // so cited cards never inline their row data (it would be redundant bloat).
   // When the model wants the underlying rows behind a specific cited card — or
@@ -39,7 +39,7 @@ const inputSchema = z.object({
     .max(20)
     .optional()
     .describe(
-      "Graph node ids (from tako_graph_search / tako_graph_related) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+      "Graph node ids (from tako_available_data) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
     ),
   strict: z
     .boolean()
