@@ -1,0 +1,168 @@
+# Docs-drift check
+#
+# Guards the hand-written, user/agent-facing docs (README.md, llms.txt,
+# llms-full.txt, AGENTS.md) against silently drifting from the tool
+# surface when server behavior changes.
+#
+# Two layers:
+#
+#   1. Deterministic reminder (always available, no secret needed):
+#      if a PR touches the doc-relevant code surface (workers/src/tools/**,
+#      workers/src/mcp.ts, workers/src/index.ts) without touching ANY of
+#      the four docs files, post a sticky PR comment listing what to check.
+#      Report-only — it never fails the build, because plenty of code
+#      changes genuinely need no doc updates.
+#
+#   2. Semantic review (runs only when the ANTHROPIC_API_KEY repo secret
+#      is set): Claude reads the PR diff AND the four docs files and
+#      judges whether the docs — including any doc edits made in the same
+#      PR — are consistent with the final behavior. It upserts the same
+#      sticky comment with either a clean bill or a list of specific
+#      stale passages with suggested wording. Also report-only.
+#
+# Complements (does not replace) the structural gate that already exists
+# in CI: `npm run registry:check` (workers-ci.yml) fails the build when
+# llms-full.txt stops covering the live tool surface (missing tools /
+# params / stale headings) — see assertLlmsFullCoverage in
+# workers/scripts/gen-registry.ts. That catches *missing* coverage;
+# this workflow catches *stale or contradictory* descriptions, which no
+# structural check can see.
+
+name: docs-drift
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # Only run when the PR touches the doc-relevant surface (code OR the
+    # docs themselves — doc edits still deserve the consistency review).
+    paths:
+      - "workers/src/**"
+      - "README.md"
+      - "llms.txt"
+      - "llms-full.txt"
+      - "AGENTS.md"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: docs-drift-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  docs-drift:
+    # Skip release-please's own PRs and fork PRs (no secret access there).
+    if: ${{ !startsWith(github.event.pull_request.head.ref, 'release-please--') && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so we can diff against the base branch merge-base.
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: changes
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin "$BASE_REF"
+          CHANGED="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          code_changed=false
+          docs_changed=false
+          while IFS= read -r f; do
+            case "$f" in
+              workers/src/tools/*|workers/src/mcp.ts|workers/src/index.ts)
+                code_changed=true ;;
+            esac
+            case "$f" in
+              README.md|llms.txt|llms-full.txt|AGENTS.md)
+                docs_changed=true ;;
+            esac
+          done <<< "$CHANGED"
+
+          echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
+          echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
+
+      # Secrets are not readable in job-level `if`s on all plans/contexts,
+      # so surface key presence as a step output and gate on that.
+      - name: Check for ANTHROPIC_API_KEY
+        id: key
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: echo "present=$HAS_KEY" >> "$GITHUB_OUTPUT"
+
+      # Layer 2 — semantic review. Reads the diff and the docs, judges
+      # consistency, and upserts ONE sticky comment (marker below).
+      - name: Semantic docs review (Claude)
+        if: ${{ steps.key.outputs.present == 'true' && steps.changes.outputs.code_changed == 'true' }}
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are running a documentation-drift check for PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
+
+            This repo is the Tako MCP server. Its hand-written, user/agent-facing docs are:
+            README.md, llms.txt, llms-full.txt, AGENTS.md (all at the repo root).
+
+            Steps:
+            1. Run `gh pr diff ${{ github.event.pull_request.number }}` to read the full diff.
+            2. Read the four docs files in the checked-out PR state.
+            3. Judge whether the code changes alter anything those docs describe — tool
+               surface, tool names/aliases, parameters and defaults, client-specific
+               behavior (ChatGPT / Claude / unknown hosts), chart rendering, auth, error
+               behavior — and whether the docs (including any doc edits in this same PR)
+               are consistent with the FINAL state of the code.
+            4. Upsert exactly one PR comment carrying the literal marker
+               `<!-- docs-drift-check -->` on its first line:
+               - Find an existing comment: `gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.body | startswith("<!-- docs-drift-check -->")) | .id'`
+               - If found, PATCH it: `gh api -X PATCH repos/${{ github.repository }}/issues/comments/<id> -f body=...`
+               - Otherwise create it: `gh pr comment ${{ github.event.pull_request.number }} --body ...`
+
+            Comment content:
+            - If everything is consistent: a short "✅ Docs consistent with this change"
+              plus one line of reasoning.
+            - If stale: "⚠️ Possible docs drift" with a concise list of specific
+              file + passage references that are now wrong, each with suggested wording.
+            - Flag only genuine factual drift. Do not comment on style, tone, or
+              coverage gaps that predate this PR.
+          claude_args: |
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(gh pr comment:*),Read,Grep,Glob"
+
+      # Layer 1 — deterministic fallback when no API key is configured:
+      # code surface changed, docs untouched → leave a reminder checklist.
+      - name: Docs reminder comment (no API key)
+        if: ${{ steps.key.outputs.present != 'true' && steps.changes.outputs.code_changed == 'true' && steps.changes.outputs.docs_changed != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          BODY="$(cat <<'EOF'
+          <!-- docs-drift-check -->
+          ⚠️ **Docs-drift reminder** — this PR changes the tool surface (`workers/src/tools/**`, `mcp.ts`, or `index.ts`) but touches none of the user/agent-facing docs. If the change alters behavior an agent or user would notice, please update the relevant files:
+
+          - [ ] `README.md` — human-facing setup + tool guide
+          - [ ] `llms.txt` — short agent-facing capability index
+          - [ ] `llms-full.txt` — full agent-facing tool reference (structurally gated by `registry:check`, but wording is hand-maintained)
+          - [ ] `AGENTS.md` — contributor/agent playbook
+
+          If no docs describe the changed behavior, feel free to ignore this. _(Set the `ANTHROPIC_API_KEY` repo secret to upgrade this reminder to an automatic semantic review that checks the actual wording.)_
+          EOF
+          )"
+          EXISTING_ID="$(gh api "repos/${REPO}/issues/${PR}/comments" \
+            --jq '.[] | select(.body | startswith("<!-- docs-drift-check -->")) | .id' | head -1)"
+          if [ -n "$EXISTING_ID" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${EXISTING_ID}" -f body="$BODY" >/dev/null
+          else
+            gh pr comment "$PR" --body "$BODY"
+          fi
