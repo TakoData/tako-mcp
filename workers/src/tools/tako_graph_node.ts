@@ -13,7 +13,7 @@ import { graphErrorMessage, graphNodeSchema } from "./_graph.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
-  "Hydrate a single graph-node `id` into full detail (name, `aliases`, `subtype`, `label`, `description`). Use it when you have a bare node id — e.g. one returned on a `tako_search` card's `nodes` (which carry only id/name/type) — and need its aliases/subtype to compose a grounded query or confirm what it is. Free and efficient.";
+  "Get full detail for one graph-node `id`: name, aliases, subtype, label, description. Use it when you hold a bare node id — e.g. from a `tako_search` card's `nodes` (only id/name/type) — and need aliases or subtype to ground a query. Free and fast.";
 
 const inputSchema = z.object({
   id: z.string().min(1).describe("Opaque public node id (as returned by graph search/related or on a card's nodes)."),

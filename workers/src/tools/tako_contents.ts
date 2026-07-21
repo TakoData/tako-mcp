@@ -25,8 +25,13 @@ import { DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } 
 import { ContentsDeliveryMode, ContentsRequest, ContentsResponse, TakoDataset } from "../generated/schemas.js";
 import type { ToolModule } from "./types.js";
 
-const DESCRIPTION =
-  "Fetch the actual rows or data behind a result URL — reach for this after `tako_search` or `tako_answer` whenever you need the real underlying data to compute over, quote, or reason about, because a search result by itself carries only metadata and a chart, NOT its data. Pass a single `url` (a TakoCard.webpage_url or a web-result URL): a Tako card URL yields that card's data (CSV by default; request JSON via `content_format`), any other URL — a web result — yields that page's extracted full text. **Precondition for Tako cards: only a card whose search/answer result carried a `content` attribute (non-null) is exportable — `content` is the export descriptor. If the card came back with `content` missing or null it has NO exportable data and this call is rejected; don't attempt it, use the card's title/preview/chart instead. Presence is required but not a guarantee — the export gate can still refuse a rare card (a self-correcting 403; fall back to its preview/chart, don't retry). Web result URLs are exempt from this gate.** For a Tako card, `content_format` picks the serialization: `csv` (default, text in `data`), `json_records` (row objects in `records`), or `json_compact` (compact columns+rows in `dataset`). A Tako card is capped at a 20-row default in both delivery modes; raise `max_rows` (up to 2,000) to get more — there is no uncapped export. `mode` controls only how the content is delivered, not how many rows come back: `inline` (default) returns the data/web text directly in the response so you can read and reason over it — always check `total_rows` / `truncated` to know if it's partial; `url` returns a short-lived presigned `download_url` to the same (capped) file, for handing the user a download/embed link or when you don't need to read it inline. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
+const DESCRIPTION = [
+  "Fetch the real content behind one result URL from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.",
+  "",
+  "Best for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.",
+  "",
+  "Precondition (Tako cards): a card is exportable only if its result carried a `content` attribute (non-null). If `content` is missing or null this call fails — use the card's preview/chart instead. Presence is necessary but not sufficient: a rare card still 403s, so fall back, don't retry. Web URLs always work.",
+].join("\n");
 
 // Curate the input from the contract explicitly: `.pick` only the fields we
 // expose (so a new field added to ContentsRequest in the synced spec does NOT
