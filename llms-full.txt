@@ -38,7 +38,7 @@ Built to fan out: each query should resolve one entity + one metric ("Apple reve
 
 Parameters:
 - `query` (string, required): Natural-language query — one entity + one metric; parallelize multiple.
-- `sources` (array): both by default (`["data","web"]`); pass `["data"]` for curated data only or `["web"]` for live web only. (`"tako"` is a legacy synonym for `"data"`.)
+- `sources` (array): both by default (`["data","web"]`) — keep web enabled. Only narrow to `["data"]` once `tako_graph_search` / `tako_graph_related` has confirmed Tako covers the data; otherwise web is the fallback when Tako lacks it. Pass `["web"]` for live web only. (`"tako"` is a legacy synonym for `"data"`.)
 - `effort` (string, "fast" | "instant"): "fast" (default) or "instant" (fastest, cached embeds). Omit for fast.
 - `count` (integer, 1-20, default 10): Maximum results per source.
 - `include_contents` (boolean, default true): Inline each card's free row preview; set false for a pointers-only response (cheaper when fanning out many parallel queries). Full rows are always a separate `tako_contents` call.
@@ -52,7 +52,7 @@ Ask one specific, self-contained data question; get one synthesized answer groun
 
 Parameters:
 - `query` (string, required): One specific, self-contained question.
-- `sources` (array, optional): both by default (`["data","web"]`); pass `["data"]` for curated data only or `["web"]` for live web only. (`"tako"` is a legacy synonym for `"data"`.)
+- `sources` (array, optional): both by default (`["data","web"]`) — keep web enabled. Only narrow to `["data"]` once `tako_graph_search` / `tako_graph_related` has confirmed Tako covers the data; otherwise web is the fallback when Tako lacks it. Pass `["web"]` for live web only. (`"tako"` is a legacy synonym for `"data"`.)
 - `country_code` (string, default "US"): ISO country code.
 - `locale` (string, default "en-US"): Locale.
 - `node_ids` (array of strings, max 20, optional): Graph node ids to PIN into the Tako data source — strong retrieval boost.
@@ -111,7 +111,7 @@ Opt-in tool — off by default; enable with `?tools=agent` on the endpoint URL (
 
 Parameters:
 - `query` (string, required): The open-ended, analytical question.
-- `sources` (array, optional): both by default (`["data","web"]`); pass `["data"]` for connected data only or `["web"]` for open-web search only. (`"tako"` is a legacy synonym for `"data"`.)
+- `sources` (array, optional): both by default (`["data","web"]`) — keep web enabled. Only narrow to `["data"]` once `tako_graph_search` / `tako_graph_related` has confirmed Tako covers the data; otherwise web is the fallback when Tako lacks it. Pass `["web"]` for open-web only. (`"tako"` is a legacy synonym for `"data"`.)
 - `thread_id` (string UUID, optional): Continue a prior agent run's thread as a follow-up; omit to start a new thread.
 
 ### get_credit_balance

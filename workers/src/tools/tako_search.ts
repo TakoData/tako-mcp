@@ -58,7 +58,7 @@ const inputSchema = z.object({
     .min(1)
     .default(["data", "web"])
     .describe(
-      'Which source(s) to search. Defaults to both Tako data and the web (["data","web"]); pass ["data"] to restrict to curated data only, or ["web"] for live web only. ("tako" is accepted as a legacy synonym for "data".)',
+      'Source(s) to search. Default ["data","web"] (both) — keep web enabled. Only narrow to ["data"] once `tako_graph_search` / `tako_graph_related` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass ["web"] for live web only. ("tako" is a legacy synonym for "data".)',
     ),
   effort: z
     .enum(["fast", "instant"])

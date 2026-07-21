@@ -59,7 +59,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which source(s) the agent may use. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] for connected data only, or [\"web\"] for open-web search only. (\"tako\" is accepted as a legacy synonym for \"data\".)",
+          "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep web enabled. Only narrow to [\"data\"] once `tako_graph_search` / `tako_graph_related` has confirmed Tako actually covers the data; otherwise web is the fallback when Tako lacks it. Pass [\"web\"] for open-web only. (\"tako\" is a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -88,7 +88,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which source(s) the agent may use. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] for connected data only, or [\"web\"] for open-web search only. (\"tako\" is accepted as a legacy synonym for \"data\".)",
+          "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep web enabled. Only narrow to [\"data\"] once `tako_graph_search` / `tako_graph_related` has confirmed Tako actually covers the data; otherwise web is the fallback when Tako lacks it. Pass [\"web\"] for open-web only. (\"tako\" is a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -139,7 +139,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which source(s) to ground in. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] for curated data only, or [\"web\"] for live web only. (\"tako\" is accepted as a legacy synonym for \"data\".)",
+          "description": "Source(s) to ground in. Default [\"data\",\"web\"] (both) — keep web enabled. Only narrow to [\"data\"] once `tako_graph_search` / `tako_graph_related` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass [\"web\"] for live web only. (\"tako\" is a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -344,7 +344,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Which source(s) to search. Defaults to both Tako data and the web ([\"data\",\"web\"]); pass [\"data\"] to restrict to curated data only, or [\"web\"] for live web only. (\"tako\" is accepted as a legacy synonym for \"data\".)",
+          "description": "Source(s) to search. Default [\"data\",\"web\"] (both) — keep web enabled. Only narrow to [\"data\"] once `tako_graph_search` / `tako_graph_related` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass [\"web\"] for live web only. (\"tako\" is a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"

@@ -23,7 +23,7 @@ const inputSchema = z.object({
     .array(z.enum(["data", "web", "tako"]))
     .min(1)
     .default(["data", "web"])
-    .describe('Which source(s) to ground in. Defaults to both Tako data and the web (["data","web"]); pass ["data"] for curated data only, or ["web"] for live web only. ("tako" is accepted as a legacy synonym for "data".)'),
+    .describe('Source(s) to ground in. Default ["data","web"] (both) — keep web enabled. Only narrow to ["data"] once `tako_graph_search` / `tako_graph_related` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass ["web"] for live web only. ("tako" is a legacy synonym for "data".)'),
   // No `include_contents` knob: the synthesized `answer` prose IS the payload,
   // so cited cards never inline their row data (it would be redundant bloat).
   // When the model wants the underlying rows behind a specific cited card — or

@@ -55,7 +55,7 @@ export const inputSchema = z.object({
     .min(1)
     .default(["data", "web"])
     .describe(
-      'Which source(s) the agent may use. Defaults to both Tako data and the web (["data","web"]); pass ["data"] for connected data only, or ["web"] for open-web search only. ("tako" is accepted as a legacy synonym for "data".)',
+      'Source(s) the agent may use. Default ["data","web"] (both) — keep web enabled. Only narrow to ["data"] once `tako_graph_search` / `tako_graph_related` has confirmed Tako actually covers the data; otherwise web is the fallback when Tako lacks it. Pass ["web"] for open-web only. ("tako" is a legacy synonym for "data".)',
     ),
   thread_id: z
     .uuid()
