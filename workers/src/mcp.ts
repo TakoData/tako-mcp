@@ -4,7 +4,14 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 // `./validation/cfworker`, unlike the other server subpaths which do ship
 // `.js` entries. Adding the extension here breaks module resolution.
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
-import { ListPromptsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  ErrorCode,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  McpError,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 import {
   BearerAuthError,
@@ -216,7 +223,8 @@ export function createMcpServer(
     "tako_agent",
   ]);
   // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
-  // from the blanket claude.ai suppression in `widgetSuppressed`).
+  // from the blanket non-ChatGPT suppression in `widgetSuppressed` —
+  // ChatGPT is the only client that gets the widget at all).
   // The mechanism is kept in place for future per-tool gating, but
   // is currently empty: `tako_search` ships its widget on ChatGPT
   // and handles the empty-result case by throwing an actionable
@@ -266,6 +274,32 @@ export function createMcpServer(
         client === "chatgpt" && CHATGPT_NO_WIDGET_TOOL_NAMES.has(tool.name),
       registeredResourceUris,
       registeredTemplateNames,
+    });
+  }
+
+  // Resources parity for server instances that registered NO widget
+  // resource (every non-ChatGPT client, since the chart widget is
+  // ChatGPT-only). The SDK only wires the `resources` capability and its
+  // request handlers on the first `registerResource` call — without this
+  // block, `resources/list` / `resources/read` answer JSON-RPC -32601 on
+  // non-ChatGPT instances, which capability-probing clients (Smithery's
+  // scan, some hosts) surface as a failure. Same rationale as the empty
+  // `prompts` registration above: an empty list is the spec-clean answer.
+  // `resources/read` still errors (there is nothing to read) but with the
+  // spec's "resource not found" shape instead of "method not found".
+  if (registeredResourceUris.size === 0) {
+    server.server.registerCapabilities({ resources: {} });
+    server.server.setRequestHandler(ListResourcesRequestSchema, () => ({
+      resources: [],
+    }));
+    server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
+      resourceTemplates: [],
+    }));
+    server.server.setRequestHandler(ReadResourceRequestSchema, (request) => {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Resource ${request.params.uri} not found`,
+      );
     });
   }
 
@@ -693,11 +727,18 @@ function registerTool(
       // context" guard.
       //
       // Gated on `ui !== undefined` — the inverse of `extraContentBlocks`
-      // above. `tako_search` uses `extraMeta` to ship `image_data_url`
-      // for the widget to read via `params._meta`. When the widget is
-      // suppressed (claude.ai), no widget will consume `_meta`, so
-      // running this hook would inflate the JSON-RPC response with a
-      // ~330 KB unused data URL.
+      // above. When the widget is suppressed (every non-ChatGPT client),
+      // no widget will consume `_meta`, so running this hook would
+      // inflate the JSON-RPC response with a ~330 KB unused data URL.
+      //
+      // NB: with the widget now ChatGPT-only, this hook only fires for
+      // ChatGPT — and both chart tools' `extraMeta` implementations bail
+      // early on `ctx.client === "chatgpt"` (its widget loads `embed_url`
+      // directly and never reads the baked image). The `image_data_url`
+      // plumbing (here, in the tools' `extraMeta`, and the widget's
+      // baked-image render branch) is therefore currently unreachable;
+      // it's retained for a future re-enable of the widget on MCP-Apps
+      // hosts. Remove it if that plan is dropped.
       let resultMeta: Record<string, unknown> | undefined;
       if (tool.extraMeta !== undefined && ui !== undefined) {
         try {

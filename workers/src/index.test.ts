@@ -701,6 +701,39 @@ describe("worker routing", () => {
     expect(item.text).toContain("tako-embed");
   });
 
+  it("POST /mcp resources/list returns an empty list (not -32601) for non-ChatGPT clients", async () => {
+    // The chart widget resource registers only for ChatGPT (the sole host
+    // that renders it), so no `registerResource` call ever happens on a
+    // non-ChatGPT server instance — and without this the SDK would never
+    // advertise the `resources` capability, turning `resources/list` into
+    // a hard -32601 for capability-probing clients (Smithery's scan, some
+    // hosts). Mirror of the prompts/list guarantee below.
+    for (const userAgent of [undefined, "claude-mcp-client/1.0"]) {
+      const res = await SELF.fetch("https://example.com/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: AUTH_HEADER,
+          ...(userAgent !== undefined ? { "user-agent": userAgent } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 12,
+          method: "resources/list",
+          params: {},
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        result?: { resources: unknown[] };
+        error?: { code: number };
+      };
+      expect(body.error).toBeUndefined();
+      expect(body.result?.resources).toEqual([]);
+    }
+  });
+
   it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
