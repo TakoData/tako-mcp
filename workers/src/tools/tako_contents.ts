@@ -3,7 +3,13 @@
  * Wraps `POST /api/v1/contents`. A Tako card URL resolves to the card's data —
  * CSV by default, or JSON via `content_format` (json_records → `records`,
  * json_compact → `dataset`); any other URL resolves to the page's extracted
- * text. One URL per call. A Tako card CSV is capped at a 20-row free default in BOTH modes;
+ * text. Not every card is exportable: the backend's export-safe gate 403s
+ * cards without exportable data, so the tool description tells the model to
+ * check `content` presence first. That check is necessary, not sufficient —
+ * search/answer set `content` via the lenient supports_data_export() while
+ * this endpoint gates on the stricter export_safe(), so a content-bearing
+ * card can still 403 (the handler maps that to a self-correcting message).
+ * One URL per call. A Tako card CSV is capped at a 20-row free default in BOTH modes;
  * `max_rows` raises that up to a 2000-row ceiling — there is no uncapped export.
  * `mode` controls only delivery, not the row count: "inline" (default) returns
  * the (capped) content in the response body — total_rows/truncated report the
@@ -15,12 +21,17 @@
  */
 import { z } from "zod";
 
-import { djangoPost } from "../django.js";
+import { DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } from "../django.js";
 import { ContentsDeliveryMode, ContentsRequest, ContentsResponse, TakoDataset } from "../generated/schemas.js";
 import type { ToolModule } from "./types.js";
 
-const DESCRIPTION =
-  "Fetch the actual rows or data behind a result URL — reach for this after `tako_search` or `tako_answer` whenever you need the real underlying data to compute over, quote, or reason about, because a search result by itself carries only metadata and a chart, NOT its data. Pass a single `url` (a TakoCard.webpage_url or a web-result URL): a Tako card URL yields that card's data (CSV by default; request JSON via `content_format`), any other URL — a web result — yields that page's extracted full text. For a Tako card, `content_format` picks the serialization: `csv` (default, text in `data`), `json_records` (row objects in `records`), or `json_compact` (compact columns+rows in `dataset`). A Tako card is capped at a 20-row default in both delivery modes; raise `max_rows` (up to 2,000) to get more — there is no uncapped export. `mode` controls only how the content is delivered, not how many rows come back: `inline` (default) returns the data/web text directly in the response so you can read and reason over it — always check `total_rows` / `truncated` to know if it's partial; `url` returns a short-lived presigned `download_url` to the same (capped) file, for handing the user a download/embed link or when you don't need to read it inline. Use `inline` when you need the numbers; use `url` when the user just wants the file.";
+const DESCRIPTION = [
+  "Fetch the real content behind one result URL from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.",
+  "",
+  "Best for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.",
+  "",
+  "Precondition (Tako cards): a card is exportable only if its result carried a `content` attribute (non-null). If `content` is missing or null this call fails — use the card's preview/chart instead. Presence is necessary but not sufficient: a rare card still 403s, so fall back, don't retry. Web URLs always work.",
+].join("\n");
 
 // Curate the input from the contract explicitly: `.pick` only the fields we
 // expose (so a new field added to ContentsRequest in the synced spec does NOT
@@ -109,13 +120,51 @@ const takoContents = {
     // optional max_rows). max_rows, when omitted, is absent from `input` and so
     // dropped from the JSON body — the backend then applies its 20-row default.
     const body = input satisfies z.input<typeof ContentsRequest>;
-    const raw = await djangoPost<unknown>(
-      ctx.env,
-      ctx.token,
-      "/api/v1/contents/",
-      body,
-      { timeoutMs: 60_000 },
-    );
+    let raw: unknown;
+    try {
+      raw = await djangoPost<unknown>(
+        ctx.env,
+        ctx.token,
+        "/api/v1/contents/",
+        body,
+        { timeoutMs: 60_000 },
+      );
+    } catch (err) {
+      // Map the two "this URL has no exportable content" statuses to
+      // self-correcting messages so the model stops retrying and falls back
+      // to the card's preview/metadata. Per the OpenAPI contract: 403 is the
+      // export-safe gate (e.g. protected-source export); 404 is "does not
+      // exist or has no exportable data". Both are framed as the LIKELY
+      // cause — not asserted fact — since 403 in particular can have other
+      // causes (cf. _graph.ts, where a 403 on /beta/graph is an edge block,
+      // not a query problem). The backend's detail is spliced in only when
+      // extractErrorDetail recognises a structured envelope — a raw slice
+      // would flood the model text with an edge/WAF HTML block page.
+      //
+      // Note the 403 message does NOT claim the card lacked a `content`
+      // attribute: the search/answer adapter sets `content` via the lenient
+      // supports_data_export(), while this endpoint gates on the stricter
+      // export_safe() — so the card that lands here may well have carried
+      // one (presence is necessary for export, not sufficient).
+      // Attach a self-correcting message via `modelGuidance` and re-throw the
+      // ORIGINAL DjangoError (rather than a plain Error). registerTool then
+      // routes it through djangoErrorToToolResult, so contents 403/404 keep the
+      // same `_meta["tako/error"]` envelope (kind/status/body) every other tool
+      // emits, while the model still sees the guidance in the text channel.
+      // The guidance already splices the recognised backend detail, so
+      // djangoErrorToToolResult uses it verbatim (no second splice).
+      if (err instanceof DjangoHttpError && err.status === 403) {
+        const detail = extractErrorDetail(err.body);
+        err.modelGuidance = `The contents endpoint refused this export (403${detail !== undefined ? `: ${detail}` : ""}). For a Tako card this usually means the export gate rejected it as unexportable — possible even when the card carried a \`content\` attribute (the export descriptor), since presence is required for export but does not guarantee it. Don't retry or rephrase; use the card's title, inline preview, and chart instead. Never call tako_contents on a card whose \`content\` attribute is missing or null.`;
+        throw err;
+      }
+      if (err instanceof DjangoNotFoundError) {
+        const detail = extractErrorDetail(err.body);
+        err.modelGuidance = `The contents endpoint found nothing downloadable at that URL (404${detail !== undefined ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result carried a \`content\` attribute (non-null) are exportable.`;
+        throw err;
+      }
+      throw err;
+    }
     // Validate the raw wire response against the generated ContentsResponse so
     // backend drift (renamed fields, restructured contents array) throws here
     // instead of silently mapping to nulls downstream.

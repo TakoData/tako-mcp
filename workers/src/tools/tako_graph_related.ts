@@ -19,8 +19,14 @@ const NER_LABELS = [
   "MONEY", "METRIC", "STOCK_TICKER", "WEBSITE",
 ] as const;
 
-const DESCRIPTION =
-  "Explore what a resolved graph node connects to — the map of **what data Tako has** for it. This is how you answer \"does Tako have X for Y?\": when `tako_search`/`tako_answer` returned no Tako cards, browse here for **adjacent metrics Tako does cover** and retry with one, or confirm the gap and report it — don't retry blind rephrasings or silently fall back to web. Call with just `node_id` for the **overview**: an ordered set of relation groups (`metrics`, `entities`, `rel:*` named edges like `rel:competes_with`, `siblings`, `part_of`/`members`), each with a preview and `total`/`total_capped` (a capped total means 'N+' — narrow to see more). Pass `relation=<key>` to page one group. `q` is an **optional** case-insensitive substring filter on name+aliases — use it only to target a specific metric/thing (e.g. `q: \"revenue\"`); omit it to browse coverage. `q` takes a single string; if a metric goes by several names (e.g. \"revenue\", \"sales\", \"net income\"), just call this tool once per name — graph calls are free. Honesty caveat: related metrics are **table-level** (metrics in datasets that cover the node), so a listed metric is strong evidence, not proof — `tako_search` is the final validator. Empty `items` is a normal answer. Graph calls are free — use them liberally to ground `tako_search`/`tako_answer`.";
+const DESCRIPTION = [
+  "Explore what a resolved graph node connects to — the map of what data Tako has for it. Free.",
+  "",
+  "Best for: checking coverage after resolving a node with `tako_graph_search`.",
+  "",
+  'Drilling `relation: "metrics"` returns only that node\'s metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.',
+  'Filtering with `q` ("revenue") narrows to a single metric. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
+].join("\n");
 
 const inputSchema = z.object({
   node_id: z.string().min(1).describe("Opaque public id of the node to explore."),

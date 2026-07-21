@@ -71,6 +71,16 @@ export abstract class DjangoError extends Error {
   readonly method: HttpMethod;
   /** HTTP status, or `undefined` for transport errors (e.g. timeout). */
   readonly status: number | undefined;
+  /**
+   * Optional model-facing guidance that OVERRIDES the default model-visible
+   * text when this error is mapped to a tool result (see
+   * `djangoErrorToToolResult`). A handler sets it to a self-correcting message
+   * and re-throws the ORIGINAL error, so the full `_meta["tako/error"]`
+   * envelope (kind/status/body) is still emitted while the text channel shows
+   * the guidance. When set it is used VERBATIM — no 4xx body splice — so build
+   * any backend detail you want into it (e.g. via `extractErrorDetail`).
+   */
+  modelGuidance?: string;
 
   constructor(
     message: string,
@@ -383,6 +393,63 @@ function isAbortError(err: unknown): boolean {
   if (err instanceof Error && err.name === "AbortError") return true;
   if (err instanceof Error && err.name === "TimeoutError") return true;
   return false;
+}
+
+/**
+ * Lift a human-readable message out of an upstream error body for the
+ * model-visible text channel, or `undefined` when the body is NOT a
+ * recognisable structured envelope.
+ *
+ * Django/DRF errors arrive as JSON envelopes — `{"detail": "…"}`
+ * (APIException), `{"error": "…"}` / `{"message": "…"}` (custom handlers),
+ * `{"detail": ["…"]}` (nested list), or a field-keyed validation map
+ * `{"field": ["…"], …}`. We lift the message out of those.
+ *
+ * Anything else returns `undefined` so the caller keeps it OUT of the text
+ * channel: non-JSON bodies (e.g. a Cloudflare/edge HTML challenge or block
+ * page on a 4xx, or a body `safeReadText` truncated so `JSON.parse` fails)
+ * and JSON objects with no recognisable message (e.g. a bare discriminator
+ * like `{"error_type": "RELEVANT_RESULTS_NOT_FOUND"}`) would otherwise flood
+ * the model with raw HTML/JSON. The full raw body always stays on
+ * `_meta["tako/error"].body` for clients that want the untouched envelope.
+ */
+export function extractErrorDetail(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // Not JSON — an HTML edge page or truncated body. Don't surface it.
+    return undefined;
+  }
+  if (typeof parsed === "string") return parsed !== "" ? parsed : undefined;
+  if (parsed === null || typeof parsed !== "object") return undefined;
+  const obj = parsed as Record<string, unknown>;
+  for (const key of ["detail", "error", "message"]) {
+    const value = obj[key];
+    if (typeof value === "string" && value !== "") return value;
+    // DRF sometimes nests a list of strings, e.g. {"detail": ["…", "…"]}.
+    if (Array.isArray(value) && value.every((v) => typeof v === "string") && value.length > 0) {
+      return value.join(" ");
+    }
+  }
+  // DRF field-keyed validation map: {"field": ["msg", …], …}. Flatten to
+  // "field: msg; …" so the LLM sees which field failed without raw JSON.
+  const entries = Object.entries(obj);
+  if (
+    entries.length > 0 &&
+    entries.every(
+      ([, value]) =>
+        Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((v) => typeof v === "string"),
+    )
+  ) {
+    return entries
+      .map(([key, value]) => `${key}: ${(value as string[]).join(" ")}`)
+      .join("; ");
+  }
+  // A JSON object with no recognisable message (e.g. a bare discriminator).
+  return undefined;
 }
 
 async function safeReadText(response: Response): Promise<string> {

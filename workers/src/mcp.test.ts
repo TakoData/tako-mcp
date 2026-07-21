@@ -7,8 +7,9 @@ import {
   DjangoResponseParseError,
   DjangoTimeoutError,
   DjangoUnauthorizedError,
+  extractErrorDetail,
 } from "./django.js";
-import { djangoErrorToToolResult, extractErrorDetail } from "./mcp.js";
+import { djangoErrorToToolResult } from "./mcp.js";
 
 describe("djangoErrorToToolResult", () => {
   // Read tools (tako_search/tako_answer/tako_contents) declare an

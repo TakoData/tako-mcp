@@ -9,8 +9,8 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { slimCardContent } from "./_search_results.js";
-import type { ResultContent } from "./_search_results.js";
+import { slimCard, slimCardContent } from "./_search_results.js";
+import type { ResultContent, TakoCard } from "./_search_results.js";
 
 // json_compact dataset with a declared temporal column at index 0.
 const dataset = (rows: unknown[][]): ResultContent =>
@@ -150,5 +150,44 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
       dataset: null,
     });
     expect((out as { total_rows?: number }).total_rows).toBe(1);
+  });
+});
+
+// `content` presence is the model-facing "tako_contents will work on this
+// card" signal (the backend's export-safe gate 403s cards without it), so
+// slimming must preserve exactly what the wire said: never fabricate a
+// descriptor on an unexportable card, never drop one from an exportable card.
+describe("slimCard — content presence is the export-eligibility signal", () => {
+  it("does not fabricate a content descriptor on a card without one (not exportable)", () => {
+    const card: TakoCard = { card_id: "c1", title: "t" };
+    expect(slimCard(card, 5)).not.toHaveProperty("content");
+    expect(slimCard(card, null)).not.toHaveProperty("content");
+  });
+
+  it("passes an explicit content: null through unchanged (still not exportable)", () => {
+    const card: TakoCard = { card_id: "c1", content: null };
+    expect(slimCard(card, 5).content).toBeNull();
+    expect(slimCard(card, null).content).toBeNull();
+  });
+
+  it("keeps the content descriptor on an exportable card even in drop-all mode", () => {
+    const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
+    const out = slimCard(card, null);
+    expect(out.content).not.toBeNull();
+    expect(out.content?.total_rows).toBe(1);
+    expect((out.content as { dataset?: unknown }).dataset).toBeNull();
+  });
+
+  it("keeps the content descriptor (with capped rows) in preview mode", () => {
+    const card: TakoCard = {
+      card_id: "c1",
+      content: dataset([
+        ["2024-01-01", 1],
+        ["2024-01-02", 2],
+      ]),
+    };
+    const out = slimCard(card, 1);
+    expect(out.content).not.toBeNull();
+    expect(rowsOf(out.content)).toEqual([["2024-01-02", 2]]);
   });
 });

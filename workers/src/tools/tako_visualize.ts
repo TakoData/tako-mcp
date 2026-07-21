@@ -51,11 +51,16 @@ const COMPONENT_TYPES = [
   "person_card",
 ] as const;
 
-const DESCRIPTION =
-  "Create an embeddable Tako chart/card directly from data you ALREADY HAVE (not from search). Provide one or more typed `components`, each with a `component_type` and a `config` object holding that type's data (e.g. `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`, `header`). The card auto-renders inline as a chart and returns `webpage_url` / `embed_url` for sharing or embedding. Use `tako_search` to FIND existing Tako data; use `tako_visualize` when you already have the numbers. " +
-  "Worked example — a bar chart with a title is two components: " +
-  '`{\"title\": \"Monthly Revenue\", \"components\": [{\"component_type\": \"header\", \"config\": {\"title\": \"Monthly Revenue\"}}, {\"component_type\": \"categorical_bar\", \"config\": {\"datasets\": [{\"label\": \"Sales\", \"units\": \"USD\", \"data\": [{\"x\": \"NA\", \"y\": 500}, {\"x\": \"EU\", \"y\": 300}]}]}}]}`. ' +
-  "For per-`component_type` `config` shapes and more worked examples, see Tako's 'Agent Skills → Visualize Your Data' docs and the Thin-Viz chart-creation reference. NOTE: `person_card` must be the ONLY component when used. **Always include `[Open in Tako](embed_url)` once at the end of your reply.**";
+const DESCRIPTION = [
+  "Create an embeddable Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. Auto-renders inline; returns `webpage_url` / `embed_url`.",
+  "",
+  "Input: one or more typed `components`, each `{component_type, config}` — e.g. `header`, `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`.",
+  "",
+  "Example — a titled bar chart is two components:",
+  '{"components": [{"component_type": "header", "config": {"title": "Revenue"}}, {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Sales", "units": "USD", "data": [{"x": "NA", "y": 500}, {"x": "EU", "y": 300}]}]}}]}',
+  "",
+  "Tip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.",
+].join("\n");
 
 const inputSchema = z.object({
   components: z

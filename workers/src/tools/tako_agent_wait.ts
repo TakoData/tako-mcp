@@ -38,8 +38,15 @@ const inputSchema = z.object({
 
 const tako_agent_wait = {
   name: "tako_agent_wait",
-  description:
-    `Use this AFTER \`tako_agent_start\` returns a \`run_id\`. Polls the agent run until it reaches \`completed\` or \`failed\`, or until \`max_wait_seconds\` (default ${AGENT_WAIT_CEILING_S} s) elapses. **If \`timed_out\` is true, IMMEDIATELY call tako_agent_wait again with the same run_id and continue chaining until status is terminal — do NOT reply to the user mid-poll. CAP THE CHAIN AT 12 CALLS TOTAL (~10 minutes of waiting); after that, tell the user the agent is taking longer than usual and offer to retry.** On \`completed\`, the result contains a synthesized \`answer\` and supporting \`cards\`.`,
+  description: [
+    "Poll an agent run from `tako_agent_start`. Blocks until `status` is `completed` or `failed`, or until `max_wait_seconds` (default " +
+      AGENT_WAIT_CEILING_S +
+      "s).",
+    "",
+    "If `timed_out` is true, call this tool again with the same `run_id` — don't reply to the user mid-poll. Cap the chain at ~12 calls (~10 min), then tell the user it's taking long and offer to retry.",
+    "",
+    "On `completed`: the result holds the synthesized `answer` and `cards`.",
+  ].join("\n"),
   inputSchema,
   outputSchema: agentRunSchema,
   annotations: {

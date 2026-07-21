@@ -19,6 +19,7 @@ import {
   DjangoResponseParseError,
   DjangoTimeoutError,
   DjangoUnauthorizedError,
+  extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
@@ -770,63 +771,6 @@ function registerTool(
  * Exported for unit testing — the wire contract is stable enough that
  * Phase 2 tests can rely on the `kind` strings here.
  */
-/**
- * Lift a human-readable message out of an upstream error body for the
- * model-visible text channel, or `undefined` when the body is NOT a
- * recognisable structured envelope.
- *
- * Django/DRF errors arrive as JSON envelopes — `{"detail": "…"}`
- * (APIException), `{"error": "…"}` / `{"message": "…"}` (custom handlers),
- * `{"detail": ["…"]}` (nested list), or a field-keyed validation map
- * `{"field": ["…"], …}`. We lift the message out of those.
- *
- * Anything else returns `undefined` so the caller keeps it OUT of the text
- * channel: non-JSON bodies (e.g. a Cloudflare/edge HTML challenge or block
- * page on a 4xx, or a body `safeReadText` truncated so `JSON.parse` fails)
- * and JSON objects with no recognisable message (e.g. a bare discriminator
- * like `{"error_type": "RELEVANT_RESULTS_NOT_FOUND"}`) would otherwise flood
- * the model with raw HTML/JSON. The full raw body always stays on
- * `_meta["tako/error"].body` for clients that want the untouched envelope.
- */
-export function extractErrorDetail(body: string): string | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    // Not JSON — an HTML edge page or truncated body. Don't surface it.
-    return undefined;
-  }
-  if (typeof parsed === "string") return parsed !== "" ? parsed : undefined;
-  if (parsed === null || typeof parsed !== "object") return undefined;
-  const obj = parsed as Record<string, unknown>;
-  for (const key of ["detail", "error", "message"]) {
-    const value = obj[key];
-    if (typeof value === "string" && value !== "") return value;
-    // DRF sometimes nests a list of strings, e.g. {"detail": ["…", "…"]}.
-    if (Array.isArray(value) && value.every((v) => typeof v === "string") && value.length > 0) {
-      return value.join(" ");
-    }
-  }
-  // DRF field-keyed validation map: {"field": ["msg", …], …}. Flatten to
-  // "field: msg; …" so the LLM sees which field failed without raw JSON.
-  const entries = Object.entries(obj);
-  if (
-    entries.length > 0 &&
-    entries.every(
-      ([, value]) =>
-        Array.isArray(value) &&
-        value.length > 0 &&
-        value.every((v) => typeof v === "string"),
-    )
-  ) {
-    return entries
-      .map(([key, value]) => `${key}: ${(value as string[]).join(" ")}`)
-      .join("; ");
-  }
-  // A JSON object with no recognisable message (e.g. a bare discriminator).
-  return undefined;
-}
-
 export function djangoErrorToToolResult(err: DjangoError): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;
@@ -871,10 +815,16 @@ export function djangoErrorToToolResult(err: DjangoError): {
   const is4xx =
     err.status !== undefined && err.status >= 400 && err.status < 500;
   const detailText = body !== undefined ? extractErrorDetail(body) : undefined;
+  // A handler-supplied `modelGuidance` (e.g. tako_contents' self-correcting
+  // 403/404 text) wins and is used verbatim — it already folds in any backend
+  // detail, so it must NOT be re-spliced. Otherwise fall back to `err.message`,
+  // splicing the recognised 4xx detail as usual.
   const text =
-    is4xx && detailText !== undefined
-      ? `${err.message}: ${detailText}`
-      : err.message;
+    err.modelGuidance !== undefined
+      ? err.modelGuidance
+      : is4xx && detailText !== undefined
+        ? `${err.message}: ${detailText}`
+        : err.message;
   return {
     content: [{ type: "text", text }],
     _meta: { "tako/error": detail },

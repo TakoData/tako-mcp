@@ -17,10 +17,10 @@ Some tools are opt-in — off by default to keep the tool surface small. Enable 
 
 ## Capabilities
 
-- Pull the actual data to work with — real rows/time-series over 100K+ curated charts (economics, finance, demographics, sports, markets, weather) plus the live web on request (`tako_search`); cards carry a free inline row preview by default and the top result auto-renders as an interactive chart. Parallelize it: fire several narrow single entity+metric searches rather than one broad multi-part query. Deep multi-step research is the opt-in Answer Agent (`tako_agent`, enable with `?tools=agent`).
-- Ask a single specific data question and get a grounded, citation-backed prose answer already synthesized for you — trust it and relay it directly (`tako_answer`); for broad or multi-part needs, or when you want the underlying data to synthesize yourself, use `tako_search` (parallelized into narrow entity+metric queries) instead.
-- Resolve entities/metrics against Tako's data graph and see exactly what data Tako has (`tako_graph_search`, `tako_graph_related`; node detail via opt-in `tako_graph_node`). Ground searches by pinning node ids, and — when a search/answer returns no Tako cards — find adjacent metrics Tako does cover or confirm the gap, instead of retrying blind rephrasings. Graph calls are free.
-- Fetch the actual rows or data (CSV/JSON) behind a Tako card, or the extracted text behind a web result — the step after search when you need real data to analyze (`tako_contents`)
-- Create an embeddable chart/card directly from your own structured data — timeseries, bar, table, financial boxes, and more (`tako_visualize`; opt-in, enable with `?tools=visualize`; on by default for ChatGPT); the card auto-renders as an interactive chart.
-- Run a multi-step Answer Agent for complex analytical questions (`tako_agent`; opt-in, enable with `?tools=agent`)
-- Check API credit balance (`get_credit_balance`; opt-in, enable with `?tools=credits`)
+- `tako_search` — fast, direct retrieval of a data point as structured cards (each with a free row preview; the top card auto-renders as an interactive chart), from Tako's curated data and the live web. Built to fan out: fire many narrow one-entity+one-metric queries in parallel rather than one broad query. Replaces a generic web search for data lookups.
+- `tako_answer` — ask one specific, self-contained data question and get one synthesized answer grounded in the cards it cites. Use `tako_search` when you want the data itself, or for broad/multi-part questions.
+- `tako_graph_search` + `tako_graph_related` — resolve entities/metrics against Tako's data graph and see exactly what data Tako has (node detail via opt-in `tako_graph_node`). Pin resolved ids to ground a search; drill `relation: "metrics"` to list a node's coverage cheaply. Graph calls are free.
+- `tako_contents` — fetch the full rows (CSV/JSON) behind a Tako card, or the extracted text behind a web result — the step after search when you need the real data. A card is exportable only if it carries a `content` attribute (web URLs always work).
+- `tako_visualize` — create an embeddable chart/card from your own structured data (opt-in, enable with `?tools=visualize`; on by default for ChatGPT).
+- `tako_agent` — run a multi-step Answer Agent for open-ended, figure-it-out questions (opt-in, enable with `?tools=agent`).
+- `get_credit_balance` — check API credit balance (opt-in, enable with `?tools=credits`).
