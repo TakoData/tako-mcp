@@ -19,6 +19,7 @@ import {
   DjangoResponseParseError,
   DjangoTimeoutError,
   DjangoUnauthorizedError,
+  extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
@@ -782,28 +783,67 @@ export function djangoErrorToToolResult(err: DjangoError): {
   };
   if (err.status !== undefined) detail.status = err.status;
   if (err instanceof DjangoTimeoutError) detail.timeoutMs = err.timeoutMs;
-  if (err instanceof DjangoBadRequestError || err instanceof DjangoHttpError) {
-    detail.body = err.body;
-  }
-  // For 400s, splice the response body into the text content. DRF
-  // validation errors (missing fields, invalid enum values, bad
-  // component config) carry the guidance the LLM needs to retry;
-  // keeping it in `structuredContent.body` alone isn't enough because
-  // not every MCP client surfaces structured content to the model.
-  // Intentionally scoped to `DjangoBadRequestError` — other subtypes
-  // (404/401/5xx/timeout) don't carry LLM-actionable detail, so their
-  // text stays body-free to keep Workers Logs greppable. `err.message`
-  // stays body-free by construction (log-injection guard in
-  // `django.ts`); the splice happens here at the MCP boundary.
+  // Surface the upstream response body on `_meta` untouched for EVERY subtype
+  // that captured one (400/401/404/catch-all), regardless of status — clients
+  // that read structured detail always get the full envelope for debugging.
+  const body = errorResponseBody(err);
+  if (body !== undefined) detail.body = body;
+
+  // Splice the body into the model-visible text for CLIENT errors (any 4xx).
+  // These carry the guidance the LLM needs to act on or relay to the user:
+  //   - 400: DRF validation errors (missing fields, invalid enum, bad config).
+  //   - 401: the auth-failure reason (bad/expired key vs. wrong environment).
+  //   - 403: the refusal reason — e.g. "Data export is not available for this
+  //     card (protected source)".
+  //   - 404: the not-found reason (a real routing/resource 404).
+  //   - 409/429/…: conflict / rate-limit detail.
+  // Keeping it in `_meta` alone isn't enough — not every MCP client surfaces
+  // structured detail to the model.
+  //
+  // SERVER errors (5xx) and transport errors (timeout — no status) stay
+  // body-free: no LLM-actionable detail, and 5xx bodies are often noisy HTML
+  // error pages that would flood the text channel.
+  //
+  // The splice is ALSO gated on `extractErrorDetail` recognising a structured
+  // message: a 4xx can still carry a raw HTML page (a Cloudflare/edge WAF 403
+  // or rate-limit 429) or a bare discriminator JSON, and we don't want that
+  // flooding the text channel either — same failure mode as a 5xx HTML body,
+  // just on a 4xx. Only DRF-shaped detail reaches the model; everything else
+  // stays on `_meta.body` only. `err.message` stays body-free by construction
+  // (log-injection guard in `django.ts`), so the splice happens only here at
+  // the MCP boundary.
+  const is4xx =
+    err.status !== undefined && err.status >= 400 && err.status < 500;
+  const detailText = body !== undefined ? extractErrorDetail(body) : undefined;
   const text =
-    err instanceof DjangoBadRequestError
-      ? `${err.message}: ${err.body}`
+    is4xx && detailText !== undefined
+      ? `${err.message}: ${detailText}`
       : err.message;
   return {
     content: [{ type: "text", text }],
     _meta: { "tako/error": detail },
     isError: true,
   };
+}
+
+/**
+ * The upstream response body captured on the error, or `undefined` for
+ * subtypes that carry none (timeout, unparseable-2xx). Every body-bearing
+ * subtype exposes it as `.body`; centralising the `instanceof` fan-out here
+ * keeps `_meta` population and the 4xx text-splice reading from one source.
+ */
+function errorResponseBody(err: DjangoError): string | undefined {
+  if (
+    err instanceof DjangoBadRequestError ||
+    err instanceof DjangoUnauthorizedError ||
+    err instanceof DjangoNotFoundError ||
+    err instanceof DjangoHttpError
+  ) {
+    // Treat an empty body as absent so it's omitted from `_meta` (no noisy
+    // `body: ""`) and never triggers the text splice.
+    return err.body === "" ? undefined : err.body;
+  }
+  return undefined;
 }
 
 function djangoErrorKind(err: DjangoError): string {

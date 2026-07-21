@@ -1,11 +1,15 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 
-vi.mock("../django.js", () => ({
+// Preserve the real module (error classes — the handler's `instanceof
+// DjangoHttpError` 403 branch needs the genuine class) and stub only the
+// transport functions.
+vi.mock("../django.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../django.js")>()),
   djangoPost: vi.fn(),
   djangoGet: vi.fn(),
 }));
 
-import { djangoPost } from "../django.js";
+import { DjangoHttpError, DjangoNotFoundError, djangoPost } from "../django.js";
 import tool from "./tako_contents.js";
 
 const ctx = { token: "t", env: {} as never, client: "claude" as const, sendProgress: vi.fn() };
@@ -268,5 +272,66 @@ describe("tako_contents handler", () => {
     await expect(
       tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx),
     ).rejects.toThrow(/no downloadable content/);
+  });
+
+  it("maps the export-safe gate's 403 (unexportable card) to a self-correcting error carrying the backend detail", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(
+      new DjangoHttpError({
+        path: "/api/v1/contents/",
+        method: "POST",
+        status: 403,
+        body: '{"detail":"card is not exportable"}',
+      }),
+    );
+    await expect(
+      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx),
+    ).rejects.toThrow(/403.*card is not exportable.*`content` attribute/s);
+  });
+
+  it("omits an unstructured 403 body (edge/WAF HTML) from the model-visible message", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(
+      new DjangoHttpError({
+        path: "/api/v1/contents/",
+        method: "POST",
+        status: 403,
+        body: "<!DOCTYPE html><html><body>Access denied</body></html>",
+      }),
+    );
+    const err = await tool
+      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx)
+      .then(() => {
+        throw new Error("expected the handler to reject");
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/refused this export \(403\)/);
+    expect((err as Error).message).not.toMatch(/DOCTYPE|<html>/);
+  });
+
+  it("maps a 404 (no exportable data / does not exist) to a self-correcting error", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(
+      new DjangoNotFoundError({
+        path: "/api/v1/contents/",
+        method: "POST",
+        body: '{"detail":"no exportable data"}',
+      }),
+    );
+    await expect(
+      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx),
+    ).rejects.toThrow(/404.*no exportable data.*`content` attribute/s);
+  });
+
+  it("passes non-403 Django errors through untouched", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(
+      new DjangoHttpError({
+        path: "/api/v1/contents/",
+        method: "POST",
+        status: 500,
+        body: "",
+      }),
+    );
+    await expect(
+      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx),
+    ).rejects.toThrow(/returned 500/);
   });
 });
