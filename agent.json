@@ -2,7 +2,7 @@
   "name": "Tako",
   "description": "Data intelligence agent. Ask a specific data question and get a grounded, citation-backed answer (tako_answer), or pull the actual rows/charts to work with yourself (tako_search) — over a knowledge graph of 100K+ charts plus the live web. Also explores its data graph, fetches underlying source content, and runs a multi-step Answer Agent for deeper questions.",
   "url": "https://mcp.tako.com",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "capabilities": {
     "streaming": true,
     "pushNotifications": false
