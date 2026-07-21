@@ -396,18 +396,22 @@ describe("chart render gates per client", () => {
     ).toBeUndefined();
   });
 
-  it("unknown client: widget metadata ships and no inline image block is added", async () => {
-    // Call 1: v3 search. Call 2: `extraMeta`'s PNG prefetch for the
-    // widget's baked `image_data_url` (degrades gracefully on the stub
-    // body — irrelevant to this assertion).
+  it("unknown client: chart ships as an inline image content block (no widget metadata)", async () => {
+    // Unknown clients are the long tail of MCP hosts (Cursor, Windsurf,
+    // Gemini CLI, LibreChat, …). Almost none of them implement the MCP
+    // Apps widget spec, but virtually all render `image` content
+    // blocks — so they get the same PNG treatment as Claude clients.
+    // Call 1: v3 search. Call 2: chart PNG for the image content block.
     mockFetchSequence([searchResponse(), pngResponse()]);
 
     const result = await callSearch("unknown");
 
-    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    const imageBlocks = result.content.filter((b) => b.type === "image");
+    expect(imageBlocks).toHaveLength(1);
+    expect(imageBlocks[0]?.mimeType).toBe("image/png");
     expect(
       (result._meta as { ui?: unknown } | undefined)?.ui,
-    ).toBeDefined();
+    ).toBeUndefined();
   });
 
   it("chatgpt client: widget metadata ships, no image block, and no PNG prefetch", async () => {

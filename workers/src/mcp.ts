@@ -376,11 +376,15 @@ function registerTool(
   //
   //   - `widgetSuppressed` → skip `appUiResource`. The host won't
   //     get a widget URI in the tool's `_meta`, so it won't load
-  //     the chart bundle. Used on claude.ai (constrained iframe
-  //     container clips the chart and exposes an awkward
-  //     scrollbar). On ChatGPT, `tako_search` keeps its widget; the
-  //     empty-result case is handled by throwing a tool-call error
-  //     instead.
+  //     the chart bundle. ChatGPT is the ONLY client that keeps the
+  //     widget: its Apps SDK renders the fully interactive iframe.
+  //     Claude clients suppress it (claude.ai's constrained iframe
+  //     container clips the chart and exposes an awkward scrollbar),
+  //     and unknown clients suppress it too — the long tail of MCP
+  //     hosts (Cursor, Windsurf, Gemini CLI, LibreChat, …) almost
+  //     never implements the MCP Apps spec, so shipping widget
+  //     metadata there just blocks the far more portable image
+  //     fallback below.
   //
   //   - `inlinePngFallbackSuppressed` → skip the
   //     `extraContentBlocks` PNG image content block. Without
@@ -388,15 +392,14 @@ function registerTool(
   //     `appUiResource` to provide a "render the chart inline as
   //     an image" fallback for hosts that don't support MCP UI.
   //
-  // The gates are DECOUPLED for Claude clients: the widget stays
-  // suppressed (see above), but the PNG content block ships — so
-  // claude.ai / Claude desktop / Claude Code render the chart inline
-  // as an image instead of a bare markdown link, and the model can
-  // see the chart while composing its answer. The `embed_url` in the
-  // structured content stays the click-through to the interactive
-  // chart. (Historically both gates fired together on claude and the
-  // agreed fallback was the markdown-link directive in the tool
-  // descriptions.)
+  // Net effect: ChatGPT renders the interactive widget; every other
+  // client gets the chart inline as an `image` content block —
+  // rendered in-chat by claude.ai / Claude desktop / Claude Code and
+  // most generic MCP hosts, and visible to the model while it
+  // composes its answer. The `embed_url` in the structured content
+  // stays the click-through to the interactive chart everywhere.
+  // (Historically both gates fired together on claude — link-only —
+  // and unknown clients got widget metadata they couldn't render.)
   //
   // Per-tool ChatGPT suppression (`widgetSuppressedForTool`) still
   // fires both gates. That set exists for tools whose widget renders
@@ -406,7 +409,7 @@ function registerTool(
   // guaranteed by the `ui === undefined` condition at the call-time
   // `extraContentBlocks` gate.)
   const widgetSuppressed =
-    options.client === "claude" || options.widgetSuppressedForTool === true;
+    options.client !== "chatgpt" || options.widgetSuppressedForTool === true;
   const inlinePngFallbackSuppressed = options.widgetSuppressedForTool === true;
   const ui =
     tool.appUiResource !== undefined && !widgetSuppressed

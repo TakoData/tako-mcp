@@ -231,35 +231,14 @@ describe("worker routing", () => {
       "tako_search",
     ]);
 
-    // MCP Apps: `tako_search` is the sole chart-widget tool after 0.3.0.
-    // It ships the widget bundle and is the only tool that auto-renders
-    // a Tako chart inline. `tako_search` is a single-tool flow
-    // (no kickoff/wait split) — the deep path polls internally and
-    // emits MCP progress notifications to keep the client timeout
-    // alive — so a successful tool call always carries a chart in
-    // the result, and the widget never has to render an empty
-    // intermediate state.
-    // All widget-carrying tools' listings must declare the URI
-    // under all three metadata keys: `_meta.ui.resourceUri` (open
-    // MCP Apps spec, read by claude.ai / VS Code / Goose), the legacy
-    // flat `_meta["ui/resourceUri"]` (older host readers), and
-    // `_meta["openai/outputTemplate"]` (ChatGPT's Apps SDK — without
-    // it the widget loads but `window.openai.toolOutput` never
-    // populates). Other tools ship no widget and should declare
-    // none of these fields.
-    // `tako_visualize` also carries the widget but is opt-in (absent here);
-    // its listing metadata is asserted in the `?tools=visualize` test below.
-    const widgetTools = new Set(["tako_search"]);
-    for (const name of widgetTools) {
-      const tool = body.result.tools.find((t) => t.name === name);
-      expect(tool?._meta).toMatchObject({
-        ui: { resourceUri: "ui://tako/embed/chart" },
-        "ui/resourceUri": "ui://tako/embed/chart",
-        "openai/outputTemplate": "ui://tako/embed/chart",
-      });
-    }
+    // MCP Apps: the chart widget is ChatGPT-only (see `widgetSuppressed`
+    // in mcp.ts). Non-ChatGPT clients — claude AND the unknown long tail
+    // (Cursor, Windsurf, Gemini CLI, …) — get the chart as an inline PNG
+    // `image` content block on tool results instead, so NO tool in this
+    // listing declares widget metadata under any of the three keys.
+    // The ChatGPT-side widget metadata is asserted in the ChatGPT
+    // tools/list tests below.
     for (const t of body.result.tools) {
-      if (widgetTools.has(t.name)) continue;
       const meta = t._meta as
         | {
             ui?: unknown;
@@ -365,6 +344,21 @@ describe("worker routing", () => {
     expect(names.has("get_credit_balance")).toBe(false);
     // 4 defaults + tako_visualize = 5.
     expect(body.result.tools).toHaveLength(5);
+
+    // The widget is ChatGPT-only, so `tako_visualize`'s listing must
+    // declare the chart resource under all three metadata keys:
+    // `_meta.ui.resourceUri` (open MCP Apps spec), the legacy flat
+    // `_meta["ui/resourceUri"]` (older host readers), and
+    // `_meta["openai/outputTemplate"]` (ChatGPT's Apps SDK — without it
+    // the widget loads but `window.openai.toolOutput` never populates).
+    const visualizeTool = body.result.tools.find(
+      (t) => t.name === "tako_visualize",
+    ) as { _meta?: Record<string, unknown> } | undefined;
+    expect(visualizeTool?._meta).toMatchObject({
+      ui: { resourceUri: "ui://tako/embed/chart" },
+      "ui/resourceUri": "ui://tako/embed/chart",
+      "openai/outputTemplate": "ui://tako/embed/chart",
+    });
   });
 
   it("POST /mcp?tools=agent adds the single tako_agent tool on non-ChatGPT clients", async () => {
@@ -437,10 +431,11 @@ describe("worker routing", () => {
     expect(body.result.tools).toHaveLength(4);
   });
 
-  it("POST /mcp?tools=visualize adds tako_visualize with its widget metadata (non-ChatGPT)", async () => {
-    // No User-Agent → client "unknown". A claude UA would blanket-suppress
-    // widget `_meta` (see `widgetSuppressed` in mcp.ts), which would make the
-    // widget assertion below vacuous.
+  it("POST /mcp?tools=visualize adds tako_visualize without widget metadata (non-ChatGPT)", async () => {
+    // No User-Agent → client "unknown". The chart widget is ChatGPT-only
+    // (see `widgetSuppressed` in mcp.ts); non-ChatGPT clients render the
+    // chart via the inline PNG image content block on tool results, so
+    // the listing must NOT declare widget metadata.
     const res = await SELF.fetch("https://example.com/mcp?tools=visualize", {
       method: "POST",
       headers: {
@@ -472,17 +467,22 @@ describe("worker routing", () => {
     // 4 default tools + tako_visualize = 5.
     expect(body.result.tools).toHaveLength(5);
 
-    // Opting in must not strip the widget: the listing still declares the
-    // chart resource under all three metadata keys (see the default-set test
-    // for why each key exists).
+    // Widget metadata is ChatGPT-only — the unknown-client listing carries
+    // none of the three widget keys (the ChatGPT default-surface test
+    // asserts their presence there).
     const visualizeTool = body.result.tools.find(
       (t) => t.name === "tako_visualize",
     );
-    expect(visualizeTool?._meta).toMatchObject({
-      ui: { resourceUri: "ui://tako/embed/chart" },
-      "ui/resourceUri": "ui://tako/embed/chart",
-      "openai/outputTemplate": "ui://tako/embed/chart",
-    });
+    const meta = visualizeTool?._meta as
+      | {
+          ui?: unknown;
+          "ui/resourceUri"?: unknown;
+          "openai/outputTemplate"?: unknown;
+        }
+      | undefined;
+    expect(meta?.ui).toBeUndefined();
+    expect(meta?.["ui/resourceUri"]).toBeUndefined();
+    expect(meta?.["openai/outputTemplate"]).toBeUndefined();
   });
 
   it("POST /mcp?tools=graph adds the three graph primitives (off by default)", async () => {
@@ -606,13 +606,16 @@ describe("worker routing", () => {
     expect(claudeDesc).not.toContain("start_deep_knowledge_search");
   });
 
-  it("POST /mcp resources/list includes the chart widget bundle", async () => {
+  it("POST /mcp resources/list includes the chart widget bundle (ChatGPT)", async () => {
+    // The widget resource registers only for ChatGPT clients — the sole
+    // host that renders it (see `widgetSuppressed` in mcp.ts).
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
+        "user-agent": "ChatGPT/1.0 (+https://chatgpt.com)",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -648,13 +651,14 @@ describe("worker routing", () => {
     });
   });
 
-  it("POST /mcp resources/read returns the widget HTML at the MCP Apps mimeType", async () => {
+  it("POST /mcp resources/read returns the widget HTML at the MCP Apps mimeType (ChatGPT)", async () => {
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
+        "user-agent": "ChatGPT/1.0 (+https://chatgpt.com)",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
