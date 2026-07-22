@@ -4,6 +4,7 @@
 [![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.TakoData%2Ftako--mcp-000000?style=flat-square)](https://registry.modelcontextprotocol.io)
 [![Smithery](https://img.shields.io/badge/Smithery-tako%2Ftako-4B8BF5?style=flat-square)](https://smithery.ai/servers/tako/tako)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![Benchmarks: +21% on VerticalRTK](https://img.shields.io/badge/Benchmarks-%2B21%25_on_VerticalRTK-6E56CF?style=flat-square)](https://tako.com/blog/evaluating-a-new-kind-of-search-api/)
 
 Connect AI agents to Tako's proprietary knowledge graph: live financial, macroeconomic, and company data — rendered as interactive, citation-backed charts.
 
@@ -17,6 +18,8 @@ Tako MCP lets an agent:
 - **Fetch** the underlying rows (CSV) or a page's text behind any result URL
 - **Visualize** your own structured data as an embeddable chart _(opt-in)_
 - **Run** Tako's Answer Agent for deep, multi-step research _(opt-in)_
+
+> **Why a data-native search API?** On Tako's [VerticalRTK benchmark](https://tako.com/blog/evaluating-a-new-kind-of-search-api/) of real-time domain questions (finance, economics, sports, weather), Tako outperforms the next-best web search API by **21%** — while using **~75% fewer tool calls at up to one-tenth the cost**, and answering research tasks in **15.5s vs 124.2s** for OpenAI web search. It reaches parity with Exa, Parallel, Nimble, and Tavily on standard web benchmarks (SimpleQA, FRAMES) and pulls ahead where structured, real-time data matters. **[Read the evals →](https://tako.com/blog/evaluating-a-new-kind-of-search-api/)**
 
 ## Installation
 
@@ -520,6 +523,7 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 ## Links
 
 - **[Full Documentation](https://docs.tako.com/documentation/integrations/mcp-server)** — setup, tools, and integration guides
+- **[Evaluating a new kind of Search API](https://tako.com/blog/evaluating-a-new-kind-of-search-api/)** — benchmarks vs. Exa, Parallel, Nimble, Tavily; why data-native search wins
 - **[Get your API key](https://tako.com/console/api-keys)** — Tako console
 - [Tako](https://tako.com) — the data visualization platform
 - [Tako on Smithery](https://smithery.ai/servers/tako/tako) — MCP server listing
