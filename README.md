@@ -314,29 +314,30 @@ Step 2: Add this Claude skill
 
 ---
 name: tako-financial-research
-description: Company financials and markets via Tako (source: S&P Global). Revenue, earnings vs. estimates, margins, valuation, stock performance, and head-to-head company comparisons as citation-backed charts. Use for equity research, company deep-dives, competitor financial comparison, or any "what are/were <company>'s <financial metric>" question.
+description: Company financials and markets via Tako (sources include S&P Global and Fiscal.ai). Revenue, earnings vs. estimates, margins, valuation, stock performance, and head-to-head company comparisons as citation-backed charts. Use for equity research, company deep-dives, competitor financial comparison, or any "what are/were <company>'s <financial metric>" question.
 ---
 
 # Financial Research (Tako)
 
-Tako serves proprietary company financials (source: S&P Global) as interactive, citation-backed charts.
+Tako serves proprietary company financials (sources include S&P Global and Fiscal.ai) as interactive, citation-backed charts.
 
 ## Pick the tool by what you want back
-- `tako_search` — the data as a chart. Default for "<company> <metric>" and "<A> vs <B> <metric>". The top result renders inline.
+- `tako_search` — the data as a chart. Default for "<company> <metric>" and "<A> vs <B> <metric>". The intent-matched card renders inline (see Rendering).
 - `tako_answer` — one specific known value, in prose ("What was Apple's FY24 revenue?"). Relay the `answer` verbatim; no need to recompute.
 - `tako_agent` — a cohort/ranking that must be figured out ("which of the largest US chipmakers grew revenue fastest since 2020?"). Slower (~30–90s).
 - `tako_available_data` — FREE pre-check: confirm a metric exists and grab its exact name + `node_id` before spending a priced call.
 
 ## Query patterns (Critical)
-- Query is ENTITY + METRIC: `"Nvidia revenue"`, `"Apple gross margin"`, `"Tesla free cash flow"`. Keep it to one entity + one metric per call.
-- Comparisons are first-class: `"Intel vs Nvidia revenue"` returns a single two-series comparison card.
+- Query is ENTITY + METRIC: `"Nvidia revenue"`, `"Apple gross margin"`, `"Tesla free cash flow"`. Keep it to one entity + one metric per call, and add a cadence word (`quarterly`/`annual`) to steer the period.
+- Comparisons are first-class: `"Intel vs Nvidia revenue"` returns a two-series comparison card — but it is not always ranked first (see Rendering), and comparisons default to annual (say `quarterly` for quarterly).
 - Multi-metric or multi-company asks → fire PARALLEL narrow searches and synthesize yourself. Do not send a multi-part question as one query.
 - Ground in Tako data with `sources: ["data"]` for proprietary financials; add `"web"` only for news/context.
 
 ## Rendering (Critical)
-- The top result renders inline automatically — an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose ("as the chart above shows"); do NOT paste `![](image_url)` for the top card — that double-renders it.
-- Cite the source on the card (e.g. S&P Global) and its as-of date.
-- Point at any extra cards by linking their titles as `[Title](webpage_url)` — embed only the top card.
+- Match the card to intent — don't blindly trust index 0. Tako auto-renders the #0 card, but ranking ≠ intent: `"<A> vs <B>"` often ranks a single-entity card above the real two-series comparison. Scan the returned cards and use the one whose title/`nodes` match the question (BOTH entities for a comparison). If the intended card isn't #0, reference it explicitly with `[Title](webpage_url)` and say it is the authoritative one.
+- Reference the chart in prose ("as the chart above shows"); do NOT paste `![](image_url)` for a card — that double-renders the inline chart.
+- Cite whatever `sources[].source_name` the card returns (often S&P Global, but financials can come from Fiscal.ai or others) and its `data_as_of` date.
+- `tako_answer` prose may cite a different fiscal period than the embedded card's latest point (e.g. the answer says FY24 while the card headline is FY25) — reconcile them so text and chart agree.
 
 ## Examples
 - Single metric → tako_search {"query": "Nvidia quarterly revenue", "sources": ["data"]}
@@ -345,9 +346,9 @@ Tako serves proprietary company financials (source: S&P Global) as interactive, 
 - Ranking → tako_agent {"query": "Among the 10 largest US semiconductor companies, which grew revenue fastest since 2020?"}
 
 ## Output (tight and structured)
-1) A 1–2 line read of the finding, referencing the inline chart
-2) Source — as-of date
-3) A single `[Open in Tako](embed_url)` for the top card
+1) A 1–2 line read of the finding, referencing the intent-matched chart
+2) Source (`source_name`) — `data_as_of` date
+3) A single `[Open in Tako](embed_url)` for the card you embedded
 
 
 Step 3: Ask the user to restart Claude Code
@@ -382,7 +383,7 @@ description: Website and app traffic via Tako (source: SimilarWeb). Monthly visi
 Tako serves SimilarWeb traffic data as interactive, citation-backed charts.
 
 ## Query patterns (Critical)
-- Query by DOMAIN, not brand. `"netflix.com monthly visits"` resolves; `"Netflix traffic"` often does not. Always use the bare domain (`youtube.com`, `chatgpt.com`).
+- Query by DOMAIN, not brand. Brand names resolve to the wrong concept — under `sources: ["data"]` a brand query returns zero cards, and with `"web"` on it mis-resolves to subscriber counts or CDN/network-traffic articles. Always use the bare domain: `"netflix.com monthly visits"`, `"youtube.com"`, `"chatgpt.com"`.
 - The core metric is Visits (monthly, with ~1-month lag).
 - Comparisons: `"youtube.com vs netflix.com monthly visits"`. Rankings: `"top websites by visits"` returns a ranked card.
 - Ground in Tako data with `sources: ["data"]` (SimilarWeb is proprietary).
@@ -395,7 +396,8 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts.
 
 ## Rendering (Critical)
 - The top result renders inline automatically — an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose; do NOT paste `![](image_url)` for the top card — that double-renders it.
-- Cite SimilarWeb + the as-of month.
+- Cite SimilarWeb + the as-of month (it's in `data_freshness.data_as_of`).
+- Comparison cards (`"A vs B"`) describe each series as a % change over the period — for absolute monthly visits, read the per-domain single-series card instead.
 - Point at any extra cards by linking their titles as `[Title](webpage_url)` — embed only the top card.
 
 ## Examples
@@ -441,9 +443,10 @@ description: Macroeconomic indicators via Tako (sources: FRED, OECD, BIS). Infla
 Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as interactive, citation-backed charts.
 
 ## Query patterns (Critical)
-- Query is COUNTRY + INDICATOR: `"US CPI inflation"`, `"US unemployment rate"`, `"US federal funds rate"`.
+- Query is COUNTRY + INDICATOR: `"US CPI inflation"`, `"US unemployment rate"`, `"US federal funds rate"` (which resolves to the Effective Federal Funds Rate, not the FOMC target range).
 - Be specific — many variants exist (CPI all-items vs CPI-W vs core; unemployment headline vs U-6 vs by age/race). If intent is precise, name the variant; if unsure, use `tako_available_data` to list exact metric names first.
-- Parallelize multi-part asks: send "CPI, core CPI, PCE, core PCE" as FOUR narrow concurrent `tako_search` calls, then synthesize — not one query.
+- PCE is a trap: `"US PCE inflation"` / `"US core PCE inflation"` resolve to price-INDEX levels (~130 index points), never a rate. For the inflation rate, query the year-over-year variant (`"US core PCE price index % change"`) AND pick the card titled `… (% Change)` whose values are in percent. Run `tako_available_data` FIRST (mandatory here) to grab the exact `(% Change)` metric + `node_id`.
+- Parallelize multi-part asks: send each metric as its own narrow concurrent `tako_search`, then synthesize — not one query.
 - Cross-country comparison is built in: `"US vs China inflation"` returns a comparison card.
 - Ground in Tako data with `sources: ["data"]`.
 
@@ -454,20 +457,20 @@ Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as inter
 - `tako_available_data` — FREE: resolve the exact indicator name + `node_id`.
 
 ## Rendering (Critical)
-- The top result renders inline automatically — an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose; do NOT paste `![](image_url)` for the top card — that double-renders it.
-- Cite the source (FRED / OECD / BIS) + as-of date.
-- Point at any extra cards by linking their titles as `[Title](webpage_url)` — embed only the top card.
+- Match the card to intent — don't blindly trust index 0. Tako auto-renders the #0 card, but the least-specific card often ranks first: `"US CPI inflation"` can rank a broad BIS country card (a different headline number) above the labeled FRED CPI card, and stale vintages can sneak in. Scan the cards and use the one whose title matches the exact variant with the freshest `data_as_of`; if it isn't #0, reference it with `[Title](webpage_url)` and say it is the authoritative one.
+- Reference the chart in prose; do NOT paste `![](image_url)` for a card — that double-renders the inline chart.
+- Cite the source (FRED / OECD / BIS) + `data_as_of` date.
 
 ## Examples
 - Single → tako_search {"query": "US CPI inflation", "sources": ["data"]}
-- Parallel multi-metric → four calls: "US CPI inflation", "US core CPI inflation", "US PCE inflation", "US core PCE inflation"
+- Parallel multi-metric → four calls: "US CPI inflation", "US core CPI inflation", "US core PCE price index % change", "US PCE price index % change" (pick each card titled "(% Change)" — the plain "PCE Price Index" cards are index levels, not rates)
 - Cross-country → tako_search {"query": "US vs China inflation", "sources": ["data"]}
 - Known value, prose → tako_answer {"query": "What is the current US federal funds rate?", "sources": ["data"]}
 
 ## Output (tight and structured)
-1) A 1–2 line read of the indicator, referencing the inline chart
-2) Source — as-of date
-3) A single `[Open in Tako](embed_url)` for the top card
+1) A 1–2 line read of the indicator, referencing the intent-matched chart
+2) Source (FRED / OECD / BIS) — `data_as_of` date
+3) A single `[Open in Tako](embed_url)` for the card you embedded
 
 
 Step 3: Ask the user to restart Claude Code
