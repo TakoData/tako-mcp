@@ -1,44 +1,35 @@
 # Tako MCP Server
 
-An MCP (Model Context Protocol) server that provides access to Tako's knowledge base and data visualizations.
+[![Full Documentation](https://img.shields.io/badge/Docs-docs.tako.com-6E56CF?style=flat-square)](https://docs.tako.com/documentation/integrations/mcp-server)
+[![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.TakoData%2Ftako--mcp-000000?style=flat-square)](https://registry.modelcontextprotocol.io)
+[![Smithery](https://img.shields.io/badge/Smithery-tako%2Ftako-4B8BF5?style=flat-square)](https://smithery.ai/servers/tako/tako)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
-## What is this?
+Connect AI agents to Tako's proprietary knowledge graph: live financial, macroeconomic, and company data — rendered as interactive, citation-backed charts.
 
-This MCP server enables AI agents to:
+**[Full Documentation](https://docs.tako.com/documentation/integrations/mcp-server)** · **[Get your API key](https://tako.com/console/api-keys)** · **[MCP Registry](https://registry.modelcontextprotocol.io)**
 
-- **Search** Tako's knowledge base for charts and live data, rendered as interactive charts
-- **Answer** data questions with grounded, citation-backed prose
-- **Fetch** underlying content (CSV or text) behind result URLs
-- **Explore** Tako's data graph to see exactly what data exists for an entity or metric
-- **Visualize** your own structured data as an embeddable chart
-- **Run** Tako's Answer Agent for deep, multi-step research (opt-in — [enable it](#optional-tools-opt-in))
+Tako MCP lets an agent:
 
-## Quick start
+- **Search** Tako's knowledge graph and the live web — top result renders inline as a chart
+- **Answer** a specific data question with grounded, citation-backed prose
+- **Discover** exactly what proprietary data exists for an entity or metric — free and fast
+- **Fetch** the underlying rows (CSV) or a page's text behind any result URL
+- **Visualize** your own structured data as an embeddable chart _(opt-in)_
+- **Run** Tako's Answer Agent for deep, multi-step research _(opt-in)_
 
-**Use the hosted endpoint at `https://mcp.tako.com`.** Three lines, no install:
+## Installation
 
-```bash
-export TAKO_API_TOKEN='<your-token-from-tako.com>'
-claude mcp add tako-mcp --transport http https://mcp.tako.com/mcp \
-  --header "Authorization: Bearer $TAKO_API_TOKEN"
+Point your MCP client at the hosted endpoint — no install, no local server:
+
+```
+https://mcp.tako.com/mcp
 ```
 
-That's it for new users. Detailed configs for Claude Code / Claude Desktop / Cursor / Windsurf are in the next section.
+Every request authenticates with a Bearer token. **[Get your API key](https://tako.com/console/api-keys)**, then pick your client below.
 
-## Hosted (Cloudflare Workers)
-
-The fastest path: point your MCP client at `https://mcp.tako.com` with a Bearer token. No install, no local server.
-
-**Endpoints:**
-
-| Environment | URL |
-|---|---|
-| Production | `https://mcp.tako.com/mcp` |
-| Staging (testing only) | `https://mcp.staging.tako.com/mcp` |
-
-**Authentication:** every request needs `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at [tako.com](https://tako.com) → account settings → API tokens.
-
-### Claude Code
+<details>
+<summary><b>Claude Code</b></summary>
 
 ```bash
 export TAKO_API_TOKEN='<your-token>'
@@ -48,12 +39,144 @@ claude mcp add tako-mcp --transport http https://mcp.tako.com/mcp \
 ```
 
 Verify with `claude mcp list` (should show `tako-mcp` connected) or `/mcp` inside a session.
+</details>
 
-### Claude Desktop
+<details>
+<summary><b>Cursor</b></summary>
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "tako-mcp": {
+      "type": "http",
+      "url": "https://mcp.tako.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-tako-api-token>"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>Windsurf</b></summary>
+
+Add to your Windsurf MCP config:
+
+```json
+{
+  "mcpServers": {
+    "tako-mcp": {
+      "type": "http",
+      "url": "https://mcp.tako.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-tako-api-token>"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>VS Code</b></summary>
+
+Add to `.vscode/mcp.json` (workspace) or your user `mcp.json`:
+
+```json
+{
+  "servers": {
+    "tako-mcp": {
+      "type": "http",
+      "url": "https://mcp.tako.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-tako-api-token>"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>Gemini CLI</b></summary>
+
+Add to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "tako-mcp": {
+      "httpUrl": "https://mcp.tako.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-tako-api-token>"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>OpenCode</b></summary>
+
+Add to `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "tako-mcp": {
+      "type": "remote",
+      "url": "https://mcp.tako.com/mcp",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer <your-tako-api-token>"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>Codex CLI</b></summary>
+
+Codex connects to remote servers through the `mcp-remote` bridge. Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.tako-mcp]
+command = "npx"
+args = ["-y", "mcp-remote", "https://mcp.tako.com/mcp", "--header", "Authorization: Bearer <your-tako-api-token>"]
+```
+</details>
+
+<details>
+<summary><b>Zed</b></summary>
+
+Add to Zed `settings.json` (via the `mcp-remote` bridge):
+
+```json
+{
+  "context_servers": {
+    "tako-mcp": {
+      "source": "custom",
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://mcp.tako.com/mcp", "--header", "Authorization: Bearer <your-tako-api-token>"]
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>Claude Desktop</b></summary>
 
 Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
-```jsonc
+```json
 {
   "mcpServers": {
     "tako-mcp": {
@@ -67,252 +190,339 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 }
 ```
 
-Restart Claude Desktop. `Tako MCP` should appear in the available tools list.
+Restart Claude Desktop — `Tako MCP` appears in the available tools list.
+</details>
 
-### Cursor / Windsurf
+<details>
+<summary><b>Claude.ai &amp; ChatGPT (OAuth — no token needed)</b></summary>
 
-Add to `~/.cursor/mcp.json` (Cursor) or the equivalent Windsurf config:
+The consumer chat hosts don't accept Bearer tokens. Instead, the hosted endpoint runs an OAuth 2.1 flow that signs you in with your Tako account and mints a per-host key for you automatically.
 
-```jsonc
-{
-  "mcpServers": {
-    "tako-mcp": {
-      "type": "http",
-      "url": "https://mcp.tako.com/mcp",
-      "headers": {
-        "Authorization": "Bearer <your-tako-api-token>"
-      }
-    }
-  }
-}
-```
+**Prerequisites:** just [sign in at tako.com](https://tako.com) with the identity you'll authorize. You do **not** mint a token yourself — the consent flow creates a per-host key (named `MCP: <client>`, visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)). Connecting a new host never rotates another host's key; Tako trims your oldest MCP key past ten.
 
-### Notes
+![tako.com API keys](docs/images/tako-api-token-generate.png)
 
-- **Tools are discovered automatically** via the MCP `tools/list` handshake on connect — your client always sees the current tool surface, no manual list to keep in sync.
-- **Auth is connection-level Bearer** — once the connection is established with your token, tool inputs require no `api_token` argument.
-- **Use the staging endpoint** (`mcp.staging.tako.com`) for testing changes against an unstable build before they reach `mcp.tako.com`.
+**Claude.ai** _(requires Pro, Max, Team, or Enterprise)_
+1. Open Claude.ai → **Settings → Connectors**
+2. Click **Add custom connector**
+3. Paste `https://mcp.tako.com/mcp` and click **Connect**
+4. Complete the Tako sign-in flow; **Tako** then appears as connected
 
-## Consumer hosts (OAuth)
+![Claude.ai Settings → Connectors](docs/images/claude-connectors-landing.png)
 
-Use this if you're connecting Tako from **Claude.ai** or **ChatGPT** — the consumer chat hosts that don't accept Bearer tokens. The hosted endpoint at `https://mcp.tako.com/mcp` runs an OAuth 2.1 flow that signs you in with your Tako account and connects on your behalf, no JSON config or CLI required.
+**ChatGPT** _(requires Pro, Business, or Enterprise; Developer Mode enabled)_
+1. Open ChatGPT → **Settings → Connectors → Developer Mode** and toggle it on
+2. Click **Create custom connector**
+3. Paste `https://mcp.tako.com/mcp` and click **Connect**
+4. Complete the Tako sign-in flow; the connector is then listed and ready
 
-> If you're using Claude Code, Claude Desktop, Cursor, or Windsurf, see the Bearer-auth instructions [above](#hosted-cloudflare-workers) — those clients accept a static `Authorization: Bearer` header and don't need OAuth.
+![ChatGPT connector connected](docs/images/chatgpt-tako-connected.png)
 
-### Prerequisites
+**During connect** you'll see three Tako-hosted screens regardless of host: a sign-in page (Google or email magic-link), a consent page (*"Connect [host] to Tako — Allow / Cancel"*), then a bounce back to the host. The host may show its own consent prompt too — that's normal.
 
-Before connecting from Claude.ai or ChatGPT, just **sign up or sign in at [tako.com](https://tako.com)** with the identity you'll use to authorize.
+![mcp.tako.com sign-in](docs/images/mcp-tako-signin.png)
+![mcp.tako.com consent](docs/images/mcp-tako-consent.png)
 
-You do **not** need to mint an API token yourself. The consent flow mints a
-per-host Tako API key for you on first authorize (named "MCP: <client>", visible
-and revocable at tako.com → settings → API tokens). Minting is additive —
-connecting a new host never rotates another host's key — and Tako trims your
-oldest MCP key once you exceed ten. You only see a "too many API keys" page if
-your account is at the overall key cap, in which case revoke one and reconnect.
+**Disconnecting.** A per-host disconnect (remove the connector in host settings) stops that host only; other hosts and Bearer-auth clients keep working. To hard-kill everything, rotate your key at [tako.com/console/api-keys](https://tako.com/console/api-keys) — every previously-issued grant across every host stops authenticating immediately.
+</details>
 
-![tako.com Settings → API tokens](docs/images/tako-api-token-generate.png)
+**Endpoints:**
 
-### What you'll see during connect
+| Environment | URL |
+|---|---|
+| Production | `https://mcp.tako.com/mcp` |
+| Staging (testing only) | `https://mcp.staging.tako.com/mcp` |
 
-The same three Tako-hosted screens appear regardless of which host (Claude.ai or ChatGPT) you're connecting from:
-
-1. **Tako sign-in page.** Two options: **Continue with Google** or send yourself an **email magic-link**. Use the same identity you signed up with at tako.com.
-
-   ![mcp.tako.com sign-in page showing Google + email magic-link options](docs/images/mcp-tako-signin.png)
-
-2. **Tako consent page.** Reads *"Connect [host name] to Tako — Signed in as you@example.com — Allow / Cancel"*. Click **Allow** to authorize the connection.
-
-   ![mcp.tako.com consent page showing client name + signed-in identity](docs/images/mcp-tako-consent.png)
-
-3. **Bounce back to the host.** The connector is now listed and tools are callable.
-
-The host itself (Claude.ai or ChatGPT) may also display its own consent prompt before or after Tako's. That's normal — Tako confirms it's safe to share your account; the host confirms it's safe to invoke an external connector.
-
-### Claude.ai
-
-*Requires Claude.ai Pro, Max, Team, or Enterprise.*
-
-1. Open Claude.ai → **Settings → Connectors**.
-
-   ![Claude.ai Settings → Connectors landing page](docs/images/claude-connectors-landing.png)
-
-2. Click **Add custom connector**.
-
-3. Paste `https://mcp.tako.com/mcp` and click **Connect**.
-
-4. You'll be taken through the Tako sign-in flow described above.
-
-5. After consent, **Tako** appears in your connector list as connected.
-
-### ChatGPT
-
-*Requires ChatGPT Pro, Business, or Enterprise. Developer Mode must be enabled.*
-
-1. Open ChatGPT → **Settings → Connectors → Developer Mode** and toggle it on if it isn't already.
-
-   ![ChatGPT Settings → Connectors with the Developer Mode toggle](docs/images/chatgpt-connectors-developer-mode.png)
-
-2. Click **Create custom connector**.
-
-   ![ChatGPT "Create custom connector" dialog](docs/images/chatgpt-create-custom-connector.png)
-
-3. Paste `https://mcp.tako.com/mcp` and click **Connect**.
-
-4. You'll be taken through the Tako sign-in flow described above.
-
-5. After consent, the connector is listed and ready to use.
-
-   ![ChatGPT connector list showing Tako connected](docs/images/chatgpt-tako-connected.png)
-
-### Verify it's working
-
-In a fresh conversation, ask:
-
-> Show me Tako's chart on Intel vs Nvidia headcount.
-
-A successful response renders the chart inline within a few seconds — a fully interactive widget on ChatGPT, a chart image on other hosts — plus a link to the interactive chart. If you instead see an authentication error, jump to *Disconnecting & re-authorizing* below.
-
-### Disconnecting & re-authorizing
-
-There are two ways to break the connection, and they have different blast radius. Pick the one that matches what you actually want.
-
-**Per-host disconnect** (Claude.ai or ChatGPT settings → remove the Tako connector). Stops *that host* from making MCP calls. Does **not** revoke the underlying Tako API token. Other connected hosts — and any Claude Code / Cursor Bearer-auth wiring on the same account — keep working unchanged.
-
-**Rotate the API token at [tako.com](https://tako.com) → settings → API tokens.** This is the hard kill switch. Rotating creates a new token and invalidates the old one server-side, which means every previously-issued OAuth grant — across every host — stops authenticating immediately. To resume from any host, disconnect and reconnect; the new consent flow picks up your fresh token.
-
-> This kill-switch behavior is by design for v1. Per-grant scoped tokens (revoke a single host without touching the others) are tracked under [TAKO-2679](https://linear.app/tako/issue/TAKO-2679)'s known limitations.
+Tools are discovered automatically via the MCP `tools/list` handshake, so your client always sees the live surface. Auth is connection-level — once connected, tool inputs need no `api_token` argument.
 
 ## Available Tools
 
-Tools are discovered automatically via the MCP `tools/list` handshake; your client always sees the live surface. Auth is connection-level (Bearer token or OAuth) — there is no per-call `api_token` argument.
+**Enabled by default:**
 
-- **`tako_search`** — **Pull the actual data to work with.** Fast search over Tako's curated knowledge graph and the live web; each card carries a free inline preview of its latest rows by default (`include_contents`, on by default; set `false` for pointers-only). The top result renders inline as a chart — a fully interactive MCP Apps widget on ChatGPT, an inline chart image on every other host (Claude, Cursor, and the rest) — with an **Open in Tako** link to the interactive chart everywhere. **Parallelize it:** decompose a broad or multi-part question into several narrow, single entity+metric searches run concurrently (e.g. "US CPI inflation", "US core PCE inflation", …) rather than one broad query — narrow queries retrieve far better. Choose `sources` (`["data"]`, `["web"]`, or **both by default**) and `effort` (`fast` default | `instant`). For the full data (or a web page's text), call `tako_contents` on the result URL — for a Tako card, only when it's marked `exportable: true` (an `exportable: false` card has no exportable data). For deep, multi-step research — or when search returns nothing — use `tako_agent` (an [opt-in tool](#optional-tools-opt-in)).
-- **`tako_answer`** — **Ask one specific, self-contained data question, get the answer.** A single grounded, citation-backed prose answer written for you (you don't touch the rows). Ground in `["data"]`, `["web"]`, or **both (default)**. For broad/multi-part needs, or when you want the underlying data to synthesize yourself, use `tako_search` (parallelized) instead; dig into a cited result's data with `tako_contents` (cards only when they're marked `exportable: true`).
-- **`tako_contents`** — Fetch the content behind a result URL: a Tako card URL returns a CSV; any other URL returns the page's extracted text. Only cards marked `exportable: true` can be fetched — the export gate rejects `exportable: false` cards (web URLs are exempt from the gate).
-- **`tako_available_data`** — Find **what proprietary, structured data exists** on an entity or metric in one call — the answer to any "what data is there on X?" question, and a cheap accuracy check to confirm a specific figure exists (and its exact name) before you spend a priced `tako_search` / `tako_answer`. Summarizes the available metrics in natural language; each match carries a `node_id` you can pin into `tako_search` / `tako_answer` for a strong retrieval boost. Free and fast.
-- **`tako_visualize`** — _Opt-in tool ([enable with `?tools=visualize`](#optional-tools-opt-in); on by default for ChatGPT)._ Create an embeddable chart/card directly from your own structured data (Tako's [Thin-Viz](https://tako.com/docs/) API). Supply typed `components` (timeseries, bar, table, financial boxes, …); the card auto-renders inline and returns `webpage_url` / `embed_url`.
-- **`tako_agent`** — _Opt-in tool ([enable with `?tools=agent`](#optional-tools-opt-in))._ Run Tako's **Answer Agent**: opinionated, multi-step research for complex questions that need reasoning across many retrievals. Returns a synthesized, citation-backed answer plus supporting chart cards. Distinct from one-shot `tako_answer` (a single grounded lookup) — the agent is slower (~30–90s) but far more thorough. (On ChatGPT this is exposed as the `tako_agent_start` / `tako_agent_wait` pair to fit the host's tool-call timeout model.)
-- **`get_credit_balance`** — _Opt-in tool ([enable with `?tools=credits`](#optional-tools-opt-in))._ Check the connected account's API credit balance.
-- **`tako_graph_search`** / **`tako_graph_related`** / **`tako_graph_node`** — _Opt-in tools ([enable with `?tools=graph`](#optional-tools-opt-in))._ The low-level graph primitives behind `tako_available_data`, for power users who need what the one-call summary doesn't expose: traversal relations (`siblings`, `part_of`, `members`, `rel:*` named edges like `rel:competes_with`), server-side `q` filtering within a relation, cursor paging, and full node detail (aliases, subtype, description). Graph calls are free.
+| Tool | Description |
+| ---- | ----------- |
+| `tako_search` | **Pull the data to work with.** Fast search over Tako's curated graph and the live web; each card carries a free inline preview of its latest rows. Top result renders inline as a chart (an interactive MCP Apps widget on ChatGPT, a chart image elsewhere) with an **Open in Tako** link. Choose `sources` (`data`, `web`, or both) and `effort` (`fast` / `instant`). Parallelize broad questions into narrow single entity+metric searches for far better retrieval. |
+| `tako_answer` | **Ask one specific data question, get the answer.** A single grounded, citation-backed prose answer, already written for you — relay it directly. Ground in `data`, `web`, or both. |
+| `tako_contents` | Fetch the content behind a result URL: a Tako card returns a CSV, any other URL returns the page's extracted text. Cards must be marked `exportable: true` (web URLs are exempt). |
+| `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search/answer. Returns a `node_id` you can pin into search/answer for a retrieval boost. Free and fast. |
 
-### Answer vs. Search — the core distinction
+**Opt-in** — off by default to keep the tool surface small. Enable per-connection via the `?tools=` query parameter (comma-separated aliases):
+
+| Alias | Tool(s) | What it's for |
+| ---- | ---- | ----------- |
+| `agent` | `tako_agent` (ChatGPT: `tako_agent_start` / `tako_agent_wait`) | Tako's **Answer Agent** — opinionated, multi-step research (~30–90s) across many retrievals, returning a synthesized answer plus chart cards |
+| `visualize` | `tako_visualize` | Author an embeddable chart/card from your own typed `components` (timeseries, bar, table, financial boxes…). On by default for ChatGPT, where it powers the widget |
+| `credits` | `get_credit_balance` | Check the connected account's API credit balance |
+| `graph` | `tako_graph_search` / `tako_graph_related` / `tako_graph_node` | Low-level graph primitives behind `tako_available_data`: traversal relations, `q` filtering, cursor paging, full node detail |
+
+```bash
+# Aliases compose as a comma-separated list on the MCP URL
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent,visualize" \
+  --header "Authorization: Bearer $TAKO_API_TOKEN"
+```
+
+Only alias names are recognized; unknown values are ignored, so a typo never breaks the connection. Omit the parameter for the default surface.
+
+<details>
+<summary><b>Answer vs. Search — the core distinction</b></summary>
 
 `tako_answer` and `tako_search` look similar but serve **opposite** needs. Pick by *what you want back*:
 
 | You want… | Use | What you get back |
 |---|---|---|
-| **The answer** to one specific, self-contained data question | **`tako_answer`** | A single synthesized, citation-backed prose answer — **already written for you.** Relay it directly; no need to re-derive or double-check it. |
-| **The data itself** — rows/time-series to compute over, chart, or turn into your own thesis | **`tako_search`** | Structured cards (each with a free row preview) + an inline chart. *You* do the synthesis. |
+| **The answer** to one specific, self-contained data question | `tako_answer` | A single synthesized, citation-backed prose answer — already written for you. Relay it directly. |
+| **The data itself** — rows/time-series to compute over or chart | `tako_search` | Structured cards (each with a free row preview) + an inline chart. *You* do the synthesis. |
 
-Rules of thumb:
-
-- **One narrow, known question → `tako_answer`.** e.g. *"What was US GDP in 2024?"* The `answer` field comes back already LLM-synthesized and grounded in its citations — **surface it as-is**; you don't need to recompute it or call `tako_contents` to verify it.
-- **Broad or multi-part → `tako_search`, parallelized.** Don't send a multi-part question to *either* tool as one call. Decompose it into narrow single **entity + metric** searches and fire them concurrently — e.g. *"US CPI inflation"*, *"US core CPI inflation"*, *"US PCE inflation"*, *"US core PCE inflation"* — then synthesize the four results yourself. Narrow queries retrieve far more accurately.
+- **One narrow, known question → `tako_answer`.** e.g. *"What was US GDP in 2024?"* — surface the `answer` field as-is.
+- **Broad or multi-part → `tako_search`, parallelized.** Decompose into narrow single entity+metric searches fired concurrently — e.g. *"US CPI inflation"*, *"US core CPI inflation"*, *"US PCE inflation"* — then synthesize yourself.
 - In one line: **`tako_answer` hands you a conclusion; `tako_search` hands you the evidence.**
+</details>
 
-### Optional tools (opt-in)
-
-To keep the default tool surface small (less context loaded into every session, fewer tools for the model to weigh), some tools are **off by default** and enabled per-connection via the `?tools=` query parameter on the MCP URL. The everyday tools (`tako_search`, `tako_answer`, `tako_contents`, `tako_available_data`) cover most questions; opt in to the rest as needed:
-
-| Alias | Enables | What it's for |
-|---|---|---|
-| `agent` | `tako_agent` (ChatGPT: `tako_agent_start` / `tako_agent_wait`) | Deep, multi-step Answer Agent research |
-| `visualize` | `tako_visualize` | Author charts from your own data (already on by default for ChatGPT, where it powers the widget) |
-| `credits` | `get_credit_balance` | Check API credit balance |
-| `graph` | `tako_graph_search`, `tako_graph_related`, `tako_graph_node` | Low-level graph traversal beyond `tako_available_data` (relations, filtering, paging, node detail) |
-
-Aliases compose as a comma-separated list:
-
-```
-https://mcp.tako.com/mcp?tools=agent,visualize,credits
-```
-
-For example, with the CLI:
-
-```bash
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" \
-  --header "Authorization: Bearer $TAKO_API_TOKEN"
-```
-
-Only alias names are recognized (not raw tool names), and unknown values in `?tools=` are ignored, so a typo never breaks the connection. Omit the parameter entirely for the default surface.
-
-## Example Flows
+<details>
+<summary><b>Example flows</b></summary>
 
 **Specific question → `tako_answer` (relay the answer):**
 1. User asks: *"What was US GDP in 2024?"*
 2. Agent calls `tako_answer` with the question
-3. Agent receives a synthesized, citation-backed `answer` — and surfaces it directly, no further work needed
+3. Agent receives a synthesized, citation-backed `answer` — and surfaces it directly
 
 **Data to work with → parallel `tako_search` (synthesize yourself):**
 1. User asks: *"Compare US CPI, core CPI, PCE, and core PCE inflation."*
-2. Agent fires **four** narrow `tako_search` calls concurrently — one per entity+metric — instead of one broad query
+2. Agent fires **four** narrow `tako_search` calls concurrently — one per entity+metric
 3. Each returns a card with a free row preview (top result renders inline as a chart)
-4. Agent synthesizes the four results into the comparison; calls `tako_contents` on a card's `webpage_url` if it needs the full rows (checking first that the card is marked `exportable: true` — `exportable: false` cards aren't exportable)
+4. Agent synthesizes the four results, calling `tako_contents` on a card's `webpage_url` if it needs full rows (when the card is `exportable: true`)
+</details>
 
-## Breaking changes (v0.3.0)
+## Agent Skills
 
-- The default tool surface is: **`tako_search`**, **`tako_answer`**, **`tako_contents`**, and **`tako_available_data`**. Everything else is [opt-in via `?tools=`](#optional-tools-opt-in): **`tako_agent`** (`agent`; on ChatGPT the split pair **`tako_agent_start`** / **`tako_agent_wait`**), **`tako_visualize`** (`visualize`; default-on for ChatGPT), **`get_credit_balance`** (`credits`), and the graph primitives **`tako_graph_search`** / **`tako_graph_related`** / **`tako_graph_node`** (`graph`).
-- The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
-- The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
+Ready-to-use skills for Claude Code. Each teaches Claude how to use Tako for a specific kind of data work. Copy the block inside a dropdown and paste it into Claude Code — it sets up the connection and skill for you.
 
-Update any client config or agent prompts that referenced the old tool names or the Python SSE endpoint.
+<details>
+<summary><b>Financial Research</b></summary>
 
-## Health Checks
+Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
 
-- `GET /health` - Simple "ok" response
+````
+Step 1: Install or update Tako MCP
+
+If Tako MCP already exists in your config, update it to this endpoint (the ?tools=agent enables the Answer Agent used for ranking questions). Run this in your terminal:
+
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
+
+
+Step 2: Add this Claude skill
+
+---
+name: tako-financial-research
+description: Company financials and markets via Tako (source: S&P Global). Revenue, earnings vs. estimates, margins, valuation, stock performance, and head-to-head company comparisons as citation-backed charts. Use for equity research, company deep-dives, competitor financial comparison, or any "what are/were <company>'s <financial metric>" question.
+---
+
+# Financial Research (Tako)
+
+Tako serves proprietary company financials (source: S&P Global) as interactive, citation-backed charts.
+
+## Pick the tool by what you want back
+- `tako_search` — the data as a chart. Default for "<company> <metric>" and "<A> vs <B> <metric>". The top result renders inline.
+- `tako_answer` — one specific known value, in prose ("What was Apple's FY24 revenue?"). Relay the `answer` verbatim; no need to recompute.
+- `tako_agent` — a cohort/ranking that must be figured out ("which of the largest US chipmakers grew revenue fastest since 2020?"). Slower (~30–90s).
+- `tako_available_data` — FREE pre-check: confirm a metric exists and grab its exact name + `node_id` before spending a priced call.
+
+## Query patterns (Critical)
+- Query is ENTITY + METRIC: `"Nvidia revenue"`, `"Apple gross margin"`, `"Tesla free cash flow"`. Keep it to one entity + one metric per call.
+- Comparisons are first-class: `"Intel vs Nvidia revenue"` returns a single two-series comparison card.
+- Multi-metric or multi-company asks → fire PARALLEL narrow searches and synthesize yourself. Do not send a multi-part question as one query.
+- Ground in Tako data with `sources: ["data"]` for proprietary financials; add `"web"` only for news/context.
+
+## Rendering (Critical)
+- The top result renders inline automatically — an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose ("as the chart above shows"); do NOT paste `![](image_url)` for the top card — that double-renders it.
+- Cite the source on the card (e.g. S&P Global) and its as-of date.
+- Point at any extra cards by linking their titles as `[Title](webpage_url)` — embed only the top card.
+
+## Examples
+- Single metric → tako_search {"query": "Nvidia quarterly revenue", "sources": ["data"]}
+- Comparison → tako_search {"query": "Intel vs Nvidia revenue", "sources": ["data"]}
+- Known value, prose → tako_answer {"query": "What was Microsoft's FY2024 net income?", "sources": ["data"]}
+- Ranking → tako_agent {"query": "Among the 10 largest US semiconductor companies, which grew revenue fastest since 2020?"}
+
+## Output (tight and structured)
+1) A 1–2 line read of the finding, referencing the inline chart
+2) Source — as-of date
+3) A single `[Open in Tako](embed_url)` for the top card
+
+
+Step 3: Ask the user to restart Claude Code
+
+Ask the user to restart Claude Code so the config change takes effect.
+````
+
+</details>
+
+<details>
+<summary><b>Website &amp; App Traffic</b></summary>
+
+Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
+
+````
+Step 1: Install or update Tako MCP
+
+If Tako MCP already exists in your config, update it to this endpoint (the ?tools=agent enables the Answer Agent used for ranking questions). Run this in your terminal:
+
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
+
+
+Step 2: Add this Claude skill
+
+---
+name: tako-web-traffic
+description: Website and app traffic via Tako (source: SimilarWeb). Monthly visits, traffic trends, and top-sites rankings for any domain as citation-backed charts. Use for competitive traffic analysis, share-of-attention, or any "how much traffic does <site> get" question.
+---
+
+# Web & App Traffic (Tako)
+
+Tako serves SimilarWeb traffic data as interactive, citation-backed charts.
+
+## Query patterns (Critical)
+- Query by DOMAIN, not brand. `"netflix.com monthly visits"` resolves; `"Netflix traffic"` often does not. Always use the bare domain (`youtube.com`, `chatgpt.com`).
+- The core metric is Visits (monthly, with ~1-month lag).
+- Comparisons: `"youtube.com vs netflix.com monthly visits"`. Rankings: `"top websites by visits"` returns a ranked card.
+- Ground in Tako data with `sources: ["data"]` (SimilarWeb is proprietary).
+
+## Pick the tool
+- `tako_search` — traffic as a chart (default; top result renders inline).
+- `tako_answer` — one number, in prose ("How many monthly visits does netflix.com get?").
+- `tako_agent` — a ranking/cohort to figure out ("top 5 streaming domains by visits, and which is growing fastest"). ~30–90s.
+- `tako_available_data` — FREE check that a domain is covered before a priced call.
+
+## Rendering (Critical)
+- The top result renders inline automatically — an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose; do NOT paste `![](image_url)` for the top card — that double-renders it.
+- Cite SimilarWeb + the as-of month.
+- Point at any extra cards by linking their titles as `[Title](webpage_url)` — embed only the top card.
+
+## Examples
+- Single domain → tako_search {"query": "netflix.com monthly visits", "sources": ["data"]}
+- Head-to-head → tako_search {"query": "youtube.com vs netflix.com monthly visits", "sources": ["data"]}
+- Ranking → tako_search {"query": "top websites by visits", "sources": ["data"]}
+
+## Output (tight and structured)
+1) A 1–2 line read of the traffic, referencing the inline chart
+2) SimilarWeb — as-of month
+3) A single `[Open in Tako](embed_url)` for the top card
+
+
+Step 3: Ask the user to restart Claude Code
+
+Ask the user to restart Claude Code so the config change takes effect.
+````
+
+</details>
+
+<details>
+<summary><b>Macroeconomics</b></summary>
+
+Copy the block below and paste it into Claude Code. It will set up the MCP connection and skill for you.
+
+````
+Step 1: Install or update Tako MCP
+
+If Tako MCP already exists in your config, update it to this endpoint (the ?tools=agent enables the Answer Agent used for ranking questions). Run this in your terminal:
+
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
+
+
+Step 2: Add this Claude skill
+
+---
+name: tako-macroeconomics
+description: Macroeconomic indicators via Tako (sources: FRED, OECD, BIS). Inflation (CPI/PCE), unemployment, GDP, interest and policy rates, and cross-country comparisons as citation-backed charts. Use for macro monitoring, economic briefings, or any "what is/was <country>'s <indicator>" question.
+---
+
+# Macroeconomics (Tako)
+
+Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as interactive, citation-backed charts.
+
+## Query patterns (Critical)
+- Query is COUNTRY + INDICATOR: `"US CPI inflation"`, `"US unemployment rate"`, `"US federal funds rate"`.
+- Be specific — many variants exist (CPI all-items vs CPI-W vs core; unemployment headline vs U-6 vs by age/race). If intent is precise, name the variant; if unsure, use `tako_available_data` to list exact metric names first.
+- Parallelize multi-part asks: send "CPI, core CPI, PCE, core PCE" as FOUR narrow concurrent `tako_search` calls, then synthesize — not one query.
+- Cross-country comparison is built in: `"US vs China inflation"` returns a comparison card.
+- Ground in Tako data with `sources: ["data"]`.
+
+## Pick the tool
+- `tako_search` — indicator as a chart (default).
+- `tako_answer` — one known value, in prose ("What is the current US unemployment rate?"). Relay verbatim.
+- `tako_agent` — a cohort/ranking to figure out ("which G7 economy has the highest inflation right now?"). ~30–90s.
+- `tako_available_data` — FREE: resolve the exact indicator name + `node_id`.
+
+## Rendering (Critical)
+- The top result renders inline automatically — an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose; do NOT paste `![](image_url)` for the top card — that double-renders it.
+- Cite the source (FRED / OECD / BIS) + as-of date.
+- Point at any extra cards by linking their titles as `[Title](webpage_url)` — embed only the top card.
+
+## Examples
+- Single → tako_search {"query": "US CPI inflation", "sources": ["data"]}
+- Parallel multi-metric → four calls: "US CPI inflation", "US core CPI inflation", "US PCE inflation", "US core PCE inflation"
+- Cross-country → tako_search {"query": "US vs China inflation", "sources": ["data"]}
+- Known value, prose → tako_answer {"query": "What is the current US federal funds rate?", "sources": ["data"]}
+
+## Output (tight and structured)
+1) A 1–2 line read of the indicator, referencing the inline chart
+2) Source — as-of date
+3) A single `[Open in Tako](embed_url)` for the top card
+
+
+Step 3: Ask the user to restart Claude Code
+
+Ask the user to restart Claude Code so the config change takes effect.
+````
+
+</details>
 
 ## Architecture
 
 Tako MCP is a Cloudflare Worker — a thin TypeScript proxy deployed at `mcp.tako.com`:
 
 ```
-AI Agent (Claude Code/Desktop, Cursor, Claude.ai, ChatGPT, etc.)
-    ↓
-  MCP Protocol (Streamable HTTP, POST /mcp)
-    ↓
+AI Agent (Claude Code/Desktop, Cursor, Claude.ai, ChatGPT, …)
+    ↓  MCP Protocol (Streamable HTTP, POST /mcp)
 Cloudflare Worker  ──  Bearer auth / OAuth, tool dispatch
-    ↓
+    ↓  X-API-Key
 Tako Django API  (tako.com)
 ```
 
-The Worker extracts the Bearer token (or OAuth-derived token), validates the MCP request, calls the appropriate Django endpoint with the user's token forwarded as `X-API-Key`, and returns structured tool results. Code lives in `workers/` of this repo.
+The Worker extracts the Bearer (or OAuth-derived) token, validates the MCP request, calls the appropriate Django endpoint with the user's token forwarded as `X-API-Key`, and returns structured tool results. Code lives in `workers/`.
 
-## MCP Registry (maintainers)
+- **Health check:** `GET /health` returns a simple `ok`.
 
-Tako is published to the official [MCP Registry](https://registry.modelcontextprotocol.io)
-as a remote server under the name `io.github.TakoData/tako-mcp`.
+<details>
+<summary><b>Breaking changes (v0.3.0)</b></summary>
 
-- **`server.json`** (repo root) is the registry descriptor: a remote
-  `streamable-http` entry pointing at `https://mcp.tako.com/mcp`. The registry
-  schema does not list tools — hosts discover them at runtime via `tools/list`.
-  (This is distinct from `registry/server.json`, the generated in-repo tool
-  catalog used by `npm run registry:gen` / `registry:check`.)
-- **Publishing** is automated by `.github/workflows/publish-mcp.yml`. It
-  authenticates with the registry via **GitHub OIDC** (no secret — the
-  `io.github.TakoData/*` namespace is authorized because this repo lives in the
-  TakoData org) and runs `mcp-publisher publish`. **The version lives in code:**
-  bump `server.json`'s `version` and merge to `main` and it publishes
-  automatically. A merge that touches `server.json` without changing the version
-  is a no-op (the workflow skips, so the registry never sees a duplicate). Manual
-  `workflow_dispatch` publishes the checked-in version on demand.
-- **Branded namespace (`com.tako/tako-mcp`)** is an optional future upgrade. It
-  requires DNS authentication: generate an Ed25519 key, add a `TXT` record on
-  `tako.com`, and swap the workflow's `login github-oidc` step for
-  `login dns --domain tako.com --private-key ${{ secrets.MCP_PRIVATE_KEY }}`.
+- The default tool surface is **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_available_data`**. Everything else is opt-in via `?tools=`: **`tako_agent`** (`agent`; ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), **`tako_visualize`** (`visualize`; default-on for ChatGPT), **`get_credit_balance`** (`credits`), and graph primitives **`tako_graph_search`** / **`tako_graph_related`** / **`tako_graph_node`** (`graph`).
+- The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
+- The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
 
-## Releases
+Update any client config or agent prompts that referenced the old tool names or the Python SSE endpoint.
+</details>
 
-Versioning and changelog are automated via release-please. Contributors use
-Conventional Commit PR titles (squash-merge); maintainers cut a release by merging
-the bot's "release: X.Y.Z" PR. See `AGENTS.md` → Releases.
+<details>
+<summary><b>MCP Registry &amp; releases (maintainers)</b></summary>
 
-## License
+Tako is published to the official [MCP Registry](https://registry.modelcontextprotocol.io) as a remote server under `io.github.TakoData/tako-mcp`.
 
-MIT License - see [LICENSE](LICENSE) for details.
+- **`server.json`** (repo root) is the registry descriptor: a remote `streamable-http` entry pointing at `https://mcp.tako.com/mcp`. The schema doesn't list tools — hosts discover them at runtime via `tools/list`. (Distinct from `registry/server.json`, the generated in-repo tool catalog used by `npm run registry:gen` / `registry:check`.)
+- **Publishing** is automated by `.github/workflows/publish-mcp.yml`, authenticating via **GitHub OIDC** (no secret). The version lives in code: bump `server.json`'s `version`, merge to `main`, and it publishes automatically. A merge that doesn't change the version is a no-op.
+- **Branded namespace (`com.tako/tako-mcp`)** is a future upgrade requiring DNS authentication (Ed25519 key + `TXT` record on `tako.com`).
+- **Versioning & changelog** are automated via release-please. Contributors use Conventional Commit PR titles (squash-merge); maintainers cut a release by merging the bot's `release: X.Y.Z` PR. See `AGENTS.md` → Releases.
+</details>
 
 ## Links
 
-- [Tako](https://tako.com) - Data visualization platform
-- [Tako on Smithery](https://smithery.ai/servers/tako/tako) - MCP server listing (hosted Worker at `mcp.tako.com/mcp`)
-- [Tako on the MCP Registry](https://registry.modelcontextprotocol.io) - `io.github.TakoData/tako-mcp`
-- [MCP Specification](https://spec.modelcontextprotocol.io/) - Model Context Protocol
+- **[Full Documentation](https://docs.tako.com/documentation/integrations/mcp-server)** — setup, tools, and integration guides
+- **[Get your API key](https://tako.com/console/api-keys)** — Tako console
+- [Tako](https://tako.com) — the data visualization platform
+- [Tako on Smithery](https://smithery.ai/servers/tako/tako) — MCP server listing
+- [MCP Registry](https://registry.modelcontextprotocol.io) — `io.github.TakoData/tako-mcp`
+- [MCP Specification](https://spec.modelcontextprotocol.io/) — Model Context Protocol
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
