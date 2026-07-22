@@ -139,7 +139,7 @@ describe("tako_available_data", () => {
     expect(out.matches.find((m) => m.node_id === "a")?.coverage.total).toBe(1);
   });
 
-  it("resolved node with empty coverage → found:false and a gap summary, not 'live data'", async () => {
+  it("resolved node with empty coverage → found:false and a gap summary, no coverage claim", async () => {
     // Regression (end-to-end): node resolution alone must not read as "Tako
     // has data" — neither in `found` nor in the summary header.
     mockFetchSequence([
@@ -148,7 +148,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "tesla" }, CTX);
     expect(out.found).toBe(false);
-    expect(out.summary).not.toContain("live data on");
+    expect(out.summary).not.toContain("Tako's proprietary data has");
     expect(out.summary).toContain("no metrics for it yet");
   });
 
@@ -160,7 +160,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "x" }, CTX);
     expect(out.found).toBe(false);
-    expect(out.summary).not.toContain("live data on");
+    expect(out.summary).not.toContain("Tako's proprietary data has");
     expect(out.matches.every((m) => m.unavailable)).toBe(true);
   });
 
