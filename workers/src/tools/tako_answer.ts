@@ -12,7 +12,7 @@ const DESCRIPTION = [
   "",
   "`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.",
   "",
-  "`tako_available_data` confirms coverage first (free and instant) — pin the node_ids it returns here for an accurate, grounded answer.",
+  "Grounds over BOTH data and web by default. When unsure the proprietary data exists or its exact name, run `tako_available_data` first (free, instant) — the recommended first step — then pin the node_ids it returns here for an accurate, grounded answer. To read the full rows or page text behind any cited card or web result, call `tako_contents` on its url.",
 ].join("\n");
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).

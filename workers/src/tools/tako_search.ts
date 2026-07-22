@@ -41,9 +41,9 @@ const DESCRIPTION = [
   "",
   "Coverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.",
   "",
-  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. To see what proprietary data exists — or confirm a specific figure exists before you spend a query — check `tako_available_data` first (free).',
+  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When unsure the data exists or its exact name, run `tako_available_data` first (free) — the recommended first step for a data lookup; it hands you the exact names to query here.',
   "",
-  "Returns: cards (up to `count`) with preview rows, chart URLs, and web links. Full csv data content is available via `tako_contents` only for cards marked `exportable: true` (or a web result — always fetchable).",
+  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. When no data card fits the query, the `web_results` can be your fallback: call `tako_contents` on the most relevant one's url to read its full page text (web urls are always fetchable; a card's full csv needs `exportable: true`).",
   "",
   "If you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
 ].join("\n");
