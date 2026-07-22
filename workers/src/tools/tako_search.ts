@@ -41,7 +41,7 @@ const DESCRIPTION = [
   "",
   'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. Listing what Tako covers is a `tako_available_data` job, not a keyword search.',
   "",
-  "Returns: cards (up to `count`) with preview rows, chart URLs, and web links. Full csv data content is available via `tako_contents` only if the card has a `content` field or the web result includes page text.",
+  "Returns: cards (up to `count`) with preview rows, chart URLs, and web links. Full csv data content is available via `tako_contents` only for cards marked `exportable: true` (or a web result — always fetchable).",
   "",
   "If you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
 ].join("\n");
@@ -77,7 +77,7 @@ const inputSchema = z.object({
     .boolean()
     .default(true)
     .describe(
-      `Inline each Tako card's free ${INLINE_PREVIEW_ROW_CAP}-row data preview (default true). Set false for pointers-only (title/chart/nodes, no rows) — cheaper for large parallel fan-outs. Controls the DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Full export is a separate tako_contents call — possible only for cards whose \`content\` attribute is present (non-null).`,
+      `Inline each Tako card's free ${INLINE_PREVIEW_ROW_CAP}-row data preview (default true). Set false for pointers-only (title/chart/nodes, no rows) — cheaper for large parallel fan-outs. Controls the DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Full export is a separate tako_contents call — possible only for cards marked \`exportable: true\`.`,
     ),
   country_code: z
     .string()

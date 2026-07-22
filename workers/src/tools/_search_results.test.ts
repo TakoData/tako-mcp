@@ -191,3 +191,27 @@ describe("slimCard — content presence is the export-eligibility signal", () =>
     expect(rowsOf(out.content)).toEqual([["2024-01-02", 2]]);
   });
 });
+
+// The explicit `exportable` boolean is a POSITIVE restatement of the
+// content-presence signal above — emitted so the model reads "no" from a field
+// instead of having to notice a MISSING key (which it overlooks, then calls
+// tako_contents anyway and 403s). Derived purely from `content`, no I/O.
+describe("slimCard — explicit exportable flag", () => {
+  it("marks a card WITHOUT a content attribute as exportable: false", () => {
+    const card: TakoCard = { card_id: "c1", title: "t" };
+    expect(slimCard(card, 5).exportable).toBe(false);
+    expect(slimCard(card, null).exportable).toBe(false);
+  });
+
+  it("marks a card with an explicit content: null as exportable: false", () => {
+    const card: TakoCard = { card_id: "c1", content: null };
+    expect(slimCard(card, 5).exportable).toBe(false);
+    expect(slimCard(card, null).exportable).toBe(false);
+  });
+
+  it("marks a content-bearing card as exportable: true (both preview and drop-all modes)", () => {
+    const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
+    expect(slimCard(card, null).exportable).toBe(true);
+    expect(slimCard(card, 5).exportable).toBe(true);
+  });
+});

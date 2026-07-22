@@ -216,7 +216,7 @@
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the real content behind one result URL from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.\n\nBest for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.\n\nPrecondition (Tako cards): a card is exportable only if its result carried a `content` attribute (non-null). If `content` is missing or null this call fails — use the card's preview/chart instead. Presence is necessary but not sufficient: a rare card still 403s, so fall back, don't retry. Web URLs always work.",
+      "description": "Fetch the real content behind one result URL from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.\n\nBest for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.\n\nPrecondition (Tako cards): only call this when the card's result had `exportable: true`. If `exportable` is false (equivalently, `content` is missing or null) this call fails — use the card's preview/chart instead, don't call. `exportable: true` is necessary but not sufficient: a rare card still 403s, so fall back, don't retry. Web URLs always work.",
       "parameters": {
         "url": {
           "type": "string",
@@ -377,7 +377,7 @@
     },
     {
       "name": "tako_search",
-      "description": "Fastest, direct retrieval of data or metrics from the live web and Tako's data graph, returned as structured cards; the top card auto-renders inline as a chart. It replaces a generic web search for data lookups.\n\nBest for: grabbing a known figure or metric — a value, time series, price, score, schedule, forecast, poll, or prediction-market number. It is cheap and fast, built to fan out: many narrow queries fired in parallel retrieve far better than one broad query, and you assemble the multi-part result yourself.\n\nEach query resolves one entity + one metric (\"Apple revenue\", \"Nvidia vs AMD gross margin\"); broad or compound queries (\"today's sports + odds\") retrieve poorly. Listing what Tako covers is a `tako_available_data` job, not a keyword search.\n\nReturns: cards (up to `count`) with preview rows, chart URLs, and web links. Full csv data content is available via `tako_contents` only if the card has a `content` field or the web result includes page text.\n\nIf you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
+      "description": "Fastest, direct retrieval of data or metrics from the live web and Tako's data graph, returned as structured cards; the top card auto-renders inline as a chart. It replaces a generic web search for data lookups.\n\nBest for: grabbing a known figure or metric — a value, time series, price, score, schedule, forecast, poll, or prediction-market number. It is cheap and fast, built to fan out: many narrow queries fired in parallel retrieve far better than one broad query, and you assemble the multi-part result yourself.\n\nEach query resolves one entity + one metric (\"Apple revenue\", \"Nvidia vs AMD gross margin\"); broad or compound queries (\"today's sports + odds\") retrieve poorly. Listing what Tako covers is a `tako_available_data` job, not a keyword search.\n\nReturns: cards (up to `count`) with preview rows, chart URLs, and web links. Full csv data content is available via `tako_contents` only for cards marked `exportable: true` (or a web result — always fetchable).\n\nIf you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
       "parameters": {
         "query": {
           "type": "string",
@@ -407,7 +407,7 @@
         },
         "include_contents": {
           "type": "boolean",
-          "description": "Inline each Tako card's free 5-row data preview (default true). Set false for pointers-only (title/chart/nodes, no rows) — cheaper for large parallel fan-outs. Controls the DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Full export is a separate tako_contents call — possible only for cards whose `content` attribute is present (non-null).",
+          "description": "Inline each Tako card's free 5-row data preview (default true). Set false for pointers-only (title/chart/nodes, no rows) — cheaper for large parallel fan-outs. Controls the DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Full export is a separate tako_contents call — possible only for cards marked `exportable: true`.",
           "default": true
         },
         "country_code": {
