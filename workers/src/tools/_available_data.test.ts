@@ -107,8 +107,8 @@ describe("selectCoverage", () => {
   });
 
   it("caps the preview at PREVIEW", () => {
-    const many = Array.from({ length: 20 }, (_, i) => `M${i}`);
-    const g = selectCoverage(group("metrics", many, 20), "metrics");
+    const many = Array.from({ length: PREVIEW + 5 }, (_, i) => `M${i}`);
+    const g = selectCoverage(group("metrics", many, PREVIEW + 5), "metrics");
     expect(g.names).toHaveLength(PREVIEW);
     expect(g.truncated).toBe(true);
   });
@@ -188,23 +188,27 @@ describe("buildSummary", () => {
     expect(s).toContain("tako_search");
   });
 
-  it("entity match → metrics-forward line with a +N more tail", () => {
+  it("entity match → metrics count line, names not repeated in prose", () => {
     const s = buildSummary({ query: "apple", matches: [appleMatch], otherMatches: [] });
     expect(s).toContain('Tako has live data on 1 match for "apple":');
-    expect(s).toContain("**Apple Inc. (ORG)** — 47 metrics incl. Revenue, Net Income, Market Cap (+44 more).");
+    expect(s).toContain("**Apple Inc. (ORG)** — 47 metrics.");
+    // The name list lives once, in matches[].coverage.names — the prose only
+    // carries the single next-step example, never the enumeration.
+    expect(s).not.toContain("Net Income");
+    expect(s).not.toContain("Market Cap");
   });
 
   it("metric match → 'tracked for N entities' line (not 'no metrics')", () => {
     const s = buildSummary({ query: "inflation", matches: [inflationMatch], otherMatches: [] });
-    expect(s).toContain("**Inflation Rate (METRIC)** — tracked for 63 entities incl. United States, United Kingdom, India (+60 more).");
+    expect(s).toContain("**Inflation Rate (METRIC)** — tracked for 63 entities.");
     expect(s).not.toContain("no metrics");
+    expect(s).not.toContain("United Kingdom"); // names only in coverage.names
   });
 
-  it("capped total renders as 'N+' and drops the misleading numeric tail", () => {
+  it("capped total renders as 'N+'", () => {
     const capped = buildMatch(entityNode({ name: "Tesla, Inc." }), group("metrics", ["EV/NTM Revenue", "Gross Margin (%)"], 250, true));
     const s = buildSummary({ query: "tesla", matches: [capped], otherMatches: [] });
-    expect(s).toContain("**Tesla, Inc. (ORG)** — 250+ metrics incl. EV/NTM Revenue, Gross Margin (%).");
-    expect(s).not.toContain("more)"); // no "(+N more)" when capped
+    expect(s).toContain("**Tesla, Inc. (ORG)** — 250+ metrics.");
   });
 
   it("does NOT put node ids in the prose", () => {
@@ -264,7 +268,7 @@ describe("buildSummary", () => {
     // very entity the summary just reported as having no data.
     const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
     const s = buildSummary({ query: "tesla", matches: [bare], otherMatches: [] });
-    expect(s).not.toContain("call tako_search using");
+    expect(s).not.toContain("call tako_search with");
   });
 
   it("lists other matches capped at OTHER_MATCH_PREVIEW with a tail", () => {

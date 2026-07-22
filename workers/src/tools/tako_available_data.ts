@@ -25,6 +25,7 @@ import {
   coverageKindFor,
   EXPAND_TOP_N,
   hasLiveCoverage,
+  PREVIEW,
   unavailableMatch,
 } from "./_available_data.js";
 import type { OtherMatch } from "./_available_data.js";
@@ -49,7 +50,7 @@ const DESCRIPTION = [
   "",
   "Tips:",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.",
-  "The exact metric names in the summary are the terms to reuse in a follow-up tako_search (e.g. \"Apple Inc. revenue\").",
+  "Each match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search (e.g. \"Apple Inc. revenue\").",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -162,7 +163,7 @@ const tako_available_data = {
         try {
           const relatedRaw = await djangoGet<unknown>(
             ctx.env, ctx.token, "/api/beta/graph/related",
-            { query: { node_id: node.id, relation, limit: 50 }, timeoutMs: 15_000 },
+            { query: { node_id: node.id, relation, limit: PREVIEW }, timeoutMs: 15_000 },
           );
           const related = relatedShape.safeParse(relatedRaw);
           if (!related.success) return unavailableMatch(node);

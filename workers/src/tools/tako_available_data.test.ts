@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
+import { PREVIEW } from "./_available_data.js";
 import takoAvailableData from "./tako_available_data.js";
 import {
   jsonResponse,
@@ -86,14 +87,16 @@ describe("tako_available_data", () => {
     for (const url of drills) {
       expect(url.pathname).toBe("/api/beta/graph/related");
       expect(url.searchParams.get("relation")).toBe("metrics");
-      expect(url.searchParams.get("limit")).toBe("50");
+      expect(url.searchParams.get("limit")).toBe(String(PREVIEW));
     }
     expect(out.found).toBe(true);
     expect(out.matches[0]?.node_id).toBe("apple-inc");
     expect(out.matches[0]?.coverage.kind).toBe("metrics");
     expect(out.matches[0]?.coverage.total).toBe(47);
     expect(out.other_matches).toEqual([{ name: "Apple Records", type: "entity" }]);
-    expect(out.summary).toContain("47 metrics incl. Revenue, Net Income");
+    expect(out.summary).toContain("47 metrics.");
+    // Names live once, in coverage.names — the prose never enumerates them.
+    expect(out.summary).not.toContain("Net Income");
   });
 
   it("metric-type hit drills relation=entities and reports coverage, NOT 'no metrics'", async () => {
@@ -109,19 +112,18 @@ describe("tako_available_data", () => {
     expect(drillUrl.searchParams.get("relation")).toBe("entities"); // NOT metrics
     expect(out.matches[0]?.coverage.kind).toBe("entities");
     expect(out.matches[0]?.coverage.total).toBe(63);
-    expect(out.summary).toContain("tracked for 63 entities incl. United States");
+    expect(out.summary).toContain("tracked for 63 entities.");
     expect(out.summary).not.toContain("no metrics");
   });
 
-  it("renders a capped total as 'N+' with no numeric remainder", async () => {
+  it("renders a capped total as 'N+'", async () => {
     mockFetchSequence([
       jsonResponse(200, { results: [searchHit("tsla", "Tesla, Inc.")] }),
       jsonResponse(200, drill("tsla", "Tesla, Inc.", "metrics", ["EV/NTM Revenue", "Gross Margin (%)"], 250, true)),
     ]);
     const out = await takoAvailableData.handler({ q: "tesla" }, CTX);
     expect(out.matches[0]?.coverage.capped).toBe(true);
-    expect(out.summary).toContain("250+ metrics incl. EV/NTM Revenue, Gross Margin (%).");
-    expect(out.summary).not.toContain("more)");
+    expect(out.summary).toContain("250+ metrics.");
   });
 
   it("isolates a per-node coverage failure as an unavailable match", async () => {
@@ -174,7 +176,7 @@ describe("tako_available_data", () => {
     expect(drillUrl.searchParams.get("relation")).toBe("metrics");
     expect(out.found).toBe(true);
     expect(out.matches[0]?.coverage.kind).toBe("metrics");
-    expect(out.summary).toContain("12 metrics incl. Price, P/E Ratio");
+    expect(out.summary).toContain("12 metrics.");
   });
 
   it("treats a malformed coverage payload as unavailable, not a hard failure", async () => {
