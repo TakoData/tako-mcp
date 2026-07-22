@@ -55,7 +55,7 @@ export const inputSchema = z.object({
     .min(1)
     .default(["data", "web"])
     .describe(
-      'Source(s) the agent may use. Default ["data","web"] (both) — keep web enabled. Only narrow to ["data"] once `tako_available_data` has confirmed Tako actually covers the data; otherwise web is the fallback when Tako lacks it. Pass ["web"] for open-web only. ("tako" is a legacy synonym for "data".)',
+      'Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako\'s data graph. ("tako" is a legacy synonym for "data".)',
     ),
   thread_id: z
     .uuid()

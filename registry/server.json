@@ -59,7 +59,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep web enabled. Only narrow to [\"data\"] once `tako_available_data` has confirmed Tako actually covers the data; otherwise web is the fallback when Tako lacks it. Pass [\"web\"] for open-web only. (\"tako\" is a legacy synonym for \"data\".)",
+          "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph. (\"tako\" is a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -88,7 +88,7 @@
         },
         "sources": {
           "type": "array",
-          "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep web enabled. Only narrow to [\"data\"] once `tako_available_data` has confirmed Tako actually covers the data; otherwise web is the fallback when Tako lacks it. Pass [\"web\"] for open-web only. (\"tako\" is a legacy synonym for \"data\".)",
+          "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph. (\"tako\" is a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -130,16 +130,16 @@
     },
     {
       "name": "tako_answer",
-      "description": "Ask one specific data question; get one synthesized answer grounded in the data or web tako cites.\n\nBest for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations.\n\n`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.",
+      "description": "Ask one specific data question; get one synthesized answer grounded in the data or web tako cites.\n\nBest for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations.\n\n`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.\n\n`tako_available_data` confirms coverage first (free and instant) — pin the node_ids it returns here for an accurate, grounded answer.",
       "parameters": {
         "query": {
           "type": "string",
-          "description": "Natural-language question to answer (e.g. \"What was US GDP in 2024?\").",
+          "description": "Natural-language question to answer (e.g. \"What was US GDP in 2024?\"). Website-traffic data is keyed by domain — ask about \"openai.com monthly visits\", not \"OpenAI website visits\".",
           "required": true
         },
         "sources": {
           "type": "array",
-          "description": "Source(s) to ground in. Default [\"data\",\"web\"] (both) — keep web enabled. Only narrow to [\"data\"] once `tako_available_data` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass [\"web\"] for live web only. (\"tako\" is a legacy synonym for \"data\".)",
+          "description": "Source(s) to ground in. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. (\"tako\" is a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -157,7 +157,7 @@
         },
         "node_ids": {
           "type": "array",
-          "description": "Graph node ids (from tako_available_data) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source."
+          "description": "Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source."
         },
         "strict": {
           "type": "boolean",
@@ -174,7 +174,7 @@
     },
     {
       "name": "tako_available_data",
-      "description": "See what proprietary, continuously-updated data Tako has on an entity or metric — resolved to graph nodes and summarized in one call. Free and fast.\n\nBest for: the first thing to call when you want to know what proprietary data is available (a company, person, place, or measure) before running a priced tako_search / tako_answer.\n\nHow it works: resolves the name to the top graph matches, then reports the live data Tako has for each — the metrics it tracks for an entity (e.g. Tesla), or the entities a metric is tracked across (e.g. Inflation Rate) — as a natural-language summary you can show the user.\n\nTips:\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.\nEach match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search (e.g. \"Apple Inc. revenue\").",
+      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nBest for: any \"what structured/proprietary data is there on X?\" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer — a cheap accuracy check that tells you whether the data exists and under exactly what name, so you retrieve the real thing instead of guessing.\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.\nEach match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search (e.g. \"Apple Inc. revenue\") to hit the data precisely.",
       "parameters": {
         "q": {
           "type": "string",
@@ -377,16 +377,16 @@
     },
     {
       "name": "tako_search",
-      "description": "Fastest, direct retrieval of data or metrics from the live web and Tako's data graph, returned as structured cards; the top card auto-renders inline as a chart. It replaces a generic web search for data lookups.\n\nBest for: grabbing a known figure or metric — a value, time series, price, score, schedule, forecast, poll, or prediction-market number. It is cheap and fast, built to fan out: many narrow queries fired in parallel retrieve far better than one broad query, and you assemble the multi-part result yourself.\n\nEach query resolves one entity + one metric (\"Apple revenue\", \"Nvidia vs AMD gross margin\"); broad or compound queries (\"today's sports + odds\") retrieve poorly. Listing what Tako covers is a `tako_available_data` job, not a keyword search.\n\nReturns: cards (up to `count`) with preview rows, chart URLs, and web links. Full csv data content is available via `tako_contents` only for cards marked `exportable: true` (or a web result — always fetchable).\n\nIf you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
+      "description": "Fastest, direct retrieval of data or metrics from the live web and proprietary data sources, returned as structured cards and web links; the top card auto-renders inline as a chart. It replaces a generic web search for data lookups.\n\nBest for: grabbing a known figure or metric — a value, time series, price, score, schedule, forecast, poll, or prediction-market number. It is cheap and fast, built to fan out: many narrow queries fired in parallel retrieve far better than one broad query, and you assemble the multi-part result yourself.\n\nCoverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.\n\nEach query resolves one entity + one metric (\"Apple revenue\", \"Nvidia vs AMD gross margin\"); broad or compound queries (\"today's sports + odds\") retrieve poorly. To see what proprietary data exists — or confirm a specific figure exists before you spend a query — check `tako_available_data` first (free).\n\nReturns: cards (up to `count`) with preview rows, chart URLs, and web links. Full csv data content is available via `tako_contents` only for cards marked `exportable: true` (or a web result — always fetchable).\n\nIf you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
       "parameters": {
         "query": {
           "type": "string",
-          "description": "Natural-language search query (e.g. \"US GDP growth\", \"Intel vs Nvidia revenue\").",
+          "description": "Natural-language search query (e.g. \"US GDP growth\", \"Intel vs Nvidia revenue\"). Website-traffic data is keyed by domain — query \"openai.com monthly visits\", not \"OpenAI website visits\".",
           "required": true
         },
         "sources": {
           "type": "array",
-          "description": "Source(s) to search. Default [\"data\",\"web\"] (both) — keep web enabled. Only narrow to [\"data\"] once `tako_available_data` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass [\"web\"] for live web only. (\"tako\" is a legacy synonym for \"data\".)",
+          "description": "Source(s) to search. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. (\"tako\" is a legacy synonym for \"data\".)",
           "default": [
             "data",
             "web"
@@ -422,7 +422,7 @@
         },
         "node_ids": {
           "type": "array",
-          "description": "Graph node ids (from tako_available_data, or a card's nodes) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source."
+          "description": "Graph node ids (from tako_available_data, or a card's nodes) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source."
         },
         "strict": {
           "type": "boolean",

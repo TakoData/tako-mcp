@@ -42,15 +42,15 @@ const NER_LABELS = [
 ] as const;
 
 const DESCRIPTION = [
-  "See what proprietary, continuously-updated data Tako has on an entity or metric — resolved to graph nodes and summarized in one call. Free and fast.",
+  "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.",
   "",
-  "Best for: the first thing to call when you want to know what proprietary data is available (a company, person, place, or measure) before running a priced tako_search / tako_answer.",
+  'Best for: any "what structured/proprietary data is there on X?" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer — a cheap accuracy check that tells you whether the data exists and under exactly what name, so you retrieve the real thing instead of guessing.',
   "",
-  "How it works: resolves the name to the top graph matches, then reports the live data Tako has for each — the metrics it tracks for an entity (e.g. Tesla), or the entities a metric is tracked across (e.g. Inflation Rate) — as a natural-language summary you can show the user.",
+  "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
   "",
   "Tips:",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.",
-  "Each match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search (e.g. \"Apple Inc. revenue\").",
+  "Each match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search (e.g. \"Apple Inc. revenue\") to hit the data precisely.",
 ].join("\n");
 
 const inputSchema = z.object({
