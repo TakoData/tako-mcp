@@ -1670,6 +1670,16 @@ components:
             Web URLs ignore this field.
           examples:
           - 100
+        max_chars:
+          type: integer
+          maximum: 100000.0
+          minimum: 1.0
+          title: Max Chars
+          description: Character cap on extracted web page text. Ignored for Tako
+            card URLs (they use max_rows). Default 10000, maximum 100000.
+          default: 10000
+          examples:
+          - 20000
         quote_only:
           type: boolean
           title: Quote Only
@@ -3004,25 +3014,6 @@ components:
       required:
       - request_id
       title: SearchResponse
-    SourceSettings:
-      properties:
-        count:
-          type: integer
-          maximum: 20.0
-          minimum: 1.0
-          title: Count
-          description: Maximum number of results to return for this source. 1-20.
-          default: 5
-        include_contents:
-          type: boolean
-          title: Include Contents
-          description: Inline this source's underlying data directly in the response.
-            For the Tako data source, that is serialized card data (see content_format).
-            For web results, that is the extracted text.
-          default: false
-      additionalProperties: false
-      type: object
-      title: SourceSettings
     Sources:
       properties:
         data:
@@ -3033,7 +3024,7 @@ components:
             only if present. Tako accepts the legacy key 'tako' as a synonym.
         web:
           anyOf:
-          - $ref: '#/components/schemas/SourceSettings'
+          - $ref: '#/components/schemas/WebSourceSettings'
           - type: 'null'
           description: Web source. The search includes it only if present.
       additionalProperties: false
@@ -3201,6 +3192,15 @@ components:
           anyOf:
           - $ref: '#/components/schemas/ResultContent'
           - type: 'null'
+        exportable:
+          type: boolean
+          title: Exportable
+          description: Whether the /contents endpoint can download this card's data.
+            false means the export is not available; use the card's chart and inline
+            preview instead. true means the export is eligible but not guaranteed;
+            the /contents endpoint can still return 403, so fall back to the preview
+            on error.
+          default: false
         relevance_score:
           anyOf:
           - type: number
@@ -3687,6 +3687,16 @@ components:
         data units. Absent when the surface did not or cannot emit inline data
 
         (for example, the answer agent).'
+    WebCategory:
+      type: string
+      enum:
+      - news
+      - sports
+      - finance
+      title: WebCategory
+      description: 'Web search category filter. Only ''news'' maps to a provider category
+
+        today; ''sports'' and ''finance'' are accepted but have no effect yet.'
     WebResult:
       properties:
         title:
@@ -3746,6 +3756,87 @@ components:
         raw retrieval output — title, URL, optional snippet. They do not depend
 
         on any LLM synthesis that may also happen over them.'
+    WebSourceSettings:
+      properties:
+        count:
+          type: integer
+          maximum: 20.0
+          minimum: 1.0
+          title: Count
+          description: Maximum number of results to return for this source. 1-20.
+          default: 5
+        include_contents:
+          type: boolean
+          title: Include Contents
+          description: Inline this source's underlying data directly in the response.
+            For the Tako data source, that is serialized card data (see content_format).
+            For web results, that is the extracted text.
+          default: false
+        category:
+          anyOf:
+          - $ref: '#/components/schemas/WebCategory'
+          - type: 'null'
+          description: Restrict web results to a category. 'news' filters to news
+            sources. 'sports' and 'finance' are accepted but have no effect yet. Omit
+            for a general web search.
+        include_domains:
+          items:
+            type: string
+          type: array
+          maxItems: 20
+          title: Include Domains
+          description: Return only results from these domains (bare hosts, for example
+            'cnn.com'). Max 20.
+        exclude_domains:
+          items:
+            type: string
+          type: array
+          maxItems: 20
+          title: Exclude Domains
+          description: Drop results from these domains (bare hosts, for example 'cnn.com').
+            Max 20.
+        snippet_max_chars:
+          type: integer
+          maximum: 20000.0
+          minimum: 1.0
+          title: Snippet Max Chars
+          description: Character cap on the text excerpt returned per web result.
+            Default 1000, maximum 20000.
+          default: 1000
+        article_content_max_chars:
+          type: integer
+          maximum: 100000.0
+          minimum: 1.0
+          title: Article Content Max Chars
+          description: Character cap on the full article text when include_contents
+            is true. Default 10000, maximum 100000.
+          default: 10000
+        published_after:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Published After
+          description: Keep only web results published on or after this date (ISO
+            'YYYY-MM-DD'). Tako applies the date on the provider where possible, and
+            always filters the returned results. Results with no known publication
+            date are kept. Omit for no lower bound.
+        published_before:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Published Before
+          description: Keep only web results published on or before this date (ISO
+            'YYYY-MM-DD'). Results with no known publication date are kept. Omit for
+            no upper bound.
+      additionalProperties: false
+      type: object
+      title: WebSourceSettings
+      description: 'Web source settings. Adds category, domain filters, and character
+        caps
+
+        on top of the base count and include_contents.'
   securitySchemes:
     apiKey:
       type: apiKey
