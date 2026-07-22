@@ -29,11 +29,12 @@ type GraphRelation = z.infer<typeof graphRelationSchema>;
 // disambiguation ("Tesla, Inc." vs another "Tesla") visible while staying to a
 // single parallel batch of related calls.
 export const EXPAND_TOP_N = 2;
-// Preview cap for the coverage list. Both `summary` (prose) and
-// structuredContent count toward the host's context budget (the same pressure
-// that drives slimCardContent), so the preview stays short; the full count
-// lives in `total`.
-export const PREVIEW = 8;
+// Cap for the coverage name list, matched to the graph/related drill's fetch
+// limit (the tool passes this as `limit`, so the list shows everything
+// fetched). Coverage names are the tool's primary payload — each is a term the
+// agent reuses in a follow-up tako_search — so completeness beats brevity
+// here. `total`/`truncated` still report when even more exist server-side.
+export const PREVIEW = 50;
 export const OTHER_MATCH_PREVIEW = 5;
 
 // Metric names that read as internal/accounting plumbing rather than the
@@ -163,16 +164,10 @@ export function unavailableMatch(node: GraphNode): CoverageMatch {
   };
 }
 
-// "Revenue, Net Income, Market Cap (+42 more)" — when capped, the "+N more"
-// would understate (total is a floor), so we drop the numeric tail and let the
-// "N+" count carry the "there are more" signal.
-function listWithTail(g: CoverageGroup): string {
-  const shown = g.names.join(", ");
-  if (g.capped) return shown;
-  const rest = g.total - g.names.length;
-  return rest > 0 ? `${shown} (+${rest} more)` : shown;
-}
-
+// Counts only — the names themselves live once, in `matches[].coverage.names`
+// (the whole output object is serialized into the model-visible text block, so
+// listing names here again would double their token cost). Capped totals
+// render as "N+" (the total is a floor).
 function countStr(g: CoverageGroup): string {
   return `${g.total}${g.capped ? "+" : ""}`;
 }
@@ -183,9 +178,9 @@ function labelSuffix(m: CoverageMatch): string {
 
 function coverageClause(g: CoverageGroup): string {
   if (g.kind === "entities") {
-    return `tracked for ${countStr(g)} ${plural(g.total, "entity", "entities")} incl. ${listWithTail(g)}`;
+    return `tracked for ${countStr(g)} ${plural(g.total, "entity", "entities")}`;
   }
-  return `${countStr(g)} ${plural(g.total, "metric", "metrics")} incl. ${listWithTail(g)}`;
+  return `${countStr(g)} ${plural(g.total, "metric", "metrics")}`;
 }
 
 function emptyClause(kind: CoverageKind): string {
@@ -218,9 +213,11 @@ function nextStepExample(matches: CoverageMatch[]): string | null {
 }
 
 /**
- * The natural-language coverage summary — the primary, user-facing field of
- * `tako_available_data`'s output. Canonical names inline (they double as the
- * exact terms a follow-up `tako_search` reuses). Node ids never appear here.
+ * The natural-language coverage summary — the narrative shell of
+ * `tako_available_data`'s output: header, per-match counts, gap/unavailable
+ * phrasing, and the next-step instruction. The coverage names themselves are
+ * NOT repeated here — they live once, in `matches[].coverage.names`, which
+ * rides in the same serialized text block. Node ids never appear here.
  */
 export function buildSummary(input: {
   query: string;
@@ -263,7 +260,7 @@ export function buildSummary(input: {
   if (example) {
     blocks.push(
       "",
-      `To pull any of these as a chart or dataset, call tako_search using the name shown (e.g. "${example}").`,
+      `The exact names are listed in each match's coverage.names. To pull one as a chart or dataset, call tako_search with entity + metric (e.g. "${example}").`,
     );
   }
 
