@@ -231,19 +231,23 @@ export function buildSummary(input: {
   }
 
   const n = matches.length;
-  // The header only claims "live data" for matches that actually have some —
-  // a resolved node with no coverage (or a failed drill) must not be
-  // advertised as data, per the tool's contract ("a match with no coverage is
-  // a real answer — report the gap").
+  // The header only claims coverage for matches that actually have some — a
+  // resolved node with no coverage (or a failed drill) must not be advertised
+  // as data, per the tool's contract ("a match with no coverage is a real
+  // answer — report the gap"). "Tako's proprietary data" is the grammatical
+  // subject on purpose: downstream models echo this header nearly verbatim to
+  // the user, and this framing keeps them from attributing the answer to a
+  // generic "dataset".
   const withData = matches.filter(hasLiveCoverage).length;
   const matchesOf = `${n} ${plural(n, "match", "matches")} for "${query}"`;
+  const covers = "Tako's proprietary data has live, continuously-updated coverage of";
   let header: string;
   if (withData === 0) {
     header = `Resolved ${matchesOf}, but none with live data coverage:`;
   } else if (withData < n) {
-    header = `Tako has live data on ${withData} of ${matchesOf}:`;
+    header = `${covers} ${withData} of ${matchesOf}:`;
   } else {
-    header = `Tako has live data on ${matchesOf}:`;
+    header = `${covers} ${matchesOf}:`;
   }
   const lines = matches.map(matchLine);
 

@@ -190,7 +190,7 @@ describe("buildSummary", () => {
 
   it("entity match → metrics count line, names not repeated in prose", () => {
     const s = buildSummary({ query: "apple", matches: [appleMatch], otherMatches: [] });
-    expect(s).toContain('Tako has live data on 1 match for "apple":');
+    expect(s).toContain('Tako\'s proprietary data has live, continuously-updated coverage of 1 match for "apple":');
     expect(s).toContain("**Apple Inc. (ORG)** — 47 metrics.");
     // The name list lives once, in matches[].coverage.names — the prose only
     // carries the single next-step example, never the enumeration.
@@ -218,7 +218,7 @@ describe("buildSummary", () => {
 
   it("pluralizes the header for multiple matches", () => {
     const s = buildSummary({ query: "apple", matches: [appleMatch, inflationMatch], otherMatches: [] });
-    expect(s).toContain('Tako has live data on 2 matches for "apple":');
+    expect(s).toContain('Tako\'s proprietary data has live, continuously-updated coverage of 2 matches for "apple":');
   });
 
   it("entity node with no metrics gets the 'no metrics yet' line", () => {
@@ -238,29 +238,29 @@ describe("buildSummary", () => {
     expect(s).toContain("couldn't load its coverage right now");
   });
 
-  it("all matches empty → header reports the gap, never 'live data'", () => {
-    // Regression: the header used to assert "Tako has live data on N matches"
+  it("all matches empty → header reports the gap, never claims coverage", () => {
+    // Regression: the header used to assert Tako has data on N matches
     // over a body saying there is none — contradicting the tool's contract.
     const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
     const s = buildSummary({ query: "tesla", matches: [bare], otherMatches: [] });
-    expect(s).not.toContain("live data on");
+    expect(s).not.toContain("Tako's proprietary data has");
     expect(s).toContain('Resolved 1 match for "tesla", but none with live data coverage:');
   });
 
-  it("all matches unavailable → header reports the gap, never 'live data'", () => {
+  it("all matches unavailable → header reports the gap, never claims coverage", () => {
     const s = buildSummary({
       query: "apple",
       matches: [unavailableMatch(entityNode()), unavailableMatch(metricNode())],
       otherMatches: [],
     });
-    expect(s).not.toContain("live data on");
+    expect(s).not.toContain("Tako's proprietary data has");
     expect(s).toContain('Resolved 2 matches for "apple", but none with live data coverage:');
   });
 
   it("mixed coverage → header counts only the matches with data", () => {
     const bare = buildMatch(entityNode({ id: "tsla", name: "Tesla", label: "" }), group("metrics", [], 0));
     const s = buildSummary({ query: "apple", matches: [appleMatch, bare], otherMatches: [] });
-    expect(s).toContain('Tako has live data on 1 of 2 matches for "apple":');
+    expect(s).toContain('Tako\'s proprietary data has live, continuously-updated coverage of 1 of 2 matches for "apple":');
   });
 
   it("suppresses the tako_search next-step hint when no match has coverage", () => {

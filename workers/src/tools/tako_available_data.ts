@@ -49,6 +49,7 @@ const DESCRIPTION = [
   "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
   "",
   "Tips:",
+  "One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The coverage.names answer all of them at once — never loop one call per name.",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.",
   "Each match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search (e.g. \"Apple Inc. revenue\") to hit the data precisely.",
 ].join("\n");
