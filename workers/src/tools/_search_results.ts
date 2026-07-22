@@ -24,12 +24,13 @@ import {
 // populated only when contents were requested. `content_format` ("csv" for
 // Tako card data, "text" for web page text) is null when no payload is
 // delivered. A card with NO `content` (missing or null) is not exportable:
-// the backend's export-safe gate 403s a tako_contents call on its URL. Its
-// presence is necessary but NOT sufficient — the adapter sets `content` via
-// the lenient supports_data_export() while /api/v1/contents gates on the
-// stricter export_safe(), so a content-bearing card can still 403 (rare;
-// tako_contents maps it to a self-correcting message). The descriptor must
-// survive slimming (slimCardContent strips rows but always keeps the object).
+// the backend's export-safe gate 403s a tako_contents call on its URL. Since
+// TakoData/tako#27989 the adapter gates `content` (and the sibling
+// `exportable` flag) on the same fail-closed export_safe() that
+// /api/v1/contents enforces, so presence matches the gate by construction —
+// though a rare card can still 403 at export time (tako_contents maps it to a
+// self-correcting message). The descriptor must survive slimming
+// (slimCardContent strips rows but always keeps the object).
 //
 // Every field is optional/nullable on purpose: this is a RESPONSE the tool only
 // surfaces for the model to read (nothing in code branches on it), and the
@@ -68,8 +69,10 @@ export const takoCardSchema = z
       .describe(
         "Raw export descriptor + inline data preview. Read the sibling `exportable` boolean as the call/skip signal instead of inferring from this field's presence. Missing or null here is equivalent to exportable:false. Present is necessary for a tako_contents export but not a guarantee (a rare card still 403s — fall back to the preview/chart).",
       ),
-    // Explicit export-eligibility flag the worker computes from `content`
-    // presence (a pure in-memory boolean — no extra backend call). Emitted so
+    // Explicit export-eligibility flag. The backend emits it authoritatively
+    // (TakoData/tako#27989, computed with the same fail-closed export_safe
+    // gate as /contents); slimCard passes a wire value through and derives
+    // from `content` presence only when an older backend omits it. Emitted so
     // the model reads a POSITIVE "no" rather than having to notice a MISSING
     // `content` key, which LLMs routinely overlook — then call tako_contents
     // anyway and draw a 403. false is authoritative; true is eligible-not-guaranteed.
@@ -284,15 +287,19 @@ export function slimCardContent(
 
 /**
  * Immutable: return a new card, slimmed and tagged with an explicit
- * `exportable` flag. `content` presence is the export-eligibility signal; we
- * surface it as a positive boolean so the model reads an explicit "no" instead
- * of having to notice a MISSING key (which LLMs overlook, then call
- * tako_contents anyway and draw a 403). Pure in-memory — no I/O, no added latency.
+ * `exportable` flag — a positive boolean so the model reads an explicit "no"
+ * instead of having to notice a MISSING `content` key (which LLMs overlook,
+ * then call tako_contents anyway and draw a 403). The backend emits the flag
+ * authoritatively (TakoData/tako#27989, same fail-closed gate as /contents),
+ * so a wire value passes through untouched; deriving from `content` presence
+ * is only the fallback for older backends. Pure in-memory — no I/O.
  */
-export const slimCard = (card: TakoCard, capRows: number | null): TakoCard =>
-  card.content == null
-    ? { ...card, exportable: false }
-    : { ...card, exportable: true, content: slimCardContent(card.content, capRows) };
+export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
+  const exportable = card.exportable ?? card.content != null;
+  return card.content == null
+    ? { ...card, exportable }
+    : { ...card, exportable, content: slimCardContent(card.content, capRows) };
+};
 
 /**
  * Slim a web result's `content`. Web `content.data` is the page's full

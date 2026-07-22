@@ -192,24 +192,54 @@ describe("slimCard — content presence is the export-eligibility signal", () =>
   });
 });
 
-// The explicit `exportable` boolean is a POSITIVE restatement of the
-// content-presence signal above — emitted so the model reads "no" from a field
-// instead of having to notice a MISSING key (which it overlooks, then calls
-// tako_contents anyway and 403s). Derived purely from `content`, no I/O.
+// The explicit `exportable` boolean is emitted so the model reads "no" from a
+// field instead of having to notice a MISSING key (which it overlooks, then
+// calls tako_contents anyway and 403s). The backend emits it authoritatively
+// since TakoData/tako#27989 (same fail-closed export_safe gate as /contents),
+// so a wire flag passes through untouched — even when it disagrees with
+// content presence. Deriving from `content != null` is only the fallback for
+// older backends that don't emit the flag.
 describe("slimCard — explicit exportable flag", () => {
-  it("marks a card WITHOUT a content attribute as exportable: false", () => {
+  it("passes a backend exportable: true through on a content-bearing card", () => {
+    const card: TakoCard = {
+      card_id: "c1",
+      exportable: true,
+      content: dataset([["2024-01-01", 1]]),
+    };
+    expect(slimCard(card, null).exportable).toBe(true);
+    expect(slimCard(card, 5).exportable).toBe(true);
+  });
+
+  it("passes a backend exportable: false through (authoritative) even when content is present", () => {
+    const card: TakoCard = {
+      card_id: "c1",
+      exportable: false,
+      content: dataset([["2024-01-01", 1]]),
+    };
+    const out = slimCard(card, 5);
+    expect(out.exportable).toBe(false);
+    // The wire's content descriptor still survives slimming untouched.
+    expect(out.content).not.toBeNull();
+  });
+
+  it("passes a backend exportable: true through even when content is absent", () => {
+    const card: TakoCard = { card_id: "c1", exportable: true };
+    expect(slimCard(card, 5).exportable).toBe(true);
+  });
+
+  it("falls back: marks a card WITHOUT flag or content attribute as exportable: false", () => {
     const card: TakoCard = { card_id: "c1", title: "t" };
     expect(slimCard(card, 5).exportable).toBe(false);
     expect(slimCard(card, null).exportable).toBe(false);
   });
 
-  it("marks a card with an explicit content: null as exportable: false", () => {
+  it("falls back: marks a flagless card with an explicit content: null as exportable: false", () => {
     const card: TakoCard = { card_id: "c1", content: null };
     expect(slimCard(card, 5).exportable).toBe(false);
     expect(slimCard(card, null).exportable).toBe(false);
   });
 
-  it("marks a content-bearing card as exportable: true (both preview and drop-all modes)", () => {
+  it("falls back: marks a flagless content-bearing card as exportable: true (both modes)", () => {
     const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
     expect(slimCard(card, null).exportable).toBe(true);
     expect(slimCard(card, 5).exportable).toBe(true);

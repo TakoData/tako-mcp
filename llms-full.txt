@@ -61,7 +61,7 @@ Parameters:
 ### tako_contents
 Fetch the real content behind one result URL from `tako_search` / `tako_answer` — the rows behind a Tako card (CSV by default, or JSON), or a web page's full text. It is the step after search when you need the full data to compute over or quote; a search result carries only a preview and a chart, not its rows. One URL per call.
 
-Precondition (Tako cards): call this only on cards whose result was marked `exportable: true` (the flag is derived from a non-null `content` attribute). If `exportable` is false this call fails — use the card's preview/chart instead. `exportable: true` is necessary but not sufficient: the export gate can still refuse a rare card (a self-correcting 403 — fall back, don't retry). Web URLs always work.
+Precondition (Tako cards): call this only on cards whose result was marked `exportable: true` (the flag is emitted by the Tako API and equivalent to a non-null `content` attribute). If `exportable` is false this call fails — use the card's preview/chart instead. `exportable: true` is necessary but not sufficient: the export gate can still refuse a rare card (a self-correcting 403 — fall back, don't retry). Web URLs always work.
 
 Parameters:
 - `url` (string, required): The result URL to fetch — a Tako card's `webpage_url`, or a web-result URL.
