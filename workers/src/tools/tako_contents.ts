@@ -30,7 +30,7 @@ const DESCRIPTION = [
   "",
   "Best for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.",
   "",
-  "Precondition (Tako cards): a card is exportable only if its result carried a `content` attribute (non-null). If `content` is missing or null this call fails — use the card's preview/chart instead. Presence is necessary but not sufficient: a rare card still 403s, so fall back, don't retry. Web URLs always work.",
+  "Precondition (Tako cards): only call this when the card's result had `exportable: true`. If `exportable` is false (equivalently, `content` is missing or null) this call fails — use the card's preview/chart instead, don't call. `exportable: true` is necessary but not sufficient: a rare card still 403s, so fall back, don't retry. Web URLs always work.",
 ].join("\n");
 
 // Curate the input from the contract explicitly: `.pick` only the fields we
@@ -155,12 +155,12 @@ const takoContents = {
       // djangoErrorToToolResult uses it verbatim (no second splice).
       if (err instanceof DjangoHttpError && err.status === 403) {
         const detail = extractErrorDetail(err.body);
-        err.modelGuidance = `The contents endpoint refused this export (403${detail !== undefined ? `: ${detail}` : ""}). For a Tako card this usually means the export gate rejected it as unexportable — possible even when the card carried a \`content\` attribute (the export descriptor), since presence is required for export but does not guarantee it. Don't retry or rephrase; use the card's title, inline preview, and chart instead. Never call tako_contents on a card whose \`content\` attribute is missing or null.`;
+        err.modelGuidance = `The contents endpoint refused this export (403${detail !== undefined ? `: ${detail}` : ""}). For a Tako card this usually means the export gate rejected it as unexportable — possible even for an \`exportable: true\` card, since that flag is necessary for export but does not guarantee it. Don't retry or rephrase; use the card's title, inline preview, and chart instead. Never call tako_contents on a card whose result had \`exportable: false\` (equivalently, a missing or null \`content\` attribute).`;
         throw err;
       }
       if (err instanceof DjangoNotFoundError) {
         const detail = extractErrorDetail(err.body);
-        err.modelGuidance = `The contents endpoint found nothing downloadable at that URL (404${detail !== undefined ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result carried a \`content\` attribute (non-null) are exportable.`;
+        err.modelGuidance = `The contents endpoint found nothing downloadable at that URL (404${detail !== undefined ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result had \`exportable: true\` (a non-null \`content\` attribute) are exportable.`;
         throw err;
       }
       throw err;

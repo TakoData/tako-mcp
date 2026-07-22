@@ -11,6 +11,8 @@ const DESCRIPTION = [
   "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations.",
   "",
   "`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.",
+  "",
+  "`tako_available_data` confirms coverage first (free and instant) — pin the node_ids it returns here for an accurate, grounded answer.",
 ].join("\n");
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).
@@ -18,12 +20,12 @@ const inputSchema = z.object({
   query: z
     .string()
     .min(1)
-    .describe('Natural-language question to answer (e.g. "What was US GDP in 2024?").'),
+    .describe('Natural-language question to answer (e.g. "What was US GDP in 2024?"). Website-traffic data is keyed by domain — ask about "openai.com monthly visits", not "OpenAI website visits".'),
   sources: z
     .array(z.enum(["data", "web", "tako"]))
     .min(1)
     .default(["data", "web"])
-    .describe('Source(s) to ground in. Default ["data","web"] (both) — keep web enabled. Only narrow to ["data"] once `tako_available_data` has confirmed Tako actually covers the data; otherwise web is your fallback when Tako lacks it. Pass ["web"] for live web only. ("tako" is a legacy synonym for "data".)'),
+    .describe('Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)'),
   // No `include_contents` knob: the synthesized `answer` prose IS the payload,
   // so cited cards never inline their row data (it would be redundant bloat).
   // When the model wants the underlying rows behind a specific cited card — or
@@ -39,7 +41,7 @@ const inputSchema = z.object({
     .max(20)
     .optional()
     .describe(
-      "Graph node ids (from tako_available_data) to PIN into the Tako data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+      "Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
     ),
   strict: z
     .boolean()
