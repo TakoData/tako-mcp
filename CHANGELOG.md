@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.12.0](https://github.com/TakoData/tako-mcp/compare/v0.11.0...v0.12.0) (2026-07-23)
+
+
+### Features
+
+* Claude Code plugin — hosted MCP server + bundled research skills ([b0b2c81](https://github.com/TakoData/tako-mcp/commit/b0b2c8153dd6841e5738db99af803395a6c1887c))
+* Claude Code plugin — hosted MCP server + bundled research skills ([662f00d](https://github.com/TakoData/tako-mcp/commit/662f00d87cda698754bcc929df91edd1204727e1))
+* omit plugin version so marketplace auto-syncs every commit ([8aa0f6b](https://github.com/TakoData/tako-mcp/commit/8aa0f6b51960ad4c1167039ba5b3a0178763b4de))
+* pin plugin version to release-please ([4b7fee1](https://github.com/TakoData/tako-mcp/commit/4b7fee15d85b7a057e24aec7bf4e39cd930d0f55))
+
+
+### Bug Fixes
+
+* use userConfig for plugin auth instead of env interpolation ([85f5460](https://github.com/TakoData/tako-mcp/commit/85f54601da357afdc9826de5207b94387023ef22))
+
+
+### Documentation
+
+* clarify plugin env var and duplicate-server removal ([faef406](https://github.com/TakoData/tako-mcp/commit/faef4060c4b6bc7ae391a56d877e955abf09f44a))
+* persist TAKO_API_KEY in shell profile for plugin path ([f824cc0](https://github.com/TakoData/tako-mcp/commit/f824cc0ab2846e2d871946b6f4282061a345b00f))
+
 ## [0.11.0](https://github.com/TakoData/tako-mcp/compare/v0.10.0...v0.11.0) (2026-07-23)
 
 
