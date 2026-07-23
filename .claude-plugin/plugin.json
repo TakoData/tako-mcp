@@ -1,7 +1,6 @@
 {
   "name": "tako",
   "description": "Tako's proprietary knowledge graph as MCP tools — live financial, macroeconomic, and company data as interactive, citation-backed charts — plus bundled research skills.",
-  "version": "0.1.0",
   "author": {
     "name": "Tako",
     "url": "https://tako.com"
@@ -9,7 +8,15 @@
   "homepage": "https://docs.tako.com/documentation/integrations/mcp-server",
   "repository": "https://github.com/TakoData/tako-mcp",
   "license": "MIT",
-  "keywords": ["tako", "mcp", "search", "finance", "macroeconomics", "charts", "data"],
+  "keywords": [
+    "tako",
+    "mcp",
+    "search",
+    "finance",
+    "macroeconomics",
+    "charts",
+    "data"
+  ],
   "mcpServers": {
     "tako": {
       "type": "http",
