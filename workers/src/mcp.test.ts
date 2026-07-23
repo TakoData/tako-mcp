@@ -442,3 +442,40 @@ describe("chart render gates per client", () => {
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
   });
 });
+
+describe("server instructions", () => {
+  // The MCP `instructions` field on the `initialize` result is the
+  // spec's channel for server-level usage guidance — Claude hosts
+  // inject it into the system prompt as "MCP Server Instructions",
+  // which is where "prefer tako_search over generic web search" has
+  // to live to actually influence tool routing. Tool descriptions
+  // alone are too buried in the tool list to win that decision.
+  it("advertises tako_search as the preferred route for data questions and a web-search substitute", async () => {
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" },
+      sendProgress: noopSendProgress,
+      client: "unknown",
+    };
+    const server = createMcpServer(ctx);
+    const mcpClient = new Client(
+      { name: "instructions-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      const instructions = mcpClient.getInstructions();
+      expect(instructions).toBeDefined();
+      // Anchor phrases, not exact prose: the copy will be tuned, but it
+      // must always name the tool and position it against web search.
+      expect(instructions).toContain("tako_search");
+      expect(instructions?.toLowerCase()).toContain("web search");
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  });
+});
