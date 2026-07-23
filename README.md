@@ -34,7 +34,7 @@ Every request authenticates with a Bearer token. **[Get your API key](https://ta
 <details>
 <summary><b>Claude Code</b></summary>
 
-**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step:
+**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step. The plugin reads your key from `TAKO_API_KEY` (not `TAKO_API_TOKEN`):
 
 ```bash
 export TAKO_API_KEY='<your-token>'
@@ -42,6 +42,8 @@ export TAKO_API_KEY='<your-token>'
 claude plugin marketplace add TakoData/tako-mcp
 claude plugin install tako@tako
 ```
+
+If you previously added the server with `claude mcp add`, remove it first (`claude mcp remove tako-mcp`) so you don't end up with two copies of every tool.
 
 **Or add the MCP server directly:**
 
