@@ -188,31 +188,9 @@ Add to Zed `settings.json` (via the `mcp-remote` bridge):
 </details>
 
 <details>
-<summary><b>Claude Desktop</b></summary>
+<summary><b>Claude.ai, Claude Desktop &amp; ChatGPT (OAuth — no token needed)</b></summary>
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "tako-mcp": {
-      "type": "http",
-      "url": "https://mcp.tako.com/mcp",
-      "headers": {
-        "Authorization": "Bearer <your-tako-api-token>"
-      }
-    }
-  }
-}
-```
-
-Restart Claude Desktop — `Tako MCP` appears in the available tools list.
-</details>
-
-<details>
-<summary><b>Claude.ai &amp; ChatGPT (OAuth — no token needed)</b></summary>
-
-The consumer chat hosts don't accept Bearer tokens. Instead, the hosted endpoint runs an OAuth 2.1 flow that signs you in with your Tako account and mints a per-host key for you automatically.
+The consumer chat hosts don't accept Bearer tokens. `claude_desktop_config.json` only validates stdio servers, so a remote `"type": "http"` entry there is silently dropped — Claude Desktop connects through Connectors like Claude.ai. The hosted endpoint runs an OAuth 2.1 flow that signs you in with your Tako account and mints a per-host key for you automatically.
 
 **Prerequisites:** just [sign in at tako.com](https://tako.com) with the identity you'll authorize. You do **not** mint a token yourself — the consent flow creates a per-host key (named `MCP: <client>`, visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)). Connecting a new host never rotates another host's key; Tako trims your oldest MCP key past ten.
 
@@ -225,6 +203,12 @@ The consumer chat hosts don't accept Bearer tokens. Instead, the hosted endpoint
 4. Complete the Tako sign-in flow; **Tako** then appears as connected
 
 ![Claude.ai Settings → Connectors](docs/images/claude-connectors-landing.png)
+
+**Claude Desktop** _(same plan requirement as Claude.ai)_
+1. Open Claude Desktop → **Settings → Connectors**
+2. Click **Add custom connector**
+3. Paste `https://mcp.tako.com/mcp` and click **Connect**
+4. Complete the Tako sign-in flow; **Tako** then appears as connected
 
 **ChatGPT** _(requires Pro, Business, or Enterprise; Developer Mode enabled)_
 1. Open ChatGPT → **Settings → Connectors → Developer Mode** and toggle it on
