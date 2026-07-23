@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.11.0](https://github.com/TakoData/tako-mcp/compare/v0.10.0...v0.11.0) (2026-07-23)
+
+
+### Features
+
+* **mcp:** inline chart images for unknown MCP clients too (widget stays ChatGPT-only) ([72418fd](https://github.com/TakoData/tako-mcp/commit/72418fd91e9681aa020b0d5dc3119c07ac256cca))
+* **mcp:** render charts inline as images on Claude and generic MCP clients ([a983a2f](https://github.com/TakoData/tako-mcp/commit/a983a2f8df2dfee7d3f946ed57086934376206b8))
+* **mcp:** render charts inline as images on Claude clients ([4588e43](https://github.com/TakoData/tako-mcp/commit/4588e430cf1041d3b9483056103deec8a18e04b2))
+* **tools:** add tako_available_data; demote graph primitives ([8985cf4](https://github.com/TakoData/tako-mcp/commit/8985cf4b49975108ef33b02131bf6f43c1f797ca))
+* **tools:** add tako_available_data; demote graph primitives ([a24959d](https://github.com/TakoData/tako-mcp/commit/a24959d2e62f5e2dd08ee4563797ba3cf4e482c9))
+* **tools:** emit explicit `exportable` flag on search/answer cards ([e7fb4e9](https://github.com/TakoData/tako-mcp/commit/e7fb4e92b8623eab8fd64b939fb6426dcc6394a4))
+* **tools:** explicit `exportable` flag + reframe `tako_available_data` descriptions ([eb6131b](https://github.com/TakoData/tako-mcp/commit/eb6131bb884bc713f434bd4f58370ac4d3facc54))
+* **tools:** full coverage names in tako_available_data; dedupe from summary ([e391698](https://github.com/TakoData/tako-mcp/commit/e3916986b7bb10115b4c80b33881fd175f531651))
+* **tools:** full coverage names in tako_available_data; dedupe from summary ([6d6834d](https://github.com/TakoData/tako-mcp/commit/6d6834d6fc32d8a806db57f06264af449ed9de09))
+
+
+### Bug Fixes
+
+* **mcp:** keep resources/list answering on non-ChatGPT clients ([237a356](https://github.com/TakoData/tako-mcp/commit/237a3565e71bc1dd430a8bc75369ef3e2d8fc896))
+* **mcp:** only splice recognised structured detail into model text ([7df30fb](https://github.com/TakoData/tako-mcp/commit/7df30fb5c211794fd6572400c386f1a6747196f5))
+* **mcp:** surface upstream 4xx error bodies (403/401/404/…) to the model ([b3460bf](https://github.com/TakoData/tako-mcp/commit/b3460bf363e2932e210e246867913508f0a90b81))
+* **tools:** address PR [#144](https://github.com/TakoData/tako-mcp/issues/144) review — content gate is necessary, not sufficient ([e65696b](https://github.com/TakoData/tako-mcp/commit/e65696b04323da516316896372cbe95490627f77))
+* **tools:** gate tako_contents on the card's content attribute ([1334282](https://github.com/TakoData/tako-mcp/commit/13342826a982713be672d3dc05af0ba834d06d2e))
+* **tools:** honest coverage semantics + ?tools=graph escape hatch (PR [#148](https://github.com/TakoData/tako-mcp/issues/148) review) ([af406de](https://github.com/TakoData/tako-mcp/commit/af406deec61879d038b53bf6574230e39df30191))
+* **tools:** only call tako_contents on cards that carry a content attribute ([967cdbc](https://github.com/TakoData/tako-mcp/commit/967cdbcebcb449bd86797e243042079ae6ada899))
+* **tools:** only call tako_contents on cards that carry a content attribute ([dacb52d](https://github.com/TakoData/tako-mcp/commit/dacb52d0cf32a6910fe0485547ef00cd7a3518e4))
+* **tools:** preserve _meta error envelope on contents 403/404; align visualize example ([029543f](https://github.com/TakoData/tako-mcp/commit/029543f9d664dde765272022cdec7fc1cdc391f2))
+
+
+### Chores
+
+* **registry:** regen server.json for tako_available_data description ([148132d](https://github.com/TakoData/tako-mcp/commit/148132d0691216133972b9870a4310ae62ad6496))
+* sync OpenAPI spec from monorepo ([#153](https://github.com/TakoData/tako-mcp/issues/153)) ([2d4772f](https://github.com/TakoData/tako-mcp/commit/2d4772fe6765e09187b6880e3f3ece22f6fcb137))
+
+
+### Documentation
+
+* add Search API evals blog (benchmarks) to README ([d59a12d](https://github.com/TakoData/tako-mcp/commit/d59a12dd0e34e9dabaf726e1a2080ab42e0fc394))
+* graph tools as the coverage-verification path; proprietary-data framing ([c41c289](https://github.com/TakoData/tako-mcp/commit/c41c2892fef9a5acbc5c5044293b418e1f556cea))
+* **llms:** document the graph tools and their coverage-verification role ([f39096d](https://github.com/TakoData/tako-mcp/commit/f39096d7897c38bbb9c056d2dafd5fa6ecd829b0))
+* redesign README in exa-style with agent skills ([5f7f69a](https://github.com/TakoData/tako-mcp/commit/5f7f69a27672483743c0b5afb6c1fac000d5440f))
+* reflect inline chart images on non-ChatGPT hosts ([8211141](https://github.com/TakoData/tako-mcp/commit/82111417b074f69bce1c898576c1df2ccea7afec))
+* sharpen agent skills per QA review ([013ed6b](https://github.com/TakoData/tako-mcp/commit/013ed6b79dde189d7f1b6149334a62c4d00a0e6e))
+* sharpen agent skills per QA review ([86fd0db](https://github.com/TakoData/tako-mcp/commit/86fd0dbeb44516f9bdf6dc4ca1025a5cc3bcd027))
+* sharpen search/answer tool wording + harden financial skill per QA ([171e789](https://github.com/TakoData/tako-mcp/commit/171e7895c936a5eb5bab5ced0d0d8e32da31bdd1))
+* **skills:** harden financial skill per QA (card selection, estimates vs actuals, cross-currency, sources, empty results) ([ca46995](https://github.com/TakoData/tako-mcp/commit/ca46995fd2072f1e12a4cffd73ae63b38b97de40))
+* **tools:** address PR [#143](https://github.com/TakoData/tako-mcp/issues/143) review — dedupe freshness claim, guard llms-full.txt drift ([bf6e751](https://github.com/TakoData/tako-mcp/commit/bf6e751783cdfcb769fd727af99cca0c7fe47fb7))
+* **tools:** frame Tako data as proprietary, continuously-updated live data ([8e091e4](https://github.com/TakoData/tako-mcp/commit/8e091e4d42056a6342fc85591048549be1218ec0))
+* **tools:** rewrite tool descriptions in the Exa idiom + sync llms docs ([3d5809b](https://github.com/TakoData/tako-mcp/commit/3d5809b7488142cd0c85ad45c969a73115cb6e5f))
+* **tools:** steer sources — keep web enabled until graph-confirmed ([e7641ac](https://github.com/TakoData/tako-mcp/commit/e7641ac9ae0ecd806ac3b2bca86c9e61b8e0500e))
+* **tools:** teach the graph tools' coverage-verification role ([e44c99f](https://github.com/TakoData/tako-mcp/commit/e44c99f658d13b38a331ee39c438453a9d3ca7a9))
+
+
+### Refactors
+
+* **tools:** attribute available-data summary to Tako's proprietary data + bidirectional fan-out tip ([2d4d995](https://github.com/TakoData/tako-mcp/commit/2d4d99552c3188926096990d0ce235e0b10ffcb0))
+* **tools:** frame data+web as one result with web-contents fallback; prioritize available_data as first step ([b6a1848](https://github.com/TakoData/tako-mcp/commit/b6a1848838735166420ec1876cb429cc9d9ab313))
+* **tools:** reframe tako_available_data as proprietary-data discovery + accuracy pre-check ([37e2bc4](https://github.com/TakoData/tako-mcp/commit/37e2bc46de1b12147f4daa41d28afaa1a1815f28))
+* **tools:** Tako-proprietary-data attribution in available-data summary + fan-out tip ([9753c5e](https://github.com/TakoData/tako-mcp/commit/9753c5ec23239fb88b7de03991386d773b802bb2))
+* **tools:** trust the API's authoritative exportable flag ([e0827d2](https://github.com/TakoData/tako-mcp/commit/e0827d21f8cdbad0f1432b835a0b8ceb5e230ad3))
+
 ## [0.10.0](https://github.com/TakoData/tako-mcp/compare/v0.9.0...v0.10.0) (2026-07-20)
 
 
