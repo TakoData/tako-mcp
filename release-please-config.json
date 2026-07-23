@@ -10,7 +10,8 @@
         "workers/src/mcp.ts",
         { "type": "json", "path": "registry/metadata.json", "jsonpath": "$.version" },
         { "type": "json", "path": "registry/server.json", "jsonpath": "$.version" },
-        { "type": "yaml", "path": "registry/smithery.yaml", "jsonpath": "$.version" }
+        { "type": "yaml", "path": "registry/smithery.yaml", "jsonpath": "$.version" },
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
       ]
     }
   },
