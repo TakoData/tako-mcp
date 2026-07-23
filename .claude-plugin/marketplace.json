@@ -1,0 +1,21 @@
+{
+  "name": "tako",
+  "owner": {
+    "name": "Tako",
+    "url": "https://tako.com"
+  },
+  "metadata": {
+    "description": "Official Tako plugins — live financial, macroeconomic, and company data for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "tako",
+      "source": "./",
+      "description": "Tako's proprietary knowledge graph as MCP tools — live financial, macroeconomic, and company data as interactive, citation-backed charts — plus bundled research skills.",
+      "author": {
+        "name": "Tako"
+      },
+      "homepage": "https://docs.tako.com/documentation/integrations/mcp-server"
+    }
+  ]
+}
