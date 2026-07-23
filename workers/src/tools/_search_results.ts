@@ -108,7 +108,11 @@ export type TakoCard = z.infer<typeof takoCardSchema>;
 export const webResultSchema = z
   .object({
     title: z.string(),
-    url: z.string(),
+    url: z
+      .string()
+      .describe(
+        "The web page URL. Always fetchable via tako_contents for the page's full text (web urls need no `exportable` flag, unlike cards) — a fallback you can read when no Tako data card fits the query.",
+      ),
     snippet: z.string().nullable().optional(),
     source_name: z.string().nullable().optional(),
     publish_date: z.string().nullable().optional(),

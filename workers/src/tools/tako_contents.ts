@@ -30,7 +30,9 @@ const DESCRIPTION = [
   "",
   "Best for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.",
   "",
-  "Precondition (Tako cards): only call this when the card's result had `exportable: true`. If `exportable` is false (equivalently, `content` is missing or null) this call fails — use the card's preview/chart instead, don't call. `exportable: true` is necessary but not sufficient: a rare card still 403s, so fall back, don't retry. Web URLs always work.",
+  "Precondition (Tako cards): only call this when the card's result had `exportable: true`. If `exportable` is false (equivalently, `content` is missing or null) this call fails — use the card's preview/chart instead, don't call. `exportable: true` is necessary but not sufficient: a rare card still 403s, so fall back, don't retry.",
+  "",
+  "Web URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text.",
 ].join("\n");
 
 // Curate the input from the contract explicitly: `.pick` only the fields we

@@ -44,7 +44,9 @@ const NER_LABELS = [
 const DESCRIPTION = [
   "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.",
   "",
-  'Best for: any "what structured/proprietary data is there on X?" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer — a cheap accuracy check that tells you whether the data exists and under exactly what name, so you retrieve the real thing instead of guessing.',
+  "The recommended first step for a data lookup: run this before tako_search / tako_answer whenever you're unsure the data exists or its exact name. It's free, it confirms coverage, and the exact names it returns make the follow-up priced call land precisely instead of guessing. (Skip it only for an obvious open-web query that no data graph would hold.)",
+  "",
+  'Best for: any "what structured/proprietary data is there on X?" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer — a cheap accuracy check that tells you whether the data exists and under exactly what name.',
   "",
   "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
   "",
