@@ -34,17 +34,14 @@ Every request authenticates with a Bearer token. **[Get your API key](https://ta
 <details>
 <summary><b>Claude Code</b></summary>
 
-**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step. The plugin reads your key from `TAKO_API_KEY` (not `TAKO_API_TOKEN`):
+**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step. Claude Code prompts for your API key when the plugin is enabled and stores it securely — no `export` or environment variable to manage:
 
 ```bash
-# Persist your key so every Claude Code launch can read it
-echo "export TAKO_API_KEY='<your-token>'" >> ~/.zshrc && source ~/.zshrc
-
 claude plugin marketplace add TakoData/tako-mcp
 claude plugin install tako@tako
 ```
 
-> Persist the variable in your shell profile (`~/.zshrc`, `~/.bashrc`, …) rather than running a one-off `export`. Unlike the `claude mcp add` path below — which bakes the resolved token into stored config at add-time — the plugin stores `${TAKO_API_KEY}` literally and re-expands it on **every** Claude Code launch. If the variable isn't set in the shell you launch from, the plugin sends `Authorization: Bearer ${TAKO_API_KEY}` verbatim and auth fails silently.
+When the plugin is enabled, Claude Code asks for your **Tako API key** and injects it as the Bearer token automatically. **[Get your API key](https://tako.com/console/api-keys)**.
 
 If you previously added the server with `claude mcp add`, remove it first (`claude mcp remove tako-mcp`) so you don't end up with two copies of every tool.
 
