@@ -14,4 +14,15 @@ describe("chart widget HTML", () => {
     expect(ui.html).toContain('"ui/notifications/size-changed"');
     expect(ui.html).toContain("notifyIntrinsicHeight");
   });
+
+  it("declares resourceDomains so the remote image fallback loads on claude.ai", () => {
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    // image_url is served from the public API base; the embed page from
+    // the web base. Both must be CSP-allowed for the <img> fallback.
+    expect(ui.resourceDomains).toBeDefined();
+    expect(ui.resourceDomains!.length).toBeGreaterThan(0);
+    for (const d of ui.resourceDomains!) {
+      expect(d).toMatch(/^https:\/\//);
+    }
+  });
 });

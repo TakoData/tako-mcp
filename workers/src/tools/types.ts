@@ -164,6 +164,12 @@ export interface AppUiResource {
    */
   frameDomains?: string[];
   /**
+   * Origins the widget may load subresources (images, media) from —
+   * surfaces as `_meta.ui.csp.resourceDomains`. Data URIs are always
+   * allowed; this is only needed for remote `<img src>` fallbacks.
+   */
+  resourceDomains?: string[];
+  /**
    * Optional dynamic-resource variant — registered as a `ResourceTemplate`
    * (one URI per per-call substitution). Used when the widget needs to
    * have call-specific data (chart image, dimensions) baked into the HTML

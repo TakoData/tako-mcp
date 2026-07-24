@@ -995,6 +995,11 @@ export function buildChartAppUiResource(
     // tool also writes into `embed_url`, so the two move together. No
     // wildcards: the widget only ever embeds Tako's own embed page.
     frameDomains: [webBase],
+    // Remote-image fallback (`<img src=image_url>`) loads from the API
+    // base; the primary data-URI path needs no CSP. webBase covers any
+    // future web-hosted asset. Deduped — staging/prod use one host for
+    // both.
+    resourceDomains: [...new Set([webBase, resolvePublicApiBase(env)])],
     // Dynamic-resource variant — registered as a `ResourceTemplate`,
     // one URI per pub_id. Per-call tool result overrides
     // `_meta.ui.resourceUri` to point claude.ai at a specific

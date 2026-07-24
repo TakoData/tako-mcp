@@ -515,8 +515,15 @@ function registerTool(
 
   if (ui !== undefined) {
     const uiMeta: Record<string, unknown> = {};
+    const csp: Record<string, unknown> = {};
     if (ui.frameDomains && ui.frameDomains.length > 0) {
-      uiMeta.csp = { frameDomains: ui.frameDomains };
+      csp.frameDomains = ui.frameDomains;
+    }
+    if (ui.resourceDomains && ui.resourceDomains.length > 0) {
+      csp.resourceDomains = ui.resourceDomains;
+    }
+    if (Object.keys(csp).length > 0) {
+      uiMeta.csp = csp;
     }
     // Resource registration. CSP-allowed iframe domains live on
     // `_meta.ui.csp.frameDomains` (open MCP Apps spec). The bundle's
