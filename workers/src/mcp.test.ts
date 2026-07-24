@@ -416,6 +416,26 @@ describe("chart render gates per client", () => {
     expect(meta?.image_data_url).toMatch(/^data:image\/png;base64,/);
   });
 
+  it("claude client: PNG fetch failure degrades gracefully (widget _meta stays, no image_data_url)", async () => {
+    // Call 1: v3 search succeeds. Call 2: PNG fetch fails (500).
+    mockFetchSequence([
+      searchResponse(),
+      new Response("error", { status: 500 }),
+    ]);
+
+    const result = await callSearch("claude");
+
+    // Graceful degradation: the tool call still resolves, the widget
+    // metadata is still attached (claude stays on the static URI), and
+    // `image_data_url` is simply absent — no throw, no partial data.
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    const meta = result._meta as
+      | { ui?: { resourceUri?: string }; image_data_url?: string }
+      | undefined;
+    expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/tako\/embed\/chart/);
+    expect(meta?.image_data_url).toBeUndefined();
+  });
+
   it("unknown client: chart ships as an inline image content block (no widget metadata)", async () => {
     // Unknown clients are the long tail of MCP hosts (Cursor, Windsurf,
     // Gemini CLI, LibreChat, …). Almost none of them implement the MCP
