@@ -66,6 +66,7 @@ import {
   STATE_COOKIE,
   STATE_COOKIE_MAX_AGE_S,
 } from "./cookies.js";
+import { canonicalizeResource } from "./resource.js";
 import type {
   AccessTokenClaims,
   AuthCodeClaims,
@@ -228,6 +229,8 @@ export function handleProtectedResourceMetadata(
   }
   const origin = new URL(req.url).origin;
   return Response.json({
+    // The MCP endpoint URL is the canonical resource identifier (RFC 8707).
+    // Issued tokens are audienced to this value and `/mcp` validates it.
     resource: `${origin}/mcp`,
     authorization_servers: [origin],
     bearer_methods_supported: ["header"],
@@ -443,6 +446,8 @@ interface AuthorizeQuery {
   code_challenge_method: string;
   state: string | null;
   scope: string | null;
+  /** RFC 8707 resource (canonical bare origin), or null when omitted. */
+  resource: string | null;
 }
 
 function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
@@ -472,6 +477,20 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
       return `scope contains unsupported values; supported: ${[...SUPPORTED_SCOPES].join(", ")}`;
     }
   }
+  // RFC 8707 resource indicator. This AS serves exactly one resource — this
+  // server's own origin — so a `resource` that canonicalizes to anything
+  // else is `invalid_target`. Omitted is allowed (older clients); the token
+  // is then audienced to this origin by default at issue time.
+  const expectedResource = `${url.origin}/mcp`;
+  const rawResource = p.get("resource");
+  let resource: string | null = null;
+  if (rawResource !== null) {
+    const canonical = canonicalizeResource(rawResource);
+    if (canonical === null || canonical !== expectedResource) {
+      return `invalid_target: unknown resource; this server's resource is ${expectedResource}`;
+    }
+    resource = canonical;
+  }
   return {
     client_id,
     redirect_uri,
@@ -480,6 +499,7 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
     code_challenge_method,
     state: p.get("state"),
     scope,
+    resource,
   };
 }
 
@@ -545,6 +565,7 @@ export async function handleAuthorize(
         code_challenge_method: parsed.code_challenge_method,
         state: parsed.state,
         scope: parsed.scope,
+        resource: parsed.resource,
         exp: Math.floor(Date.now() / 1000) + STATE_COOKIE_MAX_AGE_S,
       };
       const stateJwt = await signJwt(stateClaims, cfg.signKey);
@@ -575,6 +596,7 @@ export async function handleAuthorize(
     );
     if (parsed.state !== null) formActionUrl.searchParams.set("state", parsed.state);
     if (parsed.scope !== null) formActionUrl.searchParams.set("scope", parsed.scope);
+    if (parsed.resource !== null) formActionUrl.searchParams.set("resource", parsed.resource);
     return htmlResponse(
       consentPage({
         clientName: client.client_name,
@@ -668,6 +690,7 @@ export async function handleAuthorize(
     user_id: session!.user_id,
     user_email: session!.user_email,
     enc_tako_token,
+    resource: parsed.resource,
     exp: now + AUTH_CODE_TTL_S,
     jti: crypto.randomUUID(),
   };
@@ -783,15 +806,18 @@ export async function handleToken(req: Request, env: Env): Promise<Response> {
     return jsonError("invalid_request", "could not parse form body", 400);
   }
 
+  // `iss` for issued tokens is this server's own origin (per-env).
+  const issuer = new URL(req.url).origin;
+
   const grant_type = params.get("grant_type");
   if (grant_type === null) {
     return jsonError("invalid_request", "grant_type is required", 400);
   }
   if (grant_type === "authorization_code") {
-    return handleAuthorizationCodeGrant(params, cfg);
+    return handleAuthorizationCodeGrant(params, issuer, cfg);
   }
   if (grant_type === "refresh_token") {
-    return handleRefreshGrant(params, cfg);
+    return handleRefreshGrant(params, issuer, cfg);
   }
   return jsonError(
     "unsupported_grant_type",
@@ -867,6 +893,7 @@ async function checkAndMarkRedeemed(
 
 async function handleAuthorizationCodeGrant(
   params: URLSearchParams,
+  issuer: string,
   cfg: OAuthConfig,
 ): Promise<Response> {
   const code = params.get("code");
@@ -919,12 +946,15 @@ async function handleAuthorizationCodeGrant(
       user_email: claims.user_email,
       enc_tako_token: claims.enc_tako_token,
     },
+    issuer,
+    claims.resource ?? null,
     cfg,
   );
 }
 
 async function handleRefreshGrant(
   params: URLSearchParams,
+  issuer: string,
   cfg: OAuthConfig,
 ): Promise<Response> {
   const refresh_token = params.get("refresh_token");
@@ -952,6 +982,10 @@ async function handleRefreshGrant(
       user_email: claims.user_email,
       enc_tako_token: claims.enc_tako_token,
     },
+    issuer,
+    // Carry the audience forward across rotation. Legacy refresh tokens
+    // predate the claim (undefined) → default to the bare origin at issue.
+    claims.resource ?? null,
     cfg,
   );
 }
@@ -965,15 +999,24 @@ interface IdentityForToken {
 
 async function issueTokens(
   identity: IdentityForToken,
+  issuer: string,
+  resource: string | null,
   cfg: OAuthConfig,
 ): Promise<Response> {
   const now = Math.floor(Date.now() / 1000);
+  // `iss` is the authorization-server issuer (bare origin); `aud` binds the
+  // token to the resource server (the `/mcp` endpoint). When the client named
+  // a resource, `aud` equals it (already validated == `${origin}/mcp`);
+  // otherwise it defaults to `${origin}/mcp` so every token is audienced.
+  const aud = resource ?? `${issuer}/mcp`;
   const accessClaims: AccessTokenClaims = {
     type: "access",
     scope: identity.scope,
     user_id: identity.user_id,
     user_email: identity.user_email,
     enc_tako_token: identity.enc_tako_token,
+    iss: issuer,
+    aud,
     exp: now + ACCESS_TOKEN_TTL_S,
   };
   const refreshClaims: RefreshTokenClaims = {
@@ -982,6 +1025,9 @@ async function issueTokens(
     user_id: identity.user_id,
     user_email: identity.user_email,
     enc_tako_token: identity.enc_tako_token,
+    iss: issuer,
+    aud,
+    resource,
     exp: now + REFRESH_TOKEN_TTL_S,
     jti: crypto.randomUUID(),
   };
@@ -1231,6 +1277,8 @@ export async function handleStytchCallback(
     authorizeUrl.searchParams.set("state", stateClaims.state);
   if (stateClaims.scope !== null)
     authorizeUrl.searchParams.set("scope", stateClaims.scope);
+  if (stateClaims.resource !== null)
+    authorizeUrl.searchParams.set("resource", stateClaims.resource);
 
   // Multiple Set-Cookie headers — modern Workers fetch API handles this
   // by accepting a Headers instance with repeated entries (single string
