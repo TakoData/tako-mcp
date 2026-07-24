@@ -73,8 +73,9 @@ describe("tako_visualize handler", () => {
     expect(takoVisualize.name).toBe("tako_visualize");
   });
 
-  it("is a write tool that creates a public card (annotations)", () => {
+  it("is a write tool over a closed domain (annotations)", () => {
     expect(takoVisualize.annotations.readOnlyHint).toBe(false);
+    // Closed domain per the MCP spec — renders caller-supplied data.
     expect(takoVisualize.annotations.openWorldHint).toBe(false);
   });
 

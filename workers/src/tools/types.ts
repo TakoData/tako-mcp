@@ -96,8 +96,16 @@ export interface ToolAnnotations {
   readOnlyHint: boolean;
   /** Tool can delete or irrecoverably change state. */
   destructiveHint: boolean;
-  /** Tool's effects are observable outside Tako (e.g. creates a public URL). */
-  openWorldHint?: boolean;
+  /**
+   * MCP spec: the tool may interact with an "open world" of external
+   * entities; false means its domain of interaction is closed. Per the spec's
+   * own example, a web search tool is open-world (true) and a memory tool is
+   * closed (false). Required so every tool declares it explicitly — this is a
+   * statement about the domain of interaction, NOT about externally observable
+   * side effects, so `tako_visualize` (creates a public card but only from
+   * caller-supplied data) is closed/false while the retrieval tools are true.
+   */
+  openWorldHint: boolean;
 }
 
 /**

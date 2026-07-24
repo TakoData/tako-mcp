@@ -159,6 +159,9 @@ const tako_visualize = {
     title: "Tako: Visualize",
     readOnlyHint: false,
     destructiveHint: false,
+    // Closed domain per the MCP spec's openWorldHint: it renders data the
+    // caller already supplied into a card; it does not interact with an
+    // open/unpredictable set of external entities the way a web search does.
     openWorldHint: false,
   },
   async handler(input, ctx): Promise<Output> {

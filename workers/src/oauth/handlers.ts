@@ -66,6 +66,12 @@ import {
   STATE_COOKIE,
   STATE_COOKIE_MAX_AGE_S,
 } from "./cookies.js";
+import {
+  canonicalizeResource,
+  isServerResource,
+  serverIssuer,
+  serverResource,
+} from "./resource.js";
 import type {
   AccessTokenClaims,
   AuthCodeClaims,
@@ -209,6 +215,28 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * RFC 6749 §4.1.2.1 — deliver an authorization error to the client via its
+ * (already-validated) redirect URI as a 302, preserving `state`. Used for
+ * `invalid_target` so the connector sees a structured OAuth error rather than
+ * a bare page it can't parse.
+ */
+function redirectAuthError(
+  redirectUri: string,
+  state: string | null,
+  error: string,
+  errorDescription: string,
+): Response {
+  const u = new URL(redirectUri);
+  u.searchParams.set("error", error);
+  u.searchParams.set("error_description", errorDescription);
+  if (state !== null) u.searchParams.set("state", state);
+  return new Response(null, {
+    status: 302,
+    headers: { location: u.toString() },
+  });
+}
+
 /* --------------------------- Discovery --------------------------- */
 
 /**
@@ -226,10 +254,11 @@ export function handleProtectedResourceMetadata(
   if (readConfig(env) === null) {
     return new Response("not found", { status: 404 });
   }
-  const origin = new URL(req.url).origin;
   return Response.json({
-    resource: `${origin}/mcp`,
-    authorization_servers: [origin],
+    // The MCP endpoint URL is the canonical resource identifier (RFC 8707).
+    // Issued tokens are audienced to this value and `/mcp` validates it.
+    resource: serverResource(req),
+    authorization_servers: [serverIssuer(req)],
     bearer_methods_supported: ["header"],
     scopes_supported: [...SUPPORTED_SCOPES],
   });
@@ -443,6 +472,9 @@ interface AuthorizeQuery {
   code_challenge_method: string;
   state: string | null;
   scope: string | null;
+  /** RFC 8707 resource, RAW (uncanonicalized) or null. Validated in
+   *  `handleAuthorize` after client validation. */
+  resourceRaw: string | null;
 }
 
 function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
@@ -472,6 +504,10 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
       return `scope contains unsupported values; supported: ${[...SUPPORTED_SCOPES].join(", ")}`;
     }
   }
+  // RFC 8707 resource indicator is carried RAW here; it is canonicalized and
+  // validated in `handleAuthorize` AFTER client + redirect_uri validation, so
+  // an `invalid_target` can be delivered to the client via the redirect URI
+  // (RFC 6749 §4.1.2.1) rather than a bare 400 page.
   return {
     client_id,
     redirect_uri,
@@ -480,6 +516,7 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
     code_challenge_method,
     state: p.get("state"),
     scope,
+    resourceRaw: p.get("resource"),
   };
 }
 
@@ -514,6 +551,25 @@ export async function handleAuthorize(
     });
   }
 
+  // RFC 8707 resource: canonicalize and validate now that the redirect_uri is
+  // known-registered. This server accepts either the bare origin or the `/mcp`
+  // endpoint (see `isServerResource`). Any other value is `invalid_target`,
+  // delivered to the client via the redirect URI per RFC 6749 §4.1.2.1 rather
+  // than a bare page. Omitted is allowed (token audienced to `/mcp` by default).
+  let resource: string | null = null;
+  if (parsed.resourceRaw !== null) {
+    const canonical = canonicalizeResource(parsed.resourceRaw);
+    if (canonical === null || !isServerResource(canonical, url.origin)) {
+      return redirectAuthError(
+        parsed.redirect_uri,
+        parsed.state,
+        "invalid_target",
+        `unknown resource; this server is ${url.origin}/mcp`,
+      );
+    }
+    resource = canonical;
+  }
+
   // Fetch the user's session, if any. We accept it on either GET
   // (rendering consent) or POST (issuing the auth code).
   const sessionRaw = readCookie(req, SESSION_COOKIE);
@@ -545,6 +601,7 @@ export async function handleAuthorize(
         code_challenge_method: parsed.code_challenge_method,
         state: parsed.state,
         scope: parsed.scope,
+        resource,
         exp: Math.floor(Date.now() / 1000) + STATE_COOKIE_MAX_AGE_S,
       };
       const stateJwt = await signJwt(stateClaims, cfg.signKey);
@@ -575,6 +632,7 @@ export async function handleAuthorize(
     );
     if (parsed.state !== null) formActionUrl.searchParams.set("state", parsed.state);
     if (parsed.scope !== null) formActionUrl.searchParams.set("scope", parsed.scope);
+    if (resource !== null) formActionUrl.searchParams.set("resource", resource);
     return htmlResponse(
       consentPage({
         clientName: client.client_name,
@@ -668,6 +726,7 @@ export async function handleAuthorize(
     user_id: session!.user_id,
     user_email: session!.user_email,
     enc_tako_token,
+    resource,
     exp: now + AUTH_CODE_TTL_S,
     jti: crypto.randomUUID(),
   };
@@ -783,15 +842,18 @@ export async function handleToken(req: Request, env: Env): Promise<Response> {
     return jsonError("invalid_request", "could not parse form body", 400);
   }
 
+  // `iss` for issued tokens is this server's own origin (per-env).
+  const issuer = serverIssuer(req);
+
   const grant_type = params.get("grant_type");
   if (grant_type === null) {
     return jsonError("invalid_request", "grant_type is required", 400);
   }
   if (grant_type === "authorization_code") {
-    return handleAuthorizationCodeGrant(params, cfg);
+    return handleAuthorizationCodeGrant(params, issuer, cfg);
   }
   if (grant_type === "refresh_token") {
-    return handleRefreshGrant(params, cfg);
+    return handleRefreshGrant(params, issuer, cfg);
   }
   return jsonError(
     "unsupported_grant_type",
@@ -865,8 +927,43 @@ async function checkAndMarkRedeemed(
   return null;
 }
 
+/**
+ * Validate the optional RFC 8707 `resource` form param at `/token` (the MCP
+ * auth spec has it as a MUST on token requests too) and reconcile it with the
+ * resource the grant is already bound to. Returns the effective resource to
+ * audience the issued tokens with, or an OAuth error Response.
+ */
+function resolveTokenResource(
+  requestedRaw: string | null,
+  boundResource: string | null,
+  origin: string,
+): { resource: string | null } | { error: Response } {
+  if (requestedRaw === null) return { resource: boundResource };
+  const canonical = canonicalizeResource(requestedRaw);
+  if (canonical === null || !isServerResource(canonical, origin)) {
+    return {
+      error: jsonError(
+        "invalid_target",
+        `unknown resource; this server is ${origin}/mcp`,
+        400,
+      ),
+    };
+  }
+  if (boundResource !== null && canonical !== boundResource) {
+    return {
+      error: jsonError(
+        "invalid_target",
+        "requested resource does not match the resource bound to this grant",
+        400,
+      ),
+    };
+  }
+  return { resource: canonical };
+}
+
 async function handleAuthorizationCodeGrant(
   params: URLSearchParams,
+  issuer: string,
   cfg: OAuthConfig,
 ): Promise<Response> {
   const code = params.get("code");
@@ -912,6 +1009,12 @@ async function handleAuthorizationCodeGrant(
     AUTH_CODE_TTL_S,
   );
   if (replay !== null) return replay;
+  const resolved = resolveTokenResource(
+    params.get("resource"),
+    claims.resource ?? null,
+    issuer,
+  );
+  if ("error" in resolved) return resolved.error;
   return issueTokens(
     {
       scope: claims.scope,
@@ -919,12 +1022,15 @@ async function handleAuthorizationCodeGrant(
       user_email: claims.user_email,
       enc_tako_token: claims.enc_tako_token,
     },
+    issuer,
+    resolved.resource,
     cfg,
   );
 }
 
 async function handleRefreshGrant(
   params: URLSearchParams,
+  issuer: string,
   cfg: OAuthConfig,
 ): Promise<Response> {
   const refresh_token = params.get("refresh_token");
@@ -939,12 +1045,41 @@ async function handleRefreshGrant(
       400,
     );
   }
+  // Reject a refresh token bound to a different origin/resource than the one it
+  // is presented to (`issuer` == this request's origin). Without this, a token
+  // for host A redeemed at host B would mint an access token with iss=B, aud=A
+  // that `/mcp` at B then 401s forever (dead-end loop), and — on staging, where
+  // workers.dev + custom domain share a signing key — a token would launder its
+  // audience to another host through a single refresh. Legacy tokens with no
+  // iss/aud are tolerated (re-audienced to this origin's default at issue).
+  if (typeof claims.iss === "string" && claims.iss !== issuer) {
+    return jsonError(
+      "invalid_grant",
+      "refresh token was issued for a different server",
+      400,
+    );
+  }
+  if (typeof claims.aud === "string" && !isServerResource(claims.aud, issuer)) {
+    return jsonError(
+      "invalid_grant",
+      "refresh token audience does not match this server",
+      400,
+    );
+  }
   const replay = await checkAndMarkRedeemed(
     "refresh-token",
     claims.jti,
     REFRESH_TOKEN_TTL_S,
   );
   if (replay !== null) return replay;
+  const resolved = resolveTokenResource(
+    params.get("resource"),
+    // Carry the audience forward across rotation. Legacy refresh tokens
+    // predate the claim (undefined) → default to this origin's /mcp at issue.
+    claims.resource ?? null,
+    issuer,
+  );
+  if ("error" in resolved) return resolved.error;
   return issueTokens(
     {
       scope: claims.scope,
@@ -952,6 +1087,8 @@ async function handleRefreshGrant(
       user_email: claims.user_email,
       enc_tako_token: claims.enc_tako_token,
     },
+    issuer,
+    resolved.resource,
     cfg,
   );
 }
@@ -965,15 +1102,24 @@ interface IdentityForToken {
 
 async function issueTokens(
   identity: IdentityForToken,
+  issuer: string,
+  resource: string | null,
   cfg: OAuthConfig,
 ): Promise<Response> {
   const now = Math.floor(Date.now() / 1000);
+  // `iss` is the authorization-server issuer (bare origin); `aud` binds the
+  // token to the resource server (the `/mcp` endpoint). When the client named
+  // a resource, `aud` equals it (already validated == `${origin}/mcp`);
+  // otherwise it defaults to `${origin}/mcp` so every token is audienced.
+  const aud = resource ?? `${issuer}/mcp`;
   const accessClaims: AccessTokenClaims = {
     type: "access",
     scope: identity.scope,
     user_id: identity.user_id,
     user_email: identity.user_email,
     enc_tako_token: identity.enc_tako_token,
+    iss: issuer,
+    aud,
     exp: now + ACCESS_TOKEN_TTL_S,
   };
   const refreshClaims: RefreshTokenClaims = {
@@ -982,6 +1128,9 @@ async function issueTokens(
     user_id: identity.user_id,
     user_email: identity.user_email,
     enc_tako_token: identity.enc_tako_token,
+    iss: issuer,
+    aud,
+    resource,
     exp: now + REFRESH_TOKEN_TTL_S,
     jti: crypto.randomUUID(),
   };
@@ -1231,6 +1380,11 @@ export async function handleStytchCallback(
     authorizeUrl.searchParams.set("state", stateClaims.state);
   if (stateClaims.scope !== null)
     authorizeUrl.searchParams.set("scope", stateClaims.scope);
+  // `typeof === "string"` (not `!== null`) so a state cookie minted by pre-PR
+  // code — which has no `resource` key and is `undefined` at runtime — doesn't
+  // rebuild `?resource=undefined` and hard-fail the resumed authorize.
+  if (typeof stateClaims.resource === "string")
+    authorizeUrl.searchParams.set("resource", stateClaims.resource);
 
   // Multiple Set-Cookie headers — modern Workers fetch API handles this
   // by accepting a Headers instance with repeated entries (single string

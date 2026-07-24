@@ -388,6 +388,18 @@ function registerTool(
     annotations: tool.annotations,
   };
 
+  // Advertise per-tool OAuth on every runtime descriptor. This only survives
+  // to the client via `_meta` — the SDK's `tools/list` serializer drops
+  // unknown top-level descriptor fields, but passes `_meta` through verbatim.
+  // Reverse-DNS namespaced (`com.tako/…`) per the MCP `_meta` rules, which
+  // reserve unprefixed keys for the protocol and would collide with the field
+  // SEP-1488 (still Draft) will standardize at the descriptor top level. Hosts
+  // read it to know the tool is reachable via OAuth and needs the `mcp` scope.
+  // The widget block below MERGES into this rather than replacing it.
+  config._meta = {
+    "com.tako/securitySchemes": [{ type: "oauth2", scopes: ["mcp"] }],
+  };
+
   if (tool.outputSchema !== undefined) {
     // Output schemas are optional — only read tools declare them.
     // In practice every `outputSchema` we ship is `z.object(...)`,
@@ -601,6 +613,7 @@ function registerTool(
     // static URI for all three keys. The template resource is still
     // registered above for future hosts that may support it.
     config._meta = {
+      ...(config._meta as Record<string, unknown>),
       ui: { resourceUri: ui.uri },
       "ui/resourceUri": ui.uri,
       "openai/outputTemplate": ui.uri,
@@ -979,8 +992,15 @@ export async function handleMcpRequest(
   //   `tryResolveOAuthAccessToken` returns null, we forward the bearer
   //   verbatim. Backwards-compatible with every Claude Code install in
   //   the wild.
-  const oauthMappedToken = await tryResolveOAuthAccessToken(bearer, env);
-  const token = oauthMappedToken ?? bearer;
+  const origin = new URL(request.url).origin;
+  const oauth = await tryResolveOAuthAccessToken(bearer, env, origin);
+  if (oauth.kind === "reject") {
+    // The bearer IS a Worker-issued JWT but failed a binding check
+    // (wrong audience/issuer/scope/type). Return a clean 401 rather than
+    // forwarding it to Django as a raw API key.
+    return oauthChallengeResponse(request, oauth.error, oauth.errorDescription);
+  }
+  const token = oauth.kind === "ok" ? oauth.takoToken : bearer;
 
   // Base ctx — `sendProgress` here is a placeholder overridden per
   // tool call inside `registerTool`'s SDK callback (where the
@@ -1086,9 +1106,30 @@ export async function handleMcpRequest(
  * doc — that is how MCP hosts (Claude.ai, ChatGPT) bootstrap an OAuth
  * flow when they have only the MCP URL and got a 401.
  */
+/**
+ * Build the RFC 6750 / RFC 9728 `WWW-Authenticate: Bearer` challenge value.
+ * Always carries `resource_metadata` (so an MCP host can bootstrap OAuth from
+ * a bare 401) and `scope`; `error` / `error_description` are added when known.
+ */
+function wwwAuthenticate(
+  origin: string,
+  error?: string,
+  errorDescription?: string,
+): string {
+  const parts = [
+    `resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+    `scope="mcp"`,
+  ];
+  if (error !== undefined) parts.unshift(`error="${error}"`);
+  if (errorDescription !== undefined) {
+    // Quote-safe: strip any double quotes from the human-readable reason.
+    parts.push(`error_description="${errorDescription.replace(/"/g, "'")}"`);
+  }
+  return `Bearer ${parts.join(", ")}`;
+}
+
 function bearerAuthResponse(request: Request, err: BearerAuthError): Response {
   const origin = new URL(request.url).origin;
-  const resourceMetadataUrl = `${origin}/.well-known/oauth-protected-resource`;
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
@@ -1099,7 +1140,43 @@ function bearerAuthResponse(request: Request, err: BearerAuthError): Response {
       status: 401,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "WWW-Authenticate": `Bearer error="invalid_token", resource_metadata="${resourceMetadataUrl}"`,
+        "WWW-Authenticate": wwwAuthenticate(origin, "invalid_token"),
+      },
+    },
+  );
+}
+
+/**
+ * 401 for an OAuth access token that verified as ours but failed a binding
+ * check (audience / issuer / scope / type). Distinct from `bearerAuthResponse`
+ * (missing / malformed header) so the `error` / `error_description` reflect the
+ * specific OAuth failure and ChatGPT/Claude can decide whether to re-link.
+ */
+function oauthChallengeResponse(
+  request: Request,
+  error: string,
+  errorDescription: string,
+): Response {
+  const origin = new URL(request.url).origin;
+  // RFC 6750 §3.1: insufficient_scope → 403 (the grant is wrong; a
+  // re-auth would re-present the same scope and loop). Everything else →
+  // 401 (re-authenticate).
+  const status = error === "insufficient_scope" ? 403 : 401;
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: {
+        code: -32001,
+        message: errorDescription,
+        data: { kind: error },
+      },
+    }),
+    {
+      status,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "WWW-Authenticate": wwwAuthenticate(origin, error, errorDescription),
       },
     },
   );

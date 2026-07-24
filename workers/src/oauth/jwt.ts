@@ -82,9 +82,26 @@ export async function signJwt<T extends JwtClaims>(
   return `${data}.${b64url(sig)}`;
 }
 
+/** Clock-skew tolerance applied to `exp` checks (see `verifyJwt`). */
+export const CLOCK_SKEW_MS = 30 * 1000;
+
+/**
+ * Returns true when a decoded payload's `exp` is in the past (with skew).
+ * Exported so callers that verify with `{ ignoreExpiry: true }` can make their
+ * own expired-vs-valid decision (e.g. `/mcp` treats an expired-but-signed
+ * access token as a `reject`, not a fall-through).
+ */
+export function isExpired(payload: JwtClaims): boolean {
+  return (
+    payload.exp !== undefined &&
+    payload.exp * 1000 + CLOCK_SKEW_MS < Date.now()
+  );
+}
+
 export async function verifyJwt<T extends JwtClaims = JwtClaims>(
   token: string,
   secret: string,
+  opts: { ignoreExpiry?: boolean } = {},
 ): Promise<T | null> {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
@@ -122,17 +139,14 @@ export async function verifyJwt<T extends JwtClaims = JwtClaims>(
   } catch {
     return null;
   }
-  // 30 seconds of clock-skew tolerance on `exp`. Stytch sessions, the
-  // Worker, and the requesting client may not share a time source; a
-  // strict-equality check at the second boundary spuriously fails for
-  // tokens minted within the last few hundred milliseconds of their
-  // TTL. The 60s auth-code TTL is short enough that a 30s window
-  // doesn't materially weaken replay protection.
-  const CLOCK_SKEW_MS = 30 * 1000;
-  if (
-    payload.exp !== undefined &&
-    payload.exp * 1000 + CLOCK_SKEW_MS < Date.now()
-  ) {
+  // 30 seconds of clock-skew tolerance on `exp` (see `CLOCK_SKEW_MS`). Stytch
+  // sessions, the Worker, and the requesting client may not share a time
+  // source; a strict-equality check at the second boundary spuriously fails
+  // for tokens minted within the last few hundred milliseconds of their TTL.
+  // The 60s auth-code TTL is short enough that a 30s window doesn't materially
+  // weaken replay protection. `ignoreExpiry` lets a caller get the claims of
+  // an expired-but-otherwise-valid token to make its own decision.
+  if (!opts.ignoreExpiry && isExpired(payload)) {
     return null;
   }
   return payload;

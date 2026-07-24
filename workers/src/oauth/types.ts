@@ -24,6 +24,16 @@ export type OAuthTokenType =
 
 interface BaseClaims extends JwtClaims {
   type: OAuthTokenType;
+  /**
+   * RFC 7519 `iss` / `aud`. Present on tokens issued to clients
+   * (access + refresh) so `/mcp` can bind them to this resource server.
+   * Optional on the interface for the rolling cutover: tokens minted
+   * before this shipped carry neither, and `/mcp` accepts their absence
+   * while rejecting a *mismatched* value. Cookies / auth codes / client_ids
+   * leave these unset.
+   */
+  iss?: string;
+  aud?: string;
 }
 
 /* --------------------------- DCR --------------------------- */
@@ -51,6 +61,13 @@ export interface AuthCodeClaims extends BaseClaims {
   user_email: string;
   /** AES-GCM-encrypted Tako API token. See `encryptAesGcm` in `jwt.ts`. */
   enc_tako_token: string;
+  /**
+   * RFC 8707 resource indicator the client requested at `/authorize`
+   * (canonicalized to the bare origin), or `null` when the client omitted
+   * it. Carried forward so `/token` can bind the issued access/refresh
+   * token `aud` to it.
+   */
+  resource: string | null;
   /** Unique JWT ID for single-use enforcement (OAuth 2.1 §4.1.2). The
    *  redemption handler records this in Workers Cache after a successful
    *  exchange and rejects subsequent presentations with the same `jti`. */
@@ -82,6 +99,12 @@ export interface RefreshTokenClaims extends BaseClaims {
   user_id: string;
   user_email: string;
   enc_tako_token: string;
+  /**
+   * RFC 8707 resource the grant is bound to (canonical bare origin) or
+   * `null` for legacy/omitted. Copied verbatim into each re-minted access
+   * token's `aud` on refresh so the audience survives rotation.
+   */
+  resource?: string | null;
   /** Unique JWT ID for single-use enforcement (OAuth 2.1 §4.3.1
    *  refresh-token rotation). Recorded in Workers Cache on successful
    *  exchange so re-presenting the same refresh token is rejected.
@@ -110,6 +133,12 @@ export interface StateCookieClaims extends BaseClaims {
   code_challenge_method: string;
   state: string | null;
   scope: string | null;
+  /** RFC 8707 resource indicator (canonical) carried across the Stytch
+   *  round-trip, or `null` when the client omitted it. Optional on the
+   *  interface: a state cookie minted before this shipped has no `resource`
+   *  key and is `undefined` at runtime — callers must guard with
+   *  `typeof === "string"`, not `!== null`. */
+  resource?: string | null;
 }
 
 /**
