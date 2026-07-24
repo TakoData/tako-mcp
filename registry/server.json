@@ -4,7 +4,7 @@
   "name": "tako-mcp",
   "version": "0.12.0",
   "title": "Tako MCP Server",
-  "description": "Search, answer, and fetch data from Tako's knowledge base of 100K+ charts covering economics, finance, demographics, sports, markets, and weather; and run a multi-step Answer Agent for deeper questions.",
+  "description": "Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have. That includes company financials, macroeconomic indicators, web and app traffic, sports, US government spending, and more.",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
     "source": "github"
