@@ -1,45 +1,40 @@
 /**
- * Guards the advertised tool annotations. `openWorldHint` follows the MCP
- * spec's meaning — true when a tool interacts with an open/unpredictable set
- * of external entities (web search and the live data graph), false for a
- * closed domain (rendering caller-supplied data). Every tool must declare all
- * three hints explicitly (the type makes openWorldHint required); these tests
- * pin the load-bearing values and the explicitness guarantee.
+ * Guards the advertised tool annotations across the WHOLE registry.
+ * `openWorldHint` follows the MCP spec's meaning — true when a tool interacts
+ * with an open/unpredictable set of external entities (web search and the live
+ * data graph), false for a closed domain (rendering caller-supplied data).
+ * Iterating `TOOL_REGISTRY` (rather than a hand-listed subset) makes the
+ * "every tool declares all three hints" guarantee real and catches a future
+ * tool that ships the wrong value.
  */
 import { describe, expect, it } from "vitest";
 
-import takoSearch from "./tako_search.js";
-import takoAnswer from "./tako_answer.js";
-import takoContents from "./tako_contents.js";
-import takoAvailableData from "./tako_available_data.js";
-import takoVisualize from "./tako_visualize.js";
+import { TOOL_REGISTRY } from "./_registry.js";
 
-describe("tool annotations — openWorldHint", () => {
-  it("web-search-style retrieval tools are open-world (true)", () => {
-    for (const tool of [takoSearch, takoAnswer, takoContents, takoAvailableData]) {
-      expect(tool.annotations.readOnlyHint).toBe(true);
-      expect(tool.annotations.destructiveHint).toBe(false);
-      expect(tool.annotations.openWorldHint).toBe(true);
+// Closed-domain tools per the MCP spec: tako_visualize renders data the caller
+// already supplied; get_credit_balance reads Tako's own account state. Every
+// other tool reaches the open world (web + the live data graph).
+const CLOSED_WORLD = new Set(["tako_visualize", "get_credit_balance"]);
+
+describe("tool annotations", () => {
+  it("every tool declares all three hints explicitly (booleans)", () => {
+    for (const tool of TOOL_REGISTRY) {
+      expect(typeof tool.annotations.readOnlyHint, tool.name).toBe("boolean");
+      expect(typeof tool.annotations.destructiveHint, tool.name).toBe("boolean");
+      expect(typeof tool.annotations.openWorldHint, tool.name).toBe("boolean");
     }
   });
 
-  it("tako_visualize is closed-world (false) — renders caller-supplied data", () => {
-    expect(takoVisualize.annotations.readOnlyHint).toBe(false);
-    expect(takoVisualize.annotations.destructiveHint).toBe(false);
-    expect(takoVisualize.annotations.openWorldHint).toBe(false);
+  it("openWorldHint matches the MCP-spec domain-of-interaction for every tool", () => {
+    for (const tool of TOOL_REGISTRY) {
+      const expected = !CLOSED_WORLD.has(tool.name);
+      expect(tool.annotations.openWorldHint, tool.name).toBe(expected);
+    }
   });
 
-  it("every tool declares all three hints explicitly", () => {
-    for (const tool of [
-      takoSearch,
-      takoAnswer,
-      takoContents,
-      takoAvailableData,
-      takoVisualize,
-    ]) {
-      expect(typeof tool.annotations.readOnlyHint).toBe("boolean");
-      expect(typeof tool.annotations.destructiveHint).toBe("boolean");
-      expect(typeof tool.annotations.openWorldHint).toBe("boolean");
-    }
+  it("tako_visualize is the write/publish tool (readOnlyHint false)", () => {
+    const viz = TOOL_REGISTRY.find((t) => t.name === "tako_visualize");
+    expect(viz?.annotations.readOnlyHint).toBe(false);
+    expect(viz?.annotations.openWorldHint).toBe(false);
   });
 });

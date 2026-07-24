@@ -13,7 +13,8 @@
  */
 
 import type { Env } from "../env.js";
-import { decryptAesGcm, verifyJwt } from "./jwt.js";
+import { decryptAesGcm, isExpired, verifyJwt } from "./jwt.js";
+import { isServerResource } from "./resource.js";
 import type { AccessTokenClaims } from "./types.js";
 
 /** The required scope every access token must carry to reach `/mcp`. */
@@ -36,23 +37,33 @@ export type OAuthAccessResult =
   | { kind: "not_oauth" };
 
 /**
+ * A `reject` that also logs one greppable line to Workers Logs. `iss`/`aud`
+ * are non-secret, so a rollout regression is diagnosable in `wrangler tail`.
+ */
+function reject(error: string, errorDescription: string): OAuthAccessResult {
+  console.error(`[oauth] /mcp reject error=${error}: ${errorDescription}`);
+  return { kind: "reject", error, errorDescription };
+}
+
+/**
  * Verify an incoming bearer as a Worker-issued OAuth access JWT and bind it to
- * this resource server. `expectedIssuer` is the authorization-server issuer
- * (the bare origin, e.g. `https://mcp.tako.com`); `expectedResource` is this
- * server's canonical resource (the `/mcp` endpoint, e.g.
- * `https://mcp.tako.com/mcp`). `iss` is checked against the former, `aud`
- * against the latter.
+ * this resource server. `origin` is this server's bare origin; `iss` is checked
+ * against it and `aud` against the accepted resource set (origin and
+ * `${origin}/mcp` — see `isServerResource`).
  *
  * `iss`/`aud` are validated only when PRESENT — tokens minted before audience
  * binding shipped carry neither, and we accept their absence during the
  * rolling cutover (access tokens live 15 min, so this window is short) while
- * rejecting a token that names a DIFFERENT issuer/resource.
+ * rejecting a token that names a DIFFERENT issuer/resource. A present but
+ * non-string `iss`/`aud` (e.g. an array) is rejected outright so a future
+ * minter can't silently bypass the check. An expired-but-signed access token
+ * is a `reject` (not a fall-through) so the host sees a 401 + challenge and
+ * runs the refresh exchange.
  */
 export async function tryResolveOAuthAccessToken(
   bearer: string,
   env: Env,
-  expectedIssuer: string,
-  expectedResource: string,
+  origin: string,
 ): Promise<OAuthAccessResult> {
   const sign = env.OAUTH_SIGN_KEY;
   const enc = env.OAUTH_ENC_KEY;
@@ -75,51 +86,52 @@ export async function tryResolveOAuthAccessToken(
     return { kind: "not_oauth" };
   }
 
-  const claims = await verifyJwt<AccessTokenClaims>(bearer, sign);
-  // Bad signature / expired / malformed: indistinguishable from a raw token
-  // that happens to be JWT-shaped, so fall through rather than hard-reject.
+  // Verify the signature but keep expired tokens so we can distinguish them
+  // from a bad signature: a bad signature is indistinguishable from a raw
+  // token and falls through; an expired-but-signed token is ours and rejects.
+  const claims = await verifyJwt<AccessTokenClaims>(bearer, sign, {
+    ignoreExpiry: true,
+  });
   if (!claims) return { kind: "not_oauth" };
 
   // From here the signature is OURS, so any binding failure is a definite
   // 401 rather than a fall-through.
   if (claims.type !== "access") {
-    return {
-      kind: "reject",
-      error: "invalid_token",
-      errorDescription: "presented token is not an access token",
-    };
+    return reject("invalid_token", "presented token is not an access token");
   }
-  if (typeof claims.iss === "string" && claims.iss !== expectedIssuer) {
-    return {
-      kind: "reject",
-      error: "invalid_token",
-      errorDescription: `token issuer ${claims.iss} does not match ${expectedIssuer}`,
-    };
+  if (isExpired(claims)) {
+    return reject("invalid_token", "access token is expired");
   }
-  if (typeof claims.aud === "string" && claims.aud !== expectedResource) {
-    return {
-      kind: "reject",
-      error: "invalid_token",
-      errorDescription: `token audience ${claims.aud} is not this resource (${expectedResource})`,
-    };
+  // `iss`/`aud`: reject a present-but-non-string value (array etc.) so the
+  // check can't be bypassed; validate a string value; tolerate absence.
+  if (claims.iss !== undefined) {
+    if (typeof claims.iss !== "string" || claims.iss !== origin) {
+      return reject(
+        "invalid_token",
+        `token issuer ${String(claims.iss)} does not match ${origin}`,
+      );
+    }
+  }
+  if (claims.aud !== undefined) {
+    if (typeof claims.aud !== "string" || !isServerResource(claims.aud, origin)) {
+      return reject(
+        "invalid_token",
+        `token audience ${String(claims.aud)} is not this resource server`,
+      );
+    }
   }
   const scopes =
     typeof claims.scope === "string"
       ? claims.scope.split(/\s+/).filter((s) => s.length > 0)
       : [];
   if (!scopes.includes(REQUIRED_SCOPE)) {
-    return {
-      kind: "reject",
-      error: "insufficient_scope",
-      errorDescription: `token is missing the required '${REQUIRED_SCOPE}' scope`,
-    };
+    return reject(
+      "insufficient_scope",
+      `token is missing the required '${REQUIRED_SCOPE}' scope`,
+    );
   }
   if (typeof claims.enc_tako_token !== "string") {
-    return {
-      kind: "reject",
-      error: "invalid_token",
-      errorDescription: "token is missing credentials",
-    };
+    return reject("invalid_token", "token is missing credentials");
   }
 
   const decrypted = await decryptAesGcm(claims.enc_tako_token, enc);
@@ -127,17 +139,11 @@ export async function tryResolveOAuthAccessToken(
     // Signature verified (so the token came from us) but decryption
     // failed — strongly implies the encryption key was rotated without
     // also rotating the signing key, leaving in-flight access tokens
-    // un-decryptable. Log so this is visible during a key-rotation
-    // incident; reject so the request fails closed with a clean 401.
-    console.error(
-      "OAuth access token signature valid but Tako-token decryption failed " +
-        "(likely encryption-key rotation without coordinated signing-key rotation)",
+    // un-decryptable. Reject so the request fails closed with a clean 401.
+    return reject(
+      "invalid_token",
+      "token credentials could not be decrypted (likely encryption-key rotation)",
     );
-    return {
-      kind: "reject",
-      error: "invalid_token",
-      errorDescription: "token credentials could not be decrypted",
-    };
   }
   return { kind: "ok", takoToken: decrypted };
 }

@@ -1420,7 +1420,13 @@ describe("OAuth resource indicators (RFC 8707)", () => {
     expect(jwtPayload(accessToken).aud).toBe(RESOURCE);
   });
 
-  it("rejects a resource that names a different server (invalid_target)", async () => {
+  it("accepts the bare origin as a valid resource", async () => {
+    const { accessToken } = await flowWithResource(ORIGIN);
+    // aud is whichever accepted form the client requested — here the origin.
+    expect(jwtPayload(accessToken).aud).toBe(ORIGIN);
+  });
+
+  it("rejects a foreign resource via the redirect URI (invalid_target)", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
     const sessionJwt = await mintSessionCookie(env);
@@ -1431,6 +1437,7 @@ describe("OAuth resource indicators (RFC 8707)", () => {
     url.searchParams.set("response_type", "code");
     url.searchParams.set("code_challenge", challenge);
     url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("state", "xyz");
     url.searchParams.set("resource", "https://evil.example/mcp");
     const res = await handleAuthorize(
       new Request(url.toString(), {
@@ -1439,8 +1446,52 @@ describe("OAuth resource indicators (RFC 8707)", () => {
       }),
       env,
     );
-    expect(res.status).toBe(400);
-    expect(await res.text()).toContain("invalid_target");
+    // RFC 6749 §4.1.2.1 error delivery: 302 to the registered redirect_uri.
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.origin + loc.pathname).toBe("https://client.example.com/cb");
+    expect(loc.searchParams.get("error")).toBe("invalid_target");
+    expect(loc.searchParams.get("state")).toBe("xyz");
+  });
+
+  it("rejects a foreign `resource` at /token (invalid_target)", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { verifier, challenge } = await pkcePair();
+    const url = new URL(`${ORIGIN}/authorize`);
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    const authorizeRes = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const code = new URL(authorizeRes.headers.get("location")!)
+      .searchParams.get("code")!;
+    const tokenRes = await handleToken(
+      new Request(`${ORIGIN}/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://client.example.com/cb",
+          code_verifier: verifier,
+          client_id: clientId,
+          resource: "https://evil.example/mcp",
+        }).toString(),
+      }),
+      env,
+    );
+    expect(tokenRes.status).toBe(400);
+    const body = (await tokenRes.json()) as { error: string };
+    expect(body.error).toBe("invalid_target");
   });
 
   it("carries `resource` into the state cookie on the login round-trip", async () => {

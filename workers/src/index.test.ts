@@ -231,10 +231,10 @@ describe("worker routing", () => {
       "tako_search",
     ]);
 
-    // Every runtime tool advertises per-tool OAuth via `_meta.securitySchemes`
-    // (the only descriptor field the SDK preserves on the wire).
+    // Every runtime tool advertises per-tool OAuth via _meta, reverse-DNS
+    // namespaced per the MCP _meta rules (the only field the SDK preserves).
     for (const t of body.result.tools) {
-      expect(t._meta?.securitySchemes).toEqual([
+      expect(t._meta?.["com.tako/securitySchemes"]).toEqual([
         { type: "oauth2", scopes: ["mcp"] },
       ]);
     }

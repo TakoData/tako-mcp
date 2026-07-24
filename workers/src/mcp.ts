@@ -391,11 +391,13 @@ function registerTool(
   // Advertise per-tool OAuth on every runtime descriptor. This only survives
   // to the client via `_meta` — the SDK's `tools/list` serializer drops
   // unknown top-level descriptor fields, but passes `_meta` through verbatim.
-  // Hosts (ChatGPT / Claude) read it to know the tool is reachable via the
-  // OAuth flow and requires the `mcp` scope. The widget block below MERGES
-  // into this rather than replacing it.
+  // Reverse-DNS namespaced (`com.tako/…`) per the MCP `_meta` rules, which
+  // reserve unprefixed keys for the protocol and would collide with the field
+  // SEP-1488 (still Draft) will standardize at the descriptor top level. Hosts
+  // read it to know the tool is reachable via OAuth and needs the `mcp` scope.
+  // The widget block below MERGES into this rather than replacing it.
   config._meta = {
-    securitySchemes: [{ type: "oauth2", scopes: ["mcp"] }],
+    "com.tako/securitySchemes": [{ type: "oauth2", scopes: ["mcp"] }],
   };
 
   if (tool.outputSchema !== undefined) {
@@ -991,7 +993,7 @@ export async function handleMcpRequest(
   //   verbatim. Backwards-compatible with every Claude Code install in
   //   the wild.
   const origin = new URL(request.url).origin;
-  const oauth = await tryResolveOAuthAccessToken(bearer, env, origin, `${origin}/mcp`);
+  const oauth = await tryResolveOAuthAccessToken(bearer, env, origin);
   if (oauth.kind === "reject") {
     // The bearer IS a Worker-issued JWT but failed a binding check
     // (wrong audience/issuer/scope/type). Return a clean 401 rather than
@@ -1156,6 +1158,10 @@ function oauthChallengeResponse(
   errorDescription: string,
 ): Response {
   const origin = new URL(request.url).origin;
+  // RFC 6750 §3.1: insufficient_scope → 403 (the grant is wrong; a
+  // re-auth would re-present the same scope and loop). Everything else →
+  // 401 (re-authenticate).
+  const status = error === "insufficient_scope" ? 403 : 401;
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
@@ -1167,7 +1173,7 @@ function oauthChallengeResponse(
       },
     }),
     {
-      status: 401,
+      status,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         "WWW-Authenticate": wwwAuthenticate(origin, error, errorDescription),

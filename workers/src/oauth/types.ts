@@ -133,9 +133,12 @@ export interface StateCookieClaims extends BaseClaims {
   code_challenge_method: string;
   state: string | null;
   scope: string | null;
-  /** RFC 8707 resource indicator (canonical bare origin) carried across
-   *  the Stytch round-trip, or `null` when the client omitted it. */
-  resource: string | null;
+  /** RFC 8707 resource indicator (canonical) carried across the Stytch
+   *  round-trip, or `null` when the client omitted it. Optional on the
+   *  interface: a state cookie minted before this shipped has no `resource`
+   *  key and is `undefined` at runtime — callers must guard with
+   *  `typeof === "string"`, not `!== null`. */
+  resource?: string | null;
 }
 
 /**

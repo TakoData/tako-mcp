@@ -50,7 +50,7 @@ describe("tryResolveOAuthAccessToken", () => {
   it("resolves the Tako token from a valid, correctly-audienced access JWT", async () => {
     const env = envWith({});
     const token = await mintAccessToken(env, "real-tako-token-xyz");
-    const r = await tryResolveOAuthAccessToken(token, env, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
     expect(r).toEqual({ kind: "ok", takoToken: "real-tako-token-xyz" });
   });
 
@@ -69,13 +69,13 @@ describe("tryResolveOAuthAccessToken", () => {
       },
       env.OAUTH_SIGN_KEY!,
     );
-    const r = await tryResolveOAuthAccessToken(token, env, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
     expect(r).toEqual({ kind: "ok", takoToken: "legacy-tok" });
   });
 
   it("is not_oauth for non-JWT bearers (raw Tako tokens)", async () => {
     const env = envWith({});
-    const r = await tryResolveOAuthAccessToken("plain-tako-api-token", env, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken("plain-tako-api-token", env, ISSUER);
     expect(r).toEqual({ kind: "not_oauth" });
   });
 
@@ -84,7 +84,7 @@ describe("tryResolveOAuthAccessToken", () => {
     const token = await mintAccessToken(env, "x");
     const { OAUTH_SIGN_KEY: _omit, ...disabledEnv } = env;
     void _omit;
-    const r = await tryResolveOAuthAccessToken(token, disabledEnv as Env, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(token, disabledEnv as Env, ISSUER);
     expect(r).toEqual({ kind: "not_oauth" });
   });
 
@@ -93,7 +93,7 @@ describe("tryResolveOAuthAccessToken", () => {
     const token = await mintAccessToken(env, "x");
     const { OAUTH_ENC_KEY: _omit, ...disabledEnv } = env;
     void _omit;
-    const r = await tryResolveOAuthAccessToken(token, disabledEnv as Env, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(token, disabledEnv as Env, ISSUER);
     expect(r).toEqual({ kind: "not_oauth" });
   });
 
@@ -101,7 +101,7 @@ describe("tryResolveOAuthAccessToken", () => {
     const envA = envWith({});
     const envB: Env = { ...envA, OAUTH_SIGN_KEY: "completely-different-key" };
     const token = await mintAccessToken(envA, "x");
-    const r = await tryResolveOAuthAccessToken(token, envB, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(token, envB, ISSUER);
     expect(r).toEqual({ kind: "not_oauth" });
   });
 
@@ -121,14 +121,14 @@ describe("tryResolveOAuthAccessToken", () => {
       },
       env.OAUTH_SIGN_KEY!,
     );
-    const r = await tryResolveOAuthAccessToken(refreshShaped, env, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(refreshShaped, env, ISSUER);
     expect(r.kind).toBe("reject");
   });
 
   it("rejects a token whose audience names a different resource", async () => {
     const env = envWith({});
     const token = await mintAccessToken(env, "x", { aud: "https://evil.example" });
-    const r = await tryResolveOAuthAccessToken(token, env, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
     expect(r.kind).toBe("reject");
     if (r.kind === "reject") expect(r.error).toBe("invalid_token");
   });
@@ -136,14 +136,14 @@ describe("tryResolveOAuthAccessToken", () => {
   it("rejects a token whose issuer is a different origin", async () => {
     const env = envWith({});
     const token = await mintAccessToken(env, "x", { iss: "https://evil.example" });
-    const r = await tryResolveOAuthAccessToken(token, env, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
     expect(r.kind).toBe("reject");
   });
 
   it("rejects a token missing the required 'mcp' scope", async () => {
     const env = envWith({});
     const token = await mintAccessToken(env, "x", { scope: "openid" });
-    const r = await tryResolveOAuthAccessToken(token, env, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
     expect(r.kind).toBe("reject");
     if (r.kind === "reject") expect(r.error).toBe("insufficient_scope");
   });
@@ -152,7 +152,46 @@ describe("tryResolveOAuthAccessToken", () => {
     const env = envWith({});
     const token = await mintAccessToken(env, "x");
     const rotatedEnv: Env = { ...env, OAUTH_ENC_KEY: freshEncKey() };
-    const r = await tryResolveOAuthAccessToken(token, rotatedEnv, ISSUER, RESOURCE);
+    const r = await tryResolveOAuthAccessToken(token, rotatedEnv, ISSUER);
+    expect(r.kind).toBe("reject");
+  });
+
+  it("accepts a token audienced to the bare origin (both forms are this server)", async () => {
+    const env = envWith({});
+    const token = await mintAccessToken(env, "ok-tok", { aud: ISSUER });
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
+    expect(r).toEqual({ kind: "ok", takoToken: "ok-tok" });
+  });
+
+  it("rejects an expired access token with a 401-worthy reject (not fall-through)", async () => {
+    const env = envWith({});
+    const token = await mintAccessToken(env, "x", {
+      exp: Math.floor(Date.now() / 1000) - 3600,
+    });
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
+    expect(r.kind).toBe("reject");
+    if (r.kind === "reject") expect(r.error).toBe("invalid_token");
+  });
+
+  it("rejects a non-string aud (array) rather than skipping the check", async () => {
+    const env = envWith({});
+    // RFC 7519 permits aud as an array; a future minter must not bypass the
+    // check by emitting one, so a present non-string aud is rejected.
+    const enc_tako_token = await encryptAesGcm("x", env.OAUTH_ENC_KEY!);
+    const token = await signJwt(
+      {
+        type: "access",
+        scope: "mcp",
+        user_id: "u",
+        user_email: "e",
+        enc_tako_token,
+        iss: ISSUER,
+        aud: [RESOURCE, "https://evil.example"],
+        exp: Math.floor(Date.now() / 1000) + 60,
+      },
+      env.OAUTH_SIGN_KEY!,
+    );
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
     expect(r.kind).toBe("reject");
   });
 });
