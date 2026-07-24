@@ -290,10 +290,12 @@ describe("extractErrorDetail", () => {
  *
  *   - `widgetSuppressed` — skip the MCP Apps widget (`appUiResource`).
  *     ChatGPT and Claude clients both keep this OFF now: claude.ai
- *     renders MCP Apps widgets inline in the chat body (via the image
- *     branch — its restricted `frameDomains` rule out the iframe route
- *     ChatGPT uses), so both get widget `_meta`. Unknown clients keep
- *     it ON — the long tail of MCP hosts rarely implements MCP Apps.
+ *     renders MCP Apps widgets inline in the chat body via the image
+ *     branch (claude.ai's own outer CSP ignores our `frameDomains`
+ *     declaration, so the bundle's runtime `window.openai` check falls
+ *     back from iframe to image there), so both get widget `_meta`.
+ *     Unknown clients keep it ON — the long tail of MCP hosts rarely
+ *     implements MCP Apps.
  *   - `inlinePngFallbackSuppressed` — skip the `extraContentBlocks`
  *     PNG image content block. Attaching the widget (`ui !== undefined`)
  *     already suppresses this hook for ChatGPT and Claude, so only
