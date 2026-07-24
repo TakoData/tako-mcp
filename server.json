@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.TakoData/tako-mcp",
   "title": "Tako",
-  "description": "Proprietary, continuously-updated live data: 100K+ charts — search, answer, fetch, Answer Agent.",
+  "description": "Give your agent web search and authoritative datasets: S&P Global, FRED, OECD, SimilarWeb & more.",
   "version": "0.12.0",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
