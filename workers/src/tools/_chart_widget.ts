@@ -913,17 +913,38 @@ export async function fetchImageDataUrlAndDims(
   const timeout = setTimeout(() => controller.abort(), PNG_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) return undefined;
+    if (!response.ok) {
+      console.warn(
+        `[tako] chart image_data_url fetch failed: HTTP ${response.status} from ${url}`,
+      );
+      return undefined;
+    }
     const contentType = response.headers.get("content-type") ?? "";
     // Reject anything that's not an image — an upstream redirect to an
     // HTML error page would otherwise let us base64 HTML and ship it
     // as a `data:image/...` URI the client can't render.
-    if (!contentType.startsWith("image/")) return undefined;
+    if (!contentType.startsWith("image/")) {
+      console.warn(
+        `[tako] chart image_data_url fetch failed: unexpected content-type "${contentType}" from ${url}`,
+      );
+      return undefined;
+    }
     const buffer = await response.arrayBuffer();
-    if (buffer.byteLength === 0) return undefined;
-    if (buffer.byteLength > MAX_INLINE_DATA_URL_BYTES) return undefined;
+    if (buffer.byteLength === 0) {
+      console.warn(`[tako] chart image_data_url fetch failed: empty body from ${url}`);
+      return undefined;
+    }
+    if (buffer.byteLength > MAX_INLINE_DATA_URL_BYTES) {
+      console.warn(
+        `[tako] chart image_data_url fetch failed: oversize body (${buffer.byteLength} bytes) from ${url}`,
+      );
+      return undefined;
+    }
     const dims = parsePngDimensions(buffer);
-    if (dims === undefined) return undefined;
+    if (dims === undefined) {
+      console.warn(`[tako] chart image_data_url fetch failed: invalid PNG header from ${url}`);
+      return undefined;
+    }
     // `parsePngDimensions` validated the PNG signature (89 50 4E 47…),
     // so the buffer is always `image/png` by here — no need to derive
     // the MIME type from the response header.
@@ -932,7 +953,8 @@ export async function fetchImageDataUrlAndDims(
       naturalWidth: dims.width,
       naturalHeight: dims.height,
     };
-  } catch {
+  } catch (e) {
+    console.warn(`[tako] chart image_data_url fetch failed: ${String(e)} for ${url}`);
     return undefined;
   } finally {
     clearTimeout(timeout);
