@@ -709,37 +709,73 @@ describe("worker routing", () => {
     expect(item.text).toContain("tako-embed");
   });
 
-  it("POST /mcp resources/list returns an empty list (not -32601) for non-ChatGPT clients", async () => {
-    // The chart widget resource registers only for ChatGPT (the sole host
-    // that renders it), so no `registerResource` call ever happens on a
-    // non-ChatGPT server instance — and without this the SDK would never
-    // advertise the `resources` capability, turning `resources/list` into
-    // a hard -32601 for capability-probing clients (Smithery's scan, some
-    // hosts). Mirror of the prompts/list guarantee below.
-    for (const userAgent of [undefined, "claude-mcp-client/1.0"]) {
-      const res = await SELF.fetch("https://example.com/mcp", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          authorization: AUTH_HEADER,
-          ...(userAgent !== undefined ? { "user-agent": userAgent } : {}),
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 12,
-          method: "resources/list",
-          params: {},
-        }),
-      });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        result?: { resources: unknown[] };
-        error?: { code: number };
+  it("POST /mcp resources/list returns an empty list (not -32601) for unknown clients", async () => {
+    // The chart widget resource registers for ChatGPT and Claude clients —
+    // the two hosts that render MCP Apps widgets (see `widgetSuppressed`
+    // in mcp.ts) — so no `registerResource` call ever happens on an
+    // unknown-client server instance — and without this the SDK would
+    // never advertise the `resources` capability, turning `resources/list`
+    // into a hard -32601 for capability-probing clients (Smithery's scan,
+    // some hosts). Mirror of the prompts/list guarantee below.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 12,
+        method: "resources/list",
+        params: {},
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result?: { resources: unknown[] };
+      error?: { code: number };
+    };
+    expect(body.error).toBeUndefined();
+    expect(body.result?.resources).toEqual([]);
+  });
+
+  it("POST /mcp resources/list includes the chart widget bundle (Claude)", async () => {
+    // Claude clients now get the same widget resource registration as
+    // ChatGPT (the gate flip in mcp.ts) — claude.ai renders MCP Apps
+    // widgets inline in the chat body, unlike its collapsed treatment of
+    // `image` content blocks, so the widget resource must be discoverable
+    // via `resources/list` for a claude-mcp-client user agent too.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "claude-mcp-client/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 13,
+        method: "resources/list",
+        params: {},
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        resources: Array<{
+          uri: string;
+          mimeType?: string;
+          _meta?: Record<string, unknown>;
+        }>;
       };
-      expect(body.error).toBeUndefined();
-      expect(body.result?.resources).toEqual([]);
-    }
+    };
+    const widget = body.result.resources.find(
+      (r) => r.uri === "ui://tako/embed/chart",
+    );
+    expect(widget).toBeDefined();
+    expect(widget?.mimeType).toBe("text/html;profile=mcp-app");
   });
 
   it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {

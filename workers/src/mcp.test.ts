@@ -289,13 +289,15 @@ describe("extractErrorDetail", () => {
  * Two independent gates decide how a chart-bearing tool result renders:
  *
  *   - `widgetSuppressed` — skip the MCP Apps widget (`appUiResource`).
- *     Claude clients keep this ON: claude.ai's widget container clips
- *     the chart iframe, so no widget `_meta` ships there.
+ *     ChatGPT and Claude clients both keep this OFF now: claude.ai
+ *     renders MCP Apps widgets inline in the chat body (via the image
+ *     branch — its restricted `frameDomains` rule out the iframe route
+ *     ChatGPT uses), so both get widget `_meta`. Unknown clients keep
+ *     it ON — the long tail of MCP hosts rarely implements MCP Apps.
  *   - `inlinePngFallbackSuppressed` — skip the `extraContentBlocks`
- *     PNG image content block. Claude clients keep this OFF so charts
- *     render inline as images (claude.ai, Claude desktop, and Claude
- *     Code all render `image` content blocks in-chat, and the model
- *     can see the chart while composing its answer).
+ *     PNG image content block. Attaching the widget (`ui !== undefined`)
+ *     already suppresses this hook for ChatGPT and Claude, so only
+ *     unknown clients render `image` content blocks in-chat.
  *
  * Exercised end-to-end over an in-memory MCP transport: real server,
  * real tool registration, real `tools/call` — only the upstream
@@ -378,22 +380,38 @@ describe("chart render gates per client", () => {
     vi.restoreAllMocks();
   });
 
-  it("claude client: chart ships as an inline image content block (widget stays suppressed)", async () => {
-    // Call 1: v3 search. Call 2: chart PNG for the image content block.
-    mockFetchSequence([searchResponse(), pngResponse()]);
+  /**
+   * 1x1 transparent PNG — a REAL PNG (valid IHDR), because the widget
+   * `_meta` path (`fetchImageDataUrlAndDims`) parses dimensions and
+   * degrades to undefined on a bare signature.
+   */
+  function realPngResponse(): Response {
+    const b64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new Response(bytes, {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    });
+  }
+
+  it("claude client: MCP Apps widget ships inline, no image content block", async () => {
+    // Call 1: v3 search. Call 2: chart PNG — now fetched by `extraMeta`
+    // (baked `_meta.image_data_url` for the widget's image branch)
+    // instead of `extraContentBlocks`. Still exactly two fetches.
+    mockFetchSequence([searchResponse(), realPngResponse()]);
 
     const result = await callSearch("claude");
 
-    const imageBlocks = result.content.filter((b) => b.type === "image");
-    expect(imageBlocks).toHaveLength(1);
-    expect(imageBlocks[0]?.mimeType).toBe("image/png");
-    expect(typeof imageBlocks[0]?.data).toBe("string");
-    expect((imageBlocks[0]?.data as string).length).toBeGreaterThan(0);
-    // Widget stays suppressed for claude — no MCP Apps resource URI in
-    // the result `_meta` (claude.ai's widget container clips charts).
-    expect(
-      (result._meta as { ui?: unknown } | undefined)?.ui,
-    ).toBeUndefined();
+    // Widget replaces the PNG content block on claude — MCP Apps inline
+    // cards render in the chat body; image blocks stay collapsed in the
+    // tool-call expander (the bug this change fixes).
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    const meta = result._meta as
+      | { ui?: { resourceUri?: string }; image_data_url?: string }
+      | undefined;
+    expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/tako\/embed\/chart/);
+    expect(meta?.image_data_url).toMatch(/^data:image\/png;base64,/);
   });
 
   it("unknown client: chart ships as an inline image content block (no widget metadata)", async () => {
@@ -430,9 +448,10 @@ describe("chart render gates per client", () => {
   });
 
   it("claude client: no image block when the search returns zero cards", async () => {
-    // Empty result → no top card → no image_url → the PNG hook must not
-    // fire (queue holds only the search response; an unexpected second
-    // fetch would throw loudly).
+    // Empty result → no top card → no image_url → `extraMeta`'s PNG
+    // prefetch must not fire (queue holds only the search response; an
+    // unexpected second fetch would throw loudly) and no image content
+    // block ships either — both hold with the widget path too.
     mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "req-2" }),
     ]);
