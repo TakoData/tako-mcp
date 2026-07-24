@@ -420,7 +420,9 @@ describe("chart render gates per client", () => {
     // Unknown clients are the long tail of MCP hosts (Cursor, Windsurf,
     // Gemini CLI, LibreChat, …). Almost none of them implement the MCP
     // Apps widget spec, but virtually all render `image` content
-    // blocks — so they get the same PNG treatment as Claude clients.
+    // blocks — so they're the one bucket that still gets the PNG
+    // fallback (Claude now gets the widget's image branch instead, see
+    // the "claude client" test above).
     // Call 1: v3 search. Call 2: chart PNG for the image content block.
     mockFetchSequence([searchResponse(), pngResponse()]);
 

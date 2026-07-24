@@ -916,10 +916,10 @@ export async function fetchImageDataUrlAndDims(
 
 /**
  * Fetch the chart PNG and return it as a single MCP `image` content
- * block. Used by both tools' `extraContentBlocks` hook on hosts where
- * the widget bundle is suppressed (claude.ai for custom connectors,
- * which crops the widget iframe to ~200 px tall — strictly worse than
- * an inline image block).
+ * block. Used by both tools' `extraContentBlocks` hook on unknown
+ * clients — the one bucket where the widget bundle is suppressed
+ * entirely (ChatGPT and Claude both get the widget; see
+ * `widgetSuppressed` in mcp.ts).
  *
  * All failure modes (timeout, !ok, wrong content-type, 0-byte body,
  * oversize, network error) return `[]` so the tool call still resolves

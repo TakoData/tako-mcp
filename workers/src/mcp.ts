@@ -111,11 +111,15 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * Detect the calling MCP client from the HTTP `User-Agent` header.
  *
  * Used to gate per-client behavior that we'd otherwise have to ask the
- * LLM to figure out from prose — specifically, suppressing the chart
- * widget on claude.ai (where the constrained iframe container clips
- * the chart and the LLM's markdown link is strictly cleaner UX) and
- * routing ChatGPT through the agent split pair (its Apps SDK doesn't
- * reset tool-call timeouts on progress notifications).
+ * LLM to figure out from prose — specifically, routing the chart to
+ * the MCP Apps widget for ChatGPT and Claude (the two hosts that render
+ * it inline — ChatGPT via the interactive iframe branch, Claude via the
+ * image branch, since claude.ai's host-side CSP ignores declared
+ * `frameDomains` and the widget's runtime `window.openai` check falls
+ * back to the static image there) while unknown clients fall back to
+ * the inline PNG `image` content block, and routing ChatGPT through
+ * the agent split pair (its Apps SDK doesn't reset tool-call timeouts
+ * on progress notifications).
  *
  * The match is intentionally loose: we don't care about exact UA
  * strings, just whether the request smells like one of the major
@@ -266,8 +270,8 @@ export function createMcpServer(
     "tako_agent",
   ]);
   // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
-  // from the blanket non-ChatGPT suppression in `widgetSuppressed` —
-  // ChatGPT is the only client that gets the widget at all).
+  // from the blanket unknown-client suppression in `widgetSuppressed` —
+  // ChatGPT and Claude are the only clients that get the widget at all).
   // The mechanism is kept in place for future per-tool gating, but
   // is currently empty: `tako_search` ships its widget on ChatGPT
   // and handles the empty-result case by throwing an actionable
@@ -329,11 +333,12 @@ export function createMcpServer(
   }
 
   // Resources parity for server instances that registered NO widget
-  // resource (every non-ChatGPT client, since the chart widget is
-  // ChatGPT-only). The SDK only wires the `resources` capability and its
-  // request handlers on the first `registerResource` call — without this
-  // block, `resources/list` / `resources/read` answer JSON-RPC -32601 on
-  // non-ChatGPT instances, which capability-probing clients (Smithery's
+  // resource (unknown clients only — ChatGPT and Claude both register
+  // it, and the fallback below only fires when neither did). The SDK
+  // only wires the `resources` capability and its request handlers on
+  // the first `registerResource` call — without this block,
+  // `resources/list` / `resources/read` answer JSON-RPC -32601 on
+  // unknown-client instances, which capability-probing clients (Smithery's
   // scan, some hosts) surface as a failure. Same rationale as the empty
   // `prompts` registration above: an empty list is the spec-clean answer.
   // `resources/read` still errors (there is nothing to read) but with the
@@ -544,8 +549,12 @@ function registerTool(
       uiMeta.csp = csp;
     }
     // Resource registration. CSP-allowed iframe domains live on
-    // `_meta.ui.csp.frameDomains` (open MCP Apps spec). The bundle's
-    // `_meta.ui` is set in TWO places by design (matches the official
+    // `_meta.ui.csp.frameDomains` (open MCP Apps spec); its sibling
+    // `_meta.ui.csp.resourceDomains` allow-lists the origins the
+    // remote-image fallback (`<img src=image_url>`) may fetch/embed
+    // from — the widget's image branch is what actually renders on
+    // Claude, where the iframe branch never gets a chance to load. The
+    // bundle's `_meta.ui` is set in TWO places by design (matches the official
     // `@modelcontextprotocol/ext-apps` helper):
     //
     //   1. Resource registration metadata (third arg to
@@ -1144,9 +1153,9 @@ export async function handleMcpRequest(
     // connectors from referencing prod URLs and vice versa.
     const url = new URL(request.url);
     const requestOrigin = url.origin;
-    // Detect calling client from User-Agent so we can suppress the
-    // chart widget on claude.ai (constrained iframe container) and
-    // route ChatGPT through the agent split pair. See
+    // Detect calling client from User-Agent so we can route the chart
+    // widget to ChatGPT and Claude (unknown clients fall back to the
+    // inline PNG) and route ChatGPT through the agent split pair. See
     // `detectMcpClient` for the matching rules.
     const client = detectMcpClient(request.headers.get("user-agent"));
     // Opt-in tools: the agent is off by default and enabled per-connection

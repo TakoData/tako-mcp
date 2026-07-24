@@ -396,8 +396,9 @@ describe("worker routing", () => {
     // 4 defaults + tako_visualize = 5.
     expect(body.result.tools).toHaveLength(5);
 
-    // The widget is ChatGPT-only, so `tako_visualize`'s listing must
-    // declare the chart resource under all three metadata keys:
+    // The widget ships on ChatGPT (and Claude — see the claude tools/list
+    // test above), so `tako_visualize`'s listing must declare the chart
+    // resource under all three metadata keys:
     // `_meta.ui.resourceUri` (open MCP Apps spec), the legacy flat
     // `_meta["ui/resourceUri"]` (older host readers), and
     // `_meta["openai/outputTemplate"]` (ChatGPT's Apps SDK — without it
@@ -483,10 +484,11 @@ describe("worker routing", () => {
   });
 
   it("POST /mcp?tools=visualize adds tako_visualize without widget metadata (non-ChatGPT)", async () => {
-    // No User-Agent → client "unknown". The chart widget is ChatGPT-only
-    // (see `widgetSuppressed` in mcp.ts); non-ChatGPT clients render the
-    // chart via the inline PNG image content block on tool results, so
-    // the listing must NOT declare widget metadata.
+    // No User-Agent → client "unknown", the one bucket still denied the
+    // widget (see `widgetSuppressed` in mcp.ts — ChatGPT and Claude both
+    // get it). Unknown clients render the chart via the inline PNG image
+    // content block on tool results instead, so the listing must NOT
+    // declare widget metadata.
     const res = await SELF.fetch("https://example.com/mcp?tools=visualize", {
       method: "POST",
       headers: {
@@ -518,9 +520,10 @@ describe("worker routing", () => {
     // 4 default tools + tako_visualize = 5.
     expect(body.result.tools).toHaveLength(5);
 
-    // Widget metadata is ChatGPT-only — the unknown-client listing carries
-    // none of the three widget keys (the ChatGPT default-surface test
-    // asserts their presence there).
+    // Widget metadata ships for ChatGPT and Claude only — the
+    // unknown-client listing carries none of the three widget keys (the
+    // ChatGPT default-surface and claude tools/list tests assert their
+    // presence there).
     const visualizeTool = body.result.tools.find(
       (t) => t.name === "tako_visualize",
     );
@@ -658,8 +661,9 @@ describe("worker routing", () => {
   });
 
   it("POST /mcp resources/list includes the chart widget bundle (ChatGPT)", async () => {
-    // The widget resource registers only for ChatGPT clients — the sole
-    // host that renders it (see `widgetSuppressed` in mcp.ts).
+    // The widget resource registers for ChatGPT here; the Claude
+    // registration is asserted separately below (see `widgetSuppressed`
+    // in mcp.ts — unknown clients are the only ones that don't get it).
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
