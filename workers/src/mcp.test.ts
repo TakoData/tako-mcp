@@ -17,13 +17,47 @@ import {
   createMcpServer,
   detectMcpClient,
   djangoErrorToToolResult,
+  toolAnnotationsForClient,
 } from "./mcp.js";
+import { TOOL_REGISTRY } from "./tools/_registry.js";
 import {
   jsonResponse,
   mockFetchSequence,
   noopSendProgress,
 } from "./tools/__test_helpers.js";
 import type { McpClientKind, ToolContext } from "./tools/types.js";
+
+describe("toolAnnotationsForClient", () => {
+  it("preserves the canonical MCP annotations for non-ChatGPT clients", () => {
+    for (const tool of TOOL_REGISTRY) {
+      expect(toolAnnotationsForClient(tool, "claude")).toEqual(tool.annotations);
+      expect(toolAnnotationsForClient(tool, "unknown")).toEqual(tool.annotations);
+    }
+  });
+
+  it("uses OpenAI Apps review semantics only for ChatGPT descriptors", () => {
+    for (const tool of TOOL_REGISTRY) {
+      const annotations = toolAnnotationsForClient(tool, "chatgpt");
+      expect(annotations.destructiveHint, tool.name).toBe(false);
+      expect(annotations.openWorldHint, tool.name).toBe(
+        tool.name === "tako_visualize",
+      );
+    }
+
+    expect(
+      toolAnnotationsForClient(
+        TOOL_REGISTRY.find((tool) => tool.name === "tako_agent_start")!,
+        "chatgpt",
+      ).readOnlyHint,
+    ).toBe(false);
+    expect(
+      toolAnnotationsForClient(
+        TOOL_REGISTRY.find((tool) => tool.name === "tako_agent")!,
+        "chatgpt",
+      ).readOnlyHint,
+    ).toBe(false);
+  });
+});
 
 describe("djangoErrorToToolResult", () => {
   // Read tools (tako_search/tako_answer/tako_contents) declare an

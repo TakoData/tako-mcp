@@ -47,7 +47,12 @@ import {
   parseEnabledOptionalToolNames,
 } from "./tools/_optional.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
-import type { AnyToolModule, McpClientKind, ToolContext } from "./tools/types.js";
+import type {
+  AnyToolModule,
+  McpClientKind,
+  ToolAnnotations,
+  ToolContext,
+} from "./tools/types.js";
 
 /**
  * Server identity. `registry/server.json` is the canonical source — versions are
@@ -164,6 +169,53 @@ export function detectMcpClient(userAgent: string | null): McpClientKind {
   // `openai-mcp`, or similar in UA.
   if (ua.includes("chatgpt") || ua.includes("openai")) return "chatgpt";
   return "unknown";
+}
+
+/**
+ * OpenAI's ChatGPT Apps review guidance uses `openWorldHint` as a
+ * public/external-state mutation label, which differs from the MCP protocol's
+ * domain-of-interaction meaning (where web search is the canonical open-world
+ * example). Keep each tool module's canonical MCP annotations untouched, then
+ * adapt only the descriptors served to ChatGPT-class clients.
+ *
+ * `tako_agent_start` is also non-read-only under the Apps review meaning
+ * because it enqueues a server-side workflow. The combined `tako_agent` gets
+ * the same override for completeness even though ChatGPT receives the split
+ * start/wait pair instead.
+ */
+const CHATGPT_ANNOTATION_OVERRIDES: Readonly<
+  Record<
+    string,
+    Partial<
+      Pick<
+        ToolAnnotations,
+        "readOnlyHint" | "destructiveHint" | "openWorldHint"
+      >
+    >
+  >
+> = {
+  tako_search: { openWorldHint: false },
+  tako_answer: { openWorldHint: false },
+  tako_contents: { openWorldHint: false },
+  tako_available_data: { openWorldHint: false },
+  tako_graph_search: { openWorldHint: false },
+  tako_graph_related: { openWorldHint: false },
+  tako_graph_node: { openWorldHint: false },
+  tako_agent: { readOnlyHint: false, openWorldHint: false },
+  tako_agent_start: { readOnlyHint: false, openWorldHint: false },
+  tako_agent_wait: { openWorldHint: false },
+  tako_visualize: { openWorldHint: true },
+};
+
+export function toolAnnotationsForClient(
+  tool: AnyToolModule,
+  client: McpClientKind,
+): ToolAnnotations {
+  if (client !== "chatgpt") return tool.annotations;
+  return {
+    ...tool.annotations,
+    ...CHATGPT_ANNOTATION_OVERRIDES[tool.name],
+  };
 }
 
 export function createMcpServer(
@@ -434,7 +486,7 @@ function registerTool(
     title: tool.annotations.title,
     description,
     inputSchema: tool.inputSchema.shape,
-    annotations: tool.annotations,
+    annotations: toolAnnotationsForClient(tool, options.client),
   };
 
   // Advertise per-tool OAuth on every runtime descriptor. This only survives

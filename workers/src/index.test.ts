@@ -212,7 +212,15 @@ describe("worker routing", () => {
 
     const body = (await res.json()) as {
       result: {
-        tools: Array<{ name: string; _meta?: Record<string, unknown> }>;
+        tools: Array<{
+          name: string;
+          annotations: {
+            readOnlyHint: boolean;
+            destructiveHint: boolean;
+            openWorldHint: boolean;
+          };
+          _meta?: Record<string, unknown>;
+        }>;
       };
     };
     const names = body.result.tools.map((t) => t.name).sort();
@@ -237,6 +245,9 @@ describe("worker routing", () => {
       expect(t._meta?.["com.tako/securitySchemes"]).toEqual([
         { type: "oauth2", scopes: ["mcp"] },
       ]);
+      // Non-ChatGPT clients retain the canonical MCP meaning, where live
+      // search/data lookup is an open-world interaction.
+      expect(t.annotations.openWorldHint).toBe(true);
     }
 
     // MCP Apps: this request carries no User-Agent, so `detectMcpClient`
@@ -326,7 +337,15 @@ describe("worker routing", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       result: {
-        tools: Array<{ name: string; _meta?: Record<string, unknown> }>;
+        tools: Array<{
+          name: string;
+          annotations: {
+            readOnlyHint: boolean;
+            destructiveHint: boolean;
+            openWorldHint: boolean;
+          };
+          _meta?: Record<string, unknown>;
+        }>;
       };
     };
     const names = new Set(body.result.tools.map((t) => t.name));
@@ -342,6 +361,23 @@ describe("worker routing", () => {
     expect(names.has("tako_visualize")).toBe(true);
     // 4 defaults + tako_visualize (ChatGPT default-on) + the split pair = 7.
     expect(body.result.tools).toHaveLength(7);
+
+    const agentStartTool = body.result.tools.find(
+      (t) => t.name === "tako_agent_start",
+    );
+    expect(agentStartTool?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+    });
+    const agentWaitTool = body.result.tools.find(
+      (t) => t.name === "tako_agent_wait",
+    );
+    expect(agentWaitTool?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    });
 
     // `tako_search` is the sole chart-widget tool on ChatGPT after 0.3.0.
     // The empty-fast widget-gap problem (ChatGPT pins widget container
@@ -377,7 +413,16 @@ describe("worker routing", () => {
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      result: { tools: Array<{ name: string }> };
+      result: {
+        tools: Array<{
+          name: string;
+          annotations: {
+            readOnlyHint: boolean;
+            destructiveHint: boolean;
+            openWorldHint: boolean;
+          };
+        }>;
+      };
     };
     const names = new Set(body.result.tools.map((t) => t.name));
     // The agent is opt-in: without `?tools=agent`, ChatGPT gets neither the
@@ -395,6 +440,16 @@ describe("worker routing", () => {
     expect(names.has("get_credit_balance")).toBe(false);
     // 4 defaults + tako_visualize = 5.
     expect(body.result.tools).toHaveLength(5);
+
+    for (const tool of body.result.tools) {
+      expect(tool.annotations.destructiveHint, tool.name).toBe(false);
+      expect(tool.annotations.openWorldHint, tool.name).toBe(
+        tool.name === "tako_visualize",
+      );
+      expect(tool.annotations.readOnlyHint, tool.name).toBe(
+        tool.name !== "tako_visualize",
+      );
+    }
 
     // The widget ships on ChatGPT (and Claude — see the claude tools/list
     // test above), so `tako_visualize`'s listing must declare the chart
