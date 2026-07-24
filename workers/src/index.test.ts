@@ -239,13 +239,16 @@ describe("worker routing", () => {
       ]);
     }
 
-    // MCP Apps: the chart widget is ChatGPT-only (see `widgetSuppressed`
-    // in mcp.ts). Non-ChatGPT clients — claude AND the unknown long tail
-    // (Cursor, Windsurf, Gemini CLI, …) — get the chart as an inline PNG
-    // `image` content block on tool results instead, so NO tool in this
-    // listing declares widget metadata under any of the three keys.
-    // The ChatGPT-side widget metadata is asserted in the ChatGPT
-    // tools/list tests below.
+    // MCP Apps: this request carries no User-Agent, so `detectMcpClient`
+    // falls through to "unknown" — the one bucket still denied the chart
+    // widget (see `widgetSuppressed` in mcp.ts). ChatGPT and Claude both
+    // get the widget now (interactive iframe on ChatGPT, image-branch
+    // render on Claude); only the unknown long tail (Cursor, Windsurf,
+    // Gemini CLI, …) falls back to the inline PNG `image` content block
+    // on tool results, so NO tool in this listing declares widget
+    // metadata under any of the three keys. The ChatGPT- and Claude-side
+    // widget metadata is asserted in the respective tools/list tests
+    // below.
     for (const t of body.result.tools) {
       const meta = t._meta as
         | {
@@ -258,6 +261,46 @@ describe("worker routing", () => {
       expect(meta?.["ui/resourceUri"]).toBeUndefined();
       expect(meta?.["openai/outputTemplate"]).toBeUndefined();
     }
+  });
+
+  it("POST /mcp tools/list declares the chart widget _meta for claude clients", async () => {
+    // claude.ai loads the widget URI from the `tools/list` registration
+    // `_meta`, not from a separate handshake (see the mcp.ts April
+    // findings on Claude's Apps loading path) — so registration `_meta`
+    // is the load-bearing wire surface for inline charts on claude.ai,
+    // same as it is for ChatGPT. This pins `tako_search`'s listing to
+    // carry all three widget keys for a claude User-Agent, mirroring the
+    // ChatGPT assertion above.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "claude-mcp-client/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        tools: Array<{ name: string; _meta?: Record<string, unknown> }>;
+      };
+    };
+    const takoSearchTool = body.result.tools.find(
+      (t) => t.name === "tako_search",
+    );
+    expect(takoSearchTool?._meta).toMatchObject({
+      ui: { resourceUri: "ui://tako/embed/chart" },
+      "ui/resourceUri": "ui://tako/embed/chart",
+      "openai/outputTemplate": "ui://tako/embed/chart",
+    });
   });
 
   it("POST /mcp?tools=agent adds the agent split pair on ChatGPT clients", async () => {
