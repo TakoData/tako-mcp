@@ -744,11 +744,20 @@ const WIDGET_HTML = `<!doctype html>
   window.addEventListener("message", function (event) {
     var msg = event.data;
     if (!msg || typeof msg !== "object") return;
+    // MCP Apps host messages (handshake + tool-result) come from the
+    // parent frame. Reject anything else — a co-installed sibling
+    // connector's iframe can postMessage to us via parent.frames[] and
+    // would otherwise be able to inject a spoofed tool-result (fake chart
+    // image + arbitrary click-through URL; render() is one-shot). The
+    // \`tako-embed-height\` branch below is separately origin-gated to the
+    // embed iframe, so leave it reachable regardless.
+    var fromHost = event.source === window.parent;
     // Init response → send the \`initialized\` notification so the host
     // starts piping tool-result messages. Don't gate on response
     // contents — any matching id (success or error) is sufficient
     // signal that the host saw our \`ui/initialize\`.
     if (
+      fromHost &&
       msg.jsonrpc === "2.0" &&
       msg.id === INIT_REQUEST_ID &&
       (msg.result !== undefined || msg.error !== undefined)
@@ -756,7 +765,7 @@ const WIDGET_HTML = `<!doctype html>
       sendInitializedNotification();
       return;
     }
-    if (msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
+    if (fromHost && msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
       var params = msg.params || {};
       // Forward both \`structuredContent\` (LLM-visible payload) and
       // \`_meta\` (metadata-only payload, where \`image_data_url\` lives).
