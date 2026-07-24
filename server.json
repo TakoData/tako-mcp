@@ -3,7 +3,7 @@
   "name": "io.github.TakoData/tako-mcp",
   "title": "Tako",
   "description": "Proprietary, continuously-updated live data: 100K+ charts — search, answer, fetch, Answer Agent.",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
     "source": "github"
