@@ -316,7 +316,8 @@ Step 2: Add this Claude skill
 
 ---
 name: tako-financial-research
-description: Company financials and markets via Tako (sources vary by metric — S&P Global, Fiscal.ai, Xignite, Visible Alpha, and others). Revenue, earnings vs. estimates, margins, valuation, stock performance, and head-to-head company comparisons as citation-backed charts. Use for equity research, company deep-dives, competitor financial comparison, or any "what are/were <company>'s <financial metric>" question.
+description: >-
+  Company financials and markets via Tako (sources vary by metric — S&P Global, Fiscal.ai, Xignite, Visible Alpha, and others). Revenue, earnings vs. estimates, margins, valuation, stock performance, and head-to-head company comparisons as citation-backed charts. Use for equity research, company deep-dives, competitor financial comparison, or any "what are/were <company>'s <financial metric>" question.
 ---
 
 # Financial Research (Tako)
@@ -382,7 +383,8 @@ Step 2: Add this Claude skill
 
 ---
 name: tako-web-traffic
-description: Website and app traffic via Tako (source: SimilarWeb). Monthly visits, traffic trends, and top-sites rankings for any domain as citation-backed charts. Use for competitive traffic analysis, share-of-attention, or any "how much traffic does <site> get" question.
+description: >-
+  Website and app traffic via Tako (source: SimilarWeb). Monthly visits, traffic trends, and top-sites rankings for any domain as citation-backed charts. Use for competitive traffic analysis, share-of-attention, or any "how much traffic does <site> get" question.
 ---
 
 # Web & App Traffic (Tako)
@@ -443,7 +445,8 @@ Step 2: Add this Claude skill
 
 ---
 name: tako-macroeconomics
-description: Macroeconomic indicators via Tako (sources: FRED, OECD, BIS). Inflation (CPI/PCE), unemployment, GDP, interest and policy rates, and cross-country comparisons as citation-backed charts. Use for macro monitoring, economic briefings, or any "what is/was <country>'s <indicator>" question.
+description: >-
+  Macroeconomic indicators via Tako (sources: FRED, OECD, BIS). Inflation (CPI/PCE), unemployment, GDP, interest and policy rates, and cross-country comparisons as citation-backed charts. Use for macro monitoring, economic briefings, or any "what is/was <country>'s <indicator>" question.
 ---
 
 # Macroeconomics (Tako)
