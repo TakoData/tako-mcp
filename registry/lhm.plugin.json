@@ -1,0 +1,244 @@
+{
+  "identifier": "takodata-tako-mcp",
+  "name": "Tako MCP",
+  "version": "0.12.0",
+  "author": "Tako",
+  "authorUrl": "https://github.com/TakoData",
+  "description": "Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have: company financials (S&P Global), macroeconomic indicators (FRED, OECD, BIS), web and app traffic (SimilarWeb), sports, US government spending, and more. Search returns citation-backed cards that render inline as charts; Answer returns grounded prose. Hosted at https://mcp.tako.com/mcp \u2014 authenticate with a Tako API key (Bearer) or OAuth on web hosts.",
+  "homepage": "https://github.com/TakoData/tako-mcp",
+  "cloudEndpoint": "https://mcp.tako.com/mcp",
+  "tags": [
+    "web-search",
+    "financial-data",
+    "macroeconomics",
+    "web-traffic",
+    "charts",
+    "data-visualization",
+    "real-time-data",
+    "citations"
+  ],
+  "tools": [
+    {
+      "name": "tako_answer",
+      "description": "Ask one specific data question; get one synthesized answer grounded in the data or web tako cites.\n\nBest for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations.\n\n`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.\n\nGrounds over BOTH data and web by default. When unsure the proprietary data exists or its exact name, run `tako_available_data` first (free, instant) \u2014 the recommended first step \u2014 then pin the node_ids it returns here for an accurate, grounded answer. To read the full rows or page text behind any cited card or web result, call `tako_contents` on its url.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Natural-language question to answer (e.g. \"What was US GDP in 2024?\"). Website-traffic data is keyed by domain \u2014 ask about \"openai.com monthly visits\", not \"OpenAI website visits\"."
+          },
+          "sources": {
+            "default": [
+              "data",
+              "web"
+            ],
+            "description": "Source(s) to ground in. Default [\"data\",\"web\"] (both) \u2014 keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) \u2014 never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. (\"tako\" is a legacy synonym for \"data\".)",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "data",
+                "web",
+                "tako"
+              ]
+            }
+          },
+          "country_code": {
+            "default": "US",
+            "description": "ISO country code for localized results.",
+            "type": "string"
+          },
+          "locale": {
+            "default": "en-US",
+            "description": "Locale for results.",
+            "type": "string"
+          },
+          "node_ids": {
+            "description": "Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "strict": {
+            "default": false,
+            "description": "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty \u2014 empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "tako_available_data",
+      "description": "Find what proprietary, continuously-updated structured data exists on something \u2014 summarized in one call. Free and fast.\n\nThe recommended first step for a data lookup: run this before tako_search / tako_answer whenever you're unsure the data exists or its exact name. It's free, it confirms coverage, and the exact names it returns make the follow-up priced call land precisely instead of guessing. (Skip it only for an obvious open-web query that no data graph would hold.)\n\nBest for: any \"what structured/proprietary data is there on X?\" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer \u2014 a cheap accuracy check that tells you whether the data exists and under exactly what name.\n\nWorks on an entity (a company, person, or place \u2192 the metrics tracked on it, e.g. Tesla) or a metric (\u2192 the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nOne metric across many entities \u2192 one metric-first call; one entity across many metrics \u2192 one entity-first call. The coverage.names answer all of them at once \u2014 never loop one call per name.\nPass `label` when you can categorize the term (company \u2192 ORG, country \u2192 GPE, person \u2192 PERSON) \u2014 a strong disambiguation boost.\nEach match's coverage.names lists the exact metric/entity names \u2014 reuse them verbatim in a follow-up tako_search (e.g. \"Apple Inc. revenue\") to hit the data precisely.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "minLength": 2,
+            "description": "Entity or metric name to look up (min 2 chars)."
+          },
+          "types": {
+            "description": "Narrow resolution to a \"thing\" (\"entity\") or a \"measure\" (\"metric\"). Omit to search both.",
+            "type": "string",
+            "enum": [
+              "entity",
+              "metric"
+            ]
+          },
+          "label": {
+            "description": "NER label to prefer (boost, not a filter). Supply when you can categorize the term (company\u2192ORG, place\u2192GPE, person\u2192PERSON, ...).",
+            "type": "string",
+            "enum": [
+              "PERSON",
+              "ORG",
+              "GPE",
+              "LOC",
+              "PRODUCT",
+              "EVENT",
+              "LANGUAGE",
+              "MONEY",
+              "METRIC",
+              "STOCK_TICKER",
+              "WEBSITE"
+            ]
+          }
+        },
+        "required": [
+          "q"
+        ]
+      }
+    },
+    {
+      "name": "tako_contents",
+      "description": "Fetch the real content behind one result URL from tako_search or tako_answer \u2014 the rows behind a Tako card, or a web page's full text.\n\nBest for: getting the full data to compute over or quote after `tako_search` / `tako_answer` \u2014 a search result carries only a preview and a chart, not its rows.\n\nPrecondition (Tako cards): only call this when the card's result had `exportable: true`. If `exportable` is false (equivalently, `content` is missing or null) this call fails \u2014 use the card's preview/chart instead, don't call. `exportable: true` is necessary but not sufficient: a rare card still 403s, so fall back, don't retry.\n\nWeb URLs always work \u2014 so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The result URL to fetch downloadable content for (a TakoCard.webpage_url or a WebResult.url). A Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted text."
+          },
+          "mode": {
+            "default": "inline",
+            "description": "Delivery only \u2014 does NOT change the row cap: \"inline\" (default) returns the content in the response body (a Tako card \u2014 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation \u2014 or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url to the same capped file.",
+            "type": "string",
+            "enum": [
+              "url",
+              "inline"
+            ]
+          },
+          "content_format": {
+            "default": "csv",
+            "description": "Tako cards only \u2014 serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
+            "type": "string",
+            "enum": [
+              "csv",
+              "json_records",
+              "json_compact"
+            ]
+          },
+          "max_rows": {
+            "description": "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (always full text).",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    },
+    {
+      "name": "tako_search",
+      "description": "Fastest, direct retrieval of data or metrics from the live web and proprietary data sources, returned as structured cards and web links; the top card auto-renders inline as a chart. It replaces a generic web search for data lookups.\n\nBest for: grabbing a known figure or metric \u2014 a value, time series, price, score, schedule, forecast, poll, or prediction-market number. It is cheap and fast, built to fan out: many narrow queries fired in parallel retrieve far better than one broad query, and you assemble the multi-part result yourself.\n\nCoverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more \u2014 metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.\n\nEach query resolves one entity + one metric (\"Apple revenue\", \"Nvidia vs AMD gross margin\"); broad or compound queries (\"today's sports + odds\") retrieve poorly. When unsure the data exists or its exact name, run `tako_available_data` first (free) \u2014 the recommended first step for a data lookup; it hands you the exact names to query here.\n\nData and web come back together \u2014 treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. When no data card fits the query, the `web_results` can be your fallback: call `tako_contents` on the most relevant one's url to read its full page text (web urls are always fetchable; a card's full csv needs `exportable: true`).\n\nIf you aren\u2019t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Natural-language search query (e.g. \"US GDP growth\", \"Intel vs Nvidia revenue\"). Website-traffic data is keyed by domain \u2014 query \"openai.com monthly visits\", not \"OpenAI website visits\"."
+          },
+          "sources": {
+            "default": [
+              "data",
+              "web"
+            ],
+            "description": "Source(s) to search. Default [\"data\",\"web\"] (both) \u2014 keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) \u2014 never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. (\"tako\" is a legacy synonym for \"data\".)",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "data",
+                "web",
+                "tako"
+              ]
+            }
+          },
+          "effort": {
+            "description": "Search effort: \"fast\" (default) or \"instant\" (fastest, serves cached embeds as-is). Omit for fast.",
+            "type": "string",
+            "enum": [
+              "fast",
+              "instant"
+            ]
+          },
+          "count": {
+            "default": 10,
+            "description": "Maximum number of results to return per source (1-20).",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "include_contents": {
+            "default": true,
+            "description": "Inline each Tako card's free 5-row data preview (default true). Set false for pointers-only (title/chart/nodes, no rows) \u2014 cheaper for large parallel fan-outs. Controls the DATA source only; web page text is never auto-inlined (billed per page \u2014 use tako_contents). Full export is a separate tako_contents call \u2014 possible only for cards marked `exportable: true`.",
+            "type": "boolean"
+          },
+          "country_code": {
+            "default": "US",
+            "description": "ISO country code for localized results.",
+            "type": "string"
+          },
+          "locale": {
+            "default": "en-US",
+            "description": "Locale for results.",
+            "type": "string"
+          },
+          "node_ids": {
+            "description": "Graph node ids (from tako_available_data, or a card's nodes) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "strict": {
+            "default": false,
+            "description": "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty \u2014 empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  ]
+}
