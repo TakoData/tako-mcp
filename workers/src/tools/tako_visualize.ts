@@ -54,7 +54,7 @@ const COMPONENT_TYPES = [
 const DESCRIPTION = [
   "Create an embeddable Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. Auto-renders inline; returns `webpage_url` / `embed_url`.",
   "",
-  "Input: one or more typed `components`, each `{component_type, config}` — e.g. `header`, `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`.",
+  "Input: one or more `components`, each `{component_type, config}`. `config` is typed per `component_type` — `header`, `categorical_bar`, `generic_timeseries`, `table`, `financial_boxes`, and `pie` carry their required fields inline; other types accept a documented passthrough config. `component_variant` is optional and rarely needed.",
   "",
   "Example — a titled bar chart is two components:",
   '{"components": [{"component_type": "header", "config": {"title": "Revenue"}}, {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Sales", "units": "USD", "data": [{"x": "NA", "y": 500}, {"x": "EU", "y": 300}]}]}}]}',
@@ -62,28 +62,182 @@ const DESCRIPTION = [
   "Tip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.",
 ].join("\n");
 
+// `component_variant` is a free-form, per-`component_type` string with no
+// fixed set (backend `ComponentConfig.component_variant: str | None`,
+// thinviz/types.py). Optional and rarely needed — most cards omit it.
+const componentVariant = z
+  .string()
+  .optional()
+  .describe(
+    "Optional. Omit unless a specific `component_type` documents a named variant — most cards don't need it. Free-form per type (e.g. 'simple', 'financial'); there is no fixed set.",
+  );
+
+// --- Config sub-shapes for the common component types ---
+// Each mirrors its backend Pydantic model in
+// app/backend/knowledge/api/ga/v1/thinviz/types.py and stays `.passthrough()`
+// so the many optional styling fields (and any additive backend fields) flow
+// through untyped rather than being rejected. Only the required fields and the
+// most-used optionals are typed here — enough for an agent to build a valid
+// call without guessing.
+
+const categoricalDataPoint = z.object({
+  x: z.string().describe("Category label (e.g. 'North', 'Q1 2024')."),
+  y: z.number().describe("Y-axis value."),
+});
+const categoricalDataset = z
+  .object({
+    label: z.string().describe("Dataset label shown in the legend."),
+    data: z.array(categoricalDataPoint).describe("Data points."),
+    units: z.string().optional().describe("Units for value formatting (e.g. '$', '%')."),
+  })
+  .passthrough();
+
+const timeseriesDataPoint = z.object({
+  x: z
+    .union([z.string(), z.number()])
+    .describe("X value — a timestamp, date string, or label."),
+  y: z.number().optional().describe("Y-axis value."),
+});
+const timeseriesDataset = z
+  .object({
+    label: z.string().describe("Dataset label shown in the legend."),
+    data: z.array(timeseriesDataPoint).describe("Data points."),
+    type: z
+      .enum(["line", "bar", "scatter"])
+      .optional()
+      .describe("Chart type for this dataset (default 'line')."),
+  })
+  .passthrough();
+
+const financialBoxItem = z
+  .object({
+    header: z.string().describe("Metric name (e.g. 'Revenue', 'EPS')."),
+    value: z.string().optional().describe("Formatted value (e.g. '$10.5B', '15.2%')."),
+    growth: z
+      .object({
+        formattedValue: z.string().describe("Formatted growth string (e.g. '5.25% YoY')."),
+        value: z.number().describe("Numeric growth value (e.g. 0.0525 for 5.25%)."),
+      })
+      .optional()
+      .describe("Optional period-over-period growth indicator."),
+  })
+  .passthrough();
+
+const tableColumn = z
+  .object({
+    field: z.string().describe("Key in each row object holding this column's value."),
+    label: z.string().describe("Column header text."),
+    type: z
+      .enum(["string", "number", "date", "percent", "boolean", "rating", "currency"])
+      .optional()
+      .describe("Value type for formatting (default 'string')."),
+    units: z.string().optional().describe("Unit for formatting (e.g. '$', '%')."),
+    align: z.enum(["left", "right", "center"]).optional().describe("Text alignment."),
+  })
+  .passthrough();
+
+const headerConfig = z
+  .object({
+    title: z.string().optional().describe("Header title."),
+    subtitle: z.string().optional().describe("Optional subtitle."),
+  })
+  .passthrough();
+const categoricalBarConfig = z
+  .object({
+    datasets: z.array(categoricalDataset).min(1).describe("One or more labeled series."),
+    title: z.string().optional().describe("Title shown in the hover tooltip."),
+  })
+  .passthrough();
+const pieConfig = z
+  .object({
+    datasets: z
+      .array(categoricalDataset)
+      .min(1)
+      .describe("Slices as a labeled series (x = slice label, y = value); only the first dataset renders."),
+    title: z.string().optional().describe("Title shown in the hover tooltip."),
+  })
+  .passthrough();
+const timeseriesConfig = z
+  .object({
+    datasets: z
+      .array(timeseriesDataset)
+      .optional()
+      .describe("Chart datasets. Provide EITHER `datasets` OR `datasets_by_interval`, not both."),
+    datasets_by_interval: z
+      .record(z.string(), z.array(timeseriesDataset))
+      .optional()
+      .describe(
+        "Multi-interval data keyed by ISO 8601 duration (e.g. 'PT5M', 'P1D'). Provide EITHER this OR `datasets`.",
+      ),
+    title: z.string().optional().describe("Title shown in the hover tooltip."),
+  })
+  .passthrough();
+const tableConfig = z
+  .object({
+    columns: z.array(tableColumn).min(1).describe("Column definitions."),
+    rows: z
+      .array(z.record(z.string(), z.unknown()))
+      .describe("Row objects; each object's keys match column `field` values."),
+    title: z.string().optional().describe("Optional table title."),
+  })
+  .passthrough();
+const financialBoxesConfig = z
+  .object({ items: z.array(financialBoxItem).min(1).describe("Financial metric boxes.") })
+  .passthrough();
+
+// A member of the component discriminated union with a concretely-typed config.
+const typedComponent = <T extends (typeof COMPONENT_TYPES)[number]>(
+  component_type: T,
+  config: z.ZodTypeAny,
+) => z.object({ component_type: z.literal(component_type), component_variant: componentVariant, config });
+
+// A member whose config stays a passthrough record — the shape is documented in
+// Tako's "Visualize Your Data" docs and validated server-side, but not typed
+// here (these types are either rarely used from an agent or have large, highly
+// variable configs). The typed common types above cover the everyday path.
+const passthroughComponent = <T extends (typeof COMPONENT_TYPES)[number]>(component_type: T) =>
+  z.object({
+    component_type: z.literal(component_type),
+    component_variant: componentVariant,
+    config: z
+      .record(z.string(), z.unknown())
+      .describe(
+        `Config for \`${component_type}\` — shape varies by type; see Tako's "Visualize Your Data" docs. Passed through and validated server-side.`,
+      ),
+  });
+
+// Discriminated on `component_type` so each type advertises its own config
+// shape (the six common types typed; the rest documented passthrough). This
+// replaces a single untyped `config` bag, so an agent — or a tool scanner —
+// sees the required fields per type instead of "untyped object".
+const componentSchema = z
+  .discriminatedUnion("component_type", [
+    typedComponent("header", headerConfig),
+    typedComponent("categorical_bar", categoricalBarConfig),
+    typedComponent("generic_timeseries", timeseriesConfig),
+    typedComponent("table", tableConfig),
+    typedComponent("financial_boxes", financialBoxesConfig),
+    typedComponent("pie", pieConfig),
+    passthroughComponent("choropleth"),
+    passthroughComponent("data_table_chart"),
+    passthroughComponent("histogram"),
+    passthroughComponent("timeline"),
+    passthroughComponent("treemap"),
+    passthroughComponent("heatmap"),
+    passthroughComponent("marimekko"),
+    passthroughComponent("boxplot"),
+    passthroughComponent("waterfall"),
+    passthroughComponent("sankey"),
+    passthroughComponent("scatter"),
+    passthroughComponent("bubble"),
+    passthroughComponent("top_level_metric"),
+    passthroughComponent("person_card"),
+  ])
+  .describe("A single component: `{component_type, config}` (+ optional `component_variant`). `config` shape is keyed to `component_type`.");
+
 const inputSchema = z.object({
   components: z
-    .array(
-      z.object({
-        component_type: z
-          .enum(COMPONENT_TYPES)
-          .describe("Component type; each type expects a different `config` shape."),
-        component_variant: z
-          .string()
-          .optional()
-          .describe("Optional component variant (e.g. 'simple', 'financial')."),
-        config: z
-          .record(z.string(), z.unknown())
-          .describe(
-            "Data/configuration object for this `component_type`; its shape varies by type and is validated server-side. " +
-              'Examples — `header`: `{"title": "Monthly Revenue"}`. ' +
-              '`categorical_bar`: `{"datasets": [{"label": "Sales", "units": "USD", "data": [{"x": "NA", "y": 500}, {"x": "EU", "y": 300}]}]}` ' +
-              "(each dataset is a labeled series; `data` is an array of `{x, y}` points). " +
-              "For shapes of other types (e.g. `generic_timeseries`, `table`, `financial_boxes`, `pie`) see Tako's 'Visualize Your Data' docs.",
-          ),
-      }),
-    )
+    .array(componentSchema)
     .min(1)
     .describe("One or more components making up the card, rendered top to bottom."),
   title: z.string().optional().describe("Card title (falls back to a header component's title)."),
@@ -139,7 +293,15 @@ type Input = z.infer<typeof inputSchema>;
  * the MCP tool does not expose them.
  */
 export function buildVisualizeBody(input: Input): z.input<typeof CreateCardRequest> {
-  const body: z.input<typeof CreateCardRequest> = { components: input.components };
+  // The MCP `config` is typed per component_type; the backend contract accepts
+  // an untyped `Record<string, any>`. Loosen `config` back to a record at this
+  // boundary so the discriminated-union member types satisfy CreateCardRequest.
+  const body: z.input<typeof CreateCardRequest> = {
+    components: input.components.map((c) => ({
+      ...c,
+      config: c.config as Record<string, unknown>,
+    })),
+  };
   if (input.title !== undefined) body.title = input.title;
   if (input.description !== undefined) body.description = input.description;
   if (input.source !== undefined) body.source = input.source;

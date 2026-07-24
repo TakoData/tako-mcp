@@ -173,11 +173,54 @@ describe("tako_visualize input schema", () => {
     ).toThrow();
   });
 
-  it("accepts a valid component with a freeform config object", () => {
+  it("accepts a passthrough component_type with a freeform config object", () => {
+    // `scatter` is one of the documented-passthrough types — its config is not
+    // typed here, so an arbitrary object is accepted and passed through.
     const parsed = takoVisualize.inputSchema.parse({
       components: [{ component_type: "scatter", config: { anything: [1, 2, 3], nested: { a: 1 } } }],
     });
     expect(parsed.components[0]?.component_type).toBe("scatter");
+  });
+
+  it("accepts a typed categorical_bar config with datasets", () => {
+    const parsed = takoVisualize.inputSchema.parse({
+      components: [
+        {
+          component_type: "categorical_bar",
+          config: { datasets: [{ label: "Sales", units: "USD", data: [{ x: "NA", y: 500 }] }] },
+        },
+      ],
+    });
+    expect(parsed.components[0]?.component_type).toBe("categorical_bar");
+  });
+
+  it("rejects a typed component whose required config field is missing", () => {
+    // categorical_bar requires `datasets`; an empty config must be rejected by
+    // the discriminated-union member rather than passed through.
+    expect(() =>
+      takoVisualize.inputSchema.parse({
+        components: [{ component_type: "categorical_bar", config: {} }],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a typed table config missing rows", () => {
+    expect(() =>
+      takoVisualize.inputSchema.parse({
+        components: [
+          { component_type: "table", config: { columns: [{ field: "a", label: "A" }] } },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("accepts an optional component_variant on a typed component", () => {
+    const parsed = takoVisualize.inputSchema.parse({
+      components: [
+        { component_type: "header", component_variant: "simple", config: { title: "X" } },
+      ],
+    });
+    expect(parsed.components[0]?.component_variant).toBe("simple");
   });
 });
 
