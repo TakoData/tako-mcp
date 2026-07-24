@@ -479,10 +479,16 @@ function registerTool(
   //         interactive iframe (`frameDomains` populated, `embed_url`
   //         loaded live inside the sandbox).
   //       - Claude clients ALSO keep the widget, but render it via the
-  //         image branch, not an iframe: claude.ai restricts
-  //         `frameDomains` for custom connectors pending its own
-  //         security review, so `csp.frameDomains` stays empty for
-  //         claude and the bundle falls back to painting the
+  //         image branch, not an iframe: the server declares
+  //         `csp.frameDomains` identically for every client (see
+  //         `buildChartAppUiResource` — it always sets `frameDomains:
+  //         [webBase]`), but claude.ai's host-side sandbox currently
+  //         restricts third-party iframes regardless of what's
+  //         declared there, pending Claude's own MCP Apps security
+  //         review, so the iframe never loads on claude.ai. The
+  //         bundle's client-side JS feature-detects `window.openai` at
+  //         runtime (see `shouldUseInteractiveIframe` in
+  //         `_chart_widget.ts`) and falls back to painting the
   //         server-fetched `_meta.image_data_url` PNG (see the
   //         `extraMeta` comment below) instead of embedding
   //         `embed_url` in an `<iframe>`.
@@ -842,11 +848,14 @@ function registerTool(
       // implementations bail early on `ctx.client === "chatgpt"` (its
       // iframe widget loads `embed_url` directly and never reads the
       // baked image), while Claude's do not — `image_data_url` is
-      // Claude's PRIMARY chart data path. claude.ai restricts
-      // `frameDomains` for custom connectors pending its own security
-      // review, so the widget can't embed `embed_url` in an `<iframe>`
-      // there; instead it reads this baked `_meta.image_data_url` and
-      // paints the PNG directly in its image render branch.
+      // Claude's PRIMARY chart data path. The server declares the same
+      // `csp.frameDomains` for both clients, but claude.ai's host-side
+      // sandbox currently restricts third-party iframes regardless of
+      // that declaration, pending Claude's own MCP Apps security
+      // review, so the bundle's runtime `window.openai` feature
+      // detection picks the image branch there instead of embedding
+      // `embed_url` in an `<iframe>`; it reads this baked
+      // `_meta.image_data_url` and paints the PNG directly.
       let resultMeta: Record<string, unknown> | undefined;
       if (tool.extraMeta !== undefined && ui !== undefined) {
         try {

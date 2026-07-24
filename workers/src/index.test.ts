@@ -776,6 +776,28 @@ describe("worker routing", () => {
     );
     expect(widget).toBeDefined();
     expect(widget?.mimeType).toBe("text/html;profile=mcp-app");
+    // CSP-allowed iframe domain mirrors `resolvePublicBase(env)` (which in
+    // tests resolves to `DJANGO_BASE_URL` / `http://localhost:8000`). The
+    // server declares this identically for every client — Claude clients
+    // don't get a restricted `frameDomains` list; claude.ai's own
+    // host-side sandbox is what blocks the iframe, not this metadata.
+    expect(widget?._meta).toMatchObject({
+      ui: { csp: { frameDomains: ["http://localhost:8000"] } },
+    });
+    // `resourceDomains` allow-lists the origins the image-branch fallback
+    // is permitted to fetch/embed from (the remote `image_url` and the
+    // server-fetched `image_data_url`) — must be a non-empty array of
+    // valid origins (staging/production always resolve to `https://`;
+    // the local test config's `DJANGO_BASE_URL` is `http://localhost:8000`,
+    // same as the `frameDomains` assertion above).
+    const resourceDomains = (
+      widget?._meta as { ui?: { csp?: { resourceDomains?: unknown } } }
+    )?.ui?.csp?.resourceDomains;
+    expect(Array.isArray(resourceDomains)).toBe(true);
+    expect((resourceDomains as string[]).length).toBeGreaterThan(0);
+    for (const origin of resourceDomains as string[]) {
+      expect(origin).toMatch(/^https?:\/\//);
+    }
   });
 
   it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {
