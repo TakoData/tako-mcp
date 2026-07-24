@@ -214,6 +214,30 @@ describe("tako_visualize input schema", () => {
     ).toThrow();
   });
 
+  it("preserves untyped optional config fields on a typed component (passthrough)", () => {
+    // The core correctness property of the discriminated union: fields not
+    // typed here (styling options the backend accepts) must survive parsing,
+    // not be silently stripped. A plain z.object() would drop them and every
+    // other test would still pass — so assert preservation explicitly.
+    const parsed = takoVisualize.inputSchema.parse({
+      components: [
+        {
+          component_type: "categorical_bar",
+          config: {
+            datasets: [{ label: "Sales", data: [{ x: "NA", y: 500 }] }],
+            series_color_theme: "red_bad_green_good",
+            legend: { position: "bottom" },
+            default_view: "horizontal",
+          },
+        },
+      ],
+    });
+    const cfg = parsed.components[0]?.config as Record<string, unknown>;
+    expect(cfg.series_color_theme).toBe("red_bad_green_good");
+    expect(cfg.legend).toEqual({ position: "bottom" });
+    expect(cfg.default_view).toBe("horizontal");
+  });
+
   it("accepts an optional component_variant on a typed component", () => {
     const parsed = takoVisualize.inputSchema.parse({
       components: [

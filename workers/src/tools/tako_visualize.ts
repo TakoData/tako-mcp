@@ -142,6 +142,9 @@ const headerConfig = z
     subtitle: z.string().optional().describe("Optional subtitle."),
   })
   .passthrough();
+// `.min(1)` on the required collections below is intentionally stricter than
+// the backend (which accepts empty lists) — an empty chart is a meaningless
+// card, so we reject it early with a clear message rather than render nothing.
 const categoricalBarConfig = z
   .object({
     datasets: z.array(categoricalDataset).min(1).describe("One or more labeled series."),
