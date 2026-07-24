@@ -73,10 +73,10 @@ describe("tako_visualize handler", () => {
     expect(takoVisualize.name).toBe("tako_visualize");
   });
 
-  it("is a write tool that creates a public card (annotations)", () => {
+  it("is a write tool over a closed domain (annotations)", () => {
     expect(takoVisualize.annotations.readOnlyHint).toBe(false);
-    // Creates a public, shareable card URL — effect observable outside Tako.
-    expect(takoVisualize.annotations.openWorldHint).toBe(true);
+    // Closed domain per the MCP spec — renders caller-supplied data.
+    expect(takoVisualize.annotations.openWorldHint).toBe(false);
   });
 
   it("POSTs components + title to /api/v1/thin_viz/create/ and lifts card_id into widget fields", async () => {

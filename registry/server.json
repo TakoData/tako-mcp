@@ -169,7 +169,7 @@
         "title": "Tako: Answer",
         "readOnlyHint": true,
         "destructiveHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       }
     },
     {
@@ -211,7 +211,7 @@
         "title": "Tako: Available Data",
         "readOnlyHint": true,
         "destructiveHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       }
     },
     {
@@ -251,7 +251,7 @@
         "title": "Tako: Fetch Contents",
         "readOnlyHint": true,
         "destructiveHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       }
     },
     {
@@ -434,7 +434,7 @@
         "title": "Tako: Search",
         "readOnlyHint": true,
         "destructiveHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       }
     },
     {
@@ -471,7 +471,7 @@
         "title": "Tako: Visualize",
         "readOnlyHint": false,
         "destructiveHint": false,
-        "openWorldHint": true
+        "openWorldHint": false
       }
     }
   ],
