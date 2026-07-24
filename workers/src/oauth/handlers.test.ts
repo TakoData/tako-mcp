@@ -1324,3 +1324,141 @@ describe("test helpers stay imported", () => {
     expect(typeof buildSetCookie).toBe("function");
   });
 });
+
+/* --------------------------- Resource indicators (RFC 8707) --------------------------- */
+
+describe("OAuth resource indicators (RFC 8707)", () => {
+  const ORIGIN = "https://mcp.example.com";
+  const RESOURCE = `${ORIGIN}/mcp`;
+
+  /** Decode a JWT payload (no verification — tests assert claim values). */
+  function jwtPayload(token: string): Record<string, unknown> {
+    const part = token.split(".")[1]!;
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/") +
+      "=".repeat((4 - (part.length % 4)) % 4);
+    return JSON.parse(atob(b64)) as Record<string, unknown>;
+  }
+
+  /** Run authorize(POST) -> token, optionally sending a `resource` param. */
+  async function flowWithResource(resource: string | null): Promise<{
+    accessToken: string;
+    refreshToken: string;
+  }> {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { verifier, challenge } = await pkcePair();
+    const url = new URL(`${ORIGIN}/authorize`);
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("scope", "mcp");
+    if (resource !== null) url.searchParams.set("resource", resource);
+
+    const authorizeRes = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const code = new URL(authorizeRes.headers.get("location")!)
+      .searchParams.get("code")!;
+    const tokenRes = await handleToken(
+      new Request(`${ORIGIN}/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://client.example.com/cb",
+          code_verifier: verifier,
+          client_id: clientId,
+        }).toString(),
+      }),
+      env,
+    );
+    expect(tokenRes.status).toBe(200);
+    const body = (await tokenRes.json()) as {
+      access_token: string;
+      refresh_token: string;
+    };
+    return { accessToken: body.access_token, refreshToken: body.refresh_token };
+  }
+
+  it("protected-resource metadata advertises the /mcp resource", async () => {
+    const res = handleProtectedResourceMetadata(
+      new Request(`${ORIGIN}/.well-known/oauth-protected-resource`),
+      envWith(),
+    );
+    const body = (await res.json()) as { resource: string };
+    expect(body.resource).toBe(RESOURCE);
+  });
+
+  it("binds issued access + refresh tokens to iss (origin) and aud (resource)", async () => {
+    const { accessToken, refreshToken } = await flowWithResource(RESOURCE);
+    const access = jwtPayload(accessToken);
+    expect(access.iss).toBe(ORIGIN);
+    expect(access.aud).toBe(RESOURCE);
+    const refresh = jwtPayload(refreshToken);
+    expect(refresh.iss).toBe(ORIGIN);
+    expect(refresh.aud).toBe(RESOURCE);
+    expect(refresh.resource).toBe(RESOURCE);
+  });
+
+  it("defaults aud to the /mcp resource when the client omits `resource`", async () => {
+    const { accessToken } = await flowWithResource(null);
+    const access = jwtPayload(accessToken);
+    expect(access.iss).toBe(ORIGIN);
+    expect(access.aud).toBe(RESOURCE);
+  });
+
+  it("accepts a resource with a trailing slash / query (canonicalized)", async () => {
+    const { accessToken } = await flowWithResource(`${ORIGIN}/mcp/?tools=agent`);
+    expect(jwtPayload(accessToken).aud).toBe(RESOURCE);
+  });
+
+  it("rejects a resource that names a different server (invalid_target)", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { challenge } = await pkcePair();
+    const url = new URL(`${ORIGIN}/authorize`);
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("resource", "https://evil.example/mcp");
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("invalid_target");
+  });
+
+  it("carries `resource` into the state cookie on the login round-trip", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const { challenge } = await pkcePair();
+    const url = new URL(`${ORIGIN}/authorize`);
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("resource", RESOURCE);
+    // GET with no session → 302 /login, Set-Cookie state carries resource.
+    const res = await handleAuthorize(new Request(url.toString()), env);
+    expect(res.status).toBe(302);
+    const setCookie = res.headers.get("set-cookie")!;
+    const stateJwt = setCookie.split(`${STATE_COOKIE}=`)[1]!.split(";")[0]!;
+    expect(jwtPayload(stateJwt).resource).toBe(RESOURCE);
+  });
+});

@@ -231,6 +231,14 @@ describe("worker routing", () => {
       "tako_search",
     ]);
 
+    // Every runtime tool advertises per-tool OAuth via `_meta.securitySchemes`
+    // (the only descriptor field the SDK preserves on the wire).
+    for (const t of body.result.tools) {
+      expect(t._meta?.securitySchemes).toEqual([
+        { type: "oauth2", scopes: ["mcp"] },
+      ]);
+    }
+
     // MCP Apps: the chart widget is ChatGPT-only (see `widgetSuppressed`
     // in mcp.ts). Non-ChatGPT clients — claude AND the unknown long tail
     // (Cursor, Windsurf, Gemini CLI, …) — get the chart as an inline PNG
