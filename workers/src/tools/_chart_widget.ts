@@ -371,11 +371,28 @@ const WIDGET_HTML = `<!doctype html>
   // intrinsic height. We notify on load (placeholder height) and again
   // after rendering. No-op on hosts that don't expose the function.
   function notifyHeight(h) {
+    // ChatGPT Apps SDK mechanism.
     try {
       if (window.openai && typeof window.openai.notifyIntrinsicHeight === "function") {
         window.openai.notifyIntrinsicHeight(h);
       }
     } catch (e) { /* ignore */ }
+    // MCP Apps open-spec mechanism (claude.ai, VS Code Insiders, Goose):
+    // JSON-RPC notification over postMessage. Hosts that don't implement
+    // it (ChatGPT) ignore unknown messages — same pattern as the
+    // ui/initialize handshake below. Sent best-effort even before the
+    // handshake completes; render() re-notifies after data arrives, so a
+    // pre-handshake miss self-corrects.
+    try {
+      window.parent.postMessage({
+        jsonrpc: "2.0",
+        method: "ui/notifications/size-changed",
+        params: {
+          width: (document.documentElement && document.documentElement.clientWidth) || 0,
+          height: h,
+        },
+      }, "*");
+    } catch (e) { /* host gone — nothing to do */ }
   }
 
   function render(structuredContent, meta) {
