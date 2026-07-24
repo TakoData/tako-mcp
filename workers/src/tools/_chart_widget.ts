@@ -197,11 +197,27 @@ function buildBakedWidgetHtml(opts: {
 (function(){
   "use strict";
   function notify(){
+    var h = document.documentElement.offsetHeight;
+    // ChatGPT Apps SDK mechanism.
     try {
       if (window.openai && typeof window.openai.notifyIntrinsicHeight === "function") {
-        var h = document.documentElement.offsetHeight;
         if (h > 0) window.openai.notifyIntrinsicHeight(h);
       }
+    } catch (e) { /* host gone — nothing to do */ }
+    // MCP Apps open-spec mechanism (claude.ai, VS Code Insiders, Goose):
+    // the static widget's notifyHeight sends this same notification —
+    // mirrored here so open-spec hosts get sizing info from the baked
+    // per-pub_id variant too, not just the static iframe/img bundle.
+    // Hosts that don't implement it (ChatGPT) ignore unknown messages.
+    try {
+      window.parent.postMessage({
+        jsonrpc: "2.0",
+        method: "ui/notifications/size-changed",
+        params: {
+          width: (document.documentElement && document.documentElement.clientWidth) || 0,
+          height: h,
+        },
+      }, "*");
     } catch (e) { /* host gone — nothing to do */ }
   }
   notify();
