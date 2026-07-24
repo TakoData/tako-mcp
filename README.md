@@ -188,31 +188,9 @@ Add to Zed `settings.json` (via the `mcp-remote` bridge):
 </details>
 
 <details>
-<summary><b>Claude Desktop</b></summary>
+<summary><b>Claude.ai, Claude Desktop &amp; ChatGPT (OAuth — no token needed)</b></summary>
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "tako-mcp": {
-      "type": "http",
-      "url": "https://mcp.tako.com/mcp",
-      "headers": {
-        "Authorization": "Bearer <your-tako-api-token>"
-      }
-    }
-  }
-}
-```
-
-Restart Claude Desktop — `Tako MCP` appears in the available tools list.
-</details>
-
-<details>
-<summary><b>Claude.ai &amp; ChatGPT (OAuth — no token needed)</b></summary>
-
-The consumer chat hosts don't accept Bearer tokens. Instead, the hosted endpoint runs an OAuth 2.1 flow that signs you in with your Tako account and mints a per-host key for you automatically.
+The consumer chat hosts don't accept Bearer tokens. `claude_desktop_config.json` only validates stdio servers, so a remote `"type": "http"` entry there is silently dropped — Claude Desktop connects through Connectors like Claude.ai. The hosted endpoint runs an OAuth 2.1 flow that signs you in with your Tako account and mints a per-host key for you automatically.
 
 **Prerequisites:** just [sign in at tako.com](https://tako.com) with the identity you'll authorize. You do **not** mint a token yourself — the consent flow creates a per-host key (named `MCP: <client>`, visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)). Connecting a new host never rotates another host's key; Tako trims your oldest MCP key past ten.
 
@@ -225,6 +203,12 @@ The consumer chat hosts don't accept Bearer tokens. Instead, the hosted endpoint
 4. Complete the Tako sign-in flow; **Tako** then appears as connected
 
 ![Claude.ai Settings → Connectors](docs/images/claude-connectors-landing.png)
+
+**Claude Desktop** _(same plan requirement as Claude.ai)_
+1. Open Claude Desktop → **Settings → Connectors**
+2. Click **Add custom connector**
+3. Paste `https://mcp.tako.com/mcp` and click **Connect**
+4. Complete the Tako sign-in flow; **Tako** then appears as connected
 
 **ChatGPT** _(requires Pro, Business, or Enterprise; Developer Mode enabled)_
 1. Open ChatGPT → **Settings → Connectors → Developer Mode** and toggle it on
@@ -261,6 +245,8 @@ Tools are discovered automatically via the MCP `tools/list` handshake, so your c
 | `tako_answer` | **Ask one specific data question, get the answer.** A single grounded, citation-backed prose answer, already written for you — relay it directly. Ground in `data`, `web`, or both. |
 | `tako_contents` | Fetch the content behind a result URL: a Tako card returns a CSV, any other URL returns the page's extracted text. Cards must be marked `exportable: true` (web URLs are exempt). |
 | `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search/answer. Returns a `node_id` you can pin into search/answer for a retrieval boost. Free and fast. |
+
+On connect, the server also advertises [MCP server instructions](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle#initialization) that hosts like Claude.ai, Claude Desktop, and Claude Code place in the model's system prompt. They steer data and metric questions to `tako_search` ahead of the host's built-in web search, and note that `tako_search` covers the live web too, so one call can stand in for a separate web search on mixed questions. Built-in web search remains the fallback for queries outside Tako's coverage.
 
 **Opt-in** — off by default to keep the tool surface small. Enable per-connection via the `?tools=` query parameter (comma-separated aliases):
 
