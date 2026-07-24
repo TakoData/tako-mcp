@@ -1013,10 +1013,15 @@ export async function fetchPngContentBlock(
  * repeat registrations of the same URI so the SDK doesn't throw
  * `Resource ui://... is already registered`.
  *
- * The static URI loads the iframe widget (used by ChatGPT). The
- * dynamic per-pub_id URI bakes the chart image into the resource HTML
- * (used by claude.ai, where the host snapshots `documentElement.
- * offsetHeight` once on widget mount and ignores later updates).
+ * The static URI loads the iframe widget (used by ChatGPT, and by
+ * claude.ai today — see the "Conclusion" comment in `mcp.ts` near the
+ * dynamic ResourceTemplate registration). The dynamic per-pub_id URI
+ * bakes the chart image into the resource HTML instead; it's retained
+ * for a future host that honors per-call `resourceUri` overrides (the
+ * host would snapshot `documentElement.offsetHeight` once on widget
+ * mount, so baking the image in up front avoids a missed resize), but
+ * claude.ai currently ignores per-call overrides and stays on the
+ * static URI + baked `_meta.image_data_url` from `extraMeta`.
  *
  * `resolveUriFromInput` reads the top card's `pub_id` from the tool
  * output (the search input is a query, not a pub_id) and falls back to

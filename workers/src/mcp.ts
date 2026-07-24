@@ -123,9 +123,10 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  *
  * The match is intentionally loose: we don't care about exact UA
  * strings, just whether the request smells like one of the major
- * MCP-app hosts. Unknown UAs fall through to the "render the widget"
- * default — better to over-render than to hide the chart from a host
- * that supports it.
+ * MCP-app hosts. Unknown UAs fall through to the inline-PNG `image`
+ * content block, not the widget — that path is the portable fallback
+ * that works on the long tail of MCP hosts that don't (yet) implement
+ * MCP Apps, so an unrecognized client still gets a chart it can render.
  */
 // `McpClientKind` is defined in `tools/types.ts` (re-exported below)
 // so tool modules can reference it without a circular import on
@@ -610,11 +611,15 @@ function registerTool(
       );
     }
     // Optional dynamic-resource variant. When defined, the same widget
-    // also gets a `ResourceTemplate` registration, and per-call tool
-    // results point claude.ai's `_meta.ui.resourceUri` at a specific
-    // instance of that template (so the widget HTML can have the
-    // chart's image + dimensions baked in at fetch time, sidestepping
-    // claude.ai's "snapshot offsetHeight once on mount" behavior). See
+    // also gets a `ResourceTemplate` registration so a per-call
+    // `_meta.ui.resourceUri` could point at a specific instance of that
+    // template (baking the chart's image + dimensions into the widget
+    // HTML at fetch time, sidestepping a host's "snapshot offsetHeight
+    // once on mount" behavior). claude.ai does NOT use this today — see
+    // the "Conclusion" comment below: it ignores per-call resourceUri
+    // overrides and stays on the static URI + baked
+    // `_meta.image_data_url` from `extraMeta`. The template stays
+    // registered for a future host that does honor per-call URIs. See
     // `AppUiResource.dynamic` for the rationale.
     if (
       ui.dynamic !== undefined &&
