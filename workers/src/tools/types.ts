@@ -96,8 +96,13 @@ export interface ToolAnnotations {
   readOnlyHint: boolean;
   /** Tool can delete or irrecoverably change state. */
   destructiveHint: boolean;
-  /** Tool's effects are observable outside Tako (e.g. creates a public URL). */
-  openWorldHint?: boolean;
+  /**
+   * Tool's effects are observable outside Tako (e.g. creates a public URL).
+   * Required: every tool must declare it explicitly so the read-only
+   * retrieval tools (false) are never conflated with the write/publish tools
+   * (true) in the advertised annotations.
+   */
+  openWorldHint: boolean;
 }
 
 /**

@@ -115,7 +115,7 @@ const takoContents = {
     title: "Tako: Fetch Contents",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
   },
   async handler(input, ctx): Promise<Output> {
     // input conforms to the generated ContentsRequest contract (url + mode +

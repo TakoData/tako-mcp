@@ -122,7 +122,7 @@ const takoAnswer = {
     title: "Tako: Answer",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
   },
   async handler(input, ctx): Promise<Output> {
     // GA /api/v1/answer takes the v3 SearchRequest shape: top-level `query`

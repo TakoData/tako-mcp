@@ -169,7 +169,7 @@ const tako_search = {
     title: "Tako: Search",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
   },
   async handler(input, ctx): Promise<Output> {
     // v3 SearchRequest takes a per-source `sources` OBJECT — an index is

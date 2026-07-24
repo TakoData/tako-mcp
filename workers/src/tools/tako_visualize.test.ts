@@ -75,7 +75,8 @@ describe("tako_visualize handler", () => {
 
   it("is a write tool that creates a public card (annotations)", () => {
     expect(takoVisualize.annotations.readOnlyHint).toBe(false);
-    expect(takoVisualize.annotations.openWorldHint).toBe(false);
+    // Creates a public, shareable card URL — effect observable outside Tako.
+    expect(takoVisualize.annotations.openWorldHint).toBe(true);
   });
 
   it("POSTs components + title to /api/v1/thin_viz/create/ and lifts card_id into widget fields", async () => {

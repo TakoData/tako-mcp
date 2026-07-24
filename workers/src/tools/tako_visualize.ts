@@ -159,7 +159,9 @@ const tako_visualize = {
     title: "Tako: Visualize",
     readOnlyHint: false,
     destructiveHint: false,
-    openWorldHint: false,
+    // Creates a persistent, publicly-shareable Tako card (webpage_url /
+    // embed_url) — an effect observable outside Tako.
+    openWorldHint: true,
   },
   async handler(input, ctx): Promise<Output> {
     const body = buildVisualizeBody(input);

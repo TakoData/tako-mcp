@@ -108,7 +108,7 @@ const tako_available_data = {
     title: "Tako: Available Data",
     readOnlyHint: true,
     destructiveHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
   },
   async handler(input: Input, ctx): Promise<Output> {
     // 1) Resolve the name to graph nodes.
