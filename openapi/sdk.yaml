@@ -2063,6 +2063,26 @@ components:
         row_cpm_usd is the card-level total (sum of the card''s distinct priced sources''
 
         per-1,000-row rate); no per-source breakdown.'
+    GeoLocation:
+      properties:
+        latitude:
+          type: number
+          maximum: 90.0
+          minimum: -90.0
+          title: Latitude
+          description: Latitude of the end user (degrees, -90 to 90).
+        longitude:
+          type: number
+          maximum: 180.0
+          minimum: -180.0
+          title: Longitude
+          description: Longitude of the end user (degrees, -180 to 180).
+      additionalProperties: false
+      type: object
+      required:
+      - latitude
+      - longitude
+      title: GeoLocation
     GraphNode:
       properties:
         id:
@@ -2965,6 +2985,13 @@ components:
           description: Per-source settings. The search includes an index only if its
             key is present. Defaults to {data:{}, web:{}} (data and web, count 5 each).
             Tako accepts the legacy key 'tako' as a synonym for 'data'.
+        location:
+          anyOf:
+          - $ref: '#/components/schemas/GeoLocation'
+          - type: 'null'
+          description: Optional coordinates of the end user. Resolves the location
+            for implicit-location queries (for example, weather). An explicit location
+            in the query overrides these coordinates.
         country_code:
           type: string
           title: Country Code
