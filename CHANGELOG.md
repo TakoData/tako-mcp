@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.13.0](https://github.com/TakoData/tako-mcp/compare/v0.12.0...v0.13.0) (2026-07-25)
+
+
+### Features
+
+* advertise server-level instructions steering search to tako_search ([4f7f649](https://github.com/TakoData/tako-mcp/commit/4f7f6496384f24130e680e102128f492d19e9f5c))
+* **oauth:** RFC 8707 resource indicators + audience-bound access tokens ([99fcefb](https://github.com/TakoData/tako-mcp/commit/99fcefbc25a42207840196737f4dfc953e7fb3f4))
+* **oauth:** RFC 8707 resource indicators + audience-bound tokens; per-tool securitySchemes ([4e2623a](https://github.com/TakoData/tako-mcp/commit/4e2623ac24e65222a14134617ab5180b1ee48a2b))
+* server instructions steering search to tako_search; Claude Desktop connects via Connectors ([f9f0244](https://github.com/TakoData/tako-mcp/commit/f9f0244d42b8ac96e17cff063689633f055d604a))
+
+
+### Bug Fixes
+
+* **oauth:** address PR review — resource robustness, refresh binding, 403/expiry ([0200a79](https://github.com/TakoData/tako-mcp/commit/0200a79ff71f1afbe84d9c2fbeff6301afb00fcc))
+* **tools:** correct openWorldHint per tool; make it a required annotation ([7b12912](https://github.com/TakoData/tako-mcp/commit/7b12912e42683b3f1f4243536fff8d0c032969e5))
+* **tools:** keep openWorldHint per MCP spec; require the annotation ([1c2fa5f](https://github.com/TakoData/tako-mcp/commit/1c2fa5f26b76f1a3a2e2c1f21e0159e4e4206b61))
+
+
+### Chores
+
+* add 25eliu as glama.json maintainer; hyphenate industry-leading ([a8ac054](https://github.com/TakoData/tako-mcp/commit/a8ac054d69f364088989602344872188e215ac63))
+* sync OpenAPI spec from monorepo ([#165](https://github.com/TakoData/tako-mcp/issues/165)) ([f8d7907](https://github.com/TakoData/tako-mcp/commit/f8d790702d7df761904d16e61a5a59006e4948f4))
+* sync OpenAPI spec from monorepo ([#169](https://github.com/TakoData/tako-mcp/issues/169)) ([8024690](https://github.com/TakoData/tako-mcp/commit/8024690fbbd104bb6d05db6dbc44a8f8292f1a8f))
+
+
+### Documentation
+
+* Claude Desktop connects via Connectors, not claude_desktop_config.json ([f00a78f](https://github.com/TakoData/tako-mcp/commit/f00a78f63d70961e6da3c8159ff6c54daaba6c6e))
+* document server-level MCP instructions in README ([420e66c](https://github.com/TakoData/tako-mcp/commit/420e66c985f09a40ccf50fc56059367d9e8e6c79))
+* reframe README intro around web search + licensed data; add 25eliu as glama maintainer ([6051295](https://github.com/TakoData/tako-mcp/commit/6051295822b2d3912f76077c26fe4914aa6bbb13))
+* reframe registry description around agent access to web search + authoritative datasets ([49840c6](https://github.com/TakoData/tako-mcp/commit/49840c68227126a4123a6b1d64a92de089b77b79))
+
 ## [0.12.0](https://github.com/TakoData/tako-mcp/compare/v0.11.0...v0.12.0) (2026-07-23)
 
 
