@@ -44,7 +44,7 @@ import type { AnyToolModule, McpClientKind, ToolContext } from "./tools/types.js
  * returns, so a mismatch surfaces as "wrong server" in tooling.
  */
 export const SERVER_NAME = "tako-mcp";
-export const SERVER_VERSION = "0.12.0"; // x-release-please-version
+export const SERVER_VERSION = "0.13.0"; // x-release-please-version
 
 /**
  * Server-level usage guidance, returned as the MCP `instructions` field on
