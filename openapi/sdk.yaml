@@ -53,8 +53,10 @@ paths:
       tags:
       - tako
       summary: Answer
-      description: Fast-pipeline retrieval plus an LLM-synthesized answer with confidence.
-        Replaces the grounding endpoint.
+      description: Fast-pipeline retrieval plus an LLM-synthesized answer. Tako may
+        omit sources that cannot provide usable text. This endpoint returns 3 web
+        results when you omit sources.web.count. The shared request schema shows a
+        default of 5, which applies to POST /v3/search.
       operationId: answer
       requestBody:
         content:
@@ -1410,6 +1412,56 @@ components:
       - error_message
       - error_type
       title: BaseAPIError
+    ColumnDescriptor:
+      properties:
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        metric:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Metric
+        entity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Entity
+        unit:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit
+        dtype:
+          anyOf:
+          - $ref: '#/components/schemas/TakoDatasetColumnType'
+          - type: 'null'
+      type: object
+      title: ColumnDescriptor
+      description: 'Structured description of one exported value column.
+
+
+        Producers set the semantic parts they know (``metric``, ``entity``,
+
+        ``unit``). ``name`` and ``dtype`` are filled centrally: ``name`` is the
+
+        rendered canonical header (set by ``apply_descriptor_names``), and ``dtype``
+
+        is inferred from the real column data in ``finalize_export_frame``. A
+
+        producer-set ``dtype`` would drift from the cells, and a producer cannot know
+
+        the disambiguated ``name`` before the whole frame is rendered.
+
+
+        In the exported manifest ``name`` equals the column''s actual header, and
+        the
+
+        manifest is positionally aligned with the exported columns (manifest entry
+
+        ``i`` describes column ``i``).'
     ComponentConfig:
       properties:
         component_type:
@@ -1587,6 +1639,18 @@ components:
           description: Rate card for a downloadable card CSV, so a caller can compute
             a full export's cost before fetching. Null for web text and other non-downloadable
             content.
+        manifest:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ColumnDescriptor'
+            type: array
+          - type: 'null'
+          title: Manifest
+          description: 'Per-column metadata, one entry per exported column, in column
+            order: entry i describes column i (CSV header i, json_records key i, or
+            dataset.columns[i]). Each entry carries name (the column header), dtype,
+            unit, metric, and entity. Null for web or quote responses that carry no
+            tabular columns.'
         source_url:
           type: string
           title: Source Url
@@ -1672,14 +1736,15 @@ components:
           - 100
         max_chars:
           type: integer
-          maximum: 100000.0
+          maximum: 1000000.0
           minimum: 1.0
           title: Max Chars
           description: Character cap on extracted web page text. Ignored for Tako
-            card URLs (they use max_rows). Default 10000, maximum 100000.
-          default: 10000
+            card URLs (they use max_rows). The default is the full page text, up to
+            the 1000000-character ceiling. To truncate, pass a smaller value.
+          default: 1000000
           examples:
-          - 20000
+          - 50000
         quote_only:
           type: boolean
           title: Quote Only
@@ -2469,6 +2534,18 @@ components:
           description: Rate card for a downloadable card CSV, so a caller can compute
             a full export's cost before fetching. Null for web text and other non-downloadable
             content.
+        manifest:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ColumnDescriptor'
+            type: array
+          - type: 'null'
+          title: Manifest
+          description: 'Per-column metadata, one entry per exported column, in column
+            order: entry i describes column i (CSV header i, json_records key i, or
+            dataset.columns[i]). Each entry carries name (the column header), dtype,
+            unit, metric, and entity. Null for web or quote responses that carry no
+            tabular columns.'
       type: object
       title: ResultContent
       description: 'Describes the downloadable content behind a result.
@@ -3354,6 +3431,13 @@ components:
           $ref: '#/components/schemas/TakoDatasetColumnType'
           description: 'Logical column type: ''string'', ''number'', ''boolean'',
             ''date'', or ''datetime''. Temporal cells are ISO-8601 strings.'
+        unit:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit
+          description: Structured unit for the column values, e.g. 'USD billions',
+            '%'. Null when unitless.
       type: object
       required:
       - name
@@ -3832,12 +3916,12 @@ components:
           default: 1000
         article_content_max_chars:
           type: integer
-          maximum: 100000.0
+          maximum: 1000000.0
           minimum: 1.0
           title: Article Content Max Chars
           description: Character cap on the full article text when include_contents
-            is true. Default 10000, maximum 100000.
-          default: 10000
+            is true. Default 30000, maximum 1000000.
+          default: 30000
         published_after:
           anyOf:
           - type: string
