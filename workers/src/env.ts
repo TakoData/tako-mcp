@@ -6,6 +6,20 @@
  * `django.ts`, `index.ts`, `mcp.ts`) can import it without creating
  * circular dependencies.
  */
+
+/**
+ * Structural type of Cloudflare's Workers rate-limiting binding
+ * (`unsafe.bindings` entries with `type: "ratelimit"` in `wrangler.jsonc`).
+ * Declared locally instead of relying on `@cloudflare/workers-types` so the
+ * shape is pinned to exactly what we call and tests can supply fakes.
+ * `limit()` counts one hit against `key`'s bucket and reports whether the
+ * request is within the configured limit. Counting is per-colo and
+ * approximate — acceptable for free-tier abuse protection, not billing.
+ */
+export interface RateLimit {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
 export interface Env {
   /**
    * Origin of the Django backend the Worker proxies to — e.g.
@@ -89,6 +103,22 @@ export interface Env {
    * for a connector that was never registered against them.
    */
   OPENAI_APPS_CHALLENGE_TOKEN?: string;
+  /**
+   * Tako API key of the dedicated free-tier account, forwarded to Django
+   * as `X-API-Key` for anonymous (no `Authorization` header) `/mcp`
+   * requests. A Worker secret (`wrangler secret put FREE_TIER_API_KEY
+   * --env <env>`). Optional and fail-closed: when unset (or when
+   * `FREE_TIER_RATE_LIMITER` is unbound), anonymous requests get the
+   * same 401 as before the free tier existed. See `freetier.ts`.
+   */
+  FREE_TIER_API_KEY?: string;
+  /**
+   * Cloudflare rate-limit binding metering anonymous free-tier usage,
+   * keyed per client IP. Declared under `unsafe.bindings` in
+   * `wrangler.jsonc` (10 requests / 60 s). Optional in the same
+   * fail-closed sense as `FREE_TIER_API_KEY`.
+   */
+  FREE_TIER_RATE_LIMITER?: RateLimit;
 }
 
 /**
