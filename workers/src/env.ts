@@ -120,14 +120,15 @@ export interface Env {
    */
   FREE_TIER_RATE_LIMITER?: RateLimit;
   /**
-   * Cloudflare rate-limit binding for the GLOBAL anonymous ceiling —
-   * hit with one constant key for every anonymous request regardless of
-   * method, bounding total free-tier volume platform-wide (per-IP keying
-   * is meaningless for hosted MCP hosts whose traffic egresses from a few
-   * platform IPs). Declared under `unsafe.bindings` in `wrangler.jsonc`
-   * (1000 requests / 60 s). Optional in the same fail-closed sense as
-   * the other two free-tier bindings — all three must be present for the
-   * free tier to activate. See `freetier.ts`.
+   * Cloudflare rate-limit binding hit with one constant key for every
+   * anonymous request regardless of method. PER-COLO burst shaping, not
+   * a true global ceiling — the binding counts per colo with no global
+   * mode, so the enforced number is `limit × colos reached`; the genuine
+   * platform-wide bound is Django's per-user throttling on the free-tier
+   * account (see `freetier.ts` module header). Declared under
+   * `unsafe.bindings` in `wrangler.jsonc` (1000 requests / 60 s / colo).
+   * Optional in the same fail-closed sense as the other two free-tier
+   * bindings — all three must be present for the free tier to activate.
    */
   FREE_TIER_GLOBAL_RATE_LIMITER?: RateLimit;
 }

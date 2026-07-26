@@ -27,12 +27,21 @@ requests 401 exactly as before):
 |---|---|---|
 | `FREE_TIER_API_KEY` | secret | Tako API key of the dedicated free-tier account, forwarded to Django as `X-API-Key` (trimmed, so a piped `wrangler secret put` newline can't break it) |
 | `FREE_TIER_RATE_LIMITER` | `unsafe.bindings` ratelimit in `wrangler.jsonc` | per-IP fairness bucket: 10 free-tool `tools/call`s / 60 s |
-| `FREE_TIER_GLOBAL_RATE_LIMITER` | `unsafe.bindings` ratelimit in `wrangler.jsonc` | global ceiling: 1000 anonymous requests / 60 s across ALL callers |
+| `FREE_TIER_GLOBAL_RATE_LIMITER` | `unsafe.bindings` ratelimit in `wrangler.jsonc` | per-colo burst shaping: 1000 anonymous requests / 60 s / colo, all callers |
 
-The global ceiling is the actual spend/volume bound: per-IP keying means
-little for hosted MCP hosts (claude.ai, ChatGPT, and similar egress from
-a handful of platform IPs), and it also caps the otherwise-unmetered
-handshake methods. The per-IP bucket is the fairness layer on top.
+Neither Worker bucket is the platform-wide spend bound. Cloudflare's
+ratelimit binding counts per colo (no global mode), so the constant-key
+bucket enforces `1000/min × colos reached` — it exists to shape per-colo
+floods, including the otherwise-unmetered handshake methods. Per-IP
+keying means little for hosted MCP hosts (claude.ai, ChatGPT, and
+similar egress from a handful of platform IPs); it's a fairness layer.
+The **genuinely global ceiling is Django's Redis-backed per-user
+throttling on the free-tier account** — every anonymous request
+authenticates as that one user, landing on `_SEARCH_USER` (720/min,
+`/api/v3/search/`), `_DRF_USER` (720/min, `/api/v1/answer/`), and
+`_GRAPH_TIER` (180/min + 10,000/day, `/api/beta/graph/*`) in
+`app/backend/api/throttling/policy.py`. Note none of these weighs tool
+cost: the worst case is that many `tako_answer` calls.
 
 Behavior when active:
 
@@ -44,11 +53,12 @@ Behavior when active:
   hidden tool returns "tool not found" without burning per-IP quota;
   `initialize` / `tools/list` never burn it. IPv4 clients are keyed by
   address, IPv6 by /64 prefix.
-- An over-limit free-tool call returns **HTTP 200 with a JSON-RPC tool
-  result** (`isError: true`) carrying the upsell message pointing at
-  https://trytako.com/account/ — deliberately not a 429, which MCP SDK
-  clients surface as a transport error the model never reads. The global
-  ceiling (which trips before the body is parsed) returns a plain 429.
+- An over-limit `tools/call` (either bucket) returns **HTTP 200 with a
+  JSON-RPC tool result** (`isError: true`) carrying an upsell message
+  pointing at https://trytako.com/account/ — deliberately not a 429,
+  which MCP SDK clients surface as a transport error the model never
+  reads. Non-`tools/call` requests over the per-colo ceiling get a plain
+  429 (no valid readable shape exists for them).
 - If the shared account itself runs out of Tako credits (Django 402),
   the tool result carries the same style of upsell copy instead of the
   raw billing error.
@@ -79,9 +89,16 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
 2. **Create the dedicated free-tier Tako account** and generate its API
    key from the account page. All anonymous traffic spends this one
    account's credits.
-3. **Set Django-side limits/credits on that account.** This is the total
-   spend backstop: the Worker limiter fails *open* on limiter runtime
-   errors, so give the account a credit budget you can afford to lose.
+3. **Put the account on a plan where the credit ceiling actually
+   enforces.** This is the total spend backstop (the Worker limiters
+   fail *open* on runtime errors and are per-colo anyway), and the
+   mechanism matters: Django's credit throttles (`_ANSWER_CREDIT`,
+   `_V3_CREDIT`, `_CONTENTS_CREDIT`) are **bypassed** for PAYG billing
+   (spend meters in USD forever and never 402s — unbounded dollars),
+   and for Enterprise/MPP accounts. So the free-tier account must be a
+   standard credit-capped plan with a budget you can afford to lose.
+   The per-user *rate* throttles (720/min search+answer, 180/min graph)
+   apply on every billing mode and are the floor either way.
 4. **Enable staging first:**
    ```bash
    wrangler secret put FREE_TIER_API_KEY --env staging   # paste the API key

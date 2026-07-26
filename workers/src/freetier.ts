@@ -7,18 +7,25 @@
  * forwarded to Django, the visible toolset shrinks to
  * `FREE_TIER_TOOL_NAMES`, and requests are limited by two buckets:
  *
- * - A GLOBAL ceiling (constant key, every anonymous request regardless of
- *   method) — the actual spend/volume bound. Per-IP keying means nothing
- *   for hosted MCP hosts (claude.ai, ChatGPT, Centaur) whose fetches all
- *   egress from a handful of platform IPs, and an IPv6 /64 can mint
- *   endless distinct keys — so the global bucket is the control that
- *   bounds the shared account, and it also caps the otherwise-unmetered
- *   handshake methods (`initialize`, `tools/list`), which need no
- *   credential at all.
+ * - A constant-key bucket hit by every anonymous request regardless of
+ *   method — PER-COLO BURST SHAPING, not a true global ceiling:
+ *   Cloudflare's ratelimit binding counts per colo with no global mode,
+ *   so the enforced number is `limit × (colos reached)`, and hosted MCP
+ *   hosts (claude.ai, ChatGPT, Centaur) egressing from many regions
+ *   maximize that fan-out. It still bounds per-colo floods — including
+ *   the otherwise-unmetered handshake methods, which need no credential
+ *   at all. The genuinely GLOBAL ceiling is Django's Redis-backed
+ *   per-user throttles on the free-tier account (search and answer at
+ *   720/min per user, graph at 180/min + 10,000/day per user — see
+ *   `app/backend/api/throttling/policy.py` in the monorepo), which every
+ *   anonymous request lands on because they all authenticate as the one
+ *   `FREE_TIER_API_KEY` user.
  * - A PER-IP bucket (fairness layer) counting only `tools/call`s that
  *   name one of the three free tools — the only requests that spend Tako
  *   credits. Calls to hidden tools return "tool not found" without
- *   burning the caller's per-IP quota (they still count globally).
+ *   burning the caller's per-IP quota (they still count per-colo).
+ *   Per-IP keying alone means little for hosted hosts (shared egress
+ *   IPs), which is why the platform-wide bound lives in Django.
  *
  * JSON-RPC batch arrays are rejected outright (see
  * `checkFreeTierRateLimit`) rather than metered — a batch would let one
@@ -128,8 +135,12 @@ export type JsonRpcRequestId = string | number | null;
 /** Outcome of the anonymous-path admission checks, in check order. */
 export type FreeTierMeterResult =
   | { kind: "allowed" }
-  /** Global ceiling exhausted — every anonymous request counts here. */
-  | { kind: "global_limited" }
+  /**
+   * Per-colo ceiling exhausted — every anonymous request counts here.
+   * `requestId` is set when the body is a `tools/call` request (any tool
+   * name) so the response can be a readable tool result; null otherwise.
+   */
+  | { kind: "global_limited"; requestId: JsonRpcRequestId }
   /** Body over `MAX_FREE_TIER_BODY_BYTES` (or unparseable length). */
   | { kind: "too_large" }
   /** JSON-RPC batch (array body) — rejected, never metered. */
@@ -166,14 +177,16 @@ export function freeTierRateLimitKey(ip: string | null): string {
 /**
  * Admission checks for an anonymous request, in order:
  *
- * 1. Global ceiling — one constant-key `limit()` per anonymous request,
- *    before the body is even looked at. This is the spend/volume bound
- *    (see module header) and the only limit on handshake methods.
- * 2. Body size — a declared `Content-Length` over
+ * 1. Body size — a declared `Content-Length` over
  *    `MAX_FREE_TIER_BODY_BYTES` is rejected before any read, and the
  *    body peek itself is a BOUNDED read that aborts past the same cap
  *    (`Content-Length` is client-supplied and can lie; the bounded read
  *    is the enforcement, the header check just a cheap early exit).
+ * 2. Per-colo ceiling — one constant-key `limit()` per anonymous request
+ *    (parse failures included, so garbage floods still count). The peek
+ *    runs FIRST so that a ceiling-limited `tools/call` can carry its
+ *    request id and answer as a readable tool result instead of a 429
+ *    the SDK client swallows as a transport error.
  * 3. Batch rejection — array bodies (see module header).
  * 4. Per-IP metering — only for `tools/call`s naming a free tool, keyed
  *    per `freeTierRateLimitKey`, on a CLONE of the body (the transport
@@ -186,18 +199,6 @@ export async function checkFreeTierRateLimit(
   request: Request,
   config: FreeTierConfig,
 ): Promise<FreeTierMeterResult> {
-  try {
-    const { success } = await config.globalLimiter.limit({ key: "global" });
-    if (!success) {
-      console.log("[free-tier] global ceiling limited");
-      return { kind: "global_limited" };
-    }
-  } catch (err) {
-    console.error(
-      `[free-tier] global rate limiter error (failing open): ${String(err)}`,
-    );
-  }
-
   const contentLength = request.headers.get("content-length");
   if (contentLength !== null) {
     const declaredBytes = Number(contentLength);
@@ -208,8 +209,25 @@ export async function checkFreeTierRateLimit(
 
   const peeked = await readBoundedJson(request);
   if (peeked.kind === "too_large") return { kind: "too_large" };
+  const body = peeked.kind === "ok" ? peeked.body : undefined;
+
+  // A response with a matching id can only be built for a `tools/call`
+  // (the tool-error result shape is not a valid reply to other methods).
+  const toolsCallId = jsonRpcToolsCallId(body);
+
+  try {
+    const { success } = await config.globalLimiter.limit({ key: "global" });
+    if (!success) {
+      console.log("[free-tier] per-colo ceiling limited");
+      return { kind: "global_limited", requestId: toolsCallId };
+    }
+  } catch (err) {
+    console.error(
+      `[free-tier] global rate limiter error (failing open): ${String(err)}`,
+    );
+  }
+
   if (peeked.kind === "unparseable") return { kind: "allowed" };
-  const body = peeked.body;
   if (Array.isArray(body)) return { kind: "batch" };
   if (!isMeteredJsonRpcBody(body)) return { kind: "allowed" };
 
@@ -217,6 +235,20 @@ export async function checkFreeTierRateLimit(
   const requestId: JsonRpcRequestId =
     typeof rawId === "string" || typeof rawId === "number" ? rawId : null;
   return hitPerIpLimiter(request, config.limiter, requestId);
+}
+
+/**
+ * The request id, iff `body` is a single JSON-RPC `tools/call` request
+ * (any tool name) with a well-formed id — the only shape whose over-limit
+ * response can echo an id inside a tool-error result.
+ */
+function jsonRpcToolsCallId(body: unknown): JsonRpcRequestId {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return null;
+  }
+  const { method, id } = body as { method?: unknown; id?: unknown };
+  if (method !== "tools/call") return null;
+  return typeof id === "string" || typeof id === "number" ? id : null;
 }
 
 /**
@@ -346,39 +378,59 @@ export function freeTierLimitResponse(requestId: JsonRpcRequestId): Response {
 }
 
 /**
- * The global-ceiling message. Keep the number in sync with the
- * `FREE_TIER_GLOBAL_RATE_LIMITER` bindings in `wrangler.jsonc` (asserted
- * by the same drift test as `FREE_TIER_LIMIT_MESSAGE`).
+ * The per-colo-ceiling message. Deliberately numberless: the binding's
+ * `limit` is enforced per Cloudflare colo, so the effective platform-wide
+ * number varies with colo fan-out and any stated figure would be wrong.
+ * (The drift test only asserts the three env bindings agree with each
+ * other; there is no message number to sync.)
  */
 export const FREE_TIER_GLOBAL_LIMIT_MESSAGE =
   "The Tako free tier is at capacity right now. Try again shortly, or " +
   "get a free API key at https://trytako.com/account/ for dedicated access.";
 
 /**
- * HTTP 429 for a request over the GLOBAL anonymous ceiling. This fires
- * before the body is read, so no request id is available and the tripping
- * request may not even be a `tools/call` — a plain 429 (which the SDK
- * client surfaces as a transport error) is the honest answer here, unlike
- * the per-IP case above. It should be rare: the ceiling is sized well
- * above expected legitimate volume.
+ * Response for a request over the per-colo anonymous ceiling. Same
+ * readability rule as `freeTierLimitResponse`: when the tripping request
+ * is a `tools/call` with a known id, answer HTTP 200 with a JSON-RPC
+ * tool-error result the model can read; otherwise (handshake methods,
+ * unparseable bodies, batches) a plain 429 with `Retry-After` is the only
+ * shape available.
  */
-export function freeTierGlobalLimitResponse(): Response {
+export function freeTierGlobalLimitResponse(
+  requestId: JsonRpcRequestId,
+): Response {
+  if (requestId === null) {
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32000,
+          message: FREE_TIER_GLOBAL_LIMIT_MESSAGE,
+          data: { kind: "global_rate_limited" },
+        },
+      }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Retry-After": "60",
+        },
+      },
+    );
+  }
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
-      id: null,
-      error: {
-        code: -32000,
-        message: FREE_TIER_GLOBAL_LIMIT_MESSAGE,
-        data: { kind: "global_rate_limited" },
+      id: requestId,
+      result: {
+        content: [{ type: "text", text: FREE_TIER_GLOBAL_LIMIT_MESSAGE }],
+        isError: true,
       },
     }),
     {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Retry-After": "60",
-      },
+      status: 200,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
     },
   );
 }

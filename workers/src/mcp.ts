@@ -737,11 +737,14 @@ function registerTool(
           // the tier's expected steady-state failure (the Django-side cap
           // is the fail-open spend backstop). Surface it as upsell copy,
           // not the raw billing error — which would read as a bug to an
-          // anonymous user who has no account to top up.
+          // anonymous user who has no account to top up. Status 402 is
+          // the complete signal (Django's PaymentRequiredError always
+          // serves 402); matching on body text would let any 4xx that
+          // echoes caller-supplied input masquerade as credit exhaustion.
           if (
             callCtx.tier === "free" &&
             err instanceof DjangoHttpError &&
-            (err.status === 402 || err.body.includes("PAYMENT_REQUIRED"))
+            err.status === 402
           ) {
             return freeTierCreditsToolResult();
           }
@@ -1042,7 +1045,7 @@ export async function handleMcpRequest(
     const meterResult = await checkFreeTierRateLimit(request, freeTier);
     switch (meterResult.kind) {
       case "global_limited":
-        return freeTierGlobalLimitResponse();
+        return freeTierGlobalLimitResponse(meterResult.requestId);
       case "too_large":
         return freeTierTooLargeResponse();
       case "batch":

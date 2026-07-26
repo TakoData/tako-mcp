@@ -238,13 +238,38 @@ describe("checkFreeTierRateLimit", () => {
     expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
   });
 
-  it("returns global_limited when the ceiling is exhausted, before per-IP metering", async () => {
+  it("returns global_limited with the request id for a tools/call, before per-IP metering", async () => {
     const config = makeConfig({ globalLimiter: fakeLimiter(false) });
     const req = mcpRequest(TOOLS_CALL_BODY);
     await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
       kind: "global_limited",
+      requestId: TOOLS_CALL_BODY.id,
     });
     expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
+  });
+
+  it("returns global_limited with a null id for non-tools/call methods", async () => {
+    const config = makeConfig({ globalLimiter: fakeLimiter(false) });
+    const req = mcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "global_limited",
+      requestId: null,
+    });
+  });
+
+  it("counts unparseable bodies against the per-colo ceiling (garbage floods still count)", async () => {
+    const config = makeConfig();
+    const req = new Request("https://example.com/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not json{",
+    });
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "allowed",
+    });
+    expect((config.globalLimiter as ReturnType<typeof fakeLimiter>).keys).toEqual([
+      "global",
+    ]);
   });
 
   it("counts a free-tool tools/call against the CF-Connecting-IP key and allows under-limit", async () => {
@@ -454,8 +479,22 @@ describe("freeTierLimitResponse", () => {
 });
 
 describe("freeTierGlobalLimitResponse", () => {
-  it("is a 429 JSON-RPC error with the capacity message and Retry-After", async () => {
-    const res = freeTierGlobalLimitResponse();
+  it("with a tools/call id: HTTP 200 tool-error result the model can read", async () => {
+    const res = freeTierGlobalLimitResponse("req-3");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      id: string;
+      result: { content: Array<{ type: string; text: string }>; isError: boolean };
+    };
+    expect(body.id).toBe("req-3");
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content).toEqual([
+      { type: "text", text: FREE_TIER_GLOBAL_LIMIT_MESSAGE },
+    ]);
+  });
+
+  it("without an id: a 429 JSON-RPC error with the capacity message and Retry-After", async () => {
+    const res = freeTierGlobalLimitResponse(null);
     expect(res.status).toBe(429);
     expect(res.headers.get("retry-after")).toBe("60");
     const body = (await res.json()) as {
@@ -664,7 +703,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.content[0]?.text).toBe(FREE_TIER_LIMIT_MESSAGE);
   });
 
-  it("an anonymous request over the global ceiling gets the capacity 429", async () => {
+  it("a non-tools/call request over the per-colo ceiling gets the capacity 429", async () => {
     const limiter = fakeLimiter(true);
     const res = await worker.fetch(
       post(TOOLS_LIST_BODY),
@@ -673,6 +712,23 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(res.status).toBe(429);
     const body = (await res.json()) as { error: { message: string } };
     expect(body.error.message).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("a tools/call over the per-colo ceiling gets a 200 TOOL ERROR the model can read", async () => {
+    const limiter = fakeLimiter(true);
+    const res = await worker.fetch(
+      post(ANSWER_CALL_BODY),
+      freeEnv(limiter, fakeLimiter(false)),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      id: number;
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.id).toBe(ANSWER_CALL_BODY.id);
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
     expect(limiter.keys).toEqual([]);
   });
 
@@ -744,6 +800,25 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     };
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0]?.text).toBe(FREE_TIER_CREDITS_MESSAGE);
+  });
+
+  it("a 4xx body merely CONTAINING 'PAYMENT_REQUIRED' text is not mistaken for credit exhaustion", async () => {
+    // Only status 402 signals credit exhaustion. A validation error that
+    // echoes caller-supplied text must keep the real error message.
+    const limiter = fakeLimiter(true);
+    mockFetchSequence([
+      new Response(
+        JSON.stringify({ detail: "invalid query: PAYMENT_REQUIRED" }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      ),
+    ]);
+    const res = await worker.fetch(post(ANSWER_CALL_BODY), freeEnv(limiter));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
   });
 
   it("authenticated credit exhaustion keeps the real Django error (no upsell substitution)", async () => {

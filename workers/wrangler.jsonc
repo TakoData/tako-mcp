@@ -38,10 +38,11 @@
   //    tools/call per 60 s). Keep `limit` in sync with
   //    FREE_TIER_LIMIT_MESSAGE in `src/freetier.ts` — a drift test in
   //    `src/freetier.test.ts` asserts the message matches this value.
-  //  - FREE_TIER_GLOBAL_RATE_LIMITER: constant-key global ceiling
-  //    (1000 anonymous requests / 60 s across ALL callers) — the actual
-  //    spend/volume bound; per-IP means little for hosted MCP hosts
-  //    egressing from a few platform IPs.
+  //  - FREE_TIER_GLOBAL_RATE_LIMITER: constant-key bucket counting every
+  //    anonymous request (1000 / 60 s). PER-COLO burst shaping, not a
+  //    true global ceiling — the binding counts per colo, so the enforced
+  //    number is limit x colos reached. The genuine platform-wide bound
+  //    is Django's per-user throttling on the free-tier account.
   // NB: the bindings alone do NOT enable the free tier; the
   // FREE_TIER_API_KEY secret must also be set (fail-closed).
   "unsafe": {
