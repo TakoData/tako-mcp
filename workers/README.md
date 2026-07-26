@@ -20,26 +20,47 @@ npm run dev
 
 `/mcp` requests with **no** `Authorization` header are served as a
 rate-limited free tier instead of a 401 — but only in environments that
-opt in. Two bindings gate it (fail-closed: with either missing, anonymous
+opt in. Three bindings gate it (fail-closed: with any missing, anonymous
 requests 401 exactly as before):
 
 | Binding | Kind | Purpose |
 |---|---|---|
-| `FREE_TIER_API_KEY` | secret | Tako API key of the dedicated free-tier account, forwarded to Django as `X-API-Key` |
-| `FREE_TIER_RATE_LIMITER` | `unsafe.bindings` ratelimit in `wrangler.jsonc` | 10 metered requests / 60 s per client IP |
+| `FREE_TIER_API_KEY` | secret | Tako API key of the dedicated free-tier account, forwarded to Django as `X-API-Key` (trimmed, so a piped `wrangler secret put` newline can't break it) |
+| `FREE_TIER_RATE_LIMITER` | `unsafe.bindings` ratelimit in `wrangler.jsonc` | per-IP fairness bucket: 10 free-tool `tools/call`s / 60 s |
+| `FREE_TIER_GLOBAL_RATE_LIMITER` | `unsafe.bindings` ratelimit in `wrangler.jsonc` | global ceiling: 1000 anonymous requests / 60 s across ALL callers |
+
+The global ceiling is the actual spend/volume bound: per-IP keying means
+little for hosted MCP hosts (claude.ai, ChatGPT, and similar egress from
+a handful of platform IPs), and it also caps the otherwise-unmetered
+handshake methods. The per-IP bucket is the fairness layer on top.
 
 Behavior when active:
 
 - Anonymous connections see exactly three tools: `tako_available_data`,
   `tako_search`, `tako_answer`. Everything else is hidden.
-- Only `tools/call` is metered (per `CF-Connecting-IP`); `initialize` /
-  `tools/list` are always free. Over-limit calls get an HTTP 429 with an
-  upsell message pointing at https://trytako.com/account/. Each metered
-  request logs one line: `[free-tier] ip=<ip> allowed|limited`.
+- Every anonymous request counts against the global ceiling; the per-IP
+  bucket counts only `tools/call`s naming one of the three free tools
+  (the only requests that spend Tako credits). A `tools/call` for a
+  hidden tool returns "tool not found" without burning per-IP quota;
+  `initialize` / `tools/list` never burn it. IPv4 clients are keyed by
+  address, IPv6 by /64 prefix.
+- An over-limit free-tool call returns **HTTP 200 with a JSON-RPC tool
+  result** (`isError: true`) carrying the upsell message pointing at
+  https://trytako.com/account/ — deliberately not a 429, which MCP SDK
+  clients surface as a transport error the model never reads. The global
+  ceiling (which trips before the body is parsed) returns a plain 429.
+- If the shared account itself runs out of Tako credits (Django 402),
+  the tool result carries the same style of upsell copy instead of the
+  raw billing error.
+- Each per-IP-metered request logs one line:
+  `[free-tier] ip=<key> allowed|limited`.
 - JSON-RPC batch requests (array bodies) are rejected outright with an
   HTTP 400 — never metered, never forwarded to Django. Batching was
   removed from the MCP spec in 2025-06-18, and metering a batch as a
   single limiter hit would let it stand in for unlimited `tools/call`s.
+- Anonymous request bodies are capped at 128 KiB (HTTP 413 past that) —
+  the body peek is new unauthenticated surface and its read is bounded,
+  so a lying `Content-Length` doesn't help.
 - A malformed `Authorization` header still 401s — only a fully absent
   header selects the free tier.
 - Limiter runtime failures fail open (the shared account's Django-side
@@ -49,11 +70,12 @@ Behavior when active:
 
 Setting the `FREE_TIER_API_KEY` secret is the on/off switch — until it is
 set on an environment, anonymous requests 401 exactly as before. There is
-nothing to configure in the Cloudflare dashboard: the rate limiter is
-config-as-code in `wrangler.jsonc` and deploys with the Worker.
+nothing to configure in the Cloudflare dashboard: both rate limiters are
+config-as-code in `wrangler.jsonc` and deploy with the Worker.
 
 1. **Deploy the Worker** (normal deploy flow). The
-   `FREE_TIER_RATE_LIMITER` binding ships with it.
+   `FREE_TIER_RATE_LIMITER` and `FREE_TIER_GLOBAL_RATE_LIMITER` bindings
+   ship with it.
 2. **Create the dedicated free-tier Tako account** and generate its API
    key from the account page. All anonymous traffic spends this one
    account's credits.
@@ -66,20 +88,51 @@ config-as-code in `wrangler.jsonc` and deploys with the Worker.
    ```
 5. **Verify on staging:** connect an MCP client to
    `mcp.staging.tako.com/mcp` with no auth → `tools/list` shows exactly
-   the three free tools; make 11 `tools/call`s inside a minute → the
-   11th returns 429 with the upsell message.
+   the three free tools; make 11 free-tool `tools/call`s inside a minute
+   → the 11th returns a tool error carrying the upsell message.
 6. **Enable production** — after consciously accepting the operator
    warning below:
    ```bash
    wrangler secret put FREE_TIER_API_KEY --env production
    ```
 
-To change the per-IP limit later, edit `simple.limit` in **all three**
-`unsafe.bindings` blocks in `wrangler.jsonc` (dev/staging/production)
-AND the `FREE_TIER_LIMIT_MESSAGE` copy in `src/freetier.ts`, then
-redeploy. Counting is per-Cloudflare-colo and approximate (an IP whose
-traffic hits two colos can see roughly 2× the limit) — acceptable for
-abuse protection, not billing.
+**Kill switch (rollback):** deleting the secret instantly reverts the
+environment to the pre-free-tier behavior (anonymous → 401), no code
+change or redeploy needed:
+
+```bash
+wrangler secret delete FREE_TIER_API_KEY --env production
+```
+
+**Key rotation:** `wrangler secret put` over the top swaps what the
+Worker forwards, but the OLD key remains a valid full-privilege Tako API
+key until it is revoked/regenerated on the Tako account itself — do both.
+The three-tool restriction is Worker-side filtering, not an authorization
+boundary on the key, so treat the key's blast radius as the whole
+account.
+
+**Runbook — detecting fail-open:** the only signal that a limiter outage
+has the tier failing open is the Worker error log line. Check for it
+with:
+
+```bash
+wrangler tail tako-mcp-production --search "failing open"
+```
+
+Before production enablement, set up a Cloudflare Workers
+error-rate notification (Account → Notifications → Workers) so a
+sustained burst of these isn't something you discover by accident an
+hour later. The Django-side account cap (step 3) bounds the damage in
+the meantime.
+
+To change the limits later: the per-IP limit lives in the three
+`FREE_TIER_RATE_LIMITER` blocks in `wrangler.jsonc` AND in
+`FREE_TIER_LIMIT_MESSAGE` in `src/freetier.ts` (a drift test in
+`src/freetier.test.ts` fails if the message and bindings disagree); the
+global ceiling lives in the three `FREE_TIER_GLOBAL_RATE_LIMITER`
+blocks. Edit, then redeploy. Counting is per-Cloudflare-colo and
+approximate (an IP whose traffic hits two colos can see roughly 2× the
+limit) — acceptable for abuse protection, not billing.
 
 **Operator warning:** OAuth-capable hosts (claude.ai and similar) decide
 whether to run their OAuth sign-in flow based on getting a 401 from the

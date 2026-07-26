@@ -32,11 +32,17 @@
     // tokens below.
     "OPENAI_APPS_CHALLENGE_TOKEN": "dev-stub-not-a-real-challenge-token"
   },
-  // Free-tier rate limiter (10 metered requests / 60 s / IP). Cloudflare's
-  // rate-limiting API is configured via `unsafe.bindings`. Keep the
-  // `limit` value in sync with FREE_TIER_LIMIT_MESSAGE in
-  // `src/freetier.ts` — the upsell message states the number.
-  // NB: the binding alone does NOT enable the free tier; the
+  // Free-tier rate limiters. Cloudflare's rate-limiting API is configured
+  // via `unsafe.bindings`; two buckets:
+  //  - FREE_TIER_RATE_LIMITER: per-IP fairness bucket (10 free-tool
+  //    tools/call per 60 s). Keep `limit` in sync with
+  //    FREE_TIER_LIMIT_MESSAGE in `src/freetier.ts` — a drift test in
+  //    `src/freetier.test.ts` asserts the message matches this value.
+  //  - FREE_TIER_GLOBAL_RATE_LIMITER: constant-key global ceiling
+  //    (1000 anonymous requests / 60 s across ALL callers) — the actual
+  //    spend/volume bound; per-IP means little for hosted MCP hosts
+  //    egressing from a few platform IPs.
+  // NB: the bindings alone do NOT enable the free tier; the
   // FREE_TIER_API_KEY secret must also be set (fail-closed).
   "unsafe": {
     "bindings": [
@@ -45,6 +51,12 @@
         "type": "ratelimit",
         "namespace_id": "1000",
         "simple": { "limit": 10, "period": 60 }
+      },
+      {
+        "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1010",
+        "simple": { "limit": 1000, "period": 60 }
       }
     ]
   },
@@ -72,6 +84,12 @@
             "type": "ratelimit",
             "namespace_id": "1001",
             "simple": { "limit": 10, "period": 60 }
+          },
+          {
+            "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
+            "type": "ratelimit",
+            "namespace_id": "1011",
+            "simple": { "limit": 1000, "period": 60 }
           }
         ]
       },
@@ -114,6 +132,12 @@
             "type": "ratelimit",
             "namespace_id": "1002",
             "simple": { "limit": 10, "period": 60 }
+          },
+          {
+            "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
+            "type": "ratelimit",
+            "namespace_id": "1012",
+            "simple": { "limit": 1000, "period": 60 }
           }
         ]
       },

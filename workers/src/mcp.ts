@@ -34,7 +34,10 @@ import {
   FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
+  freeTierCreditsToolResult,
+  freeTierGlobalLimitResponse,
   freeTierLimitResponse,
+  freeTierTooLargeResponse,
   resolveFreeTierConfig,
   type Tier,
 } from "./freetier.js";
@@ -730,6 +733,18 @@ function registerTool(
         // Non-Django throws re-throw to the SDK, which wraps them in a
         // generic tool error (last-resort path for handler bugs).
         if (err instanceof DjangoError) {
+          // Free tier: the shared account exhausting its Tako credits is
+          // the tier's expected steady-state failure (the Django-side cap
+          // is the fail-open spend backstop). Surface it as upsell copy,
+          // not the raw billing error — which would read as a bug to an
+          // anonymous user who has no account to top up.
+          if (
+            callCtx.tier === "free" &&
+            err instanceof DjangoHttpError &&
+            (err.status === 402 || err.body.includes("PAYMENT_REQUIRED"))
+          ) {
+            return freeTierCreditsToolResult();
+          }
           return djangoErrorToToolResult(err);
         }
         throw err;
@@ -982,10 +997,13 @@ function djangoErrorKind(err: DjangoError): string {
  * subsequent calls independently; re-negotiation is cheap).
  *
  * Auth gate: `extractBearer` runs BEFORE the SDK sees the request. A
- * missing / malformed / empty `Authorization` header short-circuits here
- * with a uniform JSON-RPC 401 response — the SDK never processes
- * unauthenticated traffic. `initialize` requires auth too; MCP clients are
- * expected to be configured with a Tako API token before they connect.
+ * malformed or empty `Authorization` header short-circuits here with a
+ * uniform JSON-RPC 401 response. A fully ABSENT header is served as the
+ * anonymous free tier — restricted toolset, rate-limited, on the shared
+ * `FREE_TIER_API_KEY` account — but ONLY in environments where all three
+ * free-tier bindings are configured (see `resolveFreeTierConfig`);
+ * everywhere else the missing-header case 401s exactly as it always did,
+ * and `initialize` requires auth.
  *
  * `enableJsonResponse: true` makes the transport return a single JSON-RPC
  * response body instead of an SSE stream, which keeps the wire format simple
@@ -1017,16 +1035,22 @@ export async function handleMcpRequest(
   let token: string;
   let tier: Tier;
   if (bearer === null && freeTier !== null) {
-    // Anonymous free tier: meter tools/call per client IP BEFORE any SDK
-    // work, then act as the shared free-tier account downstream. Batch
-    // (array) bodies are rejected outright rather than metered — see
-    // `checkFreeTierRateLimit`.
-    const meterResult = await checkFreeTierRateLimit(request, freeTier.limiter);
-    if (meterResult === "limited") {
-      return freeTierLimitResponse();
-    }
-    if (meterResult === "batch") {
-      return freeTierBatchResponse();
+    // Anonymous free tier: admission checks BEFORE any SDK work (global
+    // ceiling → body-size bound → batch rejection → per-IP metering of
+    // free-tool calls), then act as the shared free-tier account
+    // downstream. See `checkFreeTierRateLimit` for the ordering rationale.
+    const meterResult = await checkFreeTierRateLimit(request, freeTier);
+    switch (meterResult.kind) {
+      case "global_limited":
+        return freeTierGlobalLimitResponse();
+      case "too_large":
+        return freeTierTooLargeResponse();
+      case "batch":
+        return freeTierBatchResponse();
+      case "limited":
+        return freeTierLimitResponse(meterResult.requestId);
+      case "allowed":
+        break;
     }
     token = freeTier.apiKey;
     tier = "free";
@@ -1069,6 +1093,7 @@ export async function handleMcpRequest(
       /* no-op outside tool-call scope */
     },
     client: "unknown",
+    tier,
   };
 
   try {

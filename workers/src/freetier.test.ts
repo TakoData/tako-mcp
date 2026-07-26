@@ -1,14 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import wranglerRaw from "../wrangler.jsonc?raw";
 import type { Env, RateLimit } from "./env.js";
 import {
   checkFreeTierRateLimit,
   FREE_TIER_BATCH_MESSAGE,
+  FREE_TIER_CREDITS_MESSAGE,
+  FREE_TIER_GLOBAL_LIMIT_MESSAGE,
   FREE_TIER_LIMIT_MESSAGE,
   FREE_TIER_TOOL_NAMES,
+  type FreeTierConfig,
   freeTierBatchResponse,
+  freeTierGlobalLimitResponse,
   freeTierLimitResponse,
+  freeTierRateLimitKey,
+  freeTierTooLargeResponse,
   isMeteredJsonRpcBody,
+  MAX_FREE_TIER_BODY_BYTES,
   resolveFreeTierConfig,
 } from "./freetier.js";
 import worker from "./index.js";
@@ -23,6 +31,25 @@ function fakeLimiter(success: boolean): RateLimit & { keys: string[] } {
       keys.push(key);
       return { success };
     },
+  };
+}
+
+/** A limiter whose `limit()` always throws — the fail-open path. */
+function throwingLimiter(): RateLimit {
+  return {
+    async limit() {
+      throw new Error("limiter unavailable");
+    },
+  };
+}
+
+/** Assemble a `FreeTierConfig` with sane defaults for unit tests. */
+function makeConfig(overrides: Partial<FreeTierConfig> = {}): FreeTierConfig {
+  return {
+    apiKey: "free-key",
+    limiter: fakeLimiter(true),
+    globalLimiter: fakeLimiter(true),
+    ...overrides,
   };
 }
 
@@ -53,48 +80,105 @@ describe("FREE_TIER_TOOL_NAMES", () => {
 
 describe("resolveFreeTierConfig", () => {
   const limiter = fakeLimiter(true);
+  const globalLimiter = fakeLimiter(true);
 
-  it("returns the config when both bindings are present", () => {
+  it("returns the config when all three bindings are present", () => {
     const env = {
       DJANGO_BASE_URL: "http://localhost:8000",
       FREE_TIER_API_KEY: "free-key",
       FREE_TIER_RATE_LIMITER: limiter,
+      FREE_TIER_GLOBAL_RATE_LIMITER: globalLimiter,
     } as Env;
     expect(resolveFreeTierConfig(env)).toEqual({
       apiKey: "free-key",
       limiter,
+      globalLimiter,
     });
   });
 
-  it("returns null when the API key is missing or empty (fail-closed)", () => {
-    expect(
-      resolveFreeTierConfig({
-        DJANGO_BASE_URL: "http://localhost:8000",
-        FREE_TIER_RATE_LIMITER: limiter,
-      } as Env),
-    ).toBeNull();
-    expect(
-      resolveFreeTierConfig({
-        DJANGO_BASE_URL: "http://localhost:8000",
-        FREE_TIER_API_KEY: "",
-        FREE_TIER_RATE_LIMITER: limiter,
-      } as Env),
-    ).toBeNull();
+  it("trims the API key — a piped `wrangler secret put` adds a trailing newline", () => {
+    const env = {
+      DJANGO_BASE_URL: "http://localhost:8000",
+      FREE_TIER_API_KEY: "  free-key\n",
+      FREE_TIER_RATE_LIMITER: limiter,
+      FREE_TIER_GLOBAL_RATE_LIMITER: globalLimiter,
+    } as Env;
+    expect(resolveFreeTierConfig(env)?.apiKey).toBe("free-key");
   });
 
-  it("returns null when the limiter binding is missing (fail-closed)", () => {
+  it("returns null when the API key is missing, empty, or whitespace-only (fail-closed)", () => {
+    for (const key of [undefined, "", "  \n"]) {
+      expect(
+        resolveFreeTierConfig({
+          DJANGO_BASE_URL: "http://localhost:8000",
+          ...(key !== undefined ? { FREE_TIER_API_KEY: key } : {}),
+          FREE_TIER_RATE_LIMITER: limiter,
+          FREE_TIER_GLOBAL_RATE_LIMITER: globalLimiter,
+        } as Env),
+      ).toBeNull();
+    }
+  });
+
+  it("returns null when the per-IP limiter binding is missing (fail-closed)", () => {
     expect(
       resolveFreeTierConfig({
         DJANGO_BASE_URL: "http://localhost:8000",
         FREE_TIER_API_KEY: "free-key",
+        FREE_TIER_GLOBAL_RATE_LIMITER: globalLimiter,
+      } as Env),
+    ).toBeNull();
+  });
+
+  it("returns null when the global limiter binding is missing (fail-closed)", () => {
+    expect(
+      resolveFreeTierConfig({
+        DJANGO_BASE_URL: "http://localhost:8000",
+        FREE_TIER_API_KEY: "free-key",
+        FREE_TIER_RATE_LIMITER: limiter,
       } as Env),
     ).toBeNull();
   });
 });
 
 describe("isMeteredJsonRpcBody", () => {
-  it("meters tools/call", () => {
-    expect(isMeteredJsonRpcBody(TOOLS_CALL_BODY)).toBe(true);
+  it("meters a tools/call naming each free tool", () => {
+    for (const name of FREE_TIER_TOOL_NAMES) {
+      expect(
+        isMeteredJsonRpcBody({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: {} },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("does not meter a tools/call for a hidden tool (returns 'tool not found' without spend)", () => {
+    for (const name of ["tako_agent", "get_credit_balance", "no_such_tool"]) {
+      expect(
+        isMeteredJsonRpcBody({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: {} },
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("does not meter a tools/call with missing or malformed params", () => {
+    expect(
+      isMeteredJsonRpcBody({ jsonrpc: "2.0", id: 1, method: "tools/call" }),
+    ).toBe(false);
+    expect(
+      isMeteredJsonRpcBody({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: 42 },
+      }),
+    ).toBe(false);
   });
 
   it("does not meter the handshake and listing methods", () => {
@@ -117,100 +201,286 @@ describe("isMeteredJsonRpcBody", () => {
   });
 });
 
+describe("freeTierRateLimitKey", () => {
+  it("uses the shared 'unknown' bucket when the header is absent", () => {
+    expect(freeTierRateLimitKey(null)).toBe("unknown");
+  });
+
+  it("keys IPv4 addresses verbatim", () => {
+    expect(freeTierRateLimitKey("203.0.113.7")).toBe("203.0.113.7");
+  });
+
+  it("keys IPv6 addresses by /64 prefix — one subscriber, one bucket", () => {
+    expect(freeTierRateLimitKey("2001:db8:1:2:3:4:5:6")).toBe("v6:2001:db8:1:2");
+    // `::` expansion: 2001:db8::1 is 2001:db8:0:0:0:0:0:1 → /64 = 2001:db8:0:0.
+    expect(freeTierRateLimitKey("2001:db8::1")).toBe("v6:2001:db8:0:0");
+    // Two hosts in the same /64 share a bucket…
+    expect(freeTierRateLimitKey("2001:db8:1:2:aaaa::1")).toBe(
+      freeTierRateLimitKey("2001:db8:1:2:bbbb::2"),
+    );
+    // …two different /64s do not.
+    expect(freeTierRateLimitKey("2001:db8:1:2::1")).not.toBe(
+      freeTierRateLimitKey("2001:db8:1:3::1"),
+    );
+  });
+});
+
 describe("checkFreeTierRateLimit", () => {
-  it("counts a tools/call against the CF-Connecting-IP key and allows under-limit", async () => {
-    const limiter = fakeLimiter(true);
-    const req = mcpRequest(TOOLS_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" });
-    await expect(checkFreeTierRateLimit(req, limiter)).resolves.toBe("allowed");
-    expect(limiter.keys).toEqual(["203.0.113.7"]);
-  });
-
-  it("returns limited when the bucket is exhausted", async () => {
-    const limiter = fakeLimiter(false);
-    const req = mcpRequest(TOOLS_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" });
-    await expect(checkFreeTierRateLimit(req, limiter)).resolves.toBe("limited");
-  });
-
-  it("never calls the limiter for unmetered methods", async () => {
-    const limiter = fakeLimiter(false); // would report limited if consulted
+  it("hits the global ceiling for EVERY request, even unmetered methods", async () => {
+    const config = makeConfig();
     const req = mcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-    await expect(checkFreeTierRateLimit(req, limiter)).resolves.toBe("allowed");
-    expect(limiter.keys).toEqual([]);
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "allowed",
+    });
+    expect((config.globalLimiter as ReturnType<typeof fakeLimiter>).keys).toEqual([
+      "global",
+    ]);
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
+  });
+
+  it("returns global_limited when the ceiling is exhausted, before per-IP metering", async () => {
+    const config = makeConfig({ globalLimiter: fakeLimiter(false) });
+    const req = mcpRequest(TOOLS_CALL_BODY);
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "global_limited",
+    });
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
+  });
+
+  it("counts a free-tool tools/call against the CF-Connecting-IP key and allows under-limit", async () => {
+    const config = makeConfig();
+    const req = mcpRequest(TOOLS_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" });
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "allowed",
+    });
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([
+      "203.0.113.7",
+    ]);
+  });
+
+  it("returns limited with the request id when the per-IP bucket is exhausted", async () => {
+    const config = makeConfig({ limiter: fakeLimiter(false) });
+    const req = mcpRequest(
+      { ...TOOLS_CALL_BODY, id: "req-9" },
+      { "cf-connecting-ip": "203.0.113.7" },
+    );
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "limited",
+      requestId: "req-9",
+    });
+  });
+
+  it("degrades the request id to null when it is missing or malformed", async () => {
+    const config = makeConfig({ limiter: fakeLimiter(false) });
+    const { id: _dropped, ...noIdBody } = TOOLS_CALL_BODY;
+    const req = mcpRequest(noIdBody);
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "limited",
+      requestId: null,
+    });
+  });
+
+  it("never consults the per-IP limiter for a hidden-tool tools/call (still counts globally)", async () => {
+    const config = makeConfig({ limiter: fakeLimiter(false) }); // would report limited if consulted
+    const req = mcpRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "tako_agent", arguments: {} },
+    });
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "allowed",
+    });
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
+    expect((config.globalLimiter as ReturnType<typeof fakeLimiter>).keys).toEqual([
+      "global",
+    ]);
+  });
+
+  it("keys IPv6 clients by /64 prefix", async () => {
+    const config = makeConfig();
+    const req = mcpRequest(TOOLS_CALL_BODY, {
+      "cf-connecting-ip": "2001:db8:1:2:3:4:5:6",
+    });
+    await checkFreeTierRateLimit(req, config);
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([
+      "v6:2001:db8:1:2",
+    ]);
   });
 
   it("falls back to the shared 'unknown' key without CF-Connecting-IP", async () => {
-    const limiter = fakeLimiter(true);
-    await checkFreeTierRateLimit(mcpRequest(TOOLS_CALL_BODY), limiter);
-    expect(limiter.keys).toEqual(["unknown"]);
+    const config = makeConfig();
+    await checkFreeTierRateLimit(mcpRequest(TOOLS_CALL_BODY), config);
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([
+      "unknown",
+    ]);
   });
 
   it("does not consume the request body (the transport still needs it)", async () => {
-    const limiter = fakeLimiter(true);
+    const config = makeConfig();
     const req = mcpRequest(TOOLS_CALL_BODY);
-    await checkFreeTierRateLimit(req, limiter);
+    await checkFreeTierRateLimit(req, config);
     // The original body must remain readable after the peek.
     await expect(req.json()).resolves.toMatchObject({ method: "tools/call" });
   });
 
-  it("allows (does not meter) an unparseable body — the SDK will reject it anyway", async () => {
-    const limiter = fakeLimiter(false);
+  it("allows (does not meter per-IP) an unparseable body — the SDK will reject it anyway", async () => {
+    const config = makeConfig({ limiter: fakeLimiter(false) });
     const req = new Request("https://example.com/mcp", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "not json{",
     });
-    await expect(checkFreeTierRateLimit(req, limiter)).resolves.toBe("allowed");
-    expect(limiter.keys).toEqual([]);
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "allowed",
+    });
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
   });
 
-  it("rejects a batch array as 'batch' without calling the limiter, even when it contains a tools/call", async () => {
-    const limiter = fakeLimiter(true); // would allow if (wrongly) consulted
-    const req = mcpRequest([{ jsonrpc: "2.0", id: 1, method: "tools/list" }, TOOLS_CALL_BODY]);
-    await expect(checkFreeTierRateLimit(req, limiter)).resolves.toBe("batch");
-    expect(limiter.keys).toEqual([]);
+  it("rejects a batch array as 'batch' without per-IP metering, even when it contains a tools/call", async () => {
+    const config = makeConfig();
+    const req = mcpRequest([
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      TOOLS_CALL_BODY,
+    ]);
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "batch",
+    });
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
   });
 
-  it("rejects a batch array as 'batch' without calling the limiter, even without a tools/call", async () => {
-    const limiter = fakeLimiter(true);
+  it("rejects a batch array as 'batch' even without a tools/call", async () => {
+    const config = makeConfig();
     const req = mcpRequest([{ jsonrpc: "2.0", id: 1, method: "tools/list" }]);
-    await expect(checkFreeTierRateLimit(req, limiter)).resolves.toBe("batch");
-    expect(limiter.keys).toEqual([]);
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "batch",
+    });
   });
 
-  it("fails open and logs when the limiter binding throws", async () => {
+  it("rejects a declared Content-Length over the cap before reading the body", async () => {
+    const config = makeConfig();
+    const req = mcpRequest(TOOLS_CALL_BODY, {
+      "content-length": String(MAX_FREE_TIER_BODY_BYTES + 1),
+    });
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "too_large",
+    });
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
+  });
+
+  it("rejects an actually-oversized body via the bounded read (Content-Length can lie)", async () => {
+    const config = makeConfig();
+    // A real body over the cap; the header (if any) is not what stops it.
+    const bigQuery = "x".repeat(MAX_FREE_TIER_BODY_BYTES + 1024);
+    const req = new Request("https://example.com/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...TOOLS_CALL_BODY,
+        params: { name: "tako_answer", arguments: { query: bigQuery } },
+      }),
+    });
+    await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+      kind: "too_large",
+    });
+    expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
+  });
+
+  it("fails open and logs when the per-IP limiter binding throws", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const limiter: RateLimit = {
-      async limit() {
-        throw new Error("limiter unavailable");
-      },
-    };
-    const req = mcpRequest(TOOLS_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" });
-    await expect(checkFreeTierRateLimit(req, limiter)).resolves.toBe("allowed");
-    expect(errSpy).toHaveBeenCalledOnce();
-    expect(String(errSpy.mock.calls[0]?.[0])).toContain("[free-tier]");
-    errSpy.mockRestore();
+    try {
+      const config = makeConfig({ limiter: throwingLimiter() });
+      const req = mcpRequest(TOOLS_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" });
+      await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+        kind: "allowed",
+      });
+      expect(errSpy).toHaveBeenCalledOnce();
+      expect(String(errSpy.mock.calls[0]?.[0])).toContain("failing open");
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("fails open and logs when the global limiter binding throws", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const config = makeConfig({ globalLimiter: throwingLimiter() });
+      const req = mcpRequest(TOOLS_CALL_BODY);
+      await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
+        kind: "allowed",
+      });
+      expect(errSpy).toHaveBeenCalledOnce();
+      expect(String(errSpy.mock.calls[0]?.[0])).toContain("failing open");
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
 
 describe("freeTierLimitResponse", () => {
-  it("is a 429 JSON-RPC error with the upsell message and Retry-After", async () => {
-    const res = freeTierLimitResponse();
-    expect(res.status).toBe(429);
-    expect(res.headers.get("retry-after")).toBe("60");
-    expect(res.headers.get("content-type")).toBe(
-      "application/json; charset=utf-8",
-    );
+  it("with a request id: HTTP 200 JSON-RPC RESULT carrying the upsell as a tool error", async () => {
+    // Deliberately not a 429 — the SDK client throws on non-2xx POSTs at
+    // the transport layer, so a 429 body never reaches the model. As a
+    // tool result the host feeds the text straight to the model.
+    const res = freeTierLimitResponse(4);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as {
       jsonrpc: string;
+      id: number;
+      result: { content: Array<{ type: string; text: string }>; isError: boolean };
+    };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.id).toBe(4);
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content).toEqual([
+      { type: "text", text: FREE_TIER_LIMIT_MESSAGE },
+    ]);
+    expect(FREE_TIER_LIMIT_MESSAGE).toContain("https://trytako.com/account/");
+  });
+
+  it("without a request id: degrades to the legacy 429 with Retry-After", async () => {
+    const res = freeTierLimitResponse(null);
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("60");
+    const body = (await res.json()) as {
       id: null;
       error: { code: number; message: string; data: { kind: string } };
     };
-    expect(body.jsonrpc).toBe("2.0");
     expect(body.id).toBeNull();
     expect(body.error.code).toBe(-32000);
     expect(body.error.message).toBe(FREE_TIER_LIMIT_MESSAGE);
     expect(body.error.data.kind).toBe("rate_limited");
-    expect(body.error.message).toContain("https://trytako.com/account/");
+  });
+});
+
+describe("freeTierGlobalLimitResponse", () => {
+  it("is a 429 JSON-RPC error with the capacity message and Retry-After", async () => {
+    const res = freeTierGlobalLimitResponse();
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("60");
+    const body = (await res.json()) as {
+      id: null;
+      error: { code: number; message: string; data: { kind: string } };
+    };
+    expect(body.id).toBeNull();
+    expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
+    expect(body.error.data.kind).toBe("global_rate_limited");
+  });
+});
+
+describe("freeTierTooLargeResponse", () => {
+  it("is a 413 JSON-RPC error naming the byte cap", async () => {
+    const res = freeTierTooLargeResponse();
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as {
+      id: null;
+      error: { code: number; message: string; data: { kind: string } };
+    };
+    expect(body.id).toBeNull();
+    expect(body.error.code).toBe(-32600);
+    expect(body.error.data.kind).toBe("payload_too_large");
+    expect(body.error.message).toContain(String(MAX_FREE_TIER_BODY_BYTES));
   });
 });
 
@@ -239,17 +509,51 @@ describe("freeTierBatchResponse", () => {
   });
 });
 
+describe("wrangler.jsonc ↔ message drift", () => {
+  // The limit numbers live in `unsafe.bindings` blocks (one per env) AND
+  // in the user-facing messages. This test is the sync mechanism the
+  // README promises: the upsell can never advertise a number the limiter
+  // does not enforce.
+  function bindingLimits(name: string): number[] {
+    const re = new RegExp(
+      `"name":\\s*"${name}"[\\s\\S]*?"limit":\\s*(\\d+)`,
+      "g",
+    );
+    return [...wranglerRaw.matchAll(re)].map((m) => Number(m[1]));
+  }
+
+  it("per-IP binding limits match the number in FREE_TIER_LIMIT_MESSAGE (all 3 envs)", () => {
+    const limits = bindingLimits("FREE_TIER_RATE_LIMITER");
+    expect(limits).toHaveLength(3);
+    const advertised = FREE_TIER_LIMIT_MESSAGE.match(/\((\d+) requests\/min\)/);
+    expect(advertised).not.toBeNull();
+    for (const limit of limits) {
+      expect(limit).toBe(Number(advertised![1]));
+    }
+  });
+
+  it("global binding limits agree across all 3 envs", () => {
+    const limits = bindingLimits("FREE_TIER_GLOBAL_RATE_LIMITER");
+    expect(limits).toHaveLength(3);
+    expect(new Set(limits).size).toBe(1);
+  });
+});
+
 describe("free tier end-to-end (worker.fetch with stub env)", () => {
   const JSON_HEADERS = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
   };
 
-  function freeEnv(limiter: RateLimit): Env {
+  function freeEnv(
+    limiter: RateLimit,
+    globalLimiter: RateLimit = fakeLimiter(true),
+  ): Env {
     return {
       DJANGO_BASE_URL: "http://localhost:8000",
       FREE_TIER_API_KEY: "free-tier-secret-key",
       FREE_TIER_RATE_LIMITER: limiter,
+      FREE_TIER_GLOBAL_RATE_LIMITER: globalLimiter,
     } as Env;
   }
 
@@ -275,24 +579,35 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     },
   };
   const TOOLS_LIST_BODY = { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} };
+  const ANSWER_CALL_BODY = {
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "tako_answer", arguments: { query: "US GDP" } },
+  };
 
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it("anonymous initialize succeeds without metering", async () => {
-    const limiter = fakeLimiter(false); // would 429 if (wrongly) consulted
-    const res = await worker.fetch(post(INITIALIZE_BODY), freeEnv(limiter));
+  it("anonymous initialize succeeds without per-IP metering (global counts it)", async () => {
+    const limiter = fakeLimiter(false); // would limit if (wrongly) consulted
+    const globalLimiter = fakeLimiter(true);
+    const res = await worker.fetch(
+      post(INITIALIZE_BODY),
+      freeEnv(limiter, globalLimiter),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       result: { serverInfo: { name: string } };
     };
     expect(body.result.serverInfo.name).toBe("tako-mcp");
     expect(limiter.keys).toEqual([]);
+    expect(globalLimiter.keys).toEqual(["global"]);
   });
 
-  it("anonymous tools/list shows exactly the three free tools, unmetered", async () => {
+  it("anonymous tools/list shows exactly the three free tools, unmetered per-IP", async () => {
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(post(TOOLS_LIST_BODY), freeEnv(limiter));
     expect(res.status).toBe(200);
@@ -307,7 +622,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(limiter.keys).toEqual([]);
   });
 
-  it("anonymous tools/call forwards FREE_TIER_API_KEY to Django and meters the IP", async () => {
+  it("anonymous tools/call forwards the TRIMMED FREE_TIER_API_KEY to Django and meters the IP", async () => {
     const limiter = fakeLimiter(true);
     // tako_answer POSTs /api/v1/answer/ once; the handler's response
     // handling is irrelevant here — the assertion is the outgoing header.
@@ -317,17 +632,12 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
         headers: { "content-type": "application/json" },
       }),
     ]);
+    const env = freeEnv(limiter);
+    (env as { FREE_TIER_API_KEY?: string }).FREE_TIER_API_KEY =
+      "free-tier-secret-key\n";
     const res = await worker.fetch(
-      post(
-        {
-          jsonrpc: "2.0",
-          id: 3,
-          method: "tools/call",
-          params: { name: "tako_answer", arguments: { query: "US GDP" } },
-        },
-        { "cf-connecting-ip": "203.0.113.7" },
-      ),
-      freeEnv(limiter),
+      post(ANSWER_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
+      env,
     );
     expect(res.status).toBe(200);
     expect(limiter.keys).toEqual(["203.0.113.7"]);
@@ -336,36 +646,54 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(outbound.headers.get("x-api-key")).toBe("free-tier-secret-key");
   });
 
-  it("an over-limit anonymous tools/call gets the 429 upsell", async () => {
+  it("an over-limit anonymous tools/call gets a 200 TOOL ERROR the model can read", async () => {
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(
-      post(
-        {
-          jsonrpc: "2.0",
-          id: 4,
-          method: "tools/call",
-          params: { name: "tako_answer", arguments: { query: "US GDP" } },
-        },
-        { "cf-connecting-ip": "203.0.113.7" },
-      ),
+      post(ANSWER_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
       freeEnv(limiter),
+    );
+    // Not a 429: the SDK client throws on non-2xx, so the upsell would
+    // never reach the model. A JSON-RPC result with isError does.
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      id: number;
+      result: { content: Array<{ type: string; text: string }>; isError: boolean };
+    };
+    expect(body.id).toBe(ANSWER_CALL_BODY.id);
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toBe(FREE_TIER_LIMIT_MESSAGE);
+  });
+
+  it("an anonymous request over the global ceiling gets the capacity 429", async () => {
+    const limiter = fakeLimiter(true);
+    const res = await worker.fetch(
+      post(TOOLS_LIST_BODY),
+      freeEnv(limiter, fakeLimiter(false)),
     );
     expect(res.status).toBe(429);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toBe(FREE_TIER_LIMIT_MESSAGE);
+    expect(body.error.message).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
+    expect(limiter.keys).toEqual([]);
   });
 
-  it("an anonymous batch request gets a 400, never hits the limiter or Django", async () => {
+  it("an oversized anonymous body gets a 413 without reaching Django", async () => {
+    const fetchMock = mockFetchSequence([]);
+    const res = await worker.fetch(
+      post(ANSWER_CALL_BODY, {
+        "content-length": String(MAX_FREE_TIER_BODY_BYTES + 1),
+      }),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(res.status).toBe(413);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("an anonymous batch request gets a 400, never hits the per-IP limiter or Django", async () => {
     const limiter = fakeLimiter(true); // would allow if (wrongly) consulted
     const fetchMock = mockFetchSequence([]);
     const res = await worker.fetch(
       post([
-        {
-          jsonrpc: "2.0",
-          id: 6,
-          method: "tools/call",
-          params: { name: "tako_answer", arguments: { query: "US GDP" } },
-        },
+        ANSWER_CALL_BODY,
         {
           jsonrpc: "2.0",
           id: 7,
@@ -380,6 +708,62 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.error.message).toBe(FREE_TIER_BATCH_MESSAGE);
     expect(limiter.keys).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("an anonymous call to a hidden tool does not burn per-IP quota", async () => {
+    const limiter = fakeLimiter(false); // would 429 the call if consulted
+    const res = await worker.fetch(
+      post({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: { name: "tako_agent", arguments: { query: "x" } },
+      }),
+      freeEnv(limiter),
+    );
+    // The SDK answers "tool not found" itself (the tool is unregistered
+    // on the free tier); the per-IP bucket is untouched.
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as unknown;
+    expect(JSON.stringify(body)).toMatch(/not found/i);
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("free-tier credit exhaustion (Django 402) surfaces as the upsell, not a billing error", async () => {
+    const limiter = fakeLimiter(true);
+    mockFetchSequence([
+      new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
+        status: 402,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+    const res = await worker.fetch(post(ANSWER_CALL_BODY), freeEnv(limiter));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toBe(FREE_TIER_CREDITS_MESSAGE);
+  });
+
+  it("authenticated credit exhaustion keeps the real Django error (no upsell substitution)", async () => {
+    mockFetchSequence([
+      new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
+        status: 402,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+    const res = await worker.fetch(
+      post(ANSWER_CALL_BODY, { authorization: "Bearer real-user-token" }),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
+    expect(body.result.content[0]?.text).toContain("402");
   });
 
   it("a malformed Authorization header still 401s even with the free tier configured", async () => {
@@ -398,6 +782,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     const env = {
       DJANGO_BASE_URL: "http://localhost:8000",
       FREE_TIER_RATE_LIMITER: fakeLimiter(true),
+      FREE_TIER_GLOBAL_RATE_LIMITER: fakeLimiter(true),
     } as Env;
     const res = await worker.fetch(post(INITIALIZE_BODY), env);
     expect(res.status).toBe(401);
@@ -406,11 +791,22 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.error.data.kind).toBe("missing");
   });
 
-  it("authenticated requests bypass the limiter and keep the full toolset", async () => {
+  it("without the global limiter binding, anonymous requests 401 (fail-closed)", async () => {
+    const env = {
+      DJANGO_BASE_URL: "http://localhost:8000",
+      FREE_TIER_API_KEY: "free-tier-secret-key",
+      FREE_TIER_RATE_LIMITER: fakeLimiter(true),
+    } as Env;
+    const res = await worker.fetch(post(INITIALIZE_BODY), env);
+    expect(res.status).toBe(401);
+  });
+
+  it("authenticated requests bypass both limiters and keep the full toolset", async () => {
     const limiter = fakeLimiter(false); // would 429 / restrict if consulted
+    const globalLimiter = fakeLimiter(false);
     const res = await worker.fetch(
       post(TOOLS_LIST_BODY, { authorization: "Bearer real-user-token" }),
-      freeEnv(limiter),
+      freeEnv(limiter, globalLimiter),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -423,15 +819,11 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       "tako_search",
     ]);
     expect(limiter.keys).toEqual([]);
+    expect(globalLimiter.keys).toEqual([]);
   });
 
   it("a limiter runtime failure fails open — the anonymous call still succeeds", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const limiter: RateLimit = {
-      async limit() {
-        throw new Error("limiter unavailable");
-      },
-    };
     mockFetchSequence([
       new Response(JSON.stringify({}), {
         status: 200,
@@ -439,13 +831,8 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       }),
     ]);
     const res = await worker.fetch(
-      post({
-        jsonrpc: "2.0",
-        id: 5,
-        method: "tools/call",
-        params: { name: "tako_answer", arguments: { query: "US GDP" } },
-      }),
-      freeEnv(limiter),
+      post(ANSWER_CALL_BODY),
+      freeEnv(throwingLimiter(), throwingLimiter()),
     );
     expect(res.status).toBe(200);
   });

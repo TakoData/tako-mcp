@@ -119,6 +119,17 @@ export interface Env {
    * fail-closed sense as `FREE_TIER_API_KEY`.
    */
   FREE_TIER_RATE_LIMITER?: RateLimit;
+  /**
+   * Cloudflare rate-limit binding for the GLOBAL anonymous ceiling —
+   * hit with one constant key for every anonymous request regardless of
+   * method, bounding total free-tier volume platform-wide (per-IP keying
+   * is meaningless for hosted MCP hosts whose traffic egresses from a few
+   * platform IPs). Declared under `unsafe.bindings` in `wrangler.jsonc`
+   * (1000 requests / 60 s). Optional in the same fail-closed sense as
+   * the other two free-tier bindings — all three must be present for the
+   * free tier to activate. See `freetier.ts`.
+   */
+  FREE_TIER_GLOBAL_RATE_LIMITER?: RateLimit;
 }
 
 /**
