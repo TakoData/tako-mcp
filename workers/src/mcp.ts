@@ -29,7 +29,14 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
-import { FREE_TIER_TOOL_NAMES, type Tier } from "./freetier.js";
+import {
+  checkFreeTierRateLimit,
+  FREE_TIER_TOOL_NAMES,
+  type FreeTierConfig,
+  freeTierLimitResponse,
+  resolveFreeTierConfig,
+  type Tier,
+} from "./freetier.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import {
   OPTIONAL_TOOL_NAMES,
@@ -987,36 +994,60 @@ export async function handleMcpRequest(
   request: Request,
   env: Env,
 ): Promise<Response> {
-  // Gate the whole endpoint behind Bearer auth. If the header is missing /
-  // malformed / empty, return a uniform 401 before invoking the SDK.
-  let bearer: string;
+  // Gate the endpoint behind Bearer auth — with one carve-out. A request
+  // whose Authorization header is fully ABSENT (kind="missing") is served
+  // as the anonymous free tier when the env has opted in (both free-tier
+  // bindings configured, see `resolveFreeTierConfig`). A malformed or
+  // empty header is a client *trying* to authenticate — that stays a loud
+  // 401 and is never silently downgraded to the free tier.
+  let bearer: string | null = null;
+  let freeTier: FreeTierConfig | null = null;
   try {
     bearer = extractBearer(request);
   } catch (err) {
-    if (err instanceof BearerAuthError) {
+    if (!(err instanceof BearerAuthError)) throw err;
+    freeTier = err.kind === "missing" ? resolveFreeTierConfig(env) : null;
+    if (freeTier === null) {
       return bearerAuthResponse(request, err);
     }
-    throw err;
   }
 
-  // Two-mode bearer handling:
-  // - OAuth access JWT issued by /token: verify signature, decrypt the
-  //   per-user Tako API token from the `enc_tako_token` claim, forward
-  //   that token downstream as `X-API-Key`. Each user authenticates as
-  //   themselves to Django.
-  // - Raw Tako API token (the existing Claude Code path): non-JWT shape,
-  //   `tryResolveOAuthAccessToken` returns null, we forward the bearer
-  //   verbatim. Backwards-compatible with every Claude Code install in
-  //   the wild.
   const origin = new URL(request.url).origin;
-  const oauth = await tryResolveOAuthAccessToken(bearer, env, origin);
-  if (oauth.kind === "reject") {
-    // The bearer IS a Worker-issued JWT but failed a binding check
-    // (wrong audience/issuer/scope/type). Return a clean 401 rather than
-    // forwarding it to Django as a raw API key.
-    return oauthChallengeResponse(request, oauth.error, oauth.errorDescription);
+  let token: string;
+  let tier: Tier;
+  if (bearer === null && freeTier !== null) {
+    // Anonymous free tier: meter tools/call per client IP BEFORE any SDK
+    // work, then act as the shared free-tier account downstream.
+    if ((await checkFreeTierRateLimit(request, freeTier.limiter)) === "limited") {
+      return freeTierLimitResponse();
+    }
+    token = freeTier.apiKey;
+    tier = "free";
+  } else if (bearer !== null) {
+    // Two-mode bearer handling:
+    // - OAuth access JWT issued by /token: verify signature, decrypt the
+    //   per-user Tako API token from the `enc_tako_token` claim, forward
+    //   that token downstream as `X-API-Key`. Each user authenticates as
+    //   themselves to Django.
+    // - Raw Tako API token (the existing Claude Code path): non-JWT shape,
+    //   `tryResolveOAuthAccessToken` returns null, we forward the bearer
+    //   verbatim. Backwards-compatible with every Claude Code install in
+    //   the wild.
+    const oauth = await tryResolveOAuthAccessToken(bearer, env, origin);
+    if (oauth.kind === "reject") {
+      // The bearer IS a Worker-issued JWT but failed a binding check
+      // (wrong audience/issuer/scope/type). Return a clean 401 rather than
+      // forwarding it to Django as a raw API key.
+      return oauthChallengeResponse(request, oauth.error, oauth.errorDescription);
+    }
+    token = oauth.kind === "ok" ? oauth.takoToken : bearer;
+    tier = "authenticated";
+  } else {
+    // Unreachable: `bearer === null` implies the catch above ran, and it
+    // either set `freeTier` or returned. Kept as a hard failure so a
+    // future refactor can't silently serve an unauthenticated request.
+    throw new Error("unreachable: no bearer and no free-tier config");
   }
-  const token = oauth.kind === "ok" ? oauth.takoToken : bearer;
 
   // Base ctx — `sendProgress` here is a placeholder overridden per
   // tool call inside `registerTool`'s SDK callback (where the
@@ -1062,6 +1093,7 @@ export async function handleMcpRequest(
       iconsBaseUrl: requestOrigin,
       client,
       enabledOptionalToolNames,
+      tier,
     });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env, RateLimit } from "./env.js";
 import {
@@ -9,6 +9,8 @@ import {
   isMeteredJsonRpcBody,
   resolveFreeTierConfig,
 } from "./freetier.js";
+import worker from "./index.js";
+import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
 /** A fake limiter that records keys and returns a scripted success value. */
 function fakeLimiter(success: boolean): RateLimit & { keys: string[] } {
@@ -200,5 +202,190 @@ describe("freeTierLimitResponse", () => {
     expect(body.error.message).toBe(FREE_TIER_LIMIT_MESSAGE);
     expect(body.error.data.kind).toBe("rate_limited");
     expect(body.error.message).toContain("https://trytako.com/account/");
+  });
+});
+
+describe("free tier end-to-end (worker.fetch with stub env)", () => {
+  const JSON_HEADERS = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  };
+
+  function freeEnv(limiter: RateLimit): Env {
+    return {
+      DJANGO_BASE_URL: "http://localhost:8000",
+      FREE_TIER_API_KEY: "free-tier-secret-key",
+      FREE_TIER_RATE_LIMITER: limiter,
+    } as Env;
+  }
+
+  function post(
+    body: unknown,
+    headers: Record<string, string> = {},
+  ): Request {
+    return new Request("https://example.com/mcp", {
+      method: "POST",
+      headers: { ...JSON_HEADERS, ...headers },
+      body: JSON.stringify(body),
+    });
+  }
+
+  const INITIALIZE_BODY = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "test-client", version: "0.0.0" },
+    },
+  };
+  const TOOLS_LIST_BODY = { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("anonymous initialize succeeds without metering", async () => {
+    const limiter = fakeLimiter(false); // would 429 if (wrongly) consulted
+    const res = await worker.fetch(post(INITIALIZE_BODY), freeEnv(limiter));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { serverInfo: { name: string } };
+    };
+    expect(body.result.serverInfo.name).toBe("tako-mcp");
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("anonymous tools/list shows exactly the three free tools, unmetered", async () => {
+    const limiter = fakeLimiter(false);
+    const res = await worker.fetch(post(TOOLS_LIST_BODY), freeEnv(limiter));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    expect(body.result.tools.map((t) => t.name).sort()).toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_search",
+    ]);
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("anonymous tools/call forwards FREE_TIER_API_KEY to Django and meters the IP", async () => {
+    const limiter = fakeLimiter(true);
+    // tako_answer POSTs /api/v1/answer/ once; the handler's response
+    // handling is irrelevant here — the assertion is the outgoing header.
+    const fetchMock = mockFetchSequence([
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+    const res = await worker.fetch(
+      post(
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: { name: "tako_answer", arguments: { query: "US GDP" } },
+        },
+        { "cf-connecting-ip": "203.0.113.7" },
+      ),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(200);
+    expect(limiter.keys).toEqual(["203.0.113.7"]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const outbound = requestFrom(fetchMock.mock.calls[0]!);
+    expect(outbound.headers.get("x-api-key")).toBe("free-tier-secret-key");
+  });
+
+  it("an over-limit anonymous tools/call gets the 429 upsell", async () => {
+    const limiter = fakeLimiter(false);
+    const res = await worker.fetch(
+      post(
+        {
+          jsonrpc: "2.0",
+          id: 4,
+          method: "tools/call",
+          params: { name: "tako_answer", arguments: { query: "US GDP" } },
+        },
+        { "cf-connecting-ip": "203.0.113.7" },
+      ),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe(FREE_TIER_LIMIT_MESSAGE);
+  });
+
+  it("a malformed Authorization header still 401s even with the free tier configured", async () => {
+    const limiter = fakeLimiter(true);
+    const res = await worker.fetch(
+      post(INITIALIZE_BODY, { authorization: "NotBearer xyz" }),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { data: { kind: string } } };
+    expect(body.error.data.kind).toBe("malformed");
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("without FREE_TIER_API_KEY, anonymous requests 401 exactly as before (fail-closed)", async () => {
+    const env = {
+      DJANGO_BASE_URL: "http://localhost:8000",
+      FREE_TIER_RATE_LIMITER: fakeLimiter(true),
+    } as Env;
+    const res = await worker.fetch(post(INITIALIZE_BODY), env);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain("Bearer");
+    const body = (await res.json()) as { error: { data: { kind: string } } };
+    expect(body.error.data.kind).toBe("missing");
+  });
+
+  it("authenticated requests bypass the limiter and keep the full toolset", async () => {
+    const limiter = fakeLimiter(false); // would 429 / restrict if consulted
+    const res = await worker.fetch(
+      post(TOOLS_LIST_BODY, { authorization: "Bearer real-user-token" }),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    expect(body.result.tools.map((t) => t.name).sort()).toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+      "tako_search",
+    ]);
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("a limiter runtime failure fails open — the anonymous call still succeeds", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const limiter: RateLimit = {
+      async limit() {
+        throw new Error("limiter unavailable");
+      },
+    };
+    mockFetchSequence([
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+    const res = await worker.fetch(
+      post({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: { name: "tako_answer", arguments: { query: "US GDP" } },
+      }),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(200);
   });
 });
