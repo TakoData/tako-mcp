@@ -29,6 +29,7 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
+import { FREE_TIER_TOOL_NAMES, type Tier } from "./freetier.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import {
   OPTIONAL_TOOL_NAMES,
@@ -146,6 +147,13 @@ export function createMcpServer(
      * in (the default surface), which is what tests and non-HTTP callers want.
      */
     enabledOptionalToolNames?: Set<string>;
+    /**
+     * Connection tier. `"free"` (anonymous, no Authorization header)
+     * restricts the registered toolset to `FREE_TIER_TOOL_NAMES`.
+     * Omitted → `"authenticated"`, the full surface — what every
+     * existing caller and test gets.
+     */
+    tier?: Tier;
   } = {},
 ): McpServer {
   // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
@@ -267,12 +275,20 @@ export function createMcpServer(
   // enable it via `?tools=visualize`.
   const CHATGPT_DEFAULT_ON_TOOL_NAMES = new Set(["tako_visualize"]);
   const client = options.client ?? "unknown";
+  const tier = options.tier ?? "authenticated";
   // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
   // Empty by default → the default surface excludes every optional tool.
   const enabledOptionalToolNames =
     options.enabledOptionalToolNames ?? new Set<string>();
 
   for (const tool of TOOL_REGISTRY) {
+    // Free-tier surface: anonymous connections see ONLY the three free
+    // tools. Applied before every other gate so no client-specific rule
+    // (`?tools=` opt-ins, CHATGPT_DEFAULT_ON_TOOL_NAMES) can widen the
+    // anonymous surface.
+    if (tier === "free" && !FREE_TIER_TOOL_NAMES.has(tool.name)) {
+      continue;
+    }
     // Opt-in gate: optional tools (see `OPTIONAL_TOOL_ALIASES` in
     // `_optional.ts`) are excluded from the default surface and registered
     // only when enabled via the `tools` query param — except tools ChatGPT
