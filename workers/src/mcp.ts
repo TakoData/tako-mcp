@@ -29,6 +29,18 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
+import {
+  checkFreeTierRateLimit,
+  FREE_TIER_TOOL_NAMES,
+  type FreeTierConfig,
+  freeTierBatchResponse,
+  freeTierCreditsToolResult,
+  freeTierGlobalLimitResponse,
+  freeTierLimitResponse,
+  freeTierTooLargeResponse,
+  resolveFreeTierConfig,
+  type Tier,
+} from "./freetier.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import {
   OPTIONAL_TOOL_NAMES,
@@ -146,6 +158,13 @@ export function createMcpServer(
      * in (the default surface), which is what tests and non-HTTP callers want.
      */
     enabledOptionalToolNames?: Set<string>;
+    /**
+     * Connection tier. `"free"` (anonymous, no Authorization header)
+     * restricts the registered toolset to `FREE_TIER_TOOL_NAMES`.
+     * Omitted → `"authenticated"`, the full surface — what every
+     * existing caller and test gets.
+     */
+    tier?: Tier;
   } = {},
 ): McpServer {
   // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
@@ -267,12 +286,20 @@ export function createMcpServer(
   // enable it via `?tools=visualize`.
   const CHATGPT_DEFAULT_ON_TOOL_NAMES = new Set(["tako_visualize"]);
   const client = options.client ?? "unknown";
+  const tier = options.tier ?? "authenticated";
   // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
   // Empty by default → the default surface excludes every optional tool.
   const enabledOptionalToolNames =
     options.enabledOptionalToolNames ?? new Set<string>();
 
   for (const tool of TOOL_REGISTRY) {
+    // Free-tier surface: anonymous connections see ONLY the three free
+    // tools. Applied before every other gate so no client-specific rule
+    // (`?tools=` opt-ins, CHATGPT_DEFAULT_ON_TOOL_NAMES) can widen the
+    // anonymous surface.
+    if (tier === "free" && !FREE_TIER_TOOL_NAMES.has(tool.name)) {
+      continue;
+    }
     // Opt-in gate: optional tools (see `OPTIONAL_TOOL_ALIASES` in
     // `_optional.ts`) are excluded from the default surface and registered
     // only when enabled via the `tools` query param — except tools ChatGPT
@@ -706,6 +733,21 @@ function registerTool(
         // Non-Django throws re-throw to the SDK, which wraps them in a
         // generic tool error (last-resort path for handler bugs).
         if (err instanceof DjangoError) {
+          // Free tier: the shared account exhausting its Tako credits is
+          // the tier's expected steady-state failure (the Django-side cap
+          // is the fail-open spend backstop). Surface it as upsell copy,
+          // not the raw billing error — which would read as a bug to an
+          // anonymous user who has no account to top up. Status 402 is
+          // the complete signal (Django's PaymentRequiredError always
+          // serves 402); matching on body text would let any 4xx that
+          // echoes caller-supplied input masquerade as credit exhaustion.
+          if (
+            callCtx.tier === "free" &&
+            err instanceof DjangoHttpError &&
+            err.status === 402
+          ) {
+            return freeTierCreditsToolResult();
+          }
           return djangoErrorToToolResult(err);
         }
         throw err;
@@ -958,10 +1000,13 @@ function djangoErrorKind(err: DjangoError): string {
  * subsequent calls independently; re-negotiation is cheap).
  *
  * Auth gate: `extractBearer` runs BEFORE the SDK sees the request. A
- * missing / malformed / empty `Authorization` header short-circuits here
- * with a uniform JSON-RPC 401 response — the SDK never processes
- * unauthenticated traffic. `initialize` requires auth too; MCP clients are
- * expected to be configured with a Tako API token before they connect.
+ * malformed or empty `Authorization` header short-circuits here with a
+ * uniform JSON-RPC 401 response. A fully ABSENT header is served as the
+ * anonymous free tier — restricted toolset, rate-limited, on the shared
+ * `FREE_TIER_API_KEY` account — but ONLY in environments where all three
+ * free-tier bindings are configured (see `resolveFreeTierConfig`);
+ * everywhere else the missing-header case 401s exactly as it always did,
+ * and `initialize` requires auth.
  *
  * `enableJsonResponse: true` makes the transport return a single JSON-RPC
  * response body instead of an SSE stream, which keeps the wire format simple
@@ -971,36 +1016,72 @@ export async function handleMcpRequest(
   request: Request,
   env: Env,
 ): Promise<Response> {
-  // Gate the whole endpoint behind Bearer auth. If the header is missing /
-  // malformed / empty, return a uniform 401 before invoking the SDK.
-  let bearer: string;
+  // Gate the endpoint behind Bearer auth — with one carve-out. A request
+  // whose Authorization header is fully ABSENT (kind="missing") is served
+  // as the anonymous free tier when the env has opted in (both free-tier
+  // bindings configured, see `resolveFreeTierConfig`). A malformed or
+  // empty header is a client *trying* to authenticate — that stays a loud
+  // 401 and is never silently downgraded to the free tier.
+  let bearer: string | null = null;
+  let freeTier: FreeTierConfig | null = null;
   try {
     bearer = extractBearer(request);
   } catch (err) {
-    if (err instanceof BearerAuthError) {
+    if (!(err instanceof BearerAuthError)) throw err;
+    freeTier = err.kind === "missing" ? resolveFreeTierConfig(env) : null;
+    if (freeTier === null) {
       return bearerAuthResponse(request, err);
     }
-    throw err;
   }
 
-  // Two-mode bearer handling:
-  // - OAuth access JWT issued by /token: verify signature, decrypt the
-  //   per-user Tako API token from the `enc_tako_token` claim, forward
-  //   that token downstream as `X-API-Key`. Each user authenticates as
-  //   themselves to Django.
-  // - Raw Tako API token (the existing Claude Code path): non-JWT shape,
-  //   `tryResolveOAuthAccessToken` returns null, we forward the bearer
-  //   verbatim. Backwards-compatible with every Claude Code install in
-  //   the wild.
   const origin = new URL(request.url).origin;
-  const oauth = await tryResolveOAuthAccessToken(bearer, env, origin);
-  if (oauth.kind === "reject") {
-    // The bearer IS a Worker-issued JWT but failed a binding check
-    // (wrong audience/issuer/scope/type). Return a clean 401 rather than
-    // forwarding it to Django as a raw API key.
-    return oauthChallengeResponse(request, oauth.error, oauth.errorDescription);
+  let token: string;
+  let tier: Tier;
+  if (bearer === null && freeTier !== null) {
+    // Anonymous free tier: admission checks BEFORE any SDK work (global
+    // ceiling → body-size bound → batch rejection → per-IP metering of
+    // free-tool calls), then act as the shared free-tier account
+    // downstream. See `checkFreeTierRateLimit` for the ordering rationale.
+    const meterResult = await checkFreeTierRateLimit(request, freeTier);
+    switch (meterResult.kind) {
+      case "global_limited":
+        return freeTierGlobalLimitResponse(meterResult.requestId);
+      case "too_large":
+        return freeTierTooLargeResponse();
+      case "batch":
+        return freeTierBatchResponse();
+      case "limited":
+        return freeTierLimitResponse(meterResult.requestId);
+      case "allowed":
+        break;
+    }
+    token = freeTier.apiKey;
+    tier = "free";
+  } else if (bearer !== null) {
+    // Two-mode bearer handling:
+    // - OAuth access JWT issued by /token: verify signature, decrypt the
+    //   per-user Tako API token from the `enc_tako_token` claim, forward
+    //   that token downstream as `X-API-Key`. Each user authenticates as
+    //   themselves to Django.
+    // - Raw Tako API token (the existing Claude Code path): non-JWT shape,
+    //   `tryResolveOAuthAccessToken` returns null, we forward the bearer
+    //   verbatim. Backwards-compatible with every Claude Code install in
+    //   the wild.
+    const oauth = await tryResolveOAuthAccessToken(bearer, env, origin);
+    if (oauth.kind === "reject") {
+      // The bearer IS a Worker-issued JWT but failed a binding check
+      // (wrong audience/issuer/scope/type). Return a clean 401 rather than
+      // forwarding it to Django as a raw API key.
+      return oauthChallengeResponse(request, oauth.error, oauth.errorDescription);
+    }
+    token = oauth.kind === "ok" ? oauth.takoToken : bearer;
+    tier = "authenticated";
+  } else {
+    // Unreachable: `bearer === null` implies the catch above ran, and it
+    // either set `freeTier` or returned. Kept as a hard failure so a
+    // future refactor can't silently serve an unauthenticated request.
+    throw new Error("unreachable: no bearer and no free-tier config");
   }
-  const token = oauth.kind === "ok" ? oauth.takoToken : bearer;
 
   // Base ctx — `sendProgress` here is a placeholder overridden per
   // tool call inside `registerTool`'s SDK callback (where the
@@ -1015,6 +1096,7 @@ export async function handleMcpRequest(
       /* no-op outside tool-call scope */
     },
     client: "unknown",
+    tier,
   };
 
   try {
@@ -1046,6 +1128,7 @@ export async function handleMcpRequest(
       iconsBaseUrl: requestOrigin,
       client,
       enabledOptionalToolNames,
+      tier,
     });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker

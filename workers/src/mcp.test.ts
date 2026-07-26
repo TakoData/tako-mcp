@@ -479,3 +479,72 @@ describe("server instructions", () => {
     }
   });
 });
+
+describe("free-tier tool surface", () => {
+  const ctx: ToolContext = {
+    token: "free-tier-key",
+    env: { DJANGO_BASE_URL: "http://localhost:8000" } as Env,
+    sendProgress: noopSendProgress,
+    client: "unknown",
+  };
+
+  /** List tool names over an in-memory transport for the given options. */
+  async function listToolNames(
+    options: Parameters<typeof createMcpServer>[1],
+  ): Promise<string[]> {
+    const server = createMcpServer(ctx, options);
+    const mcpClient = new Client(
+      { name: "tier-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      const { tools } = await mcpClient.listTools();
+      return tools.map((t) => t.name).sort();
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  }
+
+  it("tier 'free' registers exactly the three free tools", async () => {
+    await expect(listToolNames({ tier: "free" })).resolves.toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_search",
+    ]);
+  });
+
+  it("tier 'free' wins over ?tools= opt-ins — the anonymous surface cannot widen", async () => {
+    await expect(
+      listToolNames({
+        tier: "free",
+        enabledOptionalToolNames: new Set([
+          "tako_agent",
+          "tako_visualize",
+          "get_credit_balance",
+        ]),
+      }),
+    ).resolves.toEqual(["tako_answer", "tako_available_data", "tako_search"]);
+  });
+
+  it("tier 'free' on ChatGPT clients also drops the default-on visualize tool", async () => {
+    // CHATGPT_DEFAULT_ON_TOOL_NAMES keeps tako_visualize on ChatGPT's
+    // default surface — but not for anonymous connections.
+    await expect(
+      listToolNames({ tier: "free", client: "chatgpt" }),
+    ).resolves.toEqual(["tako_answer", "tako_available_data", "tako_search"]);
+  });
+
+  it("omitting tier keeps the existing default (authenticated) surface", async () => {
+    await expect(listToolNames({})).resolves.toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+      "tako_search",
+    ]);
+  });
+});

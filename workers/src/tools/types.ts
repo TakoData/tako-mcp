@@ -17,6 +17,7 @@
 import type { z } from "zod";
 
 import type { Env } from "../env.js";
+import type { Tier } from "../freetier.js";
 
 /**
  * Calling-client kind detected from the request's User-Agent. Used by
@@ -82,6 +83,15 @@ export interface ToolContext {
    * specific calls even though it generally supports progress.
    */
   client: McpClientKind;
+  /**
+   * Connection tier — `"free"` for anonymous (no `Authorization` header)
+   * requests served on the shared free-tier account, `"authenticated"`
+   * otherwise. Optional; absent means `"authenticated"` (the default for
+   * tests and non-HTTP callers). Currently consumed only by the Django
+   * error mapping in `mcp.ts`, which swaps raw billing errors for
+   * free-tier upsell copy when the SHARED account runs out of credits.
+   */
+  tier?: Tier;
 }
 
 /**

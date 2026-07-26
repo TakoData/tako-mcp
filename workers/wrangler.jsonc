@@ -32,6 +32,35 @@
     // tokens below.
     "OPENAI_APPS_CHALLENGE_TOKEN": "dev-stub-not-a-real-challenge-token"
   },
+  // Free-tier rate limiters. Cloudflare's rate-limiting API is configured
+  // via `unsafe.bindings`; two buckets:
+  //  - FREE_TIER_RATE_LIMITER: per-IP fairness bucket (10 free-tool
+  //    tools/call per 60 s). Keep `limit` in sync with
+  //    FREE_TIER_LIMIT_MESSAGE in `src/freetier.ts` — a drift test in
+  //    `src/freetier.test.ts` asserts the message matches this value.
+  //  - FREE_TIER_GLOBAL_RATE_LIMITER: constant-key bucket counting every
+  //    anonymous request (1000 / 60 s). PER-COLO burst shaping, not a
+  //    true global ceiling — the binding counts per colo, so the enforced
+  //    number is limit x colos reached. The genuine platform-wide bound
+  //    is Django's per-user throttling on the free-tier account.
+  // NB: the bindings alone do NOT enable the free tier; the
+  // FREE_TIER_API_KEY secret must also be set (fail-closed).
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "FREE_TIER_RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1000",
+        "simple": { "limit": 10, "period": 60 }
+      },
+      {
+        "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1010",
+        "simple": { "limit": 1000, "period": 60 }
+      }
+    ]
+  },
   "env": {
     "staging": {
       "name": "tako-mcp-staging",
@@ -42,6 +71,28 @@
         // `mcp.staging.tako.com`. Served as plain text from
         // `/.well-known/openai-apps-challenge`.
         "OPENAI_APPS_CHALLENGE_TOKEN": "yvdAP5oZPvNXuisifiatKihXGqCnPqg64InQXJ0yB5U"
+      },
+      // Free-tier rate limiter (10 metered requests / 60 s / IP). Cloudflare's
+      // rate-limiting API is configured via `unsafe.bindings`. Keep the
+      // `limit` value in sync with FREE_TIER_LIMIT_MESSAGE in
+      // `src/freetier.ts` — the upsell message states the number.
+      // NB: the binding alone does NOT enable the free tier; the
+      // FREE_TIER_API_KEY secret must also be set (fail-closed).
+      "unsafe": {
+        "bindings": [
+          {
+            "name": "FREE_TIER_RATE_LIMITER",
+            "type": "ratelimit",
+            "namespace_id": "1001",
+            "simple": { "limit": 10, "period": 60 }
+          },
+          {
+            "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
+            "type": "ratelimit",
+            "namespace_id": "1011",
+            "simple": { "limit": 1000, "period": 60 }
+          }
+        ]
       },
       // `custom_domain: true` provisions a Cloudflare Custom Domain (TLS
       // auto-issued, CNAME auto-managed) on the deploying account's
@@ -68,6 +119,28 @@
         // value, update here and redeploy. Not a secret — the URL is
         // public by design.
         "OPENAI_APPS_CHALLENGE_TOKEN": "uXTBcUGnISWBPU2YXEn7IPIDh2ANMxLa1rkFvv3Z0c0"
+      },
+      // Free-tier rate limiter (10 metered requests / 60 s / IP). Cloudflare's
+      // rate-limiting API is configured via `unsafe.bindings`. Keep the
+      // `limit` value in sync with FREE_TIER_LIMIT_MESSAGE in
+      // `src/freetier.ts` — the upsell message states the number.
+      // NB: the binding alone does NOT enable the free tier; the
+      // FREE_TIER_API_KEY secret must also be set (fail-closed).
+      "unsafe": {
+        "bindings": [
+          {
+            "name": "FREE_TIER_RATE_LIMITER",
+            "type": "ratelimit",
+            "namespace_id": "1002",
+            "simple": { "limit": 10, "period": 60 }
+          },
+          {
+            "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
+            "type": "ratelimit",
+            "namespace_id": "1012",
+            "simple": { "limit": 1000, "period": 60 }
+          }
+        ]
       },
       "routes": [
         { "pattern": "mcp.tako.com", "custom_domain": true }
