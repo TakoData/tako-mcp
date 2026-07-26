@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env, RateLimit } from "./env.js";
 import {
   checkFreeTierRateLimit,
+  FREE_TIER_BATCH_MESSAGE,
   FREE_TIER_LIMIT_MESSAGE,
   FREE_TIER_TOOL_NAMES,
+  freeTierBatchResponse,
   freeTierLimitResponse,
   isMeteredJsonRpcBody,
   resolveFreeTierConfig,
@@ -108,13 +110,6 @@ describe("isMeteredJsonRpcBody", () => {
     }
   });
 
-  it("meters a batch iff it contains a tools/call", () => {
-    expect(
-      isMeteredJsonRpcBody([{ method: "tools/list" }, TOOLS_CALL_BODY]),
-    ).toBe(true);
-    expect(isMeteredJsonRpcBody([{ method: "tools/list" }])).toBe(false);
-  });
-
   it("does not meter non-object garbage", () => {
     expect(isMeteredJsonRpcBody(null)).toBe(false);
     expect(isMeteredJsonRpcBody("tools/call")).toBe(false);
@@ -168,6 +163,20 @@ describe("checkFreeTierRateLimit", () => {
     expect(limiter.keys).toEqual([]);
   });
 
+  it("rejects a batch array as 'batch' without calling the limiter, even when it contains a tools/call", async () => {
+    const limiter = fakeLimiter(true); // would allow if (wrongly) consulted
+    const req = mcpRequest([{ jsonrpc: "2.0", id: 1, method: "tools/list" }, TOOLS_CALL_BODY]);
+    await expect(checkFreeTierRateLimit(req, limiter)).resolves.toBe("batch");
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("rejects a batch array as 'batch' without calling the limiter, even without a tools/call", async () => {
+    const limiter = fakeLimiter(true);
+    const req = mcpRequest([{ jsonrpc: "2.0", id: 1, method: "tools/list" }]);
+    await expect(checkFreeTierRateLimit(req, limiter)).resolves.toBe("batch");
+    expect(limiter.keys).toEqual([]);
+  });
+
   it("fails open and logs when the limiter binding throws", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const limiter: RateLimit = {
@@ -202,6 +211,31 @@ describe("freeTierLimitResponse", () => {
     expect(body.error.message).toBe(FREE_TIER_LIMIT_MESSAGE);
     expect(body.error.data.kind).toBe("rate_limited");
     expect(body.error.message).toContain("https://trytako.com/account/");
+  });
+});
+
+describe("freeTierBatchResponse", () => {
+  it("is a 400 JSON-RPC error with the verbatim batch message", async () => {
+    const res = freeTierBatchResponse();
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toBe(
+      "application/json; charset=utf-8",
+    );
+    const body = (await res.json()) as {
+      jsonrpc: string;
+      id: null;
+      error: { code: number; message: string; data: { kind: string } };
+    };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.id).toBeNull();
+    expect(body.error.code).toBe(-32600);
+    expect(body.error.data.kind).toBe("batch_not_supported");
+    expect(body.error.message).toBe(FREE_TIER_BATCH_MESSAGE);
+    expect(body.error.message).toBe(
+      "Batch requests are not supported on the free tier. Send one " +
+        "JSON-RPC request per POST, or get a free API key at " +
+        "https://trytako.com/account/ for full access.",
+    );
   });
 });
 
@@ -319,6 +353,33 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(res.status).toBe(429);
     const body = (await res.json()) as { error: { message: string } };
     expect(body.error.message).toBe(FREE_TIER_LIMIT_MESSAGE);
+  });
+
+  it("an anonymous batch request gets a 400, never hits the limiter or Django", async () => {
+    const limiter = fakeLimiter(true); // would allow if (wrongly) consulted
+    const fetchMock = mockFetchSequence([]);
+    const res = await worker.fetch(
+      post([
+        {
+          jsonrpc: "2.0",
+          id: 6,
+          method: "tools/call",
+          params: { name: "tako_answer", arguments: { query: "US GDP" } },
+        },
+        {
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: { name: "tako_search", arguments: { query: "US CPI" } },
+        },
+      ]),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe(FREE_TIER_BATCH_MESSAGE);
+    expect(limiter.keys).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("a malformed Authorization header still 401s even with the free tier configured", async () => {

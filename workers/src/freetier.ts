@@ -6,7 +6,10 @@
  * request instead of a 401: a shared free-tier Tako API key is forwarded to
  * Django, the visible toolset shrinks to `FREE_TIER_TOOL_NAMES`, and
  * `tools/call` requests are metered per client IP through Cloudflare's
- * rate-limit binding. Design doc:
+ * rate-limit binding. JSON-RPC batch arrays are rejected outright (see
+ * `checkFreeTierRateLimit`) rather than metered — a batch would let one
+ * limiter hit cover an arbitrary number of Django-spending calls. Design
+ * doc:
  * `docs/superpowers/specs/2026-07-26-anonymous-free-tier-design.md`.
  *
  * Fail modes, deliberately asymmetric:
@@ -63,13 +66,14 @@ export function resolveFreeTierConfig(env: Env): FreeTierConfig | null {
  * Only `tools/call` is metered — it is the only method that spends the
  * shared account's Tako credits. Handshake and discovery methods
  * (`initialize`, `tools/list`, notifications, pings) must stay unmetered
- * or clients would burn quota (or get 429s) just connecting. Batch arrays
- * are metered iff any element is a `tools/call`. Anything unparseable /
- * non-object is unmetered: it can never reach Django, and the SDK will
- * reject it with a proper JSON-RPC error on its own.
+ * or clients would burn quota (or get 429s) just connecting. Array bodies
+ * never reach here — `checkFreeTierRateLimit` rejects batches before the
+ * metering decision — so no recursion into batch elements is needed.
+ * Anything unparseable / non-object is unmetered: it can never reach
+ * Django, and the SDK will reject it with a proper JSON-RPC error on its
+ * own.
  */
 export function isMeteredJsonRpcBody(body: unknown): boolean {
-  if (Array.isArray(body)) return body.some(isMeteredJsonRpcBody);
   return (
     typeof body === "object" &&
     body !== null &&
@@ -84,18 +88,27 @@ export function isMeteredJsonRpcBody(body: unknown): boolean {
  * Cloudflare sets it on every proxied request; the `"unknown"` shared
  * bucket only occurs in local `wrangler dev`.
  *
+ * A JSON-RPC batch (array body) is rejected outright as `"batch"`,
+ * checked before the metering decision — the MCP SDK dispatches every
+ * element of a batch individually, so a single limiter hit would cover an
+ * arbitrary number of Django-spending calls. JSON-RPC batching was
+ * removed from the MCP spec in 2025-06-18, so no legitimate modern client
+ * sends one; this only runs on the anonymous path, so authenticated
+ * requests are unaffected.
+ *
  * Limiter failure fails OPEN (see module header for why).
  */
 export async function checkFreeTierRateLimit(
   request: Request,
   limiter: RateLimit,
-): Promise<"allowed" | "limited"> {
+): Promise<"allowed" | "limited" | "batch"> {
   let body: unknown;
   try {
     body = await request.clone().json();
   } catch {
     return "allowed";
   }
+  if (Array.isArray(body)) return "batch";
   if (!isMeteredJsonRpcBody(body)) return "allowed";
 
   const key = request.headers.get("cf-connecting-ip") ?? "unknown";
@@ -144,6 +157,43 @@ export function freeTierLimitResponse(): Response {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         "Retry-After": "60",
+      },
+    },
+  );
+}
+
+/**
+ * The batch-rejection body's `message`. States the constraint plainly and
+ * points at the same upsell as `FREE_TIER_LIMIT_MESSAGE` — a free API key
+ * also lifts the batch restriction, since it puts the request on the
+ * authenticated path where this check never runs.
+ */
+export const FREE_TIER_BATCH_MESSAGE =
+  "Batch requests are not supported on the free tier. Send one JSON-RPC " +
+  "request per POST, or get a free API key at https://trytako.com/account/ " +
+  "for full access.";
+
+/**
+ * HTTP 400 for an anonymous JSON-RPC batch (array body). `id: null` (a
+ * batch has no single request id, and this runs before the SDK would parse
+ * one), `code: -32600` (JSON-RPC "Invalid Request" — batching is no longer
+ * a valid request shape per the 2025-06-18 MCP spec).
+ */
+export function freeTierBatchResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: {
+        code: -32600,
+        message: FREE_TIER_BATCH_MESSAGE,
+        data: { kind: "batch_not_supported" },
+      },
+    }),
+    {
+      status: 400,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
       },
     },
   );

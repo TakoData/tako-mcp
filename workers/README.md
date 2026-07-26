@@ -34,7 +34,12 @@ Behavior when active:
   `tako_search`, `tako_answer`. Everything else is hidden.
 - Only `tools/call` is metered (per `CF-Connecting-IP`); `initialize` /
   `tools/list` are always free. Over-limit calls get an HTTP 429 with an
-  upsell message pointing at https://trytako.com/account/.
+  upsell message pointing at https://trytako.com/account/. Each metered
+  request logs one line: `[free-tier] ip=<ip> allowed|limited`.
+- JSON-RPC batch requests (array bodies) are rejected outright with an
+  HTTP 400 — never metered, never forwarded to Django. Batching was
+  removed from the MCP spec in 2025-06-18, and metering a batch as a
+  single limiter hit would let it stand in for unlimited `tools/call`s.
 - A malformed `Authorization` header still 401s — only a fully absent
   header selects the free tier.
 - Limiter runtime failures fail open (the shared account's Django-side
@@ -50,3 +55,13 @@ wrangler secret put FREE_TIER_API_KEY --env production
 #    deploy as usual. To change the limit, edit `simple.limit` there AND
 #    the FREE_TIER_LIMIT_MESSAGE copy in src/freetier.ts.
 ```
+
+**Operator warning:** OAuth-capable hosts (claude.ai and similar) decide
+whether to run their OAuth sign-in flow based on getting a 401 from the
+*first* request to `/mcp`. With the free tier active, that first request
+succeeds anonymously instead — so any newly added connector on such a
+host starts out running against the shared free-tier account (3 tools,
+shared quota) rather than prompting the user to sign in for their own
+account. Users must explicitly connect/re-authenticate to get off the
+anonymous tier. Consciously accept this onboarding change before setting
+`FREE_TIER_API_KEY` in production.

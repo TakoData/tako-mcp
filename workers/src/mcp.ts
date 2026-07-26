@@ -33,6 +33,7 @@ import {
   checkFreeTierRateLimit,
   FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
+  freeTierBatchResponse,
   freeTierLimitResponse,
   resolveFreeTierConfig,
   type Tier,
@@ -1017,9 +1018,15 @@ export async function handleMcpRequest(
   let tier: Tier;
   if (bearer === null && freeTier !== null) {
     // Anonymous free tier: meter tools/call per client IP BEFORE any SDK
-    // work, then act as the shared free-tier account downstream.
-    if ((await checkFreeTierRateLimit(request, freeTier.limiter)) === "limited") {
+    // work, then act as the shared free-tier account downstream. Batch
+    // (array) bodies are rejected outright rather than metered — see
+    // `checkFreeTierRateLimit`.
+    const meterResult = await checkFreeTierRateLimit(request, freeTier.limiter);
+    if (meterResult === "limited") {
       return freeTierLimitResponse();
+    }
+    if (meterResult === "batch") {
+      return freeTierBatchResponse();
     }
     token = freeTier.apiKey;
     tier = "free";
