@@ -45,16 +45,41 @@ Behavior when active:
 - Limiter runtime failures fail open (the shared account's Django-side
   limits are the spend backstop); missing configuration fails closed.
 
-Enabling on an environment:
+### Rollout checklist
 
-```bash
-# 1. Create/choose the free-tier Tako account, then:
-wrangler secret put FREE_TIER_API_KEY --env staging   # paste the API key
-wrangler secret put FREE_TIER_API_KEY --env production
-# 2. The FREE_TIER_RATE_LIMITER binding is already in wrangler.jsonc;
-#    deploy as usual. To change the limit, edit `simple.limit` there AND
-#    the FREE_TIER_LIMIT_MESSAGE copy in src/freetier.ts.
-```
+Setting the `FREE_TIER_API_KEY` secret is the on/off switch — until it is
+set on an environment, anonymous requests 401 exactly as before. There is
+nothing to configure in the Cloudflare dashboard: the rate limiter is
+config-as-code in `wrangler.jsonc` and deploys with the Worker.
+
+1. **Deploy the Worker** (normal deploy flow). The
+   `FREE_TIER_RATE_LIMITER` binding ships with it.
+2. **Create the dedicated free-tier Tako account** and generate its API
+   key from the account page. All anonymous traffic spends this one
+   account's credits.
+3. **Set Django-side limits/credits on that account.** This is the total
+   spend backstop: the Worker limiter fails *open* on limiter runtime
+   errors, so give the account a credit budget you can afford to lose.
+4. **Enable staging first:**
+   ```bash
+   wrangler secret put FREE_TIER_API_KEY --env staging   # paste the API key
+   ```
+5. **Verify on staging:** connect an MCP client to
+   `mcp.staging.tako.com/mcp` with no auth → `tools/list` shows exactly
+   the three free tools; make 11 `tools/call`s inside a minute → the
+   11th returns 429 with the upsell message.
+6. **Enable production** — after consciously accepting the operator
+   warning below:
+   ```bash
+   wrangler secret put FREE_TIER_API_KEY --env production
+   ```
+
+To change the per-IP limit later, edit `simple.limit` in **all three**
+`unsafe.bindings` blocks in `wrangler.jsonc` (dev/staging/production)
+AND the `FREE_TIER_LIMIT_MESSAGE` copy in `src/freetier.ts`, then
+redeploy. Counting is per-Cloudflare-colo and approximate (an IP whose
+traffic hits two colos can see roughly 2× the limit) — acceptable for
+abuse protection, not billing.
 
 **Operator warning:** OAuth-capable hosts (claude.ai and similar) decide
 whether to run their OAuth sign-in flow based on getting a 401 from the
