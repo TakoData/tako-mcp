@@ -42,15 +42,15 @@ import {
   type Tier,
 } from "./freetier.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
-import {
-  OPTIONAL_TOOL_NAMES,
-  parseEnabledOptionalToolNames,
-} from "./tools/_optional.js";
+import { parseEnabledOptionalToolNames } from "./tools/_optional.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import {
+  isToolOnSurface,
+  toolAnnotationsForClient,
+} from "./tools/_surface.js";
 import type {
   AnyToolModule,
   McpClientKind,
-  ToolAnnotations,
   ToolContext,
 } from "./tools/types.js";
 
@@ -166,57 +166,33 @@ export function detectMcpClient(userAgent: string | null): McpClientKind {
   // claude.ai here and gets widget `_meta` it cannot render.
   if (ua.includes("claude") || ua.includes("anthropic")) return "claude";
   // ChatGPT's Apps SDK connector typically advertises `ChatGPT-User`,
-  // `openai-mcp`, or similar in UA.
-  if (ua.includes("chatgpt") || ua.includes("openai")) return "chatgpt";
+  // `openai-mcp`, or similar in UA. OpenAI's published crawler/agent UAs
+  // (`GPTBot`, `OAI-SearchBot`) contain neither substring, so match them
+  // explicitly: if any OpenAI-family tooling (directory crawler, app
+  // review harness) lists our tools, it must see the same descriptors
+  // `chatgpt-app-submission.json` declares — not the canonical MCP ones
+  // the unknown-UA fallback would serve. Residual risk: an OpenAI
+  // reviewer hitting /mcp with a UA outside these families still falls
+  // through to `unknown`; the actual connector UA should be confirmed
+  // against production request logs rather than the `"ChatGPT/1.0"`
+  // stand-in the tests use.
+  if (
+    ua.includes("chatgpt") ||
+    ua.includes("openai") ||
+    ua.includes("gptbot") ||
+    ua.includes("oai-searchbot")
+  ) {
+    return "chatgpt";
+  }
   return "unknown";
 }
 
-/**
- * OpenAI's ChatGPT Apps review guidance uses `openWorldHint` as a
- * public/external-state mutation label, which differs from the MCP protocol's
- * domain-of-interaction meaning (where web search is the canonical open-world
- * example). Keep each tool module's canonical MCP annotations untouched, then
- * adapt only the descriptors served to ChatGPT-class clients.
- *
- * `tako_agent_start` is also non-read-only under the Apps review meaning
- * because it enqueues a server-side workflow. The combined `tako_agent` gets
- * the same override for completeness even though ChatGPT receives the split
- * start/wait pair instead.
- */
-const CHATGPT_ANNOTATION_OVERRIDES: Readonly<
-  Record<
-    string,
-    Partial<
-      Pick<
-        ToolAnnotations,
-        "readOnlyHint" | "destructiveHint" | "openWorldHint"
-      >
-    >
-  >
-> = {
-  tako_search: { openWorldHint: false },
-  tako_answer: { openWorldHint: false },
-  tako_contents: { openWorldHint: false },
-  tako_available_data: { openWorldHint: false },
-  tako_graph_search: { openWorldHint: false },
-  tako_graph_related: { openWorldHint: false },
-  tako_graph_node: { openWorldHint: false },
-  tako_agent: { readOnlyHint: false, openWorldHint: false },
-  tako_agent_start: { readOnlyHint: false, openWorldHint: false },
-  tako_agent_wait: { openWorldHint: false },
-  tako_visualize: { openWorldHint: true },
-};
-
-export function toolAnnotationsForClient(
-  tool: AnyToolModule,
-  client: McpClientKind,
-): ToolAnnotations {
-  if (client !== "chatgpt") return tool.annotations;
-  return {
-    ...tool.annotations,
-    ...CHATGPT_ANNOTATION_OVERRIDES[tool.name],
-  };
-}
+// Per-client annotation resolution lives with the tool surface config in
+// `tools/_surface.ts` (each tool declares its own `annotationsByClient`
+// next to its canonical MCP annotations — see `annotationsByClient` in
+// `tools/types.ts` for the MCP-vs-Apps-review semantics). Re-exported here
+// so existing imports from `./mcp.js` keep working.
+export { toolAnnotationsForClient };
 
 export function createMcpServer(
   ctx: ToolContext,
@@ -310,34 +286,12 @@ export function createMcpServer(
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
 
-  // Tools that should ONLY appear on ChatGPT-class clients.
+  // Which tools appear for which client — and the ChatGPT-only /
+  // ChatGPT-excluded / ChatGPT-default-on membership sets — live in
+  // `tools/_surface.ts`, shared with `gen-registry.ts` so the
+  // `chatgpt-app-submission.json` parity check validates the exact
+  // surface this loop registers.
   //
-  // ChatGPT's Apps SDK doesn't send a progressToken, so the single-tool
-  // `tako_agent` dispatch+poll path (which emits progress to keep the
-  // per-call timeout fresh) can't survive ChatGPT's ~60 s ceiling. The
-  // split pair `tako_agent_start` / `tako_agent_wait` is used instead.
-  //
-  // Hosting them only on the clients that need them keeps the
-  // Claude.ai tool surface minimal (no risk of the agent there
-  // accidentally choosing the slower split flow over the single-call
-  // path) and keeps the registry codegen unchanged (registry/server.json
-  // still lists everything for discovery; the runtime just filters per
-  // request).
-  const CHATGPT_ONLY_TOOL_NAMES = new Set([
-    // ChatGPT's Apps SDK doesn't send a progressToken, so the single-tool
-    // `tako_agent` dispatch+poll path (which emits progress to keep the
-    // per-call timeout fresh) can't survive ChatGPT's ~60 s ceiling. The
-    // split pair `tako_agent_start` / `tako_agent_wait` is used instead.
-    "tako_agent_start",
-    "tako_agent_wait",
-  ]);
-  // Tools registered for all clients EXCEPT ChatGPT. The dispatch+poll
-  // `tako_agent` relies on `notifications/progress` for timeout extension —
-  // suppress it for chatgpt (which doesn't support that mechanism) and
-  // route to the split pair instead.
-  const CHATGPT_EXCLUDED_TOOL_NAMES = new Set([
-    "tako_agent",
-  ]);
   // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
   // from the blanket unknown-client suppression in `widgetSuppressed` —
   // ChatGPT and Claude are the only clients that get the widget at all).
@@ -352,12 +306,6 @@ export function createMcpServer(
   // success state. Most chart-conditional tools should rely on the
   // throw-on-empty pattern instead.
   const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
-  // Optional tools that stay on the DEFAULT surface for ChatGPT only.
-  // `tako_visualize` ships the chart widget ChatGPT renders; hiding it
-  // behind `?tools=` would silently break the ChatGPT app experience,
-  // so ChatGPT keeps it without opting in. Every other client must
-  // enable it via `?tools=visualize`.
-  const CHATGPT_DEFAULT_ON_TOOL_NAMES = new Set(["tako_visualize"]);
   const client = options.client ?? "unknown";
   const tier = options.tier ?? "authenticated";
   // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
@@ -373,23 +321,11 @@ export function createMcpServer(
     if (tier === "free" && !FREE_TIER_TOOL_NAMES.has(tool.name)) {
       continue;
     }
-    // Opt-in gate: optional tools (see `OPTIONAL_TOOL_ALIASES` in
-    // `_optional.ts`) are excluded from the default surface and registered
-    // only when enabled via the `tools` query param — except tools ChatGPT
-    // keeps by default (`CHATGPT_DEFAULT_ON_TOOL_NAMES`). Applied BEFORE the
-    // per-client filters below so a disabled tool never reaches
-    // client-variant selection.
-    if (
-      OPTIONAL_TOOL_NAMES.has(tool.name) &&
-      !enabledOptionalToolNames.has(tool.name) &&
-      !(client === "chatgpt" && CHATGPT_DEFAULT_ON_TOOL_NAMES.has(tool.name))
-    ) {
-      continue;
-    }
-    if (CHATGPT_ONLY_TOOL_NAMES.has(tool.name) && client !== "chatgpt") {
-      continue;
-    }
-    if (CHATGPT_EXCLUDED_TOOL_NAMES.has(tool.name) && client === "chatgpt") {
+    // Surface membership (opt-in gate + per-client filters) is decided by
+    // `isToolOnSurface` in `tools/_surface.ts` — shared with the codegen
+    // parity check so `chatgpt-app-submission.json` can't drift from what
+    // this loop actually registers.
+    if (!isToolOnSurface(tool.name, client, enabledOptionalToolNames)) {
       continue;
     }
     registerTool(server, tool, ctx, {

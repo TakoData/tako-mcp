@@ -124,6 +124,12 @@ const takoAnswer = {
     destructiveHint: false,
     openWorldHint: true,
   },
+  annotationsByClient: {
+    // Apps review reads `openWorldHint` as "publishes/mutates public or
+    // third-party state", not MCP's domain-of-interaction — retrieval is
+    // closed-world there. See `annotationsByClient` in types.ts.
+    chatgpt: { openWorldHint: false },
+  },
   async handler(input, ctx): Promise<Output> {
     // GA /api/v1/answer takes the v3 SearchRequest shape: top-level `query`
     // + a per-source `sources` OBJECT (an index is searched iff its key is

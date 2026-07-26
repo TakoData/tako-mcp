@@ -117,6 +117,12 @@ const takoContents = {
     destructiveHint: false,
     openWorldHint: true,
   },
+  annotationsByClient: {
+    // Apps review reads `openWorldHint` as "publishes/mutates public or
+    // third-party state", not MCP's domain-of-interaction — retrieval is
+    // closed-world there. See `annotationsByClient` in types.ts.
+    chatgpt: { openWorldHint: false },
+  },
   async handler(input, ctx): Promise<Output> {
     // input conforms to the generated ContentsRequest contract (url + mode +
     // optional max_rows). max_rows, when omitted, is absent from `input` and so

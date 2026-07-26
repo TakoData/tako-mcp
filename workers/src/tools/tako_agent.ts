@@ -319,9 +319,21 @@ const takoAgent = {
   outputSchema: agentRunSchema,
   annotations: {
     title: "Tako: Answer Agent",
+    // Read-only under the MCP reading: the run only computes an answer;
+    // the queued-run record (`run_id`/`thread_id`) is server bookkeeping,
+    // not a mutation of the user's environment. Credit debits never flip
+    // the hint — every Tako tool, reads included, debits credits.
     readOnlyHint: true,
     destructiveHint: false,
     openWorldHint: true,
+  },
+  annotationsByClient: {
+    // Apps review draws the write line at "creates a durable,
+    // user-addressable resource" — enqueueing a server-side run qualifies,
+    // so ChatGPT sees this as a non-destructive write. Override kept for
+    // completeness even though ChatGPT receives the split start/wait pair
+    // instead of this tool. See `annotationsByClient` in types.ts.
+    chatgpt: { readOnlyHint: false, openWorldHint: false },
   },
   async handler(input, ctx): Promise<AgentRun> {
     const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);

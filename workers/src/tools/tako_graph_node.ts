@@ -35,6 +35,12 @@ const tako_graph_node = {
     destructiveHint: false,
     openWorldHint: true,
   },
+  annotationsByClient: {
+    // Apps review reads `openWorldHint` as "publishes/mutates public or
+    // third-party state", not MCP's domain-of-interaction — retrieval is
+    // closed-world there. See `annotationsByClient` in types.ts.
+    chatgpt: { openWorldHint: false },
+  },
   async handler(input: Input, ctx): Promise<Output> {
     const path = `/api/beta/graph/node/${encodeURIComponent(input.id)}`;
     let data: unknown;

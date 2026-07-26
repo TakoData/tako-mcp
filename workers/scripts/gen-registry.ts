@@ -22,6 +22,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
+import {
+  isToolOnSurface,
+  toolAnnotationsForClient,
+} from "../src/tools/_surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 
 // ---------------------------------------------------------------------------
@@ -116,6 +120,80 @@ export function assertLlmsFullCoverage(
   }
 }
 
+/**
+ * Assert that `chatgpt-app-submission.json` matches the runtime ChatGPT
+ * descriptors. The submission file is hand-maintained (its justifications
+ * and test cases cannot be generated), so this validates instead of
+ * emitting: the declared tool set must equal ChatGPT's default tool
+ * surface, and each tool's annotation hints must equal what
+ * `toolAnnotationsForClient(tool, "chatgpt")` actually serves. Without
+ * this, an edit to a tool's annotations (canonical or `annotationsByClient`)
+ * would leave the submitted app metadata claiming something production no
+ * longer serves.
+ */
+export function assertChatgptSubmissionParity(
+  tools: ReadonlyArray<
+    Pick<ToolModule, "name" | "annotations" | "annotationsByClient">
+  >,
+  submissionJson: string,
+): void {
+  const submission = JSON.parse(submissionJson) as {
+    tools?: Record<string, { annotations?: Record<string, unknown> }>;
+  };
+  if (submission.tools === undefined || typeof submission.tools !== "object") {
+    throw new Error(
+      'chatgpt-app-submission.json: missing top-level "tools" object',
+    );
+  }
+  const declaredTools = submission.tools;
+
+  // The submission covers the DEFAULT production MCP URL: no `?tools=`
+  // opt-ins, client detected as chatgpt.
+  const noOptIns: ReadonlySet<string> = new Set();
+  const expected = new Map(
+    tools
+      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns))
+      .map((t) => [t.name, toolAnnotationsForClient(t, "chatgpt")]),
+  );
+
+  const problems: string[] = [];
+  const declaredNames = new Set(Object.keys(declaredTools));
+  for (const name of expected.keys()) {
+    if (!declaredNames.has(name)) {
+      problems.push(`missing tool "${name}" (on ChatGPT's default surface)`);
+    }
+  }
+  for (const name of declaredNames) {
+    if (!expected.has(name)) {
+      problems.push(`extra tool "${name}" (not on ChatGPT's default surface)`);
+    }
+  }
+
+  const HINT_KEYS = ["readOnlyHint", "openWorldHint", "destructiveHint"] as const;
+  for (const [name, resolved] of expected) {
+    const declared = declaredTools[name];
+    if (declared === undefined) continue;
+    const annotations = declared.annotations ?? {};
+    for (const hint of HINT_KEYS) {
+      if (annotations[hint] !== resolved[hint]) {
+        problems.push(
+          `tool "${name}" ${hint}: submission declares ${JSON.stringify(
+            annotations[hint],
+          )}, runtime serves ${JSON.stringify(resolved[hint])}`,
+        );
+      }
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `chatgpt-app-submission.json drift — submitted app metadata out of sync with runtime ChatGPT descriptors:\n  ${problems.join(
+        "\n  ",
+      )}\nUpdate chatgpt-app-submission.json so each tool's annotations equal toolAnnotationsForClient(tool, "chatgpt") for the default ChatGPT surface.`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -128,6 +206,7 @@ const METADATA_PATH = resolve(REPO_ROOT, "registry", "metadata.json");
 const REGISTRY_PATH = resolve(REPO_ROOT, "registry", "server.json");
 const BARREL_PATH = resolve(TOOLS_DIR, "_registry.ts");
 const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
+const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
 
 // Filename conventions for the tools/ directory. A tool module is any `.ts`
 // file that does NOT match one of the following:
@@ -407,6 +486,14 @@ async function main(): Promise<void> {
   // 3. llms-full.txt coverage: the hand-written doc must mention every tool,
   //    and any tool with a `### <name>` section must document all its params.
   assertLlmsFullCoverage(registryTools, readFileSync(LLMS_FULL_PATH, "utf8"));
+
+  // 4. ChatGPT app-submission parity: the hand-maintained submission
+  //    metadata must describe exactly the tools (and annotation hints)
+  //    ChatGPT receives from the default production MCP URL.
+  assertChatgptSubmissionParity(
+    modules.map((m) => m.tool),
+    readFileSync(SUBMISSION_PATH, "utf8"),
+  );
 
   const registry = buildRegistry(metadata, registryTools);
   const registryJson = serializeJson(registry);

@@ -27,6 +27,28 @@ import {
 } from "./tools/__test_helpers.js";
 import type { McpClientKind, ToolContext } from "./tools/types.js";
 
+describe("detectMcpClient", () => {
+  it("maps OpenAI-family user agents to chatgpt", () => {
+    // Apps SDK / ChatGPT connector families.
+    expect(detectMcpClient("ChatGPT/1.0 (+https://chatgpt.com)")).toBe(
+      "chatgpt",
+    );
+    expect(detectMcpClient("openai-mcp/1.0")).toBe("chatgpt");
+    // OpenAI's published crawler/agent UAs contain neither "chatgpt" nor
+    // "openai" in the product token — matched explicitly so OpenAI review
+    // tooling sees the descriptors chatgpt-app-submission.json declares.
+    expect(detectMcpClient("GPTBot/1.2")).toBe("chatgpt");
+    expect(detectMcpClient("OAI-SearchBot/1.0")).toBe("chatgpt");
+  });
+
+  it("maps claude/anthropic UAs to claude and everything else to unknown", () => {
+    expect(detectMcpClient("claude-mcp-client/1.0")).toBe("claude");
+    expect(detectMcpClient(null)).toBe("unknown");
+    expect(detectMcpClient("")).toBe("unknown");
+    expect(detectMcpClient("curl/8.4.0")).toBe("unknown");
+  });
+});
+
 describe("toolAnnotationsForClient", () => {
   it("preserves the canonical MCP annotations for non-ChatGPT clients", () => {
     for (const tool of TOOL_REGISTRY) {

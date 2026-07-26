@@ -171,6 +171,12 @@ const tako_search = {
     destructiveHint: false,
     openWorldHint: true,
   },
+  annotationsByClient: {
+    // Apps review reads `openWorldHint` as "publishes/mutates public or
+    // third-party state", not MCP's domain-of-interaction — retrieval is
+    // closed-world there. See `annotationsByClient` in types.ts.
+    chatgpt: { openWorldHint: false },
+  },
   async handler(input, ctx): Promise<Output> {
     // v3 SearchRequest takes a per-source `sources` OBJECT — an index is
     // searched iff its key is present, and `count` / `include_contents` are

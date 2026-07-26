@@ -87,8 +87,8 @@
       "expected_output_url": null
     },
     {
-      "description": "Retrieve the underlying text from a supplied web result URL.",
-      "user_prompt": "Use Tako to fetch the page text behind https://www.bls.gov/cpi/.",
+      "description": "Retrieve the underlying page text behind a web result URL as a post-search follow-up.",
+      "user_prompt": "I got this web result URL from a Tako search earlier: https://www.bls.gov/cpi/. Use Tako to fetch the full page text behind it.",
       "file_attachment_urls": null,
       "tools_triggered": "tako_contents",
       "expected_output": "Returns readable page text from the supplied URL with enough context to use in a follow-up answer.",
