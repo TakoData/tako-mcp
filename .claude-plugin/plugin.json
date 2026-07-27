@@ -18,22 +18,10 @@
     "charts",
     "data"
   ],
-  "userConfig": {
-    "tako_api_key": {
-      "type": "string",
-      "title": "Tako API key",
-      "description": "Your Tako API key from https://tako.com/console/api-keys",
-      "sensitive": true,
-      "required": true
-    }
-  },
   "mcpServers": {
     "tako": {
       "type": "http",
-      "url": "https://mcp.tako.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${user_config.tako_api_key}"
-      }
+      "url": "https://mcp.tako.com/mcp"
     }
   }
 }
