@@ -28,7 +28,7 @@ import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 // (app/backend/knowledge/api/ga/v1/thinviz/views.py): COMPONENT_BUILDERS
 // keys plus "header" and "person_card". Keep in sync if the backend adds
 // a builder.
-const COMPONENT_TYPES = [
+export const COMPONENT_TYPES = [
   "header",
   "generic_timeseries",
   "categorical_bar",
@@ -65,90 +65,93 @@ const DESCRIPTION = [
 // `component_variant` is a free-form, per-`component_type` string with no
 // fixed set (backend `ComponentConfig.component_variant: str | None`,
 // thinviz/types.py). Optional and rarely needed — most cards omit it.
-const componentVariant = z
-  .string()
-  .optional()
-  .describe(
-    "Optional. Omit unless a specific `component_type` documents a named variant — most cards don't need it. Free-form per type (e.g. 'simple', 'financial'); there is no fixed set.",
-  );
+// No `.describe()`: this field appears in all 20 union members, so any text
+// here is duplicated 20× in the emitted schema. The tool DESCRIPTION already
+// says it is optional and rarely needed.
+const componentVariant = z.string().optional();
 
 // --- Config sub-shapes for the common component types ---
 // Each mirrors its backend Pydantic model in
 // app/backend/knowledge/api/ga/v1/thinviz/types.py and stays `.passthrough()`
-// so the many optional styling fields (and any additive backend fields) flow
-// through untyped rather than being rejected. Only the required fields and the
-// most-used optionals are typed here — enough for an agent to build a valid
-// call without guessing.
+// — data points included, since the backend accepts extra point-level fields
+// (e.g. CategoricalDataPoint.highlight/color) that a strip-by-default object
+// would silently drop. Only the required fields and the most-used optionals
+// are typed here — enough for an agent to build a valid call without guessing.
+// Describe strings are deliberately terse: this schema ships in `tools/list`
+// on every session, so every word here is standing context for every
+// connected agent (see PR #164 review).
 
-const categoricalDataPoint = z.object({
-  x: z.string().describe("Category label (e.g. 'North', 'Q1 2024')."),
-  y: z.number().describe("Y-axis value."),
-});
+const categoricalDataPoint = z
+  .object({
+    x: z.string().describe("Category label."),
+    y: z.number().describe("Value."),
+  })
+  .passthrough();
 const categoricalDataset = z
   .object({
-    label: z.string().describe("Dataset label shown in the legend."),
-    data: z.array(categoricalDataPoint).describe("Data points."),
-    units: z.string().optional().describe("Units for value formatting (e.g. '$', '%')."),
+    label: z.string().describe("Legend label."),
+    data: z.array(categoricalDataPoint),
+    units: z.string().optional().describe("Units for formatting (e.g. '$', '%')."),
   })
   .passthrough();
 
-const timeseriesDataPoint = z.object({
-  x: z
-    .union([z.string(), z.number()])
-    .describe("X value — a timestamp, date string, or label."),
-  y: z.number().optional().describe("Y-axis value."),
-});
+const timeseriesDataPoint = z
+  .object({
+    x: z.union([z.string(), z.number()]).describe("Timestamp, date string, or label."),
+    y: z.number().optional().describe("Value."),
+  })
+  .passthrough();
 const timeseriesDataset = z
   .object({
-    label: z.string().describe("Dataset label shown in the legend."),
-    data: z.array(timeseriesDataPoint).describe("Data points."),
-    type: z
-      .enum(["line", "bar", "scatter"])
-      .optional()
-      .describe("Chart type for this dataset (default 'line')."),
+    label: z.string().describe("Legend label."),
+    data: z.array(timeseriesDataPoint),
+    type: z.enum(["line", "bar", "scatter"]).optional().describe("Default 'line'."),
   })
   .passthrough();
 
 const financialBoxItem = z
   .object({
-    header: z.string().describe("Metric name (e.g. 'Revenue', 'EPS')."),
-    value: z.string().optional().describe("Formatted value (e.g. '$10.5B', '15.2%')."),
+    header: z.string().describe("Metric name (e.g. 'Revenue')."),
+    value: z.string().optional().describe("Formatted value (e.g. '$10.5B')."),
     growth: z
       .object({
-        formattedValue: z.string().describe("Formatted growth string (e.g. '5.25% YoY')."),
-        value: z.number().describe("Numeric growth value (e.g. 0.0525 for 5.25%)."),
+        formattedValue: z.string().describe("e.g. '5.25% YoY'."),
+        value: z.number().describe("e.g. 0.0525 for 5.25%."),
       })
-      .optional()
-      .describe("Optional period-over-period growth indicator."),
+      .optional(),
   })
   .passthrough();
 
 const tableColumn = z
   .object({
-    field: z.string().describe("Key in each row object holding this column's value."),
-    label: z.string().describe("Column header text."),
+    field: z.string().describe("Row key holding this column's value."),
+    label: z.string().describe("Column header."),
     type: z
       .enum(["string", "number", "date", "percent", "boolean", "rating", "currency"])
       .optional()
-      .describe("Value type for formatting (default 'string')."),
-    units: z.string().optional().describe("Unit for formatting (e.g. '$', '%')."),
-    align: z.enum(["left", "right", "center"]).optional().describe("Text alignment."),
+      .describe("Default 'string'."),
+    units: z.string().optional(),
+    align: z.enum(["left", "right", "center"]).optional(),
   })
   .passthrough();
 
 const headerConfig = z
   .object({
-    title: z.string().optional().describe("Header title."),
-    subtitle: z.string().optional().describe("Optional subtitle."),
+    // Required to match the backend's header template (views.py:183), which
+    // lists `title` as its one required field — optional here would only
+    // defer the failure to render time.
+    title: z.string().describe("Header title."),
+    subtitle: z.string().optional(),
   })
   .passthrough();
-// `.min(1)` on the required collections below is intentionally stricter than
-// the backend (which accepts empty lists) — an empty chart is a meaningless
-// card, so we reject it early with a clear message rather than render nothing.
+// The constraints below are intentionally stricter than the backend (which
+// accepts empty lists): an empty chart is a meaningless card, so `.min(1)`
+// and the timeseries either-or refine reject it early with a clear message
+// rather than render nothing.
 const categoricalBarConfig = z
   .object({
-    datasets: z.array(categoricalDataset).min(1).describe("One or more labeled series."),
-    title: z.string().optional().describe("Title shown in the hover tooltip."),
+    datasets: z.array(categoricalDataset).min(1).describe("Labeled series."),
+    title: z.string().optional().describe("Tooltip title."),
   })
   .passthrough();
 const pieConfig = z
@@ -156,8 +159,8 @@ const pieConfig = z
     datasets: z
       .array(categoricalDataset)
       .min(1)
-      .describe("Slices as a labeled series (x = slice label, y = value); only the first dataset renders."),
-    title: z.string().optional().describe("Title shown in the hover tooltip."),
+      .describe("Slices (x = label, y = value); only the first dataset renders."),
+    title: z.string().optional().describe("Tooltip title."),
   })
   .passthrough();
 const timeseriesConfig = z
@@ -165,27 +168,28 @@ const timeseriesConfig = z
     datasets: z
       .array(timeseriesDataset)
       .optional()
-      .describe("Chart datasets. Provide EITHER `datasets` OR `datasets_by_interval`, not both."),
+      .describe("Provide exactly ONE of `datasets` or `datasets_by_interval`."),
     datasets_by_interval: z
       .record(z.string(), z.array(timeseriesDataset))
       .optional()
-      .describe(
-        "Multi-interval data keyed by ISO 8601 duration (e.g. 'PT5M', 'P1D'). Provide EITHER this OR `datasets`.",
-      ),
-    title: z.string().optional().describe("Title shown in the hover tooltip."),
+      .describe("Keyed by ISO 8601 duration (e.g. 'P1D'). Alternative to `datasets`."),
+    title: z.string().optional().describe("Tooltip title."),
   })
-  .passthrough();
+  .passthrough()
+  .refine((c) => (c.datasets === undefined) !== (c.datasets_by_interval === undefined), {
+    message: "Provide exactly one of `datasets` or `datasets_by_interval`.",
+  });
 const tableConfig = z
   .object({
     columns: z.array(tableColumn).min(1).describe("Column definitions."),
     rows: z
       .array(z.record(z.string(), z.unknown()))
-      .describe("Row objects; each object's keys match column `field` values."),
-    title: z.string().optional().describe("Optional table title."),
+      .describe("Row objects keyed by column `field`."),
+    title: z.string().optional(),
   })
   .passthrough();
 const financialBoxesConfig = z
-  .object({ items: z.array(financialBoxItem).min(1).describe("Financial metric boxes.") })
+  .object({ items: z.array(financialBoxItem).min(1).describe("Metric boxes.") })
   .passthrough();
 
 // A member of the component discriminated union with a concretely-typed config.
@@ -204,9 +208,7 @@ const passthroughComponent = <T extends (typeof COMPONENT_TYPES)[number]>(compon
     component_variant: componentVariant,
     config: z
       .record(z.string(), z.unknown())
-      .describe(
-        `Config for \`${component_type}\` — shape varies by type; see Tako's "Visualize Your Data" docs. Passed through and validated server-side.`,
-      ),
+      .describe(`\`${component_type}\` config per Tako's docs; validated server-side.`),
   });
 
 // Discriminated on `component_type` so each type advertises its own config
@@ -236,7 +238,24 @@ const componentSchema = z
     passthroughComponent("top_level_metric"),
     passthroughComponent("person_card"),
   ])
-  .describe("A single component: `{component_type, config}` (+ optional `component_variant`). `config` shape is keyed to `component_type`.");
+  .describe("One component: `{component_type, config}`; `config` shape is keyed to `component_type`.");
+
+// Compile-time exhaustiveness guard: every `COMPONENT_TYPES` entry must have
+// a union member above. The generic constraint on `typedComponent` /
+// `passthroughComponent` already rejects members NOT in the array; this
+// closes the other direction — adding a type to the array without adding a
+// member makes `MissingComponentTypes` non-`never` and this line fails tsc.
+// (See PR #164 review: `z.enum(COMPONENT_TYPES)` used to enforce this for
+// free; a discriminated union does not.)
+type MissingComponentTypes = Exclude<
+  (typeof COMPONENT_TYPES)[number],
+  z.infer<typeof componentSchema>["component_type"]
+>;
+type AssertComponentUnionExhaustive = [MissingComponentTypes] extends [never]
+  ? true
+  : { missingUnionMembersFor: MissingComponentTypes };
+const _componentUnionIsExhaustive: AssertComponentUnionExhaustive = true;
+void _componentUnionIsExhaustive;
 
 const inputSchema = z.object({
   components: z
