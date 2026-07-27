@@ -134,16 +134,37 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
    account's credits. Create it in the SAME environment the Worker points
    at: a production key returns 401 against `staging.tako.com` and vice
    versa, which is indistinguishable from a wrong key.
-3. **Fund the account and leave no card on file.** The pre-paid credit
-   balance is the abuse bound: the Worker limiters only dampen the burn
-   rate, so exhaustion is the real backstop. `@meters_api_credits`
-   pre-gates each request and returns 402 when `balance_cents <= 0` (see
-   `backend/subscriptions/decorators.py`). The hazard is **auto-reload**,
-   not the billing mode: `maybe_auto_reload` refills the balance when
-   auto-reload is enabled AND a card is attached, which would turn the cap
-   into a soft one. Keep auto-reload off. Monitor the balance and allocate
-   more as needed with `add_api_credit --email <account> --amount <n>` or
-   the `add-api-credit.yaml` Action.
+3. **Put the account on PAYG, fund it, and leave no card on file.** The
+   pre-paid credit balance is the abuse bound: the Worker limiters only
+   dampen the burn rate, so exhaustion is the real backstop. Three
+   conditions must all hold, and the first is easy to miss:
+
+   - **`billing_mode` must be `PAYG`.** The 402 gate runs only for metered
+     requests, and `is_metered_request` (`backend/subscriptions/api_metering.py`)
+     returns true for an API-key request **only** when
+     `ent.billing_mode == BillingMode.PAYG`. On a `CONTRACT` org
+     (`credit-exempt, externally billed`) `@meters_api_credits` returns the
+     view before `balance_cents` is ever read: no 402, and the funded
+     balance is never drawn down. `is_metered_request` also short-circuits
+     on `request.is_mpp`. A CONTRACT or MPP account therefore has **no
+     credit bound at all**.
+   - **The balance must be funded.** `@meters_api_credits` pre-gates each
+     request and returns 402 when `balance_cents <= 0` (see
+     `backend/subscriptions/decorators.py`).
+   - **Auto-reload must be off, with no card attached.**
+     `maybe_auto_reload` refills the balance when auto-reload is enabled
+     AND a card is on file, which turns the cap into a soft one.
+
+   Monitor the balance and allocate more as needed with
+   `add_api_credit --email <account> --amount <n>` or the
+   `add-api-credit.yaml` Action.
+
+   **The floor that holds either way.** Even when the credit gate is
+   bypassed, Django's per-user *rate* throttles still apply to the shared
+   account on every billing mode: `_SEARCH_USER` and `_DRF_USER` at
+   720/min, `_GRAPH_TIER` at 180/min plus 10,000/day
+   (`backend/api/throttling/policy.py`). Those bound request volume, not
+   spend.
 
    **Do not read the balance from the legacy `credit_balance` endpoint.**
    `GET /api/v1/credit_balance/` — and therefore the `get_credit_balance`
@@ -152,9 +173,16 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
    `ApiCreditAccount.balance_cents`. It reported $0.00 for an account that
    actually held $24.41. To check this mechanically instead of by eye, call
    `GET /api/v1/billing/api_credits/` (`ApiCreditBalanceView`,
-   `backend/subscriptions/api_credit_views.py`). It returns the authoritative
-   `balance_cents`, plus `has_saved_card` and `auto_reload.enabled` — the
-   three facts this step asks you to confirm.
+   `backend/subscriptions/api_credit_views.py`). It returns
+   `balance_cents`, `billing_mode`, `has_saved_card`, and
+   `auto_reload.enabled` — every fact this step asks you to confirm.
+
+   **Read `billing_mode` before you trust the balance.** That view returns
+   a hardcoded `balance_cents: 0` with `billing_mode: null` when the user
+   has no `enterprise_account` at all, which is indistinguishable from a
+   genuinely depleted account. Treat `billing_mode: null` as "not wired
+   up", not as "out of credits", and treat anything other than `PAYG` as
+   "no credit bound".
 4. **Enable staging first:**
    ```bash
    wrangler secret put FREE_TIER_API_KEY --env staging   # paste the API key

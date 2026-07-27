@@ -532,11 +532,14 @@ export const FREE_TIER_CREDITS_MESSAGE =
  * detail replaced by upsell copy. Callers (see `registerTool`'s catch in
  * `mcp.ts`) decide *when* this applies — this module only owns the shape.
  *
- * The `kind` is deliberately vague. It must not restate what the prose
- * withholds: an anonymous caller has no account here, so telling it that a
- * SHARED account ran out of CREDITS discloses how the tier is built, and
- * gives a prober a signal for how depleted that account is. "capacity"
- * says only that the request cannot be served right now.
+ * The `kind` is deliberately vague about the CAUSE. The message above does
+ * say the capacity is shared — that is load-bearing, because it tells the
+ * caller the exhaustion is not their own doing and stops them hunting a
+ * fault in their own setup. What neither states is that the shortage is
+ * SPENT CREDIT, which would hand a prober a gauge for how depleted the
+ * account is. "capacity" says only that the request cannot be served right
+ * now. The guard test therefore bans credit and billing wording from the
+ * kind, and does NOT ban "shared".
  */
 export function freeTierCreditsToolResult(): {
   content: Array<{ type: "text"; text: string }>;

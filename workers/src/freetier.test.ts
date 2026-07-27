@@ -576,13 +576,19 @@ describe("wrangler.jsonc ↔ message drift", () => {
 
   /** Every `simple.period` value in the file, in document order. */
   function allPeriods(): number[] {
-    const re = /"period":\s*(\d+)/g;
+    // Scoped to the FREE_TIER_* binding blocks, the same way `bindingLimits`
+    // is. An unanchored scan of the whole file would also match a `"period"`
+    // key added later for something unrelated (observability, logpush, an
+    // analytics binding) and fail with a message about admitting more
+    // traffic, which would be nothing to do with the actual edit.
+    const re = /"name":\s*"FREE_TIER_[A-Z_]*"[\s\S]*?"period":\s*(\d+)/g;
     return [...wranglerRaw.matchAll(re)].map((m) => Number(m[1]));
   }
 
   /** Every `namespace_id` value in the file, in document order. */
   function allNamespaceIds(): string[] {
-    const re = /"namespace_id":\s*"([^"]+)"/g;
+    // Scoped to the FREE_TIER_* binding blocks — see `allPeriods`.
+    const re = /"name":\s*"FREE_TIER_[A-Z_]*"[\s\S]*?"namespace_id":\s*"([^"]+)"/g;
     return [...wranglerRaw.matchAll(re)].map((m) => m[1]!);
   }
 
@@ -610,12 +616,20 @@ describe("wrangler.jsonc ↔ message drift", () => {
     expect(new Set(ids).size).toBe(6);
   });
 
-  it("no client-visible error kind discloses how the tier is built", async () => {
+  it("no freetier error kind discloses how the tier is built", async () => {
     // The `kind` fields are machine-readable and SHIP TO CALLERS. They must
     // not restate what the prose deliberately withholds — that the tier runs
-    // on one shared, credit-funded account, or which of the two limiter
-    // buckets a request tripped. A caller that can tell those apart can map
-    // the topology, and can watch the shared account deplete, by probing.
+    // on a credit-funded account, or which of the two limiter buckets a
+    // request tripped. A caller that can tell those apart can watch the
+    // account deplete by probing.
+    //
+    // SCOPE: this covers only the kinds THIS module emits. The anonymous path
+    // also surfaces `djangoErrorKind` values from `mcp.ts`
+    // (unauthorized / timeout / not_found / bad_request / response_parse /
+    // http / unknown). None of those disclose anything today, so there is no
+    // live gap, but they are not guarded here — and the raw upstream body
+    // that `djangoErrorToToolResult` attaches alongside them is a separate,
+    // larger disclosure surface tracked outside this test.
     const kinds: string[] = [];
     for (const res of [
       freeTierLimitResponse(null),
@@ -635,7 +649,11 @@ describe("wrangler.jsonc ↔ message drift", () => {
 
     expect(kinds).toHaveLength(5);
     for (const kind of kinds) {
-      expect(kind).not.toMatch(/free|credit|shared|global|colo|account|ip\b/i);
+      // "shared" is NOT banned: FREE_TIER_CREDITS_MESSAGE says the capacity
+      // is shared on purpose, so banning it from the kind would make the two
+      // disagree for no gain. What stays banned is the cause (credit) and the
+      // internal naming.
+      expect(kind).not.toMatch(/free|credit|billing|global|colo|account|ip\b/i);
     }
     // Both limiter buckets must report the SAME kind so neither is
     // distinguishable from the outside.
