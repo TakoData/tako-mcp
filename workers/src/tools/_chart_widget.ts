@@ -54,14 +54,24 @@ export const HTTP_URL_REGEX = /^https?:\/\//;
 export const MAX_INLINE_PNG_BYTES = 4 * 1024 * 1024;
 
 // Cap for inline `image_data_url` in `_meta` — distinct from
-// `MAX_INLINE_PNG_BYTES`. The data URI ends up inside the JSON-RPC tool
-// result envelope, which the LLM also tokenizes and some clients have
-// observed to silently fail their widget data flow past ~400 KB encoded.
-// Cap at 250 KB raw → ~333 KB encoded for a margin under that threshold.
+// `MAX_INLINE_PNG_BYTES`. Sized to cover the real chart range: Tako
+// chart PNGs run 50-300 KB, and this data URI is now Claude's PRIMARY
+// chart path (claude.ai's outer CSP blocks the cross-origin `image_url`
+// fallback), so a cap below 300 KB silently drops the largest charts to
+// a text link there. 400 KB raw (~533 KB encoded) covers the range with
+// headroom.
+//
+// Why the old 250 KB cap is safe to lift: `_meta` is not tokenized by
+// the model, and the ~400 KB-encoded silent widget-data failure that
+// motivated it was observed on ChatGPT — whose `extraMeta` hook is now
+// skipped entirely (see tako_search/tako_visualize), so this field never
+// ships there. The remaining ceiling is the host's message-size limit;
+// the staging ">250 KB chart renders on claude.ai" check is the
+// empirical gate on this number.
 // Charts above the cap fall back to `image_url` only, which is fine for
-// hosts whose CSP allows cross-origin images (ChatGPT) but means
-// claude.ai users see no chart for the largest charts.
-export const MAX_INLINE_DATA_URL_BYTES = 250 * 1024;
+// hosts whose CSP allows cross-origin images but means claude.ai users
+// see no chart — keep the cap comfortably above real chart sizes.
+export const MAX_INLINE_DATA_URL_BYTES = 400 * 1024;
 
 // Bound how long we'll wait on the PNG endpoint before giving up. The
 // content block / data URL is "nice to have" — better to ship the URL
@@ -197,15 +207,39 @@ function buildBakedWidgetHtml(opts: {
 (function(){
   "use strict";
   function notify(){
+    var h = document.documentElement.offsetHeight;
+    // ChatGPT Apps SDK mechanism.
     try {
       if (window.openai && typeof window.openai.notifyIntrinsicHeight === "function") {
-        var h = document.documentElement.offsetHeight;
         if (h > 0) window.openai.notifyIntrinsicHeight(h);
       }
+    } catch (e) { /* host gone — nothing to do */ }
+    // MCP Apps open-spec mechanism (claude.ai, VS Code Insiders, Goose):
+    // the static widget's notifyHeight sends this same notification —
+    // mirrored here so open-spec hosts get sizing info from the baked
+    // per-pub_id variant too, not just the static iframe/img bundle.
+    // Hosts that don't implement it (ChatGPT) ignore unknown messages.
+    try {
+      window.parent.postMessage({
+        jsonrpc: "2.0",
+        method: "ui/notifications/size-changed",
+        params: {
+          width: (document.documentElement && document.documentElement.clientWidth) || 0,
+          height: h,
+        },
+      }, "*");
     } catch (e) { /* host gone — nothing to do */ }
   }
   notify();
   window.addEventListener("resize", notify);
+  // The script runs before the <img> has necessarily loaded, so the
+  // initial notify() can measure a pre-layout height (the explicit
+  // width/height attributes reserve layout in most cases, but not when
+  // width:100% shrinks the image in a narrow container). Re-notify once
+  // the image has real dimensions — mirrors the static variant's load
+  // listener.
+  var img = document.getElementById("tako-embed-img");
+  if (img) img.addEventListener("load", notify);
 })();
 </script>
 </body>
@@ -371,11 +405,28 @@ const WIDGET_HTML = `<!doctype html>
   // intrinsic height. We notify on load (placeholder height) and again
   // after rendering. No-op on hosts that don't expose the function.
   function notifyHeight(h) {
+    // ChatGPT Apps SDK mechanism.
     try {
       if (window.openai && typeof window.openai.notifyIntrinsicHeight === "function") {
         window.openai.notifyIntrinsicHeight(h);
       }
     } catch (e) { /* ignore */ }
+    // MCP Apps open-spec mechanism (claude.ai, VS Code Insiders, Goose):
+    // JSON-RPC notification over postMessage. Hosts that don't implement
+    // it (ChatGPT) ignore unknown messages — same pattern as the
+    // ui/initialize handshake below. Sent best-effort even before the
+    // handshake completes; render() re-notifies after data arrives, so a
+    // pre-handshake miss self-corrects.
+    try {
+      window.parent.postMessage({
+        jsonrpc: "2.0",
+        method: "ui/notifications/size-changed",
+        params: {
+          width: (document.documentElement && document.documentElement.clientWidth) || 0,
+          height: h,
+        },
+      }, "*");
+    } catch (e) { /* host gone — nothing to do */ }
   }
 
   function render(structuredContent, meta) {
@@ -727,11 +778,31 @@ const WIDGET_HTML = `<!doctype html>
   window.addEventListener("message", function (event) {
     var msg = event.data;
     if (!msg || typeof msg !== "object") return;
+    // MCP Apps host messages (handshake + tool-result) come from the
+    // host's own browsing context — \`window.parent\`, or \`window.top\`
+    // if the host nests the widget inside a wrapper frame. Reject
+    // anything else — a co-installed sibling connector's iframe can
+    // postMessage to us via parent.frames[] and would otherwise be able
+    // to inject a spoofed tool-result (fake chart image + arbitrary
+    // click-through URL; render() is one-shot). A sibling's
+    // \`event.source\` is the sibling's own window, never parent or top,
+    // so widening to \`top\` keeps the injection blocked. The
+    // \`tako-embed-height\` branch below is separately origin-gated to the
+    // embed iframe, so leave it reachable regardless.
+    var fromHost = event.source === window.parent || event.source === window.top;
+    // This gate guards Claude's only chart data path. If a host ever
+    // delivers JSON-RPC from a context we don't trust, dropping it
+    // silently would strand the widget on "Loading chart…" with no
+    // signal — warn so devtools / host logs show the drop.
+    if (!fromHost && msg.jsonrpc === "2.0") {
+      console.warn("[tako-widget] dropped JSON-RPC message from untrusted source", msg.method || msg.id);
+    }
     // Init response → send the \`initialized\` notification so the host
     // starts piping tool-result messages. Don't gate on response
     // contents — any matching id (success or error) is sufficient
     // signal that the host saw our \`ui/initialize\`.
     if (
+      fromHost &&
       msg.jsonrpc === "2.0" &&
       msg.id === INIT_REQUEST_ID &&
       (msg.result !== undefined || msg.error !== undefined)
@@ -739,7 +810,7 @@ const WIDGET_HTML = `<!doctype html>
       sendInitializedNotification();
       return;
     }
-    if (msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
+    if (fromHost && msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
       var params = msg.params || {};
       // Forward both \`structuredContent\` (LLM-visible payload) and
       // \`_meta\` (metadata-only payload, where \`image_data_url\` lives).
@@ -871,17 +942,38 @@ export async function fetchImageDataUrlAndDims(
   const timeout = setTimeout(() => controller.abort(), PNG_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) return undefined;
+    if (!response.ok) {
+      console.warn(
+        `[tako] chart image_data_url fetch failed: HTTP ${response.status} from ${url}`,
+      );
+      return undefined;
+    }
     const contentType = response.headers.get("content-type") ?? "";
     // Reject anything that's not an image — an upstream redirect to an
     // HTML error page would otherwise let us base64 HTML and ship it
     // as a `data:image/...` URI the client can't render.
-    if (!contentType.startsWith("image/")) return undefined;
+    if (!contentType.startsWith("image/")) {
+      console.warn(
+        `[tako] chart image_data_url fetch failed: unexpected content-type "${contentType}" from ${url}`,
+      );
+      return undefined;
+    }
     const buffer = await response.arrayBuffer();
-    if (buffer.byteLength === 0) return undefined;
-    if (buffer.byteLength > MAX_INLINE_DATA_URL_BYTES) return undefined;
+    if (buffer.byteLength === 0) {
+      console.warn(`[tako] chart image_data_url fetch failed: empty body from ${url}`);
+      return undefined;
+    }
+    if (buffer.byteLength > MAX_INLINE_DATA_URL_BYTES) {
+      console.warn(
+        `[tako] chart image_data_url fetch failed: oversize body (${buffer.byteLength} bytes) from ${url}`,
+      );
+      return undefined;
+    }
     const dims = parsePngDimensions(buffer);
-    if (dims === undefined) return undefined;
+    if (dims === undefined) {
+      console.warn(`[tako] chart image_data_url fetch failed: invalid PNG header from ${url}`);
+      return undefined;
+    }
     // `parsePngDimensions` validated the PNG signature (89 50 4E 47…),
     // so the buffer is always `image/png` by here — no need to derive
     // the MIME type from the response header.
@@ -890,7 +982,8 @@ export async function fetchImageDataUrlAndDims(
       naturalWidth: dims.width,
       naturalHeight: dims.height,
     };
-  } catch {
+  } catch (e) {
+    console.warn(`[tako] chart image_data_url fetch failed: ${String(e)} for ${url}`);
     return undefined;
   } finally {
     clearTimeout(timeout);
@@ -899,10 +992,10 @@ export async function fetchImageDataUrlAndDims(
 
 /**
  * Fetch the chart PNG and return it as a single MCP `image` content
- * block. Used by both tools' `extraContentBlocks` hook on hosts where
- * the widget bundle is suppressed (claude.ai for custom connectors,
- * which crops the widget iframe to ~200 px tall — strictly worse than
- * an inline image block).
+ * block. Used by both tools' `extraContentBlocks` hook on unknown
+ * clients — the one bucket where the widget bundle is suppressed
+ * entirely (ChatGPT and Claude both get the widget; see
+ * `widgetSuppressed` in mcp.ts).
  *
  * All failure modes (timeout, !ok, wrong content-type, 0-byte body,
  * oversize, network error) return `[]` so the tool call still resolves
@@ -949,10 +1042,15 @@ export async function fetchPngContentBlock(
  * repeat registrations of the same URI so the SDK doesn't throw
  * `Resource ui://... is already registered`.
  *
- * The static URI loads the iframe widget (used by ChatGPT). The
- * dynamic per-pub_id URI bakes the chart image into the resource HTML
- * (used by claude.ai, where the host snapshots `documentElement.
- * offsetHeight` once on widget mount and ignores later updates).
+ * The static URI loads the iframe widget (used by ChatGPT, and by
+ * claude.ai today — see the "Conclusion" comment in `mcp.ts` near the
+ * dynamic ResourceTemplate registration). The dynamic per-pub_id URI
+ * bakes the chart image into the resource HTML instead; it's retained
+ * for a future host that honors per-call `resourceUri` overrides (the
+ * host would snapshot `documentElement.offsetHeight` once on widget
+ * mount, so baking the image in up front avoids a missed resize), but
+ * claude.ai currently ignores per-call overrides and stays on the
+ * static URI + baked `_meta.image_data_url` from `extraMeta`.
  *
  * `resolveUriFromInput` reads the top card's `pub_id` from the tool
  * output (the search input is a query, not a pub_id) and falls back to
@@ -978,6 +1076,11 @@ export function buildChartAppUiResource(
     // tool also writes into `embed_url`, so the two move together. No
     // wildcards: the widget only ever embeds Tako's own embed page.
     frameDomains: [webBase],
+    // Remote-image fallback (`<img src=image_url>`) loads from the API
+    // base; the primary data-URI path needs no CSP. webBase covers any
+    // future web-hosted asset. Deduped — staging/prod use one host for
+    // both.
+    resourceDomains: [...new Set([webBase, resolvePublicApiBase(env)])],
     // Dynamic-resource variant — registered as a `ResourceTemplate`,
     // one URI per pub_id. Per-call tool result overrides
     // `_meta.ui.resourceUri` to point claude.ai at a specific

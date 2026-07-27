@@ -5,8 +5,8 @@
   "description": "Tako MCP server on Cloudflare Workers (mcp.tako.com).",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p scripts/tsconfig.json",
-    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p test/widget/tsconfig.json",
+    "test": "vitest run && vitest run -c vitest.widget.config.ts",
     "test:watch": "vitest",
     "dev": "wrangler dev",
     "dev:staging": "wrangler dev --env staging",
@@ -28,6 +28,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.9.0",
     "js-yaml": "^4.1.0",
+    "jsdom": "^30.0.0",
     "json-schema-to-zod": "^2.6.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.2",

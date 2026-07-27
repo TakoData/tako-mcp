@@ -22,11 +22,14 @@ import type { Tier } from "../freetier.js";
 /**
  * Calling-client kind detected from the request's User-Agent. Used by
  * tools and `mcp.ts` to gate behavior that's known to differ across
- * MCP host implementations (e.g., widget suppression on Claude.ai's
- * cropped iframe; the kickoff/wait deep-search flow on ChatGPT, whose
- * Apps SDK doesn't honor `notifications/progress` for timeout
- * extension). Detection is best-effort by UA substring match — when
- * we can't classify, `"unknown"` keeps the default behavior.
+ * MCP host implementations (e.g., routing the MCP Apps chart widget
+ * to ChatGPT and Claude — interactive iframe on ChatGPT, static image
+ * branch on Claude, since claude.ai's host-side CSP ignores declared
+ * `frameDomains` — while unknown clients fall back to an inline PNG;
+ * the kickoff/wait deep-search flow on ChatGPT, whose Apps SDK doesn't
+ * honor `notifications/progress` for timeout extension). Detection is
+ * best-effort by UA substring match — when we can't classify,
+ * `"unknown"` keeps the default (PNG) behavior.
  */
 export type McpClientKind = "claude" | "chatgpt" | "unknown";
 
@@ -163,6 +166,12 @@ export interface AppUiResource {
    * "https://tako.com/embed/...">`.
    */
   frameDomains?: string[];
+  /**
+   * Origins the widget may load subresources (images, media) from —
+   * surfaces as `_meta.ui.csp.resourceDomains`. Data URIs are always
+   * allowed; this is only needed for remote `<img src>` fallbacks.
+   */
+  resourceDomains?: string[];
   /**
    * Optional dynamic-resource variant — registered as a `ResourceTemplate`
    * (one URI per per-call substitution). Used when the widget needs to

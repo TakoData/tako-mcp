@@ -239,13 +239,16 @@ describe("worker routing", () => {
       ]);
     }
 
-    // MCP Apps: the chart widget is ChatGPT-only (see `widgetSuppressed`
-    // in mcp.ts). Non-ChatGPT clients — claude AND the unknown long tail
-    // (Cursor, Windsurf, Gemini CLI, …) — get the chart as an inline PNG
-    // `image` content block on tool results instead, so NO tool in this
-    // listing declares widget metadata under any of the three keys.
-    // The ChatGPT-side widget metadata is asserted in the ChatGPT
-    // tools/list tests below.
+    // MCP Apps: this request carries no User-Agent, so `detectMcpClient`
+    // falls through to "unknown" — the one bucket still denied the chart
+    // widget (see `widgetSuppressed` in mcp.ts). ChatGPT and Claude both
+    // get the widget now (interactive iframe on ChatGPT, image-branch
+    // render on Claude); only the unknown long tail (Cursor, Windsurf,
+    // Gemini CLI, …) falls back to the inline PNG `image` content block
+    // on tool results, so NO tool in this listing declares widget
+    // metadata under any of the three keys. The ChatGPT- and Claude-side
+    // widget metadata is asserted in the respective tools/list tests
+    // below.
     for (const t of body.result.tools) {
       const meta = t._meta as
         | {
@@ -258,6 +261,46 @@ describe("worker routing", () => {
       expect(meta?.["ui/resourceUri"]).toBeUndefined();
       expect(meta?.["openai/outputTemplate"]).toBeUndefined();
     }
+  });
+
+  it("POST /mcp tools/list declares the chart widget _meta for claude clients", async () => {
+    // claude.ai loads the widget URI from the `tools/list` registration
+    // `_meta`, not from a separate handshake (see the mcp.ts April
+    // findings on Claude's Apps loading path) — so registration `_meta`
+    // is the load-bearing wire surface for inline charts on claude.ai,
+    // same as it is for ChatGPT. This pins `tako_search`'s listing to
+    // carry all three widget keys for a claude User-Agent, mirroring the
+    // ChatGPT assertion above.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "claude-mcp-client/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        tools: Array<{ name: string; _meta?: Record<string, unknown> }>;
+      };
+    };
+    const takoSearchTool = body.result.tools.find(
+      (t) => t.name === "tako_search",
+    );
+    expect(takoSearchTool?._meta).toMatchObject({
+      ui: { resourceUri: "ui://tako/embed/chart" },
+      "ui/resourceUri": "ui://tako/embed/chart",
+      "openai/outputTemplate": "ui://tako/embed/chart",
+    });
   });
 
   it("POST /mcp?tools=agent adds the agent split pair on ChatGPT clients", async () => {
@@ -353,8 +396,9 @@ describe("worker routing", () => {
     // 4 defaults + tako_visualize = 5.
     expect(body.result.tools).toHaveLength(5);
 
-    // The widget is ChatGPT-only, so `tako_visualize`'s listing must
-    // declare the chart resource under all three metadata keys:
+    // The widget ships on ChatGPT (and Claude — see the claude tools/list
+    // test above), so `tako_visualize`'s listing must declare the chart
+    // resource under all three metadata keys:
     // `_meta.ui.resourceUri` (open MCP Apps spec), the legacy flat
     // `_meta["ui/resourceUri"]` (older host readers), and
     // `_meta["openai/outputTemplate"]` (ChatGPT's Apps SDK — without it
@@ -440,10 +484,11 @@ describe("worker routing", () => {
   });
 
   it("POST /mcp?tools=visualize adds tako_visualize without widget metadata (non-ChatGPT)", async () => {
-    // No User-Agent → client "unknown". The chart widget is ChatGPT-only
-    // (see `widgetSuppressed` in mcp.ts); non-ChatGPT clients render the
-    // chart via the inline PNG image content block on tool results, so
-    // the listing must NOT declare widget metadata.
+    // No User-Agent → client "unknown", the one bucket still denied the
+    // widget (see `widgetSuppressed` in mcp.ts — ChatGPT and Claude both
+    // get it). Unknown clients render the chart via the inline PNG image
+    // content block on tool results instead, so the listing must NOT
+    // declare widget metadata.
     const res = await SELF.fetch("https://example.com/mcp?tools=visualize", {
       method: "POST",
       headers: {
@@ -475,9 +520,10 @@ describe("worker routing", () => {
     // 4 default tools + tako_visualize = 5.
     expect(body.result.tools).toHaveLength(5);
 
-    // Widget metadata is ChatGPT-only — the unknown-client listing carries
-    // none of the three widget keys (the ChatGPT default-surface test
-    // asserts their presence there).
+    // Widget metadata ships for ChatGPT and Claude only — the
+    // unknown-client listing carries none of the three widget keys (the
+    // ChatGPT default-surface and claude tools/list tests assert their
+    // presence there).
     const visualizeTool = body.result.tools.find(
       (t) => t.name === "tako_visualize",
     );
@@ -615,8 +661,9 @@ describe("worker routing", () => {
   });
 
   it("POST /mcp resources/list includes the chart widget bundle (ChatGPT)", async () => {
-    // The widget resource registers only for ChatGPT clients — the sole
-    // host that renders it (see `widgetSuppressed` in mcp.ts).
+    // The widget resource registers for ChatGPT here; the Claude
+    // registration is asserted separately below (see `widgetSuppressed`
+    // in mcp.ts — unknown clients are the only ones that don't get it).
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -657,6 +704,17 @@ describe("worker routing", () => {
     expect(widget?._meta).toMatchObject({
       ui: { csp: { frameDomains: ["http://localhost:8000"] } },
     });
+    // Pin `resourceDomains` present for ChatGPT explicitly. This is the
+    // one ADDITIVE change to ChatGPT's wire surface in the Claude-widget
+    // rollout (`csp` is built client-agnostically); `toMatchObject` above
+    // passes whether or not the key exists, so without this assertion a
+    // regression that drops it — or a strict-validating Apps SDK build
+    // that would reject it — has no test signal.
+    const chatgptResourceDomains = (
+      widget?._meta as { ui?: { csp?: { resourceDomains?: unknown } } }
+    )?.ui?.csp?.resourceDomains;
+    expect(Array.isArray(chatgptResourceDomains)).toBe(true);
+    expect((chatgptResourceDomains as string[]).length).toBeGreaterThan(0);
   });
 
   it("POST /mcp resources/read returns the widget HTML at the MCP Apps mimeType (ChatGPT)", async () => {
@@ -709,36 +767,94 @@ describe("worker routing", () => {
     expect(item.text).toContain("tako-embed");
   });
 
-  it("POST /mcp resources/list returns an empty list (not -32601) for non-ChatGPT clients", async () => {
-    // The chart widget resource registers only for ChatGPT (the sole host
-    // that renders it), so no `registerResource` call ever happens on a
-    // non-ChatGPT server instance — and without this the SDK would never
-    // advertise the `resources` capability, turning `resources/list` into
-    // a hard -32601 for capability-probing clients (Smithery's scan, some
-    // hosts). Mirror of the prompts/list guarantee below.
-    for (const userAgent of [undefined, "claude-mcp-client/1.0"]) {
-      const res = await SELF.fetch("https://example.com/mcp", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          authorization: AUTH_HEADER,
-          ...(userAgent !== undefined ? { "user-agent": userAgent } : {}),
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 12,
-          method: "resources/list",
-          params: {},
-        }),
-      });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        result?: { resources: unknown[] };
-        error?: { code: number };
+  it("POST /mcp resources/list returns an empty list (not -32601) for unknown clients", async () => {
+    // The chart widget resource registers for ChatGPT and Claude clients —
+    // the two hosts that render MCP Apps widgets (see `widgetSuppressed`
+    // in mcp.ts) — so no `registerResource` call ever happens on an
+    // unknown-client server instance — and without this the SDK would
+    // never advertise the `resources` capability, turning `resources/list`
+    // into a hard -32601 for capability-probing clients (Smithery's scan,
+    // some hosts). Mirror of the prompts/list guarantee below.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 12,
+        method: "resources/list",
+        params: {},
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result?: { resources: unknown[] };
+      error?: { code: number };
+    };
+    expect(body.error).toBeUndefined();
+    expect(body.result?.resources).toEqual([]);
+  });
+
+  it("POST /mcp resources/list includes the chart widget bundle (Claude)", async () => {
+    // Claude clients now get the same widget resource registration as
+    // ChatGPT (the gate flip in mcp.ts) — claude.ai renders MCP Apps
+    // widgets inline in the chat body, unlike its collapsed treatment of
+    // `image` content blocks, so the widget resource must be discoverable
+    // via `resources/list` for a claude-mcp-client user agent too.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "claude-mcp-client/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 13,
+        method: "resources/list",
+        params: {},
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        resources: Array<{
+          uri: string;
+          mimeType?: string;
+          _meta?: Record<string, unknown>;
+        }>;
       };
-      expect(body.error).toBeUndefined();
-      expect(body.result?.resources).toEqual([]);
+    };
+    const widget = body.result.resources.find(
+      (r) => r.uri === "ui://tako/embed/chart",
+    );
+    expect(widget).toBeDefined();
+    expect(widget?.mimeType).toBe("text/html;profile=mcp-app");
+    // CSP-allowed iframe domain mirrors `resolvePublicBase(env)` (which in
+    // tests resolves to `DJANGO_BASE_URL` / `http://localhost:8000`). The
+    // server declares this identically for every client — Claude clients
+    // don't get a restricted `frameDomains` list; claude.ai's own
+    // host-side sandbox is what blocks the iframe, not this metadata.
+    expect(widget?._meta).toMatchObject({
+      ui: { csp: { frameDomains: ["http://localhost:8000"] } },
+    });
+    // `resourceDomains` allow-lists the origins the image-branch fallback
+    // is permitted to fetch/embed from (the remote `image_url` and the
+    // server-fetched `image_data_url`) — must be a non-empty array of
+    // valid origins (staging/production always resolve to `https://`;
+    // the local test config's `DJANGO_BASE_URL` is `http://localhost:8000`,
+    // same as the `frameDomains` assertion above).
+    const resourceDomains = (
+      widget?._meta as { ui?: { csp?: { resourceDomains?: unknown } } }
+    )?.ui?.csp?.resourceDomains;
+    expect(Array.isArray(resourceDomains)).toBe(true);
+    expect((resourceDomains as string[]).length).toBeGreaterThan(0);
+    for (const origin of resourceDomains as string[]) {
+      expect(origin).toMatch(/^https?:\/\//);
     }
   });
 

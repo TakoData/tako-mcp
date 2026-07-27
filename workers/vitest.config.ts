@@ -29,6 +29,12 @@ export default defineWorkersConfig({
     ],
   },
   test: {
+    // Scope to src/ explicitly: the widget DOM tests under test/widget/
+    // run in a separate node-environment project (vitest.widget.config.ts)
+    // because jsdom can't load inside the workers-pool runtime. Without
+    // this include, vitest's default glob would pull them into this pool
+    // and they'd fail on `require("jsdom")`.
+    include: ["src/**/*.test.ts"],
     poolOptions: {
       workers: {
         wrangler: { configPath: "./wrangler.jsonc" },

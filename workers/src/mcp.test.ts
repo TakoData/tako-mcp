@@ -13,7 +13,11 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
-import { createMcpServer, djangoErrorToToolResult } from "./mcp.js";
+import {
+  createMcpServer,
+  detectMcpClient,
+  djangoErrorToToolResult,
+} from "./mcp.js";
 import {
   jsonResponse,
   mockFetchSequence,
@@ -289,13 +293,17 @@ describe("extractErrorDetail", () => {
  * Two independent gates decide how a chart-bearing tool result renders:
  *
  *   - `widgetSuppressed` — skip the MCP Apps widget (`appUiResource`).
- *     Claude clients keep this ON: claude.ai's widget container clips
- *     the chart iframe, so no widget `_meta` ships there.
+ *     ChatGPT and Claude clients both keep this OFF now: claude.ai
+ *     renders MCP Apps widgets inline in the chat body via the image
+ *     branch (claude.ai's own outer CSP ignores our `frameDomains`
+ *     declaration, so the bundle's runtime `window.openai` check falls
+ *     back from iframe to image there), so both get widget `_meta`.
+ *     Unknown clients keep it ON — the long tail of MCP hosts rarely
+ *     implements MCP Apps.
  *   - `inlinePngFallbackSuppressed` — skip the `extraContentBlocks`
- *     PNG image content block. Claude clients keep this OFF so charts
- *     render inline as images (claude.ai, Claude desktop, and Claude
- *     Code all render `image` content blocks in-chat, and the model
- *     can see the chart while composing its answer).
+ *     PNG image content block. Attaching the widget (`ui !== undefined`)
+ *     already suppresses this hook for ChatGPT and Claude, so only
+ *     unknown clients render `image` content blocks in-chat.
  *
  * Exercised end-to-end over an in-memory MCP transport: real server,
  * real tool registration, real `tools/call` — only the upstream
@@ -378,29 +386,67 @@ describe("chart render gates per client", () => {
     vi.restoreAllMocks();
   });
 
-  it("claude client: chart ships as an inline image content block (widget stays suppressed)", async () => {
-    // Call 1: v3 search. Call 2: chart PNG for the image content block.
-    mockFetchSequence([searchResponse(), pngResponse()]);
+  /**
+   * 1x1 transparent PNG — a REAL PNG (valid IHDR), because the widget
+   * `_meta` path (`fetchImageDataUrlAndDims`) parses dimensions and
+   * degrades to undefined on a bare signature.
+   */
+  function realPngResponse(): Response {
+    const b64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new Response(bytes, {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    });
+  }
+
+  it("claude client: MCP Apps widget ships inline, no image content block", async () => {
+    // Call 1: v3 search. Call 2: chart PNG — now fetched by `extraMeta`
+    // (baked `_meta.image_data_url` for the widget's image branch)
+    // instead of `extraContentBlocks`. Still exactly two fetches.
+    mockFetchSequence([searchResponse(), realPngResponse()]);
 
     const result = await callSearch("claude");
 
-    const imageBlocks = result.content.filter((b) => b.type === "image");
-    expect(imageBlocks).toHaveLength(1);
-    expect(imageBlocks[0]?.mimeType).toBe("image/png");
-    expect(typeof imageBlocks[0]?.data).toBe("string");
-    expect((imageBlocks[0]?.data as string).length).toBeGreaterThan(0);
-    // Widget stays suppressed for claude — no MCP Apps resource URI in
-    // the result `_meta` (claude.ai's widget container clips charts).
-    expect(
-      (result._meta as { ui?: unknown } | undefined)?.ui,
-    ).toBeUndefined();
+    // Widget replaces the PNG content block on claude — MCP Apps inline
+    // cards render in the chat body; image blocks stay collapsed in the
+    // tool-call expander (the bug this change fixes).
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    const meta = result._meta as
+      | { ui?: { resourceUri?: string }; image_data_url?: string }
+      | undefined;
+    expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/tako\/embed\/chart/);
+    expect(meta?.image_data_url).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("claude client: PNG fetch failure degrades gracefully (widget _meta stays, no image_data_url)", async () => {
+    // Call 1: v3 search succeeds. Call 2: PNG fetch fails (500).
+    mockFetchSequence([
+      searchResponse(),
+      new Response("error", { status: 500 }),
+    ]);
+
+    const result = await callSearch("claude");
+
+    // Graceful degradation: the tool call still resolves, the widget
+    // metadata is still attached (claude stays on the static URI), and
+    // `image_data_url` is simply absent — no throw, no partial data.
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    const meta = result._meta as
+      | { ui?: { resourceUri?: string }; image_data_url?: string }
+      | undefined;
+    expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/tako\/embed\/chart/);
+    expect(meta?.image_data_url).toBeUndefined();
   });
 
   it("unknown client: chart ships as an inline image content block (no widget metadata)", async () => {
     // Unknown clients are the long tail of MCP hosts (Cursor, Windsurf,
     // Gemini CLI, LibreChat, …). Almost none of them implement the MCP
     // Apps widget spec, but virtually all render `image` content
-    // blocks — so they get the same PNG treatment as Claude clients.
+    // blocks — so they're the one bucket that still gets the PNG
+    // fallback (Claude now gets the widget's image branch instead, see
+    // the "claude client" test above).
     // Call 1: v3 search. Call 2: chart PNG for the image content block.
     mockFetchSequence([searchResponse(), pngResponse()]);
 
@@ -430,9 +476,10 @@ describe("chart render gates per client", () => {
   });
 
   it("claude client: no image block when the search returns zero cards", async () => {
-    // Empty result → no top card → no image_url → the PNG hook must not
-    // fire (queue holds only the search response; an unexpected second
-    // fetch would throw loudly).
+    // Empty result → no top card → no image_url → `extraMeta`'s PNG
+    // prefetch must not fire (queue holds only the search response; an
+    // unexpected second fetch would throw loudly) and no image content
+    // block ships either — both hold with the widget path too.
     mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "req-2" }),
     ]);
@@ -440,6 +487,36 @@ describe("chart render gates per client", () => {
     const result = await callSearch("claude");
 
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+  });
+});
+
+describe("detectMcpClient", () => {
+  // The "claude" bucket is widget-ONLY: it suppresses the inline PNG
+  // content block. Every UA asserted into it must belong to a surface
+  // that actually renders MCP Apps widgets (claude.ai / Claude Desktop
+  // custom connectors — server-to-server from Anthropic's backend as
+  // `Claude-User`). UAs are real observed strings, not invented ones.
+  it("buckets the claude.ai/Desktop connector UAs as claude", () => {
+    expect(detectMcpClient("Claude-User")).toBe("claude");
+    expect(detectMcpClient("claude-mcp-client/1.0")).toBe("claude");
+    expect(detectMcpClient("Anthropic/1.0")).toBe("claude");
+  });
+
+  it("keeps Claude Code (and the Agent SDK it powers) on the PNG path", () => {
+    // Observed UA of claude-code 2.1.220's streamable-HTTP MCP client.
+    // A terminal, not an MCP Apps host: bucketing it "claude" would ship
+    // widget _meta it can't render AND drop the PNG block — no chart.
+    expect(detectMcpClient("claude-code/2.1.220 (sdk-cli)")).toBe("unknown");
+  });
+
+  it("buckets ChatGPT UAs as chatgpt and everything else as unknown", () => {
+    expect(detectMcpClient("ChatGPT/1.0 (+https://chatgpt.com)")).toBe(
+      "chatgpt",
+    );
+    expect(detectMcpClient("openai-mcp/1.0")).toBe("chatgpt");
+    expect(detectMcpClient("python-httpx/0.27")).toBe("unknown");
+    expect(detectMcpClient(null)).toBe("unknown");
+    expect(detectMcpClient("")).toBe("unknown");
   });
 });
 
