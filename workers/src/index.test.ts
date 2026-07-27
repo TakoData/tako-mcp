@@ -704,6 +704,17 @@ describe("worker routing", () => {
     expect(widget?._meta).toMatchObject({
       ui: { csp: { frameDomains: ["http://localhost:8000"] } },
     });
+    // Pin `resourceDomains` present for ChatGPT explicitly. This is the
+    // one ADDITIVE change to ChatGPT's wire surface in the Claude-widget
+    // rollout (`csp` is built client-agnostically); `toMatchObject` above
+    // passes whether or not the key exists, so without this assertion a
+    // regression that drops it — or a strict-validating Apps SDK build
+    // that would reject it — has no test signal.
+    const chatgptResourceDomains = (
+      widget?._meta as { ui?: { csp?: { resourceDomains?: unknown } } }
+    )?.ui?.csp?.resourceDomains;
+    expect(Array.isArray(chatgptResourceDomains)).toBe(true);
+    expect((chatgptResourceDomains as string[]).length).toBeGreaterThan(0);
   });
 
   it("POST /mcp resources/read returns the widget HTML at the MCP Apps mimeType (ChatGPT)", async () => {

@@ -5,6 +5,9 @@
   // `freetier.test.ts` depends on would otherwise be outside this program.
   // The root `tsconfig.json` picks it up via `src/**/*.ts`, which is why
   // a bare `tsc --noEmit` passes while this project fails.
+  // test/widget/**/*.test.ts is deliberately NOT here — it lives in its
+  // own project (test/widget/tsconfig.json) because its jsdom types
+  // conflict with @cloudflare/workers-types (see root tsconfig exclude).
   "include": ["src/**/*.test.ts", "src/raw-imports.d.ts"],
   "exclude": ["node_modules"]
 }

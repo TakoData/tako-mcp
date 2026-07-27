@@ -1,0 +1,17 @@
+{
+  // Fourth typecheck project (root, tsconfig.test.json, scripts, this).
+  // The widget DOM tests run under jsdom in plain Node
+  // (vitest.widget.config.ts), so they typecheck against the DOM lib —
+  // which cannot coexist with @cloudflare/workers-types in one program
+  // (CacheStorage/BufferSource global conflicts). Hence the root
+  // tsconfig excludes this directory and this project owns it. jsdom's
+  // types come from the local ./jsdom.d.ts shim — see its header for
+  // why @types/jsdom must NOT be installed in this repo.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "types": []
+  },
+  "include": ["./**/*.test.ts", "./jsdom.d.ts"],
+  "exclude": []
+}
