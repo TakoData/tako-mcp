@@ -29,21 +29,28 @@ Point your MCP client at the hosted endpoint — no install, no local server:
 https://mcp.tako.com/mcp
 ```
 
-Every request authenticates with a Bearer token. **[Get your API key](https://tako.com/console/api-keys)**, then pick your client below.
+**No token needed to start.** Connecting without credentials lands on the **free tier**: `tako_search`, `tako_answer`, and `tako_available_data`, rate-limited to 10 requests/min per IP. Authenticating unlocks the full toolset and your own account limits, two ways:
+
+- **OAuth** (Claude Code plugin, Claude.ai, Claude Desktop, ChatGPT) — a browser sign-in with your Tako account; a per-host API key is minted for you automatically.
+- **Bearer token** (config-file clients: Cursor, Windsurf, VS Code, …) — **[get your API key](https://tako.com/console/api-keys)** and paste it into the header.
+
+Pick your client below.
 
 <details>
 <summary><b>Claude Code</b></summary>
 
-**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step. Claude Code prompts for your API key when the plugin is enabled and stores it securely — no `export` or environment variable to manage:
+**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step, and works immediately on the free tier — no API key to mint or manage:
 
 ```bash
 claude plugin marketplace add TakoData/tako-mcp
 claude plugin install tako@tako
 ```
 
-When the plugin is enabled, Claude Code asks for your **Tako API key** and injects it as the Bearer token automatically. **[Get your API key](https://tako.com/console/api-keys)**.
+That's it — the core tools (`tako_search`, `tako_answer`, `tako_available_data`) work right away on the anonymous free tier. To unlock the full toolset and your own account limits, authenticate once with OAuth: run `/mcp` inside Claude Code, select **tako**, and choose **Authenticate**. A browser opens to sign you in with your Tako account and a per-host API key is minted for you automatically (visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)). The same OAuth flow powers the plugin on Claude.ai — the plugin's Tako connector connects with a click, no token pasting.
 
 If you previously added the server with `claude mcp add`, remove it first (`claude mcp remove tako-mcp`) so you don't end up with two copies of every tool.
+
+> **Updating from an earlier plugin version?** Older releases asked for a Tako API key in the plugin config; that setting is gone, so after updating your connection silently lands on the free tier (the three core tools, 10 requests/min) — nothing errors, but the full toolset and your account limits are no longer active. Run `/mcp` → **tako** → **Authenticate** once (or use the Connect button on Claude.ai) to restore full authenticated access.
 
 **Or add the MCP server directly:**
 
@@ -246,6 +253,8 @@ Tools are discovered automatically via the MCP `tools/list` handshake, so your c
 | `tako_contents` | Fetch the content behind a result URL: a Tako card returns a CSV, any other URL returns the page's extracted text. Cards must be marked `exportable: true` (web URLs are exempt). |
 | `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search/answer. Returns a `node_id` you can pin into search/answer for a retrieval boost. Free and fast. |
 
+**Free tier (no credentials):** an unauthenticated connection sees `tako_search`, `tako_answer`, and `tako_available_data` only, capped at 10 requests/min per IP. Authenticate (OAuth or Bearer) for the full surface above plus the opt-in tools below, under your own account limits.
+
 On connect, the server also advertises [MCP server instructions](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle#initialization) that hosts like Claude.ai, Claude Desktop, and Claude Code place in the model's system prompt. They steer data and metric questions to `tako_search` ahead of the host's built-in web search, and note that `tako_search` covers the live web too, so one call can stand in for a separate web search on mixed questions. Built-in web search remains the fallback for queries outside Tako's coverage.
 
 **Opt-in** — off by default to keep the tool surface small. Enable per-connection via the `?tools=` query parameter (comma-separated aliases):
@@ -257,11 +266,18 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 | `credits` | `get_credit_balance` | Check the connected account's API credit balance |
 | `graph` | `tako_graph_search` / `tako_graph_related` / `tako_graph_node` | Low-level graph primitives behind `tako_available_data`: traversal relations, `q` filtering, cursor paging, full node detail |
 
+The param rides on the connection URL, so how you set it depends on your client:
+
+- **Claude.ai, Claude Desktop, ChatGPT (connectors):** include it in the URL you paste when adding the connector — e.g. `https://mcp.tako.com/mcp?tools=agent`. OAuth is unaffected (the server canonicalizes the resource, query string included). ChatGPT gets `visualize` automatically, no param needed.
+- **Config-file clients (Cursor, Windsurf, VS Code, …) and `claude mcp add`:** put it on the URL in your config:
+
 ```bash
 # Aliases compose as a comma-separated list on the MCP URL
 claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent,visualize" \
   --header "Authorization: Bearer $TAKO_API_TOKEN"
 ```
+
+- **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). If you want opt-in tools, add the server yourself with `claude mcp add` and the `?tools=` param as above — keep only one Tako connection active so you don't get two copies of every tool (the plugin's bundled skills keep working regardless of which connection serves the tools).
 
 Only alias names are recognized; unknown values are ignored, so a typo never breaks the connection. Omit the parameter for the default surface.
 
@@ -307,9 +323,9 @@ Copy the block below and paste it into Claude Code. It will set up the MCP conne
 ````
 Step 1: Install or update Tako MCP
 
-If Tako MCP already exists in your config, update it to this endpoint (the ?tools=agent enables the Answer Agent used for ranking questions). Run this in your terminal:
+If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
 
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
 
 
 Step 2: Add this Claude skill
@@ -327,15 +343,16 @@ Tako serves proprietary company financials (sources vary by metric — S&P Globa
 ## Pick the tool by what you want back
 - `tako_search` — the data as a chart. Default for "<company> <metric>" and "<A> vs <B> <metric>". The intent-matched card renders inline (see Rendering).
 - `tako_answer` — one specific STATED value, in prose ("What was Apple's FY24 revenue?"). Relay the `answer` verbatim. It retrieves reported values; it does NOT compute derivations — for a growth rate, ratio, or margin change, pull the underlying levels (here or via `tako_search`) and compute it yourself.
-- `tako_agent` — a cohort/ranking that must be figured out ("which of the largest US chipmakers grew revenue fastest since 2020?"). Slower (~30–90s).
 - `tako_available_data` — FREE pre-check: confirm a metric exists and grab its exact name + `node_id` before spending a priced call.
+- Cohort/ranking asks ("which of the largest US chipmakers grew revenue fastest since 2020?") → resolve the cohort yourself, fire one narrow `tako_search` per member in parallel, and rank from the results.
 
 ## Query patterns (Critical)
 - Query is ENTITY + METRIC: `"Nvidia revenue"`, `"Apple gross margin"`, `"Tesla free cash flow"`. Keep it to one entity + one metric per call, and add a cadence word (`quarterly`/`annual`) to steer the period.
 - Comparisons are first-class: `"Intel vs Nvidia revenue"` returns a two-series comparison card — but it is not always ranked first (see Rendering), and comparisons default to annual (say `quarterly` for quarterly). Pairwise (2-entity) comparisons are the most reliable; 3–4-way asks often mis-rank or drop a series — prefer pairwise and synthesize.
 - Multi-metric or multi-company asks → fire PARALLEL narrow searches and synthesize yourself. Do not send a multi-part question as one query (a compound query returns a single-metric top card and misses the rest).
 - Ground in Tako data with `sources: ["data"]` — this is the default for financials. Omitting `sources` also searches the web, returning ~10 billable pages of IR/filings/MacroTrends clutter per call; add `"web"` only when you deliberately want news or qualitative context.
-- Empty result (zero cards) means "not covered in Tako," NOT that the fact is false — the response looks identical for an uncovered metric and a genuinely-nonexistent one. Don't infer a business fact from it (e.g. a company with no dividend card may pay no dividend, but don't assert it from silence). Confirm with `tako_available_data`, or fall back to a web check.
+- Empty result (zero cards) — HARD STOP on retries. Every search is billed, and rewording the same query almost never flips an empty result to a hit. Recover in exactly this order: (1) `tako_available_data` (free) to get the exact metric name + `node_id`; (2) if covered, ONE more search with that exact name and pinned `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question (in a fan-out, each entity+metric query is its own question with its own budget).
+- Empty also means "not covered in Tako," NOT that the fact is false — the response looks identical for an uncovered metric and a genuinely-nonexistent one. Don't infer a business fact from silence (e.g. no dividend card ≠ pays no dividend).
 
 ## Rendering (Critical)
 - Pick the card by intent — do NOT trust index 0. Tako auto-renders card #0, but it routinely ranks an "Overview" or "Earnings & Estimates" card above the plain metric chart (e.g. `"Lucid revenue"` puts "Lucid Group Earnings & Estimates Overview" at #0 and the actual "Lucid Revenues (Annual)" chart at #2). Choose the card whose `card_type` is `"chart"` and whose title matches the bare metric asked for. Overview/Estimates cards lead with a beat/miss "estimate vs. actual" narrative — NOT the value asked for; skip them unless the user asked about estimates. For a comparison, the right card has BOTH entities in its `nodes`/title. If the chosen card isn't #0, reference it with `[Title](webpage_url)` and say it is the authoritative one.
@@ -351,7 +368,7 @@ Tako serves proprietary company financials (sources vary by metric — S&P Globa
 - Comparison → tako_search {"query": "Intel vs Nvidia revenue", "sources": ["data"]}
 - Known value, prose → tako_answer {"query": "What was Microsoft's FY2024 net income?", "sources": ["data"]}
 - Growth rate / ratio → pull the levels, then compute yourself: tako_search {"query": "Apple annual revenue", "sources": ["data"]} → compute FY24 vs FY23 % change (tako_answer/tako_search return levels, not the rate)
-- Ranking → tako_agent {"query": "Among the 10 largest US semiconductor companies, which grew revenue fastest since 2020?"}
+- Ranking → resolve the cohort, then parallel narrow searches: tako_search {"query": "Nvidia annual revenue", "sources": ["data"]} + one per remaining company → compute growth and rank yourself
 
 ## Output (tight and structured)
 1) A 1–2 line read of the finding, referencing the intent-matched chart
@@ -374,9 +391,9 @@ Copy the block below and paste it into Claude Code. It will set up the MCP conne
 ````
 Step 1: Install or update Tako MCP
 
-If Tako MCP already exists in your config, update it to this endpoint (the ?tools=agent enables the Answer Agent used for ranking questions). Run this in your terminal:
+If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
 
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
 
 
 Step 2: Add this Claude skill
@@ -396,13 +413,14 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts.
 - The core metric is Visits (monthly, with ~1-month lag).
 - Comparisons: `"youtube.com vs netflix.com monthly visits"`. Rankings: `"top websites by visits"` returns a ranked card.
 - Ground in Tako data with `sources: ["data"]` (SimilarWeb is proprietary).
-- Empty result (zero cards) means "not covered in Tako," NOT that the domain has no traffic — confirm coverage with `tako_available_data` or a web check; don't infer a fact from silence.
+- Empty result (zero cards) — HARD STOP on retries. First check the query is a bare DOMAIN (the #1 cause of empties here); every search is billed and rewording almost never helps. Recover in exactly this order: (1) `tako_available_data` (free) to confirm the domain is covered and get its `node_id`; (2) if covered, ONE more search pinning `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question (in a fan-out, each entity+metric query is its own question with its own budget).
+- Empty also means "not covered in Tako," NOT that the domain has no traffic — don't infer a fact from silence.
 
 ## Pick the tool
 - `tako_search` — traffic as a chart (default; top result renders inline).
 - `tako_answer` — one number, in prose ("How many monthly visits does netflix.com get?").
-- `tako_agent` — a ranking/cohort to figure out ("top 5 streaming domains by visits, and which is growing fastest"). ~30–90s.
 - `tako_available_data` — FREE check that a domain is covered before a priced call.
+- Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search`, then one narrow search per domain in parallel and compute growth yourself.
 
 ## Rendering (Critical)
 - The top result renders inline automatically — an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose; do NOT paste `![](image_url)` for the top card — that double-renders it.
@@ -436,9 +454,9 @@ Copy the block below and paste it into Claude Code. It will set up the MCP conne
 ````
 Step 1: Install or update Tako MCP
 
-If Tako MCP already exists in your config, update it to this endpoint (the ?tools=agent enables the Answer Agent used for ranking questions). Run this in your terminal:
+If Tako MCP already exists in your config, update it to this endpoint. Run this in your terminal:
 
-claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent" --header "Authorization: Bearer $TAKO_API_TOKEN"
+claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp" --header "Authorization: Bearer $TAKO_API_TOKEN"
 
 
 Step 2: Add this Claude skill
@@ -460,13 +478,14 @@ Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as inter
 - Parallelize multi-part asks: send each metric as its own narrow concurrent `tako_search`, then synthesize — not one query.
 - Cross-country comparison is built in: `"US vs China inflation"` returns a comparison card. For currency-denominated indicators (GDP, wages), a cross-country chart may plot different currencies on one axis unnormalized — state each series' currency and convert before comparing.
 - Ground in Tako data with `sources: ["data"]`.
-- Empty result (zero cards) means "not covered in Tako," NOT that the indicator doesn't exist — confirm with `tako_available_data` or a web check; don't infer a fact from silence.
+- Empty result (zero cards) — HARD STOP on retries. Every search is billed, and rewording almost never flips an empty result to a hit. Recover in exactly this order: (1) `tako_available_data` (free) for the exact indicator name + `node_id`; (2) if covered, ONE more search with that exact name and pinned `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question (in a fan-out, each entity+metric query is its own question with its own budget).
+- Empty also means "not covered in Tako," NOT that the indicator doesn't exist — don't infer a fact from silence.
 
 ## Pick the tool
 - `tako_search` — indicator as a chart (default).
 - `tako_answer` — one known value, in prose ("What is the current US unemployment rate?"). Relay verbatim.
-- `tako_agent` — a cohort/ranking to figure out ("which G7 economy has the highest inflation right now?"). ~30–90s.
 - `tako_available_data` — FREE: resolve the exact indicator name + `node_id`.
+- Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → fire one narrow `tako_search` per country in parallel and rank from the results.
 
 ## Rendering (Critical)
 - Match the card to intent — don't blindly trust index 0. Tako auto-renders the #0 card, but the least-specific card often ranks first: `"US CPI inflation"` can rank a broad BIS country card (a different headline number) above the labeled FRED CPI card, and stale vintages can sneak in. Scan the cards and use the one whose title matches the exact variant with the freshest `data_as_of`; if it isn't #0, reference it with `[Title](webpage_url)` and say it is the authoritative one.

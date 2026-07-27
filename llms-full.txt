@@ -13,8 +13,9 @@
 
 Hosted endpoint: `https://mcp.tako.com/mcp` (Streamable HTTP).
 
-- CLI/desktop hosts (Claude Code, Claude Desktop, Cursor, Windsurf): pass `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at tako.com -> account settings -> API tokens.
-- Web hosts (Claude.ai, ChatGPT): connect via the server's OAuth flow; no token config needed.
+- No credentials needed to start: an anonymous connection gets the free tier — `tako_search`, `tako_answer`, and `tako_available_data`, limited to 10 requests/min per IP. Authenticating unlocks the full toolset and your own account limits.
+- Config-file hosts (Cursor, Windsurf, VS Code, or Claude Code via `claude mcp add`): pass `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at tako.com -> account settings -> API tokens.
+- OAuth hosts (Claude Code plugin, Claude.ai, ChatGPT): connect via the server's OAuth flow; no token config needed.
 
 Optional tools: some tools are opt-in and off by default, to keep the default surface small. Enable them by adding `?tools=` to the endpoint URL with comma-separated aliases, e.g. `https://mcp.tako.com/mcp?tools=agent,visualize`. Aliases: `agent` (Answer Agent — the server picks the single-call `tako_agent` on most clients and the `tako_agent_start` / `tako_agent_wait` pair on ChatGPT), `visualize` (`tako_visualize`; already on by default for ChatGPT, where it powers the chart widget), `credits` (`get_credit_balance`), `graph` (the low-level graph primitives `tako_graph_search` / `tako_graph_related` / `tako_graph_node` — power-user traversal beyond what `tako_available_data` covers). Only aliases are recognized (not raw tool names); unknown `?tools=` values are ignored, so a typo never breaks the connection.
 

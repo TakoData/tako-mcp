@@ -14,13 +14,14 @@ Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as inter
 - Parallelize multi-part asks: send each metric as its own narrow concurrent `tako_search`, then synthesize — not one query.
 - Cross-country comparison is built in: `"US vs China inflation"` returns a comparison card. For currency-denominated indicators (GDP, wages), a cross-country chart may plot different currencies on one axis unnormalized — state each series' currency and convert before comparing.
 - Ground in Tako data with `sources: ["data"]`.
-- Empty result (zero cards) means "not covered in Tako," NOT that the indicator doesn't exist — confirm with `tako_available_data` or a web check; don't infer a fact from silence.
+- Empty result (zero cards) — HARD STOP on retries. Every search is billed, and rewording almost never flips an empty result to a hit. Recover in exactly this order: (1) `tako_available_data` (free) for the exact indicator name + `node_id`; (2) if covered, ONE more search with that exact name and pinned `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question (in a fan-out, each entity+metric query is its own question with its own budget).
+- Empty also means "not covered in Tako," NOT that the indicator doesn't exist — don't infer a fact from silence.
 
 ## Pick the tool
 - `tako_search` — indicator as a chart (default).
 - `tako_answer` — one known value, in prose ("What is the current US unemployment rate?"). Relay verbatim.
-- `tako_agent` — a cohort/ranking to figure out ("which G7 economy has the highest inflation right now?"). ~30–90s.
 - `tako_available_data` — FREE: resolve the exact indicator name + `node_id`.
+- Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → fire one narrow `tako_search` per country in parallel and rank from the results.
 
 ## Rendering (Critical)
 - Match the card to intent — don't blindly trust index 0. Tako auto-renders the #0 card, but the least-specific card often ranks first: `"US CPI inflation"` can rank a broad BIS country card (a different headline number) above the labeled FRED CPI card, and stale vintages can sneak in. Scan the cards and use the one whose title matches the exact variant with the freshest `data_as_of`; if it isn't #0, reference it with `[Title](webpage_url)` and say it is the authoritative one.

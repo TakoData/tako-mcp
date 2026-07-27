@@ -425,7 +425,11 @@ describe("chart render gates per client", () => {
    */
   async function callSearch(
     client: McpClientKind,
-  ): Promise<{ content: ContentBlock[]; _meta?: Record<string, unknown> }> {
+  ): Promise<{
+    content: ContentBlock[];
+    structuredContent?: Record<string, unknown>;
+    _meta?: Record<string, unknown>;
+  }> {
     const server = createMcpServer(makeCtx(client), { client });
     // The test runtime stubs `ajv` (see vitest.config.ts) — the SDK
     // Client must get the same Workers-safe validator the server uses.
@@ -554,6 +558,13 @@ describe("chart render gates per client", () => {
     const result = await callSearch("claude");
 
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    // The zero-result guidance must survive the SDK round trip: it is
+    // declared in `searchOutputShape`, so `structuredContent` keeps it
+    // (an undeclared key would be silently stripped by the SDK's
+    // outputSchema parse — this pins schema and builder together).
+    expect(
+      (result.structuredContent as { guidance?: string }).guidance,
+    ).toMatch(/tako_available_data/);
   });
 });
 

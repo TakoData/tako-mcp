@@ -357,6 +357,9 @@ export const searchOutputShape = {
   // Cost-plus usage for this request (null when it was not metered/billed).
   usage: usageSchema.nullable(),
   request_id: z.string(),
+  // Present ONLY on a zero-result response: tells the model how to recover
+  // without burning priced calls on reworded retries.
+  guidance: z.string().optional(),
   ...autoChainShape,
 } as const;
 
@@ -365,6 +368,7 @@ export type SearchOutput = {
   web_results: WebResult[];
   usage: Usage | null;
   request_id: string;
+  guidance?: string;
   pub_id?: string;
   embed_url?: string;
   image_url?: string;
@@ -372,6 +376,56 @@ export type SearchOutput = {
   width?: number;
   height?: number;
 };
+
+// Which sources a search actually hit, for tailoring zero-result guidance.
+// "tako" is a legacy alias for "data" (see tako_search's sources enum).
+type SearchedSources = readonly string[];
+const searchedData = (s: SearchedSources): boolean =>
+  s.includes("data") || s.includes("tako");
+const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
+
+/**
+ * Recovery protocol for a zero-CARD search. Rewording the same query almost
+ * never flips a miss into a hit — misses come from query SHAPE (compound
+ * query, brand instead of domain, unresolved entity) or from the data simply
+ * not being covered, and every retry is a priced call the model burns on a
+ * loop that never converges.
+ *
+ * The wording is mirrored (as a "HARD STOP on retries" bullet) in the three
+ * bundled skills' SKILL.md files under skills/ and their embedded copies in
+ * README.md — keep the recovery recipe (free tako_available_data check →
+ * at most ONE pinned retry → stop) consistent across all copies when
+ * editing any of them.
+ */
+function buildZeroResultGuidance(
+  hasWebResults: boolean,
+  sources: SearchedSources,
+): string {
+  if (hasWebResults) {
+    return [
+      "No data cards matched — do NOT re-search with rephrasings hoping for a chart, and do not retry this query.",
+      "Work from the returned web_results (tako_contents on the most relevant url fetches its full page text),",
+      "or confirm data coverage with tako_available_data (free) and spend at most ONE more search pinning its node_ids.",
+    ].join(" ");
+  }
+  if (!searchedData(sources)) {
+    return [
+      "No results — do NOT retry this query or rephrasings of it; every search is priced, and the live web returned nothing here.",
+      "If a data metric is what you are after, check tako_available_data (free) for coverage and run ONE data-source search;",
+      "otherwise stop calling Tako for this question and answer from other tools.",
+    ].join(" ");
+  }
+  return [
+    "No results — do NOT retry this query or rephrasings of it; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
+    "Recover in order: (1) call tako_available_data (free) with the entity to learn the exact metric names + node_ids Tako actually has;",
+    "(2) if it confirms coverage, spend your ONE remaining search on that exact name, pinning node_ids" +
+      (searchedWeb(sources)
+        ? ";"
+        : ' (adding "web" as a fallback source on that same single retry is fine);'),
+    "(3) if it shows no coverage, stop calling Tako for this question and answer from other sources.",
+    'Rule out the usual shape mistakes before that one retry: one entity + one metric per query (split compound asks into parallel searches), and domains not brand names for website traffic ("netflix.com", not "Netflix").',
+  ].join(" ");
+}
 
 /**
  * Build the tako_search output: the cards + web_results + request_id, plus
@@ -385,12 +439,28 @@ export function buildSearchOutput(
   requestId: string,
   usage: Usage | null,
   env: Env,
+  searchedSources: readonly string[],
 ): SearchOutput {
   const base: SearchOutput = {
     cards,
     web_results: webResults,
     usage,
     request_id: requestId,
+    // A miss is billed the same as a hit, and models default to
+    // rephrase-and-retry loops that never converge — so any zero-CARD
+    // response carries its own recovery protocol instead of a bare empty
+    // array. Keyed on cards (not cards AND web) because the default
+    // ["data","web"] search almost always returns some web links: gating on
+    // both would skip the guidance in exactly the chart-less case the
+    // retry loop feeds on.
+    ...(cards.length === 0
+      ? {
+          guidance: buildZeroResultGuidance(
+            webResults.length > 0,
+            searchedSources,
+          ),
+        }
+      : {}),
   };
   const topCardId = cards[0]?.card_id;
   if (typeof topCardId === "string" && topCardId !== "") {

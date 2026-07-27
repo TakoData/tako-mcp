@@ -9,8 +9,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { slimCard, slimCardContent } from "./_search_results.js";
+import { buildSearchOutput, slimCard, slimCardContent } from "./_search_results.js";
 import type { ResultContent, TakoCard } from "./_search_results.js";
+
+import type { Env } from "../env.js";
 
 // json_compact dataset with a declared temporal column at index 0.
 const dataset = (rows: unknown[][]): ResultContent =>
@@ -243,5 +245,47 @@ describe("slimCard — explicit exportable flag", () => {
     const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
     expect(slimCard(card, null).exportable).toBe(true);
     expect(slimCard(card, 5).exportable).toBe(true);
+  });
+});
+
+describe("buildSearchOutput — zero-card guidance", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+
+  it("attaches the full anti-retry protocol when cards AND web_results are both empty", () => {
+    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"]);
+    // The load-bearing instruction: do not re-issue reworded searches.
+    expect(out.guidance).toMatch(/do not retry/i);
+    expect(out.guidance).toMatch(/tako_available_data/);
+  });
+
+  it("still fires on zero cards WITH web_results — steering to the web fallback, not a re-search", () => {
+    // The common default-source miss: no data card, some web hits. This is
+    // exactly the "reword and retry for a chart" loop case, so guidance must
+    // not be silently skipped here.
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"]);
+    expect(out.guidance).toMatch(/do not re-search/i);
+    expect(out.guidance).toMatch(/web_results/);
+  });
+
+  it("tailors the both-empty protocol for a data-only search (web fallback allowed on the single retry)", () => {
+    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"]);
+    expect(out.guidance).toMatch(/tako_available_data/);
+    expect(out.guidance).toMatch(/"web"/);
+  });
+
+  it("gives a web-only search web-shaped guidance instead of node-pinning advice", () => {
+    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"]);
+    expect(out.guidance).toMatch(/do not retry/i);
+    expect(out.guidance).not.toMatch(/pinning node_ids/);
+  });
+
+  it("treats the legacy \"tako\" source alias as data", () => {
+    const out = buildSearchOutput([], [], "req-6", null, ENV, ["tako"]);
+    expect(out.guidance).toMatch(/pinning node_ids/);
+  });
+
+  it("omits guidance when any card is present", () => {
+    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"]);
+    expect(out.guidance).toBeUndefined();
   });
 });

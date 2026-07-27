@@ -320,6 +320,8 @@ describe("tako_search response mapping", () => {
 
     expect(out.web_results).toHaveLength(1);
     expect(out.web_results[0]?.url).toBe("https://example.com/a");
+    // Zero cards (even with web hits) still carries anti-retry guidance.
+    expect(out.guidance).toMatch(/do not retry/i);
   });
 
   it("populates auto-chain widget fields when the top card has card_id", async () => {
@@ -336,6 +338,7 @@ describe("tako_search response mapping", () => {
     const out = await tako_search.handler({ query: "AAPL", ...DEFAULTS }, CTX);
 
     expect(out.pub_id).toBe("aapl-price");
+    expect(out.guidance).toBeUndefined();
     expect(out.embed_url).toBe(
       "https://staging.trytako.com/embed/aapl-price/?dark_mode=auto",
     );
@@ -364,6 +367,8 @@ describe("tako_search response mapping", () => {
     expect(out.pub_id).toBeUndefined();
     expect(out.embed_url).toBeUndefined();
     expect(out.image_url).toBeUndefined();
+    // Zero results carry the anti-retry recovery protocol.
+    expect(out.guidance).toMatch(/tako_available_data/);
   });
 
   it("omits widget fields when the top card has no card_id", async () => {

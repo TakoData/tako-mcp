@@ -10,15 +10,16 @@ Tako serves proprietary company financials (sources vary by metric — S&P Globa
 ## Pick the tool by what you want back
 - `tako_search` — the data as a chart. Default for "<company> <metric>" and "<A> vs <B> <metric>". The intent-matched card renders inline (see Rendering).
 - `tako_answer` — one specific STATED value, in prose ("What was Apple's FY24 revenue?"). Relay the `answer` verbatim. It retrieves reported values; it does NOT compute derivations — for a growth rate, ratio, or margin change, pull the underlying levels (here or via `tako_search`) and compute it yourself.
-- `tako_agent` — a cohort/ranking that must be figured out ("which of the largest US chipmakers grew revenue fastest since 2020?"). Slower (~30–90s).
 - `tako_available_data` — FREE pre-check: confirm a metric exists and grab its exact name + `node_id` before spending a priced call.
+- Cohort/ranking asks ("which of the largest US chipmakers grew revenue fastest since 2020?") → resolve the cohort yourself, fire one narrow `tako_search` per member in parallel, and rank from the results.
 
 ## Query patterns (Critical)
 - Query is ENTITY + METRIC: `"Nvidia revenue"`, `"Apple gross margin"`, `"Tesla free cash flow"`. Keep it to one entity + one metric per call, and add a cadence word (`quarterly`/`annual`) to steer the period.
 - Comparisons are first-class: `"Intel vs Nvidia revenue"` returns a two-series comparison card — but it is not always ranked first (see Rendering), and comparisons default to annual (say `quarterly` for quarterly). Pairwise (2-entity) comparisons are the most reliable; 3–4-way asks often mis-rank or drop a series — prefer pairwise and synthesize.
 - Multi-metric or multi-company asks → fire PARALLEL narrow searches and synthesize yourself. Do not send a multi-part question as one query (a compound query returns a single-metric top card and misses the rest).
 - Ground in Tako data with `sources: ["data"]` — this is the default for financials. Omitting `sources` also searches the web, returning ~10 billable pages of IR/filings/MacroTrends clutter per call; add `"web"` only when you deliberately want news or qualitative context.
-- Empty result (zero cards) means "not covered in Tako," NOT that the fact is false — the response looks identical for an uncovered metric and a genuinely-nonexistent one. Don't infer a business fact from it (e.g. a company with no dividend card may pay no dividend, but don't assert it from silence). Confirm with `tako_available_data`, or fall back to a web check.
+- Empty result (zero cards) — HARD STOP on retries. Every search is billed, and rewording the same query almost never flips an empty result to a hit. Recover in exactly this order: (1) `tako_available_data` (free) to get the exact metric name + `node_id`; (2) if covered, ONE more search with that exact name and pinned `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question (in a fan-out, each entity+metric query is its own question with its own budget).
+- Empty also means "not covered in Tako," NOT that the fact is false — the response looks identical for an uncovered metric and a genuinely-nonexistent one. Don't infer a business fact from silence (e.g. no dividend card ≠ pays no dividend).
 
 ## Rendering (Critical)
 - Pick the card by intent — do NOT trust index 0. Tako auto-renders card #0, but it routinely ranks an "Overview" or "Earnings & Estimates" card above the plain metric chart (e.g. `"Lucid revenue"` puts "Lucid Group Earnings & Estimates Overview" at #0 and the actual "Lucid Revenues (Annual)" chart at #2). Choose the card whose `card_type` is `"chart"` and whose title matches the bare metric asked for. Overview/Estimates cards lead with a beat/miss "estimate vs. actual" narrative — NOT the value asked for; skip them unless the user asked about estimates. For a comparison, the right card has BOTH entities in its `nodes`/title. If the chosen card isn't #0, reference it with `[Title](webpage_url)` and say it is the authoritative one.
@@ -34,7 +35,7 @@ Tako serves proprietary company financials (sources vary by metric — S&P Globa
 - Comparison → tako_search {"query": "Intel vs Nvidia revenue", "sources": ["data"]}
 - Known value, prose → tako_answer {"query": "What was Microsoft's FY2024 net income?", "sources": ["data"]}
 - Growth rate / ratio → pull the levels, then compute yourself: tako_search {"query": "Apple annual revenue", "sources": ["data"]} → compute FY24 vs FY23 % change (tako_answer/tako_search return levels, not the rate)
-- Ranking → tako_agent {"query": "Among the 10 largest US semiconductor companies, which grew revenue fastest since 2020?"}
+- Ranking → resolve the cohort, then parallel narrow searches: tako_search {"query": "Nvidia annual revenue", "sources": ["data"]} + one per remaining company → compute growth and rank yourself
 
 ## Output (tight and structured)
 1) A 1–2 line read of the finding, referencing the intent-matched chart
