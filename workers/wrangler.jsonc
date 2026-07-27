@@ -131,10 +131,8 @@
         // Glama remote-server listing claim for `mcp.tako.com`. Glama
         // matches this against the claiming Glama account's email —
         // served as JSON from `/.well-known/glama.json`. Not a secret —
-        // the URL is public by design. A role alias, not a personal
-        // mailbox: the URL exists to be scraped by third parties, and
-        // ownership must survive personnel changes.
-        "GLAMA_MAINTAINER_EMAIL": "mcp@trytako.com"
+        // the URL is public by design.
+        "GLAMA_MAINTAINER_EMAIL": "eric@trytako.com"
       },
       // Free-tier rate limiters (per-IP 10 metered requests / 60 s;
       // per-colo ceiling 120 anonymous requests / 60 s). Declared with the
