@@ -1,15 +1,23 @@
 name: workers-ci
 
 on:
+  # The two root files are guarded by `registry:check` (see
+  # `gen-registry.ts`: `assertChatgptSubmissionParity`,
+  # `assertLlmsFullCoverage`) — they must trigger this workflow or a PR
+  # editing only a guarded file skips the very guard that protects it.
   push:
     branches: [main]
     paths:
       - 'workers/**'
       - 'registry/**'
+      - 'chatgpt-app-submission.json'
+      - 'llms-full.txt'
   pull_request:
     paths:
       - 'workers/**'
       - 'registry/**'
+      - 'chatgpt-app-submission.json'
+      - 'llms-full.txt'
   workflow_dispatch:
 
 concurrency:

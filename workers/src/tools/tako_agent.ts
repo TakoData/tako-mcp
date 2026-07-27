@@ -319,21 +319,20 @@ const takoAgent = {
   outputSchema: agentRunSchema,
   annotations: {
     title: "Tako: Answer Agent",
-    // Read-only under the MCP reading: the run only computes an answer;
-    // the queued-run record (`run_id`/`thread_id`) is server bookkeeping,
-    // not a mutation of the user's environment. Credit debits never flip
-    // the hint — every Tako tool, reads included, debits credits.
-    readOnlyHint: true,
+    // WRITE under the shared rule in types.ts: the call creates a durable,
+    // user-addressable resource — a queued run reachable later via
+    // `run_id`/`thread_id`. Non-destructive: it only ever adds runs.
+    readOnlyHint: false,
     destructiveHint: false,
     openWorldHint: true,
   },
   annotationsByClient: {
-    // Apps review draws the write line at "creates a durable,
-    // user-addressable resource" — enqueueing a server-side run qualifies,
-    // so ChatGPT sees this as a non-destructive write. Override kept for
-    // completeness even though ChatGPT receives the split start/wait pair
-    // instead of this tool. See `annotationsByClient` in types.ts.
-    chatgpt: { readOnlyHint: false, openWorldHint: false },
+    // Apps review reads `openWorldHint` as "publishes/mutates public or
+    // third-party state", not MCP's domain-of-interaction, so the
+    // open-world retrieval flag drops for the ChatGPT family. Override
+    // kept even though ChatGPT receives the split start/wait pair instead
+    // of this tool. See `annotationsByClient` in types.ts.
+    chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<AgentRun> {
     const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);

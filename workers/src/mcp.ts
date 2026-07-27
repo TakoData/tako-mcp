@@ -31,7 +31,6 @@ import {
 import type { Env } from "./env.js";
 import {
   checkFreeTierRateLimit,
-  FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
   freeTierCreditsToolResult,
@@ -168,14 +167,21 @@ export function detectMcpClient(userAgent: string | null): McpClientKind {
   // ChatGPT's Apps SDK connector typically advertises `ChatGPT-User`,
   // `openai-mcp`, or similar in UA. OpenAI's published crawler/agent UAs
   // (`GPTBot`, `OAI-SearchBot`) contain neither substring, so match them
-  // explicitly: if any OpenAI-family tooling (directory crawler, app
-  // review harness) lists our tools, it must see the same descriptors
-  // `chatgpt-app-submission.json` declares — not the canonical MCP ones
-  // the unknown-UA fallback would serve. Residual risk: an OpenAI
-  // reviewer hitting /mcp with a UA outside these families still falls
-  // through to `unknown`; the actual connector UA should be confirmed
-  // against production request logs rather than the `"ChatGPT/1.0"`
-  // stand-in the tests use.
+  // explicitly — and deliberately at the full `chatgpt` classification,
+  // not just for annotations: `McpClientKind` also selects the tool set
+  // (`isToolOnSurface`), widget registration, and image content blocks,
+  // and if OpenAI-family tooling (directory crawler, app review harness)
+  // lists our tools it must see the same TOOL SURFACE
+  // `chatgpt-app-submission.json` declares, not the `unknown` surface
+  // (which swaps the split agent pair for `tako_agent` and drops
+  // `tako_visualize`). The extra levers are harmless to a crawler: the
+  // widget is inert metadata and image suppression only trims response
+  // bytes. Residual risk for a UA outside these families is narrow:
+  // `unknown` already serves the Apps-review annotation labels (see
+  // `annotationClientFamily` in `tools/_surface.ts`), so only the
+  // tool-set difference remains. The actual connector UA should still be
+  // confirmed against production request logs rather than the
+  // `"ChatGPT/1.0"` stand-in the tests use.
   if (
     ua.includes("chatgpt") ||
     ua.includes("openai") ||
@@ -190,9 +196,7 @@ export function detectMcpClient(userAgent: string | null): McpClientKind {
 // Per-client annotation resolution lives with the tool surface config in
 // `tools/_surface.ts` (each tool declares its own `annotationsByClient`
 // next to its canonical MCP annotations — see `annotationsByClient` in
-// `tools/types.ts` for the MCP-vs-Apps-review semantics). Re-exported here
-// so existing imports from `./mcp.js` keep working.
-export { toolAnnotationsForClient };
+// `tools/types.ts` for the MCP-vs-Apps-review semantics).
 
 export function createMcpServer(
   ctx: ToolContext,
@@ -314,18 +318,11 @@ export function createMcpServer(
     options.enabledOptionalToolNames ?? new Set<string>();
 
   for (const tool of TOOL_REGISTRY) {
-    // Free-tier surface: anonymous connections see ONLY the three free
-    // tools. Applied before every other gate so no client-specific rule
-    // (`?tools=` opt-ins, CHATGPT_DEFAULT_ON_TOOL_NAMES) can widen the
-    // anonymous surface.
-    if (tier === "free" && !FREE_TIER_TOOL_NAMES.has(tool.name)) {
-      continue;
-    }
-    // Surface membership (opt-in gate + per-client filters) is decided by
-    // `isToolOnSurface` in `tools/_surface.ts` — shared with the codegen
-    // parity check so `chatgpt-app-submission.json` can't drift from what
-    // this loop actually registers.
-    if (!isToolOnSurface(tool.name, client, enabledOptionalToolNames)) {
+    // Surface membership (free-tier gate + opt-in gate + per-client
+    // filters) is decided by `isToolOnSurface` in `tools/_surface.ts` —
+    // shared with the codegen parity check so `chatgpt-app-submission.json`
+    // can't drift from what this loop actually registers.
+    if (!isToolOnSurface(tool.name, client, enabledOptionalToolNames, tier)) {
       continue;
     }
     registerTool(server, tool, ctx, {

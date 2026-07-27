@@ -17,9 +17,9 @@ import {
   createMcpServer,
   detectMcpClient,
   djangoErrorToToolResult,
-  toolAnnotationsForClient,
 } from "./mcp.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import { toolAnnotationsForClient } from "./tools/_surface.js";
 import {
   jsonResponse,
   mockFetchSequence,
@@ -50,14 +50,25 @@ describe("detectMcpClient", () => {
 });
 
 describe("toolAnnotationsForClient", () => {
-  it("preserves the canonical MCP annotations for non-ChatGPT clients", () => {
+  it("preserves the canonical MCP annotations for claude", () => {
     for (const tool of TOOL_REGISTRY) {
       expect(toolAnnotationsForClient(tool, "claude")).toEqual(tool.annotations);
-      expect(toolAnnotationsForClient(tool, "unknown")).toEqual(tool.annotations);
     }
   });
 
-  it("uses OpenAI Apps review semantics only for ChatGPT descriptors", () => {
+  it("resolves unknown clients to the ChatGPT override family", () => {
+    // An OpenAI reviewer or crawler with an unrecognized UA lands on
+    // `unknown` — it must see the same labels chatgpt-app-submission.json
+    // declares, never canonical labels that contradict it (see
+    // `annotationClientFamily` in tools/_surface.ts).
+    for (const tool of TOOL_REGISTRY) {
+      expect(toolAnnotationsForClient(tool, "unknown")).toEqual(
+        toolAnnotationsForClient(tool, "chatgpt"),
+      );
+    }
+  });
+
+  it("uses OpenAI Apps review semantics for ChatGPT descriptors", () => {
     for (const tool of TOOL_REGISTRY) {
       const annotations = toolAnnotationsForClient(tool, "chatgpt");
       expect(annotations.destructiveHint, tool.name).toBe(false);

@@ -124,12 +124,18 @@ export function assertLlmsFullCoverage(
  * Assert that `chatgpt-app-submission.json` matches the runtime ChatGPT
  * descriptors. The submission file is hand-maintained (its justifications
  * and test cases cannot be generated), so this validates instead of
- * emitting: the declared tool set must equal ChatGPT's default tool
- * surface, and each tool's annotation hints must equal what
- * `toolAnnotationsForClient(tool, "chatgpt")` actually serves. Without
- * this, an edit to a tool's annotations (canonical or `annotationsByClient`)
- * would leave the submitted app metadata claiming something production no
- * longer serves.
+ * emitting: the declared tool set must equal ChatGPT's default
+ * AUTHENTICATED tool surface, and each tool's annotation hints must equal
+ * what `toolAnnotationsForClient(tool, "chatgpt")` actually serves.
+ * Without this, an edit to a tool's annotations (canonical or
+ * `annotationsByClient`) would leave the submitted app metadata claiming
+ * something production no longer serves.
+ *
+ * The anonymous free-tier surface is asserted separately (and more
+ * weakly): it must be a SUBSET of the declared tools. The reverse gap is
+ * expected — `tako_contents` and `tako_visualize` are absent for
+ * anonymous connections — which is why the submission's test cases
+ * assume an OAuth-linked connection.
  */
 export function assertChatgptSubmissionParity(
   tools: ReadonlyArray<
@@ -147,12 +153,13 @@ export function assertChatgptSubmissionParity(
   }
   const declaredTools = submission.tools;
 
-  // The submission covers the DEFAULT production MCP URL: no `?tools=`
-  // opt-ins, client detected as chatgpt.
+  // The submission covers the DEFAULT production MCP URL over an
+  // AUTHENTICATED (OAuth-linked) connection: no `?tools=` opt-ins, client
+  // detected as chatgpt, tier "authenticated".
   const noOptIns: ReadonlySet<string> = new Set();
   const expected = new Map(
     tools
-      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns))
+      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns, "authenticated"))
       .map((t) => [t.name, toolAnnotationsForClient(t, "chatgpt")]),
   );
 
@@ -166,6 +173,20 @@ export function assertChatgptSubmissionParity(
   for (const name of declaredNames) {
     if (!expected.has(name)) {
       problems.push(`extra tool "${name}" (not on ChatGPT's default surface)`);
+    }
+  }
+
+  // Anonymous connections must never serve a tool the submission does not
+  // declare — a free-tier surface that outgrew the submission would show
+  // OpenAI review tooling an undeclared tool.
+  for (const t of tools) {
+    if (
+      isToolOnSurface(t.name, "chatgpt", noOptIns, "free") &&
+      !declaredNames.has(t.name)
+    ) {
+      problems.push(
+        `tool "${t.name}" is on the anonymous free-tier ChatGPT surface but not declared in the submission`,
+      );
     }
   }
 
