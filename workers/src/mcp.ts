@@ -138,11 +138,27 @@ export type { McpClientKind };
 export function detectMcpClient(userAgent: string | null): McpClientKind {
   if (userAgent === null || userAgent === "") return "unknown";
   const ua = userAgent.toLowerCase();
-  // Claude.ai's MCP server-to-server connector identifies itself as
-  // either `Claude-User`, `claude-mcp-client`, or similar — match on
-  // any "claude" / "anthropic" substring. The user's own browser UA
-  // never reaches /mcp directly (claude.ai proxies through its
-  // backend), so this won't false-positive on user browsers.
+  // Claude Code's HTTP MCP client (and the Agent SDK, which runs Claude
+  // Code under the hood) sends `claude-code/<version> (sdk-cli)` —
+  // verified empirically 2026-07-27 against claude-code 2.1.220. It is
+  // a terminal, not an MCP Apps host: it cannot render the widget, and
+  // `"claude"` is widget-only (the widget suppresses the PNG content
+  // block via the `ui === undefined` mutual exclusion). Bucket it as
+  // `"unknown"` so it keeps the portable inline-PNG path. Must run
+  // BEFORE the broad "claude" substring match below.
+  if (ua.includes("claude-code")) return "unknown";
+  // Claude.ai and Claude Desktop custom connectors are server-to-server
+  // from Anthropic's backend (egress 160.79.104.0/21) and identify as
+  // `Claude-User` (occasionally `python-httpx`, which falls through to
+  // "unknown" → PNG — acceptable, that path renders everywhere). Match
+  // on any remaining "claude" / "anthropic" substring. The user's own
+  // browser UA never reaches /mcp directly (claude.ai proxies through
+  // its backend), so this won't false-positive on user browsers.
+  //
+  // Known residual risk: the Messages API `mcp_servers` connector also
+  // egresses from Anthropic's backend and its UA is not publicly
+  // pinned. If it sends `Claude-User` it is indistinguishable from
+  // claude.ai here and gets widget `_meta` it cannot render.
   if (ua.includes("claude") || ua.includes("anthropic")) return "claude";
   // ChatGPT's Apps SDK connector typically advertises `ChatGPT-User`,
   // `openai-mcp`, or similar in UA.

@@ -13,7 +13,11 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
-import { createMcpServer, djangoErrorToToolResult } from "./mcp.js";
+import {
+  createMcpServer,
+  detectMcpClient,
+  djangoErrorToToolResult,
+} from "./mcp.js";
 import {
   jsonResponse,
   mockFetchSequence,
@@ -483,6 +487,36 @@ describe("chart render gates per client", () => {
     const result = await callSearch("claude");
 
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+  });
+});
+
+describe("detectMcpClient", () => {
+  // The "claude" bucket is widget-ONLY: it suppresses the inline PNG
+  // content block. Every UA asserted into it must belong to a surface
+  // that actually renders MCP Apps widgets (claude.ai / Claude Desktop
+  // custom connectors — server-to-server from Anthropic's backend as
+  // `Claude-User`). UAs are real observed strings, not invented ones.
+  it("buckets the claude.ai/Desktop connector UAs as claude", () => {
+    expect(detectMcpClient("Claude-User")).toBe("claude");
+    expect(detectMcpClient("claude-mcp-client/1.0")).toBe("claude");
+    expect(detectMcpClient("Anthropic/1.0")).toBe("claude");
+  });
+
+  it("keeps Claude Code (and the Agent SDK it powers) on the PNG path", () => {
+    // Observed UA of claude-code 2.1.220's streamable-HTTP MCP client.
+    // A terminal, not an MCP Apps host: bucketing it "claude" would ship
+    // widget _meta it can't render AND drop the PNG block — no chart.
+    expect(detectMcpClient("claude-code/2.1.220 (sdk-cli)")).toBe("unknown");
+  });
+
+  it("buckets ChatGPT UAs as chatgpt and everything else as unknown", () => {
+    expect(detectMcpClient("ChatGPT/1.0 (+https://chatgpt.com)")).toBe(
+      "chatgpt",
+    );
+    expect(detectMcpClient("openai-mcp/1.0")).toBe("chatgpt");
+    expect(detectMcpClient("python-httpx/0.27")).toBe("unknown");
+    expect(detectMcpClient(null)).toBe("unknown");
+    expect(detectMcpClient("")).toBe("unknown");
   });
 });
 
