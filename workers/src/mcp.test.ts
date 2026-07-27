@@ -18,12 +18,79 @@ import {
   detectMcpClient,
   djangoErrorToToolResult,
 } from "./mcp.js";
+import { TOOL_REGISTRY } from "./tools/_registry.js";
+import { toolAnnotationsForClient } from "./tools/_surface.js";
 import {
   jsonResponse,
   mockFetchSequence,
   noopSendProgress,
 } from "./tools/__test_helpers.js";
 import type { McpClientKind, ToolContext } from "./tools/types.js";
+
+describe("detectMcpClient", () => {
+  it("maps OpenAI-family user agents to chatgpt", () => {
+    // Apps SDK / ChatGPT connector families.
+    expect(detectMcpClient("ChatGPT/1.0 (+https://chatgpt.com)")).toBe(
+      "chatgpt",
+    );
+    expect(detectMcpClient("openai-mcp/1.0")).toBe("chatgpt");
+    // OpenAI's published crawler/agent UAs contain neither "chatgpt" nor
+    // "openai" in the product token — matched explicitly so OpenAI review
+    // tooling sees the descriptors chatgpt-app-submission.json declares.
+    expect(detectMcpClient("GPTBot/1.2")).toBe("chatgpt");
+    expect(detectMcpClient("OAI-SearchBot/1.0")).toBe("chatgpt");
+  });
+
+  it("maps claude/anthropic UAs to claude and everything else to unknown", () => {
+    expect(detectMcpClient("claude-mcp-client/1.0")).toBe("claude");
+    expect(detectMcpClient(null)).toBe("unknown");
+    expect(detectMcpClient("")).toBe("unknown");
+    expect(detectMcpClient("curl/8.4.0")).toBe("unknown");
+  });
+});
+
+describe("toolAnnotationsForClient", () => {
+  it("preserves the canonical MCP annotations for claude", () => {
+    for (const tool of TOOL_REGISTRY) {
+      expect(toolAnnotationsForClient(tool, "claude")).toEqual(tool.annotations);
+    }
+  });
+
+  it("resolves unknown clients to the ChatGPT override family", () => {
+    // An OpenAI reviewer or crawler with an unrecognized UA lands on
+    // `unknown` — it must see the same labels chatgpt-app-submission.json
+    // declares, never canonical labels that contradict it (see
+    // `annotationClientFamily` in tools/_surface.ts).
+    for (const tool of TOOL_REGISTRY) {
+      expect(toolAnnotationsForClient(tool, "unknown")).toEqual(
+        toolAnnotationsForClient(tool, "chatgpt"),
+      );
+    }
+  });
+
+  it("uses OpenAI Apps review semantics for ChatGPT descriptors", () => {
+    for (const tool of TOOL_REGISTRY) {
+      const annotations = toolAnnotationsForClient(tool, "chatgpt");
+      expect(annotations.destructiveHint, tool.name).toBe(false);
+      expect(annotations.openWorldHint, tool.name).toBe(
+        tool.name === "tako_visualize",
+      );
+    }
+
+    expect(
+      toolAnnotationsForClient(
+        TOOL_REGISTRY.find((tool) => tool.name === "tako_agent_start")!,
+        "chatgpt",
+      ).readOnlyHint,
+    ).toBe(false);
+    expect(
+      toolAnnotationsForClient(
+        TOOL_REGISTRY.find((tool) => tool.name === "tako_agent")!,
+        "chatgpt",
+      ).readOnlyHint,
+    ).toBe(false);
+  });
+});
 
 describe("djangoErrorToToolResult", () => {
   // Read tools (tako_search/tako_answer/tako_contents) declare an

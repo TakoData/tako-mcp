@@ -319,9 +319,20 @@ const takoAgent = {
   outputSchema: agentRunSchema,
   annotations: {
     title: "Tako: Answer Agent",
-    readOnlyHint: true,
+    // WRITE under the shared rule in types.ts: the call creates a durable,
+    // user-addressable resource — a queued run reachable later via
+    // `run_id`/`thread_id`. Non-destructive: it only ever adds runs.
+    readOnlyHint: false,
     destructiveHint: false,
     openWorldHint: true,
+  },
+  annotationsByClient: {
+    // Apps review reads `openWorldHint` as "publishes/mutates public or
+    // third-party state", not MCP's domain-of-interaction, so the
+    // open-world retrieval flag drops for the ChatGPT family. Override
+    // kept even though ChatGPT receives the split start/wait pair instead
+    // of this tool. See `annotationsByClient` in types.ts.
+    chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<AgentRun> {
     const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);

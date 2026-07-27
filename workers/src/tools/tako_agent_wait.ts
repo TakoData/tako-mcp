@@ -4,7 +4,7 @@
  *
  * Registered ONLY on clients that don't honor MCP
  * `notifications/progress` for tool-call timeout extension (currently:
- * ChatGPT). See `mcp.ts`'s `CHATGPT_ONLY_TOOL_NAMES` set and
+ * ChatGPT). See `_surface.ts`'s `CHATGPT_ONLY_TOOL_NAMES` set and
  * `tako_agent_start` for the full rationale.
  *
  * Internally calls `pollAgentRun`, which polls
@@ -54,6 +54,13 @@ const tako_agent_wait = {
     readOnlyHint: true,
     destructiveHint: false,
     openWorldHint: true,
+  },
+  annotationsByClient: {
+    // Polling an existing run creates nothing — read-only on both
+    // readings; only `openWorldHint` diverges (Apps review reads it as
+    // "publishes/mutates public state"). See `annotationsByClient` in
+    // types.ts.
+    chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<AgentRun> {
     return pollAgentRun(ctx, input.run_id, {

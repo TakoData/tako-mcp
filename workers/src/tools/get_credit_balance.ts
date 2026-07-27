@@ -53,6 +53,10 @@ const get_credit_balance = {
     destructiveHint: false,
     openWorldHint: false,
   },
+  // Deliberately no `annotationsByClient`: a private account lookup is
+  // read-only and closed-world under both the MCP and Apps review
+  // readings, so — uniquely among these tools — the canonical annotations
+  // already serve every client.
   async handler(_input, ctx) {
     const data = await djangoGet<Record<string, unknown>>(
       ctx.env,

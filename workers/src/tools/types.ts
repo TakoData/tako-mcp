@@ -274,6 +274,40 @@ export interface ToolModule<
   inputSchema: InputSchema;
   outputSchema?: z.ZodType<Output>;
   annotations: ToolAnnotations;
+  /**
+   * Optional per-client annotation overrides, merged over
+   * {@link annotations} — the same resolution shape as
+   * {@link descriptionByClient} (see `toolAnnotationsForClient` in
+   * `_surface.ts`). The canonical `annotations` follow the MCP spec's
+   * readings; they are what `claude` clients and the generated registry
+   * see. `chatgpt` AND `unknown` clients resolve the `chatgpt` override
+   * family (see `annotationClientFamily` in `_surface.ts`), so OpenAI
+   * review tooling with an unrecognized UA can never see labels that
+   * contradict `chatgpt-app-submission.json`.
+   *
+   * Exists because OpenAI's ChatGPT Apps review reads `openWorldHint`
+   * differently from the MCP protocol. MCP: domain of interaction (web
+   * search is the spec's canonical open-world example). Apps review:
+   * "does this call publish or mutate publicly visible / third-party
+   * state?" Retrieval tools are therefore open-world under MCP but
+   * closed-world under Apps review, and `tako_visualize` (mints public
+   * chart URLs) is the reverse.
+   *
+   * `readOnlyHint` needs NO per-client override — its meaning is the
+   * same in both ecosystems ("does not modify its environment"), and the
+   * write line is drawn once, for every client: a call is a WRITE when
+   * it creates a durable, user-addressable resource — an agent run
+   * reachable later via `run_id`/`thread_id` (`tako_agent`,
+   * `tako_agent_start`), a chart card with public URLs
+   * (`tako_visualize`). Those tools declare canonical
+   * `readOnlyHint: false`. Metering side effects do NOT flip the hint:
+   * every Tako tool, including pure reads, debits a credit balance, so
+   * counting billing as a write would make `readOnlyHint` vacuously
+   * false everywhere.
+   */
+  annotationsByClient?: Partial<
+    Record<McpClientKind, Partial<ToolAnnotations>>
+  >;
   handler: (input: z.infer<InputSchema>, ctx: ToolContext) => Promise<Output>;
   /**
    * Optional hook to append extra MCP content blocks (image, audio, resource)
@@ -346,6 +380,10 @@ export interface AnyToolModule {
   inputSchema: z.ZodObject<z.ZodRawShape>;
   outputSchema?: z.ZodType<unknown>;
   annotations: ToolAnnotations;
+  /** Per-client annotation overrides — see {@link ToolModule.annotationsByClient}. */
+  annotationsByClient?: Partial<
+    Record<McpClientKind, Partial<ToolAnnotations>>
+  >;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;
   extraContentBlocks?: (
     output: unknown,

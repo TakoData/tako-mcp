@@ -31,7 +31,6 @@ import {
 import type { Env } from "./env.js";
 import {
   checkFreeTierRateLimit,
-  FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
   freeTierCreditsToolResult,
@@ -42,12 +41,17 @@ import {
   type Tier,
 } from "./freetier.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
-import {
-  OPTIONAL_TOOL_NAMES,
-  parseEnabledOptionalToolNames,
-} from "./tools/_optional.js";
+import { parseEnabledOptionalToolNames } from "./tools/_optional.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
-import type { AnyToolModule, McpClientKind, ToolContext } from "./tools/types.js";
+import {
+  isToolOnSurface,
+  toolAnnotationsForClient,
+} from "./tools/_surface.js";
+import type {
+  AnyToolModule,
+  McpClientKind,
+  ToolContext,
+} from "./tools/types.js";
 
 /**
  * Server identity. `registry/server.json` is the canonical source — versions are
@@ -161,10 +165,38 @@ export function detectMcpClient(userAgent: string | null): McpClientKind {
   // claude.ai here and gets widget `_meta` it cannot render.
   if (ua.includes("claude") || ua.includes("anthropic")) return "claude";
   // ChatGPT's Apps SDK connector typically advertises `ChatGPT-User`,
-  // `openai-mcp`, or similar in UA.
-  if (ua.includes("chatgpt") || ua.includes("openai")) return "chatgpt";
+  // `openai-mcp`, or similar in UA. OpenAI's published crawler/agent UAs
+  // (`GPTBot`, `OAI-SearchBot`) contain neither substring, so match them
+  // explicitly — and deliberately at the full `chatgpt` classification,
+  // not just for annotations: `McpClientKind` also selects the tool set
+  // (`isToolOnSurface`), widget registration, and image content blocks,
+  // and if OpenAI-family tooling (directory crawler, app review harness)
+  // lists our tools it must see the same TOOL SURFACE
+  // `chatgpt-app-submission.json` declares, not the `unknown` surface
+  // (which swaps the split agent pair for `tako_agent` and drops
+  // `tako_visualize`). The extra levers are harmless to a crawler: the
+  // widget is inert metadata and image suppression only trims response
+  // bytes. Residual risk for a UA outside these families is narrow:
+  // `unknown` already serves the Apps-review annotation labels (see
+  // `annotationClientFamily` in `tools/_surface.ts`), so only the
+  // tool-set difference remains. The actual connector UA should still be
+  // confirmed against production request logs rather than the
+  // `"ChatGPT/1.0"` stand-in the tests use.
+  if (
+    ua.includes("chatgpt") ||
+    ua.includes("openai") ||
+    ua.includes("gptbot") ||
+    ua.includes("oai-searchbot")
+  ) {
+    return "chatgpt";
+  }
   return "unknown";
 }
+
+// Per-client annotation resolution lives with the tool surface config in
+// `tools/_surface.ts` (each tool declares its own `annotationsByClient`
+// next to its canonical MCP annotations — see `annotationsByClient` in
+// `tools/types.ts` for the MCP-vs-Apps-review semantics).
 
 export function createMcpServer(
   ctx: ToolContext,
@@ -258,34 +290,12 @@ export function createMcpServer(
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
 
-  // Tools that should ONLY appear on ChatGPT-class clients.
+  // Which tools appear for which client — and the ChatGPT-only /
+  // ChatGPT-excluded / ChatGPT-default-on membership sets — live in
+  // `tools/_surface.ts`, shared with `gen-registry.ts` so the
+  // `chatgpt-app-submission.json` parity check validates the exact
+  // surface this loop registers.
   //
-  // ChatGPT's Apps SDK doesn't send a progressToken, so the single-tool
-  // `tako_agent` dispatch+poll path (which emits progress to keep the
-  // per-call timeout fresh) can't survive ChatGPT's ~60 s ceiling. The
-  // split pair `tako_agent_start` / `tako_agent_wait` is used instead.
-  //
-  // Hosting them only on the clients that need them keeps the
-  // Claude.ai tool surface minimal (no risk of the agent there
-  // accidentally choosing the slower split flow over the single-call
-  // path) and keeps the registry codegen unchanged (registry/server.json
-  // still lists everything for discovery; the runtime just filters per
-  // request).
-  const CHATGPT_ONLY_TOOL_NAMES = new Set([
-    // ChatGPT's Apps SDK doesn't send a progressToken, so the single-tool
-    // `tako_agent` dispatch+poll path (which emits progress to keep the
-    // per-call timeout fresh) can't survive ChatGPT's ~60 s ceiling. The
-    // split pair `tako_agent_start` / `tako_agent_wait` is used instead.
-    "tako_agent_start",
-    "tako_agent_wait",
-  ]);
-  // Tools registered for all clients EXCEPT ChatGPT. The dispatch+poll
-  // `tako_agent` relies on `notifications/progress` for timeout extension —
-  // suppress it for chatgpt (which doesn't support that mechanism) and
-  // route to the split pair instead.
-  const CHATGPT_EXCLUDED_TOOL_NAMES = new Set([
-    "tako_agent",
-  ]);
   // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
   // from the blanket unknown-client suppression in `widgetSuppressed` —
   // ChatGPT and Claude are the only clients that get the widget at all).
@@ -300,12 +310,6 @@ export function createMcpServer(
   // success state. Most chart-conditional tools should rely on the
   // throw-on-empty pattern instead.
   const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
-  // Optional tools that stay on the DEFAULT surface for ChatGPT only.
-  // `tako_visualize` ships the chart widget ChatGPT renders; hiding it
-  // behind `?tools=` would silently break the ChatGPT app experience,
-  // so ChatGPT keeps it without opting in. Every other client must
-  // enable it via `?tools=visualize`.
-  const CHATGPT_DEFAULT_ON_TOOL_NAMES = new Set(["tako_visualize"]);
   const client = options.client ?? "unknown";
   const tier = options.tier ?? "authenticated";
   // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
@@ -314,30 +318,11 @@ export function createMcpServer(
     options.enabledOptionalToolNames ?? new Set<string>();
 
   for (const tool of TOOL_REGISTRY) {
-    // Free-tier surface: anonymous connections see ONLY the three free
-    // tools. Applied before every other gate so no client-specific rule
-    // (`?tools=` opt-ins, CHATGPT_DEFAULT_ON_TOOL_NAMES) can widen the
-    // anonymous surface.
-    if (tier === "free" && !FREE_TIER_TOOL_NAMES.has(tool.name)) {
-      continue;
-    }
-    // Opt-in gate: optional tools (see `OPTIONAL_TOOL_ALIASES` in
-    // `_optional.ts`) are excluded from the default surface and registered
-    // only when enabled via the `tools` query param — except tools ChatGPT
-    // keeps by default (`CHATGPT_DEFAULT_ON_TOOL_NAMES`). Applied BEFORE the
-    // per-client filters below so a disabled tool never reaches
-    // client-variant selection.
-    if (
-      OPTIONAL_TOOL_NAMES.has(tool.name) &&
-      !enabledOptionalToolNames.has(tool.name) &&
-      !(client === "chatgpt" && CHATGPT_DEFAULT_ON_TOOL_NAMES.has(tool.name))
-    ) {
-      continue;
-    }
-    if (CHATGPT_ONLY_TOOL_NAMES.has(tool.name) && client !== "chatgpt") {
-      continue;
-    }
-    if (CHATGPT_EXCLUDED_TOOL_NAMES.has(tool.name) && client === "chatgpt") {
+    // Surface membership (free-tier gate + opt-in gate + per-client
+    // filters) is decided by `isToolOnSurface` in `tools/_surface.ts` —
+    // shared with the codegen parity check so `chatgpt-app-submission.json`
+    // can't drift from what this loop actually registers.
+    if (!isToolOnSurface(tool.name, client, enabledOptionalToolNames, tier)) {
       continue;
     }
     registerTool(server, tool, ctx, {
@@ -434,7 +419,7 @@ function registerTool(
     title: tool.annotations.title,
     description,
     inputSchema: tool.inputSchema.shape,
-    annotations: tool.annotations,
+    annotations: toolAnnotationsForClient(tool, options.client),
   };
 
   // Advertise per-tool OAuth on every runtime descriptor. This only survives

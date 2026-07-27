@@ -164,6 +164,18 @@ const tako_visualize = {
     // open/unpredictable set of external entities the way a web search does.
     openWorldHint: false,
   },
+  annotationsByClient: {
+    // The one override that WIDENS a hint: Apps review reads
+    // `openWorldHint` as "publishes/mutates publicly visible state", and
+    // this call mints a card with publicly accessible webpage/embed URLs.
+    // Combined with `readOnlyHint: false` this marks the call
+    // confirmation-worthy in ChatGPT even though the tool sits on
+    // ChatGPT's default surface — intended: a user-visible prompt before
+    // creating a public URL is the honest label for review, and matches
+    // the justification in `chatgpt-app-submission.json`. See
+    // `annotationsByClient` in types.ts.
+    chatgpt: { openWorldHint: true },
+  },
   async handler(input, ctx): Promise<Output> {
     const body = buildVisualizeBody(input);
 

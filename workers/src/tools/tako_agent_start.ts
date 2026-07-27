@@ -10,7 +10,7 @@
  *
  * On Claude.ai (which sends a `progressToken` and resets timeouts on
  * progress events), this tool is NOT registered — the single `tako_agent`
- * tool handles the full dispatch+poll in one call. See `mcp.ts`'s
+ * tool handles the full dispatch+poll in one call. See `_surface.ts`'s
  * `CHATGPT_ONLY_TOOL_NAMES` set.
  *
  * Wire path: POSTs to `/api/v1/agent/answer/runs` with `effort: "medium"`
@@ -48,9 +48,19 @@ const tako_agent_start = {
   outputSchema,
   annotations: {
     title: "Tako: Start Agent Run",
-    readOnlyHint: true,
+    // WRITE under the shared rule in types.ts: the call creates a durable,
+    // user-addressable resource — a queued run reachable later via
+    // `run_id`/`thread_id`. Non-destructive: it only ever adds runs.
+    readOnlyHint: false,
     destructiveHint: false,
     openWorldHint: true,
+  },
+  annotationsByClient: {
+    // Apps review reads `openWorldHint` as "publishes/mutates public or
+    // third-party state", not MCP's domain-of-interaction, so the
+    // open-world retrieval flag drops for the ChatGPT family. See
+    // `annotationsByClient` in types.ts.
+    chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<Output> {
     const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);

@@ -1,0 +1,140 @@
+{
+  "$schema": "https://developers.openai.com/plugins/schemas/chatgpt-app-submission.v1.json",
+  "schema_version": 1,
+  "app_info": {
+    "display_name": "Tako",
+    "subtitle": "Search live data and charts",
+    "description": "Tako helps users find current data and metrics from proprietary datasets and the live web, get citation-backed answers, retrieve underlying result content, check available data coverage, and create charts from structured data.",
+    "category": "PRODUCTIVITY"
+  },
+  "tools": {
+    "tako_search": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Searches Tako's data index and the live web and returns matching cards and links without modifying records or external state.",
+        "open_world_justification": "Does not publish content or change publicly visible or third-party state.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "tako_answer": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves source material and returns a synthesized, citation-backed answer without changing stored or external data.",
+        "open_world_justification": "Does not publish the answer or modify publicly visible or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "tako_contents": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves CSV data or page text from a supplied result URL without modifying the source.",
+        "open_world_justification": "Does not publish content or change the supplied website or any third-party system.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "tako_available_data": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Looks up Tako's structured-data coverage for an entity or metric and returns matching names without changing data.",
+        "open_world_justification": "Does not publish content or modify publicly visible or third-party state.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "tako_visualize": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Creates a persistent Tako chart card from structured data supplied by the user.",
+        "open_world_justification": "Creates a chart card with publicly accessible webpage and embed URLs.",
+        "destructive_justification": "Creates a new card but does not delete, overwrite, revoke access, or perform irreversible transactions."
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "description": "Retrieve a current metric as structured data with a chart.",
+      "user_prompt": "Show me the latest US consumer price index and its recent trend as a chart.",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_search",
+      "expected_output": "Returns a relevant CPI data card with recent values, source attribution, and an inline chart when available.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Answer a specific data question with supporting citations.",
+      "user_prompt": "What was US real GDP growth in 2025? Give me a concise answer with citations.",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_answer",
+      "expected_output": "Returns one concise, citation-backed answer grounded in relevant data or web sources.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Retrieve the underlying page text behind a web result URL as a post-search follow-up.",
+      "user_prompt": "I got this web result URL from a Tako search earlier: https://www.bls.gov/cpi/. Use Tako to fetch the full page text behind it.",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_contents",
+      "expected_output": "Returns readable page text from the supplied URL with enough context to use in a follow-up answer.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Check which structured metrics are available before running a priced search.",
+      "user_prompt": "What proprietary structured data does Tako have for Tesla?",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_available_data",
+      "expected_output": "Returns whether coverage exists, matching entities, and the exact available metric names for a follow-up search.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Create a chart from data supplied directly by the user.",
+      "user_prompt": "Create a bar chart titled Regional Sales using North America: 500, Europe: 300, and Asia: 450, with units of USD millions.",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_visualize",
+      "expected_output": "Creates and displays a regional sales bar chart and provides a link to open the resulting Tako card.",
+      "expected_output_url": null
+    }
+  ],
+  "negative_test_cases": [
+    {
+      "description": "Do not trigger for unrelated creative-writing requests.",
+      "user_prompt": "Write a short bedtime story about a friendly lighthouse.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because the request does not involve data discovery, data retrieval, or visualization.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for calendar-management requests.",
+      "user_prompt": "Schedule a meeting with my design team tomorrow at 10 AM.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because it cannot access or modify calendars.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for sending messages through another service.",
+      "user_prompt": "Email this market summary to my team.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because it cannot send email or messages.",
+      "expected_output_url": null
+    }
+  ]
+}

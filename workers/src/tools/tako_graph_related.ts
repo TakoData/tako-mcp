@@ -66,6 +66,12 @@ const tako_graph_related = {
     destructiveHint: false,
     openWorldHint: true,
   },
+  annotationsByClient: {
+    // Apps review reads `openWorldHint` as "publishes/mutates public or
+    // third-party state", not MCP's domain-of-interaction — retrieval is
+    // closed-world there. See `annotationsByClient` in types.ts.
+    chatgpt: { openWorldHint: false },
+  },
   async handler(input: Input, ctx): Promise<Output> {
     const query: Record<string, string | number | boolean> = {
       node_id: input.node_id,

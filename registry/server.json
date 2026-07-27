@@ -72,7 +72,7 @@
       },
       "annotations": {
         "title": "Tako: Answer Agent",
-        "readOnlyHint": true,
+        "readOnlyHint": false,
         "destructiveHint": false,
         "openWorldHint": true
       }
@@ -101,7 +101,7 @@
       },
       "annotations": {
         "title": "Tako: Start Agent Run",
-        "readOnlyHint": true,
+        "readOnlyHint": false,
         "destructiveHint": false,
         "openWorldHint": true
       }

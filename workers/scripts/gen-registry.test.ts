@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import {
   assertAllToolsDescribed,
+  assertChatgptSubmissionParity,
   assertLlmsFullCoverage,
   MCP_TOOL_ALLOWLIST,
 } from "./gen-registry.js";
@@ -58,4 +59,89 @@ describe("assertLlmsFullCoverage", () => {
       assertLlmsFullCoverage([tool("tako_agent_start", "query")], doc),
     ).toThrow(/tako_agent_start.*never mentioned/);
   });
+});
+
+describe("assertChatgptSubmissionParity", () => {
+  // Fixture tool on ChatGPT's default authenticated surface: not optional,
+  // not chatgpt-only/excluded, not a free-tier name — so the only gates it
+  // exercises are the ones under test here.
+  const tool = (
+    name: string,
+    overrides?: { chatgpt?: { openWorldHint?: boolean; readOnlyHint?: boolean } },
+  ) => ({
+    name,
+    annotations: {
+      title: name,
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
+    ...(overrides !== undefined ? { annotationsByClient: overrides } : {}),
+  });
+  const submission = (
+    tools: Record<string, { annotations?: Record<string, unknown> }>,
+  ) => JSON.stringify({ tools });
+
+  it("passes when the declared tools and hints match the runtime descriptors", () => {
+    const t = tool("tako_x", { chatgpt: { openWorldHint: false } });
+    const declared = submission({
+      tako_x: {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: false,
+        },
+      },
+    });
+    expect(() => assertChatgptSubmissionParity([t], declared)).not.toThrow();
+  });
+
+  it("throws when the top-level tools object is missing", () => {
+    expect(() => assertChatgptSubmissionParity([tool("tako_x")], "{}")).toThrow(
+      /missing top-level "tools"/,
+    );
+  });
+
+  it("fails on a surface tool the submission does not declare", () => {
+    expect(() =>
+      assertChatgptSubmissionParity([tool("tako_x")], submission({})),
+    ).toThrow(/missing tool "tako_x"/);
+  });
+
+  it("fails on a declared tool that is not on ChatGPT's default surface", () => {
+    expect(() =>
+      assertChatgptSubmissionParity(
+        [],
+        submission({ tako_ghost: { annotations: {} } }),
+      ),
+    ).toThrow(/extra tool "tako_ghost"/);
+  });
+
+  it("fails on a hint mismatch with a per-tool, per-hint message", () => {
+    const t = tool("tako_x", { chatgpt: { openWorldHint: false } });
+    const declared = submission({
+      tako_x: {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: true, // runtime serves false for chatgpt
+        },
+      },
+    });
+    expect(() => assertChatgptSubmissionParity([t], declared)).toThrow(
+      /tool "tako_x" openWorldHint: submission declares true, runtime serves false/,
+    );
+  });
+
+  it("fails when a free-tier surface tool is missing from the submission", () => {
+    // `tako_search` is in FREE_TIER_TOOL_NAMES: anonymous connections must
+    // never see a tool the submission does not declare.
+    expect(() =>
+      assertChatgptSubmissionParity([tool("tako_search")], submission({})),
+    ).toThrow(/anonymous free-tier ChatGPT surface but not declared/);
+  });
+
+  // NOTE: parity against the REAL registry + committed submission file is
+  // asserted by `npm run registry:check` (CI), not here — this suite runs
+  // in the Workers pool, which has no filesystem.
 });
