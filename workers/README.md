@@ -145,7 +145,7 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
    more as needed with `add_api_credit --email <account> --amount <n>` or
    the `add-api-credit.yaml` Action.
 
-   **Read the balance from the account console, not the API.**
+   **Do not read the balance from the legacy `credit_balance` endpoint.**
    `GET /api/v1/credit_balance/` — and therefore the `get_credit_balance`
    MCP tool — reads the legacy Metronome/Redis ledger via
    `BillingServiceSingleton.get_remaining_credit_balance`, NOT
