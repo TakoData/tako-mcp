@@ -14,7 +14,7 @@ Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as inter
 - Parallelize multi-part asks: send each metric as its own narrow concurrent `tako_search`, then synthesize — not one query.
 - Cross-country comparison is built in: `"US vs China inflation"` returns a comparison card. For currency-denominated indicators (GDP, wages), a cross-country chart may plot different currencies on one axis unnormalized — state each series' currency and convert before comparing.
 - Ground in Tako data with `sources: ["data"]`.
-- Empty result (zero cards) — HARD STOP on retries. Every search is billed, and rewording almost never flips an empty result to a hit. Recover in exactly this order: (1) `tako_available_data` (free) for the exact indicator name + `node_id`; (2) if covered, ONE more search with that exact name and pinned `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question.
+- Empty result (zero cards) — HARD STOP on retries. Every search is billed, and rewording almost never flips an empty result to a hit. Recover in exactly this order: (1) `tako_available_data` (free) for the exact indicator name + `node_id`; (2) if covered, ONE more search with that exact name and pinned `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question (in a fan-out, each entity+metric query is its own question with its own budget).
 - Empty also means "not covered in Tako," NOT that the indicator doesn't exist — don't infer a fact from silence.
 
 ## Pick the tool

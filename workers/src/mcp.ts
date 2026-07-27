@@ -300,15 +300,15 @@ export function createMcpServer(
   // from the blanket unknown-client suppression in `widgetSuppressed` —
   // ChatGPT and Claude are the only clients that get the widget at all).
   // The mechanism is kept in place for future per-tool gating, but
-  // is currently empty: `tako_search` ships its widget on ChatGPT
-  // and handles the empty-result case by throwing an actionable
-  // tool-call error (ChatGPT does NOT reserve a widget container for
-  // tool errors, so the widget never leaves a persistent gap).
+  // is currently empty: `tako_search` ships its widget on ChatGPT,
+  // and a zero-match search returns a SUCCESS result (with `guidance`,
+  // no `pub_id`/`embed_url`) — the widget bundle detects that empty
+  // shape by the absence of any chart URL and collapses itself
+  // (see `_chart_widget.ts`), so no persistent blank box is left.
   //
   // Add a tool name here only if it has a UI bundle that produces
   // unrenderable / blank widgets on ChatGPT in some legitimate
-  // success state. Most chart-conditional tools should rely on the
-  // throw-on-empty pattern instead.
+  // success state.
   const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
   const client = options.client ?? "unknown";
   const tier = options.tier ?? "authenticated";

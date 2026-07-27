@@ -4,9 +4,10 @@
  *
  * Synchronous and fast-only: `effort` is `fast` (default) or `instant`
  * (cached-embed fast path). There is no in-tool deep/research path and
- * no async polling — deep, multi-step research lives in the Tako agent
- * (`tako_agent_start` → `tako_agent_wait`), and the tool description
- * steers the model there when this returns nothing.
+ * no async polling. A zero-card response carries a `guidance` field
+ * (built in `_search_results.ts`) steering the model to the free
+ * `tako_available_data` coverage check instead of priced
+ * reword-and-retry loops.
  *
  * The top result auto-renders inline as a chart: `buildSearchOutput`
  * lifts the top card's `card_id` into top-level widget fields
@@ -216,6 +217,7 @@ const tako_search = {
       wire.request_id,
       wire.usage ?? null,
       ctx.env,
+      input.sources,
     );
   },
   async extraMeta(output, ctx) {

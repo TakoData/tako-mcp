@@ -12,7 +12,7 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts.
 - The core metric is Visits (monthly, with ~1-month lag).
 - Comparisons: `"youtube.com vs netflix.com monthly visits"`. Rankings: `"top websites by visits"` returns a ranked card.
 - Ground in Tako data with `sources: ["data"]` (SimilarWeb is proprietary).
-- Empty result (zero cards) — HARD STOP on retries. First check the query is a bare DOMAIN (the #1 cause of empties here); every search is billed and rewording almost never helps. Recover in exactly this order: (1) `tako_available_data` (free) to confirm the domain is covered and get its `node_id`; (2) if covered, ONE more search pinning `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question.
+- Empty result (zero cards) — HARD STOP on retries. First check the query is a bare DOMAIN (the #1 cause of empties here); every search is billed and rewording almost never helps. Recover in exactly this order: (1) `tako_available_data` (free) to confirm the domain is covered and get its `node_id`; (2) if covered, ONE more search pinning `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question (in a fan-out, each entity+metric query is its own question with its own budget).
 - Empty also means "not covered in Tako," NOT that the domain has no traffic — don't infer a fact from silence.
 
 ## Pick the tool
