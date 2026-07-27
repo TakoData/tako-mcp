@@ -27,7 +27,7 @@ requests 401 exactly as before):
 |---|---|---|
 | `FREE_TIER_API_KEY` | secret | Tako API key of the dedicated free-tier account, forwarded to Django as `X-API-Key` (trimmed, so a piped `wrangler secret put` newline can't break it) |
 | `FREE_TIER_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-IP fairness bucket: 10 free-tool `tools/call`s / 60 s |
-| `FREE_TIER_GLOBAL_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-colo burst shaping: 120 anonymous requests / 60 s / colo, all callers |
+| `FREE_TIER_GLOBAL_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-colo burst shaping: 60 anonymous requests / 60 s / colo, all callers |
 
 Declare both under the first-class `ratelimits` key. **Never under
 `unsafe.bindings`** — that path is a raw passthrough: the API accepts it,
@@ -38,7 +38,7 @@ limiters); the only proof is a live burst against a deployed Worker.
 
 Neither Worker bucket is the platform-wide spend bound. Cloudflare's
 ratelimit binding counts per colo (no global mode), so the constant-key
-bucket enforces `120/min × colos reached` — it exists to shape per-colo
+bucket enforces `60/min × colos reached` — it exists to shape per-colo
 floods, including the otherwise-unmetered handshake methods. Per-IP
 keying means little for hosted MCP hosts (claude.ai, ChatGPT, and
 similar egress from a handful of platform IPs); it's a fairness layer.
@@ -49,6 +49,42 @@ authenticates as that one user, landing on `_SEARCH_USER` (720/min,
 `_GRAPH_TIER` (180/min + 10,000/day, `/api/beta/graph/*`) in
 `app/backend/api/throttling/policy.py`. Note none of these weighs tool
 cost: the worst case is that many `tako_answer` calls.
+
+### Measured behaviour
+
+The rate-limit binding is a burn-rate **dampener, not a bound**. Measured
+against deployed staging with the secret set and the bindings confirmed
+present:
+
+| Per-IP config | Cold first burst (of 200) | Sustained, converged | Slow drip, 20 requests at 3 s |
+|---|---|---|---|
+| `limit: 10` | 104-118 admitted | ~53-64 per 200 | 20/20 admitted, 0 limited |
+| `limit: 1` | ~118 admitted | ~19-25 per 200 | 13/20 admitted, 7 limited |
+
+1. The configured limit controls **sustained** admission, not burst
+   admission. Changing it moves the converged figure, not the first burst.
+2. **Cold start leaks about 115 requests regardless of the limit.** A caller
+   who pauses for one period gets a fresh leak. The limit cannot close this.
+3. **Normal-paced traffic is never limited** at `limit: 10`. This is the path
+   a real client takes.
+
+One IP had 292 requests admitted in about 16 seconds. Cloudflare documents
+the binding as "permissive, eventually consistent, and intentionally
+designed to not be used as an accurate accounting system", with counters
+"cached on the same machine and updated asynchronously".
+
+Two conclusions follow. First, no user-facing string states a rate; a test
+enforces this. Second, the pre-paid credit balance on the shared account is
+the real bound.
+
+Do NOT reach for `unsafe.bindings` or a shorter `period` to fix this.
+`unsafe.bindings` was tried and changed nothing. A shorter period resets the
+counter more often, and because the cold-start leak recurs per period, it
+admits MORE traffic.
+
+Per-call cost is bounded by the tool schemas: the anonymous toolset cannot
+select the expensive `deep` tier. `tako_answer` does not expose `effort` and
+`tako_search` constrains it to `["fast", "instant"]`.
 
 Behavior when active:
 
@@ -62,7 +98,7 @@ Behavior when active:
   address, IPv6 by /64 prefix.
 - An over-limit `tools/call` (either bucket) returns **HTTP 200 with a
   JSON-RPC tool result** (`isError: true`) carrying an upsell message
-  pointing at https://trytako.com/account/ — deliberately not a 429,
+  pointing at https://tako.com/account/ — deliberately not a 429,
   which MCP SDK clients surface as a transport error the model never
   reads. Non-`tools/call` requests over the per-colo ceiling get a plain
   429 (no valid readable shape exists for them).
@@ -93,27 +129,39 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
 1. **Deploy the Worker** (normal deploy flow). The
    `FREE_TIER_RATE_LIMITER` and `FREE_TIER_GLOBAL_RATE_LIMITER` bindings
    ship with it.
-2. **Create the dedicated free-tier Tako account** and generate its API
-   key from the account page. All anonymous traffic spends this one
-   account's credits.
-3. **Put the account on a plan where the credit ceiling actually
-   enforces.** This is the total spend backstop (the Worker limiters
-   fail *open* on runtime errors and are per-colo anyway), and the
-   mechanism matters: Django's credit throttles (`_ANSWER_CREDIT`,
-   `_V3_CREDIT`, `_CONTENTS_CREDIT`) are **bypassed** for PAYG billing
-   (spend meters in USD forever and never 402s — unbounded dollars),
-   and for Enterprise/MPP accounts. So the free-tier account must be a
-   standard credit-capped plan with a budget you can afford to lose.
-   The per-user *rate* throttles (720/min search+answer, 180/min graph)
-   apply on every billing mode and are the floor either way.
+2. **Create the dedicated Tako account for anonymous access** and generate
+   its API key from the account page. All anonymous traffic spends this one
+   account's credits. Create it in the SAME environment the Worker points
+   at: a production key returns 401 against `staging.tako.com` and vice
+   versa, which is indistinguishable from a wrong key.
+3. **Fund the account and leave no card on file.** The pre-paid credit
+   balance is the abuse bound: the Worker limiters only dampen the burn
+   rate, so exhaustion is the real backstop. `@meters_api_credits`
+   pre-gates each request and returns 402 when `balance_cents <= 0` (see
+   `backend/subscriptions/decorators.py`). The hazard is **auto-reload**,
+   not the billing mode: `maybe_auto_reload` refills the balance when
+   auto-reload is enabled AND a card is attached, which would turn the cap
+   into a soft one. Keep auto-reload off. Monitor the balance and allocate
+   more as needed with `add_api_credit --email <account> --amount <n>` or
+   the `add-api-credit.yaml` Action.
+
+   **Read the balance from the account console, not the API.**
+   `GET /api/v1/credit_balance/` — and therefore the `get_credit_balance`
+   MCP tool — reads the legacy Metronome/Redis ledger via
+   `BillingServiceSingleton.get_remaining_credit_balance`, NOT
+   `ApiCreditAccount.balance_cents`. It reported $0.00 for an account that
+   actually held $24.41.
 4. **Enable staging first:**
    ```bash
    wrangler secret put FREE_TIER_API_KEY --env staging   # paste the API key
    ```
 5. **Verify on staging:** connect an MCP client to
-   `mcp.staging.tako.com/mcp` with no auth → `tools/list` shows exactly
-   the three free tools; make 11 free-tool `tools/call`s inside a minute
-   → the 11th returns a tool error carrying the upsell message.
+   `mcp.staging.tako.com/mcp` with no auth. Expect `tools/list` to show
+   exactly the three tools, and a `tako_search` call to return real
+   results. Do NOT expect a specific call to be rate limited — see
+   "Measured behaviour". To confirm the limiter is wired at all, send a
+   sustained burst (a few hundred metered calls at concurrency 8) and check
+   that rejections appear.
 6. **Enable production** — after consciously accepting the operator
    warning below:
    ```bash
@@ -150,12 +198,12 @@ hour later. The Django-side account cap (step 3) bounds the damage in
 the meantime.
 
 To change the limits later: the per-IP limit lives in the three
-`FREE_TIER_RATE_LIMITER` blocks in `wrangler.jsonc` AND in
-`FREE_TIER_LIMIT_MESSAGE` in `src/freetier.ts` (a drift test in
-`src/freetier.test.ts` fails if the message and bindings disagree); the
-global ceiling lives in the three `FREE_TIER_GLOBAL_RATE_LIMITER`
-blocks. Edit, then redeploy — then confirm against the DEPLOYED Worker
-with a burst of more than `limit` metered calls inside one period. The
+`FREE_TIER_RATE_LIMITER` blocks in `wrangler.jsonc` and the global ceiling
+in the three `FREE_TIER_GLOBAL_RATE_LIMITER` blocks. Do NOT add the number
+to any user-facing message — a test in `src/freetier.test.ts` fails if you
+do, because the binding cannot enforce it. Edit, then redeploy — then
+confirm against the DEPLOYED Worker with a burst of more than `limit`
+metered calls inside one period. The
 unit suite injects fake limiters, so it passes whether or not the real
 binding counts. Counting is per-Cloudflare-colo and approximate (an IP
 whose traffic hits two colos can see roughly 2× the limit) — acceptable
