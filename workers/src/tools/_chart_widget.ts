@@ -54,14 +54,24 @@ export const HTTP_URL_REGEX = /^https?:\/\//;
 export const MAX_INLINE_PNG_BYTES = 4 * 1024 * 1024;
 
 // Cap for inline `image_data_url` in `_meta` — distinct from
-// `MAX_INLINE_PNG_BYTES`. The data URI ends up inside the JSON-RPC tool
-// result envelope, which the LLM also tokenizes and some clients have
-// observed to silently fail their widget data flow past ~400 KB encoded.
-// Cap at 250 KB raw → ~333 KB encoded for a margin under that threshold.
+// `MAX_INLINE_PNG_BYTES`. Sized to cover the real chart range: Tako
+// chart PNGs run 50-300 KB, and this data URI is now Claude's PRIMARY
+// chart path (claude.ai's outer CSP blocks the cross-origin `image_url`
+// fallback), so a cap below 300 KB silently drops the largest charts to
+// a text link there. 400 KB raw (~533 KB encoded) covers the range with
+// headroom.
+//
+// Why the old 250 KB cap is safe to lift: `_meta` is not tokenized by
+// the model, and the ~400 KB-encoded silent widget-data failure that
+// motivated it was observed on ChatGPT — whose `extraMeta` hook is now
+// skipped entirely (see tako_search/tako_visualize), so this field never
+// ships there. The remaining ceiling is the host's message-size limit;
+// the staging ">250 KB chart renders on claude.ai" check is the
+// empirical gate on this number.
 // Charts above the cap fall back to `image_url` only, which is fine for
-// hosts whose CSP allows cross-origin images (ChatGPT) but means
-// claude.ai users see no chart for the largest charts.
-export const MAX_INLINE_DATA_URL_BYTES = 250 * 1024;
+// hosts whose CSP allows cross-origin images but means claude.ai users
+// see no chart — keep the cap comfortably above real chart sizes.
+export const MAX_INLINE_DATA_URL_BYTES = 400 * 1024;
 
 // Bound how long we'll wait on the PNG endpoint before giving up. The
 // content block / data URL is "nice to have" — better to ship the URL
@@ -222,6 +232,14 @@ function buildBakedWidgetHtml(opts: {
   }
   notify();
   window.addEventListener("resize", notify);
+  // The script runs before the <img> has necessarily loaded, so the
+  // initial notify() can measure a pre-layout height (the explicit
+  // width/height attributes reserve layout in most cases, but not when
+  // width:100% shrinks the image in a narrow container). Re-notify once
+  // the image has real dimensions — mirrors the static variant's load
+  // listener.
+  var img = document.getElementById("tako-embed-img");
+  if (img) img.addEventListener("load", notify);
 })();
 </script>
 </body>
@@ -761,13 +779,24 @@ const WIDGET_HTML = `<!doctype html>
     var msg = event.data;
     if (!msg || typeof msg !== "object") return;
     // MCP Apps host messages (handshake + tool-result) come from the
-    // parent frame. Reject anything else — a co-installed sibling
-    // connector's iframe can postMessage to us via parent.frames[] and
-    // would otherwise be able to inject a spoofed tool-result (fake chart
-    // image + arbitrary click-through URL; render() is one-shot). The
+    // host's own browsing context — \`window.parent\`, or \`window.top\`
+    // if the host nests the widget inside a wrapper frame. Reject
+    // anything else — a co-installed sibling connector's iframe can
+    // postMessage to us via parent.frames[] and would otherwise be able
+    // to inject a spoofed tool-result (fake chart image + arbitrary
+    // click-through URL; render() is one-shot). A sibling's
+    // \`event.source\` is the sibling's own window, never parent or top,
+    // so widening to \`top\` keeps the injection blocked. The
     // \`tako-embed-height\` branch below is separately origin-gated to the
     // embed iframe, so leave it reachable regardless.
-    var fromHost = event.source === window.parent;
+    var fromHost = event.source === window.parent || event.source === window.top;
+    // This gate guards Claude's only chart data path. If a host ever
+    // delivers JSON-RPC from a context we don't trust, dropping it
+    // silently would strand the widget on "Loading chart…" with no
+    // signal — warn so devtools / host logs show the drop.
+    if (!fromHost && msg.jsonrpc === "2.0") {
+      console.warn("[tako-widget] dropped JSON-RPC message from untrusted source", msg.method || msg.id);
+    }
     // Init response → send the \`initialized\` notification so the host
     // starts piping tool-result messages. Don't gate on response
     // contents — any matching id (success or error) is sufficient
