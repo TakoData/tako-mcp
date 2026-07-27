@@ -9,8 +9,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { slimCard, slimCardContent } from "./_search_results.js";
+import { buildSearchOutput, slimCard, slimCardContent } from "./_search_results.js";
 import type { ResultContent, TakoCard } from "./_search_results.js";
+
+import type { Env } from "../env.js";
 
 // json_compact dataset with a declared temporal column at index 0.
 const dataset = (rows: unknown[][]): ResultContent =>
@@ -243,5 +245,27 @@ describe("slimCard — explicit exportable flag", () => {
     const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
     expect(slimCard(card, null).exportable).toBe(true);
     expect(slimCard(card, 5).exportable).toBe(true);
+  });
+});
+
+describe("buildSearchOutput — zero-result guidance", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+
+  it("attaches an anti-retry guidance message when cards AND web_results are both empty", () => {
+    const out = buildSearchOutput([], [], "req-1", null, ENV);
+    expect(out.guidance).toBeDefined();
+    // The load-bearing instruction: do not re-issue reworded searches.
+    expect(out.guidance).toMatch(/do not retry/i);
+    expect(out.guidance).toMatch(/tako_available_data/);
+  });
+
+  it("omits guidance when any card is present", () => {
+    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV);
+    expect(out.guidance).toBeUndefined();
+  });
+
+  it("omits guidance when only web_results are present", () => {
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV);
+    expect(out.guidance).toBeUndefined();
   });
 });

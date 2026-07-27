@@ -357,6 +357,9 @@ export const searchOutputShape = {
   // Cost-plus usage for this request (null when it was not metered/billed).
   usage: usageSchema.nullable(),
   request_id: z.string(),
+  // Present ONLY on a zero-result response: tells the model how to recover
+  // without burning priced calls on reworded retries.
+  guidance: z.string().optional(),
   ...autoChainShape,
 } as const;
 
@@ -365,6 +368,7 @@ export type SearchOutput = {
   web_results: WebResult[];
   usage: Usage | null;
   request_id: string;
+  guidance?: string;
   pub_id?: string;
   embed_url?: string;
   image_url?: string;
@@ -372,6 +376,16 @@ export type SearchOutput = {
   width?: number;
   height?: number;
 };
+
+// Recovery protocol for a zero-result search. Rewording the same query almost
+// never flips an empty result to a hit — the misses come from query SHAPE
+// (compound query, brand instead of domain, unresolved entity) or from the
+// data simply not being covered.
+const ZERO_RESULT_GUIDANCE = [
+  "No results — do NOT retry this query or rephrasings of it; each retry is billed and empty means the query shape is off or the data is not covered, not that wording was unlucky.",
+  "Recover in order: (1) call tako_available_data (free) with the entity to learn the exact metric names + node_ids Tako actually has; (2) if it confirms coverage, search ONCE more using that exact name, pinning node_ids; (3) if it shows no coverage, stop calling Tako for this question and answer from other sources.",
+  'Also check the usual shape mistakes before that one retry: one entity + one metric per query (split compound asks into parallel searches), domains not brand names for website traffic ("netflix.com", not "Netflix"), and sources ["data","web"] unless data-only was deliberate.',
+].join(" ");
 
 /**
  * Build the tako_search output: the cards + web_results + request_id, plus
@@ -391,6 +405,14 @@ export function buildSearchOutput(
     web_results: webResults,
     usage,
     request_id: requestId,
+    // Each empty response is billed the same as a hit, and models default to
+    // rephrase-and-retry loops that never converge — so a zero-result response
+    // carries its own recovery protocol instead of a bare empty array.
+    ...(cards.length === 0 && webResults.length === 0
+      ? {
+          guidance: ZERO_RESULT_GUIDANCE,
+        }
+      : {}),
   };
   const topCardId = cards[0]?.card_id;
   if (typeof topCardId === "string" && topCardId !== "") {

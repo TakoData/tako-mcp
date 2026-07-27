@@ -30,7 +30,7 @@
   "mcpServers": {
     "tako": {
       "type": "http",
-      "url": "https://mcp.tako.com/mcp?tools=agent",
+      "url": "https://mcp.tako.com/mcp",
       "headers": {
         "Authorization": "Bearer ${user_config.tako_api_key}"
       }
