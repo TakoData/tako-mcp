@@ -71,6 +71,27 @@ export default {
       });
     }
 
+    // Glama remote-server ownership verification. Glama GETs this URL on
+    // the server's public hostname and matches `maintainers[].email`
+    // against the claiming Glama account's email. Same gating shape as
+    // the OpenAI challenge above: unset binding falls through to the
+    // catch-all 404, and no CORS wrapper (server-to-server fetch).
+    if (
+      request.method === "GET" &&
+      url.pathname === "/.well-known/glama.json" &&
+      env.GLAMA_MAINTAINER_EMAIL
+    ) {
+      return new Response(
+        JSON.stringify({
+          maintainers: [{ email: env.GLAMA_MAINTAINER_EMAIL }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        },
+      );
+    }
+
     // OAuth 2.1 + DCR + PKCE (TAKO-2679). The two `.well-known/...`
     // discovery docs let MCP hosts (Claude.ai, ChatGPT) bootstrap the
     // OAuth flow from just the resource URL. `/register`, `/authorize`,

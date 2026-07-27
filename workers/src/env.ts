@@ -105,6 +105,17 @@ export interface Env {
    */
   OPENAI_APPS_CHALLENGE_TOKEN?: string;
   /**
+   * Glama remote-server ownership verification. Glama GETs
+   * `/.well-known/glama.json` on the server's public hostname and
+   * matches `maintainers[].email` against the claiming Glama account's
+   * email (must match exactly). Set per-env in `wrangler.jsonc` `vars`
+   * (not a secret — the value is meant to be served on a public URL).
+   * When unset, the well-known route returns 404 so non-production
+   * environments don't satisfy a listing-claim verification for a
+   * server that was never registered against them.
+   */
+  GLAMA_MAINTAINER_EMAIL?: string;
+  /**
    * Tako API key of the dedicated free-tier account, forwarded to Django
    * as `X-API-Key` for anonymous (no `Authorization` header) `/mcp`
    * requests. A Worker secret (`wrangler secret put FREE_TIER_API_KEY

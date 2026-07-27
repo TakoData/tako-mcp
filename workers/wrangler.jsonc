@@ -30,7 +30,13 @@
     // `/.well-known/openai-apps-challenge` route echoes whatever this
     // is set to. Staging / production override with OpenAI-issued
     // tokens below.
-    "OPENAI_APPS_CHALLENGE_TOKEN": "dev-stub-not-a-real-challenge-token"
+    "OPENAI_APPS_CHALLENGE_TOKEN": "dev-stub-not-a-real-challenge-token",
+    // Stub in the same sense as the OpenAI token above — `index.test.ts`
+    // asserts `/.well-known/glama.json` serves whatever this is set to.
+    // Production overrides with the real Glama-account email below;
+    // envs without the var 404 the route (never verify an un-issued
+    // listing claim).
+    "GLAMA_MAINTAINER_EMAIL": "dev-stub-not-a-real-email@example.com"
   },
   // Free-tier rate limiters — declared with the first-class `ratelimits`
   // key, NOT `unsafe.bindings`. `unsafe.bindings` is a raw passthrough to
@@ -121,7 +127,12 @@
         // `/.well-known/openai-apps-challenge`. If OpenAI rotates the
         // value, update here and redeploy. Not a secret — the URL is
         // public by design.
-        "OPENAI_APPS_CHALLENGE_TOKEN": "uXTBcUGnISWBPU2YXEn7IPIDh2ANMxLa1rkFvv3Z0c0"
+        "OPENAI_APPS_CHALLENGE_TOKEN": "uXTBcUGnISWBPU2YXEn7IPIDh2ANMxLa1rkFvv3Z0c0",
+        // Glama remote-server listing claim for `mcp.tako.com`. Glama
+        // matches this against the claiming Glama account's email —
+        // served as JSON from `/.well-known/glama.json`. Not a secret —
+        // the URL is public by design.
+        "GLAMA_MAINTAINER_EMAIL": "eric@trytako.com"
       },
       // Free-tier rate limiters (per-IP 10 metered requests / 60 s;
       // per-colo ceiling 120 anonymous requests / 60 s). Declared with the
