@@ -460,7 +460,7 @@ describe("freeTierLimitResponse", () => {
     expect(body.result.content).toEqual([
       { type: "text", text: FREE_TIER_LIMIT_MESSAGE },
     ]);
-    expect(FREE_TIER_LIMIT_MESSAGE).toContain("https://trytako.com/account/");
+    expect(FREE_TIER_LIMIT_MESSAGE).toContain("https://tako.com/account/");
   });
 
   it("without a request id: degrades to the legacy 429 with Retry-After", async () => {
@@ -541,18 +541,22 @@ describe("freeTierBatchResponse", () => {
     expect(body.error.data.kind).toBe("batch_not_supported");
     expect(body.error.message).toBe(FREE_TIER_BATCH_MESSAGE);
     expect(body.error.message).toBe(
-      "Batch requests are not supported on the free tier. Send one " +
-        "JSON-RPC request per POST, or get a free API key at " +
-        "https://trytako.com/account/ for full access.",
+      "Batch requests are not supported for anonymous access. Send one " +
+        "JSON-RPC request per POST, or get an API key at " +
+        "https://tako.com/account/ for full access.",
     );
   });
 });
 
 describe("wrangler.jsonc ↔ message drift", () => {
-  // The limit numbers live in `ratelimits` blocks (one per env) AND
-  // in the user-facing messages. This test is the sync mechanism the
-  // README promises: the upsell can never advertise a number the limiter
-  // does not enforce.
+  // The binding CANNOT enforce a specific rate, so no user-facing string may
+  // claim one. Measured on deployed staging against a 10-per-60s bucket: 20 of
+  // 20 normal-paced requests were admitted, a cold burst admitted ~115
+  // regardless of the configured limit, and one IP had 292 requests admitted in
+  // ~16 s. The earlier version of this test asserted the advertised number
+  // MATCHED the binding, which protected a false promise. It now asserts the
+  // opposite, so a number cannot be reintroduced. See README.md "Measured
+  // behaviour".
   function bindingLimits(name: string): number[] {
     const re = new RegExp(
       `"name":\\s*"${name}"[\\s\\S]*?"limit":\\s*(\\d+)`,
@@ -561,20 +565,33 @@ describe("wrangler.jsonc ↔ message drift", () => {
     return [...wranglerRaw.matchAll(re)].map((m) => Number(m[1]));
   }
 
-  it("per-IP binding limits match the number in FREE_TIER_LIMIT_MESSAGE (all 3 envs)", () => {
+  it("per-IP binding limits agree across all 3 envs", () => {
     const limits = bindingLimits("FREE_TIER_RATE_LIMITER");
     expect(limits).toHaveLength(3);
-    const advertised = FREE_TIER_LIMIT_MESSAGE.match(/\((\d+) requests\/min\)/);
-    expect(advertised).not.toBeNull();
-    for (const limit of limits) {
-      expect(limit).toBe(Number(advertised![1]));
-    }
+    expect(new Set(limits).size).toBe(1);
   });
 
   it("global binding limits agree across all 3 envs", () => {
     const limits = bindingLimits("FREE_TIER_GLOBAL_RATE_LIMITER");
     expect(limits).toHaveLength(3);
     expect(new Set(limits).size).toBe(1);
+  });
+
+  it("no user-facing message advertises a rate, says free, or uses the old host", () => {
+    const messages = [
+      FREE_TIER_LIMIT_MESSAGE,
+      FREE_TIER_GLOBAL_LIMIT_MESSAGE,
+      FREE_TIER_BATCH_MESSAGE,
+      FREE_TIER_CREDITS_MESSAGE,
+    ];
+    for (const message of messages) {
+      expect(message).not.toMatch(
+        /\d+\s*requests?\s*(\/|per)\s*(min|minute|sec|second)/i,
+      );
+      expect(message).not.toMatch(/\bfree\b/i);
+      expect(message).not.toContain("trytako.com");
+      expect(message).toContain("https://tako.com/account/");
+    }
   });
 });
 

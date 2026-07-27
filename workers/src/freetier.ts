@@ -314,15 +314,18 @@ async function hitPerIpLimiter(
 }
 
 /**
- * The over-limit message. States the limit number — keep in sync with the
- * `simple.limit` value on the `FREE_TIER_RATE_LIMITER` bindings in
- * `wrangler.jsonc` (a test in `freetier.test.ts` asserts they match). The
- * URL is the upsell: a free API key lifts the anonymous per-IP limit and
- * unlocks the full toolset.
+ * The over-limit message for the per-IP bucket. It states NO number: the
+ * Cloudflare rate-limit binding is permissive and eventually consistent, so it
+ * cannot enforce a specific rate (measured: 20 of 20 normal-paced requests
+ * admitted against a 10-per-60s bucket). A drift test in `freetier.test.ts`
+ * fails if a rate figure is reintroduced here. The URL is the upsell: an API
+ * key of the caller's own lifts the anonymous limits and unlocks the full
+ * toolset. It is hardcoded to production on purpose — signup must reach
+ * `tako.com` even when the caller hit staging.
  */
 export const FREE_TIER_LIMIT_MESSAGE =
-  "Free tier limit reached (10 requests/min). Try again in a minute, or " +
-  "get a free API key at https://trytako.com/account/ for higher limits.";
+  "Rate limit reached for anonymous access. Try again in a minute, or " +
+  "get an API key at https://tako.com/account/ for higher limits.";
 
 /**
  * Response for an over-limit metered `tools/call`.
@@ -385,8 +388,8 @@ export function freeTierLimitResponse(requestId: JsonRpcRequestId): Response {
  * other; there is no message number to sync.)
  */
 export const FREE_TIER_GLOBAL_LIMIT_MESSAGE =
-  "The Tako free tier is at capacity right now. Try again shortly, or " +
-  "get a free API key at https://trytako.com/account/ for dedicated access.";
+  "Anonymous access is at capacity right now. Try again shortly, or " +
+  "get an API key at https://tako.com/account/ for dedicated access.";
 
 /**
  * Response for a request over the per-colo anonymous ceiling. Same
@@ -460,14 +463,14 @@ export function freeTierTooLargeResponse(): Response {
 
 /**
  * The batch-rejection body's `message`. States the constraint plainly and
- * points at the same upsell as `FREE_TIER_LIMIT_MESSAGE` — a free API key
+ * points at the same upsell as `FREE_TIER_LIMIT_MESSAGE` — an API key
  * also lifts the batch restriction, since it puts the request on the
  * authenticated path where this check never runs.
  */
 export const FREE_TIER_BATCH_MESSAGE =
-  "Batch requests are not supported on the free tier. Send one JSON-RPC " +
-  "request per POST, or get a free API key at https://trytako.com/account/ " +
-  "for full access.";
+  "Batch requests are not supported for anonymous access. Send one " +
+  "JSON-RPC request per POST, or get an API key at " +
+  "https://tako.com/account/ for full access.";
 
 /**
  * HTTP 400 for an anonymous JSON-RPC batch (array body). `id: null` (a
@@ -496,17 +499,17 @@ export function freeTierBatchResponse(): Response {
 }
 
 /**
- * Model-visible message when the SHARED free-tier account runs out of
- * Tako credits — the steady-state failure the Django-side cap exists to
- * produce (it is the fail-open spend backstop). Without this mapping the
- * anonymous user would see Django's raw billing error spliced into the
- * tool result by `djangoErrorToToolResult`, which reads as a bug rather
- * than an upsell.
+ * Model-visible message when the shared anonymous account runs out of Tako
+ * credits. This is the DESIGNED safety valve, not an anomaly: the pre-paid
+ * credit balance is the abuse bound, because the Worker rate limiters are a
+ * burn-rate dampener rather than a bound. Exhaustion is therefore an expected
+ * steady state, and the operator tops the account up. Without this mapping the
+ * caller would see Django's raw billing error spliced into the tool result by
+ * `djangoErrorToToolResult`, which reads as a bug rather than an upsell.
  */
 export const FREE_TIER_CREDITS_MESSAGE =
-  "The Tako free tier is temporarily out of shared capacity. Get a free " +
-  "API key at https://trytako.com/account/ to keep going with your own " +
-  "account.";
+  "Anonymous access is temporarily out of shared capacity. Get an API " +
+  "key at https://tako.com/account/ to continue with your own account.";
 
 /**
  * Tool result substituted for a Django payment/credit error on the free
