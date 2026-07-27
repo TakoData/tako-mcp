@@ -50,6 +50,8 @@ That's it — the core tools (`tako_search`, `tako_answer`, `tako_available_data
 
 If you previously added the server with `claude mcp add`, remove it first (`claude mcp remove tako-mcp`) so you don't end up with two copies of every tool.
 
+> **Updating from an earlier plugin version?** Older releases asked for a Tako API key in the plugin config; that setting is gone, so after updating your connection silently lands on the free tier (the three core tools, 10 requests/min) — nothing errors, but the full toolset and your account limits are no longer active. Run `/mcp` → **tako** → **Authenticate** once (or use the Connect button on Claude.ai) to restore full authenticated access.
+
 **Or add the MCP server directly:**
 
 ```bash

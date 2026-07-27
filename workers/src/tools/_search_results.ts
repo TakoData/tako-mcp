@@ -379,13 +379,10 @@ export type SearchOutput = {
 
 // Which sources a search actually hit, for tailoring zero-result guidance.
 // "tako" is a legacy alias for "data" (see tako_search's sources enum).
-// undefined (an older/other caller not threading sources) is treated as
-// the default both-sources search.
-type SearchedSources = readonly string[] | undefined;
+type SearchedSources = readonly string[];
 const searchedData = (s: SearchedSources): boolean =>
-  s === undefined || s.includes("data") || s.includes("tako");
-const searchedWeb = (s: SearchedSources): boolean =>
-  s === undefined || s.includes("web");
+  s.includes("data") || s.includes("tako");
+const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
 
 /**
  * Recovery protocol for a zero-CARD search. Rewording the same query almost
@@ -442,7 +439,7 @@ export function buildSearchOutput(
   requestId: string,
   usage: Usage | null,
   env: Env,
-  searchedSources?: readonly string[],
+  searchedSources: readonly string[],
 ): SearchOutput {
   const base: SearchOutput = {
     cards,
