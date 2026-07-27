@@ -26,12 +26,19 @@ requests 401 exactly as before):
 | Binding | Kind | Purpose |
 |---|---|---|
 | `FREE_TIER_API_KEY` | secret | Tako API key of the dedicated free-tier account, forwarded to Django as `X-API-Key` (trimmed, so a piped `wrangler secret put` newline can't break it) |
-| `FREE_TIER_RATE_LIMITER` | `unsafe.bindings` ratelimit in `wrangler.jsonc` | per-IP fairness bucket: 10 free-tool `tools/call`s / 60 s |
-| `FREE_TIER_GLOBAL_RATE_LIMITER` | `unsafe.bindings` ratelimit in `wrangler.jsonc` | per-colo burst shaping: 1000 anonymous requests / 60 s / colo, all callers |
+| `FREE_TIER_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-IP fairness bucket: 10 free-tool `tools/call`s / 60 s |
+| `FREE_TIER_GLOBAL_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-colo burst shaping: 120 anonymous requests / 60 s / colo, all callers |
+
+Declare both under the first-class `ratelimits` key. **Never under
+`unsafe.bindings`** — that path is a raw passthrough: the API accepts it,
+`wrangler versions view` renders the limits correctly, and `limit()`
+resolves without throwing, but it never counts, so every call returns
+`{success: true}`. No unit test catches it (the suite injects fake
+limiters); the only proof is a live burst against a deployed Worker.
 
 Neither Worker bucket is the platform-wide spend bound. Cloudflare's
 ratelimit binding counts per colo (no global mode), so the constant-key
-bucket enforces `1000/min × colos reached` — it exists to shape per-colo
+bucket enforces `120/min × colos reached` — it exists to shape per-colo
 floods, including the otherwise-unmetered handshake methods. Per-IP
 keying means little for hosted MCP hosts (claude.ai, ChatGPT, and
 similar egress from a handful of platform IPs); it's a fairness layer.
@@ -147,9 +154,12 @@ To change the limits later: the per-IP limit lives in the three
 `FREE_TIER_LIMIT_MESSAGE` in `src/freetier.ts` (a drift test in
 `src/freetier.test.ts` fails if the message and bindings disagree); the
 global ceiling lives in the three `FREE_TIER_GLOBAL_RATE_LIMITER`
-blocks. Edit, then redeploy. Counting is per-Cloudflare-colo and
-approximate (an IP whose traffic hits two colos can see roughly 2× the
-limit) — acceptable for abuse protection, not billing.
+blocks. Edit, then redeploy — then confirm against the DEPLOYED Worker
+with a burst of more than `limit` metered calls inside one period. The
+unit suite injects fake limiters, so it passes whether or not the real
+binding counts. Counting is per-Cloudflare-colo and approximate (an IP
+whose traffic hits two colos can see roughly 2× the limit) — acceptable
+for abuse protection, not billing.
 
 **Operator warning:** OAuth-capable hosts (claude.ai and similar) decide
 whether to run their OAuth sign-in flow based on getting a 401 from the

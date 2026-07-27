@@ -549,7 +549,7 @@ describe("freeTierBatchResponse", () => {
 });
 
 describe("wrangler.jsonc ↔ message drift", () => {
-  // The limit numbers live in `unsafe.bindings` blocks (one per env) AND
+  // The limit numbers live in `ratelimits` blocks (one per env) AND
   // in the user-facing messages. This test is the sync mechanism the
   // README promises: the upsell can never advertise a number the limiter
   // does not enforce.

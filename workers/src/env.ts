@@ -9,7 +9,8 @@
 
 /**
  * Structural type of Cloudflare's Workers rate-limiting binding
- * (`unsafe.bindings` entries with `type: "ratelimit"` in `wrangler.jsonc`).
+ * (`ratelimits` entries in `wrangler.jsonc` — NOT `unsafe.bindings`, which
+ * produces a binding that satisfies this interface but never counts).
  * Declared locally instead of relying on `@cloudflare/workers-types` so the
  * shape is pinned to exactly what we call and tests can supply fakes.
  * `limit()` counts one hit against `key`'s bucket and reports whether the
@@ -114,9 +115,9 @@ export interface Env {
   FREE_TIER_API_KEY?: string;
   /**
    * Cloudflare rate-limit binding metering anonymous free-tier usage,
-   * keyed per client IP. Declared under `unsafe.bindings` in
-   * `wrangler.jsonc` (10 requests / 60 s). Optional in the same
-   * fail-closed sense as `FREE_TIER_API_KEY`.
+   * keyed per client IP. Declared under `ratelimits` in `wrangler.jsonc`
+   * (10 requests / 60 s). Optional in the same fail-closed sense as
+   * `FREE_TIER_API_KEY`.
    */
   FREE_TIER_RATE_LIMITER?: RateLimit;
   /**
@@ -125,10 +126,10 @@ export interface Env {
    * a true global ceiling — the binding counts per colo with no global
    * mode, so the enforced number is `limit × colos reached`; the genuine
    * platform-wide bound is Django's per-user throttling on the free-tier
-   * account (see `freetier.ts` module header). Declared under
-   * `unsafe.bindings` in `wrangler.jsonc` (1000 requests / 60 s / colo).
-   * Optional in the same fail-closed sense as the other two free-tier
-   * bindings — all three must be present for the free tier to activate.
+   * account (see `freetier.ts` module header). Declared under `ratelimits`
+   * in `wrangler.jsonc` (120 requests / 60 s / colo). Optional in the same
+   * fail-closed sense as the other two free-tier bindings — all three must
+   * be present for the free tier to activate.
    */
   FREE_TIER_GLOBAL_RATE_LIMITER?: RateLimit;
 }
