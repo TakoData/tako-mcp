@@ -29,19 +29,24 @@ Point your MCP client at the hosted endpoint — no install, no local server:
 https://mcp.tako.com/mcp
 ```
 
-Every request authenticates with a Bearer token. **[Get your API key](https://tako.com/console/api-keys)**, then pick your client below.
+**No token needed to start.** Connecting without credentials lands on the **free tier**: `tako_search`, `tako_answer`, and `tako_available_data`, rate-limited to 10 requests/min per IP. Authenticating unlocks the full toolset and your own account limits, two ways:
+
+- **OAuth** (Claude Code plugin, Claude.ai, Claude Desktop, ChatGPT) — a browser sign-in with your Tako account; a per-host API key is minted for you automatically.
+- **Bearer token** (config-file clients: Cursor, Windsurf, VS Code, …) — **[get your API key](https://tako.com/console/api-keys)** and paste it into the header.
+
+Pick your client below.
 
 <details>
 <summary><b>Claude Code</b></summary>
 
-**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step, and signs you in with OAuth — no API key to mint or manage:
+**Plugin (recommended)** — installs the MCP connection plus Tako's bundled [research skills](#agent-skills) in one step, and works immediately on the free tier — no API key to mint or manage:
 
 ```bash
 claude plugin marketplace add TakoData/tako-mcp
 claude plugin install tako@tako
 ```
 
-Then authenticate once: run `/mcp` inside Claude Code, select **tako**, and choose **Authenticate**. A browser opens to sign you in with your Tako account and a per-host API key is minted for you automatically (visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)). The same OAuth flow powers the plugin on Claude.ai — the plugin's Tako connector connects with a click, no token pasting.
+That's it — the core tools (`tako_search`, `tako_answer`, `tako_available_data`) work right away on the anonymous free tier. To unlock the full toolset and your own account limits, authenticate once with OAuth: run `/mcp` inside Claude Code, select **tako**, and choose **Authenticate**. A browser opens to sign you in with your Tako account and a per-host API key is minted for you automatically (visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)). The same OAuth flow powers the plugin on Claude.ai — the plugin's Tako connector connects with a click, no token pasting.
 
 If you previously added the server with `claude mcp add`, remove it first (`claude mcp remove tako-mcp`) so you don't end up with two copies of every tool.
 
@@ -245,6 +250,8 @@ Tools are discovered automatically via the MCP `tools/list` handshake, so your c
 | `tako_answer` | **Ask one specific data question, get the answer.** A single grounded, citation-backed prose answer, already written for you — relay it directly. Ground in `data`, `web`, or both. |
 | `tako_contents` | Fetch the content behind a result URL: a Tako card returns a CSV, any other URL returns the page's extracted text. Cards must be marked `exportable: true` (web URLs are exempt). |
 | `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search/answer. Returns a `node_id` you can pin into search/answer for a retrieval boost. Free and fast. |
+
+**Free tier (no credentials):** an unauthenticated connection sees `tako_search`, `tako_answer`, and `tako_available_data` only, capped at 10 requests/min per IP. Authenticate (OAuth or Bearer) for the full surface above plus the opt-in tools below, under your own account limits.
 
 On connect, the server also advertises [MCP server instructions](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle#initialization) that hosts like Claude.ai, Claude Desktop, and Claude Code place in the model's system prompt. They steer data and metric questions to `tako_search` ahead of the host's built-in web search, and note that `tako_search` covers the live web too, so one call can stand in for a separate web search on mixed questions. Built-in web search remains the fallback for queries outside Tako's coverage.
 
