@@ -409,8 +409,12 @@ export function freeTierGlobalLimitResponse(
         id: null,
         error: {
           code: -32000,
+          // Deliberately the SAME kind the per-IP bucket reports. Two
+          // distinguishable kinds would let a caller map which bucket it
+          // tripped, and so infer the limiter topology by probing. The
+          // message text still tells the caller what to do.
           message: FREE_TIER_GLOBAL_LIMIT_MESSAGE,
-          data: { kind: "global_rate_limited" },
+          data: { kind: "rate_limited" },
         },
       }),
       {
@@ -527,6 +531,12 @@ export const FREE_TIER_CREDITS_MESSAGE =
  * text content, machine-readable `_meta["tako/error"]`), with the billing
  * detail replaced by upsell copy. Callers (see `registerTool`'s catch in
  * `mcp.ts`) decide *when* this applies — this module only owns the shape.
+ *
+ * The `kind` is deliberately vague. It must not restate what the prose
+ * withholds: an anonymous caller has no account here, so telling it that a
+ * SHARED account ran out of CREDITS discloses how the tier is built, and
+ * gives a prober a signal for how depleted that account is. "capacity"
+ * says only that the request cannot be served right now.
  */
 export function freeTierCreditsToolResult(): {
   content: Array<{ type: "text"; text: string }>;
@@ -535,7 +545,7 @@ export function freeTierCreditsToolResult(): {
 } {
   return {
     content: [{ type: "text", text: FREE_TIER_CREDITS_MESSAGE }],
-    _meta: { "tako/error": { kind: "free_tier_credits_exhausted" } },
+    _meta: { "tako/error": { kind: "capacity" } },
     isError: true,
   };
 }

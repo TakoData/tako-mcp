@@ -12,6 +12,7 @@ import {
   FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
+  freeTierCreditsToolResult,
   freeTierGlobalLimitResponse,
   freeTierLimitResponse,
   freeTierRateLimitKey,
@@ -505,7 +506,9 @@ describe("freeTierGlobalLimitResponse", () => {
     expect(body.id).toBeNull();
     expect(body.error.code).toBe(-32000);
     expect(body.error.message).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
-    expect(body.error.data.kind).toBe("global_rate_limited");
+    // Same kind as the per-IP bucket, on purpose: two distinguishable kinds
+    // would let a caller map the limiter topology by probing.
+    expect(body.error.data.kind).toBe("rate_limited");
   });
 });
 
@@ -605,6 +608,38 @@ describe("wrangler.jsonc ↔ message drift", () => {
     const ids = allNamespaceIds();
     expect(ids).toHaveLength(6); // 3 envs x (per-IP + global)
     expect(new Set(ids).size).toBe(6);
+  });
+
+  it("no client-visible error kind discloses how the tier is built", async () => {
+    // The `kind` fields are machine-readable and SHIP TO CALLERS. They must
+    // not restate what the prose deliberately withholds — that the tier runs
+    // on one shared, credit-funded account, or which of the two limiter
+    // buckets a request tripped. A caller that can tell those apart can map
+    // the topology, and can watch the shared account deplete, by probing.
+    const kinds: string[] = [];
+    for (const res of [
+      freeTierLimitResponse(null),
+      freeTierGlobalLimitResponse(null),
+      freeTierTooLargeResponse(),
+      freeTierBatchResponse(),
+    ]) {
+      const body = (await res.json()) as {
+        error: { data: { kind: string } };
+      };
+      kinds.push(body.error.data.kind);
+    }
+    const meta = freeTierCreditsToolResult()._meta["tako/error"] as {
+      kind: string;
+    };
+    kinds.push(meta.kind);
+
+    expect(kinds).toHaveLength(5);
+    for (const kind of kinds) {
+      expect(kind).not.toMatch(/free|credit|shared|global|colo|account|ip\b/i);
+    }
+    // Both limiter buckets must report the SAME kind so neither is
+    // distinguishable from the outside.
+    expect(kinds[0]).toBe(kinds[1]);
   });
 
   it("no user-facing message advertises a rate, says free, or uses the old host", () => {
