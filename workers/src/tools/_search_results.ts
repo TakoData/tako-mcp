@@ -422,7 +422,8 @@ function buildZeroResultGuidance(
       (searchedWeb(sources)
         ? ";"
         : ' (adding "web" as a fallback source on that same single retry is fine);'),
-    "(3) if it shows no coverage, stop calling Tako for this question and answer from other sources.",
+    "(3) if it shows no coverage, stop calling Tako for this question and answer from other sources",
+    '— except website-traffic asks: the graph misses long-tail domains SimilarWeb still covers, so there the real coverage test is the one retry itself, as a bare-domain query ("kagi.com monthly visits").',
     'Rule out the usual shape mistakes before that one retry: one entity + one metric per query (split compound asks into parallel searches), and domains not brand names for website traffic ("netflix.com", not "Netflix").',
   ].join(" ");
 }

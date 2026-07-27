@@ -5,20 +5,21 @@ description: Website and app traffic via Tako (source: SimilarWeb). Monthly visi
 
 # Web & App Traffic (Tako)
 
-Tako serves SimilarWeb traffic data as interactive, citation-backed charts.
+Tako serves SimilarWeb traffic data as interactive, citation-backed charts. All tools below live on the Tako MCP server (server name `tako`).
 
 ## Query patterns (Critical)
 - Query by DOMAIN, not brand. Brand names resolve to the wrong concept — under `sources: ["data"]` a brand query returns zero cards, and with `"web"` on it mis-resolves to subscriber counts or CDN/network-traffic articles. Always use the bare domain: `"netflix.com monthly visits"`, `"youtube.com"`, `"chatgpt.com"`.
 - The core metric is Visits (monthly, with ~1-month lag).
 - Comparisons: `"youtube.com vs netflix.com monthly visits"`. Rankings: `"top websites by visits"` returns a ranked card.
 - Ground in Tako data with `sources: ["data"]` (SimilarWeb is proprietary).
-- Empty result (zero cards) — HARD STOP on retries. First check the query is a bare DOMAIN (the #1 cause of empties here); every search is billed and rewording almost never helps. Recover in exactly this order: (1) `tako_available_data` (free) to confirm the domain is covered and get its `node_id`; (2) if covered, ONE more search pinning `node_ids`; (3) if not covered, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question (in a fan-out, each entity+metric query is its own question with its own budget).
+- Empty result (zero cards) — HARD STOP on freeform retries; every search is billed (even an empty one) and rewording almost never helps. The #1 cause here is a brand-name query: if the query wasn't a bare DOMAIN, fix it to one (`"Netflix traffic"` → `"netflix.com monthly visits"`) and retry ONCE — that is the recovery. If a domain-shaped query still came back empty, stop calling Tako for this question and fall back to the web. Never send more than 2 priced searches for the same underlying question (in a fan-out, each domain query is its own question with its own budget).
+- Do NOT use `tako_available_data` to rule a domain out: its graph is entity-based and misses long-tail domains SimilarWeb still covers (it reports `found: false` for kagi.com while `"kagi.com monthly visits"` returns a real card). It is still useful for resolving a brand to its entity `node_id` (e.g. tako_available_data {"q": "Netflix"} — note the arg is `q`) to pin into a search.
 - Empty also means "not covered in Tako," NOT that the domain has no traffic — don't infer a fact from silence.
 
 ## Pick the tool
 - `tako_search` — traffic as a chart (default; top result renders inline).
 - `tako_answer` — one number, in prose ("How many monthly visits does netflix.com get?").
-- `tako_available_data` — FREE check that a domain is covered before a priced call.
+- `tako_available_data` — FREE brand→entity resolver (see the empty-result bullet for its limits on domains).
 - Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search`, then one narrow search per domain in parallel and compute growth yourself.
 
 ## Rendering (Critical)
