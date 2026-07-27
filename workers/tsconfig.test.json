@@ -1,5 +1,10 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/**/*.test.ts"],
+  // `src/raw-imports.d.ts` is named explicitly: the glob matches only
+  // `*.test.ts`, so the ambient `*.jsonc?raw` module declaration that
+  // `freetier.test.ts` depends on would otherwise be outside this program.
+  // The root `tsconfig.json` picks it up via `src/**/*.ts`, which is why
+  // a bare `tsc --noEmit` passes while this project fails.
+  "include": ["src/**/*.test.ts", "src/raw-imports.d.ts"],
   "exclude": ["node_modules"]
 }
