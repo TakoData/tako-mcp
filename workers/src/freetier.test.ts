@@ -571,6 +571,18 @@ describe("wrangler.jsonc ↔ message drift", () => {
     return [...wranglerRaw.matchAll(re)].map((m) => Number(m[1]));
   }
 
+  /** Every `simple.period` value in the file, in document order. */
+  function allPeriods(): number[] {
+    const re = /"period":\s*(\d+)/g;
+    return [...wranglerRaw.matchAll(re)].map((m) => Number(m[1]));
+  }
+
+  /** Every `namespace_id` value in the file, in document order. */
+  function allNamespaceIds(): string[] {
+    const re = /"namespace_id":\s*"([^"]+)"/g;
+    return [...wranglerRaw.matchAll(re)].map((m) => m[1]!);
+  }
+
   it("per-IP binding limits agree across all 3 envs", () => {
     const limits = bindingLimits("FREE_TIER_RATE_LIMITER");
     expect(limits).toHaveLength(3);
@@ -581,6 +593,18 @@ describe("wrangler.jsonc ↔ message drift", () => {
     const limits = bindingLimits("FREE_TIER_GLOBAL_RATE_LIMITER");
     expect(limits).toHaveLength(3);
     expect(new Set(limits).size).toBe(1);
+  });
+
+  it("every bucket's period is 60 — a shorter period admits MORE traffic, not less (see README 'Measured behaviour')", () => {
+    const periods = allPeriods();
+    expect(periods).toHaveLength(6); // 3 envs x (per-IP + global)
+    expect(periods.every((p) => p === 60)).toBe(true);
+  });
+
+  it("all six namespace_id values are distinct — reusing one would merge the per-IP and per-colo counters", () => {
+    const ids = allNamespaceIds();
+    expect(ids).toHaveLength(6); // 3 envs x (per-IP + global)
+    expect(new Set(ids).size).toBe(6);
   });
 
   it("no user-facing message advertises a rate, says free, or uses the old host", () => {

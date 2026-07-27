@@ -40,9 +40,10 @@
   // that (the suite injects fake limiters), so the only proof is a live
   // burst against a deployed Worker. Two buckets:
   //  - FREE_TIER_RATE_LIMITER: per-IP fairness bucket (10 free-tool
-  //    tools/call per 60 s). Keep `limit` in sync with
-  //    FREE_TIER_LIMIT_MESSAGE in `src/freetier.ts` — a drift test in
-  //    `src/freetier.test.ts` asserts the message matches this value.
+  //    tools/call per 60 s). Do NOT put this number in any user-facing
+  //    message — a drift test in `src/freetier.test.ts` fails if a
+  //    message states a rate, because the binding cannot enforce one.
+  //    See the Measured behaviour section in README.md.
   //  - FREE_TIER_GLOBAL_RATE_LIMITER: constant-key bucket counting every
   //    anonymous request (60 / 60 s). PER-COLO burst shaping, not a
   //    true global ceiling — the binding counts per colo, so the enforced
@@ -77,9 +78,8 @@
       // Free-tier rate limiters (per-IP 10 metered requests / 60 s;
       // per-colo ceiling 60 anonymous requests / 60 s). Declared with the
       // first-class `ratelimits` key — see the top-level block for why
-      // `unsafe.bindings` silently never counts. Keep the per-IP `limit`
-      // in sync with FREE_TIER_LIMIT_MESSAGE in `src/freetier.ts` — the
-      // upsell message states the number.
+      // `unsafe.bindings` silently never counts. Do NOT put the per-IP
+      // number in any user-facing message; a drift test forbids it.
       // NB: the bindings alone do NOT enable the free tier; the
       // FREE_TIER_API_KEY secret must also be set (fail-closed).
       "ratelimits": [
@@ -123,9 +123,8 @@
       // Free-tier rate limiters (per-IP 10 metered requests / 60 s;
       // per-colo ceiling 60 anonymous requests / 60 s). Declared with the
       // first-class `ratelimits` key — see the top-level block for why
-      // `unsafe.bindings` silently never counts. Keep the per-IP `limit`
-      // in sync with FREE_TIER_LIMIT_MESSAGE in `src/freetier.ts` — the
-      // upsell message states the number.
+      // `unsafe.bindings` silently never counts. Do NOT put the per-IP
+      // number in any user-facing message; a drift test forbids it.
       // NB: the bindings alone do NOT enable the free tier; the
       // FREE_TIER_API_KEY secret must also be set (fail-closed).
       "ratelimits": [

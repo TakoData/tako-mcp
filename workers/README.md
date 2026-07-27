@@ -115,7 +115,7 @@ Behavior when active:
   the body peek is new unauthenticated surface and its read is bounded,
   so a lying `Content-Length` doesn't help.
 - A malformed `Authorization` header still 401s — only a fully absent
-  header selects the free tier.
+  header selects the anonymous tier.
 - Limiter runtime failures fail open (the shared account's Django-side
   limits are the spend backstop); missing configuration fails closed.
 
@@ -150,7 +150,11 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
    MCP tool — reads the legacy Metronome/Redis ledger via
    `BillingServiceSingleton.get_remaining_credit_balance`, NOT
    `ApiCreditAccount.balance_cents`. It reported $0.00 for an account that
-   actually held $24.41.
+   actually held $24.41. To check this mechanically instead of by eye, call
+   `GET /api/v1/billing/api_credits/` (`ApiCreditBalanceView`,
+   `backend/subscriptions/api_credit_views.py`). It returns the authoritative
+   `balance_cents`, plus `has_saved_card` and `auto_reload.enabled` — the
+   three facts this step asks you to confirm.
 4. **Enable staging first:**
    ```bash
    wrangler secret put FREE_TIER_API_KEY --env staging   # paste the API key
@@ -211,7 +215,7 @@ for abuse protection, not billing.
 
 **Operator warning:** OAuth-capable hosts (claude.ai and similar) decide
 whether to run their OAuth sign-in flow based on getting a 401 from the
-*first* request to `/mcp`. With the free tier active, that first request
+*first* request to `/mcp`. With anonymous access active, that first request
 succeeds anonymously instead — so any newly added connector on such a
 host starts out running against the shared free-tier account (3 tools,
 shared quota) rather than prompting the user to sign in for their own
