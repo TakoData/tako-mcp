@@ -20,7 +20,8 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts. All 
 - `tako_search` — traffic as a chart (default; top result renders inline).
 - `tako_answer` — one number, in prose ("How many monthly visits does netflix.com get?").
 - `tako_available_data` — FREE brand→entity resolver (see the empty-result bullet for its limits on domains).
-- Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search`, then one narrow search per domain in parallel and compute growth yourself.
+- SimilarWeb is a protected source, so EVERY traffic card is read-only: `exportable: false`, no inline preview rows, and `tako_contents` cannot export the CSV — a licensing wall, not an error, so never call `tako_contents` on a traffic card. The numbers live in the card's `description` (latest value + % change over the period) and the chart; for one specific figure use `tako_answer`. (Web-result urls remain fetchable.)
+- Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search`, then one narrow search per domain in parallel and compute growth from each card's `description`.
 
 ## Rendering (Critical)
 - The top result renders inline automatically — an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose; do NOT paste `![](image_url)` for the top card — that double-renders it.
