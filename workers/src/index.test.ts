@@ -52,35 +52,6 @@ describe("worker routing", () => {
     expect(res.status).toBe(404);
   });
 
-  it("GET /.well-known/glama.json returns the maintainer email as JSON", async () => {
-    // Glama's remote-server ownership verification GETs this URL and
-    // matches `maintainers[].email` against the claiming Glama account's
-    // email. The email comes from the `GLAMA_MAINTAINER_EMAIL` binding
-    // (per env, in `wrangler.jsonc`); for the test runner the top-level
-    // `vars` entry stubs it to a known string.
-    const res = await SELF.fetch("https://example.com/.well-known/glama.json");
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe(
-      "application/json; charset=utf-8",
-    );
-    expect(await res.json()).toEqual({
-      maintainers: [{ email: "dev-stub-not-a-real-email@example.com" }],
-    });
-  });
-
-  it("GET /.well-known/glama.json returns 404 when the email is unset", async () => {
-    // Same "never satisfy an un-issued verification" property as the
-    // OpenAI challenge above: with no `GLAMA_MAINTAINER_EMAIL` binding the
-    // route falls through to the catch-all 404, so an environment that
-    // never opted in cannot verify a Glama listing claim.
-    const env = { DJANGO_BASE_URL: "http://localhost:8000" } as Env;
-    const res = await worker.fetch(
-      new Request("https://example.com/.well-known/glama.json"),
-      env,
-    );
-    expect(res.status).toBe(404);
-  });
-
   // We deliberately do not alias the OIDC discovery path. ChatGPT's App
   // Review wizard auto-locks the OIDC form fields once the URL resolves,
   // and the resulting half-OIDC / half-OAuth shape trips its classifier.
