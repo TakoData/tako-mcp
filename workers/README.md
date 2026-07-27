@@ -27,7 +27,7 @@ requests 401 exactly as before):
 |---|---|---|
 | `FREE_TIER_API_KEY` | secret | Tako API key of the dedicated free-tier account, forwarded to Django as `X-API-Key` (trimmed, so a piped `wrangler secret put` newline can't break it) |
 | `FREE_TIER_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-IP fairness bucket: 10 free-tool `tools/call`s / 60 s |
-| `FREE_TIER_GLOBAL_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-colo burst shaping: 60 anonymous requests / 60 s / colo, all callers |
+| `FREE_TIER_GLOBAL_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-colo burst shaping: 120 anonymous requests / 60 s / colo, all callers |
 
 Declare both under the first-class `ratelimits` key. **Never under
 `unsafe.bindings`** — that path is a raw passthrough: the API accepts it,
@@ -38,7 +38,7 @@ limiters); the only proof is a live burst against a deployed Worker.
 
 Neither Worker bucket is the platform-wide spend bound. Cloudflare's
 ratelimit binding counts per colo (no global mode), so the constant-key
-bucket enforces `60/min × colos reached` — it exists to shape per-colo
+bucket enforces `120/min × colos reached` — it exists to shape per-colo
 floods, including the otherwise-unmetered handshake methods. Per-IP
 keying means little for hosted MCP hosts (claude.ai, ChatGPT, and
 similar egress from a handful of platform IPs); it's a fairness layer.
@@ -81,6 +81,24 @@ Do NOT reach for `unsafe.bindings` or a shorter `period` to fix this.
 `unsafe.bindings` was tried and changed nothing. A shorter period resets the
 counter more often, and because the cold-start leak recurs per period, it
 admits MORE traffic.
+
+**The per-colo bucket has NOT been measured.** Every row above varies the
+per-IP bucket. Sustained bursts showed per-colo rejections rising while
+per-IP rejections fell, so the per-colo bucket is the one that clamps under
+load — but no measurement supports any particular value for it, and 120 is
+not tuned. Lowering it was tried in this branch and reverted for that
+reason.
+
+Before changing it, note what it gates. `checkFreeTierRateLimit` hits the
+per-colo bucket **before** the batch check and before the metering decision,
+so `initialize` and `tools/list` count against it even though they spend
+nothing. A connector opening a new session costs roughly three requests, so
+the ceiling divided by three is the rough budget of new anonymous sessions
+per minute per colo. Past it, a handshake gets a plain 429 — not a 401, so
+an OAuth-capable host shows no sign-in prompt, and not a tool result, so the
+model reads nothing. It just looks broken. Any retune therefore needs a
+measurement of **sessions per minute per colo until handshakes fail**, not
+just admitted-call counts, which cannot see a rejected handshake at all.
 
 Per-call cost is bounded by the tool schemas: the anonymous toolset cannot
 select the expensive `deep` tier. `tako_answer` does not expose `effort` and

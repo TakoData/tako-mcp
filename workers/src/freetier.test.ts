@@ -506,9 +506,10 @@ describe("freeTierGlobalLimitResponse", () => {
     expect(body.id).toBeNull();
     expect(body.error.code).toBe(-32000);
     expect(body.error.message).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
-    // Same kind as the per-IP bucket, on purpose: two distinguishable kinds
-    // would let a caller map the limiter topology by probing.
-    expect(body.error.data.kind).toBe("rate_limited");
+    // Distinct from the per-IP bucket's kind. Collapsing the two hid the
+    // topology in `kind` while `message` still revealed it, so it broke a
+    // client-visible contract for no gain. See `freeTierGlobalLimitResponse`.
+    expect(body.error.data.kind).toBe("global_rate_limited");
   });
 });
 
@@ -616,12 +617,16 @@ describe("wrangler.jsonc ↔ message drift", () => {
     expect(new Set(ids).size).toBe(6);
   });
 
-  it("no freetier error kind discloses how the tier is built", async () => {
-    // The `kind` fields are machine-readable and SHIP TO CALLERS. They must
-    // not restate what the prose deliberately withholds — that the tier runs
-    // on a credit-funded account, or which of the two limiter buckets a
-    // request tripped. A caller that can tell those apart can watch the
-    // account deplete by probing.
+  it("no freetier error kind names the internal mechanism or the cause", async () => {
+    // The `kind` fields are machine-readable and SHIP TO CALLERS. What they
+    // must not do is name the internal mechanism, or restate the one thing
+    // the prose deliberately withholds: that the shortage is SPENT CREDIT,
+    // which would hand a prober a gauge for how depleted the account is.
+    //
+    // Limiter TOPOLOGY is deliberately NOT hidden. Hiding it here while the
+    // two limit messages still describe different situations bought nothing
+    // and broke a client-visible contract, so `global_rate_limited` stays
+    // distinct from `rate_limited` and "global" is not banned below.
     //
     // SCOPE: this covers only the kinds THIS module emits. The anonymous path
     // also surfaces `djangoErrorKind` values from `mcp.ts`
@@ -649,15 +654,13 @@ describe("wrangler.jsonc ↔ message drift", () => {
 
     expect(kinds).toHaveLength(5);
     for (const kind of kinds) {
-      // "shared" is NOT banned: FREE_TIER_CREDITS_MESSAGE says the capacity
-      // is shared on purpose, so banning it from the kind would make the two
-      // disagree for no gain. What stays banned is the cause (credit) and the
-      // internal naming.
-      expect(kind).not.toMatch(/free|credit|billing|global|colo|account|ip\b/i);
+      // NOT banned, deliberately:
+      //   "shared" — FREE_TIER_CREDITS_MESSAGE says the capacity is shared on
+      //     purpose, so banning it from the kind would make the two disagree.
+      //   "global" — see the topology note above.
+      // Banned: the internal naming, and the cause of the shortage.
+      expect(kind).not.toMatch(/free_tier|credit|billing|payment|exhaust|depleted|quota/i);
     }
-    // Both limiter buckets must report the SAME kind so neither is
-    // distinguishable from the outside.
-    expect(kinds[0]).toBe(kinds[1]);
   });
 
   it("no user-facing message advertises a rate, says free, or uses the old host", () => {

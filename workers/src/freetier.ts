@@ -409,12 +409,16 @@ export function freeTierGlobalLimitResponse(
         id: null,
         error: {
           code: -32000,
-          // Deliberately the SAME kind the per-IP bucket reports. Two
-          // distinguishable kinds would let a caller map which bucket it
-          // tripped, and so infer the limiter topology by probing. The
-          // message text still tells the caller what to do.
+          // A distinct kind from the per-IP bucket, on purpose. Collapsing
+          // the two was tried and reverted: the two messages say different
+          // things anyway, so a caller reads the topology off `message` just
+          // as easily as off `kind`. Hiding it in one field and not the other
+          // bought nothing and broke a client-visible contract. If the
+          // topology ever needs to be genuinely opaque, the MESSAGES have to
+          // converge first — and that costs the caller the difference between
+          // "slow down" and "come back later".
           message: FREE_TIER_GLOBAL_LIMIT_MESSAGE,
-          data: { kind: "rate_limited" },
+          data: { kind: "global_rate_limited" },
         },
       }),
       {

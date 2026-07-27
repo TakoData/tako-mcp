@@ -45,11 +45,14 @@
   //    message states a rate, because the binding cannot enforce one.
   //    See the Measured behaviour section in README.md.
   //  - FREE_TIER_GLOBAL_RATE_LIMITER: constant-key bucket counting every
-  //    anonymous request (60 / 60 s). PER-COLO burst shaping, not a
+  //    anonymous request (120 / 60 s). PER-COLO burst shaping, not a
   //    true global ceiling — the binding counts per colo, so the enforced
-  //    number is limit x colos reached. Measurements show this is the
-  //    bucket that actually clamps under sustained load; see the
-  //    "Measured behaviour" section in README.md.
+  //    number is limit x colos reached. Measurement shows this is the
+  //    bucket that clamps under sustained load, but the VALUE 120 is not
+  //    itself tuned from measurement. Before changing it, read the
+  //    "Measured behaviour" section in README.md: this bucket is hit
+  //    before the metering decision, so it also gates `initialize` and
+  //    `tools/list`, and lowering it rejects legitimate handshakes.
   // NB: the bindings alone do NOT enable the free tier; the
   // FREE_TIER_API_KEY secret must also be set (fail-closed).
   "ratelimits": [
@@ -61,7 +64,7 @@
     {
       "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
       "namespace_id": "1010",
-      "simple": { "limit": 60, "period": 60 }
+      "simple": { "limit": 120, "period": 60 }
     }
   ],
   "env": {
@@ -76,7 +79,7 @@
         "OPENAI_APPS_CHALLENGE_TOKEN": "yvdAP5oZPvNXuisifiatKihXGqCnPqg64InQXJ0yB5U"
       },
       // Free-tier rate limiters (per-IP 10 metered requests / 60 s;
-      // per-colo ceiling 60 anonymous requests / 60 s). Declared with the
+      // per-colo ceiling 120 anonymous requests / 60 s). Declared with the
       // first-class `ratelimits` key — see the top-level block for why
       // `unsafe.bindings` silently never counts. Do NOT put the per-IP
       // number in any user-facing message; a drift test forbids it.
@@ -91,7 +94,7 @@
         {
           "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
           "namespace_id": "1011",
-          "simple": { "limit": 60, "period": 60 }
+          "simple": { "limit": 120, "period": 60 }
         }
       ],
       // `custom_domain: true` provisions a Cloudflare Custom Domain (TLS
@@ -121,7 +124,7 @@
         "OPENAI_APPS_CHALLENGE_TOKEN": "uXTBcUGnISWBPU2YXEn7IPIDh2ANMxLa1rkFvv3Z0c0"
       },
       // Free-tier rate limiters (per-IP 10 metered requests / 60 s;
-      // per-colo ceiling 60 anonymous requests / 60 s). Declared with the
+      // per-colo ceiling 120 anonymous requests / 60 s). Declared with the
       // first-class `ratelimits` key — see the top-level block for why
       // `unsafe.bindings` silently never counts. Do NOT put the per-IP
       // number in any user-facing message; a drift test forbids it.
@@ -136,7 +139,7 @@
         {
           "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
           "namespace_id": "1012",
-          "simple": { "limit": 60, "period": 60 }
+          "simple": { "limit": 120, "period": 60 }
         }
       ],
       "routes": [
