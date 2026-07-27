@@ -439,6 +439,16 @@ export function freeTierGlobalLimitResponse(
 }
 
 /**
+ * The body-too-large message. Unlike the rate-limit messages, this DOES
+ * state a number: `MAX_FREE_TIER_BODY_BYTES` is exactly enforced by the
+ * bounded read in `readBoundedJson` (not an approximate or eventually
+ * consistent binding), so stating the byte cap is honest.
+ */
+export const FREE_TIER_TOO_LARGE_MESSAGE =
+  `Request body is too large for anonymous access. The limit is ` +
+  `${MAX_FREE_TIER_BODY_BYTES} bytes.`;
+
+/**
  * HTTP 413 for an anonymous body over `MAX_FREE_TIER_BODY_BYTES` (or with
  * an unparseable `Content-Length`). Rejected before any buffering — see
  * step 2 in `checkFreeTierRateLimit`.
@@ -450,7 +460,7 @@ export function freeTierTooLargeResponse(): Response {
       id: null,
       error: {
         code: -32600,
-        message: `Request body exceeds the free-tier limit of ${MAX_FREE_TIER_BODY_BYTES} bytes.`,
+        message: FREE_TIER_TOO_LARGE_MESSAGE,
         data: { kind: "payload_too_large" },
       },
     }),

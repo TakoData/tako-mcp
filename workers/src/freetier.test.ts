@@ -8,6 +8,7 @@ import {
   FREE_TIER_CREDITS_MESSAGE,
   FREE_TIER_GLOBAL_LIMIT_MESSAGE,
   FREE_TIER_LIMIT_MESSAGE,
+  FREE_TIER_TOO_LARGE_MESSAGE,
   FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
@@ -520,6 +521,11 @@ describe("freeTierTooLargeResponse", () => {
     expect(body.error.code).toBe(-32600);
     expect(body.error.data.kind).toBe("payload_too_large");
     expect(body.error.message).toContain(String(MAX_FREE_TIER_BODY_BYTES));
+    expect(body.error.message).toBe(FREE_TIER_TOO_LARGE_MESSAGE);
+    expect(body.error.message).toBe(
+      "Request body is too large for anonymous access. The limit is " +
+        "131072 bytes.",
+    );
   });
 });
 
@@ -578,18 +584,35 @@ describe("wrangler.jsonc ↔ message drift", () => {
   });
 
   it("no user-facing message advertises a rate, says free, or uses the old host", () => {
-    const messages = [
+    // All five user-facing messages, including the 413 body-too-large
+    // message: it ships to clients (see `freeTierTooLargeResponse`), so the
+    // same prohibitions apply. It is NOT an upsell, though — no rate is
+    // advertised (the byte cap is exactly enforced, unlike the limiter
+    // buckets, so that number is fine; the regex below only bans a
+    // requests-per-time figure) and it carries no account URL, so it is
+    // deliberately excluded from the upsell-URL list below.
+    const allMessages = [
       FREE_TIER_LIMIT_MESSAGE,
       FREE_TIER_GLOBAL_LIMIT_MESSAGE,
       FREE_TIER_BATCH_MESSAGE,
       FREE_TIER_CREDITS_MESSAGE,
+      FREE_TIER_TOO_LARGE_MESSAGE,
     ];
-    for (const message of messages) {
+    for (const message of allMessages) {
       expect(message).not.toMatch(
         /\d+\s*requests?\s*(\/|per)\s*(min|minute|sec|second)/i,
       );
       expect(message).not.toMatch(/\bfree\b/i);
       expect(message).not.toContain("trytako.com");
+    }
+
+    const upsellMessages = [
+      FREE_TIER_LIMIT_MESSAGE,
+      FREE_TIER_GLOBAL_LIMIT_MESSAGE,
+      FREE_TIER_BATCH_MESSAGE,
+      FREE_TIER_CREDITS_MESSAGE,
+    ];
+    for (const message of upsellMessages) {
       expect(message).toContain("https://tako.com/account/");
     }
   });
