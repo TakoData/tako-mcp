@@ -263,7 +263,7 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 | Alias | Tool(s) | What it's for |
 | ---- | ---- | ----------- |
 | `agent` | `tako_agent` (ChatGPT: `tako_agent_start` / `tako_agent_wait`) | Tako's **Answer Agent** — opinionated, multi-step research (~30–90s) across many retrievals, returning a synthesized answer plus chart cards |
-| `visualize` | `tako_visualize` | Author an embeddable chart/card from your own `components` — config typed per component type (header, bar, timeseries, table, financial boxes, pie; other types pass through). On by default for ChatGPT, where it powers the widget |
+| `visualize` | `tako_visualize` | Author an embeddable chart/card from your own typed `components` (timeseries, bar, table, financial boxes…). On by default for ChatGPT, where it powers the widget |
 | `credits` | `get_credit_balance` | Check the connected account's API credit balance |
 | `graph` | `tako_graph_search` / `tako_graph_related` / `tako_graph_node` | Low-level graph primitives behind `tako_available_data`: traversal relations, `q` filtering, cursor paging, full node detail |
 
@@ -547,8 +547,6 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 - **Publishing** is automated by `.github/workflows/publish-mcp.yml`, authenticating via **GitHub OIDC** (no secret). The version lives in code: bump `server.json`'s `version`, merge to `main`, and it publishes automatically. A merge that doesn't change the version is a no-op.
 - **Branded namespace (`com.tako/tako-mcp`)** is a future upgrade requiring DNS authentication (Ed25519 key + `TXT` record on `tako.com`).
 - **Versioning & changelog** are automated via release-please. Contributors use Conventional Commit PR titles (squash-merge); maintainers cut a release by merging the bot's `release: X.Y.Z` PR. See `AGENTS.md` → Releases.
-- **Directory listings** beyond the official registry: [Smithery](https://smithery.ai/servers/tako/tako) (`registry/smithery.yaml`), [LobeHub](https://lobehub.com/mcp/takodata-tako-mcp) (`registry/lhm.plugin.json`), and Glama. Listing descriptions stay aligned with `registry/metadata.json` — the source of truth regenerated into `registry/server.json` via `npm run registry:gen`.
-- **Glama ownership verification**: the Worker serves `GET /.well-known/glama.json` with the maintainer email from the `GLAMA_MAINTAINER_EMAIL` var (per-env in `workers/wrangler.jsonc`; not a secret). Glama matches it against the claiming account's email. Environments without the var 404 the route, so they can never satisfy a listing claim they weren't registered for.
 </details>
 
 ## Links
@@ -558,7 +556,6 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 - **[Get your API key](https://tako.com/console/api-keys)** — Tako console
 - [Tako](https://tako.com) — the data visualization platform
 - [Tako on Smithery](https://smithery.ai/servers/tako/tako) — MCP server listing
-- [Tako on LobeHub](https://lobehub.com/mcp/takodata-tako-mcp) — MCP server listing
 - [MCP Registry](https://registry.modelcontextprotocol.io) — `io.github.TakoData/tako-mcp`
 - [MCP Specification](https://spec.modelcontextprotocol.io/) — Model Context Protocol
 
