@@ -16,10 +16,10 @@ npm run typecheck
 npm run dev
 ```
 
-## Anonymous free tier
+## Anonymous access
 
 `/mcp` requests with **no** `Authorization` header are served as a
-rate-limited free tier instead of a 401 — but only in environments that
+rate-limited anonymous tier instead of a 401 — but only in environments that
 opt in. Three bindings gate it (fail-closed: with any missing, anonymous
 requests 401 exactly as before):
 
