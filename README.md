@@ -264,11 +264,18 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 | `credits` | `get_credit_balance` | Check the connected account's API credit balance |
 | `graph` | `tako_graph_search` / `tako_graph_related` / `tako_graph_node` | Low-level graph primitives behind `tako_available_data`: traversal relations, `q` filtering, cursor paging, full node detail |
 
+The param rides on the connection URL, so how you set it depends on your client:
+
+- **Claude.ai, Claude Desktop, ChatGPT (connectors):** include it in the URL you paste when adding the connector — e.g. `https://mcp.tako.com/mcp?tools=agent`. OAuth is unaffected (the server canonicalizes the resource, query string included). ChatGPT gets `visualize` automatically, no param needed.
+- **Config-file clients (Cursor, Windsurf, VS Code, …) and `claude mcp add`:** put it on the URL in your config:
+
 ```bash
 # Aliases compose as a comma-separated list on the MCP URL
 claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent,visualize" \
   --header "Authorization: Bearer $TAKO_API_TOKEN"
 ```
+
+- **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). If you want opt-in tools, add the server yourself with `claude mcp add` and the `?tools=` param as above — keep only one Tako connection active so you don't get two copies of every tool (the plugin's bundled skills keep working regardless of which connection serves the tools).
 
 Only alias names are recognized; unknown values are ignored, so a typo never breaks the connection. Omit the parameter for the default surface.
 
