@@ -59,6 +59,7 @@ const DESCRIPTION = [
   "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
   "",
   "Tips:",
+  'If your lookup names both a thing and a measure ("Carnival passenger cruise days"), split it: the entity goes in `q`, the metric words go in `coverage_filter` — never the whole phrase in `q`. `q` only resolves the name to a node; metric words passed there are lost, and the coverage comes back unfiltered.',
   "One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The coverage.names answer all of them at once — never loop one call per name.",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.",
   "Each match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search. When the target is unambiguous (a coverage_filter was applied, or the coverage is small), `next_call` is that follow-up prewritten (query + pinned node_ids) — run it verbatim.",
@@ -66,7 +67,9 @@ const DESCRIPTION = [
 ].join("\n");
 
 const inputSchema = z.object({
-  q: z.string().min(2).describe("Entity or metric name to look up (min 2 chars)."),
+  q: z.string().min(2).describe(
+    'The NAME of one entity or one metric to look up (min 2 chars). Not a full question: if your lookup names both a thing and a measure ("Carnival passenger cruise days"), put the entity here ("Carnival") and the metric words in coverage_filter ("passenger cruise days").',
+  ),
   types: z.enum(["entity", "metric"]).optional().describe(
     'Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both.',
   ),
