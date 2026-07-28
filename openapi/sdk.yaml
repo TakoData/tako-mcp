@@ -99,11 +99,11 @@ paths:
       description: 'Resolve a metric or entity in Tako''s data graph by name. Use
         this to discover and confirm what data exists before you query. For example,
         resolve the metric and the entity here, then ask /v3/search or /v1/answer
-        for that entity + metric combination. Public and unauthenticated. Note: Tako
-        does not yet filter results to the production-ready inventory. A returned
-        metric or entity without a production fact table can 404 when you pass it
-        to /beta/graph/related. Pass label to prefer a NER label (a ranking boost,
-        not a filter); by default Tako infers the label from q.'
+        for that entity + metric combination. Requires an API key. Note: Tako does
+        not yet filter results to the production-ready inventory. A returned metric
+        or entity without a production fact table can 404 when you pass it to /beta/graph/related.
+        Pass label to prefer a NER label (a ranking boost, not a filter); by default
+        Tako infers the label from q.'
       operationId: graphSearch
       parameters:
       - description: Search text (min 2 chars).
@@ -164,12 +164,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
         '503':
           description: A backing data store is temporarily unavailable.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
   /beta/graph/related:
     get:
       tags:
@@ -182,8 +190,8 @@ paths:
         Tako covers — query /v3/search or /v1/answer for one. Each group carries a
         stable `key`. Pass `relation`=<key> plus cursor to paginate that one group.
         Pass the optional q to narrow by a case-insensitive substring on names and
-        aliases (for example, the metrics of an entity that match ''gdp''). Public
-        and unauthenticated.'
+        aliases (for example, the metrics of an entity that match ''gdp''). Requires
+        an API key.'
       operationId: graphRelated
       parameters:
       - description: Opaque public id of the node.
@@ -268,6 +276,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
         '404':
           description: The requested resource does not exist or has no exportable
             data.
@@ -281,6 +295,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
   /beta/graph/node/{id}:
     get:
       tags:
@@ -288,7 +304,7 @@ paths:
       summary: Get a graph node by id
       description: Resolve a single node by its opaque public id. Search cards, /beta/graph/search,
         and /beta/graph/related return these ids. Returns the node's name, type, aliases,
-        and description. Public and unauthenticated.
+        and description. Requires an API key.
       operationId: graphNode
       parameters:
       - description: Opaque public id of the node.
@@ -304,6 +320,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GraphNode'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
         '404':
           description: The requested resource does not exist or has no exportable
             data.
@@ -317,6 +339,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+      security:
+      - apiKey: []
   /v1/contents:
     post:
       tags:
@@ -2153,7 +2177,10 @@ components:
         id:
           type: string
           title: Id
-          description: Opaque, human-friendly public id (<name-slug>-<token>).
+          description: Opaque, human-friendly public id (<prefix>::<name>::<hash>,
+            where prefix is ent for an entity or mt for a metric). Ids are not durable
+            across knowledge-graph rebuilds — resolve them at request time rather
+            than storing them.
         type:
           $ref: '#/components/schemas/GraphNodeType'
         name:
@@ -3351,7 +3378,10 @@ components:
         id:
           type: string
           title: Id
-          description: Opaque, human-friendly public id (<name-slug>-<token>).
+          description: Opaque, human-friendly public id (<prefix>::<name>::<hash>,
+            where prefix is ent for an entity or mt for a metric). Ids are not durable
+            across knowledge-graph rebuilds — resolve them at request time rather
+            than storing them.
         type:
           $ref: '#/components/schemas/GraphNodeType'
         name:
