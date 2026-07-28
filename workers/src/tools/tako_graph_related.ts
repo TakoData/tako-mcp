@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import { djangoGet } from "../django.js";
 import { graphErrorMessage, graphRelatedOutputShape } from "./_graph.js";
+import { logWireGuardFailure } from "./_log.js";
 import type { ToolModule } from "./types.js";
 
 const NER_LABELS = [
@@ -90,6 +91,9 @@ const tako_graph_related = {
         { query, timeoutMs: 15_000 },
       );
     } catch (err) {
+      // Log before wrapping: the plain-Error wrap drops the DjangoError
+      // envelope, so this is the only server-side record of the failure.
+      console.error("[tako] tool error tool=tako_graph_related stage=graph/related:", err);
       throw new Error(graphErrorMessage(err, "related", input.node_id));
     }
     // Validate against the LOOSE advertised facade, NOT the generated schema.
@@ -101,6 +105,7 @@ const tako_graph_related = {
     // value passes while genuine structural breaks still throw.
     const parsed = outputSchema.safeParse(data);
     if (!parsed.success) {
+      logWireGuardFailure("tako_graph_related", "output", parsed.error, data);
       throw new Error(
         "Tako graph/related endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );

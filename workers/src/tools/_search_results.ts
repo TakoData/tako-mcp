@@ -127,11 +127,19 @@ export const webResultSchema = z
   .loose();
 export type WebResult = z.infer<typeof webResultSchema>;
 
-// The most-recent-rows cap for the FREE inline card preview. A card's data
-// preview (dataset.rows / records) can arrive with hundreds of rows; capping
-// keeps the model-facing peek bounded. The full, priced export is always a
-// separate tako_contents call.
-export const INLINE_PREVIEW_ROW_CAP = 5;
+// The DEFAULT most-recent-rows cap for the inline card preview, matched to
+// the backend's free inline allowance: search/answer inline at most
+// CSV_FREE_ROWS = 20 rows per card server-side (tako_inline_cap_for; a
+// larger legacy cap exists only for entitled enterprise accounts), so this
+// is the honest ceiling of what actually arrives — the MCP can only cap
+// DOWN what the backend shipped, never raise it. Rows beyond 20 are the
+// priced product: a separate tako_contents call (max_rows up to 2,000; the
+// first 20 stay free there too). `preview_rows` above the allowance is
+// therefore inert today; the input keeps the wider 1..MAX_PREVIEW_ROWS
+// range so a future backend row-count knob can light it up without an
+// input-surface change.
+export const INLINE_PREVIEW_ROW_CAP = 20;
+export const MAX_PREVIEW_ROWS = 250;
 
 // `content` carries the heavy inline row payload under keys the hand-written
 // resultContentSchema passes through loosely (records/dataset are not in its
@@ -280,13 +288,58 @@ export function slimCardContent(
     cappedDataset = { ...dataset, rows: capRecentRows(dataset.rows, capRows, temporalOf) };
   }
 
+  // Rows lead, descriptor metadata trails: JSON.stringify preserves insertion
+  // order and result-size-capped clients truncate the TAIL of the serialized
+  // payload — were the rows last (the wire order), a capped client would keep
+  // the metadata and cut the data points, defeating include_contents entirely.
   return {
-    ...meta,
     data: cappedData,
     records: cappedRecords,
     dataset: cappedDataset,
+    ...meta,
     truncated: slicedRecords || slicedRows || csvTruncated || meta.truncated || false,
   } as ResultContent;
+}
+
+// Model-facing key order for a card. The backend's wire order leads every
+// card with ~1.5k chars of descriptive metadata (title, description, the full
+// per-source paragraph, methodologies) and puts `content` — the data — near
+// the end; a client with a result-size cap then truncates away exactly the
+// rows include_contents paid to inline. Serialize the identifying essentials
+// and the data first, boilerplate last. Keys absent from the card are
+// skipped; unknown keys keep their relative order after the known ones (so a
+// new backend field degrades to "after the essentials", never "lost").
+const CARD_KEY_ORDER = [
+  "card_id",
+  "title",
+  "card_type",
+  "exportable",
+  "content",
+  "nodes",
+  "data_freshness",
+  "relevance_score",
+  "relevance",
+  "webpage_url",
+  "image_url",
+  "embed_url",
+  "metric_definitions",
+  "description",
+  "methodologies",
+  "sources",
+  "source_indexes",
+  "semantic_description",
+] as const;
+
+function orderCardKeys(card: TakoCard): TakoCard {
+  const source = card as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of CARD_KEY_ORDER) {
+    if (key in source) out[key] = source[key];
+  }
+  for (const key of Object.keys(source)) {
+    if (!(key in out)) out[key] = source[key];
+  }
+  return out as TakoCard;
 }
 
 /**
@@ -296,14 +349,75 @@ export function slimCardContent(
  * then call tako_contents anyway and draw a 403). The backend emits the flag
  * authoritatively (TakoData/tako#27989, same fail-closed gate as /contents),
  * so a wire value passes through untouched; deriving from `content` presence
- * is only the fallback for older backends. Pure in-memory — no I/O.
+ * is only the fallback for older backends. Keys are re-ordered data-first
+ * (see CARD_KEY_ORDER). Pure in-memory — no I/O.
  */
 export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
   const exportable = card.exportable ?? card.content != null;
-  return card.content == null
-    ? { ...card, exportable }
-    : { ...card, exportable, content: slimCardContent(card.content, capRows) };
+  const slimmed =
+    card.content == null
+      ? { ...card, exportable }
+      : { ...card, exportable, content: slimCardContent(card.content, capRows) };
+  return orderCardKeys(slimmed);
 };
+
+// Only paragraph-length strings are worth deduping — swapping a short label
+// ("S&P Global") for a pointer marker would grow the payload, not shrink it.
+const DEDUPE_MIN_CHARS = 120;
+
+/**
+ * Replace boilerplate strings repeated across cards — per-source description
+ * paragraphs and methodology text — with a short pointer to their first
+ * occurrence. The backend repeats the full source paragraph on EVERY card
+ * from that source (five Visible Alpha cards → five copies of the same
+ * ~1k-char description), which crowds the actual data out of any client-side
+ * result-size budget. The first occurrence always survives verbatim, so no
+ * information is lost. Immutable — untouched cards are returned as-is.
+ */
+export function dedupeCardBoilerplate(cards: TakoCard[]): TakoCard[] {
+  const seen = new Map<string, string>(); // text → path of its first occurrence
+  const fold = (value: unknown, path: string): unknown => {
+    if (typeof value !== "string" || value.length < DEDUPE_MIN_CHARS) return value;
+    const first = seen.get(value);
+    if (first !== undefined) return `[identical to ${first}]`;
+    seen.set(value, path);
+    return value;
+  };
+  const foldArray = (
+    items: unknown,
+    cardIdx: number,
+    arrayKey: string,
+    textKey: string,
+  ): unknown => {
+    if (!Array.isArray(items)) return items;
+    let changed = false;
+    const out = items.map((item, i) => {
+      if (item === null || typeof item !== "object") return item;
+      const rec = item as Record<string, unknown>;
+      const folded = fold(rec[textKey], `cards[${cardIdx}].${arrayKey}[${i}].${textKey}`);
+      if (folded === rec[textKey]) return item;
+      changed = true;
+      return { ...rec, [textKey]: folded };
+    });
+    return changed ? out : items;
+  };
+  return cards.map((card, i) => {
+    const rec = card as Record<string, unknown>;
+    const next: Record<string, unknown> = { ...rec };
+    let changed = false;
+    for (const [arrayKey, textKey] of [
+      ["sources", "source_description"],
+      ["methodologies", "methodology_description"],
+    ] as const) {
+      const folded = foldArray(rec[arrayKey], i, arrayKey, textKey);
+      if (folded !== rec[arrayKey]) {
+        next[arrayKey] = folded;
+        changed = true;
+      }
+    }
+    return changed ? (next as TakoCard) : card;
+  });
+}
 
 /**
  * Slim a web result's `content`. Web `content.data` is the page's full
@@ -379,8 +493,10 @@ export type SearchOutput = {
 
 // Which sources a search actually hit, for tailoring zero-result guidance.
 // "tako" is a legacy alias for "data" (see tako_search's sources enum).
+// searchedData is exported for tako_answer's data-gap guidance gate — one
+// definition of "did this request search the data source" across both tools.
 type SearchedSources = readonly string[];
-const searchedData = (s: SearchedSources): boolean =>
+export const searchedData = (s: SearchedSources): boolean =>
   s.includes("data") || s.includes("tako");
 const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
 
@@ -422,7 +538,8 @@ function buildZeroResultGuidance(
       (searchedWeb(sources)
         ? ";"
         : ' (adding "web" as a fallback source on that same single retry is fine);'),
-    "(3) if it shows no coverage, stop calling Tako for this question and answer from other sources.",
+    "(3) if it shows no coverage, stop calling Tako for this question and answer from other sources",
+    '— except website-traffic asks: the graph misses long-tail domains SimilarWeb still covers, so there the real coverage test is the one retry itself, as a bare-domain query ("kagi.com monthly visits").',
     'Rule out the usual shape mistakes before that one retry: one entity + one metric per query (split compound asks into parallel searches), and domains not brand names for website traffic ("netflix.com", not "Netflix").',
   ].join(" ");
 }

@@ -130,7 +130,7 @@
     },
     {
       "name": "tako_answer",
-      "description": "Ask one specific data question; get one synthesized answer grounded in the data or web tako cites.\n\nBest for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations.\n\n`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.\n\nGrounds over BOTH data and web by default. When unsure the proprietary data exists or its exact name, run `tako_available_data` first (free, instant) — the recommended first step — then pin the node_ids it returns here for an accurate, grounded answer. To read the full rows or page text behind any cited card or web result, call `tako_contents` on its url.",
+      "description": "Ask one specific data question; get one synthesized answer grounded in the data or web tako cites.\n\nBest for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations.\n\n`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.\n\nGrounds over BOTH data and web by default. When unsure the proprietary data exists or its exact name, run `tako_available_data` first (free, instant) — the recommended first step — then pin the node_ids it returns here for an accurate, grounded answer. Cited data cards inline their recent rows by default (see include_contents/preview_rows), so the series arrives with the answer; for the full history or a cited page's text, call `tako_contents` on its url.",
       "parameters": {
         "query": {
           "type": "string",
@@ -144,6 +144,16 @@
             "data",
             "web"
           ]
+        },
+        "include_contents": {
+          "type": "boolean",
+          "description": "Inline each cited data card's recent rows alongside the answer (default true; preview_rows sets how many) — the values arrive with the prose, no follow-up fetch. Set false — prose + citations only — for broad fan-outs or when coverage is unconfirmed (no prior tako_available_data check). DATA cards only; cited web pages are never auto-inlined (billed per page — use tako_contents).",
+          "default": true
+        },
+        "preview_rows": {
+          "type": "integer",
+          "description": "Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default 20, the free inline allowance the server ships; values above your account's allowance have no effect). For more rows, call tako_contents on the card's url (priced beyond the first 20). Ignored when include_contents is false.",
+          "default": 20
         },
         "country_code": {
           "type": "string",
@@ -174,7 +184,7 @@
     },
     {
       "name": "tako_available_data",
-      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nThe recommended first step for a data lookup: run this before tako_search / tako_answer whenever you're unsure the data exists or its exact name. It's free, it confirms coverage, and the exact names it returns make the follow-up priced call land precisely instead of guessing. (Skip it only for an obvious open-web query that no data graph would hold.)\n\nBest for: any \"what structured/proprietary data is there on X?\" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer — a cheap accuracy check that tells you whether the data exists and under exactly what name.\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The coverage.names answer all of them at once — never loop one call per name.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.\nEach match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search (e.g. \"Apple Inc. revenue\") to hit the data precisely.",
+      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nThe recommended first step for a data lookup: run this before tako_search / tako_answer whenever you're unsure the data exists or its exact name. It's free, it confirms coverage, and the exact names it returns make the follow-up priced call land precisely instead of guessing. (Skip it only for an obvious open-web query that no data graph would hold.)\n\nBest for: any \"what structured/proprietary data is there on X?\" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer — a cheap accuracy check that tells you whether the data exists and under exactly what name.\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The coverage.names answer all of them at once — never loop one call per name.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.\nEach match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search. When the target is unambiguous (a coverage_filter was applied, or the coverage is small), `next_call` is that follow-up prewritten (query + pinned node_ids) — run it verbatim.\nHunting one specific metric on a broad entity? Pass `coverage_filter` (\"charges-off\", \"margin\" — whole words as they appear in the name) — it filters server-side across the FULL coverage, so it finds names a truncated list buries.",
       "parameters": {
         "q": {
           "type": "string",
@@ -205,6 +215,10 @@
             "STOCK_TICKER",
             "WEBSITE"
           ]
+        },
+        "coverage_filter": {
+          "type": "string",
+          "description": "Hunting one specific metric? Case-insensitive filter matching WORDS in the coverage names + aliases, applied server-side across the FULL coverage (e.g. q=\"Capital One\", coverage_filter=\"charges-off\"). Use whole words as they appear in the name — a partial word (\"charge\" for \"charges\") may not match. Use when the unfiltered list came back truncated without the metric you expected; omit for the general coverage overview."
         }
       },
       "annotations": {
@@ -216,7 +230,7 @@
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the real content behind one result URL from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.\n\nBest for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.\n\nPrecondition (Tako cards): only call this when the card's result had `exportable: true`. If `exportable` is false (equivalently, `content` is missing or null) this call fails — use the card's preview/chart instead, don't call. `exportable: true` is necessary but not sufficient: a rare card still 403s, so fall back, don't retry.\n\nWeb URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text.",
+      "description": "Fetch the real content behind one result URL from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.\n\nBest for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.\n\nPrecondition (Tako cards): only call this when the card's result had `exportable: true`. If `exportable` is false (equivalently, `content` is missing or null) this call fails — use the card's preview/chart instead, don't call. `exportable: true` is necessary but not sufficient: a rare card still 403s, so fall back, don't retry.\n\nWeb URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
       "parameters": {
         "url": {
           "type": "string",
@@ -245,6 +259,10 @@
         "max_rows": {
           "type": "integer",
           "description": "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (always full text)."
+        },
+        "query": {
+          "type": "string",
+          "description": "Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query=\"RevPAR\" against a hotel earnings page. A no-match response says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode."
         }
       },
       "annotations": {
@@ -407,8 +425,13 @@
         },
         "include_contents": {
           "type": "boolean",
-          "description": "Inline each Tako card's free 5-row data preview (default true). Set false for pointers-only (title/chart/nodes, no rows) — cheaper for large parallel fan-outs. Controls the DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Full export is a separate tako_contents call — possible only for cards marked `exportable: true`.",
+          "description": "Inline each Tako card's data preview (default true; preview_rows sets how many rows). Set false — pointers-only, no rows — for large parallel fan-outs or when coverage is unconfirmed (no prior tako_available_data check). DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Full export is a separate tako_contents call, only for cards marked `exportable: true`.",
           "default": true
+        },
+        "preview_rows": {
+          "type": "integer",
+          "description": "Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default 20, the free inline allowance the server ships; values above your account's allowance have no effect). Lower it to trim context on broad fan-outs. For MORE than 20 rows, call tako_contents on the card's url (max_rows up to 2,000 — first 20 free, priced beyond). Ignored when include_contents is false.",
+          "default": 20
         },
         "country_code": {
           "type": "string",

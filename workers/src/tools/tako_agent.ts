@@ -28,6 +28,7 @@ import {
   AnswerAgentRun as AnswerAgentRunContract,
   AnswerAgentRunRequest,
 } from "../generated/schemas.js";
+import { logWireGuardFailure } from "./_log.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -225,8 +226,15 @@ export async function pollAgentRun(
       });
       transient = 0;
     } catch (err) {
-      // Tolerate a couple of transient transport blips while the run continues.
-      if (++transient > MAX_TRANSIENT_ERRORS) throw err;
+      // Tolerate a couple of transient transport blips while the run continues
+      // — but leave a breadcrumb per blip: a backend degraded enough to fail
+      // alternate polls is otherwise invisible until the final throw.
+      transient += 1;
+      console.warn(
+        `[tako] agent poll transient error run_id=${runId} attempt=${transient}/${MAX_TRANSIENT_ERRORS}:`,
+        err,
+      );
+      if (transient > MAX_TRANSIENT_ERRORS) throw err;
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       continue;
     }
@@ -253,6 +261,7 @@ export async function pollAgentRun(
     //                        synthetic and does not appear in the backend schema).
     const lifecycleGuard = AnswerAgentRunContract.pick({ run_id: true, status: true }).safeParse(wire);
     if (!lifecycleGuard.success) {
+      logWireGuardFailure("tako_agent", "run-lifecycle", lifecycleGuard.error, wire);
       throw new Error(
         `Agent run wire drifted from the backend contract: ${lifecycleGuard.error.issues.map((i) => i.path.join(".") + ": " + i.message).join("; ")}`,
       );
@@ -263,6 +272,7 @@ export async function pollAgentRun(
     // masking the drift entirely. We catch that case explicitly.
     if (wire.status === "completed") {
       if (wire.result === undefined) {
+        logWireGuardFailure("tako_agent", "completed-missing-result", undefined, wire);
         throw new Error(
           "Agent run wire drifted from the backend contract: completed run is missing the `result` field.",
         );
@@ -270,6 +280,7 @@ export async function pollAgentRun(
       if (wire.result !== null) {
         const resultGuard = AnswerAgentResultContract.safeParse(wire.result);
         if (!resultGuard.success) {
+          logWireGuardFailure("tako_agent", "completed-result", resultGuard.error, wire);
           throw new Error(
             `Agent run wire drifted from the backend contract: result shape mismatch — ${resultGuard.error.issues.map((i) => i.path.join(".") + ": " + i.message).join("; ")}`,
           );
@@ -285,6 +296,7 @@ export async function pollAgentRun(
       error: wire.error ?? null,
     });
     if (!parsed.success) {
+      logWireGuardFailure("tako_agent", "output-normalise", parsed.error, wire);
       throw new Error("Tako agent run endpoint returned an unexpected shape.");
     }
     lastRun = parsed.data;

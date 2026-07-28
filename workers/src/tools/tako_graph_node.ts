@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import { djangoGet } from "../django.js";
 import { graphErrorMessage, graphNodeSchema } from "./_graph.js";
+import { logWireGuardFailure } from "./_log.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION =
@@ -49,6 +50,9 @@ const tako_graph_node = {
         timeoutMs: 15_000,
       });
     } catch (err) {
+      // Log before wrapping: the plain-Error wrap drops the DjangoError
+      // envelope, so this is the only server-side record of the failure.
+      console.error("[tako] tool error tool=tako_graph_node stage=graph/node:", err);
       throw new Error(graphErrorMessage(err, "node", input.id));
     }
 
@@ -58,6 +62,7 @@ const tako_graph_node = {
     // keeps those as loose strings; structural breaks still throw.
     const parsed = outputSchema.safeParse(data);
     if (!parsed.success) {
+      logWireGuardFailure("tako_graph_node", "output", parsed.error, data);
       throw new Error(
         "Tako graph/node endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );

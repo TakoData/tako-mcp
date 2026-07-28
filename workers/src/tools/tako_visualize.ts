@@ -21,6 +21,7 @@ import {
   fetchImageDataUrlAndDims,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
+import { logWireGuardFailure } from "./_log.js";
 import { autoChainShape } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
@@ -375,6 +376,7 @@ const tako_visualize = {
     // before extracting card_id.
     const wireCheck = ThinVizCard.safeParse(data);
     if (!wireCheck.success) {
+      logWireGuardFailure("tako_visualize", "ThinVizCard", wireCheck.error, data);
       throw new Error(
         "Tako visualize endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
@@ -383,6 +385,7 @@ const tako_visualize = {
 
     const cardId = wire.card_id ?? "";
     if (cardId === "") {
+      logWireGuardFailure("tako_visualize", "missing-card_id", undefined, data);
       throw new Error(
         "Tako visualize endpoint did not return a card_id. Retry once; if it persists, flag it to the Tako team.",
       );
@@ -404,6 +407,7 @@ const tako_visualize = {
       height: input.height ?? DEFAULT_HEIGHT,
     });
     if (!parsed.success) {
+      logWireGuardFailure("tako_visualize", "output-normalise", parsed.error, data);
       throw new Error(
         "Tako visualize endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );

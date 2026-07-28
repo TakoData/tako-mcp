@@ -24,9 +24,12 @@ import {
   fetchImageDataUrlAndDims,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
+import { logWireGuardFailure } from "./_log.js";
 import {
   buildSearchOutput,
+  dedupeCardBoilerplate,
   INLINE_PREVIEW_ROW_CAP,
+  MAX_PREVIEW_ROWS,
   searchOutputShape,
   slimCard,
   slimWebResult,
@@ -80,7 +83,16 @@ const inputSchema = z.object({
     .boolean()
     .default(true)
     .describe(
-      `Inline each Tako card's free ${INLINE_PREVIEW_ROW_CAP}-row data preview (default true). Set false for pointers-only (title/chart/nodes, no rows) — cheaper for large parallel fan-outs. Controls the DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Full export is a separate tako_contents call — possible only for cards marked \`exportable: true\`.`,
+      `Inline each Tako card's data preview (default true; preview_rows sets how many rows). Set false — pointers-only, no rows — for large parallel fan-outs or when coverage is unconfirmed (no prior tako_available_data check). DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Full export is a separate tako_contents call, only for cards marked \`exportable: true\`.`,
+    ),
+  preview_rows: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_PREVIEW_ROWS)
+    .default(INLINE_PREVIEW_ROW_CAP)
+    .describe(
+      `Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). Lower it to trim context on broad fan-outs. For MORE than ${INLINE_PREVIEW_ROW_CAP} rows, call tako_contents on the card's url (max_rows up to 2,000 — first ${INLINE_PREVIEW_ROW_CAP} free, priced beyond). Ignored when include_contents is false.`,
     ),
   country_code: z
     .string()
@@ -192,6 +204,7 @@ const tako_search = {
     // mapping into the normalised MCP output shape.
     const wireCheck = SearchResponse.safeParse(data);
     if (!wireCheck.success) {
+      logWireGuardFailure("tako_search", "SearchResponse", wireCheck.error, data);
       throw new Error(
         "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
@@ -201,18 +214,28 @@ const tako_search = {
     const cards = z.array(takoCardSchema).safeParse(wire.cards ?? []);
     const webResults = z.array(webResultSchema).safeParse(wire.web_results ?? []);
     if (!cards.success || !webResults.success) {
+      logWireGuardFailure(
+        "tako_search",
+        cards.success ? "web_results" : "cards",
+        cards.success ? (webResults.success ? undefined : webResults.error) : cards.error,
+        data,
+      );
       throw new Error(
         "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
     // Slim the model-facing payload: cap each card's inline row preview to the
-    // most-recent rows when include_contents is on (drop it entirely when off),
-    // and always drop web page text (billed per page — fetch via tako_contents).
-    // This shrinks BOTH channels the model sees (content.text + structuredContent
-    // in mcp.ts are both derived from this output). Full data is a tako_contents call.
-    const cap = input.include_contents ? INLINE_PREVIEW_ROW_CAP : null;
+    // caller's preview_rows most-recent rows when include_contents is on (drop
+    // it entirely when off), and always drop web page text (billed per page —
+    // fetch via tako_contents). This shrinks BOTH channels the model sees
+    // (content.text + structuredContent in mcp.ts are both derived from this
+    // output). Full data is a tako_contents call. The ?? guards direct handler
+    // calls that bypass the schema's default.
+    const cap = input.include_contents
+      ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
+      : null;
     return buildSearchOutput(
-      cards.data.map((c) => slimCard(c, cap)),
+      dedupeCardBoilerplate(cards.data.map((c) => slimCard(c, cap))),
       webResults.data.map(slimWebResult),
       wire.request_id,
       wire.usage ?? null,

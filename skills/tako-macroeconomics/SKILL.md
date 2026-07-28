@@ -5,12 +5,12 @@ description: Macroeconomic indicators via Tako (sources: FRED, OECD, BIS). Infla
 
 # Macroeconomics (Tako)
 
-Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as interactive, citation-backed charts.
+Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as interactive, citation-backed charts. All tools below live on the Tako MCP server (server name `tako`).
 
 ## Query patterns (Critical)
 - Query is COUNTRY + INDICATOR: `"US CPI inflation"`, `"US unemployment rate"`, `"US federal funds rate"` (which resolves to the Effective Federal Funds Rate, not the FOMC target range).
 - Be specific — many variants exist (CPI all-items vs CPI-W vs core; unemployment headline vs U-6 vs by age/race). If intent is precise, name the variant; if unsure, use `tako_available_data` to list exact metric names first.
-- PCE is a trap: `"US PCE inflation"` / `"US core PCE inflation"` resolve to price-INDEX levels (~130 index points), never a rate. For the inflation rate, query the year-over-year variant (`"US core PCE price index % change"`) AND pick the card titled `… (% Change)` whose values are in percent. Run `tako_available_data` FIRST (mandatory here) to grab the exact `(% Change)` metric + `node_id`.
+- PCE is a trap: `"US PCE inflation"` / `"US core PCE inflation"` silently substitute a DIFFERENT metric — observed returning a Core CPI card outright, and price-INDEX levels (~130 index points) instead of a rate. The numbers look plausible either way, so verify the chosen card's title actually says `PCE` and `(% Change)` with values in percent. For the rate, query the year-over-year variant (`"US core PCE price index % change"`). Run `tako_available_data` FIRST (mandatory here) to grab the exact `(% Change)` metric + `node_id`.
 - Parallelize multi-part asks: send each metric as its own narrow concurrent `tako_search`, then synthesize — not one query.
 - Cross-country comparison is built in: `"US vs China inflation"` returns a comparison card. For currency-denominated indicators (GDP, wages), a cross-country chart may plot different currencies on one axis unnormalized — state each series' currency and convert before comparing.
 - Ground in Tako data with `sources: ["data"]`.
@@ -20,7 +20,7 @@ Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as inter
 ## Pick the tool
 - `tako_search` — indicator as a chart (default).
 - `tako_answer` — one known value, in prose ("What is the current US unemployment rate?"). Relay verbatim.
-- `tako_available_data` — FREE: resolve the exact indicator name + `node_id`.
+- `tako_available_data` — FREE: resolve the exact indicator name + `node_id`. When the target is unambiguous, its `next_call` output is the follow-up search prewritten — run it verbatim.
 - Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → fire one narrow `tako_search` per country in parallel and rank from the results.
 
 ## Rendering (Critical)
@@ -32,6 +32,7 @@ Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as inter
 - Single → tako_search {"query": "US CPI inflation", "sources": ["data"]}
 - Parallel multi-metric → four calls: "US CPI inflation", "US core CPI inflation", "US core PCE price index % change", "US PCE price index % change" (pick each card titled "(% Change)" — the plain "PCE Price Index" cards are index levels, not rates)
 - Cross-country → tako_search {"query": "US vs China inflation", "sources": ["data"]}
+- Indicator-name pre-check (free; note the arg is `q`) → tako_available_data {"q": "US core PCE"}
 - Known value, prose → tako_answer {"query": "What is the current US federal funds rate?", "sources": ["data"]}
 
 ## Output (tight and structured)

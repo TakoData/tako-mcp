@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildMatch,
+  buildNextCall,
   buildSummary,
   coverageKindFor,
   hasLiveCoverage,
   OTHER_MATCH_PREVIEW,
   orderMetricNames,
-  PREVIEW,
+  MAX_COVERAGE_NAMES,
   selectCoverage,
   unavailableMatch,
   type CoverageMatch,
@@ -106,10 +107,10 @@ describe("selectCoverage", () => {
     expect(g.kind).toBe("entities");
   });
 
-  it("caps the preview at PREVIEW", () => {
-    const many = Array.from({ length: PREVIEW + 5 }, (_, i) => `M${i}`);
-    const g = selectCoverage(group("metrics", many, PREVIEW + 5), "metrics");
-    expect(g.names).toHaveLength(PREVIEW);
+  it("caps the names at MAX_COVERAGE_NAMES", () => {
+    const many = Array.from({ length: MAX_COVERAGE_NAMES + 5 }, (_, i) => `M${i}`);
+    const g = selectCoverage(group("metrics", many, MAX_COVERAGE_NAMES + 5), "metrics");
+    expect(g.names).toHaveLength(MAX_COVERAGE_NAMES);
     expect(g.truncated).toBe(true);
   });
 
@@ -277,15 +278,68 @@ describe("buildSummary", () => {
     expect(s).toContain("Also matched: Other0, Other1, Other2, Other3, Other4, and 3 more.");
   });
 
-  it("next-step example: entity → 'Name Metric', metric → 'Entity Name'", () => {
+  it("next-step example: entity → 'Name Metric', metric → 'Entity Name', pointing at next_call", () => {
     expect(buildSummary({ query: "apple", matches: [appleMatch], otherMatches: [] }))
-      .toContain('(e.g. "Apple Inc. Revenue")');
-    expect(buildSummary({ query: "inflation", matches: [inflationMatch], otherMatches: [] }))
-      .toContain('(e.g. "United States Inflation Rate")');
+      .toContain('query "Apple Inc. Revenue"');
+    const s = buildSummary({ query: "inflation", matches: [inflationMatch], otherMatches: [] });
+    expect(s).toContain('query "United States Inflation Rate"');
+    expect(s).toContain("next_call");
+  });
+
+  it("coverage_filter header claims a filter-miss only when every drill loaded", () => {
+    const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
+    // Pure filter-miss (all drills loaded, zero matched) → filter header.
+    const pure = buildSummary({
+      query: "tesla", matches: [bare], otherMatches: [], coverageFilter: "zebra",
+    });
+    expect(pure).toContain('no coverage matching coverage_filter "zebra"');
+    // A transient drill failure in the mix → the filter verdict is unproven;
+    // generic header, per-match lines carry the detail.
+    const mixed = buildSummary({
+      query: "tesla",
+      matches: [bare, unavailableMatch(entityNode())],
+      otherMatches: [],
+      coverageFilter: "zebra",
+    });
+    expect(mixed).toContain("but none with live data coverage:");
+    expect(mixed).not.toContain('no coverage matching coverage_filter "zebra":');
+  });
+
+  it("buildNextCall: handle from the first match WITH coverage; null when none has any", () => {
+    expect(buildNextCall([appleMatch], false)).toEqual({
+      tool: "tako_search",
+      query: "Apple Inc. Revenue",
+      node_ids: ["apple-inc"],
+    });
+    expect(buildNextCall([inflationMatch], false)).toEqual({
+      tool: "tako_search",
+      query: "United States Inflation Rate",
+      node_ids: ["inflation-rate"],
+    });
+    const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
+    // Skips the coverage-less match, lands on the one with names.
+    expect(buildNextCall([bare, appleMatch], false)?.query).toBe("Apple Inc. Revenue");
+    expect(buildNextCall([bare], false)).toBeNull();
+    expect(buildNextCall([unavailableMatch(entityNode())], false)).toBeNull();
+  });
+
+  it("buildNextCall gates on ambiguity: broad unfiltered coverage → null; filtered → handle", () => {
+    const broad = buildMatch(
+      entityNode({ id: "cof", name: "Capital One" }),
+      group("metrics", ["A", "B", "C", "D"], 250),
+    );
+    expect(buildNextCall([broad], false)).toBeNull(); // > NEXT_CALL_MAX_NAMES, no filter
+    expect(buildNextCall([broad], true)?.query).toBe("Capital One A"); // filter = intent
+    // At the boundary: a small list is unambiguous even unfiltered.
+    const small = buildMatch(
+      entityNode({ id: "x", name: "X Corp" }),
+      group("metrics", ["A", "B", "C"], 3),
+    );
+    expect(buildNextCall([small], false)?.query).toBe("X Corp A");
   });
 
   it("keeps the preview constants positive", () => {
     expect(OTHER_MATCH_PREVIEW).toBeGreaterThan(0);
-    expect(PREVIEW).toBeGreaterThan(0);
+    expect(MAX_COVERAGE_NAMES).toBeGreaterThan(0);
   });
 });

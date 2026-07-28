@@ -16,6 +16,7 @@
 import { z } from "zod";
 
 import { djangoGet } from "../django.js";
+import { logWireGuardFailure } from "./_log.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({});
@@ -73,6 +74,7 @@ const get_credit_balance = {
     // bug.
     const parsed = detailsSchema.safeParse(data);
     if (!parsed.success) {
+      logWireGuardFailure("get_credit_balance", "details", parsed.error, data);
       throw new Error(
         "Tako credit_balance endpoint returned an unexpected shape (not a JSON object). This is likely a backend issue — retry once; if it persists, flag it to the Tako team.",
       );
