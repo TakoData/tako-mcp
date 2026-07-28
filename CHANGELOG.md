@@ -1,5 +1,92 @@
 # Changelog
 
+## [0.14.0](https://github.com/TakoData/tako-mcp/compare/v0.13.0...v0.14.0) (2026-07-28)
+
+
+### Features
+
+* anonymous rate-limited free tier for /mcp ([f76276e](https://github.com/TakoData/tako-mcp/commit/f76276e83bcb92aa479e4a323395014fb4bdf095))
+* **free-tier:** add FREE_TIER_API_KEY and rate-limit bindings ([4c27f34](https://github.com/TakoData/tako-mcp/commit/4c27f34b69debf62264b12a3a629f8dc34f3a578))
+* **free-tier:** config gate, tools/call metering, per-IP limiter, 429 ([8748957](https://github.com/TakoData/tako-mcp/commit/87489573964cc2da470b0e1ab6385752ed35c476))
+* **free-tier:** restrict anonymous connections to the free toolset ([c0cb740](https://github.com/TakoData/tako-mcp/commit/c0cb740e936324b17546c0c375e71891d5a92b1c))
+* **free-tier:** serve anonymous /mcp requests rate-limited per IP ([6a68a4d](https://github.com/TakoData/tako-mcp/commit/6a68a4d26b3943decc0ddc695e4b66fc58140f16))
+* **mcp:** log SDK-internal -32602 tool-argument rejections ([bdec340](https://github.com/TakoData/tako-mcp/commit/bdec340fbd6e6afda46218a4b2a54157ba12cfe8))
+* **mcp:** render charts as inline MCP Apps widgets on Claude clients ([f530361](https://github.com/TakoData/tako-mcp/commit/f5303612c53f03b52529332fca0d6e8640267236))
+* **mcp:** render charts as inline MCP Apps widgets on Claude clients ([34a6ba8](https://github.com/TakoData/tako-mcp/commit/34a6ba83c573ef370938dcbb15e775691287dab2))
+* **widget:** declare csp resourceDomains for the remote image fallback ([aff03b4](https://github.com/TakoData/tako-mcp/commit/aff03b432785ca5698f19cdb2a1b537aac5f336a))
+* **widget:** notify height via MCP Apps ui/notifications/size-changed ([0966f31](https://github.com/TakoData/tako-mcp/commit/0966f313b200a7d89f44b0ad39ff01c24d85fe63))
+* **worker:** serve /.well-known/glama.json for Glama remote-listing claim ([a702a3a](https://github.com/TakoData/tako-mcp/commit/a702a3a5a32c47fc8d8aec5dfbde0c560b98d1f3))
+
+
+### Bug Fixes
+
+* address PR review — annotationsByClient, submission parity check, UA coverage ([fbcf43f](https://github.com/TakoData/tako-mcp/commit/fbcf43ff71ce781c8e2afec752cfe7f2ba360350))
+* address review — drop dead undefined-sources branch, add plugin update-path auth note ([847b856](https://github.com/TakoData/tako-mcp/commit/847b8560424474410f56e15a43e5c3929f513f51))
+* address round-3 review — canonical write hints, Apps labels for unknown UAs, guard coverage ([1bc66ba](https://github.com/TakoData/tako-mcp/commit/1bc66ba3b3f47014e282ea021f1ff2cb76b181ba))
+* align ChatGPT tool annotations for app review ([654965e](https://github.com/TakoData/tako-mcp/commit/654965e04c8014bd9905e9964283ba3b09aaeddd))
+* align ChatGPT tool annotations for app review ([cd7433d](https://github.com/TakoData/tako-mcp/commit/cd7433d91e5dd6eac35c447c74675687719a21d1))
+* **anonymous-tier:** address review — billing mode is the gate, not auto-reload ([128b9f7](https://github.com/TakoData/tako-mcp/commit/128b9f72060b2c49c61c969e50e34ea45c6bf8db))
+* **anonymous-tier:** apply merge-review fix wave to docs and drift test ([2861e14](https://github.com/TakoData/tako-mcp/commit/2861e142cdc797eaa7be8a947267ce6306837773))
+* **anonymous-tier:** drop the word free from the body-too-large message ([2cbfccd](https://github.com/TakoData/tako-mcp/commit/2cbfccd7e810dcbdbe7eaa520178ad2bb356dfd5))
+* **anonymous-tier:** stop advertising a rate the limiter cannot enforce ([a69c79b](https://github.com/TakoData/tako-mcp/commit/a69c79bd50a2c0d7c40a443fc5a69f7e0cf1deeb))
+* **anonymous-tier:** stop advertising an unenforceable rate limit; credits are the bound ([55e4f1c](https://github.com/TakoData/tako-mcp/commit/55e4f1ca261faeab4eba986455c054455a121d81))
+* **anonymous-tier:** stop the machine-readable error kinds disclosing internals ([8bff7a8](https://github.com/TakoData/tako-mcp/commit/8bff7a8892a5357e03d6052a5965faa0abd08712))
+* **anonymous-tier:** tighten the per-colo bucket from 120 to 60 ([a6747d4](https://github.com/TakoData/tako-mcp/commit/a6747d4d381f097740914c4f7bc57ac9ec5d0127))
+* **ci:** include raw-imports.d.ts in the test tsconfig project ([e92fdb3](https://github.com/TakoData/tako-mcp/commit/e92fdb3d90be66eeeac2280bcb3593a712cb6fe4))
+* **ci:** include raw-imports.d.ts in the test tsconfig project ([2b8f7c2](https://github.com/TakoData/tako-mcp/commit/2b8f7c2c5262663568f13c5b5f0d8a25ca2ffd43))
+* commit missing tako_visualize annotationsByClient override ([675d241](https://github.com/TakoData/tako-mcp/commit/675d241d69e14c6ccc1996c9de975ece507f6e74))
+* **free-tier:** address PR review — readable upsell, global ceiling, hardening ([7afc6ea](https://github.com/TakoData/tako-mcp/commit/7afc6eaa24249eb22189cd4104f132155bc0113c))
+* **free-tier:** address round-2 review — honest per-colo framing, readable ceiling errors ([c762db0](https://github.com/TakoData/tako-mcp/commit/c762db004e32a14272a63ab2cc27635dc0e9e290))
+* **free-tier:** declare rate limiters under ratelimits, not unsafe.bindings ([a132004](https://github.com/TakoData/tako-mcp/commit/a1320047d4144b8b9d93c39dc3010da2aa52bce2))
+* **free-tier:** declare rate limiters under ratelimits, not unsafe.bindings ([f3e938c](https://github.com/TakoData/tako-mcp/commit/f3e938cea7d64fbe878af61c16878e9c073191db))
+* **free-tier:** reject anonymous JSON-RPC batches; document OAuth-host impact ([adc2738](https://github.com/TakoData/tako-mcp/commit/adc273865d73a482965e181b355767d3097e9768))
+* **mcp:** correct frameDomains narrative + assert claude widget CSP in tests ([9f5c664](https://github.com/TakoData/tako-mcp/commit/9f5c66432bda00d9a543646e94eb9c89ff308a18))
+* **mcp:** fire zero-result guidance on any zero-card search, tailored by sources ([42c850a](https://github.com/TakoData/tako-mcp/commit/42c850af5aee8c063ab10bffb7d5199d6666a26f))
+* **mcp:** keep Claude Code / Agent SDK on the PNG chart path ([9eaa63a](https://github.com/TakoData/tako-mcp/commit/9eaa63a052462e1a5ff87fe8e6c97120c37b5867))
+* **plugin:** connect via OAuth discovery — drop CLI-only userConfig header auth ([4451404](https://github.com/TakoData/tako-mcp/commit/44514040561ca04b0681ee9e95d3768b0a21305c))
+* **plugin:** stop empty-search retry loops + make the agent tool truly optional ([edbf920](https://github.com/TakoData/tako-mcp/commit/edbf92075c6113350b06204f9c590f9f7080a047))
+* **plugin:** stop empty-search retry loops + make the agent tool truly optional ([1a09748](https://github.com/TakoData/tako-mcp/commit/1a09748c2b00028a3df5477b8d41013c15c5982a))
+* **registry:** generate lhm.plugin.json, version-bump it via release-please, use role alias for Glama ([364c070](https://github.com/TakoData/tako-mcp/commit/364c070a6dc6898e5a384d959edda12c27dc2483))
+* use canonical $id URL for submission schema reference ([8893f4c](https://github.com/TakoData/tako-mcp/commit/8893f4c3551a1ce27d469067a1b8408281e914e8))
+* **visualize:** point-level passthrough, stricter configs, exhaustiveness guard, leaner schema ([d29e337](https://github.com/TakoData/tako-mcp/commit/d29e337b6ed7231bc1ff0ec1a8c5429520a35b7f))
+* **visualize:** type component config per component_type; clarify component_variant ([d695d9a](https://github.com/TakoData/tako-mcp/commit/d695d9aee226f90f57bd3ba5fa4f61b49c0c1ae2))
+* **widget:** emit size-changed from the baked dynamic widget too ([baa1ac3](https://github.com/TakoData/tako-mcp/commit/baa1ac3c4850292fe992d70087badcb64c3eb502))
+* **widget:** harden host-message gate, cover 300 KB charts, re-notify baked height ([7b55c01](https://github.com/TakoData/tako-mcp/commit/7b55c011be27ce8800e11558fdc15295c37f61ab))
+* **widget:** log image_data_url fetch failures (Claude's primary chart path) ([3810c4b](https://github.com/TakoData/tako-mcp/commit/3810c4b7fecf4e93a56248787957d37c33109fba))
+* **widget:** reject spoofed tool-result postMessages from non-host frames ([d46056d](https://github.com/TakoData/tako-mcp/commit/d46056d73cdb623c8d35df3395f63f9cc00e8c2d))
+
+
+### Reverts
+
+* **anonymous-tier:** restore per-colo 120 and the distinct global kind ([32cd0a4](https://github.com/TakoData/tako-mcp/commit/32cd0a470539576b90b85c1cae107ce4b72c7ffc))
+* **registry:** keep eric@trytako.com for the Glama claim ([7062624](https://github.com/TakoData/tako-mcp/commit/70626242a22a6b66483e594cf60d7172e7edea38))
+* **worker:** drop the Glama ownership-verification feature ([655777a](https://github.com/TakoData/tako-mcp/commit/655777acbd57e3881bbb889b3adb95adc6c70b17))
+
+
+### Chores
+
+* ignore the local .worktrees directory ([0a1eed0](https://github.com/TakoData/tako-mcp/commit/0a1eed0627d6ec19bcd1d3ddd9d750eef76526f3))
+* sync OpenAPI spec from monorepo ([#177](https://github.com/TakoData/tako-mcp/issues/177)) ([0973de9](https://github.com/TakoData/tako-mcp/commit/0973de95c6673352e704615e793ac08ea5519465))
+
+
+### Documentation
+
+* add LobeHub badge and lhm.plugin.json manifest ([36cb6ff](https://github.com/TakoData/tako-mcp/commit/36cb6ffcf7d114be901935346371740c6166bfd5))
+* align registry descriptions with README reframe (web search + licensed data) ([f0777a3](https://github.com/TakoData/tako-mcp/commit/f0777a38455cea33661610e75b7b7b1fb130bac7))
+* align registry descriptions with README reframe (web search + licensed data) ([9bcf763](https://github.com/TakoData/tako-mcp/commit/9bcf763a9b3223d3e245736a6980d454b0772c24))
+* **anonymous-tier:** fix the self-contradicting balance instruction ([a398c6e](https://github.com/TakoData/tako-mcp/commit/a398c6e0d929e019dbc11e26fa0fc5ee94b0a229))
+* **anonymous-tier:** record measured limiter behaviour and credits as the bound ([229ea9a](https://github.com/TakoData/tako-mcp/commit/229ea9a77f2da2ebe24663acecc14c31f70fde71))
+* **anonymous-tier:** stop calling anonymous access a free tier in the README prose ([e1afd49](https://github.com/TakoData/tako-mcp/commit/e1afd49ca1cc6f5c945418cc8279a11fdefac320))
+* explain how each client surface enables the opt-in tools ([2deab1d](https://github.com/TakoData/tako-mcp/commit/2deab1dd7bff705ea96027d79dc8187218eae2bc))
+* fix inverted unknown-client comment + reconcile dynamic-URI docstrings ([c0689cb](https://github.com/TakoData/tako-mcp/commit/c0689cbaba33b9dad73254583756d812b9912e5c))
+* free tier first — no credentials needed to start, auth as the upgrade ([5cd0315](https://github.com/TakoData/tako-mcp/commit/5cd0315feecb7daf001ac6d5b3698bb7165effdd))
+* **free-tier:** expand rollout checklist (account setup, backstop limits, staging verify) ([a704b25](https://github.com/TakoData/tako-mcp/commit/a704b25893e58d315016b43d11830527526ee2a3))
+* **free-tier:** operator docs for the anonymous free tier ([35936a6](https://github.com/TakoData/tako-mcp/commit/35936a6a7f048bdcbd39acbbacff173c74f356a7))
+* quote skill descriptions as YAML folded blocks ([b12e4c6](https://github.com/TakoData/tako-mcp/commit/b12e4c699aaaf64a12afaa9c005bb17b1b4dff3d))
+* **readme:** cover PR's full scope — LobeHub listing, Glama verification, typed visualize configs ([3f927d6](https://github.com/TakoData/tako-mcp/commit/3f927d6ea1fda8a072f1dfea31410e6523281aba))
+* sweep stale ChatGPT-only-widget narratives after claude gate flip ([92c82ce](https://github.com/TakoData/tako-mcp/commit/92c82cea8c3d13e199a7fe43adb27f5c46e5a2bb))
+* **tests:** correct frameDomains narrative in gate docblock ([43eda09](https://github.com/TakoData/tako-mcp/commit/43eda09608b8a7341546a12ae82151534f3562be))
+
 ## [0.13.0](https://github.com/TakoData/tako-mcp/compare/v0.12.0...v0.13.0) (2026-07-25)
 
 
