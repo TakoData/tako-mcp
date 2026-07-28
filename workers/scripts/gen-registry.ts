@@ -146,10 +146,12 @@ export function assertLlmsFullCoverage(
  * something production no longer serves.
  *
  * The anonymous free-tier surface is asserted separately (and more
- * weakly): it must be a SUBSET of the declared tools. The reverse gap is
- * expected — `tako_contents` and `tako_visualize` are absent for
- * anonymous connections — which is why the submission's test cases
- * assume an OAuth-linked connection.
+ * weakly): it must be a SUBSET of the declared tools. Since the ChatGPT
+ * link-account flow requires auth-only tools to stay listed
+ * (`CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`),
+ * the anonymous ChatGPT listing now matches the declared five — but
+ * `tako_contents` / `tako_visualize` only EXECUTE on an OAuth-linked
+ * connection, which is what the submission's test cases assume.
  */
 export function assertChatgptSubmissionParity(
   tools: ReadonlyArray<
