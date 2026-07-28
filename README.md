@@ -30,7 +30,7 @@ Point your MCP client at the hosted endpoint — no install, no local server:
 https://mcp.tako.com/mcp
 ```
 
-**No token needed to start.** Connecting without credentials lands on the **free tier**: `tako_search`, `tako_answer`, and `tako_available_data`, rate-limited to 10 requests/min per IP. Authenticating unlocks the full toolset and your own account limits, two ways:
+**No token needed to start.** Connecting without credentials lands on the **free tier**: `tako_search`, `tako_answer`, and `tako_available_data`, rate-limited to 10 requests/min per IP. (On ChatGPT, `tako_contents` and `tako_visualize` also appear in the list, but prompt you to sign in before they run.) Authenticating unlocks the full toolset and your own account limits, two ways:
 
 - **OAuth** (Claude Code plugin, Claude.ai, Claude Desktop, ChatGPT) — a browser sign-in with your Tako account; a per-host API key is minted for you automatically.
 - **Bearer token** (config-file clients: Cursor, Windsurf, VS Code, …) — **[get your API key](https://tako.com/console/api-keys)** and paste it into the header.
@@ -254,7 +254,7 @@ Tools are discovered automatically via the MCP `tools/list` handshake, so your c
 | `tako_contents` | Fetch the content behind a result URL: a Tako card returns a CSV, any other URL returns the page's extracted text — pass `query` to get just the matching passages of a long page. Cards must be marked `exportable: true` (web URLs are exempt). |
 | `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search/answer. Returns the coverage names, a `node_id` to pin, and — when the target is unambiguous — a ready-to-run `next_call` (search query + pinned nodes) to fetch the confirmed series; `coverage_filter` hunts one specific metric server-side (whole words, e.g. "charges-off"). Free and fast. |
 
-**Free tier (no credentials):** an unauthenticated connection sees `tako_search`, `tako_answer`, and `tako_available_data` only, capped at 10 requests/min per IP. Authenticate (OAuth or Bearer) for the full surface above plus the opt-in tools below, under your own account limits.
+**Free tier (no credentials):** an unauthenticated connection can run `tako_search`, `tako_answer`, and `tako_available_data` only, capped at 10 requests/min per IP. Most clients list just those three; ChatGPT also lists `tako_contents` and `tako_visualize`, which return a sign-in prompt until the account is linked. Authenticate (OAuth or Bearer) for the full surface above plus the opt-in tools below, under your own account limits.
 
 On connect, the server also advertises [MCP server instructions](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle#initialization) that hosts like Claude.ai, Claude Desktop, and Claude Code place in the model's system prompt. They steer data and metric questions to `tako_search` ahead of the host's built-in web search, and note that `tako_search` covers the live web too, so one call can stand in for a separate web search on mixed questions. Built-in web search remains the fallback for queries outside Tako's coverage.
 

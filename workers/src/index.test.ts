@@ -241,18 +241,14 @@ describe("worker routing", () => {
 
     // Every runtime tool advertises per-tool auth via _meta, reverse-DNS
     // namespaced per the MCP _meta rules (the only field the SDK preserves).
-    // Anonymous-capable tools declare noauth + oauth2; auth-required tools
-    // declare oauth2 only (same source as ChatGPT's top-level field).
-    const FREE_NAMES = new Set([
-      "tako_search",
-      "tako_answer",
-      "tako_available_data",
-    ]);
+    // Non-ChatGPT clients keep the pre-existing oauth2-only constant —
+    // `noauth` is scoped to anonymous ChatGPT listings only (see
+    // securitySchemesForTool), so this authenticated no-UA request shows
+    // the same values it always did.
     for (const t of body.result.tools) {
-      const oauth2 = { type: "oauth2", scopes: ["mcp"] };
-      expect(t._meta?.["com.tako/securitySchemes"]).toEqual(
-        FREE_NAMES.has(t.name) ? [{ type: "noauth" }, oauth2] : [oauth2],
-      );
+      expect(t._meta?.["com.tako/securitySchemes"]).toEqual([
+        { type: "oauth2", scopes: ["mcp"] },
+      ]);
       // The top-level `securitySchemes` field is a ChatGPT-only
       // compatibility injection (`withChatGptToolSecuritySchemes`) — this
       // request has no User-Agent, so non-ChatGPT descriptors must NOT
@@ -334,17 +330,15 @@ describe("worker routing", () => {
       "tako_search",
       "tako_visualize",
     ]);
-    const schemesByName = new Map(
-      body.result.tools.map((t) => [t.name, t.securitySchemes]),
-    );
+    // AUTHENTICATED connection: the caller is already linked, so no tool
+    // advertises `noauth` — schemes are per-connection, and advertising
+    // anonymous capability to a linked client could invite a host to
+    // route calls onto the shared free-tier account. The anonymous
+    // (pre-link) listing is where `noauth` appears — asserted in
+    // freetier.test.ts.
     const oauth2 = { type: "oauth2", scopes: ["mcp"] };
-    // Anonymous-capable tools: both noauth and oauth2.
-    for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
-      expect(schemesByName.get(name)).toEqual([{ type: "noauth" }, oauth2]);
-    }
-    // Linked-account-only tools: oauth2 only.
-    for (const name of ["tako_contents", "tako_visualize"]) {
-      expect(schemesByName.get(name)).toEqual([oauth2]);
+    for (const t of body.result.tools) {
+      expect(t.securitySchemes, t.name).toEqual([oauth2]);
     }
   });
 

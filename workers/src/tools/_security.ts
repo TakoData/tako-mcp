@@ -25,7 +25,8 @@
  * The leading underscore keeps this file out of the tool-module scan in
  * `gen-registry.ts` (it is NOT a `ToolModule`).
  */
-import { FREE_TIER_TOOL_NAMES } from "../freetier.js";
+import { FREE_TIER_TOOL_NAMES, type Tier } from "../freetier.js";
+import type { McpClientKind } from "./types.js";
 
 /** OAuth scope every Worker-issued access token carries — see `oauth/`. */
 export const OAUTH_TOOL_SCOPE = "mcp";
@@ -39,20 +40,47 @@ export type SecurityScheme =
   | { type: "oauth2"; scopes: string[] };
 
 /**
- * Security schemes for a tool, derived from the free-tier surface: tools
- * anonymous connections may EXECUTE (`FREE_TIER_TOOL_NAMES`) advertise
- * `noauth` + `oauth2` (anonymous works, linking unlocks the caller's own
- * account); everything else is `oauth2`-only. Deriving from the same set
- * that gates execution keeps the advertised schemes and the enforced
- * behavior from drifting — metadata is never what AUTHORIZES a call, the
+ * Connection facts the scheme derivation needs: which client family is
+ * listing, and which tier the connection actually runs at.
+ */
+export interface SecuritySchemeContext {
+  client: McpClientKind;
+  tier: Tier;
+}
+
+/**
+ * Security schemes for a tool, scoped to the CONNECTION rather than
+ * declared statically:
+ *
+ * - `noauth` + `oauth2` — only on an ANONYMOUS (`tier: "free"`) ChatGPT
+ *   listing, and only for tools anonymous connections may EXECUTE
+ *   (`FREE_TIER_TOOL_NAMES`). That is the pre-link state where ChatGPT
+ *   needs to know it can call without an account; deriving from the same
+ *   set that gates execution keeps the advertised schemes and the
+ *   enforced behavior from drifting.
+ * - `oauth2` only — everything else: auth-required tools, authenticated
+ *   connections (the caller is already linked; advertising `noauth`
+ *   there could invite a host to route a linked user's calls onto the
+ *   shared free-tier account), and non-ChatGPT clients (which keep the
+ *   pre-existing constant value).
+ *
+ * The free-tier kill switch (`wrangler secret delete FREE_TIER_API_KEY`)
+ * stays complete for free: without the bindings, anonymous requests 401
+ * before any listing exists, so `tier: "free"` — and with it `noauth` —
+ * can never be served. Metadata is never what AUTHORIZES a call; the
  * server-side tier/token checks are.
  */
-export function securitySchemesForTool(name: string): SecurityScheme[] {
+export function securitySchemesForTool(
+  name: string,
+  ctx: SecuritySchemeContext,
+): SecurityScheme[] {
   const oauth2: SecurityScheme = {
     type: "oauth2",
     scopes: [OAUTH_TOOL_SCOPE],
   };
-  return FREE_TIER_TOOL_NAMES.has(name)
+  return ctx.client === "chatgpt" &&
+    ctx.tier === "free" &&
+    FREE_TIER_TOOL_NAMES.has(name)
     ? [{ type: "noauth" }, oauth2]
     : [oauth2];
 }
@@ -138,15 +166,19 @@ export function authRequiredToolResult(origin: string | undefined): {
 
 /**
  * Pure transform: add a top-level `securitySchemes` to every tool
- * descriptor in a (possibly batched) JSON-RPC `tools/list` response body.
- * Returns the ORIGINAL reference when nothing matched, so callers can
- * cheaply skip re-serialization. Never mutates its input.
+ * descriptor in a (possibly batched) JSON-RPC `tools/list` response body,
+ * resolved for the given connection context. Returns the ORIGINAL
+ * reference when nothing matched, so callers can cheaply skip
+ * re-serialization. Never mutates its input.
  */
-export function withToolSecuritySchemes(body: unknown): unknown {
+export function withToolSecuritySchemes(
+  body: unknown,
+  ctx: SecuritySchemeContext,
+): unknown {
   if (Array.isArray(body)) {
     let changed = false;
     const mapped = body.map((message) => {
-      const next = withToolSecuritySchemes(message);
+      const next = withToolSecuritySchemes(message, ctx);
       if (next !== message) changed = true;
       return next;
     });
@@ -165,7 +197,7 @@ export function withToolSecuritySchemes(body: unknown): unknown {
     changedTool = true;
     return {
       ...(tool as Record<string, unknown>),
-      securitySchemes: securitySchemesForTool(name),
+      securitySchemes: securitySchemesForTool(name, ctx),
     };
   });
   // An empty (or all-malformed) tools array gains nothing — keep the

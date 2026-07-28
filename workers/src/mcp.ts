@@ -334,7 +334,24 @@ export function createMcpServer(
   // success state.
   const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
   const client = options.client ?? "unknown";
-  const tier = options.tier ?? "authenticated";
+  // Tier resolution is fail-closed against a future call site that sets
+  // the tier only on ToolContext: `options.tier` wins when provided, but
+  // an omitted option falls back to `ctx.tier` (NOT straight to
+  // "authenticated") — the dispatch gate below is the only execution
+  // barrier for auth-required tools, so its input must never silently
+  // default permissive when the caller declared a tier anywhere. If both
+  // are provided they must agree; a disagreement is a config bug that
+  // fails loud rather than picking a side.
+  if (
+    options.tier !== undefined &&
+    ctx.tier !== undefined &&
+    options.tier !== ctx.tier
+  ) {
+    throw new Error(
+      `createMcpServer: options.tier ("${options.tier}") disagrees with ctx.tier ("${ctx.tier}")`,
+    );
+  }
+  const tier = options.tier ?? ctx.tier ?? "authenticated";
   // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
   // Empty by default → the default surface excludes every optional tool.
   const enabledOptionalToolNames =
@@ -475,7 +492,10 @@ function registerTool(
   // `securitySchemesForTool` source, so the two never disagree.
   // The widget block below MERGES into this rather than replacing it.
   config._meta = {
-    "com.tako/securitySchemes": securitySchemesForTool(tool.name),
+    "com.tako/securitySchemes": securitySchemesForTool(tool.name, {
+      client: options.client,
+      tier: options.tier,
+    }),
   };
 
   if (tool.outputSchema !== undefined) {
@@ -1300,7 +1320,7 @@ export async function handleMcpRequest(
       // descriptor fields — see `tools/_security.ts`). Every other
       // client gets the SDK's response untouched.
       return client === "chatgpt"
-        ? await withChatGptToolSecuritySchemes(response)
+        ? await withChatGptToolSecuritySchemes(response, tier)
         : response;
     } finally {
       // TODO(Phase 2): revisit this unconditional close.
@@ -1357,13 +1377,26 @@ export async function handleMcpRequest(
  */
 export async function withChatGptToolSecuritySchemes(
   response: Response,
+  tier: Tier,
 ): Promise<Response> {
   try {
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) return response;
     const body = (await response.clone().json()) as unknown;
-    const transformed = withToolSecuritySchemes(body);
+    const transformed = withToolSecuritySchemes(body, {
+      client: "chatgpt",
+      tier,
+    });
     if (transformed === body) return response;
+    // Positive rollout/observability signal: this line appearing in
+    // `wrangler tail` proves the UA resolved to chatgpt AND the
+    // injection ran. Its ABSENCE while ChatGPT sign-in misbehaves points
+    // straight at `detectMcpClient` (e.g. a connector UA change) —
+    // without it, a UA miss is indistinguishable from "ChatGPT changed
+    // something" (review finding on PR #183).
+    console.log(
+      `[mcp] tools/list securitySchemes injected client=chatgpt tier=${tier}`,
+    );
     const headers = new Headers(response.headers);
     // The rewritten body has a different byte length; let the runtime
     // recompute rather than serving a stale header.

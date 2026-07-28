@@ -145,13 +145,14 @@ export function assertLlmsFullCoverage(
  * `annotationsByClient`) would leave the submitted app metadata claiming
  * something production no longer serves.
  *
- * The anonymous free-tier surface is asserted separately (and more
- * weakly): it must be a SUBSET of the declared tools. Since the ChatGPT
- * link-account flow requires auth-only tools to stay listed
- * (`CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`),
- * the anonymous ChatGPT listing now matches the declared five — but
- * `tako_contents` / `tako_visualize` only EXECUTE on an OAuth-linked
- * connection, which is what the submission's test cases assume.
+ * The anonymous free-tier ChatGPT surface is asserted separately as an
+ * EQUALITY: the ChatGPT link-account flow requires auth-only tools to
+ * stay listed pre-auth (`CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in
+ * `tools/_surface.ts`), so the anonymous ChatGPT listing must match the
+ * declared tools exactly — growing past the submission and shrinking
+ * below it are both errors. `tako_contents` / `tako_visualize` only
+ * EXECUTE on an OAuth-linked connection, which is what the submission's
+ * test cases assume.
  */
 export function assertChatgptSubmissionParity(
   tools: ReadonlyArray<
@@ -192,16 +193,29 @@ export function assertChatgptSubmissionParity(
     }
   }
 
-  // Anonymous connections must never serve a tool the submission does not
-  // declare — a free-tier surface that outgrew the submission would show
-  // OpenAI review tooling an undeclared tool.
-  for (const t of tools) {
-    if (
-      isToolOnSurface(t.name, "chatgpt", noOptIns, "free") &&
-      !declaredNames.has(t.name)
-    ) {
+  // The anonymous ChatGPT surface must EQUAL the declared tools, both
+  // directions. Outgrowing the submission would show OpenAI review
+  // tooling an undeclared tool; SHRINKING below it (e.g. deleting a name
+  // from CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES) would remove a
+  // submitted tool from the pre-link listing and silently break its
+  // link-account affordance — the exact regression the discoverability
+  // change exists to prevent (PR #183 review).
+  const freeChatgptSurface = new Set(
+    tools
+      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns, "free"))
+      .map((t) => t.name),
+  );
+  for (const name of freeChatgptSurface) {
+    if (!declaredNames.has(name)) {
       problems.push(
-        `tool "${t.name}" is on the anonymous free-tier ChatGPT surface but not declared in the submission`,
+        `tool "${name}" is on the anonymous free-tier ChatGPT surface but not declared in the submission`,
+      );
+    }
+  }
+  for (const name of declaredNames) {
+    if (!freeChatgptSurface.has(name)) {
+      problems.push(
+        `tool "${name}" is declared in the submission but missing from the anonymous free-tier ChatGPT surface (link-account UI needs it listed pre-auth)`,
       );
     }
   }

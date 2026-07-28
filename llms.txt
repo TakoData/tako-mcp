@@ -11,7 +11,7 @@
 
 ## Quick Start
 
-Connect your MCP client to `https://mcp.tako.com/mcp`. No credentials are required to start: an anonymous connection gets the free tier (`tako_search`, `tako_answer`, `tako_available_data`; 10 requests/min per IP). For the full toolset and your own limits, authenticate with `Authorization: Bearer <TAKO_API_TOKEN>` (config-file clients) or the server's OAuth flow (Claude Code plugin, Claude.ai, ChatGPT).
+Connect your MCP client to `https://mcp.tako.com/mcp`. No credentials are required to start: an anonymous connection gets the free tier (`tako_search`, `tako_answer`, `tako_available_data`; 10 requests/min per IP; on ChatGPT, `tako_contents` and `tako_visualize` are also listed but require sign-in to run). For the full toolset and your own limits, authenticate with `Authorization: Bearer <TAKO_API_TOKEN>` (config-file clients) or the server's OAuth flow (Claude Code plugin, Claude.ai, ChatGPT).
 
 Some tools are opt-in — off by default to keep the tool surface small. Enable them via `?tools=` on the URL (comma-separated aliases): `agent` (Answer Agent), `visualize` (chart authoring; already on by default for ChatGPT), `credits` (credit balance), `graph` (low-level graph primitives). Example: `https://mcp.tako.com/mcp?tools=agent,visualize`.
 

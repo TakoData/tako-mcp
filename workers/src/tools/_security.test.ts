@@ -8,16 +8,19 @@ import {
 } from "./_security.js";
 
 describe("securitySchemesForTool", () => {
-  it("advertises noauth + oauth2 for the three anonymous-capable tools", () => {
+  const OAUTH2 = { type: "oauth2", scopes: ["mcp"] };
+  const ANON_CHATGPT = { client: "chatgpt", tier: "free" } as const;
+
+  it("advertises noauth + oauth2 for the free tools on an ANONYMOUS ChatGPT listing", () => {
     for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
-      expect(securitySchemesForTool(name)).toEqual([
+      expect(securitySchemesForTool(name, ANON_CHATGPT)).toEqual([
         { type: "noauth" },
-        { type: "oauth2", scopes: ["mcp"] },
+        OAUTH2,
       ]);
     }
   });
 
-  it("advertises oauth2 only for every auth-required tool", () => {
+  it("advertises oauth2 only for auth-required tools, even anonymously", () => {
     for (const name of [
       "tako_contents",
       "tako_visualize",
@@ -27,9 +30,25 @@ describe("securitySchemesForTool", () => {
       "get_credit_balance",
       "tako_graph_search",
     ]) {
-      expect(securitySchemesForTool(name)).toEqual([
-        { type: "oauth2", scopes: ["mcp"] },
-      ]);
+      expect(securitySchemesForTool(name, ANON_CHATGPT)).toEqual([OAUTH2]);
+    }
+  });
+
+  it("never advertises noauth on AUTHENTICATED connections (the caller is already linked)", () => {
+    for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
+      expect(
+        securitySchemesForTool(name, { client: "chatgpt", tier: "authenticated" }),
+      ).toEqual([OAUTH2]);
+    }
+  });
+
+  it("keeps non-ChatGPT clients on the pre-existing oauth2-only constant", () => {
+    for (const client of ["claude", "unknown"] as const) {
+      for (const tier of ["free", "authenticated"] as const) {
+        expect(securitySchemesForTool("tako_search", { client, tier })).toEqual([
+          OAUTH2,
+        ]);
+      }
     }
   });
 });
@@ -87,6 +106,9 @@ describe("authRequiredToolResult", () => {
 });
 
 describe("withToolSecuritySchemes", () => {
+  // Production's only caller context: ChatGPT client; anonymous tier so
+  // the free/gated scheme split is visible in the assertions.
+  const ANON_LIST_CTX = { client: "chatgpt", tier: "free" } as const;
   const listResponse = () => ({
     jsonrpc: "2.0",
     id: 2,
@@ -100,7 +122,7 @@ describe("withToolSecuritySchemes", () => {
 
   it("adds a top-level securitySchemes to every tool descriptor", () => {
     const body = listResponse();
-    const out = withToolSecuritySchemes(body) as typeof body & {
+    const out = withToolSecuritySchemes(body, ANON_LIST_CTX) as typeof body & {
       result: { tools: Array<{ securitySchemes?: unknown }> };
     };
     expect(out.result.tools[0]?.securitySchemes).toEqual([
@@ -115,7 +137,7 @@ describe("withToolSecuritySchemes", () => {
   it("never mutates its input (returns a new structure)", () => {
     const body = listResponse();
     const snapshot = JSON.parse(JSON.stringify(body)) as unknown;
-    const out = withToolSecuritySchemes(body);
+    const out = withToolSecuritySchemes(body, ANON_LIST_CTX);
     expect(out).not.toBe(body);
     expect(body).toEqual(snapshot);
   });
@@ -126,17 +148,17 @@ describe("withToolSecuritySchemes", () => {
       id: 1,
       result: { serverInfo: { name: "tako-mcp" } },
     };
-    expect(withToolSecuritySchemes(initialize)).toBe(initialize);
+    expect(withToolSecuritySchemes(initialize, ANON_LIST_CTX)).toBe(initialize);
     const toolCall = {
       jsonrpc: "2.0",
       id: 3,
       result: { content: [{ type: "text", text: "hi" }] },
     };
-    expect(withToolSecuritySchemes(toolCall)).toBe(toolCall);
+    expect(withToolSecuritySchemes(toolCall, ANON_LIST_CTX)).toBe(toolCall);
     const error = { jsonrpc: "2.0", id: 4, error: { code: -32602 } };
-    expect(withToolSecuritySchemes(error)).toBe(error);
-    expect(withToolSecuritySchemes(null)).toBe(null);
-    expect(withToolSecuritySchemes("nope")).toBe("nope");
+    expect(withToolSecuritySchemes(error, ANON_LIST_CTX)).toBe(error);
+    expect(withToolSecuritySchemes(null, ANON_LIST_CTX)).toBe(null);
+    expect(withToolSecuritySchemes("nope", ANON_LIST_CTX)).toBe("nope");
   });
 
   it("leaves malformed tool entries untouched while transforming valid ones", () => {
@@ -147,7 +169,7 @@ describe("withToolSecuritySchemes", () => {
         tools: [null, 42, { description: "no name" }, { name: "tako_search" }],
       },
     };
-    const out = withToolSecuritySchemes(body) as {
+    const out = withToolSecuritySchemes(body, ANON_LIST_CTX) as {
       result: { tools: unknown[] };
     };
     expect(out.result.tools[0]).toBeNull();
@@ -166,7 +188,7 @@ describe("withToolSecuritySchemes", () => {
         tools: [{ name: "tako_contents", securitySchemes: [{ type: "noauth" }] }],
       },
     };
-    const out = withToolSecuritySchemes(body) as {
+    const out = withToolSecuritySchemes(body, ANON_LIST_CTX) as {
       result: { tools: Array<{ securitySchemes?: unknown }> };
     };
     expect(out.result.tools[0]?.securitySchemes).toEqual([
@@ -176,13 +198,13 @@ describe("withToolSecuritySchemes", () => {
 
   it("returns the original reference for an empty tools array", () => {
     const body = { jsonrpc: "2.0", id: 2, result: { tools: [] } };
-    expect(withToolSecuritySchemes(body)).toBe(body);
+    expect(withToolSecuritySchemes(body, ANON_LIST_CTX)).toBe(body);
   });
 
   it("transforms tools/list messages inside a JSON-RPC batch", () => {
     const other = { jsonrpc: "2.0", id: 1, result: {} };
     const batch = [other, listResponse()];
-    const out = withToolSecuritySchemes(batch) as Array<{
+    const out = withToolSecuritySchemes(batch, ANON_LIST_CTX) as Array<{
       result?: { tools?: Array<{ securitySchemes?: unknown }> };
     }>;
     expect(out).not.toBe(batch);

@@ -852,6 +852,26 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     },
   );
 
+  it("a tier set ONLY on ToolContext still engages the dispatch gate (fail-closed default)", async () => {
+    // Regression guard for the gate's input resolution: a future call
+    // site that declares the tier on ctx but forgets options.tier must
+    // not silently get the permissive default (PR #183 review finding) —
+    // createMcpServer resolves options.tier ?? ctx.tier.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await callTool(
+      { client: "chatgpt", requestOrigin: "https://mcp.example.com" },
+      "tako_contents",
+      { url: "https://trytako.com/card/abc123" },
+      "free", // ctx.tier only — options.tier deliberately omitted
+    );
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      result._meta?.["mcp/www_authenticate"] as string[] | undefined,
+    ).toHaveLength(1);
+  });
+
   it("authenticated ChatGPT calls to auth-required tools execute without a challenge", async () => {
     // Regression guard for the dispatch gate's complement: a linked
     // (authenticated) connection must reach the real handler — a gate
@@ -956,12 +976,12 @@ describe("withChatGptToolSecuritySchemes", () => {
     const res = new Response("event: message\ndata: {}\n\n", {
       headers: { "content-type": "text/event-stream" },
     });
-    expect(await withChatGptToolSecuritySchemes(res)).toBe(res);
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
   });
 
   it("returns the original response when the body is not valid JSON (body stays readable)", async () => {
     const res = new Response("{not json", { headers: JSON_CT });
-    const out = await withChatGptToolSecuritySchemes(res);
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
     expect(out).toBe(res);
     // The adapter reads a clone — the original body must not be consumed.
     await expect(out.text()).resolves.toBe("{not json");
@@ -972,7 +992,7 @@ describe("withChatGptToolSecuritySchemes", () => {
       JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
       { headers: JSON_CT },
     );
-    expect(await withChatGptToolSecuritySchemes(res)).toBe(res);
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
   });
 
   it("rewrites tools/list, drops the stale content-length, and keeps status", async () => {
@@ -985,15 +1005,32 @@ describe("withChatGptToolSecuritySchemes", () => {
       status: 200,
       headers: { ...JSON_CT, "content-length": String(body.length) },
     });
-    const out = await withChatGptToolSecuritySchemes(res);
+    const out = await withChatGptToolSecuritySchemes(res, "free");
     expect(out).not.toBe(res);
     expect(out.status).toBe(200);
     expect(out.headers.get("content-length")).toBeNull();
     const json = (await out.json()) as {
       result: { tools: Array<{ securitySchemes?: unknown }> };
     };
+    // Anonymous (free) listing: the free tool advertises noauth + oauth2.
     expect(json.result.tools[0]?.securitySchemes).toEqual([
       { type: "noauth" },
+      { type: "oauth2", scopes: ["mcp"] },
+    ]);
+  });
+
+  it("resolves schemes per-connection: authenticated listings are oauth2-only", async () => {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      result: { tools: [{ name: "tako_search" }] },
+    });
+    const res = new Response(body, { headers: JSON_CT });
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
+    const json = (await out.json()) as {
+      result: { tools: Array<{ securitySchemes?: unknown }> };
+    };
+    expect(json.result.tools[0]?.securitySchemes).toEqual([
       { type: "oauth2", scopes: ["mcp"] },
     ]);
   });
