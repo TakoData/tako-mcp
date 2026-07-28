@@ -244,8 +244,8 @@ const tako_search = {
     );
   },
   async extraMeta(output, ctx) {
-    // Skip the fetch on ChatGPT: its widget bundle takes the iframe
-    // path (`window.openai` defined → `shouldUseInteractiveIframe()`
+    // Skip the fetch on ChatGPT: its widget bundle takes the committed
+    // iframe path (`window.openai` defined → `hasOpenAiRuntime()`
     // true in `_chart_widget.ts`), which renders `embed_url` directly
     // and never reads `image_data_url` from `_meta`. Without this
     // gate we pay the full chart-render latency

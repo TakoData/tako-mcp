@@ -486,19 +486,21 @@ function registerTool(
   //         interactive iframe (`frameDomains` populated, `embed_url`
   //         loaded live inside the sandbox).
   //       - Claude clients ALSO keep the widget, but render it via the
-  //         image branch, not an iframe: the server declares
+  //         image branch first: the server declares
   //         `csp.frameDomains` identically for every client (see
   //         `buildChartAppUiResource` — it always sets `frameDomains:
   //         [webBase]`), but claude.ai's host-side sandbox currently
   //         restricts third-party iframes regardless of what's
-  //         declared there, pending Claude's own MCP Apps security
-  //         review, so the iframe never loads on claude.ai. The
-  //         bundle's client-side JS feature-detects `window.openai` at
-  //         runtime (see `shouldUseInteractiveIframe` in
-  //         `_chart_widget.ts`) and falls back to painting the
-  //         server-fetched `_meta.image_data_url` PNG (see the
-  //         `extraMeta` comment below) instead of embedding
-  //         `embed_url` in an `<iframe>`.
+  //         declared there (anthropics/claude-ai-mcp#40, pending
+  //         Claude's own MCP Apps security review), so the iframe
+  //         never loads on claude.ai today. The bundle's client-side
+  //         JS paints the server-fetched `_meta.image_data_url` PNG
+  //         (see the `extraMeta` comment below) as the baseline, then
+  //         probes the `embed_url` iframe in the background and swaps
+  //         it in only if the host's CSP actually lets it load (see
+  //         `probeInteractiveIframe` in `_chart_widget.ts`) — so
+  //         Claude upgrades to the interactive chart automatically
+  //         once Anthropic fixes #40, without a Tako redeploy.
   //       - Unknown clients still suppress the widget — the long tail
   //         of MCP hosts (Cursor, Windsurf, Gemini CLI, LibreChat, …)
   //         almost never implements the MCP Apps spec, so shipping

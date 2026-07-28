@@ -143,6 +143,43 @@ function widgetLink(m: Mounted): HTMLAnchorElement {
   ) as HTMLAnchorElement;
 }
 
+function widgetFrame(m: Mounted): HTMLIFrameElement {
+  return m.widgetWin.document.getElementById(
+    "tako-embed",
+  ) as HTMLIFrameElement;
+}
+
+/** Fire the probe iframe's `load` event as if the embed page loaded. */
+function fireFrameLoad(m: Mounted): void {
+  const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+    .Event;
+  widgetFrame(m).dispatchEvent(new WidgetEvent("load"));
+}
+
+/**
+ * Fire the chart image's `load` event — jsdom doesn't decode `data:`
+ * URIs, so the widget's img.load listener (which unhides the link)
+ * never fires on its own.
+ */
+function fireImageLoad(m: Mounted): void {
+  const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+    .Event;
+  widgetImg(m).dispatchEvent(new WidgetEvent("load"));
+}
+
+/** Fire a `frame-src` CSP violation as if the host sandbox blocked the probe. */
+function fireFrameSrcViolation(m: Mounted): void {
+  const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+    .Event;
+  const event = new WidgetEvent("securitypolicyviolation");
+  Object.assign(event, {
+    effectiveDirective: "frame-src",
+    violatedDirective: "frame-src",
+    blockedURI: EMBED_URL,
+  });
+  m.widgetWin.document.dispatchEvent(event);
+}
+
 function staticWidgetHtml(): string {
   return buildChartAppUiResourceFromOutputPubId(ENV).html;
 }
@@ -260,6 +297,74 @@ describe("static widget bundle (executed)", () => {
         "ui/notifications/size-changed",
     ) as Array<{ params: { height: number } }>;
     expect(sizeChanges.at(-1)?.params.height).toBe(0);
+  });
+});
+
+describe("interactive iframe capability probe (executed)", () => {
+  const CHART_RESULT = toolResult(
+    { embed_url: EMBED_URL, image_url: IMAGE_URL },
+    {
+      image_data_url: DATA_URL,
+      image_natural_width: 800,
+      image_natural_height: 600,
+    },
+  );
+
+  it("probes the embed iframe in the background while showing the image", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, CHART_RESULT, m.wrapperWin);
+    fireImageLoad(m);
+    // Image is the visible baseline...
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
+    // ...while the probe iframe loads the embed hidden.
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
+  });
+
+  it("upgrades to the interactive iframe when the probe loads", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, CHART_RESULT, m.wrapperWin);
+    fireFrameLoad(m);
+    // Iframe swapped in over the PNG.
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(true);
+  });
+
+  it("stays on the image when the host CSP blocks the probe", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, CHART_RESULT, m.wrapperWin);
+    fireImageLoad(m);
+    fireFrameSrcViolation(m);
+    // Probe cancelled: frame unloaded and still hidden, image untouched.
+    expect(widgetFrame(m).getAttribute("src")).toBe("about:blank");
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
+    // A late load (e.g. the about:blank unload settling) must not swap.
+    fireFrameLoad(m);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
+  });
+
+  it("commits to the iframe immediately when window.openai is present", () => {
+    const m = mountWidget(staticWidgetHtml());
+    (m.widgetWin as unknown as { openai: object }).openai = {};
+    deliver(m, CHART_RESULT, m.wrapperWin);
+    // ChatGPT path: no PNG detour, no probe — straight to the iframe.
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+    expect(widgetImg(m).getAttribute("src")).toBeNull();
+  });
+
+  it("does not probe when there is no embed_url", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult({ image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(widgetFrame(m).getAttribute("src")).toBeNull();
   });
 });
 
