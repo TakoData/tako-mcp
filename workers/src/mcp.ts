@@ -779,6 +779,14 @@ function registerTool(
         // Non-Django throws re-throw to the SDK, which wraps them in a
         // generic tool error (last-resort path for handler bugs).
         if (err instanceof DjangoError) {
+          // Log every upstream failure with full routing context BEFORE
+          // mapping it into an `isError` result — the mapped result reaches
+          // only the client, so this line is the sole server-side record.
+          // `err.message` is body-free by construction (log-injection guard
+          // in django.ts); the capped body lives in `_meta` client-side only.
+          console.error(
+            `[mcp] tool error tool=${tool.name} client=${options.client} tier=${callCtx.tier} kind=${djangoErrorKind(err)} status=${err.status ?? "(none)"} method=${err.method} path=${err.path}: ${err.message}`,
+          );
           // Free tier: the shared account exhausting its Tako credits is
           // the tier's expected steady-state failure (the Django-side cap
           // is the fail-open spend backstop). Surface it as upsell copy,
@@ -796,6 +804,13 @@ function registerTool(
           }
           return djangoErrorToToolResult(err);
         }
+        // Non-Django throws (wire-guard drift, handler bugs) re-throw to the
+        // SDK, which converts them into client-visible tool text WITHOUT
+        // logging — so this line is the only server-side record of them.
+        console.error(
+          `[mcp] tool error tool=${tool.name} client=${options.client} tier=${callCtx.tier} kind=handler-throw:`,
+          err,
+        );
         throw err;
       }
       // When the tool declares an `outputSchema`, report the structured
@@ -1192,6 +1207,15 @@ export async function handleMcpRequest(
     const transport = new WebStandardStreamableHTTPServerTransport({
       enableJsonResponse: true,
     });
+    // The SDK's default error sink is a no-op (`this.onerror?.(error)`), so
+    // protocol- and transport-level failures — failed response sends, unknown
+    // message types, notification enqueue errors — vanish without these.
+    server.server.onerror = (error) => {
+      console.error("[mcp] protocol error:", error);
+    };
+    transport.onerror = (error) => {
+      console.error("[mcp] transport error:", error);
+    };
 
     await server.connect(transport);
     // Cloned before the transport consumes the body so the observability tap
