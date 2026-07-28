@@ -359,26 +359,168 @@ const WIDGET_HTML = `<!doctype html>
   // embed page, not arbitrary cross-frame senders.
   var embedOrigin = null;
 
-  // Pick the rendering mode based on host. ChatGPT's Apps SDK runtime
-  // exposes \`window.openai\`; its outer sandbox CSP honors our
-  // \`frameDomains\` declaration and lets the cross-origin
-  // \`<iframe src=https://staging.trytako.com/embed/...>\` load fully
-  // interactive. Other hosts (claude.ai for custom connectors most
-  // notably) enforce a stricter \`frame-src 'self' blob: data:\` outer
-  // CSP that ignores frameDomains entirely, so the iframe ends up
-  // showing Chrome's "This content is blocked" placeholder. For those
-  // hosts we drop back to the static PNG via \`image_url\` — the
-  // \`img-src\` directive is far more commonly permissive than
-  // \`frame-src\`, and a non-interactive chart is strictly better than
-  // a "blocked" error tile. Confirmed via DevTools (2026-04-29) on
-  // claude.ai web: the same widget bundle, same handshake completion,
-  // with iframe blocked vs static \`<img>\` allowed.
-  function shouldUseInteractiveIframe() {
+  // Pin the embed/probe iframe to an explicit pixel height. Hosts vary in
+  // which of the three they read (inline \`style.height\`, the
+  // \`min-height\` floor, and the \`height\` attribute), so set all three
+  // together. One helper so the next height gotcha is a one-line fix
+  // instead of the four separate inlined call sites this replaces.
+  function setFrameHeight(n) {
+    frame.style.height = n + "px";
+    frame.style.minHeight = n + "px";
+    frame.setAttribute("height", String(n));
+  }
+
+  // Record the embed iframe's origin so the \`tako-embed-height\` resize
+  // handler will honor messages from it. Only arm this once the embed is
+  // the VISIBLE surface (an immediate iframe render, or a probe that has
+  // upgraded) — arming it while a probe frame is still hidden behind the
+  // PNG would let a background embed resize the widget under a chart the
+  // user is looking at.
+  function armEmbedOrigin(url) {
+    try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
+  }
+
+  // Pick the rendering mode by CAPABILITY, not host identity.
+  //
+  // ChatGPT's Apps SDK runtime exposes \`window.openai\`; its outer
+  // sandbox CSP honors our \`frameDomains\` declaration and lets the
+  // cross-origin \`<iframe src=https://staging.trytako.com/embed/...>\`
+  // load fully interactive — commit to the iframe immediately there.
+  //
+  // Every other host renders the static PNG first (the baseline that
+  // always works) and then PROBES the embed iframe in the background
+  // via \`probeInteractiveIframe\`, swapping it in only if the embed
+  // actually loads. Rationale: claude.ai today enforces a hardcoded
+  // \`frame-src 'self' blob: data:\` outer CSP that ignores declared
+  // \`csp.frameDomains\` (anthropics/claude-ai-mcp#40 — spec violation,
+  // acknowledged, pending their MCP Apps security review), so the
+  // iframe shows Chrome's "This content is blocked" placeholder
+  // (confirmed via DevTools 2026-04-29 on claude.ai web). But that's a
+  // host bug with a pending fix: keying the branch on "is this
+  // ChatGPT" would keep Claude on the static PNG even after Anthropic
+  // ships it. Probing means the interactive path lights up on any
+  // host the moment its CSP allows it, with no Tako redeploy — and the
+  // CSP violation event fires ~immediately on blocking hosts, so
+  // today's PNG experience is unchanged.
+  function hasOpenAiRuntime() {
     try {
       return typeof window.openai !== "undefined";
     } catch (e) {
       return false;
     }
+  }
+
+  // One probe per widget lifetime. \`render()\` is one-shot via the
+  // \`rendered\` flag, but guard independently so a duplicate
+  // tool-result delivery racing the flag can't double-assign
+  // \`frame.src\`.
+  var probeStarted = false;
+  // Flips true once the probe has swapped the interactive iframe in over
+  // the PNG. The image \`load\`/\`error\` handlers check it and no-op after
+  // an upgrade so a stray duplicate image event can't re-reveal the PNG
+  // on top of the live iframe.
+  var probeUpgraded = false;
+
+  // Try to load \`url\` in the (still hidden) chart iframe and swap it
+  // in over the already-rendered PNG if it genuinely loads.
+  //
+  // Success signal: the iframe \`load\` event. A cross-origin frame's
+  // content is unreadable, but \`load\` only fires when a document
+  // actually loaded — CSP-blocked loads never make the request, so
+  // they never fire it.
+  //
+  // Failure signals, either of:
+  //  - \`securitypolicyviolation\` for \`frame-src\` on this document —
+  //    the definitive "host sandbox blocked it" signal.
+  //  - No \`load\` within the timeout — covers hosts that suppress
+  //    violation events and plain network stalls.
+  //
+  // On failure the widget stays on the PNG it already painted; the
+  // probe frame is unloaded so nothing can later surface a blocked
+  // tile.
+  function probeInteractiveIframe(url, fallbackHeight) {
+    if (probeStarted) return;
+    probeStarted = true;
+    var settled = false;
+    var timer = null;
+    // Flips true the instant we navigate the probe frame to \`url\`, and
+    // back to false before \`fail()\` sends it to about:blank. \`onLoad\`
+    // gates on this rather than \`frame.src === url\`: \`frame.src\` reads
+    // back the browser-NORMALIZED URL (\`https://tako.com:443\` collapses
+    // to \`https://tako.com\`, the host lowercases), so a raw-string
+    // compare against \`url\` can silently never match — stranding every
+    // render on the 8 s timeout on any host whose \`embed_url\` origin
+    // isn't already normalized.
+    var probeNavigated = false;
+    function cleanup() {
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      document.removeEventListener("securitypolicyviolation", onViolation);
+      frame.removeEventListener("load", onLoad);
+    }
+    function fail(reason) {
+      if (settled) return;
+      cleanup();
+      embedOrigin = null;
+      probeNavigated = false;
+      frame.src = "about:blank";
+      log("iframe probe failed, staying on image", { reason: reason });
+    }
+    function succeed() {
+      if (settled) return;
+      cleanup();
+      probeUpgraded = true;
+      // Swap at the image's CURRENT rendered height, not the tool's
+      // requested height: claude.ai sizes its outer container once
+      // (anthropics/claude-ai-mcp#69) from the PNG's footprint, so
+      // growing the frame past it would clip. The probe only starts
+      // AFTER the image has loaded (see the image \`load\` handler), so
+      // \`getBoundingClientRect().height\` here is the real laid-out
+      // height — not 0 falling through to \`fallbackHeight\`.
+      var rectH = image.getBoundingClientRect().height;
+      var offsetH = image.offsetHeight;
+      var h = Math.round(rectH || offsetH || 0) || fallbackHeight;
+      setFrameHeight(h);
+      // Arm the embed-height handshake only NOW: the embed has become the
+      // visible surface, so honoring its resize messages is finally safe.
+      armEmbedOrigin(url);
+      imageLink.classList.add("hidden");
+      placeholder.classList.add("hidden");
+      frame.classList.remove("hidden");
+      notifyHeight(h);
+      log("iframe probe succeeded, upgraded to interactive", { height: h });
+    }
+    function onViolation(event) {
+      var directive =
+        event && (event.effectiveDirective || event.violatedDirective);
+      if (typeof directive === "string" && directive.indexOf("frame-src") === 0) {
+        fail("csp:" + directive);
+      }
+    }
+    function onLoad() {
+      // \`fail()\` navigates the frame to about:blank, which fires its own
+      // \`load\`; \`probeNavigated\` is false by then so we don't count it.
+      //
+      // KNOWN GAP (bare-load success signal): \`load\` fires for ANY
+      // document the embed endpoint returns — including a Tako 404/5xx
+      // error page. On a host whose CSP allows \`frame-src\`, an embed-page
+      // outage would swap the known-good PNG for an error page. Accepted
+      // for now: the only positive signal from the cross-origin embed is
+      // the \`tako-embed-height\` message, which the Tako web app does not
+      // emit yet (see the handler comment near the bottom). Once it does,
+      // gate \`succeed()\` on that message instead of the bare \`load\`.
+      if (probeNavigated) succeed();
+    }
+    document.addEventListener("securitypolicyviolation", onViolation);
+    frame.addEventListener("load", onLoad);
+    // Deliberately do NOT arm \`embedOrigin\` here — the probe frame is
+    // still hidden behind the PNG, so honoring its \`tako-embed-height\`
+    // messages would resize the widget under a chart the user is looking
+    // at. \`succeed()\` arms it after the swap.
+    frame.src = url;
+    probeNavigated = true;
+    timer = setTimeout(function () { fail("timeout"); }, 8000);
+    log("iframe probe started", { src: url });
   }
 
   function log(label, payload) {
@@ -492,14 +634,12 @@ const WIDGET_HTML = `<!doctype html>
       typeof structuredContent.height === "number" && structuredContent.height > 0
         ? structuredContent.height
         : 600;
-    var useIframe = shouldUseInteractiveIframe() && validEmbed;
+    var useIframe = hasOpenAiRuntime() && validEmbed;
 
     if (useIframe) {
       if (frame.src !== url) frame.src = url;
-      try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
-      frame.style.height = h + "px";
-      frame.style.minHeight = h + "px";
-      frame.setAttribute("height", String(h));
+      armEmbedOrigin(url);
+      setFrameHeight(h);
       frame.classList.remove("hidden");
     } else if (validImage) {
       // Per anthropics/claude-ai-mcp#69 workaround:
@@ -533,6 +673,10 @@ const WIDGET_HTML = `<!doctype html>
       }
 
       image.addEventListener("load", function () {
+        // No-op after an upgrade: if the probe already swapped the
+        // interactive iframe in, a stray duplicate \`load\` must not
+        // re-reveal the PNG on top of it.
+        if (probeUpgraded) return;
         imageLink.classList.remove("hidden");
         placeholder.classList.add("hidden");
         // Defer measurement one frame so layout settles after the
@@ -556,6 +700,17 @@ const WIDGET_HTML = `<!doctype html>
             log("img resized after load", { height: renderedH });
           }
         });
+        // Capability probe, sequenced AFTER the PNG baseline has loaded.
+        // Starting it here rather than at render() time guarantees the
+        // image is laid out before the probe can \`succeed()\`, so the swap
+        // measures the image's real rendered height (not 0 falling through
+        // to the requested height), and this \`load\` handler has already
+        // run so it can't re-reveal the PNG over the swapped-in iframe.
+        // The PNG is the guaranteed baseline; if this host's CSP lets the
+        // embed iframe load (it doesn't on claude.ai until
+        // anthropics/claude-ai-mcp#40 is fixed), the probe upgrades to the
+        // interactive chart once it does.
+        if (validEmbed) probeInteractiveIframe(url, h);
       });
       // CSP / network error fallback. The most common trigger is
       // claude.ai's outer-document CSP (\`img-src 'self' blob: data:\`)
@@ -584,6 +739,11 @@ const WIDGET_HTML = `<!doctype html>
           placeholder.textContent = "Couldn't load chart.";
         }
         log("img errored, showing click-through fallback");
+        // Even with no visible PNG, still probe: a host that blocks
+        // cross-origin \`img-src\` but allows \`frame-src\` can upgrade to
+        // the interactive embed. \`probeStarted\` dedupes against the load
+        // path — only one of load/error fires per image.
+        if (validEmbed) probeInteractiveIframe(url, h);
       });
       // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
       // guard at the top of \`render()\` blocks any re-entry from a
@@ -591,7 +751,8 @@ const WIDGET_HTML = `<!doctype html>
       // synchronously (data: URIs can do that in some browsers).
       rendered = true;
       // Triggers the load event above. Set last so the listener is
-      // attached first.
+      // attached first. The capability probe is kicked off from inside the
+      // load/error handlers (above) so it's sequenced after the image.
       image.src = imageSrc;
       // Skip the synchronous hide-placeholder / show-anchor / notifyHeight
       // tail below — image.load handles those atomically once the
@@ -605,10 +766,8 @@ const WIDGET_HTML = `<!doctype html>
       // they'd otherwise have seen; best case some host without
       // \`window.openai\` actually allows the iframe.
       if (frame.src !== url) frame.src = url;
-      try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
-      frame.style.height = h + "px";
-      frame.style.minHeight = h + "px";
-      frame.setAttribute("height", String(h));
+      armEmbedOrigin(url);
+      setFrameHeight(h);
       frame.classList.remove("hidden");
     } else {
       // Nothing usable; leave the placeholder visible.
@@ -824,9 +983,7 @@ const WIDGET_HTML = `<!doctype html>
       var h = msg.height;
       if (typeof h !== "number" || !isFinite(h) || h <= 0 || h > 4000) return;
       var n = Math.round(h);
-      frame.style.height = n + "px";
-      frame.style.minHeight = n + "px";
-      frame.setAttribute("height", String(n));
+      setFrameHeight(n);
       notifyHeight(n);
       log("resized via embed handshake", { height: n });
     }
