@@ -25,3 +25,7 @@ workers/dist/
 # commit; secrets/local URLs land here when iterating against a local backend.
 workers/.dev.vars
 workers/.dev.vars.*
+
+# Local git worktrees. Already the working convention in this repo; ignoring
+# the directory stops a stray `git add` from committing an entire checkout.
+.worktrees/

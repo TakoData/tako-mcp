@@ -8,9 +8,11 @@ import {
   FREE_TIER_CREDITS_MESSAGE,
   FREE_TIER_GLOBAL_LIMIT_MESSAGE,
   FREE_TIER_LIMIT_MESSAGE,
+  FREE_TIER_TOO_LARGE_MESSAGE,
   FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
+  freeTierCreditsToolResult,
   freeTierGlobalLimitResponse,
   freeTierLimitResponse,
   freeTierRateLimitKey,
@@ -460,7 +462,7 @@ describe("freeTierLimitResponse", () => {
     expect(body.result.content).toEqual([
       { type: "text", text: FREE_TIER_LIMIT_MESSAGE },
     ]);
-    expect(FREE_TIER_LIMIT_MESSAGE).toContain("https://trytako.com/account/");
+    expect(FREE_TIER_LIMIT_MESSAGE).toContain("https://tako.com/account/");
   });
 
   it("without a request id: degrades to the legacy 429 with Retry-After", async () => {
@@ -504,6 +506,9 @@ describe("freeTierGlobalLimitResponse", () => {
     expect(body.id).toBeNull();
     expect(body.error.code).toBe(-32000);
     expect(body.error.message).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
+    // Distinct from the per-IP bucket's kind. Collapsing the two hid the
+    // topology in `kind` while `message` still revealed it, so it broke a
+    // client-visible contract for no gain. See `freeTierGlobalLimitResponse`.
     expect(body.error.data.kind).toBe("global_rate_limited");
   });
 });
@@ -520,6 +525,11 @@ describe("freeTierTooLargeResponse", () => {
     expect(body.error.code).toBe(-32600);
     expect(body.error.data.kind).toBe("payload_too_large");
     expect(body.error.message).toContain(String(MAX_FREE_TIER_BODY_BYTES));
+    expect(body.error.message).toBe(FREE_TIER_TOO_LARGE_MESSAGE);
+    expect(body.error.message).toBe(
+      "Request body is too large for anonymous access. The limit is " +
+        "131072 bytes.",
+    );
   });
 });
 
@@ -541,18 +551,22 @@ describe("freeTierBatchResponse", () => {
     expect(body.error.data.kind).toBe("batch_not_supported");
     expect(body.error.message).toBe(FREE_TIER_BATCH_MESSAGE);
     expect(body.error.message).toBe(
-      "Batch requests are not supported on the free tier. Send one " +
-        "JSON-RPC request per POST, or get a free API key at " +
-        "https://trytako.com/account/ for full access.",
+      "Batch requests are not supported for anonymous access. Send one " +
+        "JSON-RPC request per POST, or get an API key at " +
+        "https://tako.com/account/ for full access.",
     );
   });
 });
 
 describe("wrangler.jsonc ↔ message drift", () => {
-  // The limit numbers live in `ratelimits` blocks (one per env) AND
-  // in the user-facing messages. This test is the sync mechanism the
-  // README promises: the upsell can never advertise a number the limiter
-  // does not enforce.
+  // The binding CANNOT enforce a specific rate, so no user-facing string may
+  // claim one. Measured on deployed staging against a 10-per-60s bucket: 20 of
+  // 20 normal-paced requests were admitted, a cold burst admitted ~115
+  // regardless of the configured limit, and one IP had 292 requests admitted in
+  // ~16 s. The earlier version of this test asserted the advertised number
+  // MATCHED the binding, which protected a false promise. It now asserts the
+  // opposite, so a number cannot be reintroduced. See README.md "Measured
+  // behaviour".
   function bindingLimits(name: string): number[] {
     const re = new RegExp(
       `"name":\\s*"${name}"[\\s\\S]*?"limit":\\s*(\\d+)`,
@@ -561,20 +575,126 @@ describe("wrangler.jsonc ↔ message drift", () => {
     return [...wranglerRaw.matchAll(re)].map((m) => Number(m[1]));
   }
 
-  it("per-IP binding limits match the number in FREE_TIER_LIMIT_MESSAGE (all 3 envs)", () => {
+  /** Every `simple.period` value in the file, in document order. */
+  function allPeriods(): number[] {
+    // Scoped to the FREE_TIER_* binding blocks, the same way `bindingLimits`
+    // is. An unanchored scan of the whole file would also match a `"period"`
+    // key added later for something unrelated (observability, logpush, an
+    // analytics binding) and fail with a message about admitting more
+    // traffic, which would be nothing to do with the actual edit.
+    const re = /"name":\s*"FREE_TIER_[A-Z_]*"[\s\S]*?"period":\s*(\d+)/g;
+    return [...wranglerRaw.matchAll(re)].map((m) => Number(m[1]));
+  }
+
+  /** Every `namespace_id` value in the file, in document order. */
+  function allNamespaceIds(): string[] {
+    // Scoped to the FREE_TIER_* binding blocks — see `allPeriods`.
+    const re = /"name":\s*"FREE_TIER_[A-Z_]*"[\s\S]*?"namespace_id":\s*"([^"]+)"/g;
+    return [...wranglerRaw.matchAll(re)].map((m) => m[1]!);
+  }
+
+  it("per-IP binding limits agree across all 3 envs", () => {
     const limits = bindingLimits("FREE_TIER_RATE_LIMITER");
     expect(limits).toHaveLength(3);
-    const advertised = FREE_TIER_LIMIT_MESSAGE.match(/\((\d+) requests\/min\)/);
-    expect(advertised).not.toBeNull();
-    for (const limit of limits) {
-      expect(limit).toBe(Number(advertised![1]));
-    }
+    expect(new Set(limits).size).toBe(1);
   });
 
   it("global binding limits agree across all 3 envs", () => {
     const limits = bindingLimits("FREE_TIER_GLOBAL_RATE_LIMITER");
     expect(limits).toHaveLength(3);
     expect(new Set(limits).size).toBe(1);
+  });
+
+  it("every bucket's period is 60 — a shorter period admits MORE traffic, not less (see README 'Measured behaviour')", () => {
+    const periods = allPeriods();
+    expect(periods).toHaveLength(6); // 3 envs x (per-IP + global)
+    expect(periods.every((p) => p === 60)).toBe(true);
+  });
+
+  it("all six namespace_id values are distinct — reusing one would merge the per-IP and per-colo counters", () => {
+    const ids = allNamespaceIds();
+    expect(ids).toHaveLength(6); // 3 envs x (per-IP + global)
+    expect(new Set(ids).size).toBe(6);
+  });
+
+  it("no freetier error kind names the internal mechanism or the cause", async () => {
+    // The `kind` fields are machine-readable and SHIP TO CALLERS. What they
+    // must not do is name the internal mechanism, or restate the one thing
+    // the prose deliberately withholds: that the shortage is SPENT CREDIT,
+    // which would hand a prober a gauge for how depleted the account is.
+    //
+    // Limiter TOPOLOGY is deliberately NOT hidden. Hiding it here while the
+    // two limit messages still describe different situations bought nothing
+    // and broke a client-visible contract, so `global_rate_limited` stays
+    // distinct from `rate_limited` and "global" is not banned below.
+    //
+    // SCOPE: this covers only the kinds THIS module emits. The anonymous path
+    // also surfaces `djangoErrorKind` values from `mcp.ts`
+    // (unauthorized / timeout / not_found / bad_request / response_parse /
+    // http / unknown). None of those disclose anything today, so there is no
+    // live gap, but they are not guarded here — and the raw upstream body
+    // that `djangoErrorToToolResult` attaches alongside them is a separate,
+    // larger disclosure surface tracked outside this test.
+    const kinds: string[] = [];
+    for (const res of [
+      freeTierLimitResponse(null),
+      freeTierGlobalLimitResponse(null),
+      freeTierTooLargeResponse(),
+      freeTierBatchResponse(),
+    ]) {
+      const body = (await res.json()) as {
+        error: { data: { kind: string } };
+      };
+      kinds.push(body.error.data.kind);
+    }
+    const meta = freeTierCreditsToolResult()._meta["tako/error"] as {
+      kind: string;
+    };
+    kinds.push(meta.kind);
+
+    expect(kinds).toHaveLength(5);
+    for (const kind of kinds) {
+      // NOT banned, deliberately:
+      //   "shared" — FREE_TIER_CREDITS_MESSAGE says the capacity is shared on
+      //     purpose, so banning it from the kind would make the two disagree.
+      //   "global" — see the topology note above.
+      // Banned: the internal naming, and the cause of the shortage.
+      expect(kind).not.toMatch(/free_tier|credit|billing|payment|exhaust|depleted|quota/i);
+    }
+  });
+
+  it("no user-facing message advertises a rate, says free, or uses the old host", () => {
+    // All five user-facing messages, including the 413 body-too-large
+    // message: it ships to clients (see `freeTierTooLargeResponse`), so the
+    // same prohibitions apply. It is NOT an upsell, though — no rate is
+    // advertised (the byte cap is exactly enforced, unlike the limiter
+    // buckets, so that number is fine; the regex below only bans a
+    // requests-per-time figure) and it carries no account URL, so it is
+    // deliberately excluded from the upsell-URL list below.
+    const allMessages = [
+      FREE_TIER_LIMIT_MESSAGE,
+      FREE_TIER_GLOBAL_LIMIT_MESSAGE,
+      FREE_TIER_BATCH_MESSAGE,
+      FREE_TIER_CREDITS_MESSAGE,
+      FREE_TIER_TOO_LARGE_MESSAGE,
+    ];
+    for (const message of allMessages) {
+      expect(message).not.toMatch(
+        /\d+\s*requests?\s*(\/|per)\s*(min|minute|sec|second)/i,
+      );
+      expect(message).not.toMatch(/\bfree\b/i);
+      expect(message).not.toContain("trytako.com");
+    }
+
+    const upsellMessages = [
+      FREE_TIER_LIMIT_MESSAGE,
+      FREE_TIER_GLOBAL_LIMIT_MESSAGE,
+      FREE_TIER_BATCH_MESSAGE,
+      FREE_TIER_CREDITS_MESSAGE,
+    ];
+    for (const message of upsellMessages) {
+      expect(message).toContain("https://tako.com/account/");
+    }
   });
 });
 
