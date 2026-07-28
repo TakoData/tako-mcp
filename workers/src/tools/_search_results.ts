@@ -490,8 +490,10 @@ export type SearchOutput = {
 
 // Which sources a search actually hit, for tailoring zero-result guidance.
 // "tako" is a legacy alias for "data" (see tako_search's sources enum).
+// searchedData is exported for tako_answer's data-gap guidance gate — one
+// definition of "did this request search the data source" across both tools.
 type SearchedSources = readonly string[];
-const searchedData = (s: SearchedSources): boolean =>
+export const searchedData = (s: SearchedSources): boolean =>
   s.includes("data") || s.includes("tako");
 const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
 

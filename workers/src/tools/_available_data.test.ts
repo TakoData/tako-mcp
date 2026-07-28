@@ -286,6 +286,25 @@ describe("buildSummary", () => {
     expect(s).toContain("next_call");
   });
 
+  it("coverage_filter header claims a filter-miss only when every drill loaded", () => {
+    const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
+    // Pure filter-miss (all drills loaded, zero matched) → filter header.
+    const pure = buildSummary({
+      query: "tesla", matches: [bare], otherMatches: [], coverageFilter: "zebra",
+    });
+    expect(pure).toContain('no coverage matching coverage_filter "zebra"');
+    // A transient drill failure in the mix → the filter verdict is unproven;
+    // generic header, per-match lines carry the detail.
+    const mixed = buildSummary({
+      query: "tesla",
+      matches: [bare, unavailableMatch(entityNode())],
+      otherMatches: [],
+      coverageFilter: "zebra",
+    });
+    expect(mixed).toContain("but none with live data coverage:");
+    expect(mixed).not.toContain('no coverage matching coverage_filter "zebra":');
+  });
+
   it("buildNextCall: handle from the first match WITH coverage; null when none has any", () => {
     expect(buildNextCall([appleMatch])).toEqual({
       tool: "tako_search",

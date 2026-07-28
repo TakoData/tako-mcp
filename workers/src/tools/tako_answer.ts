@@ -7,6 +7,7 @@ import {
   dedupeCardBoilerplate,
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
+  searchedData,
   slimCard,
   slimWebResult,
   takoCardSchema,
@@ -207,8 +208,6 @@ const takoAnswer = {
       ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
       : null;
     const cards = dedupeCardBoilerplate(parsed.data.cards.map((c) => slimCard(c, cap)));
-    const searchedData =
-      input.sources.includes("data") || input.sources.includes("tako");
     return {
       ...parsed.data,
       cards,
@@ -217,7 +216,7 @@ const takoAnswer = {
       // grounded NOTHING. Emitted regardless of how confident the prose
       // sounds — rephrasing occasionally shakes a series loose, which teaches
       // agents to retry forever; this converts that into one pivot.
-      ...(searchedData && cards.length === 0
+      ...(searchedData(input.sources) && cards.length === 0
         ? {
             guidance:
               "Data-coverage verdict: ZERO curated data cards ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry tako_answer; every retry is priced and this loop rarely converges. Recover in ONE step: either call tako_available_data (free) to confirm coverage and re-ask once pinning its node_ids, or pivot to the cited web_results / other sources now.",

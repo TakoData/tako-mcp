@@ -282,7 +282,12 @@ export function buildSummary(input: {
   if (withData === 0) {
     // Under a coverage_filter, "none" only means the filter matched nothing —
     // don't let the header claim a total coverage gap the tool didn't check.
-    header = coverageFilter !== undefined
+    // But only claim a pure filter-miss when every drill actually LOADED: if
+    // any match is unavailable (transient failure), the filter verdict is
+    // unproven — fall back to the generic header and let the per-match lines
+    // explain which drill failed.
+    const anyUnavailable = matches.some((m) => m.unavailable === true);
+    header = coverageFilter !== undefined && !anyUnavailable
       ? `Resolved ${matchesOf}, but no coverage matching coverage_filter "${coverageFilter}":`
       : `Resolved ${matchesOf}, but none with live data coverage:`;
   } else if (withData < n) {
