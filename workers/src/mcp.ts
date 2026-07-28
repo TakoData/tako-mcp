@@ -31,6 +31,7 @@ import {
 import type { Env } from "./env.js";
 import {
   checkFreeTierRateLimit,
+  FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
   freeTierCreditsToolResult,
@@ -43,6 +44,12 @@ import {
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { parseEnabledOptionalToolNames } from "./tools/_optional.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import {
+  authRequiredToolResult,
+  securitySchemesForTool,
+  withToolSecuritySchemes,
+  wwwAuthenticate,
+} from "./tools/_security.js";
 import {
   isToolOnSurface,
   toolAnnotationsForClient,
@@ -813,12 +820,21 @@ function registerTool(
         );
         throw err;
       }
-      // When the tool declares an `outputSchema`, report the structured
-      // payload alongside a JSON-stringified text fallback. Clients that
-      // understand `structuredContent` get the typed value; legacy clients
-      // fall back to the text content. When no outputSchema, text-only is
-      // sufficient.
-      const text = JSON.stringify(output, null, 2);
+      // Model-facing text channel: a tool's `renderText` (markdown for
+      // prose-heavy results) when declared, else the JSON-stringified
+      // output. A throwing renderer degrades to the JSON fallback rather
+      // than failing the call.
+      let text: string;
+      if (tool.renderText !== undefined) {
+        try {
+          text = tool.renderText(output, callCtx);
+        } catch (err) {
+          console.error(`renderText hook failed for ${tool.name}:`, err);
+          text = JSON.stringify(output, null, 2);
+        }
+      } else {
+        text = JSON.stringify(output, null, 2);
+      }
       const content: Array<
         | { type: "text"; text: string }
         | { type: "image"; data: string; mimeType: string }
@@ -938,7 +954,20 @@ function registerTool(
         _meta?: Record<string, unknown>;
       } = { content };
       if (tool.outputSchema !== undefined) {
-        result.structuredContent = output as Record<string, unknown>;
+        // `slimStructured` (paired with `renderText`) shrinks the structured
+        // channel to machine essentials — hosts count structuredContent
+        // toward model context, and the markdown text already carries the
+        // full content. Fallback on throw: the full output (correct, just
+        // token-heavier).
+        let structured = output as Record<string, unknown>;
+        if (tool.slimStructured !== undefined) {
+          try {
+            structured = tool.slimStructured(output);
+          } catch (err) {
+            console.error(`slimStructured hook failed for ${tool.name}:`, err);
+          }
+        }
+        result.structuredContent = structured;
       }
       if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
         result._meta = resultMeta;

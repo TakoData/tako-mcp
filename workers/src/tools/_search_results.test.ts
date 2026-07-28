@@ -248,9 +248,11 @@ describe("slimCard — explicit exportable flag", () => {
   });
 });
 
-// Gated (exportable:false) cards carry no rows anywhere; the values_hint makes
-// the routing (description holds the headline; tako_answer for figures)
-// per-card and deterministic instead of a tool-description recall exercise.
+// Non-exportable (exportable:false) cards carry no rows anywhere; the
+// values_hint makes the routing (description holds the headline when present;
+// tako_answer for figures) per-card and deterministic instead of a
+// tool-description recall exercise. Wording is neutral ("not exportable"):
+// export_safe() also fails closed on non-licensing causes.
 describe("slimCard — values_hint on gated cards", () => {
   it("stamps a values_hint with pinned node_ids on an exportable:false card", () => {
     const card: TakoCard = {
@@ -262,7 +264,7 @@ describe("slimCard — values_hint on gated cards", () => {
       ],
     };
     const hint = slimCard(card, 5).values_hint;
-    expect(hint).toContain("license-gated");
+    expect(hint).toContain("not exportable");
     expect(hint).toContain("tako_answer");
     expect(hint).toContain('["n1","n2"]');
   });
@@ -274,9 +276,22 @@ describe("slimCard — values_hint on gated cards", () => {
     expect(hint).not.toContain("node_ids");
   });
 
+  it("points at the headline only when the card actually carries a description", () => {
+    const withDesc: TakoCard = {
+      card_id: "c1",
+      exportable: false,
+      description: "Latest value 59.2%, up 1.1pp",
+    };
+    expect(slimCard(withDesc, 5).values_hint).toContain("headline value is in description");
+    const withoutDesc: TakoCard = { card_id: "c2", exportable: false };
+    expect(slimCard(withoutDesc, 5).values_hint).not.toContain("description");
+    const blankDesc: TakoCard = { card_id: "c3", exportable: false, description: "  " };
+    expect(slimCard(blankDesc, 5).values_hint).not.toContain("description");
+  });
+
   it("stamps the hint on a fallback-derived gated card (no flag, no content)", () => {
     const card: TakoCard = { card_id: "c1", title: "t" };
-    expect(slimCard(card, 5).values_hint).toContain("license-gated");
+    expect(slimCard(card, 5).values_hint).toContain("not exportable");
   });
 
   it("never stamps a values_hint on an exportable card", () => {

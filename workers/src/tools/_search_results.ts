@@ -89,7 +89,7 @@ export const takoCardSchema = z
       .string()
       .optional()
       .describe(
-        "Present only on exportable:false (license-gated) cards: where this card's values live — headline in `description`, specific figures via tako_answer with node_ids pinned.",
+        "Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — headline in `description` when the card carries one, specific figures via tako_answer with node_ids pinned.",
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
@@ -321,7 +321,7 @@ export function slimCardContent(
 const CARD_KEY_ORDER = [
   "card_id",
   "title",
-  // `description` rides third: on license-gated (exportable:false) cards it
+  // `description` rides third: on non-exportable (exportable:false) cards it
   // IS the data — the backend puts the headline value + % change there — so
   // it must precede the URL/methodology chrome a truncating client drops.
   "description",
@@ -376,14 +376,24 @@ export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
   );
 };
 
-// Routing hint for a license-gated (exportable:false) card. Gated cards carry
-// no rows on any surface — the headline value lives in `description` and
-// specific figures come from tako_answer — so the hint makes that routing
-// per-card and deterministic instead of a tool-description recall exercise.
+// Routing hint for a non-exportable (exportable:false) card. Such cards carry
+// no rows on any surface — specific figures come from tako_answer — so the
+// hint makes that routing per-card and deterministic instead of a
+// tool-description recall exercise. Wording stays NEUTRAL ("not exportable",
+// not "license-gated"): the backend's export_safe() also fails closed on
+// blank/unresolvable source names and config-alignment errors, and narrating
+// those as a licensing decision would keep real bugs from being reported.
+// The "headline value is in description" clause is asserted only when the
+// card actually carries a description — an unverified pointer is worse than
+// none.
 function valuesHint(card: TakoCard): string {
   const ids = (card.nodes ?? []).map((n) => n.id);
   const pin = ids.length > 0 ? ` with node_ids ${JSON.stringify(ids)} pinned` : "";
-  return `rows license-gated; headline value is in description; for specific figures call tako_answer${pin}`;
+  const headline =
+    typeof card.description === "string" && card.description.trim() !== ""
+      ? "headline value is in description; "
+      : "";
+  return `rows not exportable; ${headline}for specific figures call tako_answer${pin}`;
 }
 
 // Only paragraph-length strings are worth hoisting — moving a short label

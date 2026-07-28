@@ -4,6 +4,12 @@ import { djangoPost } from "../django.js";
 import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
+  answerSlimOutputShape,
+  renderAnswerMarkdown,
+  slimAnswerStructured,
+  type AnswerFullOutput,
+} from "./_render_markdown.js";
+import {
   hoistSourceGlossary,
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
@@ -19,11 +25,13 @@ import type { ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Ask one specific data question; get one synthesized answer grounded in the data or web tako cites.",
   "",
-  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for license-gated cards: when a search card is `exportable: false`, ask here with its node_ids pinned to get the figures.",
+  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a search card is `exportable: false` (usually license-gated), ask here with its node_ids pinned to get the figures.",
   "",
   "`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.",
   "",
   "Grounds over BOTH data and web by default. When unsure the proprietary data exists or its exact name, run `tako_available_data` first (free, instant) — the recommended first step — then pin the node_ids it returns here for an accurate, grounded answer. Cited data cards inline their recent rows by default (see include_contents/preview_rows), so the series arrives with the answer; for the full history or a cited page's text, call `tako_contents` on its url.",
+  "",
+  "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, recent rows) and web citations, then source notes. Machine essentials (request_id, usage, guidance) ride separately in structuredContent.",
 ].join("\n");
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).
@@ -78,19 +86,13 @@ const inputSchema = z.object({
 });
 type Input = z.infer<typeof inputSchema>;
 
-// Parity-check outcome: Path 2 — keep the hand-written outputSchema as the
-// MCP facade (always returns arrays, never undefined) and validate the raw
-// wire against the generated AnswerResponse contract before mapping.
-//
-// The generated AnswerResponse has cards/web_results as *optional* (may be
-// absent on the wire). The hand-written facade normalises them to required
-// arrays (defaulting ?? []) so callers never see undefined. If we switched to
-// outputSchema = AnswerResponse directly the existing test
-// "defaults missing optional fields to empty arrays" would fail because
-// AnswerResponse allows cards: undefined. The generated AnswerResponse is
-// therefore used as the wire-guard (AnswerResponse.safeParse on raw data)
-// while the hand-written schema remains the tool's advertised output shape.
-const outputSchema = z.object({
+// INTERNAL full output shape: normalises the wire into the handler's return
+// value (always arrays, never undefined; the generated AnswerResponse stays
+// the wire-guard). NOT the advertised schema — the full content reaches the
+// model as rendered markdown (renderText below), and the ADVERTISED
+// outputSchema is the slim structuredContent shape so hosts that count
+// structuredContent toward context don't pay for the content twice.
+const fullOutputSchema = z.object({
   answer: z.string(),
   cards: z.array(takoCardSchema),
   web_results: z.array(webResultSchema),
@@ -105,9 +107,19 @@ const outputSchema = z.object({
   guidance: z.string().optional(),
   // Source/methodology paragraphs hoisted out of the cited cards (one copy
   // each, keyed by name) — appended last so truncating clients lose
-  // boilerplate before data. Mirrors tako_search.
-  sources_glossary: z.record(z.string(), z.string()).optional(),
+  // boilerplate before data. Mirrors tako_search, .describe() included: the
+  // declared outputSchema is the only place the model learns what this
+  // Record<string,string> is.
+  sources_glossary: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(
+      "Source/methodology descriptions shared by the cards, keyed by name — hoisted here so each rides once instead of once per card.",
+    ),
 });
+
+// Advertised (slim) schema — see the fullOutputSchema comment above.
+const outputSchema = answerSlimOutputShape;
 
 type Output = z.infer<typeof outputSchema>;
 
@@ -185,7 +197,9 @@ const takoAnswer = {
     // closed-world there. See `annotationsByClient` in types.ts.
     chatgpt: { openWorldHint: false },
   },
-  async handler(input, ctx): Promise<Output> {
+  // Declared as the FULL internal shape (assignable to the slim advertised
+  // Output via its loose index signature) so tests and hooks keep real types.
+  async handler(input, ctx): Promise<AnswerFullOutput> {
     // GA /api/v1/answer takes the v3 SearchRequest shape: top-level `query`
     // + a per-source `sources` OBJECT (an index is searched iff its key is
     // present; include_contents is per-source). The old flat `source_indexes`
@@ -207,8 +221,8 @@ const takoAnswer = {
     }
     const wire = wireCheck.data;
 
-    // Map into the normalised MCP output (always returns arrays, never undefined).
-    const parsed = outputSchema.safeParse({
+    // Map into the normalised internal output (always arrays, never undefined).
+    const parsed = fullOutputSchema.safeParse({
       answer: wire.answer,
       cards: wire.cards ?? [],
       web_results: wire.web_results ?? [],
@@ -252,6 +266,13 @@ const takoAnswer = {
       // clients then drop boilerplate first.
       ...(glossary === undefined ? {} : { sources_glossary: glossary }),
     };
+  },
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderAnswerMarkdown(output as unknown as AnswerFullOutput);
+  },
+  slimStructured(output) {
+    return slimAnswerStructured(output as unknown as AnswerFullOutput);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

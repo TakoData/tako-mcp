@@ -1,0 +1,310 @@
+/**
+ * Markdown renderers for the model-facing text channel of `tako_search` and
+ * `tako_answer`, plus the paired `structuredContent` slimmers.
+ *
+ * Why markdown: the consumers of these tools are agents reading text. JSON
+ * taxes prose-heavy content twice — escaped newlines/quotes inside snippets,
+ * and per-item key repetition (`"title":`, `"url":`, … × N results) — and a
+ * truncated JSON string is malformed where a truncated markdown doc just
+ * loses its tail. Layout: Tako data cards first, then web results, then the
+ * hoisted source notes, so truncating clients lose boilerplate before data.
+ *
+ * The channel split (see `mcp.ts`): `renderText` output becomes
+ * `content.text` (everything the model reads); `slimStructured` output
+ * becomes `structuredContent` (machine essentials only — widget fields,
+ * request_id, usage, guidance). Hosts count BOTH toward model context, so
+ * the slim side is what keeps markdown from doubling the bill.
+ *
+ * `_`-prefixed so the registry codegen (`gen-registry.ts`) skips it.
+ */
+import { z } from "zod";
+
+import {
+  autoChainShape,
+  usageSchema,
+  type SearchOutput,
+  type TakoCard,
+  type Usage,
+  type WebResult,
+} from "./_search_results.js";
+
+/** The advertised (slim) structuredContent shape for tako_search. Loose so
+ *  the handler's FULL output object still satisfies it type-wise; the wire
+ *  value is the slimmed object from `slimSearchStructured`. */
+export const searchSlimOutputShape = z.looseObject({
+  request_id: z.string(),
+  usage: usageSchema
+    .nullable()
+    .describe("Cost-plus usage for this request (null when not metered)."),
+  guidance: z
+    .string()
+    .optional()
+    .describe("Present only on a zero-card response: the recovery protocol."),
+  ...autoChainShape,
+});
+
+/** The advertised (slim) structuredContent shape for tako_answer. */
+export const answerSlimOutputShape = z.looseObject({
+  request_id: z.string(),
+  usage: usageSchema
+    .nullable()
+    .describe("Cost-plus usage for this request (null when not metered)."),
+  guidance: z
+    .string()
+    .optional()
+    .describe(
+      "Present only when the data source grounded zero cards: the deterministic coverage verdict.",
+    ),
+});
+
+/** tako_answer's full handler output (internal; the advertised schema is
+ *  `answerSlimOutputShape` and the full content rides in the markdown). The
+ *  index signature + explicit `| undefined` optionals keep it mutually
+ *  assignable with the zod-inferred internal shape and the slim advertised
+ *  Output under exactOptionalPropertyTypes. */
+export interface AnswerFullOutput {
+  answer: string;
+  cards: TakoCard[];
+  web_results: WebResult[];
+  usage: Usage | null;
+  request_id: string;
+  guidance?: string | undefined;
+  sources_glossary?: Record<string, string> | undefined;
+  [key: string]: unknown;
+}
+
+const WIDGET_KEYS = [
+  "pub_id",
+  "embed_url",
+  "image_url",
+  "dark_mode",
+  "width",
+  "height",
+] as const;
+
+/** structuredContent for tako_search: widget fields + machine essentials. */
+export function slimSearchStructured(o: SearchOutput): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    request_id: o.request_id,
+    usage: o.usage,
+  };
+  if (o.guidance !== undefined) out.guidance = o.guidance;
+  for (const k of WIDGET_KEYS) {
+    if (o[k] !== undefined) out[k] = o[k];
+  }
+  return out;
+}
+
+/** structuredContent for tako_answer: machine essentials only. */
+export function slimAnswerStructured(o: AnswerFullOutput): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    request_id: o.request_id,
+    usage: o.usage,
+  };
+  if (o.guidance !== undefined) out.guidance = o.guidance;
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Rendering helpers
+// ---------------------------------------------------------------------------
+
+const cell = (v: unknown): string =>
+  v === null || v === undefined ? "" : String(v).replaceAll("|", "\\|").replaceAll("\n", " ");
+
+function markdownTable(header: string[], rows: unknown[][]): string {
+  const head = `| ${header.map(cell).join(" | ")} |`;
+  const rule = `|${header.map(() => "---").join("|")}|`;
+  const body = rows.map((r) => `| ${r.map(cell).join(" | ")} |`);
+  return [head, rule, ...body].join("\n");
+}
+
+type LooseContent = {
+  content_format?: string | null;
+  data?: string | null;
+  records?: Array<Record<string, unknown>> | null;
+  dataset?: { columns?: unknown; rows?: unknown[] } | null;
+  total_rows?: number | null;
+  truncated?: boolean | null;
+};
+
+/** Render a card's inline rows: dataset/records → markdown table, csv → fence. */
+function renderContentRows(content: TakoCard["content"]): string | undefined {
+  if (content == null) return undefined;
+  const c = content as LooseContent;
+  const totalNote = (shown: number): string => {
+    const total = c.total_rows ?? undefined;
+    const cut = c.truncated === true;
+    if (total !== undefined && total > shown) {
+      return `data (${shown} most recent of ${total} rows — full export via tako_contents):`;
+    }
+    return cut ? `data (${shown} rows, truncated):` : `data (${shown} rows):`;
+  };
+
+  if (c.dataset && Array.isArray(c.dataset.rows) && c.dataset.rows.length > 0) {
+    const cols = Array.isArray(c.dataset.columns)
+      ? c.dataset.columns.map((col) =>
+          col !== null && typeof col === "object" && "name" in (col as object)
+            ? String((col as { name?: unknown }).name ?? "")
+            : String(col),
+        )
+      : [];
+    const rows = c.dataset.rows.filter(Array.isArray) as unknown[][];
+    if (rows.length === 0) return undefined;
+    const width = cols.length > 0 ? cols.length : (rows[0] as unknown[]).length;
+    const header = cols.length > 0 ? cols : Array.from({ length: width }, (_v, i) => `c${i + 1}`);
+    return `${totalNote(rows.length)}\n${markdownTable(header, rows)}`;
+  }
+
+  if (Array.isArray(c.records) && c.records.length > 0) {
+    const first = c.records[0] as Record<string, unknown>;
+    const keys = Object.keys(first);
+    if (keys.length === 0) return undefined;
+    const rows = c.records.map((r) => keys.map((k) => r[k]));
+    return `${totalNote(c.records.length)}\n${markdownTable(keys, rows)}`;
+  }
+
+  if (typeof c.data === "string" && c.data.trim() !== "") {
+    const lines = c.data.split("\n").filter((l) => l !== "");
+    const shown = Math.max(0, lines.length - 1); // minus header line
+    return `${totalNote(shown)}\n\`\`\`csv\n${c.data.trim()}\n\`\`\``;
+  }
+
+  return undefined;
+}
+
+/** Names riding on a card's sources/methodologies arrays (paragraphs live in
+ *  the glossary section, keyed by these names). */
+function namesOf(items: unknown, nameKey: string): string[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((i) =>
+      i !== null && typeof i === "object" ? (i as Record<string, unknown>)[nameKey] : undefined,
+    )
+    .filter((n): n is string => typeof n === "string" && n !== "");
+}
+
+type LooseDefinition = { term?: unknown; metric_name?: unknown; name?: unknown; definition?: unknown };
+
+function renderCard(card: TakoCard, idx: number): string {
+  const rec = card as Record<string, unknown>;
+  const lines: string[] = [];
+  lines.push(`### ${idx + 1}. ${card.title ?? card.card_id ?? "Untitled card"}`);
+  if (typeof card.description === "string" && card.description !== "") {
+    lines.push(card.description);
+  }
+
+  const facts: string[] = [];
+  facts.push(`exportable: ${card.exportable === true ? "yes" : "no"}`);
+  if (typeof rec.data_freshness === "string") facts.push(`freshness: ${rec.data_freshness}`);
+  const nodes = card.nodes ?? [];
+  if (nodes.length > 0) {
+    facts.push(`nodes: ${nodes.map((n) => `\`${n.id}\` (${n.name})`).join(", ")}`);
+  }
+  const sourceNames = namesOf(rec.sources, "source_name");
+  if (sourceNames.length > 0) facts.push(`source: ${sourceNames.join(", ")}`);
+  if (typeof card.webpage_url === "string" && card.webpage_url !== "") {
+    facts.push(`chart: ${card.webpage_url}`);
+  }
+  lines.push(facts.join(" · "));
+
+  if (typeof rec.values_hint === "string") lines.push(`values_hint: ${rec.values_hint}`);
+
+  const defs = rec.metric_definitions;
+  if (Array.isArray(defs) && defs.length > 0) {
+    const rendered = defs
+      .map((d) => {
+        if (d === null || typeof d !== "object") return undefined;
+        const ld = d as LooseDefinition;
+        const term = ld.term ?? ld.metric_name ?? ld.name;
+        if (typeof term !== "string" || typeof ld.definition !== "string") return undefined;
+        return `- ${term}: ${ld.definition}`;
+      })
+      .filter((s): s is string => s !== undefined);
+    if (rendered.length > 0) lines.push(rendered.join("\n"));
+  }
+
+  const rows = renderContentRows(card.content);
+  if (rows !== undefined) lines.push(rows);
+
+  return lines.join("\n");
+}
+
+function renderWebResult(w: WebResult, idx: number): string {
+  const lines: string[] = [`${idx + 1}. Title: ${w.title}`, `URL: ${w.url}`];
+  const meta: string[] = [];
+  if (typeof w.source_name === "string" && w.source_name !== "") meta.push(w.source_name);
+  if (typeof w.publish_date === "string" && w.publish_date !== "") {
+    meta.push(`Published: ${w.publish_date}`);
+  }
+  if (meta.length > 0) lines.push(meta.join(" · "));
+  if (typeof w.snippet === "string" && w.snippet.trim() !== "") lines.push(w.snippet.trim());
+  return lines.join("\n");
+}
+
+function renderGlossary(glossary: Record<string, string> | undefined): string | undefined {
+  if (glossary === undefined) return undefined;
+  const entries = Object.entries(glossary);
+  if (entries.length === 0) return undefined;
+  return ["## Source Notes", ...entries.map(([name, text]) => `**${name}**: ${text}`)].join("\n\n");
+}
+
+function renderFooter(requestId: string, usage: Usage | null): string {
+  const parts = [`request_id: ${requestId}`];
+  if (usage !== null && typeof usage.total_cost_usd === "number") {
+    parts.push(`cost: $${usage.total_cost_usd}`);
+  }
+  return `_${parts.join(" · ")}_`;
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+/** The tako_search text channel: guidance (if any) → data cards → web
+ *  results → source notes → footer. */
+export function renderSearchMarkdown(o: SearchOutput): string {
+  const blocks: string[] = [];
+  if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
+
+  if (o.cards.length > 0) {
+    blocks.push(`## Tako Data (${o.cards.length} card${o.cards.length === 1 ? "" : "s"})`);
+    blocks.push(...o.cards.map((c, i) => renderCard(c, i)));
+  } else if (o.guidance === undefined) {
+    blocks.push("## Tako Data\nNo data cards matched.");
+  }
+
+  if (o.web_results.length > 0) {
+    blocks.push(`## Web Results (${o.web_results.length})`);
+    blocks.push(o.web_results.map((w, i) => renderWebResult(w, i)).join("\n\n---\n\n"));
+  }
+
+  const glossary = renderGlossary(o.sources_glossary);
+  if (glossary !== undefined) blocks.push(glossary);
+
+  blocks.push(renderFooter(o.request_id, o.usage));
+  return blocks.join("\n\n");
+}
+
+/** The tako_answer text channel: the synthesized answer first, then its
+ *  citations (cards + web), source notes, footer. */
+export function renderAnswerMarkdown(o: AnswerFullOutput): string {
+  const blocks: string[] = [o.answer];
+  if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
+
+  if (o.cards.length > 0) {
+    blocks.push(`## Cited Data (${o.cards.length} card${o.cards.length === 1 ? "" : "s"})`);
+    blocks.push(...o.cards.map((c, i) => renderCard(c, i)));
+  }
+
+  if (o.web_results.length > 0) {
+    blocks.push(`## Cited Web (${o.web_results.length})`);
+    blocks.push(o.web_results.map((w, i) => renderWebResult(w, i)).join("\n\n---\n\n"));
+  }
+
+  const glossary = renderGlossary(o.sources_glossary);
+  if (glossary !== undefined) blocks.push(glossary);
+
+  blocks.push(renderFooter(o.request_id, o.usage));
+  return blocks.join("\n\n");
+}

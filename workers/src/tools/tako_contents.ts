@@ -32,7 +32,7 @@ const DESCRIPTION = [
   "",
   "Best for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.",
   "",
-  "Precondition (Tako cards): license-gated cards (`exportable: false`) always 403. Never call this on them; their headline value is in the card's `description` and specific figures come from `tako_answer` (see the card's `values_hint`). Call only on `exportable: true` cards, and even then a rare card still 403s: fall back, don't retry.",
+  "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) always 403. Never call this on them; their headline value is in the card's `description` (when present) and specific figures come from `tako_answer` (see the card's `values_hint`). Call only on `exportable: true` cards, and even then a rare card still 403s: fall back, don't retry.",
   "",
   "Web URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
 ].join("\n");
@@ -72,17 +72,26 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
     ),
   // Web-text character cap, passed through to the wire. The backend default is
   // the FULL page text (up to 1M chars ≈ 250k tokens — observed in the wild and
-  // unreadable for any client), so the MCP defaults it DOWN to a context-sized
-  // cap instead. Billing is per page regardless of the cap, so the default
-  // costs nothing; `truncated` reports any cut.
+  // unreadable for any client), so the HANDLER defaults it DOWN to a
+  // context-sized 100k — but only where the text reaches the model:
+  //   inline, no query → 100k (billing is per page, so the cap costs nothing)
+  //   inline + query   → pinned to the 1M ceiling (passages scan the FULL
+  //                      text; a capped scan would turn "term at char 300k"
+  //                      into a false "deterministic miss")
+  //   url mode         → omitted (nothing reaches the model; the cap would
+  //                      truncate the downloaded FILE and, because max_chars
+  //                      is part of the backend's S3 cache key, bust every
+  //                      previously cached page)
+  // Kept .optional() with NO zod default so the handler can tell "caller
+  // asked for this cap" from "caller said nothing".
   max_chars: z
     .number()
     .int()
     .gte(1)
     .lte(1_000_000)
-    .default(100_000)
+    .optional()
     .describe(
-      "Web URLs only: character cap on the extracted page text (default 100,000; max 1,000,000 = full text). Billing is per page regardless, so the cap only trims what reaches you — `truncated: true` reports a cut. Raise it when you need a full long document, or pass `query` to pull just the matching passages instead. Ignored for Tako card URLs (use max_rows).",
+      "Web URLs only: character cap on the extracted page text (max 1,000,000 = full text). Inline fetches default to 100,000 — billing is per page regardless, so the cap only trims what reaches you, and `truncated: true` reports a cut. Raise it when you need a full long document inline. In url mode the downloaded file is the full text unless you set this (an explicit value caps the file too). Ignored when `query` is set (passages always scan the full text) and for Tako card URLs (use max_rows).",
     ),
   // MCP-layer feature, deliberately NOT part of the wire body (the handler
   // strips it): the worker fetches the page text and slices out the passages
@@ -93,7 +102,7 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
     .min(1)
     .optional()
     .describe(
-      'Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query="RevPAR" against a hotel earnings page. The `note` field summarizes the matches; a no-match note says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode.',
+      'Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query="RevPAR" against a hotel earnings page. The FULL page text is always scanned (max_chars is ignored). The `note` field summarizes the matches; a no-match note says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode.',
     ),
 });
 
@@ -166,7 +175,21 @@ const takoContents = {
     // rest conforms to the generated ContentsRequest contract (url + mode +
     // optional max_rows); max_rows, when omitted, is absent from `input` and so
     // dropped from the JSON body — the backend then applies its 20-row default.
-    const { query: passageQuery, ...body } = input;
+    const { query: passageQuery, max_chars: maxCharsAsked, ...rest } = input;
+    const inline = input.mode !== "url";
+    // Effective web-text cap (see the max_chars schema comment for the full
+    // rationale): query pins the ceiling so passages scan the whole page;
+    // plain inline defaults to 100k; url mode sends nothing unless the caller
+    // set a cap explicitly — an undefined here both leaves the wire field off
+    // and disables the derived-truncation check below.
+    const maxChars =
+      inline && passageQuery !== undefined
+        ? 1_000_000
+        : maxCharsAsked ?? (inline ? 100_000 : undefined);
+    const body = {
+      ...rest,
+      ...(maxChars !== undefined ? { max_chars: maxChars } : {}),
+    };
     void (body satisfies z.input<typeof ContentsRequest>);
     let raw: unknown;
     try {
@@ -243,6 +266,22 @@ const takoContents = {
     let dataText = item.data ?? undefined;
     let note: string | undefined;
     let cut = item.truncated ?? false;
+    // Derive `truncated` for capped web text: the backend's `truncated` flag
+    // is rows-only (never set on the web route), so a page cut at max_chars
+    // would otherwise arrive with no truncation signal at all — and the
+    // minimal envelope reads absence as "complete". Length AT the cap is
+    // treated as cut; the false positive (a page exactly cap-length) is
+    // vanishingly rare next to the guaranteed false "complete" on every long
+    // page. Web text is identified by a missing content_format (cards always
+    // carry one).
+    if (
+      item.content_format == null &&
+      typeof dataText === "string" &&
+      maxChars !== undefined &&
+      dataText.length >= maxChars
+    ) {
+      cut = true;
+    }
     if (
       passageQuery !== undefined &&
       item.content_format == null &&

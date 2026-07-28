@@ -261,16 +261,55 @@ describe("tako_contents handler", () => {
     });
   });
 
-  it("caps web text via max_chars: schema-parsed input carries the 100k default onto the wire", async () => {
+  it("caps web text via max_chars: the handler applies the 100k inline default onto the wire", async () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://example.com/a" }],
       request_id: "r-chars",
     });
+    // The schema deliberately has NO default — the handler decides per mode.
     const parsed = tool.inputSchema.parse({ url: "https://example.com/a" });
-    expect(parsed.max_chars).toBe(100_000);
+    expect(parsed.max_chars).toBeUndefined();
     await tool.handler(parsed, ctx);
     const call = vi.mocked(djangoPost).mock.calls[0]!;
     expect((call[3] as { max_chars?: number }).max_chars).toBe(100_000);
+  });
+
+  it("url mode: omits max_chars from the wire unless the caller set one (full file, cache key preserved)", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [
+        { content_format: null, url: "https://signed/txt", expires_at: "2026-06-26T00:00:00Z", cost: 1, source_url: "https://example.com/a" },
+      ],
+      request_id: "r-url-nochars",
+    });
+    const parsed = tool.inputSchema.parse({ url: "https://example.com/a", mode: "url" });
+    await tool.handler(parsed, ctx);
+    expect(vi.mocked(djangoPost).mock.calls[0]![3]).not.toHaveProperty("max_chars");
+  });
+
+  it("query: pins max_chars to the 1M ceiling so passages scan the full text", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "RevPAR was here", cost: 1, source_url: "https://example.com/a" }],
+      request_id: "r-q-pin",
+    });
+    // Even an explicit cap is overridden — a capped scan would turn a late
+    // match into a false deterministic miss.
+    const parsed = tool.inputSchema.parse({
+      url: "https://example.com/a", query: "RevPAR", max_chars: 5000,
+    });
+    await tool.handler(parsed, ctx);
+    expect((vi.mocked(djangoPost).mock.calls[0]![3] as { max_chars?: number }).max_chars).toBe(1_000_000);
+  });
+
+  it("derives truncated for web text cut at max_chars (backend never sets it on the web route)", async () => {
+    const page = "x".repeat(50);
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: page, truncated: false, cost: 1, source_url: "https://example.com/a" }],
+      request_id: "r-derived-cut",
+    });
+    const parsed = tool.inputSchema.parse({ url: "https://example.com/a", max_chars: 50 });
+    const out = await tool.handler(parsed, ctx);
+    expect(out.truncated).toBe(true);
+    // Below the cap → complete → omitted (see the web-text test above).
   });
 
   it("max_chars: accepts a caller override up to the 1M full-text ceiling, rejects out-of-range", async () => {
