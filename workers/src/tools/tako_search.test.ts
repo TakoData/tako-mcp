@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../env.js";
 import { SearchRequest } from "../generated/schemas.js";
 import type { ToolContext } from "./types.js";
+import { INLINE_PREVIEW_ROW_CAP, MAX_PREVIEW_ROWS } from "./_search_results.js";
 import tako_search, { buildSearchBody } from "./tako_search.js";
 import {
   bodyOf,
@@ -52,6 +53,7 @@ const DEFAULTS = {
   sources: ["data"] as ("data" | "web" | "tako")[],
   count: 10,
   include_contents: false,
+  preview_rows: 20,
   country_code: "US",
   locale: "en-US",
   strict: false,
@@ -142,6 +144,15 @@ describe("tako_search input schema", () => {
   it("accepts the legacy \"tako\" synonym in the sources enum", () => {
     const parsed = tako_search.inputSchema.safeParse({ query: "x", sources: ["tako"] });
     expect(parsed.success).toBe(true);
+  });
+
+  it("defaults preview_rows to INLINE_PREVIEW_ROW_CAP and bounds it at 1..MAX_PREVIEW_ROWS", () => {
+    const parsed = tako_search.inputSchema.safeParse({ query: "x" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.preview_rows).toBe(INLINE_PREVIEW_ROW_CAP);
+    expect(tako_search.inputSchema.safeParse({ query: "x", preview_rows: MAX_PREVIEW_ROWS }).success).toBe(true);
+    expect(tako_search.inputSchema.safeParse({ query: "x", preview_rows: 0 }).success).toBe(false);
+    expect(tako_search.inputSchema.safeParse({ query: "x", preview_rows: MAX_PREVIEW_ROWS + 1 }).success).toBe(false);
   });
 
   it("accepts effort=fast", () => {
@@ -411,6 +422,7 @@ describe("tako_search graph grounding", () => {
         query: "Tesla revenue",
         sources: ["data"],
         count: 10,
+        preview_rows: 20,
         include_contents: false,
         country_code: "US",
         locale: "en-US",
@@ -443,7 +455,7 @@ describe("tako_search graph grounding", () => {
     expect(body.sources).toEqual({ data: { count: 10, include_contents: false } });
   });
 
-  it("caps a card's inline row preview to 5 most-recent rows when include_contents is on", async () => {
+  it("caps a card's inline row preview to the INLINE_PREVIEW_ROW_CAP most-recent rows when include_contents is on", async () => {
     mockFetchSequence([
       jsonResponse(200, {
         cards: [
@@ -475,17 +487,92 @@ describe("tako_search graph grounding", () => {
 
     // include_contents defaults true; call without pinning it false.
     const out = await tako_search.handler(
-      { query: "cpi", sources: ["data"], count: 10, include_contents: true, country_code: "US", locale: "en-US", strict: false },
+      { query: "cpi", sources: ["data"], count: 10, include_contents: true, preview_rows: INLINE_PREVIEW_ROW_CAP, country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
 
     const ds = (out.cards[0]?.content as { dataset: { rows: unknown[] } }).dataset;
-    expect(ds.rows).toHaveLength(5);
-    // Kept the MOST-RECENT 5 (tail of the series).
-    expect(ds.rows[4]).toEqual(["d299", 299]);
+    expect(ds.rows).toHaveLength(INLINE_PREVIEW_ROW_CAP);
+    // Kept the MOST-RECENT rows (tail of the series).
+    expect(ds.rows[INLINE_PREVIEW_ROW_CAP - 1]).toEqual(["d299", 299]);
     // Metadata preserved so the model knows more is available (priced).
     expect((out.cards[0]?.content as Record<string, unknown>).total_rows).toBe(300);
     expect((out.cards[0]?.content as Record<string, unknown>).truncated).toBe(true);
+  });
+
+  it("preview_rows raises the inline cap per call (50 → 50 most-recent rows survive)", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [
+          {
+            card_id: "cpi",
+            title: "US Core CPI",
+            webpage_url: "https://trytako.com/c/cpi",
+            content: {
+              content_format: "json_compact",
+              cost: 0.001,
+              total_rows: 300,
+              truncated: true,
+              dataset: {
+                columns: [{ name: "t", type: "datetime" }, { name: "v", type: "number" }],
+                rows: Array.from({ length: 300 }, (_v, i) => [`d${i}`, i]),
+                total_rows: 300,
+                truncated: true,
+                ref: "cpi-ref",
+                sources: [],
+                provenance: "query",
+              },
+            },
+          },
+        ],
+        web_results: [],
+        request_id: "req-cap-50",
+      }),
+    ]);
+
+    const out = await tako_search.handler(
+      { ...DEFAULTS, query: "cpi", include_contents: true, preview_rows: 50 },
+      CTX,
+    );
+
+    const ds = (out.cards[0]?.content as { dataset: { rows: unknown[] } }).dataset;
+    expect(ds.rows).toHaveLength(50);
+    expect(ds.rows[49]).toEqual(["d299", 299]); // still the most-recent tail
+  });
+
+  it("preview_rows is inert when include_contents is false (rows still dropped)", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [
+          {
+            card_id: "cpi",
+            title: "US Core CPI",
+            content: {
+              content_format: "json_compact",
+              cost: 0.001,
+              total_rows: 300,
+              truncated: true,
+              dataset: {
+                columns: [{ name: "t", type: "datetime" }],
+                rows: [["d0"], ["d1"]],
+                total_rows: 300,
+                truncated: true,
+                ref: "cpi-ref",
+                sources: [],
+                provenance: "query",
+              },
+            },
+          },
+        ],
+        web_results: [],
+        request_id: "req-inert",
+      }),
+    ]);
+    const out = await tako_search.handler(
+      { ...DEFAULTS, query: "cpi", include_contents: false, preview_rows: 250 },
+      CTX,
+    );
+    expect((out.cards[0]?.content as Record<string, unknown>).dataset).toBeNull();
   });
 
   it("drops card row data entirely when include_contents is false (pointers-only mode)", async () => {

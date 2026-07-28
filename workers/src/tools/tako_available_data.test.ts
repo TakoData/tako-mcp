@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import { PREVIEW } from "./_available_data.js";
+import { MAX_COVERAGE_NAMES, MAX_COVERAGE_PAGES, PAGE_LIMIT } from "./_available_data.js";
 import takoAvailableData from "./tako_available_data.js";
 import {
   jsonResponse,
@@ -21,12 +21,15 @@ const searchHit = (id: string, name: string, type = "entity", label = "ORG") => 
 });
 
 // A drilled single-relation response: `relation` carries the one group.
-const drill = (id: string, name: string, key: string, items: string[], total?: number, capped = false) => ({
+const drill = (
+  id: string, name: string, key: string, items: string[],
+  total?: number, capped = false, nextCursor: string | null = null,
+) => ({
   node: { id, type: key === "metrics" ? "entity" : "metric", name },
   relation: {
     key, kind: key === "metrics" ? "data" : "related", label: key,
     items: items.map((m, i) => ({ id: `${key}-${i}`, type: "node", name: m })),
-    total: total ?? items.length, total_capped: capped, next_cursor: null,
+    total: total ?? items.length, total_capped: capped, next_cursor: nextCursor,
   },
 });
 
@@ -87,7 +90,7 @@ describe("tako_available_data", () => {
     for (const url of drills) {
       expect(url.pathname).toBe("/api/beta/graph/related");
       expect(url.searchParams.get("relation")).toBe("metrics");
-      expect(url.searchParams.get("limit")).toBe(String(PREVIEW));
+      expect(url.searchParams.get("limit")).toBe(String(PAGE_LIMIT));
     }
     expect(out.found).toBe(true);
     expect(out.matches[0]?.node_id).toBe("apple-inc");
@@ -198,5 +201,191 @@ describe("tako_available_data", () => {
   it("throws a self-correcting message when graph/search returns an unexpected shape", async () => {
     mockFetchSequence([jsonResponse(200, { nonsense: true })]);
     await expect(takoAvailableData.handler({ q: "apple" }, CTX)).rejects.toThrow(/unexpected shape/);
+  });
+
+  it("paginates the coverage drill with the cursor and concatenates every page's names", async () => {
+    // The whole point of pagination: a metric buried past page 1 ("Net
+    // charges-off" behind 100 boilerplate normalized-accounting names) must
+    // appear in coverage.names of the ONE call — no second fetch, no filter.
+    const page1 = drill(
+      "cof", "Capital One Financial", "metrics",
+      Array.from({ length: PAGE_LIMIT }, (_, i) => `Metric ${i}`), 101, false, "cursor-2",
+    );
+    const page2 = drill(
+      "cof", "Capital One Financial", "metrics",
+      ["Net charges-off/(Recoveries) (Quarterly)"], 101,
+    );
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("cof", "Capital One Financial")] }),
+      jsonResponse(200, page1),
+      jsonResponse(200, page2),
+    ]);
+    const out = await takoAvailableData.handler({ q: "capital one" }, CTX);
+
+    expect(fetchMock.mock.calls).toHaveLength(3); // search + 2 pages
+    const firstDrill = new URL(requestFrom(fetchMock.mock.calls[1]).url);
+    expect(firstDrill.searchParams.get("limit")).toBe(String(PAGE_LIMIT));
+    expect(firstDrill.searchParams.has("cursor")).toBe(false);
+    const secondDrill = new URL(requestFrom(fetchMock.mock.calls[2]).url);
+    expect(secondDrill.searchParams.get("cursor")).toBe("cursor-2");
+    expect(out.matches[0]?.coverage.names).toHaveLength(PAGE_LIMIT + 1);
+    expect(out.matches[0]?.coverage.names).toContain("Net charges-off/(Recoveries) (Quarterly)");
+    // Every name fetched (101 of 101) → the complete list, nothing truncated.
+    expect(out.matches[0]?.coverage.truncated).toBe(false);
+  });
+
+  it("stops paginating at MAX_COVERAGE_NAMES and reports truncated", async () => {
+    const page = (cursor: string | null) =>
+      drill(
+        "big", "Big Node", "metrics",
+        Array.from({ length: PAGE_LIMIT }, (_, i) => `M ${cursor ?? "p1"} ${i}`),
+        1000, false, cursor,
+      );
+    // Enough pages that an unbounded loop would keep going; the fetched-name
+    // count crosses MAX_COVERAGE_NAMES after page ceil(MAX/PAGE_LIMIT) and no
+    // further page is requested.
+    const pagesNeeded = Math.ceil(MAX_COVERAGE_NAMES / PAGE_LIMIT);
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("big", "Big Node")] }),
+      ...Array.from({ length: pagesNeeded + 1 }, (_, i) => jsonResponse(200, page(`c${i + 2}`))),
+    ]);
+    const out = await takoAvailableData.handler({ q: "big" }, CTX);
+    expect(fetchMock.mock.calls).toHaveLength(1 + pagesNeeded); // search + pages, never the extra one
+    expect(out.matches[0]?.coverage.names).toHaveLength(MAX_COVERAGE_NAMES);
+    expect(out.matches[0]?.coverage.truncated).toBe(true);
+    expect(out.matches[0]?.coverage.total).toBe(1000);
+  });
+
+  it("keeps already-fetched pages when a later page fails (partial beats unavailable)", async () => {
+    const p1 = drill("a", "A", "metrics", ["Revenue", "Net Income"], 150, false, "c2");
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("a", "A")] }),
+      jsonResponse(200, p1),
+      jsonResponse(503, { detail: "graph store down" }),
+    ]);
+    const out = await takoAvailableData.handler({ q: "a" }, CTX);
+    expect(out.matches[0]?.unavailable).toBeUndefined();
+    expect(out.matches[0]?.coverage.names).toEqual(["Revenue", "Net Income"]);
+    expect(out.matches[0]?.coverage.total).toBe(150);
+    expect(out.matches[0]?.coverage.truncated).toBe(true);
+  });
+
+  it("keeps already-fetched pages when a later page is 200 but malformed (wire-guard path, distinct from HTTP failure)", async () => {
+    const p1 = drill("a", "A", "metrics", ["Revenue", "Net Income"], 150, false, "c2");
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("a", "A")] }),
+      jsonResponse(200, p1),
+      jsonResponse(200, { totally: "wrong" }), // parses as JSON, fails the shape guard
+    ]);
+    const out = await takoAvailableData.handler({ q: "a" }, CTX);
+    expect(out.matches[0]?.unavailable).toBeUndefined();
+    expect(out.matches[0]?.coverage.names).toEqual(["Revenue", "Net Income"]);
+    expect(out.matches[0]?.coverage.truncated).toBe(true);
+  });
+
+  it("a 200 with relation:null on the FIRST page is zero coverage, NOT unavailable", async () => {
+    // Regression (review finding): the spec allows a successful response with
+    // relation:null. Pre-pagination code fed that null into selectCoverage →
+    // "no metrics yet". Treating it as "couldn't load coverage; retry" would
+    // send the agent into a retry loop over a real answer.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("a", "A")] }),
+      jsonResponse(200, { node: { id: "a", type: "entity", name: "A" }, relation: null }),
+    ]);
+    const out = await takoAvailableData.handler({ q: "a" }, CTX);
+    expect(out.matches[0]?.unavailable).toBeUndefined();
+    expect(out.matches[0]?.coverage.total).toBe(0);
+    expect(out.found).toBe(false);
+    expect(out.summary).toContain("no metrics for it yet");
+    expect(out.summary).not.toContain("couldn't load its coverage");
+  });
+
+  it("stops after MAX_COVERAGE_PAGES round-trips even when the server pages tiny", async () => {
+    // Hard round-trip ceiling: a server paging 2 items at a time must not let
+    // the drill serialize dozens of sequential calls chasing 150 names.
+    const tinyPage = (i: number) =>
+      drill("a", "A", "metrics", [`M${i}a`, `M${i}b`], 1000, false, `c${i + 1}`);
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("a", "A")] }),
+      ...Array.from({ length: MAX_COVERAGE_PAGES + 3 }, (_, i) => jsonResponse(200, tinyPage(i))),
+    ]);
+    const out = await takoAvailableData.handler({ q: "a" }, CTX);
+    expect(fetchMock.mock.calls).toHaveLength(1 + MAX_COVERAGE_PAGES);
+    expect(out.matches[0]?.coverage.names).toHaveLength(MAX_COVERAGE_PAGES * 2);
+    expect(out.matches[0]?.coverage.truncated).toBe(true);
+  });
+
+  it("threads coverage_filter as q into every drill page, never into graph/search", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("cof", "Capital One Financial")] }),
+      jsonResponse(200, drill("cof", "Capital One Financial", "metrics", ["Net charges-off/(Recoveries) (Quarterly)"], 3)),
+    ]);
+    const out = await takoAvailableData.handler(
+      { q: "capital one", coverage_filter: "charge" }, CTX,
+    );
+    const searchUrl = new URL(requestFrom(fetchMock.mock.calls[0]).url);
+    expect(searchUrl.searchParams.get("q")).toBe("capital one"); // entity term, unfiltered
+    const drillUrl = new URL(requestFrom(fetchMock.mock.calls[1]).url);
+    expect(drillUrl.searchParams.get("q")).toBe("charge");
+    expect(out.found).toBe(true);
+    expect(out.summary).toContain('matching "charge"');
+  });
+
+  it("a zero-match coverage_filter reads as 'filter matched nothing', NOT a coverage gap", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("cof", "Capital One Financial")] }),
+      jsonResponse(200, drill("cof", "Capital One Financial", "metrics", [])),
+    ]);
+    const out = await takoAvailableData.handler(
+      { q: "capital one", coverage_filter: "zebra" }, CTX,
+    );
+    expect(out.found).toBe(false);
+    expect(out.summary).toContain('coverage_filter "zebra"');
+    expect(out.summary).not.toContain("no metrics for it yet");
+  });
+
+  it("returns a ready-to-run next_call handle (query + pinned node_ids) when coverage exists", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("apple-inc", "Apple Inc.")] }),
+      jsonResponse(200, drill("apple-inc", "Apple Inc.", "metrics", ["Revenue", "Net Income"], 47)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "apple" }, CTX);
+    expect(out.next_call).toEqual({
+      tool: "tako_search",
+      query: "Apple Inc. Revenue",
+      node_ids: ["apple-inc"],
+    });
+    expect(out.summary).toContain("next_call");
+  });
+
+  it("next_call is null when no match has coverage (never a handle for data-less names)", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("tsla", "Tesla, Inc.")] }),
+      jsonResponse(200, drill("tsla", "Tesla, Inc.", "metrics", [])),
+    ]);
+    const out = await takoAvailableData.handler({ q: "tesla" }, CTX);
+    expect(out.next_call).toBeNull();
+  });
+
+  it("stops on the cursor landing items exactly at MAX_COVERAGE_NAMES with more available", async () => {
+    const p1 = drill(
+      "a", "A", "metrics",
+      Array.from({ length: PAGE_LIMIT }, (_, i) => `M1-${i}`), 400, false, "c2",
+    );
+    const p2 = drill(
+      "a", "A", "metrics",
+      Array.from({ length: MAX_COVERAGE_NAMES - PAGE_LIMIT }, (_, i) => `M2-${i}`), 400, false, "c3",
+    );
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("a", "A")] }),
+      jsonResponse(200, p1),
+      jsonResponse(200, p2),
+      jsonResponse(200, drill("a", "A", "metrics", ["never-fetched"], 400)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "a" }, CTX);
+    expect(fetchMock.mock.calls).toHaveLength(3); // count-cap stops the loop, not the cursor
+    expect(out.matches[0]?.coverage.names).toHaveLength(MAX_COVERAGE_NAMES);
+    expect(out.matches[0]?.coverage.truncated).toBe(true);
+    expect(out.matches[0]?.coverage.total).toBe(400);
   });
 });

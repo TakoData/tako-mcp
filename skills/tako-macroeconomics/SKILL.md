@@ -20,7 +20,7 @@ Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as inter
 ## Pick the tool
 - `tako_search` — indicator as a chart (default).
 - `tako_answer` — one known value, in prose ("What is the current US unemployment rate?"). Relay verbatim.
-- `tako_available_data` — FREE: resolve the exact indicator name + `node_id`.
+- `tako_available_data` — FREE: resolve the exact indicator name + `node_id`. Its `next_call` output is the follow-up search prewritten — run it verbatim.
 - Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → fire one narrow `tako_search` per country in parallel and rank from the results.
 
 ## Rendering (Critical)

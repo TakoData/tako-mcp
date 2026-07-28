@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildMatch,
+  buildNextCall,
   buildSummary,
   coverageKindFor,
   hasLiveCoverage,
   OTHER_MATCH_PREVIEW,
   orderMetricNames,
-  PREVIEW,
+  MAX_COVERAGE_NAMES,
   selectCoverage,
   unavailableMatch,
   type CoverageMatch,
@@ -106,10 +107,10 @@ describe("selectCoverage", () => {
     expect(g.kind).toBe("entities");
   });
 
-  it("caps the preview at PREVIEW", () => {
-    const many = Array.from({ length: PREVIEW + 5 }, (_, i) => `M${i}`);
-    const g = selectCoverage(group("metrics", many, PREVIEW + 5), "metrics");
-    expect(g.names).toHaveLength(PREVIEW);
+  it("caps the names at MAX_COVERAGE_NAMES", () => {
+    const many = Array.from({ length: MAX_COVERAGE_NAMES + 5 }, (_, i) => `M${i}`);
+    const g = selectCoverage(group("metrics", many, MAX_COVERAGE_NAMES + 5), "metrics");
+    expect(g.names).toHaveLength(MAX_COVERAGE_NAMES);
     expect(g.truncated).toBe(true);
   });
 
@@ -277,15 +278,34 @@ describe("buildSummary", () => {
     expect(s).toContain("Also matched: Other0, Other1, Other2, Other3, Other4, and 3 more.");
   });
 
-  it("next-step example: entity → 'Name Metric', metric → 'Entity Name'", () => {
+  it("next-step example: entity → 'Name Metric', metric → 'Entity Name', pointing at next_call", () => {
     expect(buildSummary({ query: "apple", matches: [appleMatch], otherMatches: [] }))
-      .toContain('(e.g. "Apple Inc. Revenue")');
-    expect(buildSummary({ query: "inflation", matches: [inflationMatch], otherMatches: [] }))
-      .toContain('(e.g. "United States Inflation Rate")');
+      .toContain('query "Apple Inc. Revenue"');
+    const s = buildSummary({ query: "inflation", matches: [inflationMatch], otherMatches: [] });
+    expect(s).toContain('query "United States Inflation Rate"');
+    expect(s).toContain("next_call");
+  });
+
+  it("buildNextCall: handle from the first match WITH coverage; null when none has any", () => {
+    expect(buildNextCall([appleMatch])).toEqual({
+      tool: "tako_search",
+      query: "Apple Inc. Revenue",
+      node_ids: ["apple-inc"],
+    });
+    expect(buildNextCall([inflationMatch])).toEqual({
+      tool: "tako_search",
+      query: "United States Inflation Rate",
+      node_ids: ["inflation-rate"],
+    });
+    const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
+    // Skips the coverage-less match, lands on the one with names.
+    expect(buildNextCall([bare, appleMatch])?.query).toBe("Apple Inc. Revenue");
+    expect(buildNextCall([bare])).toBeNull();
+    expect(buildNextCall([unavailableMatch(entityNode())])).toBeNull();
   });
 
   it("keeps the preview constants positive", () => {
     expect(OTHER_MATCH_PREVIEW).toBeGreaterThan(0);
-    expect(PREVIEW).toBeGreaterThan(0);
+    expect(MAX_COVERAGE_NAMES).toBeGreaterThan(0);
   });
 });

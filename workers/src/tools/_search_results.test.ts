@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { buildSearchOutput, slimCard, slimCardContent } from "./_search_results.js";
+import { buildSearchOutput, dedupeCardBoilerplate, slimCard, slimCardContent } from "./_search_results.js";
 import type { ResultContent, TakoCard } from "./_search_results.js";
 
 import type { Env } from "../env.js";
@@ -287,5 +287,119 @@ describe("buildSearchOutput — zero-card guidance", () => {
   it("omits guidance when any card is present", () => {
     const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"]);
     expect(out.guidance).toBeUndefined();
+  });
+});
+
+describe("payload layout — data serializes before boilerplate", () => {
+  // Clients with result-size caps truncate the TAIL of the serialized JSON, so
+  // the failure mode these tests pin is: five cards of source paragraphs
+  // survive while every data point is cut. Key insertion order IS the fix
+  // (JSON.stringify preserves it into content.text and structuredContent).
+
+  const wireCard: TakoCard = {
+    // Deliberately in the backend's wire order: metadata first, content late.
+    card_id: "c1",
+    title: "PANW Revenue",
+    description: "Quarterly revenue for Palo Alto Networks.",
+    semantic_description: "A long retrieval-oriented blob…",
+    webpage_url: "https://tako.com/card/c1",
+    sources: [{ source_name: "Visible Alpha", source_description: "x".repeat(300) }],
+    methodologies: [{ methodology_name: "m", methodology_description: "consensus" }],
+    card_type: "timeseries",
+    content: dataset([
+      ["2025-01-01", 1],
+      ["2025-04-01", 2],
+    ]),
+  } as unknown as TakoCard;
+
+  it("slimCard reorders keys: content (the data) before description/sources/semantic_description", () => {
+    const keys = Object.keys(slimCard(wireCard, 5));
+    const pos = (k: string) => keys.indexOf(k);
+    expect(pos("card_id")).toBe(0);
+    expect(pos("content")).toBeGreaterThan(-1);
+    expect(pos("content")).toBeLessThan(pos("description"));
+    expect(pos("content")).toBeLessThan(pos("sources"));
+    expect(pos("content")).toBeLessThan(pos("methodologies"));
+    expect(pos("content")).toBeLessThan(pos("semantic_description"));
+    expect(pos("title")).toBeLessThan(pos("content"));
+  });
+
+  it("slimCard keeps unknown keys (after the known ones) — loose passthrough survives reordering", () => {
+    const withUnknown = { ...wireCard, brand_new_field: 42 } as unknown as TakoCard;
+    const out = slimCard(withUnknown, 5) as unknown as Record<string, unknown>;
+    expect(out.brand_new_field).toBe(42);
+  });
+
+  it("slimmed content serializes rows before descriptor metadata", () => {
+    const out = slimCardContent(dataset([["2025-01-01", 1]]), 5);
+    const keys = Object.keys(out as Record<string, unknown>);
+    expect(keys.indexOf("dataset")).toBeLessThan(keys.indexOf("content_format"));
+    expect(keys.indexOf("dataset")).toBeLessThan(keys.indexOf("cost"));
+  });
+});
+
+describe("dedupeCardBoilerplate", () => {
+  const para = "Visible Alpha provides consensus estimates built from sell-side models. ".repeat(4);
+
+  const cardWithSource = (id: string, description: string): TakoCard =>
+    ({
+      card_id: id,
+      title: id,
+      sources: [{ source_name: "Visible Alpha", source_description: description }],
+    }) as unknown as TakoCard;
+
+  it("replaces a repeated long source_description with a pointer to the first occurrence", () => {
+    const out = dedupeCardBoilerplate([
+      cardWithSource("c1", para),
+      cardWithSource("c2", para),
+      cardWithSource("c3", para),
+    ]) as unknown as Array<{ sources: Array<{ source_description: string }> }>;
+    expect(out[0]?.sources[0]?.source_description).toBe(para); // first survives verbatim
+    expect(out[1]?.sources[0]?.source_description).toBe(
+      "[identical to cards[0].sources[0].source_description]",
+    );
+    expect(out[2]?.sources[0]?.source_description).toBe(
+      "[identical to cards[0].sources[0].source_description]",
+    );
+  });
+
+  it("leaves short strings alone — a pointer marker would be longer than the label", () => {
+    const out = dedupeCardBoilerplate([
+      cardWithSource("c1", "S&P Global"),
+      cardWithSource("c2", "S&P Global"),
+    ]) as unknown as Array<{ sources: Array<{ source_description: string }> }>;
+    expect(out[1]?.sources[0]?.source_description).toBe("S&P Global");
+  });
+
+  it("dedupes repeated methodology_description too", () => {
+    const method = { methodology_name: "consensus", methodology_description: para };
+    const cards = [
+      { card_id: "a", methodologies: [method] },
+      { card_id: "b", methodologies: [{ ...method }] },
+    ] as unknown as TakoCard[];
+    const out = dedupeCardBoilerplate(cards) as unknown as Array<{
+      methodologies: Array<{ methodology_description: string }>;
+    }>;
+    expect(out[0]?.methodologies[0]?.methodology_description).toBe(para);
+    expect(out[1]?.methodologies[0]?.methodology_description).toBe(
+      "[identical to cards[0].methodologies[0].methodology_description]",
+    );
+  });
+
+  it("returns untouched cards by reference and never mutates inputs", () => {
+    const unique = cardWithSource("c1", para);
+    const other = cardWithSource("c2", "different ".repeat(30));
+    const out = dedupeCardBoilerplate([unique, other]);
+    expect(out[0]).toBe(unique);
+    expect(out[1]).toBe(other);
+    // And a deduped run leaves the ORIGINAL objects intact (immutability).
+    const dup = cardWithSource("c3", para);
+    dedupeCardBoilerplate([unique, dup]);
+    expect((dup as unknown as { sources: Array<{ source_description: string }> }).sources[0]?.source_description).toBe(para);
+  });
+
+  it("handles cards without sources or methodologies", () => {
+    const bare = { card_id: "x", title: "no arrays" } as unknown as TakoCard;
+    expect(dedupeCardBoilerplate([bare])[0]).toBe(bare);
   });
 });

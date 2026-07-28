@@ -23,6 +23,8 @@ import { z } from "zod";
 
 import { DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } from "../django.js";
 import { ContentsDeliveryMode, ContentsRequest, ContentsResponse, TakoDataset } from "../generated/schemas.js";
+import { logWireGuardFailure } from "./_log.js";
+import { extractPassages } from "./_passages.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -32,7 +34,7 @@ const DESCRIPTION = [
   "",
   "Precondition (Tako cards): only call this when the card's result had `exportable: true`. If `exportable` is false (equivalently, `content` is missing or null) this call fails — use the card's preview/chart instead, don't call. `exportable: true` is necessary but not sufficient: a rare card still 403s, so fall back, don't retry.",
   "",
-  "Web URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text.",
+  "Web URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
 ].join("\n");
 
 // Curate the input from the contract explicitly: `.pick` only the fields we
@@ -67,6 +69,17 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
     .optional()
     .describe(
       "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (always full text).",
+    ),
+  // MCP-layer feature, deliberately NOT part of the wire body (the handler
+  // strips it): the worker fetches the page text and slices out the passages
+  // around matches, so a long-document fetch is one wave, not
+  // fetch → cover-page → refetch.
+  query: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query="RevPAR" against a hotel earnings page. A no-match response says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode.',
     ),
 });
 
@@ -124,10 +137,13 @@ const takoContents = {
     chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<Output> {
-    // input conforms to the generated ContentsRequest contract (url + mode +
-    // optional max_rows). max_rows, when omitted, is absent from `input` and so
+    // `query` is an MCP-layer knob (passage extraction below), NOT a wire
+    // field — strip it or the backend's extra="forbid" 400s the request. The
+    // rest conforms to the generated ContentsRequest contract (url + mode +
+    // optional max_rows); max_rows, when omitted, is absent from `input` and so
     // dropped from the JSON body — the backend then applies its 20-row default.
-    const body = input satisfies z.input<typeof ContentsRequest>;
+    const { query: passageQuery, ...body } = input;
+    void (body satisfies z.input<typeof ContentsRequest>);
     let raw: unknown;
     try {
       raw = await djangoPost<unknown>(
@@ -178,13 +194,17 @@ const takoContents = {
     // instead of silently mapping to nulls downstream.
     const wireResult = ContentsResponse.safeParse(raw);
     if (!wireResult.success) {
+      // Zod detail goes to the server log only — the raw issue dump is
+      // upstream-echoed content and noise for the model (Safety Rules).
+      logWireGuardFailure("tako_contents", "ContentsResponse", wireResult.error, raw);
       throw new Error(
-        `Tako contents endpoint returned an unexpected wire shape: ${wireResult.error.message}`,
+        "Tako contents endpoint returned an unexpected wire shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
     const wire = wireResult.data;
     const item = wire.contents?.[0];
     if (!item) {
+      logWireGuardFailure("tako_contents", "empty-contents", undefined, raw);
       throw new Error(
         "Tako contents endpoint returned no downloadable content for that URL.",
       );
@@ -210,7 +230,25 @@ const takoContents = {
       truncated: item.truncated ?? false,
     });
     if (!parsed.success) {
+      logWireGuardFailure("tako_contents", "output-normalise", parsed.error, raw);
       throw new Error("Tako contents endpoint returned an unexpected shape.");
+    }
+    // Passage extraction (web text + inline mode only): replace the full page
+    // text with the windows around the query's matches. Card payloads
+    // (content_format "csv"/"json_*") and url-mode responses (data null) pass
+    // through untouched. Billing is unchanged — the full text was fetched;
+    // this only slims what reaches the model.
+    if (
+      passageQuery !== undefined &&
+      parsed.data.format === "text" &&
+      parsed.data.data !== null
+    ) {
+      const extracted = extractPassages(parsed.data.data, passageQuery);
+      return {
+        ...parsed.data,
+        data: extracted.data,
+        truncated: parsed.data.truncated || extracted.truncated,
+      };
     }
     return parsed.data;
   },

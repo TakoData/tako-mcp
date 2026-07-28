@@ -130,6 +130,66 @@ describe("tako_contents handler", () => {
     expect(out.cost).toBe(1); // web text is metered
   });
 
+  it("query: extracts matching passages from web text and STRIPS query from the wire body", async () => {
+    const filler = "lorem ipsum dolor sit amet ".repeat(400); // ~10.8k chars
+    const page = `${filler}RevPAR reached $142.11 in Q3.${filler}`;
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [
+        { content_format: null, data: page, cost: 1, source_url: "https://example.com/a" },
+      ],
+      request_id: "r-passages",
+    });
+    const parsed = tool.inputSchema.parse({
+      url: "https://example.com/a", mode: "inline", query: "RevPAR",
+    });
+    const out = await tool.handler(parsed, ctx);
+    // Passages, not the full dump — and the miss/hit header is explicit.
+    expect(out.data).toContain("$142.11");
+    expect(out.data).toContain("match(es)");
+    expect((out.data as string).length).toBeLessThan(page.length / 2);
+    expect(out.truncated).toBe(true);
+    // `query` is an MCP-layer knob: the backend body must not carry it
+    // (extra="forbid" would 400 the request).
+    expect(vi.mocked(djangoPost).mock.calls[0]![3]).not.toHaveProperty("query");
+  });
+
+  it("query: ignored for Tako card payloads (content_format csv)", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [
+        {
+          content_format: "csv",
+          data: "name,value\nRevPAR,142.11\nADR,190.55",
+          total_rows: 2,
+          truncated: false,
+          cost: 0.001,
+          source_url: "https://tako.com/card/abc",
+        },
+      ],
+      request_id: "r-card-q",
+    });
+    const parsed = tool.inputSchema.parse({
+      url: "https://tako.com/card/abc", query: "RevPAR",
+    });
+    const out = await tool.handler(parsed, ctx);
+    // CSV passes through untouched — no passage header injected into data.
+    expect(out.data).toBe("name,value\nRevPAR,142.11\nADR,190.55");
+  });
+
+  it("query with no match: deterministic NOT FOUND notice instead of silence", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [
+        { content_format: null, data: "a page about something else entirely", cost: 1, source_url: "https://example.com/a" },
+      ],
+      request_id: "r-miss",
+    });
+    const parsed = tool.inputSchema.parse({
+      url: "https://example.com/a", query: "zebra unicorn",
+    });
+    const out = await tool.handler(parsed, ctx);
+    expect(out.data).toContain("NOT FOUND");
+    expect(out.data).toContain("a page about something else"); // head kept for orientation
+  });
+
   it("url mode: returns the presigned download_url + expiry, null inline data", async () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [

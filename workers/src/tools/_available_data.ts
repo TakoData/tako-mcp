@@ -29,20 +29,33 @@ type GraphRelation = z.infer<typeof graphRelationSchema>;
 // disambiguation ("Tesla, Inc." vs another "Tesla") visible while staying to a
 // single parallel batch of related calls.
 export const EXPAND_TOP_N = 2;
-// Cap for the coverage name list, matched to the graph/related drill's fetch
-// limit (the tool passes this as `limit`, so the list shows everything
-// fetched). Coverage names are the tool's primary payload — each is a term the
-// agent reuses in a follow-up tako_search — so completeness beats brevity
-// here. `total`/`truncated` still report when even more exist server-side.
-export const PREVIEW = 50;
+// graph/related page size for the coverage drill (the endpoint's maximum).
+// The tool paginates with the cursor, so this is a request-shaping knob, not
+// a cap on what the agent sees.
+export const PAGE_LIMIT = 100;
+// Ceiling on the coverage name list across all fetched pages. Coverage names
+// are the tool's primary payload — each is a term the agent reuses in a
+// follow-up tako_search — so the drill paginates well past the old one-page
+// window (which buried anything behind the backend's fixed, boilerplate-first
+// order), but caps the token cost for the very largest nodes (a metric
+// tracked across thousands of entities). Names are reordered headline-first
+// across everything FETCHED before this slice is taken, so low-signal
+// accounting names are what the cap drops. `total`/`truncated` still report
+// when more exist server-side.
+export const MAX_COVERAGE_NAMES = 150;
+// Hard ceiling on coverage-drill round-trips per node, independent of the
+// item-count target above. Normally ceil(150/100) = 2 pages suffice; the
+// slack covers a server that pages smaller than PAGE_LIMIT without letting a
+// pathological page size serialize dozens of sequential calls.
+export const MAX_COVERAGE_PAGES = 4;
 export const OTHER_MATCH_PREVIEW = 5;
 
 // Metric names that read as internal/accounting plumbing rather than the
 // headline figures a person expects first. The backend returns metrics in a
 // fixed order that mixes these in early (e.g. "Account Code - Inventory
-// Valuation (Normalized)"), so we deprioritize them in the PREVIEW only — they
-// still count toward `total`. Kept deliberately narrow (two observed patterns)
-// so a real metric is never hidden, only pushed down.
+// Valuation (Normalized)"), so we deprioritize them in the name list only —
+// they still count toward `total`. Kept deliberately narrow (two observed
+// patterns) so a real metric is never hidden, only pushed down.
 const LOW_SIGNAL_METRIC = /\(Normalized\)|^Account Code\b/i;
 
 /** What a match's coverage list represents. */
@@ -108,7 +121,7 @@ export function orderMetricNames(names: string[]): string[] {
 /**
  * Build the CoverageGroup from a drilled relation group. Metrics are reordered
  * headline-first; entities keep the backend's (popularity) order. Caps at
- * PREVIEW and reports the server total + capped flag.
+ * MAX_COVERAGE_NAMES and reports the server total + capped flag.
  */
 export function selectCoverage(
   group: GraphRelation | null | undefined,
@@ -118,7 +131,7 @@ export function selectCoverage(
   const raw = group.items.map((i) => i.name);
   const ordered = kind === "metrics" ? orderMetricNames(raw) : raw;
   const total = group.total ?? ordered.length;
-  const names = ordered.slice(0, PREVIEW);
+  const names = ordered.slice(0, MAX_COVERAGE_NAMES);
   const capped = group.total_capped ?? false;
   return {
     kind,
@@ -176,40 +189,62 @@ function labelSuffix(m: CoverageMatch): string {
   return m.label ? ` (${m.label})` : "";
 }
 
-function coverageClause(g: CoverageGroup): string {
+function coverageClause(g: CoverageGroup, filter?: string): string {
+  const matching = filter !== undefined ? ` matching "${filter}"` : "";
   if (g.kind === "entities") {
-    return `tracked for ${countStr(g)} ${plural(g.total, "entity", "entities")}`;
+    return `tracked for ${countStr(g)} ${plural(g.total, "entity", "entities")}${matching}`;
   }
-  return `${countStr(g)} ${plural(g.total, "metric", "metrics")}`;
+  return `${countStr(g)} ${plural(g.total, "metric", "metrics")}${matching}`;
 }
 
-function emptyClause(kind: CoverageKind): string {
+// A zero-coverage line means two different things with and without a
+// coverage_filter: unfiltered it is a genuine gap; filtered it only means the
+// FILTER matched nothing — the entity may still hold hundreds of metrics, so
+// the phrasing must steer the agent to drop the filter, not to conclude "no
+// data" and walk away.
+function emptyClause(kind: CoverageKind, filter?: string): string {
+  if (filter !== undefined) {
+    const what = kind === "entities" ? "tracked entities" : "metrics";
+    return `resolved, but no ${what} match coverage_filter "${filter}" — the coverage itself may be non-empty; re-call without coverage_filter (or with a shorter fragment) to see it`;
+  }
   return kind === "entities"
     ? "resolved, but Tako isn't tracking it against any entities yet"
     : "resolved, but Tako holds no metrics for it yet";
 }
 
-function matchLine(m: CoverageMatch): string {
+function matchLine(m: CoverageMatch, filter?: string): string {
   const head = `**${m.name}${labelSuffix(m)}**`;
   if (m.unavailable) {
     return `${head} — resolved, but Tako couldn't load its coverage right now (temporary); retry.`;
   }
   if (m.coverage.total === 0) {
-    return `${head} — ${emptyClause(m.coverage.kind)}.`;
+    return `${head} — ${emptyClause(m.coverage.kind, filter)}.`;
   }
-  return `${head} — ${coverageClause(m.coverage)}.`;
+  return `${head} — ${coverageClause(m.coverage, filter)}.`;
 }
 
-// Pick a real next-step example. For an entity's metrics: "Tesla, Inc. Revenue".
-// For a metric's entities: "United States Inflation Rate" (entity + metric).
-// Only matches with actual coverage qualify — no fallback, or the summary
-// would steer the agent into a priced tako_search for a name it just
-// reported as having no data.
-function nextStepExample(matches: CoverageMatch[]): string | null {
+/** A directly runnable follow-up fetch: tako_search args, ready to copy. */
+export interface NextCall {
+  tool: "tako_search";
+  query: string;
+  node_ids: string[];
+}
+
+/**
+ * Build the ready-to-run follow-up handle from the first match with real
+ * coverage: entity match → "Tesla, Inc. Revenue" (entity + its first metric);
+ * metric match → "United States Inflation Rate" (first entity + metric). The
+ * matched node's id rides along for pinning. Null when no match has coverage —
+ * a handle for a name just reported as data-less would steer the agent into a
+ * priced search that misses. This is what makes discovery-first a one-step
+ * pipeline: confirm coverage → run next_call verbatim → series in hand.
+ */
+export function buildNextCall(matches: CoverageMatch[]): NextCall | null {
   const m = matches.find((x) => !x.unavailable && x.coverage.names.length > 0);
   if (!m) return null;
-  const first = m.coverage.names[0];
-  return m.coverage.kind === "entities" ? `${first} ${m.name}` : `${m.name} ${first}`;
+  const first = m.coverage.names[0] as string;
+  const query = m.coverage.kind === "entities" ? `${first} ${m.name}` : `${m.name} ${first}`;
+  return { tool: "tako_search", query, node_ids: [m.node_id] };
 }
 
 /**
@@ -223,8 +258,10 @@ export function buildSummary(input: {
   query: string;
   matches: CoverageMatch[];
   otherMatches: OtherMatch[];
+  /** The caller's coverage_filter, when one was applied to the drills. */
+  coverageFilter?: string | undefined;
 }): string {
-  const { query, matches, otherMatches } = input;
+  const { query, matches, otherMatches, coverageFilter } = input;
 
   if (matches.length === 0) {
     return `Tako has no data-graph node matching "${query}". Tako may still have relevant public/web data — try tako_search directly, or rephrase the entity or metric name.`;
@@ -243,13 +280,17 @@ export function buildSummary(input: {
   const covers = "Tako's proprietary data has live, continuously-updated coverage of";
   let header: string;
   if (withData === 0) {
-    header = `Resolved ${matchesOf}, but none with live data coverage:`;
+    // Under a coverage_filter, "none" only means the filter matched nothing —
+    // don't let the header claim a total coverage gap the tool didn't check.
+    header = coverageFilter !== undefined
+      ? `Resolved ${matchesOf}, but no coverage matching coverage_filter "${coverageFilter}":`
+      : `Resolved ${matchesOf}, but none with live data coverage:`;
   } else if (withData < n) {
     header = `${covers} ${withData} of ${matchesOf}:`;
   } else {
     header = `${covers} ${matchesOf}:`;
   }
-  const lines = matches.map(matchLine);
+  const lines = matches.map((m) => matchLine(m, coverageFilter));
 
   const blocks: string[] = [header, "", lines.join("\n\n")];
 
@@ -260,11 +301,11 @@ export function buildSummary(input: {
     blocks.push("", `Also matched: ${names.join(", ")}${tail}.`);
   }
 
-  const example = nextStepExample(matches);
+  const example = buildNextCall(matches);
   if (example) {
     blocks.push(
       "",
-      `The exact names are listed in each match's coverage.names. To pull one as a chart or dataset, call tako_search with entity + metric (e.g. "${example}").`,
+      `The exact names are listed in each match's coverage.names. To pull one as a chart or dataset, run the ready-made \`next_call\` (tako_search with query "${example.query}" + its node_ids pinned), or compose your own entity + metric query the same way.`,
     );
   }
 
