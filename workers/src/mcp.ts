@@ -209,6 +209,18 @@ export function createMcpServer(
   ctx: ToolContext,
   options: {
     iconsBaseUrl?: string;
+    /**
+     * Origin of the incoming request (e.g. `https://mcp.tako.com`), used
+     * to build the `resource_metadata` URL in tool-level
+     * `_meta["mcp/www_authenticate"]` challenges. Deliberately a separate
+     * option from `iconsBaseUrl` even though `handleMcpRequest` passes the
+     * same value to both today: icons may one day move to a CDN base,
+     * and the OAuth discovery URL must keep tracking the request origin
+     * (it has to match the HTTP 401 `WWW-Authenticate` header, which is
+     * built from `new URL(request.url).origin`). Omitted in tests /
+     * non-HTTP contexts → challenges omit `resource_metadata`.
+     */
+    requestOrigin?: string;
     client?: McpClientKind;
     /**
      * Opt-in tool names the caller enabled for this request via the `tools`
@@ -220,9 +232,13 @@ export function createMcpServer(
     enabledOptionalToolNames?: Set<string>;
     /**
      * Connection tier. `"free"` (anonymous, no Authorization header)
-     * restricts the registered toolset to `FREE_TIER_TOOL_NAMES`.
-     * Omitted → `"authenticated"`, the full surface — what every
-     * existing caller and test gets.
+     * restricts the EXECUTABLE toolset to `FREE_TIER_TOOL_NAMES` — on
+     * ChatGPT the auth-required submitted tools stay LISTED for the
+     * link-account UI but are blocked at dispatch (see
+     * `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`
+     * and the free-tier gate in `registerTool`). Omitted →
+     * `"authenticated"`, the full surface — what every existing caller
+     * and test gets.
      */
     tier?: Tier;
   } = {},
@@ -335,7 +351,7 @@ export function createMcpServer(
     registerTool(server, tool, ctx, {
       client,
       tier,
-      origin: options.iconsBaseUrl,
+      origin: options.requestOrigin,
       widgetSuppressedForTool:
         client === "chatgpt" && CHATGPT_NO_WIDGET_TOOL_NAMES.has(tool.name),
       registeredResourceUris,
@@ -790,10 +806,16 @@ function registerTool(
           );
         }
       };
+      // `tier` is stamped from the registration-time value — the SAME one
+      // that drove `isToolOnSurface` and the dispatch gate below — so the
+      // per-call context can never disagree with the surface decision
+      // (previously `ctx.tier` was a second, caller-supplied source of
+      // truth that had to be kept in sync by hand).
       const callCtx: ToolContext = {
         ...ctx,
         sendProgress,
         client: options.client,
+        tier: options.tier,
       };
       // Free-tier dispatch gate: auth-required tools can be LISTED on an
       // anonymous connection (ChatGPT needs the descriptor to offer its
@@ -835,25 +857,34 @@ function registerTool(
             return freeTierCreditsToolResult();
           }
           const mapped = djangoErrorToToolResult(err);
-          // A 401 from Django means the credential we forwarded was
-          // rejected — for an OAuth-linked user, a stale or revoked Tako
-          // token. Attach the `_meta["mcp/www_authenticate"]` challenge on
-          // ChatGPT so its client offers re-linking (the OpenAI Apps SDK
-          // keys the reauth UI on this exact field); other clients keep
-          // the unchanged error result.
+          // A 401 from Django on an AUTHENTICATED connection means the
+          // caller's own credential was rejected — for an OAuth-linked
+          // user, a stale or revoked Tako token. Attach the
+          // `_meta["mcp/www_authenticate"]` challenge on ChatGPT so its
+          // client offers re-linking (the OpenAI Apps SDK keys the reauth
+          // UI on this exact field); other clients keep the unchanged
+          // error result. Free-tier connections are excluded: there the
+          // rejected credential is the SHARED free-tier key, so "your
+          // session expired" would be false for a caller with no session
+          // — and funneling anonymous users into (working) sign-in would
+          // mask a shared-key outage as a per-user auth failure.
           if (
             options.client === "chatgpt" &&
+            options.tier === "authenticated" &&
             err instanceof DjangoUnauthorizedError
           ) {
-            mapped._meta = {
-              ...mapped._meta,
-              "mcp/www_authenticate": [
-                wwwAuthenticate(
-                  options.origin,
-                  "invalid_token",
-                  "Your Tako session is no longer valid. Sign in with Tako again to continue.",
-                ),
-              ],
+            return {
+              ...mapped,
+              _meta: {
+                ...mapped._meta,
+                "mcp/www_authenticate": [
+                  wwwAuthenticate(
+                    options.origin,
+                    "invalid_token",
+                    "Your Tako session is no longer valid. Sign in with Tako again to continue.",
+                  ),
+                ],
+              },
             };
           }
           return mapped;
@@ -1243,6 +1274,7 @@ export async function handleMcpRequest(
     }
     const server = createMcpServer(ctx, {
       iconsBaseUrl: requestOrigin,
+      requestOrigin,
       client,
       enabledOptionalToolNames,
       tier,
@@ -1340,7 +1372,11 @@ export async function withChatGptToolSecuritySchemes(
       status: response.status,
       headers,
     });
-  } catch {
+  } catch (err) {
+    // Degrading is correct (the un-augmented response is still valid MCP),
+    // but never silently: without securitySchemes ChatGPT's link-account
+    // UI quietly stops working, and this log line is the only signal.
+    console.error("[mcp] securitySchemes injection failed:", err);
     return response;
   }
 }
@@ -1421,12 +1457,12 @@ export async function logSdkValidationRejections(
  * (RFC 9728) points the client at our OAuth protected-resource discovery
  * doc — that is how MCP hosts (Claude.ai, ChatGPT) bootstrap an OAuth
  * flow when they have only the MCP URL and got a 401.
+ *
+ * The `WWW-Authenticate: Bearer` challenge formatter (`wwwAuthenticate`)
+ * lives in `tools/_security.ts`, shared with the tool-level
+ * `_meta["mcp/www_authenticate"]` challenges so both wire formats come
+ * from one builder.
  */
-// The `WWW-Authenticate: Bearer` challenge formatter (`wwwAuthenticate`)
-// lives in `tools/_security.ts`, shared with the tool-level
-// `_meta["mcp/www_authenticate"]` challenges so both wire formats come
-// from one builder.
-
 function bearerAuthResponse(request: Request, err: BearerAuthError): Response {
   const origin = new URL(request.url).origin;
   return new Response(

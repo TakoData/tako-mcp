@@ -54,6 +54,18 @@ describe("wwwAuthenticate", () => {
       "error_description=\"a 'b' c\"",
     );
   });
+
+  it("neutralizes CR/LF, backslashes, and control chars in both error and description", () => {
+    const value = wwwAuthenticate(
+      undefined,
+      "invalid\r\ntoken",
+      "bad\r\nX-Evil: 1 trailing\\",
+    );
+    expect(value).not.toMatch(/[\r\n\\]/);
+    // Must be usable as a real HTTP header value — the Workers Headers
+    // constructor throws on CR/LF, which would escape as a Worker 500.
+    expect(() => new Headers({ "www-authenticate": value })).not.toThrow();
+  });
 });
 
 describe("authRequiredToolResult", () => {
@@ -125,6 +137,46 @@ describe("withToolSecuritySchemes", () => {
     expect(withToolSecuritySchemes(error)).toBe(error);
     expect(withToolSecuritySchemes(null)).toBe(null);
     expect(withToolSecuritySchemes("nope")).toBe("nope");
+  });
+
+  it("leaves malformed tool entries untouched while transforming valid ones", () => {
+    const body = {
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        tools: [null, 42, { description: "no name" }, { name: "tako_search" }],
+      },
+    };
+    const out = withToolSecuritySchemes(body) as {
+      result: { tools: unknown[] };
+    };
+    expect(out.result.tools[0]).toBeNull();
+    expect(out.result.tools[1]).toBe(42);
+    expect(out.result.tools[2]).toEqual({ description: "no name" });
+    expect(
+      (out.result.tools[3] as { securitySchemes?: unknown }).securitySchemes,
+    ).toBeDefined();
+  });
+
+  it("replaces a pre-existing securitySchemes with the canonical value", () => {
+    const body = {
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        tools: [{ name: "tako_contents", securitySchemes: [{ type: "noauth" }] }],
+      },
+    };
+    const out = withToolSecuritySchemes(body) as {
+      result: { tools: Array<{ securitySchemes?: unknown }> };
+    };
+    expect(out.result.tools[0]?.securitySchemes).toEqual([
+      { type: "oauth2", scopes: ["mcp"] },
+    ]);
+  });
+
+  it("returns the original reference for an empty tools array", () => {
+    const body = { jsonrpc: "2.0", id: 2, result: { tools: [] } };
+    expect(withToolSecuritySchemes(body)).toBe(body);
   });
 
   it("transforms tools/list messages inside a JSON-RPC batch", () => {

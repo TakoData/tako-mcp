@@ -87,9 +87,13 @@ export const CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES: ReadonlySet<string> =
  *    `FREE_TIER_TOOL_NAMES` — plus, on ChatGPT, the auth-required
  *    submitted tools in {@link CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES},
  *    which are listed for the link-account UI but blocked at call time
- *    (see the free-tier dispatch gate in `mcp.ts`). No other rule
- *    (`?tools=` opt-ins, {@link CHATGPT_DEFAULT_ON_TOOL_NAMES}) can
- *    widen the anonymous surface.
+ *    (see the free-tier dispatch gate in `mcp.ts`). The invariant,
+ *    stated precisely: a client-controlled User-Agent can widen the
+ *    anonymous LISTING (to the fixed, submission-declared set above),
+ *    but nothing — not UA, not `?tools=` opt-ins, not
+ *    {@link CHATGPT_DEFAULT_ON_TOOL_NAMES} — can widen what anonymous
+ *    connections can EXECUTE; that stays exactly `FREE_TIER_TOOL_NAMES`,
+ *    enforced again at dispatch time in `mcp.ts`.
  * 2. Opt-in gate: optional tools (see `OPTIONAL_TOOL_ALIASES` in
  *    `_optional.ts`) are excluded from the default surface and registered
  *    only when enabled via the `tools` query param — except tools ChatGPT

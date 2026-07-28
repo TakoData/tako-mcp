@@ -4,8 +4,11 @@
  * When a request arrives with NO `Authorization` header and all three
  * free-tier bindings are configured, the Worker serves it as a rate-limited
  * anonymous request instead of a 401: a shared free-tier Tako API key is
- * forwarded to Django, the visible toolset shrinks to
- * `FREE_TIER_TOOL_NAMES`, and requests are limited by two buckets:
+ * forwarded to Django, the EXECUTABLE toolset shrinks to
+ * `FREE_TIER_TOOL_NAMES` (ChatGPT clients additionally LIST — but cannot
+ * run — the auth-required submitted tools, see
+ * `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`),
+ * and requests are limited by two buckets:
  *
  * - A constant-key bucket hit by every anonymous request regardless of
  *   method — PER-COLO BURST SHAPING, not a true global ceiling:
@@ -52,9 +55,14 @@ import type { Env, RateLimit } from "./env.js";
 export type Tier = "free" | "authenticated";
 
 /**
- * The complete anonymous tool surface. Everything else is hidden (not
- * listed, not callable) rather than listed-but-erroring — tools that
- * error on call waste agent turns.
+ * The complete anonymous EXECUTABLE tool surface. On most clients
+ * everything else is hidden (not listed, not callable) rather than
+ * listed-but-erroring — tools that error on call waste agent turns. The
+ * one exception is ChatGPT, whose link-account UI requires the two
+ * auth-required submitted tools to stay LISTED on anonymous connections
+ * (`CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`);
+ * those answer an `_meta["mcp/www_authenticate"]` challenge at dispatch
+ * (see the free-tier gate in `mcp.ts`) and never execute anonymously.
  */
 export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
   "tako_available_data",
@@ -110,11 +118,13 @@ export function resolveFreeTierConfig(env: Env): FreeTierConfig | null {
  * only request shape that spends the shared account's Tako credits.
  * Handshake and discovery methods (`initialize`, `tools/list`,
  * notifications, pings) must stay unmetered or clients would burn quota
- * just connecting, and a `tools/call` for a hidden tool (`tako_agent`,
- * `get_credit_balance`, …) returns "tool not found" without spending a
- * credit, so a confused client retrying it must not burn its whole
- * minute. Both stay bounded by the global ceiling, which counts every
- * anonymous request before this decision is made. Array bodies never
+ * just connecting, and a `tools/call` for a non-free tool spends no
+ * credit either — on most clients it returns "tool not found"; on
+ * ChatGPT the listed-but-gated tools (`tako_contents`, `tako_visualize`)
+ * return an auth challenge from the dispatch gate in `mcp.ts` without
+ * ever reaching Django — so a confused client retrying it must not burn
+ * its whole minute. Both stay bounded by the global ceiling, which
+ * counts every anonymous request before this decision is made. Array bodies never
  * reach here — `checkFreeTierRateLimit` rejects batches before the
  * metering decision. Anything unparseable / non-object is unmetered: it
  * can never reach Django, and the SDK will reject it with a proper

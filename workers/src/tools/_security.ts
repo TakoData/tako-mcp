@@ -65,6 +65,22 @@ export function securitySchemesForTool(name: string): SecurityScheme[] {
  * responses in `mcp.ts` and the tool-level `_meta["mcp/www_authenticate"]`
  * challenges below — one formatter, one wire format.
  */
+/**
+ * Make a value safe to embed in a quoted-string challenge parameter:
+ * double quotes become single quotes (readable, can't close the quoted
+ * string), and backslash/CR/LF/control characters become spaces — a
+ * trailing `\` would consume the closing quote as an RFC 7230
+ * quoted-pair, and CR/LF would make the `Headers` constructor throw when
+ * the same string is used as a real HTTP header value. Every current
+ * caller passes literals, but the formatter is shared across the HTTP
+ * 401/403 headers and tool-level `_meta` challenges, so it must stay
+ * safe for future dynamic inputs.
+ */
+function quotedStringSafe(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/"/g, "'").replace(/[\\\r\n\x00-\x1f\x7f]/g, " ");
+}
+
 export function wwwAuthenticate(
   origin: string | undefined,
   error?: string,
@@ -77,10 +93,9 @@ export function wwwAuthenticate(
     );
   }
   parts.push(`scope="${OAUTH_TOOL_SCOPE}"`);
-  if (error !== undefined) parts.unshift(`error="${error}"`);
+  if (error !== undefined) parts.unshift(`error="${quotedStringSafe(error)}"`);
   if (errorDescription !== undefined) {
-    // Quote-safe: strip any double quotes from the human-readable reason.
-    parts.push(`error_description="${errorDescription.replace(/"/g, "'")}"`);
+    parts.push(`error_description="${quotedStringSafe(errorDescription)}"`);
   }
   return `Bearer ${parts.join(", ")}`;
 }
@@ -142,15 +157,20 @@ export function withToolSecuritySchemes(body: unknown): unknown {
   if (typeof result !== "object" || result === null) return body;
   const tools = (result as { tools?: unknown }).tools;
   if (!Array.isArray(tools)) return body;
+  let changedTool = false;
   const nextTools = tools.map((tool) => {
     if (typeof tool !== "object" || tool === null) return tool;
     const name = (tool as { name?: unknown }).name;
     if (typeof name !== "string") return tool;
+    changedTool = true;
     return {
       ...(tool as Record<string, unknown>),
       securitySchemes: securitySchemesForTool(name),
     };
   });
+  // An empty (or all-malformed) tools array gains nothing — keep the
+  // original reference so callers skip the re-serialization.
+  if (!changedTool) return body;
   return {
     ...(body as Record<string, unknown>),
     result: { ...(result as Record<string, unknown>), tools: nextTools },

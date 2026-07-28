@@ -781,6 +781,81 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(limiter.keys).toEqual([]);
   });
 
+  it("anonymous ChatGPT tools/list shows the five submitted tools with top-level securitySchemes", async () => {
+    // The ChatGPT link-account flow requires the two auth-required
+    // submitted tools to stay LISTED anonymously, and the Apps SDK reads
+    // securitySchemes at the descriptor TOP LEVEL (injected by
+    // withChatGptToolSecuritySchemes — the MCP SDK drops unknown fields).
+    const limiter = fakeLimiter(false);
+    const res = await worker.fetch(
+      post(TOOLS_LIST_BODY, { "user-agent": "ChatGPT/1.0" }),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        tools: Array<{
+          name: string;
+          securitySchemes?: Array<{ type: string; scopes?: string[] }>;
+        }>;
+      };
+    };
+    expect(body.result.tools.map((t) => t.name).sort()).toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+      "tako_search",
+      "tako_visualize",
+    ]);
+    const oauth2 = { type: "oauth2", scopes: ["mcp"] };
+    const byName = new Map(
+      body.result.tools.map((t) => [t.name, t.securitySchemes]),
+    );
+    for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
+      expect(byName.get(name), name).toEqual([{ type: "noauth" }, oauth2]);
+    }
+    for (const name of ["tako_contents", "tako_visualize"]) {
+      expect(byName.get(name), name).toEqual([oauth2]);
+    }
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("anonymous ChatGPT tools/call to tako_contents returns the challenge with the request origin, unmetered, no Django call", async () => {
+    const limiter = fakeLimiter(false); // would limit if (wrongly) consulted
+    const fetchMock = mockFetchSequence([]);
+    const res = await worker.fetch(
+      post(
+        {
+          jsonrpc: "2.0",
+          id: 5,
+          method: "tools/call",
+          params: {
+            name: "tako_contents",
+            arguments: { url: "https://trytako.com/card/x" },
+          },
+        },
+        { "user-agent": "ChatGPT/1.0" },
+      ),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { isError?: boolean; _meta?: Record<string, unknown> };
+    };
+    expect(body.result.isError).toBe(true);
+    const challenges = body.result._meta?.["mcp/www_authenticate"] as string[];
+    expect(challenges).toHaveLength(1);
+    // The origin threaded through createMcpServer's requestOrigin option
+    // must match the actual request host, mirroring the HTTP 401 header.
+    expect(challenges[0]).toContain(
+      'resource_metadata="https://example.com/.well-known/oauth-protected-resource"',
+    );
+    // Blocked at dispatch: no Django call on the shared key, and non-free
+    // tool names never consume the per-IP bucket.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(limiter.keys).toEqual([]);
+  });
+
   it("anonymous tools/call forwards the TRIMMED FREE_TIER_API_KEY to Django and meters the IP", async () => {
     const limiter = fakeLimiter(true);
     // tako_answer POSTs /api/v1/answer/ once; the handler's response
