@@ -206,6 +206,36 @@ function namesOf(items: unknown, nameKey: string): string[] {
 
 type LooseDefinition = { term?: unknown; metric_name?: unknown; name?: unknown; definition?: unknown };
 
+/**
+ * A card's as-of date. The backend ships this as an OBJECT
+ * (`{"data_as_of": "2026-03-31"}`) on search cards, so a bare
+ * `typeof === "string"` test drops it on every real card. The date is the
+ * only reliable way to tell a reported actual from a forward projection (a
+ * future date) and a fresh series from a stale vintage, so losing it costs
+ * the model a correctness check the title alone cannot replace. Accept the
+ * string form too — other endpoints send one.
+ */
+function freshnessOf(value: unknown): string | undefined {
+  if (typeof value === "string" && value !== "") return value;
+  if (value !== null && typeof value === "object") {
+    const asOf = (value as { data_as_of?: unknown }).data_as_of;
+    if (typeof asOf === "string" && asOf !== "") return asOf;
+  }
+  return undefined;
+}
+
+/**
+ * Retrieval relevance. `relevance_score` is the entitlement-gated numeric
+ * field; unentitled responses carry the coarse `relevance` string ("High" /
+ * "Medium" / "Low") instead. Render whichever is present so the fact never
+ * silently vanishes for free-tier callers.
+ */
+function relevanceOf(rec: Record<string, unknown>): string | undefined {
+  if (typeof rec.relevance_score === "number") return String(rec.relevance_score);
+  if (typeof rec.relevance === "string" && rec.relevance !== "") return rec.relevance;
+  return undefined;
+}
+
 function renderCard(card: TakoCard, idx: number): string {
   const rec = card as Record<string, unknown>;
   const lines: string[] = [];
@@ -227,11 +257,13 @@ function renderCard(card: TakoCard, idx: number): string {
 
   const facts: string[] = [];
   facts.push(`exportable: ${card.exportable === true ? "yes" : "no"}`);
-  if (typeof rec.relevance_score === "number") facts.push(`relevance: ${rec.relevance_score}`);
+  const relevance = relevanceOf(rec);
+  if (relevance !== undefined) facts.push(`relevance: ${relevance}`);
   if (typeof rec.card_type === "string" && rec.card_type !== "") {
     facts.push(`type: ${rec.card_type}`);
   }
-  if (typeof rec.data_freshness === "string") facts.push(`freshness: ${rec.data_freshness}`);
+  const freshness = freshnessOf(rec.data_freshness);
+  if (freshness !== undefined) facts.push(`freshness: ${freshness}`);
   const nodes = card.nodes ?? [];
   if (nodes.length > 0) {
     facts.push(`nodes: ${nodes.map((n) => `\`${n.id}\` (${n.name})`).join(", ")}`);

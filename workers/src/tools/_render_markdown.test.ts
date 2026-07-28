@@ -176,6 +176,37 @@ describe("renderSearchMarkdown", () => {
     expect(md).toContain("semantic_description: Tesla quarterly revenue series");
   });
 
+  it("renders the as-of date from data_freshness in its object form (the shape prod sends)", () => {
+    const c = card({ data_freshness: { data_as_of: "2026-03-31" } } as Partial<TakoCard>);
+    const md = renderSearchMarkdown(searchOutput({ cards: [c] }));
+    expect(md).toContain("freshness: 2026-03-31");
+  });
+
+  it("still renders data_freshness when it arrives as a bare string", () => {
+    const c = card({ data_freshness: "2026-03-31" } as Partial<TakoCard>);
+    const md = renderSearchMarkdown(searchOutput({ cards: [c] }));
+    expect(md).toContain("freshness: 2026-03-31");
+  });
+
+  it("falls back to the coarse relevance string when relevance_score is absent (free tier)", () => {
+    const c = card({ relevance: "High" } as Partial<TakoCard>);
+    const md = renderSearchMarkdown(searchOutput({ cards: [c] }));
+    expect(md).toContain("relevance: High");
+  });
+
+  it("prefers the entitled numeric relevance_score over the coarse string", () => {
+    const c = card({ relevance_score: 0.87, relevance: "High" } as Partial<TakoCard>);
+    const md = renderSearchMarkdown(searchOutput({ cards: [c] }));
+    expect(md).toContain("relevance: 0.87");
+    expect(md).not.toContain("relevance: High");
+  });
+
+  it("omits freshness and relevance entirely when neither is present", () => {
+    const md = renderSearchMarkdown(searchOutput({ cards: [card()] }));
+    expect(md).not.toContain("freshness:");
+    expect(md).not.toContain("relevance:");
+  });
+
   it("omits semantic_description when it duplicates the description", () => {
     const c = card({
       semantic_description: "Quarterly revenue for Tesla, Inc.",
