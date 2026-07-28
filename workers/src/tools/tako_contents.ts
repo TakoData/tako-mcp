@@ -68,7 +68,21 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
     .lte(2000)
     .optional()
     .describe(
-      "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (always full text).",
+      "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (use max_chars).",
+    ),
+  // Web-text character cap, passed through to the wire. The backend default is
+  // the FULL page text (up to 1M chars ≈ 250k tokens — observed in the wild and
+  // unreadable for any client), so the MCP defaults it DOWN to a context-sized
+  // cap instead. Billing is per page regardless of the cap, so the default
+  // costs nothing; `truncated` reports any cut.
+  max_chars: z
+    .number()
+    .int()
+    .gte(1)
+    .lte(1_000_000)
+    .default(100_000)
+    .describe(
+      "Web URLs only: character cap on the extracted page text (default 100,000; max 1,000,000 = full text). Billing is per page regardless, so the cap only trims what reaches you — `truncated: true` reports a cut. Raise it when you need a full long document, or pass `query` to pull just the matching passages instead. Ignored for Tako card URLs (use max_rows).",
     ),
   // MCP-layer feature, deliberately NOT part of the wire body (the handler
   // strips it): the worker fetches the page text and slices out the passages

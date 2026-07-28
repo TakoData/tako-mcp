@@ -91,7 +91,7 @@ describe("tako_contents handler", () => {
       request_id: "r1",
     });
     const out = await tool.handler(
-      { url: "https://tako.com/card/abc", mode: "inline", content_format: "csv" },
+      { url: "https://tako.com/card/abc", mode: "inline", content_format: "csv", max_chars: 100_000 },
       ctx,
     );
     expect(tool.name).toBe("tako_contents");
@@ -124,7 +124,7 @@ describe("tako_contents handler", () => {
       request_id: "r2",
     });
     const out = await tool.handler(
-      { url: "https://example.com/a", mode: "inline", content_format: "csv" },
+      { url: "https://example.com/a", mode: "inline", content_format: "csv", max_chars: 100_000 },
       ctx,
     );
     // Web text carries no `format` — the envelope is essentially {data, cost}.
@@ -211,7 +211,7 @@ describe("tako_contents handler", () => {
       request_id: "r3",
     });
     const out = await tool.handler(
-      { url: "https://tako.com/card/abc", mode: "url", content_format: "csv" },
+      { url: "https://tako.com/card/abc", mode: "url", content_format: "csv", max_chars: 100_000 },
       ctx,
     );
     expect(out.download_url).toBe("https://signed/csv");
@@ -227,12 +227,12 @@ describe("tako_contents handler", () => {
       request_id: "r4",
     });
     await tool.handler(
-      { url: "https://example.com/a", mode: "url", content_format: "csv" },
+      { url: "https://example.com/a", mode: "url", content_format: "csv", max_chars: 100_000 },
       ctx,
     );
     const call = vi.mocked(djangoPost).mock.calls[0]!;
     expect(call[2]).toBe("/api/v1/contents/");
-    expect(call[3]).toEqual({ url: "https://example.com/a", mode: "url", content_format: "csv" });
+    expect(call[3]).toEqual({ url: "https://example.com/a", mode: "url", content_format: "csv", max_chars: 100_000 });
   });
 
   it("passes max_rows through to the POST body when provided", async () => {
@@ -256,8 +256,28 @@ describe("tako_contents handler", () => {
       url: "https://tako.com/card/abc",
       mode: "inline",
       max_rows: 1000,
+      max_chars: 100_000,
       content_format: "csv",
     });
+  });
+
+  it("caps web text via max_chars: schema-parsed input carries the 100k default onto the wire", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://example.com/a" }],
+      request_id: "r-chars",
+    });
+    const parsed = tool.inputSchema.parse({ url: "https://example.com/a" });
+    expect(parsed.max_chars).toBe(100_000);
+    await tool.handler(parsed, ctx);
+    const call = vi.mocked(djangoPost).mock.calls[0]!;
+    expect((call[3] as { max_chars?: number }).max_chars).toBe(100_000);
+  });
+
+  it("max_chars: accepts a caller override up to the 1M full-text ceiling, rejects out-of-range", async () => {
+    expect(tool.inputSchema.parse({ url: "https://x", max_chars: 1_000_000 }).max_chars).toBe(1_000_000);
+    expect(tool.inputSchema.parse({ url: "https://x", max_chars: 5000 }).max_chars).toBe(5000);
+    expect(() => tool.inputSchema.parse({ url: "https://x", max_chars: 0 })).toThrow();
+    expect(() => tool.inputSchema.parse({ url: "https://x", max_chars: 1_000_001 })).toThrow();
   });
 
   it("json_records: maps records (data/dataset null) and passes content_format through", async () => {
@@ -338,7 +358,7 @@ describe("tako_contents handler", () => {
   it("throws when the endpoint returns no content item", async () => {
     vi.mocked(djangoPost).mockResolvedValue({ contents: [], request_id: "r5" });
     await expect(
-      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx),
+      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx),
     ).rejects.toThrow(/no downloadable content/);
   });
 
@@ -352,7 +372,7 @@ describe("tako_contents handler", () => {
       }),
     );
     const err = await tool
-      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx)
+      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
       .then(() => {
         throw new Error("expected the handler to reject");
       })
@@ -374,7 +394,7 @@ describe("tako_contents handler", () => {
       }),
     );
     const err = await tool
-      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx)
+      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
       .then(() => {
         throw new Error("expected the handler to reject");
       })
@@ -393,7 +413,7 @@ describe("tako_contents handler", () => {
       }),
     );
     const err = await tool
-      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx)
+      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
       .then(() => {
         throw new Error("expected the handler to reject");
       })
@@ -412,7 +432,7 @@ describe("tako_contents handler", () => {
       }),
     );
     const err = (await tool
-      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx)
+      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
       .catch((e: unknown) => e)) as DjangoError;
     // Mirror registerTool: a DjangoError maps to a structured tool result that
     // keeps the full envelope AND shows the verbatim guidance (detail spliced
@@ -436,7 +456,7 @@ describe("tako_contents handler", () => {
       }),
     );
     await expect(
-      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv" }, ctx),
+      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx),
     ).rejects.toThrow(/returned 500/);
   });
 });

@@ -258,7 +258,12 @@
         },
         "max_rows": {
           "type": "integer",
-          "description": "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (always full text)."
+          "description": "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (use max_chars)."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Web URLs only: character cap on the extracted page text (default 100,000; max 1,000,000 = full text). Billing is per page regardless, so the cap only trims what reaches you — `truncated: true` reports a cut. Raise it when you need a full long document, or pass `query` to pull just the matching passages instead. Ignored for Tako card URLs (use max_rows).",
+          "default": 100000
         },
         "query": {
           "type": "string",
