@@ -17,6 +17,7 @@ import {
   createMcpServer,
   detectMcpClient,
   djangoErrorToToolResult,
+  logSdkValidationRejections,
 } from "./mcp.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import { toolAnnotationsForClient } from "./tools/_surface.js";
@@ -701,5 +702,80 @@ describe("free-tier tool surface", () => {
       "tako_contents",
       "tako_search",
     ]);
+  });
+});
+
+describe("logSdkValidationRejections", () => {
+  // The SDK answers schema-invalid tools/call arguments with -32602 before
+  // any tool handler runs; this tap is the only Worker-side signal for those
+  // rejections (see the doc comment in mcp.ts / PR #164 review).
+  const postRequest = (body: unknown): Request =>
+    new Request("https://mcp.example.com/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const jsonRpcResponse = (body: unknown): Response =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+
+  it("logs the tool name and message for a -32602 tools/call rejection", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await logSdkValidationRejections(
+      postRequest({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "tako_visualize", arguments: { components: [] } },
+      }),
+      jsonRpcResponse({
+        jsonrpc: "2.0",
+        id: 7,
+        error: { code: -32602, message: "Invalid arguments: components too small" },
+      }),
+    );
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const line = String(errorSpy.mock.calls[0]?.[0]);
+    expect(line).toContain("tool=tako_visualize");
+    expect(line).toContain("method=tools/call");
+    expect(line).toContain("components too small");
+  });
+
+  it("stays silent for successful responses", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await logSdkValidationRejections(
+      postRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      jsonRpcResponse({ jsonrpc: "2.0", id: 1, result: { tools: [] } }),
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("stays silent for non--32602 errors", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await logSdkValidationRejections(
+      postRequest({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "x" } }),
+      jsonRpcResponse({
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32603, message: "Internal error" },
+      }),
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("never throws on a non-JSON response body", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(
+      logSdkValidationRejections(
+        postRequest({ jsonrpc: "2.0", id: 1, method: "tools/call" }),
+        new Response("nope", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });

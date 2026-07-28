@@ -2,9 +2,9 @@
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
   "namespace": "com.tako",
   "name": "tako-mcp",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "title": "Tako MCP Server",
-  "description": "Search, answer, and fetch data from Tako's knowledge base of 100K+ charts covering economics, finance, demographics, sports, markets, and weather; and run a multi-step Answer Agent for deeper questions.",
+  "description": "Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have. That includes company financials, macroeconomic indicators, web and app traffic, sports, US government spending, and more.",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
     "source": "github"
@@ -462,7 +462,7 @@
     },
     {
       "name": "tako_visualize",
-      "description": "Create an embeddable Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. Auto-renders inline; returns `webpage_url` / `embed_url`.\n\nInput: one or more typed `components`, each `{component_type, config}` — e.g. `header`, `generic_timeseries`, `categorical_bar`, `table`, `financial_boxes`.\n\nExample — a titled bar chart is two components:\n{\"components\": [{\"component_type\": \"header\", \"config\": {\"title\": \"Revenue\"}}, {\"component_type\": \"categorical_bar\", \"config\": {\"datasets\": [{\"label\": \"Sales\", \"units\": \"USD\", \"data\": [{\"x\": \"NA\", \"y\": 500}, {\"x\": \"EU\", \"y\": 300}]}]}}]}\n\nTip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.",
+      "description": "Create an embeddable Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. Auto-renders inline; returns `webpage_url` / `embed_url`.\n\nInput: one or more `components`, each `{component_type, config}`. `config` is typed per `component_type` — `header`, `categorical_bar`, `generic_timeseries`, `table`, `financial_boxes`, and `pie` carry their required fields inline; other types accept a documented passthrough config. `component_variant` is optional and rarely needed.\n\nExample — a titled bar chart is two components:\n{\"components\": [{\"component_type\": \"header\", \"config\": {\"title\": \"Revenue\"}}, {\"component_type\": \"categorical_bar\", \"config\": {\"datasets\": [{\"label\": \"Sales\", \"units\": \"USD\", \"data\": [{\"x\": \"NA\", \"y\": 500}, {\"x\": \"EU\", \"y\": 300}]}]}}]}\n\nTip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.",
       "parameters": {
         "components": {
           "type": "array",

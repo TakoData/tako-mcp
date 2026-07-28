@@ -57,6 +57,20 @@ export const MCP_TOOL_ALLOWLIST = [
 ] as const;
 
 /**
+ * Deliberately curated subset advertised on the LobeHub listing
+ * (`registry/lhm.plugin.json`): the core retrieval surface every client
+ * gets by default, without the opt-in/ChatGPT-only/write tools. The
+ * descriptions and schemas are generated from the tool modules so they
+ * cannot drift; the CHOICE of tools is editorial and lives here.
+ */
+export const LOBEHUB_TOOL_ALLOWLIST = [
+  "tako_answer",
+  "tako_available_data",
+  "tako_contents",
+  "tako_search",
+] as const;
+
+/**
  * Assert that every tool in the registry has a non-empty description.
  * Throws with the list of offending tool names if any are missing.
  */
@@ -225,6 +239,7 @@ const REPO_ROOT = resolve(WORKERS_DIR, "..");
 const TOOLS_DIR = resolve(WORKERS_DIR, "src", "tools");
 const METADATA_PATH = resolve(REPO_ROOT, "registry", "metadata.json");
 const REGISTRY_PATH = resolve(REPO_ROOT, "registry", "server.json");
+const LOBEHUB_PATH = resolve(REPO_ROOT, "registry", "lhm.plugin.json");
 const BARREL_PATH = resolve(TOOLS_DIR, "_registry.ts");
 const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
@@ -411,6 +426,42 @@ function serializeJson(obj: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// LobeHub plugin descriptor
+// ---------------------------------------------------------------------------
+
+/**
+ * Rebuild `registry/lhm.plugin.json` from its own committed static fields
+ * plus generated `version` and `tools`. The committed file is the source of
+ * truth for the descriptor's static metadata (identifier, tags, endpoints…);
+ * `version` comes from `metadata.json` (release-please bumps both in
+ * lockstep) and `tools` is emitted from the LOBEHUB_TOOL_ALLOWLIST subset of
+ * the live tool modules — full draft-7 input schemas, since LobeHub renders
+ * them (unlike `server.json`'s flat parameter map).
+ */
+export function buildLobehubPlugin(
+  committed: Record<string, unknown>,
+  version: string,
+  modules: LoadedModule[],
+): Record<string, unknown> {
+  const byName = new Map(modules.map((m) => [m.tool.name, m.tool]));
+  const missing = LOBEHUB_TOOL_ALLOWLIST.filter((n) => !byName.has(n));
+  if (missing.length > 0) {
+    throw new Error(
+      `LOBEHUB_TOOL_ALLOWLIST entries with no tool file: ${missing.join(", ")}`,
+    );
+  }
+  const tools = LOBEHUB_TOOL_ALLOWLIST.map((name) => {
+    const tool = byName.get(name) as ToolModule;
+    return {
+      name: tool.name,
+      description: tool.description,
+      inputSchema: z.toJSONSchema(tool.inputSchema, { target: "draft-7" }),
+    };
+  });
+  return { ...committed, version, tools };
+}
+
+// ---------------------------------------------------------------------------
 // Barrel emission
 // ---------------------------------------------------------------------------
 
@@ -519,6 +570,12 @@ async function main(): Promise<void> {
   const registry = buildRegistry(metadata, registryTools);
   const registryJson = serializeJson(registry);
   const barrel = buildBarrel(modules);
+  const committedLobehub = JSON.parse(
+    readFileSync(LOBEHUB_PATH, "utf8"),
+  ) as Record<string, unknown>;
+  const lobehubJson = serializeJson(
+    buildLobehubPlugin(committedLobehub, String(metadata.version), modules),
+  );
 
   if (checkMode) {
     const committedRegistry = readFileSync(REGISTRY_PATH, "utf8");
@@ -536,6 +593,12 @@ async function main(): Promise<void> {
       );
       drift = true;
     }
+    if (readFileSync(LOBEHUB_PATH, "utf8") !== lobehubJson) {
+      console.error(
+        `[registry:check] drift: ${LOBEHUB_PATH} does not match generator output`,
+      );
+      drift = true;
+    }
     if (drift) {
       console.error(
         "Run `npm run registry:gen` in workers/ and commit the changes.",
@@ -548,8 +611,10 @@ async function main(): Promise<void> {
 
   writeFileSync(REGISTRY_PATH, registryJson);
   writeFileSync(BARREL_PATH, barrel);
+  writeFileSync(LOBEHUB_PATH, lobehubJson);
   console.log(`wrote ${REGISTRY_PATH}`);
   console.log(`wrote ${BARREL_PATH}`);
+  console.log(`wrote ${LOBEHUB_PATH}`);
   console.log(`(${modules.length} tools)`);
 }
 
