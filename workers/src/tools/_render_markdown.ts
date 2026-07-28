@@ -308,3 +308,297 @@ export function renderAnswerMarkdown(o: AnswerFullOutput): string {
   blocks.push(renderFooter(o.request_id, o.usage));
   return blocks.join("\n\n");
 }
+
+// ---------------------------------------------------------------------------
+// tako_available_data
+// ---------------------------------------------------------------------------
+
+/** Advertised (slim) structuredContent shape for tako_available_data: the
+ *  machine-checkable verdict + the ready-to-run follow-up. The summary and
+ *  coverage-name lists ride in the markdown text. */
+export const availableDataSlimOutputShape = z.looseObject({
+  found: z
+    .boolean()
+    .describe(
+      "True when at least one match has live data coverage — not mere node resolution.",
+    ),
+  query: z.string(),
+  next_call: z
+    .object({
+      tool: z.literal("tako_search"),
+      query: z.string(),
+      node_ids: z.array(z.string()),
+    })
+    .nullable()
+    .describe(
+      "Ready-to-run follow-up when coverage was found: call tako_search with exactly this query and node_ids pinned. Null when no match has coverage.",
+    ),
+});
+
+interface CoverageMatchLike {
+  node_id: string;
+  name: string;
+  type: string;
+  unavailable?: boolean | undefined;
+  coverage: {
+    kind: string;
+    names: string[];
+    total: number;
+    truncated: boolean;
+    capped: boolean;
+  };
+  [key: string]: unknown;
+}
+
+export interface AvailableDataFullOutput {
+  found: boolean;
+  query: string;
+  summary: string;
+  matches: CoverageMatchLike[];
+  other_matches: Array<{ name: string; type: string }>;
+  next_call: { tool: "tako_search"; query: string; node_ids: string[] } | null;
+  [key: string]: unknown;
+}
+
+export function slimAvailableDataStructured(
+  o: AvailableDataFullOutput,
+): Record<string, unknown> {
+  return { found: o.found, query: o.query, next_call: o.next_call };
+}
+
+/** The coverage report: the deterministic summary, then each match's full
+ *  coverage-name list (the primary payload — these are the exact terms to
+ *  reuse in tako_search), then the runnable next_call. */
+export function renderAvailableDataMarkdown(o: AvailableDataFullOutput): string {
+  const blocks: string[] = [o.summary];
+
+  for (const m of o.matches) {
+    if (m.unavailable === true || m.coverage.names.length === 0) continue;
+    const total = `${m.coverage.total}${m.coverage.capped ? "+" : ""}`;
+    const head = `**${m.name}** (\`${m.node_id}\`) — ${m.coverage.kind} (${total} total):`;
+    const names = m.coverage.names.join(", ");
+    const more =
+      m.coverage.truncated && m.coverage.total > m.coverage.names.length
+        ? ` …and ${m.coverage.total - m.coverage.names.length} more server-side (narrow with coverage_filter).`
+        : "";
+    blocks.push(`${head}\n${names}${more}`);
+  }
+
+  if (o.next_call !== null) {
+    blocks.push(`next_call (run verbatim):\n\`\`\`json\n${JSON.stringify(o.next_call)}\n\`\`\``);
+  }
+
+  return blocks.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// tako_agent / tako_agent_wait
+// ---------------------------------------------------------------------------
+
+/** Advertised (slim) structuredContent shape for agent runs: lifecycle fields
+ *  only — the answer, citations, and metadata ride in the markdown text. */
+export const agentRunSlimOutputShape = z.looseObject({
+  run_id: z.string(),
+  status: z
+    .string()
+    .describe("queued | running | completed | failed."),
+  timed_out: z
+    .boolean()
+    .describe("True when the wait window elapsed before a terminal status — poll again with the same run_id."),
+  thread_id: z
+    .string()
+    .nullable()
+    .optional()
+    .describe("Pass back as thread_id to ask a follow-up in the same conversation."),
+  error: z
+    .object({ code: z.string(), message: z.string() })
+    .loose()
+    .nullable()
+    .optional(),
+});
+
+interface AgentCitationLike {
+  index: number;
+  title: string;
+  url?: string | null | undefined;
+  source_name?: string | null | undefined;
+  publish_date?: string | null | undefined;
+  [key: string]: unknown;
+}
+
+interface AgentNoteLike {
+  title?: string | undefined;
+  term?: string | undefined;
+  description?: string | undefined;
+  definition?: string | undefined;
+  [key: string]: unknown;
+}
+
+export interface AgentRunLike {
+  run_id: string;
+  thread_id?: string | null | undefined;
+  status: string;
+  timed_out: boolean;
+  result?: {
+    answer?: string | null | undefined;
+    cards?: Array<{
+      title?: string | null | undefined;
+      embed_url?: string | null | undefined;
+      [key: string]: unknown;
+    }>;
+    citations?: AgentCitationLike[];
+    metadata?: {
+      definitions?: AgentNoteLike[] | null | undefined;
+      assumptions?: AgentNoteLike[] | null | undefined;
+      methodology?: AgentNoteLike[] | null | undefined;
+    } | null | undefined;
+    [key: string]: unknown;
+  } | null | undefined;
+  error?: { code: string; message: string } | null | undefined;
+  [key: string]: unknown;
+}
+
+export function slimAgentRunStructured(run: AgentRunLike): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    run_id: run.run_id,
+    status: run.status,
+    timed_out: run.timed_out,
+    thread_id: run.thread_id ?? null,
+  };
+  if (run.error != null) out.error = run.error;
+  return out;
+}
+
+function renderAgentNotes(title: string, notes: AgentNoteLike[] | null | undefined): string | undefined {
+  if (!Array.isArray(notes) || notes.length === 0) return undefined;
+  const lines = notes
+    .map((n) => {
+      const head = n.title ?? n.term;
+      const body = n.description ?? n.definition;
+      if (typeof head !== "string" || typeof body !== "string") return undefined;
+      return `- ${head}: ${body}`;
+    })
+    .filter((s): s is string => s !== undefined);
+  if (lines.length === 0) return undefined;
+  return `## ${title}\n${lines.join("\n")}`;
+}
+
+/** An agent run as markdown: the answer, its indexed citations (the [n]
+ *  markers in the answer join to these), charts, and the reasoning notes.
+ *  Non-terminal runs render as a poll-again status line. */
+export function renderAgentRunMarkdown(run: AgentRunLike): string {
+  const footer = `_run_id: ${run.run_id}${run.thread_id != null ? ` · thread_id: ${run.thread_id} (pass back for follow-ups)` : ""} · status: ${run.status}_`;
+
+  if (run.status === "failed") {
+    const e = run.error;
+    return [
+      `Agent run failed${e != null ? ` (${e.code}): ${e.message}` : "."}`,
+      footer,
+    ].join("\n\n");
+  }
+  if (run.status !== "completed") {
+    return [
+      `Agent run \`${run.run_id}\` is still ${run.status}${run.timed_out ? " (this wait window elapsed)" : ""}. Poll again with the same run_id — runs typically take 30–90s.`,
+      footer,
+    ].join("\n\n");
+  }
+
+  const blocks: string[] = [];
+  const answer = run.result?.answer;
+  blocks.push(typeof answer === "string" && answer !== "" ? answer : "Agent run completed with no answer text.");
+
+  const citations = run.result?.citations ?? [];
+  if (citations.length > 0) {
+    const lines = citations.map((c) => {
+      const meta: string[] = [];
+      if (typeof c.source_name === "string" && c.source_name !== "") meta.push(c.source_name);
+      if (typeof c.publish_date === "string" && c.publish_date !== "") meta.push(c.publish_date);
+      const tail = meta.length > 0 ? ` (${meta.join(" · ")})` : "";
+      return `[${c.index}] ${c.title}${c.url != null ? ` — ${c.url}` : ""}${tail}`;
+    });
+    blocks.push(`## Citations\n${lines.join("\n")}`);
+  }
+
+  const cards = run.result?.cards ?? [];
+  const chartLines = cards
+    .map((c) =>
+      typeof c.embed_url === "string" && c.embed_url !== ""
+        ? `- ${c.title ?? "Chart"}: ${c.embed_url}`
+        : undefined,
+    )
+    .filter((s): s is string => s !== undefined);
+  if (chartLines.length > 0) blocks.push(`## Charts\n${chartLines.join("\n")}`);
+
+  const md = run.result?.metadata;
+  for (const section of [
+    renderAgentNotes("Definitions", md?.definitions),
+    renderAgentNotes("Assumptions", md?.assumptions),
+    renderAgentNotes("Methodology", md?.methodology),
+  ]) {
+    if (section !== undefined) blocks.push(section);
+  }
+
+  blocks.push(footer);
+  return blocks.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// tako_contents
+// ---------------------------------------------------------------------------
+
+export interface ContentsOutputLike {
+  note?: string | undefined;
+  data?: string | undefined;
+  records?: Array<Record<string, unknown>> | undefined;
+  dataset?: unknown;
+  format?: string | undefined;
+  total_rows?: number | undefined;
+  truncated?: boolean | undefined;
+  download_url?: string | undefined;
+  expires_at?: string | undefined;
+  source_url?: string | undefined;
+  cost: number;
+  [key: string]: unknown;
+}
+
+/** structuredContent for tako_contents: the metadata WITHOUT the payload
+ *  channels (data/records/dataset live in the text). */
+export function slimContentsStructured(o: ContentsOutputLike): Record<string, unknown> {
+  const { data, records, dataset, note, ...meta } = o;
+  void data;
+  void records;
+  void dataset;
+  void note;
+  return meta;
+}
+
+/** tako_contents as text: the payload itself (page text raw, csv fenced,
+ *  json payloads fenced), led by the passage note and trailed by a one-line
+ *  metadata footer. This is where the JSON-escaping tax on 100k-char pages
+ *  actually dies. */
+export function renderContentsText(o: ContentsOutputLike): string {
+  const blocks: string[] = [];
+  if (o.note !== undefined) blocks.push(`> ${o.note}`);
+
+  if (o.download_url !== undefined) {
+    blocks.push(
+      `Download: ${o.download_url}${o.expires_at !== undefined ? ` (expires ${o.expires_at})` : ""}`,
+    );
+  }
+
+  if (o.data !== undefined) {
+    blocks.push(o.format === "csv" ? `\`\`\`csv\n${o.data}\n\`\`\`` : o.data);
+  } else if (o.records !== undefined) {
+    blocks.push(`\`\`\`json\n${JSON.stringify(o.records)}\n\`\`\``);
+  } else if (o.dataset !== undefined) {
+    blocks.push(`\`\`\`json\n${JSON.stringify(o.dataset)}\n\`\`\``);
+  }
+
+  const meta: string[] = [`cost: $${o.cost}`];
+  if (o.total_rows !== undefined) meta.push(`total_rows: ${o.total_rows}`);
+  if (o.truncated === true) meta.push("truncated");
+  if (o.source_url !== undefined) meta.push(`source_url: ${o.source_url}`);
+  blocks.push(`_${meta.join(" · ")}_`);
+
+  return blocks.join("\n\n");
+}

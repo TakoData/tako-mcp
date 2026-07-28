@@ -37,6 +37,12 @@ import {
   graphRelatedOutputShape,
   graphSearchOutputShape,
 } from "./_graph.js";
+import {
+  availableDataSlimOutputShape,
+  renderAvailableDataMarkdown,
+  slimAvailableDataStructured,
+  type AvailableDataFullOutput,
+} from "./_render_markdown.js";
 import type { graphRelationSchema } from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
 import type { ToolModule } from "./types.js";
@@ -100,7 +106,12 @@ const coverageMatchSchema = z.object({
   coverage: coverageGroupSchema,
 });
 
-const outputSchema = z.object({
+// INTERNAL full output shape (types the handler's return value). NOT the
+// advertised schema: the summary + coverage-name lists reach the model as
+// rendered markdown (renderText below), and the ADVERTISED outputSchema is
+// the slim structuredContent shape (found/query/next_call) so hosts that
+// count structuredContent toward context don't pay for the content twice.
+const fullOutputSchema = z.object({
   found: z.boolean().describe(
     "True when at least one match has live data coverage — not mere node resolution. A resolved node with no coverage (or whose coverage lookup failed) yields false.",
   ),
@@ -119,6 +130,10 @@ const outputSchema = z.object({
       "Ready-to-run follow-up, present only when the target is UNAMBIGUOUS — a coverage_filter was applied, or the coverage list is small: call tako_search with exactly this query and node_ids (pinned) to fetch the confirmed series in one step. Null otherwise (a broad entity's top metric is arbitrary — compose your own entity + metric query from coverage.names instead of spending a priced search on a guess).",
     ),
 });
+type FullOutput = z.infer<typeof fullOutputSchema>;
+
+// Advertised (slim) schema — see the fullOutputSchema comment above.
+const outputSchema = availableDataSlimOutputShape;
 type Output = z.infer<typeof outputSchema>;
 
 const searchShape = z.object(graphSearchOutputShape);
@@ -141,7 +156,9 @@ const tako_available_data = {
     // closed-world there. See `annotationsByClient` in types.ts.
     chatgpt: { openWorldHint: false },
   },
-  async handler(input: Input, ctx): Promise<Output> {
+  // Declared as the FULL internal shape (assignable to the slim advertised
+  // Output via its loose index signature) so tests and hooks keep real types.
+  async handler(input: Input, ctx): Promise<FullOutput> {
     // 1) Resolve the name to graph nodes.
     const searchQuery: Record<string, string | number | boolean> = {
       q: input.q,
@@ -303,6 +320,13 @@ const tako_available_data = {
       // applied, or a small coverage list) — see buildNextCall.
       next_call: buildNextCall(matches, input.coverage_filter !== undefined),
     };
+  },
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderAvailableDataMarkdown(output as unknown as AvailableDataFullOutput);
+  },
+  slimStructured(output) {
+    return slimAvailableDataStructured(output as unknown as AvailableDataFullOutput);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

@@ -25,6 +25,11 @@ import { DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } 
 import { ContentsDeliveryMode, ContentsRequest, ContentsResponse, TakoDataset } from "../generated/schemas.js";
 import { logWireGuardFailure } from "./_log.js";
 import { extractPassages } from "./_passages.js";
+import {
+  renderContentsText,
+  slimContentsStructured,
+  type ContentsOutputLike,
+} from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -317,6 +322,17 @@ const takoContents = {
       throw new Error("Tako contents endpoint returned an unexpected shape.");
     }
     return parsed.data;
+  },
+  // The payload (page text / csv / json) reaches the model as plain text —
+  // this is where the JSON-escaping tax on 100k-char pages dies — and
+  // structuredContent keeps only the metadata. The all-optional outputSchema
+  // already validates the slim subset.
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderContentsText(output as unknown as ContentsOutputLike);
+  },
+  slimStructured(output) {
+    return slimContentsStructured(output as unknown as ContentsOutputLike);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

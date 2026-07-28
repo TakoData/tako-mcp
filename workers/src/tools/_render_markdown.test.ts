@@ -10,9 +10,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  renderAgentRunMarkdown,
   renderAnswerMarkdown,
+  renderAvailableDataMarkdown,
+  renderContentsText,
   renderSearchMarkdown,
+  slimAgentRunStructured,
   slimAnswerStructured,
+  slimAvailableDataStructured,
+  slimContentsStructured,
   slimSearchStructured,
   type AnswerFullOutput,
 } from "./_render_markdown.js";
@@ -233,5 +239,148 @@ describe("structuredContent slimmers", () => {
     expect(
       Object.keys(slimAnswerStructured({ ...base, guidance: "g" })).sort(),
     ).toEqual(["guidance", "request_id", "usage"]);
+  });
+});
+
+describe("renderAvailableDataMarkdown + slim", () => {
+  const output = {
+    found: true,
+    query: "Tesla",
+    summary: "Tako's proprietary data has live coverage of 1 match for \"Tesla\":",
+    matches: [
+      {
+        node_id: "ent_tsla",
+        name: "Tesla, Inc.",
+        type: "entity",
+        coverage: {
+          kind: "metrics",
+          names: ["Revenue", "Gross Margin"],
+          total: 187,
+          truncated: true,
+          capped: false,
+        },
+      },
+    ],
+    other_matches: [],
+    next_call: { tool: "tako_search" as const, query: "Tesla, Inc. Revenue", node_ids: ["ent_tsla"] },
+  };
+
+  it("renders summary, coverage names with node id, truncation note, and next_call fence", () => {
+    const md = renderAvailableDataMarkdown(output);
+    expect(md.startsWith("Tako's proprietary data")).toBe(true);
+    expect(md).toContain("**Tesla, Inc.** (`ent_tsla`) — metrics (187 total):");
+    expect(md).toContain("Revenue, Gross Margin");
+    expect(md).toContain("…and 185 more server-side");
+    expect(md).toContain('```json\n{"tool":"tako_search"');
+  });
+
+  it("slims structuredContent to found/query/next_call", () => {
+    expect(Object.keys(slimAvailableDataStructured(output)).sort()).toEqual([
+      "found",
+      "next_call",
+      "query",
+    ]);
+  });
+});
+
+describe("renderAgentRunMarkdown + slim", () => {
+  const completed = {
+    run_id: "run-1",
+    thread_id: "th-1",
+    status: "completed",
+    timed_out: false,
+    result: {
+      answer: "The cohort is A, B, and C. [1]",
+      cards: [{ title: "Cohort chart", embed_url: "https://trytako.com/embed/x/" }],
+      citations: [
+        { index: 1, title: "Source doc", url: "https://example.com/doc", source_name: "Example", publish_date: "2026-07-01" },
+      ],
+      metadata: {
+        definitions: [{ term: "cohort", definition: "companies matching the criteria" }],
+        assumptions: null,
+        methodology: null,
+      },
+    },
+  };
+
+  it("renders answer, indexed citations, charts, definitions, and the run footer", () => {
+    const md = renderAgentRunMarkdown(completed);
+    expect(md.startsWith("The cohort is A, B, and C. [1]")).toBe(true);
+    expect(md).toContain("[1] Source doc — https://example.com/doc (Example · 2026-07-01)");
+    expect(md).toContain("- Cohort chart: https://trytako.com/embed/x/");
+    expect(md).toContain("- cohort: companies matching the criteria");
+    expect(md).toContain("run_id: run-1");
+    expect(md).toContain("thread_id: th-1");
+  });
+
+  it("renders a poll-again line for a timed-out non-terminal run", () => {
+    const md = renderAgentRunMarkdown({ run_id: "run-2", status: "running", timed_out: true });
+    expect(md).toContain("still running");
+    expect(md).toContain("Poll again");
+  });
+
+  it("renders the error for a failed run", () => {
+    const md = renderAgentRunMarkdown({
+      run_id: "run-3",
+      status: "failed",
+      timed_out: false,
+      error: { code: "internal", message: "boom" },
+    });
+    expect(md).toContain("Agent run failed (internal): boom");
+  });
+
+  it("slims structuredContent to the lifecycle fields", () => {
+    expect(Object.keys(slimAgentRunStructured(completed)).sort()).toEqual([
+      "run_id",
+      "status",
+      "thread_id",
+      "timed_out",
+    ]);
+  });
+});
+
+describe("renderContentsText + slim", () => {
+  it("web text: note leads, page text rides RAW (no JSON escaping), metadata footers", () => {
+    const md = renderContentsText({
+      note: "2 match(es) for the phrase \"RevPAR\"",
+      data: "line one\nline two",
+      truncated: true,
+      cost: 0.001,
+    });
+    expect(md.startsWith("> 2 match(es)")).toBe(true);
+    expect(md).toContain("line one\nline two");
+    expect(md).toContain("cost: $0.001");
+    expect(md).toContain("truncated");
+  });
+
+  it("card csv rides in a fence with total_rows in the footer", () => {
+    const md = renderContentsText({
+      format: "csv",
+      data: "date,v\n2026-01-01,1",
+      total_rows: 1500,
+      cost: 0.001,
+    });
+    expect(md).toContain("```csv\ndate,v\n2026-01-01,1\n```");
+    expect(md).toContain("total_rows: 1500");
+  });
+
+  it("url mode renders the download link + expiry", () => {
+    const md = renderContentsText({
+      download_url: "https://signed/csv",
+      expires_at: "2026-07-29T00:00:00Z",
+      cost: 0,
+    });
+    expect(md).toContain("Download: https://signed/csv (expires 2026-07-29T00:00:00Z)");
+  });
+
+  it("slims structuredContent to metadata only (payload channels dropped)", () => {
+    const slim = slimContentsStructured({
+      note: "n",
+      data: "big page text",
+      format: "csv",
+      total_rows: 3,
+      cost: 0.5,
+    });
+    expect(slim).toEqual({ format: "csv", total_rows: 3, cost: 0.5 });
   });
 });

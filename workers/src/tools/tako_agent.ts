@@ -29,6 +29,12 @@ import {
   AnswerAgentRunRequest,
 } from "../generated/schemas.js";
 import { logWireGuardFailure } from "./_log.js";
+import {
+  agentRunSlimOutputShape,
+  renderAgentRunMarkdown,
+  slimAgentRunStructured,
+  type AgentRunLike,
+} from "./_render_markdown.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -328,7 +334,10 @@ const takoAgent = {
   name: "tako_agent",
   description: DESCRIPTION,
   inputSchema,
-  outputSchema: agentRunSchema,
+  // Advertised schema = the slim lifecycle shape; the answer, citations, and
+  // reasoning notes reach the model as rendered markdown (renderText below).
+  // agentRunSchema stays the internal shape the poll validates against.
+  outputSchema: agentRunSlimOutputShape,
   annotations: {
     title: "Tako: Answer Agent",
     // WRITE under the shared rule in types.ts: the call creates a durable,
@@ -350,6 +359,13 @@ const takoAgent = {
     const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);
     return pollAgentRun(ctx, runId, { budgetMs: AGENT_POLL_BUDGET_MS, onTimeout: "throw" });
   },
-} satisfies ToolModule<typeof inputSchema, AgentRun>;
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderAgentRunMarkdown(output as unknown as AgentRunLike);
+  },
+  slimStructured(output) {
+    return slimAgentRunStructured(output as unknown as AgentRunLike);
+  },
+} satisfies ToolModule<typeof inputSchema, z.infer<typeof agentRunSlimOutputShape>>;
 
 export default takoAgent;
