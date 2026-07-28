@@ -152,8 +152,8 @@
         },
         "preview_rows": {
           "type": "integer",
-          "description": "How many rows of each cited card's data to inline when include_contents is true — always the N MOST-RECENT rows (default 50, max 250). Ignored when include_contents is false.",
-          "default": 50
+          "description": "Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default 20, the free inline allowance the server ships; values above your account's allowance have no effect). For more rows, call tako_contents on the card's url (priced beyond the first 20). Ignored when include_contents is false.",
+          "default": 20
         },
         "country_code": {
           "type": "string",
@@ -184,7 +184,7 @@
     },
     {
       "name": "tako_available_data",
-      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nThe recommended first step for a data lookup: run this before tako_search / tako_answer whenever you're unsure the data exists or its exact name. It's free, it confirms coverage, and the exact names it returns make the follow-up priced call land precisely instead of guessing. (Skip it only for an obvious open-web query that no data graph would hold.)\n\nBest for: any \"what structured/proprietary data is there on X?\" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer — a cheap accuracy check that tells you whether the data exists and under exactly what name.\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The coverage.names answer all of them at once — never loop one call per name.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.\nEach match's coverage.names lists the exact metric/entity names, and `next_call` is a ready-to-run tako_search (query + pinned node_ids) for the top one — run it verbatim, or swap in any other name from coverage.names.\nHunting one specific metric on a broad entity? Pass `coverage_filter` (\"charge-off\", \"margin\") — it filters server-side across the FULL coverage, so it finds names a truncated list buries.",
+      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nThe recommended first step for a data lookup: run this before tako_search / tako_answer whenever you're unsure the data exists or its exact name. It's free, it confirms coverage, and the exact names it returns make the follow-up priced call land precisely instead of guessing. (Skip it only for an obvious open-web query that no data graph would hold.)\n\nBest for: any \"what structured/proprietary data is there on X?\" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer — a cheap accuracy check that tells you whether the data exists and under exactly what name.\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The coverage.names answer all of them at once — never loop one call per name.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.\nEach match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search. When the target is unambiguous (a coverage_filter was applied, or the coverage is small), `next_call` is that follow-up prewritten (query + pinned node_ids) — run it verbatim.\nHunting one specific metric on a broad entity? Pass `coverage_filter` (\"charges-off\", \"margin\" — whole words as they appear in the name) — it filters server-side across the FULL coverage, so it finds names a truncated list buries.",
       "parameters": {
         "q": {
           "type": "string",
@@ -218,7 +218,7 @@
         },
         "coverage_filter": {
           "type": "string",
-          "description": "Hunting one specific metric? Case-insensitive substring filter on the coverage names + aliases, applied server-side across the FULL coverage (e.g. q=\"Capital One\", coverage_filter=\"charge-off\"). Use when the unfiltered list came back truncated without the metric you expected. Omit for the general coverage overview."
+          "description": "Hunting one specific metric? Case-insensitive filter matching WORDS in the coverage names + aliases, applied server-side across the FULL coverage (e.g. q=\"Capital One\", coverage_filter=\"charges-off\"). Use whole words as they appear in the name — a partial word (\"charge\" for \"charges\") may not match. Use when the unfiltered list came back truncated without the metric you expected; omit for the general coverage overview."
         }
       },
       "annotations": {
@@ -430,8 +430,8 @@
         },
         "preview_rows": {
           "type": "integer",
-          "description": "How many rows of each card's data to inline when include_contents is true — always the N MOST-RECENT rows (default 50, max 250). Raise it toward 250 when you know you need the longer series inline (best after tako_available_data confirmed the data, or with node_ids pinned); lower it to trim context on broad fan-outs. Ignored when include_contents is false.",
-          "default": 50
+          "description": "Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default 20, the free inline allowance the server ships; values above your account's allowance have no effect). Lower it to trim context on broad fan-outs. For MORE than 20 rows, call tako_contents on the card's url (max_rows up to 2,000 — first 20 free, priced beyond). Ignored when include_contents is false.",
+          "default": 20
         },
         "country_code": {
           "type": "string",

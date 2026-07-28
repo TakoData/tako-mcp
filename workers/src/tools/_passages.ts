@@ -8,7 +8,9 @@
  * Matching is two-tier: the full query phrase first (case-insensitive); when
  * the phrase never occurs, each individual term (≥ MIN_TERM_LEN chars) is
  * matched instead — a query like "RevPAR occupancy 2024" still lands on
- * sections mentioning any of its terms. When nothing matches at all, the
+ * sections mentioning any of its terms. Fairness holds at BOTH levels: the
+ * match budget is split evenly per term, and window selection guarantees
+ * every matched term at least one passage before any term gets extras. When nothing matches at all, the
  * result says so explicitly and carries the head of the document — a
  * deterministic "not on this page" verdict, not a silent empty string.
  *
@@ -62,18 +64,68 @@ function occurrences(
   return { hits, capped: false };
 }
 
-/** Merge sorted [start,end) windows that overlap or touch. */
-function mergeWindows(windows: Array<[number, number]>): Array<[number, number]> {
-  const merged: Array<[number, number]> = [];
-  for (const [start, end] of windows) {
+/** A hit index tagged with the term (or phrase) that produced it. */
+interface TaggedHit {
+  i: number;
+  term: string;
+}
+
+/** A merged passage window and the set of terms whose hits it covers. */
+interface TermWindow {
+  start: number;
+  end: number;
+  terms: Set<string>;
+}
+
+/**
+ * Turn tagged hits into merged windows (±WINDOW around each hit; overlapping
+ * or touching windows coalesce), each carrying the terms it covers.
+ */
+function mergeTaggedWindows(hits: TaggedHit[], textLen: number): TermWindow[] {
+  const sorted = [...hits].sort((a, b) => a.i - b.i);
+  const merged: TermWindow[] = [];
+  for (const h of sorted) {
+    const start = Math.max(0, h.i - WINDOW);
+    const end = Math.min(textLen, h.i + WINDOW);
     const last = merged[merged.length - 1];
-    if (last !== undefined && start <= last[1]) {
-      merged[merged.length - 1] = [last[0], Math.max(last[1], end)];
+    if (last !== undefined && start <= last.end) {
+      last.end = Math.max(last.end, end);
+      last.terms.add(h.term);
     } else {
-      merged.push([start, end]);
+      merged.push({ start, end, terms: new Set([h.term]) });
     }
   }
   return merged;
+}
+
+/**
+ * Pick at most `max` windows, term-fairly: every matched term claims its
+ * earliest window BEFORE any remaining capacity is filled in document order.
+ * A plain positional slice would let a common early term ("occupancy", a
+ * year) crowd a rare late term's window ("RevPAR … $142.11") out of the
+ * result while the header still reads matched — silently missing the one
+ * passage the caller wanted. Output keeps document order.
+ */
+function selectWindows(windows: TermWindow[], max: number): TermWindow[] {
+  if (windows.length <= max) return windows;
+  const chosen = new Set<number>();
+  const allTerms = new Set<string>();
+  for (const w of windows) for (const t of w.terms) allTerms.add(t);
+  for (const term of allTerms) {
+    if (chosen.size >= max) break;
+    let covered = false;
+    for (const i of chosen) {
+      if ((windows[i] as TermWindow).terms.has(term)) {
+        covered = true;
+        break;
+      }
+    }
+    if (covered) continue;
+    const idx = windows.findIndex((w) => w.terms.has(term));
+    if (idx >= 0) chosen.add(idx);
+  }
+  for (let i = 0; i < windows.length && chosen.size < max; i++) chosen.add(i);
+  return [...chosen].sort((a, b) => a - b).map((i) => windows[i] as TermWindow);
 }
 
 /**
@@ -87,7 +139,7 @@ export function extractPassages(text: string, query: string): PassageResult {
   let saturated = false;
   const phraseScan = occurrences(lowerText, phrase, MAX_MATCHES);
   saturated = phraseScan.capped;
-  let hits = phraseScan.hits;
+  let hits: TaggedHit[] = phraseScan.hits.map((i) => ({ i, term: phrase }));
   let tier = `the phrase "${query.trim()}"`;
   if (hits.length === 0) {
     const terms = [...new Set(
@@ -98,15 +150,16 @@ export function extractPassages(text: string, query: string): PassageResult {
     // must never starve a rare term ("RevPAR") of its slots — the rare term
     // is usually the one carrying the figure the caller wants, and dropping
     // it silently while reporting matched:true is worse than a clean miss.
+    // (selectWindows applies the same fairness again at the WINDOW level.)
     const perTerm = Math.max(1, Math.floor(MAX_MATCHES / Math.max(1, terms.length)));
     saturated = false;
     hits = terms
       .flatMap((t) => {
         const scan = occurrences(lowerText, t, perTerm);
         saturated = saturated || scan.capped;
-        return scan.hits;
+        return scan.hits.map((i) => ({ i, term: t }));
       })
-      .sort((a, b) => a - b);
+      .sort((a, b) => a.i - b.i);
     if (hits.length > MAX_MATCHES) {
       saturated = true;
       hits = hits.slice(0, MAX_MATCHES);
@@ -127,16 +180,16 @@ export function extractPassages(text: string, query: string): PassageResult {
     };
   }
 
-  const windows = mergeWindows(
-    hits.map((i): [number, number] => [Math.max(0, i - WINDOW), Math.min(text.length, i + WINDOW)]),
-  ).slice(0, MAX_PASSAGES);
+  // `saturated` stays a MATCH-count marker ("N+"); dropped WINDOWS are
+  // reported by `truncated` and the extracted-passage count instead.
+  const windows = selectWindows(mergeTaggedWindows(hits, text.length), MAX_PASSAGES);
 
-  const passages = windows.map(([start, end]) => {
+  const passages = windows.map(({ start, end }) => {
     const prefix = start > 0 ? "…" : "";
     const suffix = end < text.length ? "…" : "";
     return `${prefix}${text.slice(start, end)}${suffix}`;
   });
-  const covered = windows.reduce((sum, [start, end]) => sum + (end - start), 0);
+  const covered = windows.reduce((sum, { start, end }) => sum + (end - start), 0);
   const header =
     `[tako_contents] ${hits.length}${saturated ? "+" : ""} match(es) for ${tier} — ` +
     `${passages.length} passage(s) extracted from ${text.length} chars of page text. ` +

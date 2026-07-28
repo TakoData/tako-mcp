@@ -84,6 +84,23 @@ describe("extractPassages", () => {
     expect(r.data).toContain("$142.11");
   });
 
+  it("window SELECTION is term-fair too: many spaced-out common windows can't crowd out the rare term's window (review round 2)", () => {
+    // Reviewer's exact repro: 12 "occupancy" hits spaced 4000 chars apart —
+    // wider than the merge span, so each stays its own window. A positional
+    // windows.slice(0, 8) kept only common windows and dropped the late
+    // RevPAR one. selectWindows must hand every term a window first.
+    const spaced = Array.from(
+      { length: 12 },
+      () => `${"z".repeat(4000)} occupancy held `,
+    ).join("");
+    const doc = `${spaced}${"z".repeat(4000)} RevPAR reached $142.11 in Q3. ${"z".repeat(1000)}`;
+    const r = extractPassages(doc, "RevPAR occupancy 2031");
+    expect(r.matched).toBe(true);
+    expect(r.data).toContain("$142.11");
+    // Still bounded: at most 8 passages.
+    expect((r.data.match(/\[…\]/g) ?? []).length).toBeLessThanOrEqual(7);
+  });
+
   it("the '+' saturation marker only appears when matches were actually dropped", () => {
     const exactly64 = Array.from({ length: 64 }, () => "target, ").join("");
     const r64 = extractPassages(exactly64, "target");

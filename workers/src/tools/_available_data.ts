@@ -205,7 +205,7 @@ function coverageClause(g: CoverageGroup, filter?: string): string {
 function emptyClause(kind: CoverageKind, filter?: string): string {
   if (filter !== undefined) {
     const what = kind === "entities" ? "tracked entities" : "metrics";
-    return `resolved, but no ${what} match coverage_filter "${filter}" — the coverage itself may be non-empty; re-call without coverage_filter (or with a shorter fragment) to see it`;
+    return `resolved, but no ${what} match coverage_filter "${filter}" — the coverage itself may be non-empty; re-call without coverage_filter (or with a different word from the metric's name) to see it`;
   }
   return kind === "entities"
     ? "resolved, but Tako isn't tracking it against any entities yet"
@@ -230,21 +230,40 @@ export interface NextCall {
   node_ids: string[];
 }
 
-/**
- * Build the ready-to-run follow-up handle from the first match with real
- * coverage: entity match → "Tesla, Inc. Revenue" (entity + its first metric);
- * metric match → "United States Inflation Rate" (first entity + metric). The
- * matched node's id rides along for pinning. Null when no match has coverage —
- * a handle for a name just reported as data-less would steer the agent into a
- * priced search that misses. This is what makes discovery-first a one-step
- * pipeline: confirm coverage → run next_call verbatim → series in hand.
- */
-export function buildNextCall(matches: CoverageMatch[]): NextCall | null {
+// A coverage list at or under this size is treated as unambiguous enough for
+// a ready-to-run handle: with 3 names the top one is a meaningful pick; with
+// a broad entity's dozens, names[0] is just backend popularity order and a
+// handle would invite an off-target PRICED search.
+export const NEXT_CALL_MAX_NAMES = 3;
+
+// The example query + node id the summary and next_call share: first match
+// with real coverage, entity match → "Tesla, Inc. Revenue", metric match →
+// "United States Inflation Rate".
+function exampleSearch(matches: CoverageMatch[]): NextCall | null {
   const m = matches.find((x) => !x.unavailable && x.coverage.names.length > 0);
   if (!m) return null;
   const first = m.coverage.names[0] as string;
   const query = m.coverage.kind === "entities" ? `${first} ${m.name}` : `${m.name} ${first}`;
   return { tool: "tako_search", query, node_ids: [m.node_id] };
+}
+
+/**
+ * Build the ready-to-run follow-up handle — but ONLY when the target is
+ * unambiguous: the caller filtered the coverage (so names reflect intent),
+ * or the coverage list is small (≤ NEXT_CALL_MAX_NAMES). Otherwise null:
+ * "run this verbatim" against a broad entity's arbitrary top metric would
+ * spend a priced search on a guess — the opposite of discovery-first. Also
+ * null when no match has coverage (a handle for a name just reported as
+ * data-less would steer the agent into a search that misses).
+ */
+export function buildNextCall(
+  matches: CoverageMatch[],
+  filtered: boolean,
+): NextCall | null {
+  const m = matches.find((x) => !x.unavailable && x.coverage.names.length > 0);
+  if (!m) return null;
+  if (!filtered && m.coverage.names.length > NEXT_CALL_MAX_NAMES) return null;
+  return exampleSearch(matches);
 }
 
 /**
@@ -306,11 +325,20 @@ export function buildSummary(input: {
     blocks.push("", `Also matched: ${names.join(", ")}${tail}.`);
   }
 
-  const example = buildNextCall(matches);
-  if (example) {
+  // Mirror the tool's next_call gate: advertise the ready-made handle only
+  // when one is actually emitted; otherwise steer to composing a precise
+  // entity + metric query (still showing a concrete example).
+  const handle = buildNextCall(matches, coverageFilter !== undefined);
+  const example = exampleSearch(matches);
+  if (handle) {
     blocks.push(
       "",
-      `The exact names are listed in each match's coverage.names. To pull one as a chart or dataset, run the ready-made \`next_call\` (tako_search with query "${example.query}" + its node_ids pinned), or compose your own entity + metric query the same way.`,
+      `The exact names are listed in each match's coverage.names. To pull one as a chart or dataset, run the ready-made \`next_call\` (tako_search with query "${handle.query}" + its node_ids pinned), or compose your own entity + metric query the same way.`,
+    );
+  } else if (example) {
+    blocks.push(
+      "",
+      `The exact names are listed in each match's coverage.names. Pick the one you actually need and pull it with tako_search as entity + metric (e.g. "${example.query}"), pinning the match's node_id.`,
     );
   }
 

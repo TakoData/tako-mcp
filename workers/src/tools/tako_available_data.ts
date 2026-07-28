@@ -61,8 +61,8 @@ const DESCRIPTION = [
   "Tips:",
   "One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The coverage.names answer all of them at once — never loop one call per name.",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.",
-  "Each match's coverage.names lists the exact metric/entity names, and `next_call` is a ready-to-run tako_search (query + pinned node_ids) for the top one — run it verbatim, or swap in any other name from coverage.names.",
-  'Hunting one specific metric on a broad entity? Pass `coverage_filter` ("charge-off", "margin") — it filters server-side across the FULL coverage, so it finds names a truncated list buries.',
+  "Each match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search. When the target is unambiguous (a coverage_filter was applied, or the coverage is small), `next_call` is that follow-up prewritten (query + pinned node_ids) — run it verbatim.",
+  'Hunting one specific metric on a broad entity? Pass `coverage_filter` ("charges-off", "margin" — whole words as they appear in the name) — it filters server-side across the FULL coverage, so it finds names a truncated list buries.',
 ].join("\n");
 
 const inputSchema = z.object({
@@ -74,7 +74,7 @@ const inputSchema = z.object({
     "NER label to prefer (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...).",
   ),
   coverage_filter: z.string().min(1).optional().describe(
-    'Hunting one specific metric? Case-insensitive substring filter on the coverage names + aliases, applied server-side across the FULL coverage (e.g. q="Capital One", coverage_filter="charge-off"). Use when the unfiltered list came back truncated without the metric you expected. Omit for the general coverage overview.',
+    'Hunting one specific metric? Case-insensitive filter matching WORDS in the coverage names + aliases, applied server-side across the FULL coverage (e.g. q="Capital One", coverage_filter="charges-off"). Use whole words as they appear in the name — a partial word ("charge" for "charges") may not match. Use when the unfiltered list came back truncated without the metric you expected; omit for the general coverage overview.',
   ),
 });
 
@@ -113,7 +113,7 @@ const outputSchema = z.object({
     })
     .nullable()
     .describe(
-      "Ready-to-run follow-up when coverage was found: call tako_search with exactly this query and node_ids (pinned) to fetch the confirmed series in one step. Swap the metric/entity in `query` for any other name from coverage.names to fetch a different one. Null when no match has coverage.",
+      "Ready-to-run follow-up, present only when the target is UNAMBIGUOUS — a coverage_filter was applied, or the coverage list is small: call tako_search with exactly this query and node_ids (pinned) to fetch the confirmed series in one step. Null otherwise (a broad entity's top metric is arbitrary — compose your own entity + metric query from coverage.names instead of spending a priced search on a guess).",
     ),
 });
 type Output = z.infer<typeof outputSchema>;
@@ -296,8 +296,9 @@ const tako_available_data = {
       other_matches,
       // The discovery-to-fetch handle: agents that stop at prose re-derive a
       // query and often miss; this is the same example the summary names, in
-      // directly runnable form.
-      next_call: buildNextCall(matches),
+      // directly runnable form. Gated on an unambiguous target (filter
+      // applied, or a small coverage list) — see buildNextCall.
+      next_call: buildNextCall(matches, input.coverage_filter !== undefined),
     };
   },
 } satisfies ToolModule<typeof inputSchema, Output>;

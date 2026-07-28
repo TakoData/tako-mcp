@@ -55,7 +55,7 @@ const inputSchema = z.object({
     .max(MAX_PREVIEW_ROWS)
     .default(INLINE_PREVIEW_ROW_CAP)
     .describe(
-      `How many rows of each cited card's data to inline when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, max ${MAX_PREVIEW_ROWS}). Ignored when include_contents is false.`,
+      `Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). For more rows, call tako_contents on the card's url (priced beyond the first ${INLINE_PREVIEW_ROW_CAP}). Ignored when include_contents is false.`,
     ),
   country_code: z
     .string()
@@ -145,6 +145,21 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
   } satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
 }
 
+/**
+ * The zero-data-card verdict, worded by whether web results ground the
+ * answer. With web grounding the prose may be a complete, correct answer
+ * (e.g. "who won the game?") — the verdict must scope itself to the data
+ * index, not read as "this answer failed". Without web grounding it is the
+ * hard anti-retry stop. Both are deterministic (cards.length === 0), never
+ * inferred from the prose.
+ */
+function buildDataGapGuidance(hasWebResults: boolean): string {
+  if (hasWebResults) {
+    return "Data-coverage note: ZERO curated data cards ground this answer — it is web-grounded only (machine check: cards.length === 0). If the prose answers the question, use it as-is. If you specifically wanted Tako's proprietary series, do NOT rephrase-and-retry tako_answer (priced, rarely converges): confirm coverage once with tako_available_data (free) and re-ask pinning its node_ids, or accept the web-grounded answer.";
+  }
+  return "Data-coverage verdict: ZERO curated data cards (and no web results) ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry tako_answer; every retry is priced and this loop rarely converges. Recover in ONE step: either call tako_available_data (free) to confirm coverage and re-ask once pinning its node_ids, or pivot to other sources now.";
+}
+
 const takoAnswer = {
   name: "tako_answer",
   description: DESCRIPTION,
@@ -208,19 +223,20 @@ const takoAnswer = {
       ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
       : null;
     const cards = dedupeCardBoilerplate(parsed.data.cards.map((c) => slimCard(c, cap)));
+    const web_results = parsed.data.web_results.map(slimWebResult);
     return {
       ...parsed.data,
       cards,
-      web_results: parsed.data.web_results.map(slimWebResult),
+      web_results,
       // Deterministic data-coverage verdict: the data source was searched and
       // grounded NOTHING. Emitted regardless of how confident the prose
       // sounds — rephrasing occasionally shakes a series loose, which teaches
-      // agents to retry forever; this converts that into one pivot.
+      // agents to retry forever; this converts that into one pivot. The
+      // wording branches on web grounding (mirroring buildZeroResultGuidance):
+      // a web-cited answer may be complete and correct — the verdict then
+      // scopes itself to the DATA index instead of impugning the answer.
       ...(searchedData(input.sources) && cards.length === 0
-        ? {
-            guidance:
-              "Data-coverage verdict: ZERO curated data cards ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry tako_answer; every retry is priced and this loop rarely converges. Recover in ONE step: either call tako_available_data (free) to confirm coverage and re-ask once pinning its node_ids, or pivot to the cited web_results / other sources now.",
-          }
+        ? { guidance: buildDataGapGuidance(web_results.length > 0) }
         : {}),
     };
   },

@@ -344,10 +344,10 @@ describe("tako_available_data", () => {
     expect(out.summary).not.toContain("no metrics for it yet");
   });
 
-  it("returns a ready-to-run next_call handle (query + pinned node_ids) when coverage exists", async () => {
+  it("returns a ready-to-run next_call handle when the coverage list is small (unambiguous)", async () => {
     mockFetchSequence([
       jsonResponse(200, { results: [searchHit("apple-inc", "Apple Inc.")] }),
-      jsonResponse(200, drill("apple-inc", "Apple Inc.", "metrics", ["Revenue", "Net Income"], 47)),
+      jsonResponse(200, drill("apple-inc", "Apple Inc.", "metrics", ["Revenue", "Net Income"], 2)),
     ]);
     const out = await takoAvailableData.handler({ q: "apple" }, CTX);
     expect(out.next_call).toEqual({
@@ -356,6 +356,42 @@ describe("tako_available_data", () => {
       node_ids: ["apple-inc"],
     });
     expect(out.summary).toContain("next_call");
+  });
+
+  it("suppresses next_call for a broad UNFILTERED coverage (names[0] is arbitrary popularity order)", async () => {
+    // "Run this verbatim" against a broad entity's top metric would spend a
+    // PRICED search on a guess (PR #179 review, comment C6). The summary
+    // falls back to the compose-your-own example.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("cof", "Capital One Financial")] }),
+      jsonResponse(200, drill(
+        "cof", "Capital One Financial", "metrics",
+        ["EV/NTM Revenue", "Gross Margin (%)", "Asset Turnover", "Book Value per Share"], 250,
+      )),
+    ]);
+    const out = await takoAvailableData.handler({ q: "capital one" }, CTX);
+    expect(out.next_call).toBeNull();
+    expect(out.summary).not.toContain("next_call");
+    expect(out.summary).toContain('(e.g. "Capital One Financial EV/NTM Revenue")');
+  });
+
+  it("emits next_call for a broad coverage WHEN a coverage_filter narrowed it to intent", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("cof", "Capital One Financial")] }),
+      jsonResponse(200, drill(
+        "cof", "Capital One Financial", "metrics",
+        ["Net charges-off/(Recoveries) (Quarterly)", "Net charges-off/(Recoveries) (Annual)",
+         "Net charges-off ratio", "Charges-off, gross"], 4,
+      )),
+    ]);
+    const out = await takoAvailableData.handler(
+      { q: "capital one", coverage_filter: "charges-off" }, CTX,
+    );
+    expect(out.next_call).toEqual({
+      tool: "tako_search",
+      query: "Capital One Financial Net charges-off/(Recoveries) (Quarterly)",
+      node_ids: ["cof"],
+    });
   });
 
   it("next_call is null when no match has coverage (never a handle for data-less names)", async () => {

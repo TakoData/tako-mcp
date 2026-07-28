@@ -92,7 +92,7 @@ const inputSchema = z.object({
     .max(MAX_PREVIEW_ROWS)
     .default(INLINE_PREVIEW_ROW_CAP)
     .describe(
-      `How many rows of each card's data to inline when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, max ${MAX_PREVIEW_ROWS}). Raise it toward ${MAX_PREVIEW_ROWS} when you know you need the longer series inline (best after tako_available_data confirmed the data, or with node_ids pinned); lower it to trim context on broad fan-outs. Ignored when include_contents is false.`,
+      `Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). Lower it to trim context on broad fan-outs. For MORE than ${INLINE_PREVIEW_ROW_CAP} rows, call tako_contents on the card's url (max_rows up to 2,000 — first ${INLINE_PREVIEW_ROW_CAP} free, priced beyond). Ignored when include_contents is false.`,
     ),
   country_code: z
     .string()

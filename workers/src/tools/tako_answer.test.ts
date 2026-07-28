@@ -388,10 +388,13 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
     },
   };
 
-  it("defaults include_contents to true and preview_rows to the shared cap", () => {
+  it("defaults include_contents to true and preview_rows to the free inline allowance (20)", () => {
+    // 20 mirrors the backend's CSV_FREE_ROWS inline cap — the server never
+    // ships more than the account's allowance, so a larger default would
+    // promise rows that never arrive (PR #179 review, comment C1).
     const parsed = takoAnswer.inputSchema.parse({ query: "x" });
     expect(parsed.include_contents).toBe(true);
-    expect(parsed.preview_rows).toBe(50);
+    expect(parsed.preview_rows).toBe(20);
   });
 
   it("requests include_contents on the DATA source only; web stays pinned false", async () => {
@@ -442,9 +445,31 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
       takoAnswer.inputSchema.parse({ query: "hotel RevPAR Q3" }),
       CTX,
     );
+    // Web results ground the answer → the SOFT branch: the verdict scopes
+    // itself to the data index instead of impugning a possibly-correct
+    // web-cited answer (PR #179 review, comment C3).
     expect(out.guidance).toContain("ZERO curated data cards");
-    expect(out.guidance).toContain("Do NOT rephrase-and-retry");
+    expect(out.guidance).toContain("web-grounded only");
+    expect(out.guidance).toContain("If the prose answers the question, use it as-is");
     expect(out.guidance).toContain("tako_available_data");
+  });
+
+  it("zero data cards AND zero web results → the hard anti-retry verdict", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        answer: "I couldn't find that in the provided sources.",
+        cards: [],
+        web_results: [],
+        request_id: "req-gap-hard",
+      }),
+    ]);
+    const out = await takoAnswer.handler(
+      takoAnswer.inputSchema.parse({ query: "hotel RevPAR Q3" }),
+      CTX,
+    );
+    expect(out.guidance).toContain("and no web results");
+    expect(out.guidance).toContain("Do NOT rephrase-and-retry");
+    expect(out.guidance).not.toContain("web-grounded only");
   });
 
   it("no guidance on a web-only ask (no data verdict to render)", async () => {

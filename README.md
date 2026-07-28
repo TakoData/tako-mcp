@@ -248,10 +248,10 @@ Tools are discovered automatically via the MCP `tools/list` handshake, so your c
 
 | Tool | Description |
 | ---- | ----------- |
-| `tako_search` | **Pull the data to work with.** Fast search over Tako's curated graph and the live web; each card inlines its most-recent rows (50 by default, `preview_rows` up to 250). Top result renders inline as a chart (an interactive MCP Apps widget on ChatGPT, a chart image elsewhere) with an **Open in Tako** link. Choose `sources` (`data`, `web`, or both) and `effort` (`fast` / `instant`). Parallelize broad questions into narrow single entity+metric searches for far better retrieval. |
+| `tako_search` | **Pull the data to work with.** Fast search over Tako's curated graph and the live web; each card inlines its most-recent rows free (the 20-row inline allowance; `preview_rows` caps it down, `tako_contents` exports more, priced). Top result renders inline as a chart (an interactive MCP Apps widget on ChatGPT, a chart image elsewhere) with an **Open in Tako** link. Choose `sources` (`data`, `web`, or both) and `effort` (`fast` / `instant`). Parallelize broad questions into narrow single entity+metric searches for far better retrieval. |
 | `tako_answer` | **Ask one specific data question, get the answer.** A single grounded, citation-backed prose answer, already written for you — relay it directly. Cited data cards inline their recent rows alongside the prose; when zero data cards ground the answer, a `guidance` field says so deterministically (pivot, don't rephrase-retry). Ground in `data`, `web`, or both. |
 | `tako_contents` | Fetch the content behind a result URL: a Tako card returns a CSV, any other URL returns the page's extracted text — pass `query` to get just the matching passages of a long page. Cards must be marked `exportable: true` (web URLs are exempt). |
-| `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search/answer. Returns the coverage names, a `node_id` to pin, and a ready-to-run `next_call` (search query + pinned nodes) to fetch the confirmed series; `coverage_filter` hunts one specific metric server-side. Free and fast. |
+| `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search/answer. Returns the coverage names, a `node_id` to pin, and — when the target is unambiguous — a ready-to-run `next_call` (search query + pinned nodes) to fetch the confirmed series; `coverage_filter` hunts one specific metric server-side (whole words, e.g. "charges-off"). Free and fast. |
 
 **Free tier (no credentials):** an unauthenticated connection sees `tako_search`, `tako_answer`, and `tako_available_data` only, capped at 10 requests/min per IP. Authenticate (OAuth or Bearer) for the full surface above plus the opt-in tools below, under your own account limits.
 
@@ -343,7 +343,7 @@ Tako serves proprietary company financials (sources vary by metric — S&P Globa
 ## Pick the tool by what you want back
 - `tako_search` — the data as a chart. Default for "<company> <metric>" and "<A> vs <B> <metric>". The intent-matched card renders inline (see Rendering).
 - `tako_answer` — one specific STATED value, in prose ("What was Apple's FY24 revenue?"). Relay the `answer` verbatim. It retrieves reported values; it does NOT compute derivations — for a growth rate, ratio, or margin change, pull the underlying levels (here or via `tako_search`) and compute it yourself.
-- `tako_available_data` — FREE pre-check: confirm a metric exists and grab its exact name + `node_id` before spending a priced call. Its `next_call` output is that follow-up search prewritten (query + pinned `node_ids`) — run it verbatim.
+- `tako_available_data` — FREE pre-check: confirm a metric exists and grab its exact name + `node_id` before spending a priced call. When the target is unambiguous, its `next_call` output is that follow-up search prewritten (query + pinned `node_ids`) — run it verbatim.
 - Protected sources are read-only: S&P Global, FactSet, Visible Alpha, and CoinMarketCap cards come back `exportable: false` with NO inline preview rows, and `tako_contents` cannot export their CSV — a licensing wall, not an error, so never retry the export. Read the headline value from the card's `description`, cite the chart, or ask `tako_answer` for the specific number. (Fiscal.ai cards export normally.)
 - Cohort/ranking asks ("which of the largest US chipmakers grew revenue fastest since 2020?") → resolve the cohort yourself, fire one narrow `tako_search` per member in parallel, and rank from the results.
 
@@ -488,7 +488,7 @@ Tako serves macro indicators (sources: FRED / St. Louis Fed, OECD, BIS) as inter
 ## Pick the tool
 - `tako_search` — indicator as a chart (default).
 - `tako_answer` — one known value, in prose ("What is the current US unemployment rate?"). Relay verbatim.
-- `tako_available_data` — FREE: resolve the exact indicator name + `node_id`. Its `next_call` output is the follow-up search prewritten — run it verbatim.
+- `tako_available_data` — FREE: resolve the exact indicator name + `node_id`. When the target is unambiguous, its `next_call` output is the follow-up search prewritten — run it verbatim.
 - Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → fire one narrow `tako_search` per country in parallel and rank from the results.
 
 ## Rendering (Critical)

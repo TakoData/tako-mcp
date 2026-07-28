@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import { djangoGet } from "../django.js";
 import { graphErrorMessage, graphSearchOutputShape } from "./_graph.js";
+import { logWireGuardFailure } from "./_log.js";
 import type { ToolModule } from "./types.js";
 
 const NER_LABELS = [
@@ -80,6 +81,9 @@ const tako_graph_search = {
         { query, timeoutMs: 15_000 },
       );
     } catch (err) {
+      // Log before wrapping: the plain-Error wrap drops the DjangoError
+      // envelope, so this is the only server-side record of the failure.
+      console.error("[tako] tool error tool=tako_graph_search stage=graph/search:", err);
       throw new Error(graphErrorMessage(err, "search"));
     }
 
@@ -92,6 +96,7 @@ const tako_graph_search = {
     // strings, so structural breaks still throw but new enum values pass.
     const parsed = outputSchema.safeParse(data);
     if (!parsed.success) {
+      logWireGuardFailure("tako_graph_search", "output", parsed.error, data);
       throw new Error(
         "Tako graph/search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );

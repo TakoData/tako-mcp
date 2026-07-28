@@ -127,15 +127,18 @@ export const webResultSchema = z
   .loose();
 export type WebResult = z.infer<typeof webResultSchema>;
 
-// The DEFAULT most-recent-rows cap for the inline card preview. A card's data
-// preview (dataset.rows / records) can arrive with hundreds of rows; capping
-// keeps the model-facing peek bounded. 50 rows covers the common asks
-// outright (a decade of quarterly data, ~two months of daily prices) so the
-// agent usually needs no follow-up export; the full, priced export is always
-// a separate tako_contents call. The agent can adjust the cap per call via
-// tako_search's `preview_rows` (up to MAX_PREVIEW_ROWS — the backend ships
-// the series either way; this only governs how much reaches the model).
-export const INLINE_PREVIEW_ROW_CAP = 50;
+// The DEFAULT most-recent-rows cap for the inline card preview, matched to
+// the backend's free inline allowance: search/answer inline at most
+// CSV_FREE_ROWS = 20 rows per card server-side (tako_inline_cap_for; a
+// larger legacy cap exists only for entitled enterprise accounts), so this
+// is the honest ceiling of what actually arrives — the MCP can only cap
+// DOWN what the backend shipped, never raise it. Rows beyond 20 are the
+// priced product: a separate tako_contents call (max_rows up to 2,000; the
+// first 20 stay free there too). `preview_rows` above the allowance is
+// therefore inert today; the input keeps the wider 1..MAX_PREVIEW_ROWS
+// range so a future backend row-count knob can light it up without an
+// input-surface change.
+export const INLINE_PREVIEW_ROW_CAP = 20;
 export const MAX_PREVIEW_ROWS = 250;
 
 // `content` carries the heavy inline row payload under keys the hand-written

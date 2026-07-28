@@ -1010,18 +1010,36 @@ export async function fetchPngContentBlock(
   const timeout = setTimeout(() => controller.abort(), PNG_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) return [];
+    // Each degrade logs a `[tako-widget]` line (mirroring
+    // `fetchImageDataUrlAndDims`): this path serves UNKNOWN clients (Cursor,
+    // Windsurf, Gemini CLI, …), so a silent `[]` here is "the chart never
+    // shows up" with nothing to tail.
+    if (!response.ok) {
+      console.warn(`[tako-widget] png content block: status=${response.status} url=${url}`);
+      return [];
+    }
     const contentType = response.headers.get("content-type") ?? "";
     // Defensive: an upstream redirect to an HTML error page would
     // otherwise let us base64 HTML and ship it as `mimeType:
     // "image/png"` — a garbage block the client would try to render.
-    if (!contentType.startsWith("image/")) return [];
+    if (!contentType.startsWith("image/")) {
+      console.warn(`[tako-widget] png content block: non-image content-type=${contentType} url=${url}`);
+      return [];
+    }
     const buffer = await response.arrayBuffer();
     // 0-byte 200 is plausible if a renderer returned early; emitting
     // `{ data: "", mimeType: "image/png" }` would have clients try to
     // render an invalid image. Mirror the oversize bail.
-    if (buffer.byteLength === 0) return [];
-    if (buffer.byteLength > MAX_INLINE_PNG_BYTES) return [];
+    if (buffer.byteLength === 0) {
+      console.warn(`[tako-widget] png content block: empty body url=${url}`);
+      return [];
+    }
+    if (buffer.byteLength > MAX_INLINE_PNG_BYTES) {
+      console.warn(
+        `[tako-widget] png content block: oversize bytes=${buffer.byteLength} url=${url}`,
+      );
+      return [];
+    }
     return [
       {
         type: "image",
@@ -1029,7 +1047,8 @@ export async function fetchPngContentBlock(
         mimeType: contentType.split(";")[0]!.trim(),
       },
     ];
-  } catch {
+  } catch (err) {
+    console.warn(`[tako-widget] png content block: fetch failed url=${url}:`, err);
     return [];
   } finally {
     clearTimeout(timeout);

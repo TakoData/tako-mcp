@@ -306,21 +306,36 @@ describe("buildSummary", () => {
   });
 
   it("buildNextCall: handle from the first match WITH coverage; null when none has any", () => {
-    expect(buildNextCall([appleMatch])).toEqual({
+    expect(buildNextCall([appleMatch], false)).toEqual({
       tool: "tako_search",
       query: "Apple Inc. Revenue",
       node_ids: ["apple-inc"],
     });
-    expect(buildNextCall([inflationMatch])).toEqual({
+    expect(buildNextCall([inflationMatch], false)).toEqual({
       tool: "tako_search",
       query: "United States Inflation Rate",
       node_ids: ["inflation-rate"],
     });
     const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
     // Skips the coverage-less match, lands on the one with names.
-    expect(buildNextCall([bare, appleMatch])?.query).toBe("Apple Inc. Revenue");
-    expect(buildNextCall([bare])).toBeNull();
-    expect(buildNextCall([unavailableMatch(entityNode())])).toBeNull();
+    expect(buildNextCall([bare, appleMatch], false)?.query).toBe("Apple Inc. Revenue");
+    expect(buildNextCall([bare], false)).toBeNull();
+    expect(buildNextCall([unavailableMatch(entityNode())], false)).toBeNull();
+  });
+
+  it("buildNextCall gates on ambiguity: broad unfiltered coverage → null; filtered → handle", () => {
+    const broad = buildMatch(
+      entityNode({ id: "cof", name: "Capital One" }),
+      group("metrics", ["A", "B", "C", "D"], 250),
+    );
+    expect(buildNextCall([broad], false)).toBeNull(); // > NEXT_CALL_MAX_NAMES, no filter
+    expect(buildNextCall([broad], true)?.query).toBe("Capital One A"); // filter = intent
+    // At the boundary: a small list is unambiguous even unfiltered.
+    const small = buildMatch(
+      entityNode({ id: "x", name: "X Corp" }),
+      group("metrics", ["A", "B", "C"], 3),
+    );
+    expect(buildNextCall([small], false)?.query).toBe("X Corp A");
   });
 
   it("keeps the preview constants positive", () => {
