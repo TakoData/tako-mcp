@@ -149,6 +149,24 @@ function widgetFrame(m: Mounted): HTMLIFrameElement {
   ) as HTMLIFrameElement;
 }
 
+/**
+ * Deliver a `tako-embed-height` resize message as if the embed iframe
+ * posted it. The widget's handler gates on `event.origin` matching the
+ * armed embed origin, so set it to the embed URL's origin.
+ */
+function deliverEmbedHeight(m: Mounted, height: number): void {
+  const WidgetMessageEvent = (
+    m.widgetWin as unknown as { MessageEvent: typeof MessageEvent }
+  ).MessageEvent;
+  m.widgetWin.dispatchEvent(
+    new WidgetMessageEvent("message", {
+      data: { type: "tako-embed-height", height },
+      origin: "https://staging.trytako.com",
+      source: m.widgetWin as unknown as MessageEventSource,
+    }),
+  );
+}
+
 /** Fire the probe iframe's `load` event as if the embed page loaded. */
 function fireFrameLoad(m: Mounted): void {
   const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
@@ -325,10 +343,62 @@ describe("interactive iframe capability probe (executed)", () => {
   it("upgrades to the interactive iframe when the probe loads", () => {
     const m = mountWidget(staticWidgetHtml());
     deliver(m, CHART_RESULT, m.wrapperWin);
+    // The probe only arms once the PNG baseline has loaded, so the swap
+    // measures the image's real rendered height rather than the requested
+    // fallback.
+    fireImageLoad(m);
     fireFrameLoad(m);
     // Iframe swapped in over the PNG.
     expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
     expect(widgetLink(m).classList.contains("hidden")).toBe(true);
+  });
+
+  it("does not arm the probe until the PNG baseline has loaded", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, CHART_RESULT, m.wrapperWin);
+    // No probe in flight yet: the frame has no src and a stray `load`
+    // (there is no listener bound) can't swap a not-yet-measured iframe
+    // over the PNG.
+    expect(widgetFrame(m).getAttribute("src")).toBeNull();
+    fireFrameLoad(m);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(true);
+    // Image loads → probe arms and starts loading the embed, hidden.
+    fireImageLoad(m);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
+  });
+
+  it("does not re-reveal the PNG when a duplicate image load fires after upgrade", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, CHART_RESULT, m.wrapperWin);
+    fireImageLoad(m);
+    fireFrameLoad(m); // upgrade to the interactive iframe
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(true);
+    // A stray second image load must not un-hide the PNG on top of the
+    // live iframe.
+    fireImageLoad(m);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(true);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+  });
+
+  it("ignores embed-height messages while the probe is hidden, honors them after upgrade", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, CHART_RESULT, m.wrapperWin);
+    fireImageLoad(m); // probe armed, embed loading hidden behind the PNG
+    const frame = widgetFrame(m);
+    frame.removeAttribute("height");
+    // During the probe window `embedOrigin` is unarmed, so a resize
+    // message from the (hidden) embed must not size the widget under the
+    // visible PNG.
+    deliverEmbedHeight(m, 1234);
+    expect(frame.getAttribute("height")).toBeNull();
+    // After the swap, `embedOrigin` is armed and the same message resizes.
+    fireFrameLoad(m);
+    deliverEmbedHeight(m, 1234);
+    expect(frame.getAttribute("height")).toBe("1234");
   });
 
   it("stays on the image when the host CSP blocks the probe", () => {
