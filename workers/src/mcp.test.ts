@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import {
   DjangoBadRequestError,
@@ -18,6 +19,7 @@ import {
   detectMcpClient,
   djangoErrorToToolResult,
   logSdkValidationRejections,
+  structuredContentFor,
 } from "./mcp.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import { toolAnnotationsForClient } from "./tools/_surface.js";
@@ -777,5 +779,74 @@ describe("logSdkValidationRejections", () => {
       ),
     ).resolves.toBeUndefined();
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+// The slim/schema pairing contract (types.ts: slimStructured's return "MUST
+// conform to the tool's advertised outputSchema") is hand-maintained across
+// five pairs in two files — this guard is what turns a drift into a logged
+// full-output fallback instead of a result spec-compliant clients reject.
+describe("structuredContentFor", () => {
+  const outputSchema = z.looseObject({ request_id: z.string() });
+  const full = { request_id: "r1", cards: ["heavy", "payload"] };
+
+  it("serves the slim object when it conforms to the outputSchema", () => {
+    const structured = structuredContentFor(
+      {
+        name: "t",
+        outputSchema,
+        slimStructured: () => ({ request_id: "r1" }),
+      },
+      full,
+    );
+    expect(structured).toEqual({ request_id: "r1" });
+  });
+
+  it("falls back to the FULL output (and logs) when the slim drifts from the schema", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const structured = structuredContentFor(
+      {
+        name: "t",
+        outputSchema,
+        // Drifted: missing the required request_id.
+        slimStructured: () => ({ usage: null }),
+      },
+      full,
+    );
+    expect(structured).toEqual(full);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("does not conform"),
+      expect.anything(),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("falls back to the full output when the slimmer throws", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const structured = structuredContentFor(
+      {
+        name: "t",
+        outputSchema,
+        slimStructured: () => {
+          throw new Error("boom");
+        },
+      },
+      full,
+    );
+    expect(structured).toEqual(full);
+    errorSpy.mockRestore();
+  });
+
+  it("serves the full output untouched when no slimmer is declared", () => {
+    expect(structuredContentFor({ name: "t", outputSchema }, full)).toEqual(full);
+  });
+
+  it("serves the slim object as-is when the tool declares no outputSchema", () => {
+    expect(
+      structuredContentFor(
+        { name: "t", slimStructured: () => ({ anything: 1 }) },
+        full,
+      ),
+    ).toEqual({ anything: 1 });
   });
 });

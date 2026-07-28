@@ -20,7 +20,9 @@ describe("extractPassages", () => {
     expect(r.data).toContain("$142.11");
     expect(r.data).toContain("guidance: RevPAR growth");
     expect(r.data.length).toBeLessThan(PAGE.length / 2); // the point: most filler gone
-    expect(r.data).toContain("2 match(es)");
+    // The match summary rides in `note`, keeping `data` pure page text.
+    expect(r.note).toContain("2 match(es)");
+    expect(r.data).not.toContain("match(es)");
   });
 
   it("matches case-insensitively", () => {
@@ -33,7 +35,7 @@ describe("extractPassages", () => {
     const r = extractPassages(PAGE, "RevPAR occupancy 2031"); // phrase absent; terms present
     expect(r.matched).toBe(true);
     expect(r.data).toContain("$142.11");
-    expect(r.data).toContain("terms of");
+    expect(r.note).toContain("terms of");
   });
 
   it("merges overlapping windows into one passage", () => {
@@ -47,8 +49,8 @@ describe("extractPassages", () => {
   it("no match → explicit deterministic miss with the page head, never an empty string", () => {
     const r = extractPassages(PAGE, "zebra unicorn");
     expect(r.matched).toBe(false);
-    expect(r.data).toContain("NOT FOUND");
-    expect(r.data).toContain("do not refetch it with a reworded query");
+    expect(r.note).toContain("NOT FOUND");
+    expect(r.note).toContain("do not refetch it with a reworded query");
     expect(r.data).toContain("lorem ipsum"); // head slice for orientation
     expect(r.truncated).toBe(true);
   });
@@ -104,11 +106,11 @@ describe("extractPassages", () => {
   it("the '+' saturation marker only appears when matches were actually dropped", () => {
     const exactly64 = Array.from({ length: 64 }, () => "target, ").join("");
     const r64 = extractPassages(exactly64, "target");
-    expect(r64.data).toContain("64 match(es)");
-    expect(r64.data).not.toContain("64+");
+    expect(r64.note).toContain("64 match(es)");
+    expect(r64.note).not.toContain("64+");
 
     const more = Array.from({ length: 70 }, () => "target, ").join("");
     const r70 = extractPassages(more, "target");
-    expect(r70.data).toContain("64+ match(es)");
+    expect(r70.note).toContain("64+ match(es)");
   });
 });

@@ -310,6 +310,24 @@ export interface ToolModule<
   >;
   handler: (input: z.infer<InputSchema>, ctx: ToolContext) => Promise<Output>;
   /**
+   * Optional model-facing text renderer. When present, `mcp.ts` uses its
+   * return value as the result's `content.text` INSTEAD of the
+   * JSON-stringified output — e.g. markdown for prose-heavy results, which
+   * reads better and costs fewer tokens than escaped JSON. Pure and
+   * synchronous; a throwing renderer degrades to the JSON text.
+   */
+  renderText?: (output: Output, ctx: ToolContext) => string;
+  /**
+   * Optional `structuredContent` slimmer. When present, its return value is
+   * reported as the result's `structuredContent` instead of the full output.
+   * Pair it with `renderText`: hosts count `structuredContent` toward model
+   * context, so once the text channel carries the full content (as markdown),
+   * the structured channel must shrink to machine essentials (widget fields,
+   * ids, usage) or the response pays for everything twice. The returned value
+   * MUST conform to the tool's advertised `outputSchema`.
+   */
+  slimStructured?: (output: Output) => Record<string, unknown>;
+  /**
    * Optional hook to append extra MCP content blocks (image, audio, resource)
    * after the default JSON-stringified text block. Called once per
    * `tools/call`, after `handler` resolves. Tools should treat this as
@@ -385,6 +403,8 @@ export interface AnyToolModule {
     Record<McpClientKind, Partial<ToolAnnotations>>
   >;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;
+  renderText?: (output: unknown, ctx: ToolContext) => string;
+  slimStructured?: (output: unknown) => Record<string, unknown>;
   extraContentBlocks?: (
     output: unknown,
     ctx: ToolContext,

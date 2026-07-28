@@ -37,6 +37,12 @@ import {
   graphRelatedOutputShape,
   graphSearchOutputShape,
 } from "./_graph.js";
+import {
+  availableDataSlimOutputShape,
+  renderAvailableDataMarkdown,
+  slimAvailableDataStructured,
+  type AvailableDataFullOutput,
+} from "./_render_markdown.js";
 import type { graphRelationSchema } from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
 import type { ToolModule } from "./types.js";
@@ -59,6 +65,7 @@ const DESCRIPTION = [
   "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
   "",
   "Tips:",
+  'If your lookup names both a thing and a measure ("Carnival passenger cruise days"), split it: the entity goes in `q`, the metric words go in `coverage_filter` — never the whole phrase in `q`. `q` only resolves the name to a node; metric words passed there are lost, and the coverage comes back unfiltered.',
   "One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The coverage.names answer all of them at once — never loop one call per name.",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.",
   "Each match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search. When the target is unambiguous (a coverage_filter was applied, or the coverage is small), `next_call` is that follow-up prewritten (query + pinned node_ids) — run it verbatim.",
@@ -66,7 +73,9 @@ const DESCRIPTION = [
 ].join("\n");
 
 const inputSchema = z.object({
-  q: z.string().min(2).describe("Entity or metric name to look up (min 2 chars)."),
+  q: z.string().min(2).describe(
+    'The NAME of one entity or one metric to look up (min 2 chars). Not a full question: if your lookup names both a thing and a measure ("Carnival passenger cruise days"), put the entity here ("Carnival") and the metric words in coverage_filter ("passenger cruise days").',
+  ),
   types: z.enum(["entity", "metric"]).optional().describe(
     'Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both.',
   ),
@@ -97,7 +106,12 @@ const coverageMatchSchema = z.object({
   coverage: coverageGroupSchema,
 });
 
-const outputSchema = z.object({
+// INTERNAL full output shape (types the handler's return value). NOT the
+// advertised schema: the summary + coverage-name lists reach the model as
+// rendered markdown (renderText below), and the ADVERTISED outputSchema is
+// the slim structuredContent shape (found/query/next_call) so hosts that
+// count structuredContent toward context don't pay for the content twice.
+const fullOutputSchema = z.object({
   found: z.boolean().describe(
     "True when at least one match has live data coverage — not mere node resolution. A resolved node with no coverage (or whose coverage lookup failed) yields false.",
   ),
@@ -116,6 +130,10 @@ const outputSchema = z.object({
       "Ready-to-run follow-up, present only when the target is UNAMBIGUOUS — a coverage_filter was applied, or the coverage list is small: call tako_search with exactly this query and node_ids (pinned) to fetch the confirmed series in one step. Null otherwise (a broad entity's top metric is arbitrary — compose your own entity + metric query from coverage.names instead of spending a priced search on a guess).",
     ),
 });
+type FullOutput = z.infer<typeof fullOutputSchema>;
+
+// Advertised (slim) schema — see the fullOutputSchema comment above.
+const outputSchema = availableDataSlimOutputShape;
 type Output = z.infer<typeof outputSchema>;
 
 const searchShape = z.object(graphSearchOutputShape);
@@ -138,7 +156,9 @@ const tako_available_data = {
     // closed-world there. See `annotationsByClient` in types.ts.
     chatgpt: { openWorldHint: false },
   },
-  async handler(input: Input, ctx): Promise<Output> {
+  // Declared as the FULL internal shape (assignable to the slim advertised
+  // Output via its loose index signature) so tests and hooks keep real types.
+  async handler(input: Input, ctx): Promise<FullOutput> {
     // 1) Resolve the name to graph nodes.
     const searchQuery: Record<string, string | number | boolean> = {
       q: input.q,
@@ -300,6 +320,13 @@ const tako_available_data = {
       // applied, or a small coverage list) — see buildNextCall.
       next_call: buildNextCall(matches, input.coverage_filter !== undefined),
     };
+  },
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderAvailableDataMarkdown(output as unknown as AvailableDataFullOutput);
+  },
+  slimStructured(output) {
+    return slimAvailableDataStructured(output as unknown as AvailableDataFullOutput);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

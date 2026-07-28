@@ -17,7 +17,13 @@
  */
 import { z } from "zod";
 
-import { AGENT_WAIT_CEILING_S, agentRunSchema, type AgentRun, pollAgentRun } from "./tako_agent.js";
+import {
+  agentRunSlimOutputShape,
+  renderAgentRunMarkdown,
+  slimAgentRunStructured,
+  type AgentRunLike,
+} from "./_render_markdown.js";
+import { AGENT_WAIT_CEILING_S, type AgentRun, pollAgentRun } from "./tako_agent.js";
 import type { ToolModule } from "./types.js";
 
 const inputSchema = z.object({
@@ -48,7 +54,9 @@ const tako_agent_wait = {
     "On `completed`: the result holds the synthesized `answer` and `cards`.",
   ].join("\n"),
   inputSchema,
-  outputSchema: agentRunSchema,
+  // Advertised schema = the slim lifecycle shape; the result rides as
+  // rendered markdown (renderText below). Mirrors tako_agent.
+  outputSchema: agentRunSlimOutputShape,
   annotations: {
     title: "Tako: Wait for Agent Run",
     readOnlyHint: true,
@@ -68,6 +76,13 @@ const tako_agent_wait = {
       onTimeout: "return",
     });
   },
-} satisfies ToolModule<typeof inputSchema, AgentRun>;
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderAgentRunMarkdown(output as unknown as AgentRunLike);
+  },
+  slimStructured(output) {
+    return slimAgentRunStructured(output as unknown as AgentRunLike);
+  },
+} satisfies ToolModule<typeof inputSchema, z.infer<typeof agentRunSlimOutputShape>>;
 
 export default tako_agent_wait;

@@ -365,6 +365,44 @@ export function createMcpServer(
 }
 
 /**
+ * The `structuredContent` for a tool result: the tool's `slimStructured`
+ * output when it's declared AND conforms to the advertised `outputSchema`,
+ * else the full handler output (correct, just token-heavier).
+ *
+ * The conformance parse is what enforces the pairing contract in `types.ts`
+ * ("the returned value MUST conform to the tool's advertised
+ * `outputSchema`") — five hand-maintained slim/schema pairs across two
+ * files, where an unchecked drift ships a result spec-compliant clients
+ * reject. Fail-open like the throw path: log server-side, serve the full
+ * output. Exported for tests.
+ */
+export function structuredContentFor(
+  tool: Pick<AnyToolModule, "name" | "outputSchema" | "slimStructured">,
+  output: unknown,
+): Record<string, unknown> {
+  const full = output as Record<string, unknown>;
+  if (tool.slimStructured === undefined) return full;
+  let slim: Record<string, unknown>;
+  try {
+    slim = tool.slimStructured(output);
+  } catch (err) {
+    console.error(`slimStructured hook failed for ${tool.name}:`, err);
+    return full;
+  }
+  if (tool.outputSchema !== undefined) {
+    const conforms = tool.outputSchema.safeParse(slim);
+    if (!conforms.success) {
+      console.error(
+        `[mcp] slimStructured for ${tool.name} does not conform to its outputSchema — serving the full output:`,
+        conforms.error.message,
+      );
+      return full;
+    }
+  }
+  return slim;
+}
+
+/**
  * Register a single `ToolModule` with an `McpServer`, adapting between our
  * handler signature (`(input, ctx) => Promise<Output>`) and the SDK's
  * expected `CallToolResult` return shape.
@@ -779,6 +817,14 @@ function registerTool(
         // Non-Django throws re-throw to the SDK, which wraps them in a
         // generic tool error (last-resort path for handler bugs).
         if (err instanceof DjangoError) {
+          // Log every upstream failure with full routing context BEFORE
+          // mapping it into an `isError` result — the mapped result reaches
+          // only the client, so this line is the sole server-side record.
+          // `err.message` is body-free by construction (log-injection guard
+          // in django.ts); the capped body lives in `_meta` client-side only.
+          console.error(
+            `[mcp] tool error tool=${tool.name} client=${options.client} tier=${callCtx.tier} kind=${djangoErrorKind(err)} status=${err.status ?? "(none)"} method=${err.method} path=${err.path}: ${err.message}`,
+          );
           // Free tier: the shared account exhausting its Tako credits is
           // the tier's expected steady-state failure (the Django-side cap
           // is the fail-open spend backstop). Surface it as upsell copy,
@@ -796,14 +842,30 @@ function registerTool(
           }
           return djangoErrorToToolResult(err);
         }
+        // Non-Django throws (wire-guard drift, handler bugs) re-throw to the
+        // SDK, which converts them into client-visible tool text WITHOUT
+        // logging — so this line is the only server-side record of them.
+        console.error(
+          `[mcp] tool error tool=${tool.name} client=${options.client} tier=${callCtx.tier} kind=handler-throw:`,
+          err,
+        );
         throw err;
       }
-      // When the tool declares an `outputSchema`, report the structured
-      // payload alongside a JSON-stringified text fallback. Clients that
-      // understand `structuredContent` get the typed value; legacy clients
-      // fall back to the text content. When no outputSchema, text-only is
-      // sufficient.
-      const text = JSON.stringify(output, null, 2);
+      // Model-facing text channel: a tool's `renderText` (markdown for
+      // prose-heavy results) when declared, else the JSON-stringified
+      // output. A throwing renderer degrades to the JSON fallback rather
+      // than failing the call.
+      let text: string;
+      if (tool.renderText !== undefined) {
+        try {
+          text = tool.renderText(output, callCtx);
+        } catch (err) {
+          console.error(`renderText hook failed for ${tool.name}:`, err);
+          text = JSON.stringify(output, null, 2);
+        }
+      } else {
+        text = JSON.stringify(output, null, 2);
+      }
       const content: Array<
         | { type: "text"; text: string }
         | { type: "image"; data: string; mimeType: string }
@@ -923,7 +985,7 @@ function registerTool(
         _meta?: Record<string, unknown>;
       } = { content };
       if (tool.outputSchema !== undefined) {
-        result.structuredContent = output as Record<string, unknown>;
+        result.structuredContent = structuredContentFor(tool, output);
       }
       if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
         result._meta = resultMeta;
@@ -1192,6 +1254,15 @@ export async function handleMcpRequest(
     const transport = new WebStandardStreamableHTTPServerTransport({
       enableJsonResponse: true,
     });
+    // The SDK's default error sink is a no-op (`this.onerror?.(error)`), so
+    // protocol- and transport-level failures — failed response sends, unknown
+    // message types, notification enqueue errors — vanish without these.
+    server.server.onerror = (error) => {
+      console.error("[mcp] protocol error:", error);
+    };
+    transport.onerror = (error) => {
+      console.error("[mcp] transport error:", error);
+    };
 
     await server.connect(transport);
     // Cloned before the transport consumes the body so the observability tap
