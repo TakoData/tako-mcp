@@ -163,7 +163,10 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
     // Web page text is billed per page, so it is never auto-inlined regardless
     // of `include_contents` (which governs only the free Tako card preview).
     // The model fetches web text on demand via tako_contents(url).
-    sources.web = { count: input.count, include_contents: false };
+    // snippet_max_chars 2000 (backend default 1000): a meatier free excerpt
+    // per web result, so the model picks the right url for a priced
+    // tako_contents follow-up from a real excerpt instead of a headline.
+    sources.web = { count: input.count, include_contents: false, snippet_max_chars: 2000 };
   }
   const body: z.input<typeof SearchRequest> = {
     query: input.query,

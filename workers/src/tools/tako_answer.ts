@@ -138,7 +138,11 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
   // Web include_contents stays pinned false regardless of the input flag:
   // page text is billed per page and is a large prose blob — never auto-fetch
   // it here (the model pulls it via tako_contents when it needs it).
-  if (input.sources.includes("web")) sources.web = { include_contents: false };
+  // snippet_max_chars 2000 (backend default 1000): meatier free excerpts so a
+  // follow-up tako_contents lands on the right cited page. Mirrors tako_search.
+  if (input.sources.includes("web")) {
+    sources.web = { include_contents: false, snippet_max_chars: 2000 };
+  }
   // No `effort`/per-source `count` (unlike buildSearchBody): answer is
   // fast-pipeline + arbiter only, with no async/deep path (see handler).
   return {
