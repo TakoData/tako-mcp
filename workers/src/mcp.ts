@@ -365,6 +365,44 @@ export function createMcpServer(
 }
 
 /**
+ * The `structuredContent` for a tool result: the tool's `slimStructured`
+ * output when it's declared AND conforms to the advertised `outputSchema`,
+ * else the full handler output (correct, just token-heavier).
+ *
+ * The conformance parse is what enforces the pairing contract in `types.ts`
+ * ("the returned value MUST conform to the tool's advertised
+ * `outputSchema`") — five hand-maintained slim/schema pairs across two
+ * files, where an unchecked drift ships a result spec-compliant clients
+ * reject. Fail-open like the throw path: log server-side, serve the full
+ * output. Exported for tests.
+ */
+export function structuredContentFor(
+  tool: Pick<AnyToolModule, "name" | "outputSchema" | "slimStructured">,
+  output: unknown,
+): Record<string, unknown> {
+  const full = output as Record<string, unknown>;
+  if (tool.slimStructured === undefined) return full;
+  let slim: Record<string, unknown>;
+  try {
+    slim = tool.slimStructured(output);
+  } catch (err) {
+    console.error(`slimStructured hook failed for ${tool.name}:`, err);
+    return full;
+  }
+  if (tool.outputSchema !== undefined) {
+    const conforms = tool.outputSchema.safeParse(slim);
+    if (!conforms.success) {
+      console.error(
+        `[mcp] slimStructured for ${tool.name} does not conform to its outputSchema — serving the full output:`,
+        conforms.error.message,
+      );
+      return full;
+    }
+  }
+  return slim;
+}
+
+/**
  * Register a single `ToolModule` with an `McpServer`, adapting between our
  * handler signature (`(input, ctx) => Promise<Output>`) and the SDK's
  * expected `CallToolResult` return shape.
@@ -947,20 +985,7 @@ function registerTool(
         _meta?: Record<string, unknown>;
       } = { content };
       if (tool.outputSchema !== undefined) {
-        // `slimStructured` (paired with `renderText`) shrinks the structured
-        // channel to machine essentials — hosts count structuredContent
-        // toward model context, and the markdown text already carries the
-        // full content. Fallback on throw: the full output (correct, just
-        // token-heavier).
-        let structured = output as Record<string, unknown>;
-        if (tool.slimStructured !== undefined) {
-          try {
-            structured = tool.slimStructured(output);
-          } catch (err) {
-            console.error(`slimStructured hook failed for ${tool.name}:`, err);
-          }
-        }
-        result.structuredContent = structured;
+        result.structuredContent = structuredContentFor(tool, output);
       }
       if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
         result._meta = resultMeta;

@@ -112,6 +112,26 @@ export function slimAnswerStructured(o: AnswerFullOutput): Record<string, unknow
 const cell = (v: unknown): string =>
   v === null || v === undefined ? "" : String(v).replaceAll("|", "\\|").replaceAll("\n", " ");
 
+/**
+ * Fence opaque/untrusted text with a backtick run LONGER than any run inside
+ * it (min 3), so the content can neither close the fence early nor forge the
+ * document's own framing. JSON-stringification used to provide this boundary
+ * incidentally (upstream text arrived escaped, inside a string); now that web
+ * page text and snippets ride verbatim in one markdown document, a page
+ * ending in "## Tako Data (1 card)…_request_id: …_" would otherwise render
+ * indistinguishably from our own sections and footer.
+ */
+function fenced(text: string, lang = ""): string {
+  const runs = text.match(/`+/g);
+  const longest = runs === null ? 0 : Math.max(...runs.map((r) => r.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}${lang}\n${text}\n${fence}`;
+}
+
+/** Flatten upstream text destined for a single-line slot (titles, meta): an
+ *  embedded newline would otherwise start a fresh line the content controls. */
+const oneLine = (v: string): string => v.replace(/\s*\n\s*/g, " ").trim();
+
 function markdownTable(header: string[], rows: unknown[][]): string {
   const head = `| ${header.map(cell).join(" | ")} |`;
   const rule = `|${header.map(() => "---").join("|")}|`;
@@ -167,7 +187,7 @@ function renderContentRows(content: TakoCard["content"]): string | undefined {
   if (typeof c.data === "string" && c.data.trim() !== "") {
     const lines = c.data.split("\n").filter((l) => l !== "");
     const shown = Math.max(0, lines.length - 1); // minus header line
-    return `${totalNote(shown)}\n\`\`\`csv\n${c.data.trim()}\n\`\`\``;
+    return `${totalNote(shown)}\n${fenced(c.data.trim(), "csv")}`;
   }
 
   return undefined;
@@ -194,8 +214,23 @@ function renderCard(card: TakoCard, idx: number): string {
     lines.push(card.description);
   }
 
+  // Retrieval metadata rides too (relevance_score is entitlement-gated —
+  // "only populated for entitled accounts" — so dropping it would silently
+  // remove a paid feature's output).
+  if (
+    typeof rec.semantic_description === "string" &&
+    rec.semantic_description !== "" &&
+    rec.semantic_description !== card.description
+  ) {
+    lines.push(`semantic_description: ${rec.semantic_description}`);
+  }
+
   const facts: string[] = [];
   facts.push(`exportable: ${card.exportable === true ? "yes" : "no"}`);
+  if (typeof rec.relevance_score === "number") facts.push(`relevance: ${rec.relevance_score}`);
+  if (typeof rec.card_type === "string" && rec.card_type !== "") {
+    facts.push(`type: ${rec.card_type}`);
+  }
   if (typeof rec.data_freshness === "string") facts.push(`freshness: ${rec.data_freshness}`);
   const nodes = card.nodes ?? [];
   if (nodes.length > 0) {
@@ -203,8 +238,23 @@ function renderCard(card: TakoCard, idx: number): string {
   }
   const sourceNames = namesOf(rec.sources, "source_name");
   if (sourceNames.length > 0) facts.push(`source: ${sourceNames.join(", ")}`);
+  // Methodology names must render for the same reason source names do: the
+  // glossary hoists methodology paragraphs keyed by these names, and a
+  // Source Notes entry nothing references is unattributable.
+  const methodologyNames = namesOf(rec.methodologies, "methodology_name");
+  if (methodologyNames.length > 0) facts.push(`methodology: ${methodologyNames.join(", ")}`);
+  const sourceIndexes = Array.isArray(rec.source_indexes)
+    ? rec.source_indexes.filter((s): s is string => typeof s === "string" && s !== "")
+    : [];
+  if (sourceIndexes.length > 0) facts.push(`source_indexes: ${sourceIndexes.join(", ")}`);
   if (typeof card.webpage_url === "string" && card.webpage_url !== "") {
     facts.push(`chart: ${card.webpage_url}`);
+  }
+  if (typeof rec.embed_url === "string" && rec.embed_url !== "") {
+    facts.push(`embed: ${rec.embed_url}`);
+  }
+  if (typeof rec.image_url === "string" && rec.image_url !== "") {
+    facts.push(`image: ${rec.image_url}`);
   }
   lines.push(facts.join(" · "));
 
@@ -231,14 +281,19 @@ function renderCard(card: TakoCard, idx: number): string {
 }
 
 function renderWebResult(w: WebResult, idx: number): string {
-  const lines: string[] = [`${idx + 1}. Title: ${w.title}`, `URL: ${w.url}`];
+  // Titles/meta/snippets are upstream web content: single-line slots are
+  // newline-flattened and snippets fenced so a page can't forge the
+  // document's own sections (see `fenced`).
+  const lines: string[] = [`${idx + 1}. Title: ${oneLine(w.title)}`, `URL: ${w.url}`];
   const meta: string[] = [];
-  if (typeof w.source_name === "string" && w.source_name !== "") meta.push(w.source_name);
+  if (typeof w.source_name === "string" && w.source_name !== "") meta.push(oneLine(w.source_name));
   if (typeof w.publish_date === "string" && w.publish_date !== "") {
-    meta.push(`Published: ${w.publish_date}`);
+    meta.push(`Published: ${oneLine(w.publish_date)}`);
   }
   if (meta.length > 0) lines.push(meta.join(" · "));
-  if (typeof w.snippet === "string" && w.snippet.trim() !== "") lines.push(w.snippet.trim());
+  if (typeof w.snippet === "string" && w.snippet.trim() !== "") {
+    lines.push(fenced(w.snippet.trim()));
+  }
   return lines.join("\n");
 }
 
@@ -385,7 +440,8 @@ export function renderAvailableDataMarkdown(o: AvailableDataFullOutput): string 
   }
 
   if (o.next_call !== null) {
-    blocks.push(`next_call (run verbatim):\n\`\`\`json\n${JSON.stringify(o.next_call)}\n\`\`\``);
+    // The embedded query is caller input — dynamic fence, same as web text.
+    blocks.push(`next_call (run verbatim):\n${fenced(JSON.stringify(o.next_call), "json")}`);
   }
 
   return blocks.join("\n\n");
@@ -586,12 +642,17 @@ export function renderContentsText(o: ContentsOutputLike): string {
     );
   }
 
+  // Page text is upstream web content — fenced (dynamic length) so it can't
+  // forge this document's own note/footer framing. Inside the fence it still
+  // rides verbatim: the JSON-escaping tax stays dead, only the boundary is
+  // back. Card csv/json get the same treatment (a cell containing ``` would
+  // otherwise close the fence early).
   if (o.data !== undefined) {
-    blocks.push(o.format === "csv" ? `\`\`\`csv\n${o.data}\n\`\`\`` : o.data);
+    blocks.push(fenced(o.data, o.format === "csv" ? "csv" : "text"));
   } else if (o.records !== undefined) {
-    blocks.push(`\`\`\`json\n${JSON.stringify(o.records)}\n\`\`\``);
+    blocks.push(fenced(JSON.stringify(o.records), "json"));
   } else if (o.dataset !== undefined) {
-    blocks.push(`\`\`\`json\n${JSON.stringify(o.dataset)}\n\`\`\``);
+    blocks.push(fenced(JSON.stringify(o.dataset), "json"));
   }
 
   const meta: string[] = [`cost: $${o.cost}`];
