@@ -74,7 +74,7 @@ describe("tako_contents input schema", () => {
 });
 
 describe("tako_contents handler", () => {
-  it("inline mode (default): returns CSV data inline with total_rows/truncated, null download_url", async () => {
+  it("inline mode (default): returns CSV data inline with total_rows/truncated, no download_url", async () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [
         {
@@ -99,8 +99,11 @@ describe("tako_contents handler", () => {
     expect(out.data).toBe("name,value\nA,1\nB,2");
     expect(out.total_rows).toBe(1500);
     expect(out.truncated).toBe(true);
-    expect(out.download_url).toBeNull();
-    expect(out.expires_at).toBeNull();
+    // Minimal envelope: url-mode fields are OMITTED inline, not null.
+    expect(out).not.toHaveProperty("download_url");
+    expect(out).not.toHaveProperty("expires_at");
+    // source_url echoes the requested url here, so it is omitted too.
+    expect(out).not.toHaveProperty("source_url");
     expect(out.cost).toBe(0); // card CSV is free
   });
 
@@ -124,9 +127,11 @@ describe("tako_contents handler", () => {
       { url: "https://example.com/a", mode: "inline", content_format: "csv" },
       ctx,
     );
-    expect(out.format).toBe("text");
+    // Web text carries no `format` — the envelope is essentially {data, cost}.
+    expect(out).not.toHaveProperty("format");
     expect(out.data).toBe("hello world");
-    expect(out.download_url).toBeNull();
+    expect(out).not.toHaveProperty("download_url");
+    expect(out).not.toHaveProperty("truncated"); // complete → omitted, not false
     expect(out.cost).toBe(1); // web text is metered
   });
 
@@ -143,9 +148,11 @@ describe("tako_contents handler", () => {
       url: "https://example.com/a", mode: "inline", query: "RevPAR",
     });
     const out = await tool.handler(parsed, ctx);
-    // Passages, not the full dump — and the miss/hit header is explicit.
+    // Passages, not the full dump — data is PURE page text; the match summary
+    // rides separately in `note`.
     expect(out.data).toContain("$142.11");
-    expect(out.data).toContain("match(es)");
+    expect(out.data).not.toContain("match(es)");
+    expect(out.note).toContain("match(es)");
     expect((out.data as string).length).toBeLessThan(page.length / 2);
     expect(out.truncated).toBe(true);
     // `query` is an MCP-layer knob: the backend body must not carry it
@@ -186,11 +193,11 @@ describe("tako_contents handler", () => {
       url: "https://example.com/a", query: "zebra unicorn",
     });
     const out = await tool.handler(parsed, ctx);
-    expect(out.data).toContain("NOT FOUND");
+    expect(out.note).toContain("NOT FOUND");
     expect(out.data).toContain("a page about something else"); // head kept for orientation
   });
 
-  it("url mode: returns the presigned download_url + expiry, null inline data", async () => {
+  it("url mode: returns the presigned download_url + expiry, no inline data", async () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [
         {
@@ -209,9 +216,9 @@ describe("tako_contents handler", () => {
     );
     expect(out.download_url).toBe("https://signed/csv");
     expect(out.expires_at).toBe("2026-06-26T00:00:00Z");
-    expect(out.data).toBeNull();
-    expect(out.total_rows).toBeNull();
-    expect(out.truncated).toBe(false);
+    expect(out).not.toHaveProperty("data");
+    expect(out).not.toHaveProperty("total_rows");
+    expect(out).not.toHaveProperty("truncated");
   });
 
   it("passes url + mode through to POST /api/v1/contents/", async () => {
@@ -280,8 +287,8 @@ describe("tako_contents handler", () => {
       { name: "A", value: 1 },
       { name: "B", value: 2 },
     ]);
-    expect(out.data).toBeNull();
-    expect(out.dataset).toBeNull();
+    expect(out).not.toHaveProperty("data");
+    expect(out).not.toHaveProperty("dataset");
     const call = vi.mocked(djangoPost).mock.calls[0]!;
     expect((call[3] as { content_format?: string }).content_format).toBe("json_records");
   });
@@ -324,8 +331,8 @@ describe("tako_contents handler", () => {
       ["A", 1],
       ["B", 2],
     ]);
-    expect(out.data).toBeNull();
-    expect(out.records).toBeNull();
+    expect(out).not.toHaveProperty("data");
+    expect(out).not.toHaveProperty("records");
   });
 
   it("throws when the endpoint returns no content item", async () => {

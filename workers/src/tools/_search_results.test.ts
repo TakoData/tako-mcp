@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { buildSearchOutput, dedupeCardBoilerplate, slimCard, slimCardContent } from "./_search_results.js";
+import { buildSearchOutput, hoistSourceGlossary, slimCard, slimCardContent } from "./_search_results.js";
 import type { ResultContent, TakoCard } from "./_search_results.js";
 
 import type { Env } from "../env.js";
@@ -248,6 +248,58 @@ describe("slimCard — explicit exportable flag", () => {
   });
 });
 
+// Gated (exportable:false) cards carry no rows anywhere; the values_hint makes
+// the routing (description holds the headline; tako_answer for figures)
+// per-card and deterministic instead of a tool-description recall exercise.
+describe("slimCard — values_hint on gated cards", () => {
+  it("stamps a values_hint with pinned node_ids on an exportable:false card", () => {
+    const card: TakoCard = {
+      card_id: "c1",
+      exportable: false,
+      nodes: [
+        { id: "n1", name: "Entity", type: "entity" },
+        { id: "n2", name: "Metric", type: "metric" },
+      ],
+    };
+    const hint = slimCard(card, 5).values_hint;
+    expect(hint).toContain("license-gated");
+    expect(hint).toContain("tako_answer");
+    expect(hint).toContain('["n1","n2"]');
+  });
+
+  it("stamps a node-less hint when the gated card has no nodes", () => {
+    const card: TakoCard = { card_id: "c1", exportable: false };
+    const hint = slimCard(card, 5).values_hint;
+    expect(hint).toContain("tako_answer");
+    expect(hint).not.toContain("node_ids");
+  });
+
+  it("stamps the hint on a fallback-derived gated card (no flag, no content)", () => {
+    const card: TakoCard = { card_id: "c1", title: "t" };
+    expect(slimCard(card, 5).values_hint).toContain("license-gated");
+  });
+
+  it("never stamps a values_hint on an exportable card", () => {
+    const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
+    expect(slimCard(card, 5)).not.toHaveProperty("values_hint");
+  });
+
+  it("orders description and values_hint before the URL/methodology chrome", () => {
+    const card: TakoCard = {
+      card_id: "c1",
+      title: "t",
+      exportable: false,
+      description: "Latest value 59.2%, up 1.1pp",
+      webpage_url: "https://trytako.com/card/c1",
+      image_url: "https://trytako.com/card/c1.png",
+    };
+    const keys = Object.keys(slimCard(card, 5) as Record<string, unknown>);
+    expect(keys.indexOf("description")).toBeLessThan(keys.indexOf("webpage_url"));
+    expect(keys.indexOf("values_hint")).toBeLessThan(keys.indexOf("webpage_url"));
+    expect(keys.indexOf("description")).toBeLessThan(keys.indexOf("image_url"));
+  });
+});
+
 describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
@@ -312,12 +364,15 @@ describe("payload layout — data serializes before boilerplate", () => {
     ]),
   } as unknown as TakoCard;
 
-  it("slimCard reorders keys: content (the data) before description/sources/semantic_description", () => {
+  it("slimCard reorders keys: description + content (the substance) before URL/source chrome", () => {
     const keys = Object.keys(slimCard(wireCard, 5));
     const pos = (k: string) => keys.indexOf(k);
     expect(pos("card_id")).toBe(0);
     expect(pos("content")).toBeGreaterThan(-1);
-    expect(pos("content")).toBeLessThan(pos("description"));
+    // description precedes content: on license-gated cards it carries the
+    // headline value, so it must survive truncation alongside the data.
+    expect(pos("description")).toBeLessThan(pos("content"));
+    expect(pos("content")).toBeLessThan(pos("webpage_url"));
     expect(pos("content")).toBeLessThan(pos("sources"));
     expect(pos("content")).toBeLessThan(pos("methodologies"));
     expect(pos("content")).toBeLessThan(pos("semantic_description"));
@@ -338,68 +393,99 @@ describe("payload layout — data serializes before boilerplate", () => {
   });
 });
 
-describe("dedupeCardBoilerplate", () => {
-  const para = "Visible Alpha provides consensus estimates built from sell-side models. ".repeat(4);
+describe("hoistSourceGlossary", () => {
+  const para = "Consensus estimates built from detailed sell-side analyst models across sectors. ".repeat(3);
 
   const cardWithSource = (id: string, description: string): TakoCard =>
     ({
       card_id: id,
       title: id,
-      sources: [{ source_name: "Visible Alpha", source_description: description }],
+      sources: [{ source_name: "Alpha Source", source_description: description }],
     }) as unknown as TakoCard;
 
-  it("replaces a repeated long source_description with a pointer to the first occurrence", () => {
-    const out = dedupeCardBoilerplate([
+  it("hoists a repeated long source_description into ONE glossary entry keyed by source_name", () => {
+    const { cards, glossary } = hoistSourceGlossary([
       cardWithSource("c1", para),
       cardWithSource("c2", para),
       cardWithSource("c3", para),
-    ]) as unknown as Array<{ sources: Array<{ source_description: string }> }>;
-    expect(out[0]?.sources[0]?.source_description).toBe(para); // first survives verbatim
-    expect(out[1]?.sources[0]?.source_description).toBe(
-      "[identical to cards[0].sources[0].source_description]",
-    );
-    expect(out[2]?.sources[0]?.source_description).toBe(
-      "[identical to cards[0].sources[0].source_description]",
-    );
+    ]);
+    expect(glossary).toEqual({ "Alpha Source": para });
+    const out = cards as unknown as Array<{ sources: Array<Record<string, unknown>> }>;
+    for (const c of out) {
+      // The paragraph is gone from every card; the name key survives as the
+      // glossary lookup handle.
+      expect(c.sources[0]).toEqual({ source_name: "Alpha Source" });
+    }
   });
 
-  it("leaves short strings alone — a pointer marker would be longer than the label", () => {
-    const out = dedupeCardBoilerplate([
-      cardWithSource("c1", "S&P Global"),
-      cardWithSource("c2", "S&P Global"),
-    ]) as unknown as Array<{ sources: Array<{ source_description: string }> }>;
-    expect(out[1]?.sources[0]?.source_description).toBe("S&P Global");
+  it("hoists even a single occurrence (moves boilerplate behind the data)", () => {
+    const { cards, glossary } = hoistSourceGlossary([cardWithSource("c1", para)]);
+    expect(glossary).toEqual({ "Alpha Source": para });
+    expect(
+      (cards as unknown as Array<{ sources: Array<Record<string, unknown>> }>)[0]?.sources[0],
+    ).not.toHaveProperty("source_description");
   });
 
-  it("dedupes repeated methodology_description too", () => {
+  it("leaves short strings inline — hoisting a label costs more than it saves", () => {
+    const { cards, glossary } = hoistSourceGlossary([
+      cardWithSource("c1", "Short label"),
+      cardWithSource("c2", "Short label"),
+    ]);
+    expect(glossary).toBeUndefined();
+    expect(
+      (cards as unknown as Array<{ sources: Array<{ source_description: string }> }>)[1]
+        ?.sources[0]?.source_description,
+    ).toBe("Short label");
+  });
+
+  it("hoists methodology_description keyed by methodology_name", () => {
     const method = { methodology_name: "consensus", methodology_description: para };
-    const cards = [
+    const input = [
       { card_id: "a", methodologies: [method] },
       { card_id: "b", methodologies: [{ ...method }] },
     ] as unknown as TakoCard[];
-    const out = dedupeCardBoilerplate(cards) as unknown as Array<{
-      methodologies: Array<{ methodology_description: string }>;
-    }>;
-    expect(out[0]?.methodologies[0]?.methodology_description).toBe(para);
-    expect(out[1]?.methodologies[0]?.methodology_description).toBe(
-      "[identical to cards[0].methodologies[0].methodology_description]",
-    );
+    const { cards, glossary } = hoistSourceGlossary(input);
+    expect(glossary).toEqual({ consensus: para });
+    const out = cards as unknown as Array<{ methodologies: Array<Record<string, unknown>> }>;
+    expect(out[0]?.methodologies[0]).not.toHaveProperty("methodology_description");
+    expect(out[1]?.methodologies[0]).not.toHaveProperty("methodology_description");
+  });
+
+  it("keeps a same-name entry with DIFFERENT text inline (no information loss)", () => {
+    const other = "A completely different but still paragraph-length source description text. ".repeat(3);
+    const { cards, glossary } = hoistSourceGlossary([
+      cardWithSource("c1", para),
+      cardWithSource("c2", other),
+    ]);
+    expect(glossary).toEqual({ "Alpha Source": para });
+    expect(
+      (cards as unknown as Array<{ sources: Array<{ source_description: string }> }>)[1]
+        ?.sources[0]?.source_description,
+    ).toBe(other);
+  });
+
+  it("leaves entries without a usable name inline", () => {
+    const input = [
+      { card_id: "a", sources: [{ source_description: para }] },
+    ] as unknown as TakoCard[];
+    const { cards, glossary } = hoistSourceGlossary(input);
+    expect(glossary).toBeUndefined();
+    expect(
+      (cards as unknown as Array<{ sources: Array<{ source_description: string }> }>)[0]
+        ?.sources[0]?.source_description,
+    ).toBe(para);
   });
 
   it("returns untouched cards by reference and never mutates inputs", () => {
-    const unique = cardWithSource("c1", para);
-    const other = cardWithSource("c2", "different ".repeat(30));
-    const out = dedupeCardBoilerplate([unique, other]);
-    expect(out[0]).toBe(unique);
-    expect(out[1]).toBe(other);
-    // And a deduped run leaves the ORIGINAL objects intact (immutability).
-    const dup = cardWithSource("c3", para);
-    dedupeCardBoilerplate([unique, dup]);
-    expect((dup as unknown as { sources: Array<{ source_description: string }> }).sources[0]?.source_description).toBe(para);
-  });
-
-  it("handles cards without sources or methodologies", () => {
     const bare = { card_id: "x", title: "no arrays" } as unknown as TakoCard;
-    expect(dedupeCardBoilerplate([bare])[0]).toBe(bare);
+    const hoistable = cardWithSource("c1", para);
+    const { cards } = hoistSourceGlossary([bare, hoistable]);
+    expect(cards[0]).toBe(bare);
+    // The hoisted card is a NEW object; the original stays intact (immutability).
+    expect(cards[1]).not.toBe(hoistable);
+    expect(
+      (hoistable as unknown as { sources: Array<{ source_description: string }> })
+        .sources[0]?.source_description,
+    ).toBe(para);
   });
 });

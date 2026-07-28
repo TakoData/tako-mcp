@@ -332,7 +332,7 @@ describe("tako_search response mapping", () => {
     expect(out.web_results).toHaveLength(1);
     expect(out.web_results[0]?.url).toBe("https://example.com/a");
     // Zero cards (even with web hits) still carries anti-retry guidance.
-    expect(out.guidance).toMatch(/do not retry/i);
+    expect(out.guidance).toMatch(/do not re-search/i);
   });
 
   it("populates auto-chain widget fields when the top card has card_id", async () => {

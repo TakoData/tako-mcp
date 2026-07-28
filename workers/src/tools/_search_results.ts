@@ -82,6 +82,15 @@ export const takoCardSchema = z
       .describe(
         "Whether this card's underlying data can be fetched with tako_contents. false → NOT exportable: do NOT call tako_contents on this card, use its inline preview/chart. true → eligible, but not a guarantee — a rare card still 403s, so on error fall back rather than retry.",
       ),
+    // MCP-synthesized routing hint, stamped in slimCard on exportable:false
+    // cards only (never on the wire): tells the model where the values live
+    // instead of letting it burn a doomed tako_contents call.
+    values_hint: z
+      .string()
+      .optional()
+      .describe(
+        "Present only on exportable:false (license-gated) cards: where this card's values live — headline in `description`, specific figures via tako_answer with node_ids pinned.",
+      ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
     // sources.data.node_ids to pin the same nodes in a follow-up search.
@@ -312,20 +321,24 @@ export function slimCardContent(
 const CARD_KEY_ORDER = [
   "card_id",
   "title",
-  "card_type",
+  // `description` rides third: on license-gated (exportable:false) cards it
+  // IS the data — the backend puts the headline value + % change there — so
+  // it must precede the URL/methodology chrome a truncating client drops.
+  "description",
+  "values_hint",
   "exportable",
   "content",
   "nodes",
+  "card_type",
   "data_freshness",
   "relevance_score",
   "relevance",
+  "metric_definitions",
   "webpage_url",
   "image_url",
   "embed_url",
-  "metric_definitions",
-  "description",
-  "methodologies",
   "sources",
+  "methodologies",
   "source_indexes",
   "semantic_description",
 ] as const;
@@ -358,65 +371,85 @@ export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
     card.content == null
       ? { ...card, exportable }
       : { ...card, exportable, content: slimCardContent(card.content, capRows) };
-  return orderCardKeys(slimmed);
+  return orderCardKeys(
+    exportable ? slimmed : { ...slimmed, values_hint: valuesHint(card) },
+  );
 };
 
-// Only paragraph-length strings are worth deduping — swapping a short label
-// ("S&P Global") for a pointer marker would grow the payload, not shrink it.
-const DEDUPE_MIN_CHARS = 120;
+// Routing hint for a license-gated (exportable:false) card. Gated cards carry
+// no rows on any surface — the headline value lives in `description` and
+// specific figures come from tako_answer — so the hint makes that routing
+// per-card and deterministic instead of a tool-description recall exercise.
+function valuesHint(card: TakoCard): string {
+  const ids = (card.nodes ?? []).map((n) => n.id);
+  const pin = ids.length > 0 ? ` with node_ids ${JSON.stringify(ids)} pinned` : "";
+  return `rows license-gated; headline value is in description; for specific figures call tako_answer${pin}`;
+}
+
+// Only paragraph-length strings are worth hoisting — moving a short label
+// out of the card would cost more glossary overhead than it saves.
+const GLOSSARY_MIN_CHARS = 120;
 
 /**
- * Replace boilerplate strings repeated across cards — per-source description
- * paragraphs and methodology text — with a short pointer to their first
- * occurrence. The backend repeats the full source paragraph on EVERY card
- * from that source (five Visible Alpha cards → five copies of the same
- * ~1k-char description), which crowds the actual data out of any client-side
- * result-size budget. The first occurrence always survives verbatim, so no
- * information is lost. Immutable — untouched cards are returned as-is.
+ * Hoist per-card source/methodology boilerplate into one top-level glossary.
+ * The backend repeats the full source paragraph on EVERY card from that
+ * source (five same-source cards → five copies of the same ~1k-char
+ * description), which crowds the actual data out of any client-side
+ * result-size budget. Each paragraph moves out of the cards into
+ * `glossary[name]` (one copy, keyed by the entry's own name field), and the
+ * caller serializes the glossary at the END of the output so truncating
+ * clients lose boilerplate last, data never. An entry with no usable name, or
+ * a same-name entry carrying DIFFERENT text, stays inline — nothing is ever
+ * lost. Immutable — untouched cards are returned as-is.
  */
-export function dedupeCardBoilerplate(cards: TakoCard[]): TakoCard[] {
-  const seen = new Map<string, string>(); // text → path of its first occurrence
-  const fold = (value: unknown, path: string): unknown => {
-    if (typeof value !== "string" || value.length < DEDUPE_MIN_CHARS) return value;
-    const first = seen.get(value);
-    if (first !== undefined) return `[identical to ${first}]`;
-    seen.set(value, path);
-    return value;
-  };
-  const foldArray = (
-    items: unknown,
-    cardIdx: number,
-    arrayKey: string,
-    textKey: string,
-  ): unknown => {
+export function hoistSourceGlossary(cards: TakoCard[]): {
+  cards: TakoCard[];
+  glossary: Record<string, string> | undefined;
+} {
+  const glossary: Record<string, string> = {};
+  const hoistArray = (items: unknown, nameKey: string, textKey: string): unknown => {
     if (!Array.isArray(items)) return items;
     let changed = false;
-    const out = items.map((item, i) => {
+    const out = items.map((item) => {
       if (item === null || typeof item !== "object") return item;
       const rec = item as Record<string, unknown>;
-      const folded = fold(rec[textKey], `cards[${cardIdx}].${arrayKey}[${i}].${textKey}`);
-      if (folded === rec[textKey]) return item;
+      const name = rec[nameKey];
+      const text = rec[textKey];
+      if (
+        typeof name !== "string" || name === "" ||
+        typeof text !== "string" || text.length < GLOSSARY_MIN_CHARS
+      ) {
+        return item;
+      }
+      const existing = glossary[name];
+      if (existing !== undefined && existing !== text) return item;
+      glossary[name] = text;
       changed = true;
-      return { ...rec, [textKey]: folded };
+      const { [textKey]: _hoisted, ...rest } = rec;
+      return rest;
     });
     return changed ? out : items;
   };
-  return cards.map((card, i) => {
+  const outCards = cards.map((card) => {
     const rec = card as Record<string, unknown>;
     const next: Record<string, unknown> = { ...rec };
     let changed = false;
-    for (const [arrayKey, textKey] of [
-      ["sources", "source_description"],
-      ["methodologies", "methodology_description"],
+    for (const [arrayKey, nameKey, textKey] of [
+      ["sources", "source_name", "source_description"],
+      ["methodologies", "methodology_name", "methodology_description"],
     ] as const) {
-      const folded = foldArray(rec[arrayKey], i, arrayKey, textKey);
-      if (folded !== rec[arrayKey]) {
-        next[arrayKey] = folded;
+      const hoisted = hoistArray(rec[arrayKey], nameKey, textKey);
+      if (hoisted !== rec[arrayKey]) {
+        next[arrayKey] = hoisted;
         changed = true;
       }
     }
     return changed ? (next as TakoCard) : card;
   });
+  return {
+    cards: outCards,
+    glossary: Object.keys(glossary).length > 0 ? glossary : undefined,
+  };
 }
 
 /**
@@ -474,6 +507,15 @@ export const searchOutputShape = {
   // Present ONLY on a zero-result response: tells the model how to recover
   // without burning priced calls on reworded retries.
   guidance: z.string().optional(),
+  // Source/methodology paragraphs hoisted out of the cards (one copy each,
+  // keyed by name). The caller appends this AFTER every other field so
+  // truncating clients lose boilerplate last.
+  sources_glossary: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(
+      "Source/methodology descriptions shared by the cards, keyed by name — hoisted here so each rides once instead of once per card.",
+    ),
   ...autoChainShape,
 } as const;
 
@@ -483,6 +525,7 @@ export type SearchOutput = {
   usage: Usage | null;
   request_id: string;
   guidance?: string;
+  sources_glossary?: Record<string, string>;
   pub_id?: string;
   embed_url?: string;
   image_url?: string;
@@ -519,9 +562,9 @@ function buildZeroResultGuidance(
 ): string {
   if (hasWebResults) {
     return [
-      "No data cards matched — do NOT re-search with rephrasings hoping for a chart, and do not retry this query.",
-      "Work from the returned web_results (tako_contents on the most relevant url fetches its full page text),",
-      "or confirm data coverage with tako_available_data (free) and spend at most ONE more search pinning its node_ids.",
+      "This search returned web results but no data cards. That usually means the data graph does not cover this query, not that the wording was unlucky, so do NOT re-search with rephrasings.",
+      "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
+      "If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, pinning its node_ids.",
     ].join(" ");
   }
   if (!searchedData(sources)) {

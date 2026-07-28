@@ -27,7 +27,7 @@ import {
 import { logWireGuardFailure } from "./_log.js";
 import {
   buildSearchOutput,
-  dedupeCardBoilerplate,
+  hoistSourceGlossary,
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
   searchOutputShape,
@@ -48,6 +48,8 @@ const DESCRIPTION = [
   'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When unsure the data exists or its exact name, run `tako_available_data` first (free) — the recommended first step for a data lookup; it hands you the exact names to query here.',
   "",
   "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. When no data card fits the query, the `web_results` can be your fallback: call `tako_contents` on the most relevant one's url to read its full page text (web urls are always fetchable; a card's full csv needs `exportable: true`).",
+  "",
+  "License-gated cards return `exportable: false` and no rows: read the headline value from the card's `description`, or get specific figures via `tako_answer` with the card's `nodes` ids pinned (each gated card carries a `values_hint` saying exactly this).",
   "",
   "If you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
 ].join("\n");
@@ -234,14 +236,20 @@ const tako_search = {
     const cap = input.include_contents
       ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
       : null;
-    return buildSearchOutput(
-      dedupeCardBoilerplate(cards.data.map((c) => slimCard(c, cap))),
+    const { cards: slimCards, glossary } = hoistSourceGlossary(
+      cards.data.map((c) => slimCard(c, cap)),
+    );
+    const output = buildSearchOutput(
+      slimCards,
       webResults.data.map(slimWebResult),
       wire.request_id,
       wire.usage ?? null,
       ctx.env,
       input.sources,
     );
+    // Glossary spreads on LAST so it serializes after the data — truncating
+    // clients then drop boilerplate first.
+    return glossary === undefined ? output : { ...output, sources_glossary: glossary };
   },
   async extraMeta(output, ctx) {
     // Skip the fetch on ChatGPT: its widget bundle takes the committed

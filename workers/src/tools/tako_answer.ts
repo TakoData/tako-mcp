@@ -4,7 +4,7 @@ import { djangoPost } from "../django.js";
 import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
-  dedupeCardBoilerplate,
+  hoistSourceGlossary,
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
   searchedData,
@@ -19,7 +19,7 @@ import type { ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Ask one specific data question; get one synthesized answer grounded in the data or web tako cites.",
   "",
-  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations.",
+  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for license-gated cards: when a search card is `exportable: false`, ask here with its node_ids pinned to get the figures.",
   "",
   "`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.",
   "",
@@ -103,6 +103,10 @@ const outputSchema = z.object({
   // another wording" — this field is the machine-checkable "not in the data
   // index" that converts rephrase-retry loops into a single pivot.
   guidance: z.string().optional(),
+  // Source/methodology paragraphs hoisted out of the cited cards (one copy
+  // each, keyed by name) — appended last so truncating clients lose
+  // boilerplate before data. Mirrors tako_search.
+  sources_glossary: z.record(z.string(), z.string()).optional(),
 });
 
 type Output = z.infer<typeof outputSchema>;
@@ -222,7 +226,9 @@ const takoAnswer = {
     const cap = (input.include_contents ?? true)
       ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
       : null;
-    const cards = dedupeCardBoilerplate(parsed.data.cards.map((c) => slimCard(c, cap)));
+    const { cards, glossary } = hoistSourceGlossary(
+      parsed.data.cards.map((c) => slimCard(c, cap)),
+    );
     const web_results = parsed.data.web_results.map(slimWebResult);
     return {
       ...parsed.data,
@@ -238,6 +244,9 @@ const takoAnswer = {
       ...(searchedData(input.sources) && cards.length === 0
         ? { guidance: buildDataGapGuidance(web_results.length > 0) }
         : {}),
+      // Glossary spreads on LAST so it serializes after the data — truncating
+      // clients then drop boilerplate first.
+      ...(glossary === undefined ? {} : { sources_glossary: glossary }),
     };
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
