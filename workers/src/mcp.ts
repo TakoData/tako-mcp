@@ -1192,8 +1192,13 @@ export async function handleMcpRequest(
     });
 
     await server.connect(transport);
+    // Cloned before the transport consumes the body so the observability tap
+    // below can re-read the call when the SDK rejects it.
+    const requestForLogging = request.clone();
     try {
-      return await transport.handleRequest(request);
+      const response = await transport.handleRequest(request);
+      await logSdkValidationRejections(requestForLogging, response);
+      return response;
     } finally {
       // TODO(Phase 2): revisit this unconditional close.
       //
@@ -1227,6 +1232,71 @@ export async function handleMcpRequest(
         headers: { "Content-Type": "application/json; charset=utf-8" },
       },
     );
+  }
+}
+
+/**
+ * Observability tap for SDK-internal tool-argument rejections. The SDK
+ * validates `tools/call` arguments against the registered input schema
+ * BEFORE the tool callback runs, so an input the schema rejects becomes a
+ * JSON-RPC `-32602` to the client with no Worker-side signal — the outer
+ * catch in `handleMcpRequest` never sees it, and neither does any tool
+ * handler. That blind spot matters whenever a schema is tightened (e.g.
+ * `tako_visualize`'s typed configs): traffic the new schema rejects would
+ * otherwise surface only as user complaints. Peeking at the buffered
+ * response (`enableJsonResponse: true` guarantees it is fully buffered, so
+ * no stream can be truncated) logs each rejection with its tool name to
+ * Workers Logs.
+ *
+ * `request` must be a clone whose body has not been consumed. Never throws:
+ * a malformed body here must not break serving the already-built response.
+ */
+export async function logSdkValidationRejections(
+  request: Request,
+  response: Response,
+): Promise<void> {
+  try {
+    if (request.method !== "POST") return;
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) return;
+    const responseBody = (await response.clone().json()) as unknown;
+    const responseMessages = Array.isArray(responseBody)
+      ? responseBody
+      : [responseBody];
+    const rejections = responseMessages.filter(
+      (m): m is { id?: unknown; error: { code: number; message?: string } } => {
+        if (typeof m !== "object" || m === null) return false;
+        const error = (m as { error?: unknown }).error;
+        return (
+          typeof error === "object" &&
+          error !== null &&
+          (error as { code?: unknown }).code === -32602
+        );
+      },
+    );
+    if (rejections.length === 0) return;
+    const requestBody = (await request.json()) as unknown;
+    const requestMessages = Array.isArray(requestBody)
+      ? requestBody
+      : [requestBody];
+    for (const rejection of rejections) {
+      const call = requestMessages.find(
+        (m): m is { id?: unknown; method?: unknown; params?: unknown } =>
+          typeof m === "object" &&
+          m !== null &&
+          (m as { id?: unknown }).id === rejection.id,
+      );
+      const method = typeof call?.method === "string" ? call.method : "unknown";
+      const params = call?.params as { name?: unknown } | undefined;
+      const toolName = typeof params?.name === "string" ? params.name : "unknown";
+      console.error(
+        `[mcp] invalid params (-32602): method=${method} tool=${toolName} error=${
+          rejection.error.message ?? ""
+        }`,
+      );
+    }
+  } catch {
+    // Best-effort tap — swallowing is deliberate; see the doc comment.
   }
 }
 

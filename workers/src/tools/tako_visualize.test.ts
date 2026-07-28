@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import takoVisualize, { buildVisualizeBody } from "./tako_visualize.js";
+import takoVisualize, { buildVisualizeBody, COMPONENT_TYPES } from "./tako_visualize.js";
 import { CreateCardRequest, ThinVizCard } from "../generated/schemas.js";
 import {
   bodyOf,
@@ -173,11 +173,180 @@ describe("tako_visualize input schema", () => {
     ).toThrow();
   });
 
-  it("accepts a valid component with a freeform config object", () => {
+  it("accepts a passthrough component_type with a freeform config object", () => {
+    // `scatter` is one of the documented-passthrough types — its config is not
+    // typed here, so an arbitrary object is accepted and passed through.
     const parsed = takoVisualize.inputSchema.parse({
       components: [{ component_type: "scatter", config: { anything: [1, 2, 3], nested: { a: 1 } } }],
     });
     expect(parsed.components[0]?.component_type).toBe("scatter");
+  });
+
+  it("accepts a typed categorical_bar config with datasets", () => {
+    const parsed = takoVisualize.inputSchema.parse({
+      components: [
+        {
+          component_type: "categorical_bar",
+          config: { datasets: [{ label: "Sales", units: "USD", data: [{ x: "NA", y: 500 }] }] },
+        },
+      ],
+    });
+    expect(parsed.components[0]?.component_type).toBe("categorical_bar");
+  });
+
+  it("rejects a typed component whose required config field is missing", () => {
+    // categorical_bar requires `datasets`; an empty config must be rejected by
+    // the discriminated-union member rather than passed through.
+    expect(() =>
+      takoVisualize.inputSchema.parse({
+        components: [{ component_type: "categorical_bar", config: {} }],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a typed table config missing rows", () => {
+    expect(() =>
+      takoVisualize.inputSchema.parse({
+        components: [
+          { component_type: "table", config: { columns: [{ field: "a", label: "A" }] } },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("preserves untyped optional config fields on a typed component (passthrough)", () => {
+    // The core correctness property of the discriminated union: fields not
+    // typed here (styling options the backend accepts) must survive parsing,
+    // not be silently stripped. A plain z.object() would drop them and every
+    // other test would still pass — so assert preservation explicitly.
+    const parsed = takoVisualize.inputSchema.parse({
+      components: [
+        {
+          component_type: "categorical_bar",
+          config: {
+            datasets: [{ label: "Sales", data: [{ x: "NA", y: 500 }] }],
+            series_color_theme: "red_bad_green_good",
+            legend: { position: "bottom" },
+            default_view: "horizontal",
+          },
+        },
+      ],
+    });
+    const cfg = parsed.components[0]?.config as Record<string, unknown>;
+    expect(cfg.series_color_theme).toBe("red_bad_green_good");
+    expect(cfg.legend).toEqual({ position: "bottom" });
+    expect(cfg.default_view).toBe("horizontal");
+  });
+
+  it("preserves untyped fields on individual DATA POINTS (point-level passthrough)", () => {
+    // Regression for the PR #164 review repro: `highlight`/`color` are valid
+    // backend CategoricalDataPoint fields not typed here. A strip-by-default
+    // point schema would parse cleanly, silently drop `highlight`, and render
+    // every bar muted — so assert the point survives all the way into the
+    // Django body.
+    const body = buildVisualizeBody(
+      takoVisualize.inputSchema.parse({
+        components: [
+          {
+            component_type: "categorical_bar",
+            config: {
+              series_color_theme: "uniform",
+              datasets: [
+                {
+                  label: "Revenue",
+                  data: [
+                    { x: "Q1", y: 100 },
+                    { x: "Q2", y: 140, highlight: true, color: "#ff0000" },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const config = body.components[0]?.config as {
+      datasets: { data: Record<string, unknown>[] }[];
+    };
+    expect(config.datasets[0]?.data[1]).toEqual({
+      x: "Q2",
+      y: 140,
+      highlight: true,
+      color: "#ff0000",
+    });
+  });
+
+  it("rejects a generic_timeseries config with neither datasets nor datasets_by_interval", () => {
+    expect(() =>
+      takoVisualize.inputSchema.parse({
+        components: [{ component_type: "generic_timeseries", config: {} }],
+      }),
+    ).toThrow(/exactly one/);
+  });
+
+  it("rejects a generic_timeseries config with BOTH datasets and datasets_by_interval", () => {
+    const series = [{ label: "A", data: [{ x: "2024-01-01", y: 1 }] }];
+    expect(() =>
+      takoVisualize.inputSchema.parse({
+        components: [
+          {
+            component_type: "generic_timeseries",
+            config: { datasets: series, datasets_by_interval: { P1D: series } },
+          },
+        ],
+      }),
+    ).toThrow(/exactly one/);
+  });
+
+  it("accepts generic_timeseries with only datasets_by_interval", () => {
+    const parsed = takoVisualize.inputSchema.parse({
+      components: [
+        {
+          component_type: "generic_timeseries",
+          config: { datasets_by_interval: { P1D: [{ label: "A", data: [{ x: 1, y: 2 }] }] } },
+        },
+      ],
+    });
+    expect(parsed.components[0]?.component_type).toBe("generic_timeseries");
+  });
+
+  it("rejects a header config without a title (backend's one required field)", () => {
+    expect(() =>
+      takoVisualize.inputSchema.parse({
+        components: [{ component_type: "header", config: { subtitle: "only" } }],
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a minimal component for EVERY entry in COMPONENT_TYPES", () => {
+    // Runtime half of the exhaustiveness guard (the compile-time half lives
+    // next to `componentSchema`): a COMPONENT_TYPES entry with no union
+    // member — or a typed member whose minimal config drifts — fails here.
+    const minimalTypedConfigs: Record<string, Record<string, unknown>> = {
+      header: { title: "T" },
+      categorical_bar: { datasets: [{ label: "A", data: [{ x: "a", y: 1 }] }] },
+      generic_timeseries: { datasets: [{ label: "A", data: [{ x: 1, y: 2 }] }] },
+      table: { columns: [{ field: "a", label: "A" }], rows: [{ a: 1 }] },
+      financial_boxes: { items: [{ header: "Revenue" }] },
+      pie: { datasets: [{ label: "A", data: [{ x: "a", y: 1 }] }] },
+    };
+    for (const componentType of COMPONENT_TYPES) {
+      const config = minimalTypedConfigs[componentType] ?? { anything: true };
+      expect(() =>
+        takoVisualize.inputSchema.parse({
+          components: [{ component_type: componentType, config }],
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it("accepts an optional component_variant on a typed component", () => {
+    const parsed = takoVisualize.inputSchema.parse({
+      components: [
+        { component_type: "header", component_variant: "simple", config: { title: "X" } },
+      ],
+    });
+    expect(parsed.components[0]?.component_variant).toBe("simple");
   });
 });
 

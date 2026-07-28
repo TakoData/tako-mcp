@@ -4,6 +4,8 @@ import {
   assertAllToolsDescribed,
   assertChatgptSubmissionParity,
   assertLlmsFullCoverage,
+  buildLobehubPlugin,
+  LOBEHUB_TOOL_ALLOWLIST,
   MCP_TOOL_ALLOWLIST,
 } from "./gen-registry.js";
 
@@ -16,6 +18,44 @@ describe("registry guards", () => {
     const registered = new Set(TOOL_REGISTRY.map((t) => t.name));
     for (const name of MCP_TOOL_ALLOWLIST) expect(registered.has(name)).toBe(true);
     expect(registered.size).toBe(MCP_TOOL_ALLOWLIST.length);
+  });
+
+  it("the LobeHub allowlist is a subset of the registered tools", () => {
+    const registered = new Set(TOOL_REGISTRY.map((t) => t.name));
+    for (const name of LOBEHUB_TOOL_ALLOWLIST) {
+      expect(registered.has(name)).toBe(true);
+    }
+  });
+});
+
+describe("buildLobehubPlugin", () => {
+  const modules = TOOL_REGISTRY.map((tool) => ({ file: `${tool.name}.ts`, tool }));
+  const committed = {
+    identifier: "takodata-tako-mcp",
+    version: "0.0.1",
+    tags: ["web-search"],
+    tools: [{ name: "stale", description: "stale", inputSchema: {} }],
+  };
+
+  it("keeps static fields, overrides version, and emits the curated tools", () => {
+    const plugin = buildLobehubPlugin(committed, "9.9.9", modules);
+    expect(plugin.identifier).toBe("takodata-tako-mcp");
+    expect(plugin.tags).toEqual(["web-search"]);
+    expect(plugin.version).toBe("9.9.9");
+    const tools = plugin.tools as { name: string; inputSchema: Record<string, unknown> }[];
+    expect(tools.map((t) => t.name)).toEqual([...LOBEHUB_TOOL_ALLOWLIST]);
+    // Full draft-7 schemas, not server.json's flat parameter map.
+    for (const tool of tools) {
+      expect(tool.inputSchema.$schema).toContain("draft-07");
+      expect(tool.inputSchema.properties).toBeDefined();
+    }
+  });
+
+  it("throws when an allowlisted tool has no module", () => {
+    const withoutSearch = modules.filter((m) => m.tool.name !== "tako_search");
+    expect(() => buildLobehubPlugin(committed, "9.9.9", withoutSearch)).toThrow(
+      /tako_search/,
+    );
   });
 });
 
