@@ -90,9 +90,19 @@ export interface ToolContext {
    * Connection tier — `"free"` for anonymous (no `Authorization` header)
    * requests served on the shared free-tier account, `"authenticated"`
    * otherwise. Optional; absent means `"authenticated"` (the default for
-   * tests and non-HTTP callers). Currently consumed only by the Django
-   * error mapping in `mcp.ts`, which swaps raw billing errors for
-   * free-tier upsell copy when the SHARED account runs out of credits.
+   * tests and non-HTTP callers). Two consumers in `mcp.ts`:
+   *
+   * 1. SECURITY INPUT: `createMcpServer` resolves its tier as
+   *    `options.tier ?? ctx.tier ?? "authenticated"`, and that resolved
+   *    value drives both the tool surface and the free-tier dispatch
+   *    gate — the only execution barrier keeping anonymous connections
+   *    off auth-required tools. Setting `tier: "free"` here engages the
+   *    gate even if the `createMcpServer` option is omitted (the two
+   *    must agree when both are set; disagreement throws).
+   * 2. The Django error mapping, which swaps raw billing errors for
+   *    free-tier upsell copy when the SHARED account runs out of
+   *    credits. (Inside a tool call, handlers see the REGISTRATION-time
+   *    tier stamped over this field — see `callCtx` in `registerTool`.)
    */
   tier?: Tier;
 }

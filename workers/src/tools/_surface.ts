@@ -74,8 +74,12 @@ export const CHATGPT_DEFAULT_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
  * the original policy (hidden entirely — a listed tool that errors on
  * call wastes agent turns on hosts with no linking UI to show).
  *
- * Must stay a subset of the tools `chatgpt-app-submission.json` declares —
- * `assertChatgptSubmissionParity` in `gen-registry.ts` enforces that.
+ * This set plus `FREE_TIER_TOOL_NAMES` must EQUAL the tools
+ * `chatgpt-app-submission.json` declares — `assertChatgptSubmissionParity`
+ * in `gen-registry.ts` enforces the equality in BOTH directions, so
+ * removing a name here fails `registry:check` (it would silently drop a
+ * submitted tool's link-account affordance), and adding one requires
+ * declaring it in the submission.
  */
 export const CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES: ReadonlySet<string> =
   new Set(["tako_contents", "tako_visualize"]);

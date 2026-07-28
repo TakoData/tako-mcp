@@ -153,6 +153,17 @@ export function assertLlmsFullCoverage(
  * below it are both errors. `tako_contents` / `tako_visualize` only
  * EXECUTE on an OAuth-linked connection, which is what the submission's
  * test cases assume.
+ *
+ * Transitive consequence (deliberate, worth stating): because BOTH the
+ * authenticated ChatGPT surface and the anonymous ChatGPT surface must
+ * equal the declared tools, the two surfaces are necessarily IDENTICAL —
+ * every submitted ChatGPT tool is visible pre-auth. That is the current
+ * product intent (OpenAI's link-account UI needs pre-auth listing). A
+ * future ChatGPT tool that should stay HIDDEN until sign-in cannot exist
+ * under this check; supporting one means relaxing the anonymous-side
+ * equality back to "anonymous ⊆ declared" plus an explicit allowlist of
+ * intentionally-hidden-pre-auth names — do that deliberately, not by
+ * listing the tool anonymously to silence the error.
  */
 export function assertChatgptSubmissionParity(
   tools: ReadonlyArray<
@@ -215,7 +226,7 @@ export function assertChatgptSubmissionParity(
   for (const name of declaredNames) {
     if (!freeChatgptSurface.has(name)) {
       problems.push(
-        `tool "${name}" is declared in the submission but missing from the anonymous free-tier ChatGPT surface (link-account UI needs it listed pre-auth)`,
+        `tool "${name}" is declared in the submission but missing from the anonymous free-tier ChatGPT surface (link-account UI needs it listed pre-auth) — fix by restoring the name in CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES / FREE_TIER_TOOL_NAMES (workers/src/tools/_surface.ts, workers/src/freetier.ts), NOT by editing the submission`,
       );
     }
   }
@@ -240,7 +251,7 @@ export function assertChatgptSubmissionParity(
     throw new Error(
       `chatgpt-app-submission.json drift — submitted app metadata out of sync with runtime ChatGPT descriptors:\n  ${problems.join(
         "\n  ",
-      )}\nUpdate chatgpt-app-submission.json so each tool's annotations equal toolAnnotationsForClient(tool, "chatgpt") for the default ChatGPT surface.`,
+      )}\nEach problem line names its remediation; for annotation/tool-set drift, update chatgpt-app-submission.json to match the runtime surface (toolAnnotationsForClient(tool, "chatgpt")); for a shrunken anonymous surface, restore the tool-set constants in workers/src.`,
     );
   }
 }

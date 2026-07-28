@@ -236,9 +236,13 @@ export function createMcpServer(
      * ChatGPT the auth-required submitted tools stay LISTED for the
      * link-account UI but are blocked at dispatch (see
      * `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`
-     * and the free-tier gate in `registerTool`). Omitted →
-     * `"authenticated"`, the full surface — what every existing caller
-     * and test gets.
+     * and the free-tier gate in `registerTool`). Resolution order when
+     * omitted: `ctx.tier` first, then `"authenticated"` — the fallback
+     * to the ToolContext value is deliberate fail-closed behavior, so a
+     * caller that declares the tier anywhere engages the dispatch gate
+     * (see the resolution + disagreement assertion below). Tests and
+     * non-HTTP callers that set neither still get the authenticated
+     * full surface.
      */
     tier?: Tier;
   } = {},
