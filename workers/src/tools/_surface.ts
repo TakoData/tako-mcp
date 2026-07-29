@@ -62,12 +62,42 @@ export const CHATGPT_DEFAULT_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Auth-required tools that stay DISCOVERABLE (listed) on anonymous ChatGPT
+ * connections. ChatGPT's Apps SDK offers the link-account flow per tool
+ * from the `tools/list` descriptors — a tool hidden from the anonymous
+ * listing can never surface the sign-in UI, so the two submitted tools
+ * that need a linked account must still be listed before authentication
+ * (developers.openai.com/apps-sdk/build/auth). They are listed, NOT
+ * runnable: `registerTool` in `mcp.ts` gates the call at dispatch time
+ * and answers with an `_meta["mcp/www_authenticate"]` challenge instead
+ * of executing on the shared free-tier account. Every other client keeps
+ * the original policy (hidden entirely — a listed tool that errors on
+ * call wastes agent turns on hosts with no linking UI to show).
+ *
+ * This set plus `FREE_TIER_TOOL_NAMES` must EQUAL the tools
+ * `chatgpt-app-submission.json` declares — `assertChatgptSubmissionParity`
+ * in `gen-registry.ts` enforces the equality in BOTH directions, so
+ * removing a name here fails `registry:check` (it would silently drop a
+ * submitted tool's link-account affordance), and adding one requires
+ * declaring it in the submission.
+ */
+export const CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES: ReadonlySet<string> =
+  new Set(["tako_contents", "tako_visualize"]);
+
+/**
  * Whether a tool is registered for a request. Four gates, in order:
  *
  * 1. Free-tier gate: anonymous connections (`tier: "free"`) see ONLY
- *    `FREE_TIER_TOOL_NAMES`. Applied first so no client-specific rule
- *    (`?tools=` opt-ins, {@link CHATGPT_DEFAULT_ON_TOOL_NAMES}) can
- *    widen the anonymous surface.
+ *    `FREE_TIER_TOOL_NAMES` — plus, on ChatGPT, the auth-required
+ *    submitted tools in {@link CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES},
+ *    which are listed for the link-account UI but blocked at call time
+ *    (see the free-tier dispatch gate in `mcp.ts`). The invariant,
+ *    stated precisely: a client-controlled User-Agent can widen the
+ *    anonymous LISTING (to the fixed, submission-declared set above),
+ *    but nothing — not UA, not `?tools=` opt-ins, not
+ *    {@link CHATGPT_DEFAULT_ON_TOOL_NAMES} — can widen what anonymous
+ *    connections can EXECUTE; that stays exactly `FREE_TIER_TOOL_NAMES`,
+ *    enforced again at dispatch time in `mcp.ts`.
  * 2. Opt-in gate: optional tools (see `OPTIONAL_TOOL_ALIASES` in
  *    `_optional.ts`) are excluded from the default surface and registered
  *    only when enabled via the `tools` query param — except tools ChatGPT
@@ -82,7 +112,16 @@ export function isToolOnSurface(
   enabledOptionalToolNames: ReadonlySet<string>,
   tier: Tier = "authenticated",
 ): boolean {
-  if (tier === "free" && !FREE_TIER_TOOL_NAMES.has(name)) return false;
+  if (
+    tier === "free" &&
+    !FREE_TIER_TOOL_NAMES.has(name) &&
+    !(
+      client === "chatgpt" &&
+      CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES.has(name)
+    )
+  ) {
+    return false;
+  }
   if (
     OPTIONAL_TOOL_NAMES.has(name) &&
     !enabledOptionalToolNames.has(name) &&

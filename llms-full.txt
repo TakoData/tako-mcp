@@ -13,7 +13,7 @@
 
 Hosted endpoint: `https://mcp.tako.com/mcp` (Streamable HTTP).
 
-- No credentials needed to start: an anonymous connection gets the free tier — `tako_search`, `tako_answer`, and `tako_available_data`, limited to 10 requests/min per IP. Authenticating unlocks the full toolset and your own account limits.
+- No credentials needed to start: an anonymous connection gets the free tier — `tako_search`, `tako_answer`, and `tako_available_data`, limited to 10 requests/min per IP. (ChatGPT additionally lists `tako_contents` and `tako_visualize` anonymously; they answer with a sign-in challenge until the account is linked.) Authenticating unlocks the full toolset and your own account limits.
 - Config-file hosts (Cursor, Windsurf, VS Code, or Claude Code via `claude mcp add`): pass `Authorization: Bearer <TAKO_API_TOKEN>`. Get a token at tako.com -> account settings -> API tokens.
 - OAuth hosts (Claude Code plugin, Claude.ai, ChatGPT): connect via the server's OAuth flow; no token config needed.
 

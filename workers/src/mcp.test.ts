@@ -20,6 +20,7 @@ import {
   djangoErrorToToolResult,
   logSdkValidationRejections,
   structuredContentFor,
+  withChatGptToolSecuritySchemes,
 } from "./mcp.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import { toolAnnotationsForClient } from "./tools/_surface.js";
@@ -75,10 +76,33 @@ describe("toolAnnotationsForClient", () => {
     for (const tool of TOOL_REGISTRY) {
       const annotations = toolAnnotationsForClient(tool, "chatgpt");
       expect(annotations.destructiveHint, tool.name).toBe(false);
+      // `tako_visualize` mints a publicly reachable card URL — the one
+      // tool Apps review reads as publishing state (`openWorldHint:
+      // true` + `readOnlyHint: false`); retrieval tools stay read-only.
       expect(annotations.openWorldHint, tool.name).toBe(
         tool.name === "tako_visualize",
       );
     }
+    for (const name of [
+      "tako_search",
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+    ]) {
+      expect(
+        toolAnnotationsForClient(
+          TOOL_REGISTRY.find((tool) => tool.name === name)!,
+          "chatgpt",
+        ).readOnlyHint,
+        name,
+      ).toBe(true);
+    }
+    expect(
+      toolAnnotationsForClient(
+        TOOL_REGISTRY.find((tool) => tool.name === "tako_visualize")!,
+        "chatgpt",
+      ).readOnlyHint,
+    ).toBe(false);
 
     expect(
       toolAnnotationsForClient(
@@ -689,12 +713,44 @@ describe("free-tier tool surface", () => {
     ).resolves.toEqual(["tako_answer", "tako_available_data", "tako_search"]);
   });
 
-  it("tier 'free' on ChatGPT clients also drops the default-on visualize tool", async () => {
-    // CHATGPT_DEFAULT_ON_TOOL_NAMES keeps tako_visualize on ChatGPT's
-    // default surface — but not for anonymous connections.
+  it("tier 'free' on ChatGPT clients keeps the auth-required submitted tools DISCOVERABLE", async () => {
+    // ChatGPT's link-account UI is keyed off the `tools/list` descriptors
+    // (OpenAI Apps SDK auth guide), so the two submitted tools that need a
+    // linked account stay listed on anonymous connections — the full
+    // five-tool surface `chatgpt-app-submission.json` declares. They are
+    // listed, not runnable: the dispatch gate answers with an
+    // `_meta["mcp/www_authenticate"]` challenge (tested below) instead of
+    // executing on the shared free-tier account.
     await expect(
       listToolNames({ tier: "free", client: "chatgpt" }),
-    ).resolves.toEqual(["tako_answer", "tako_available_data", "tako_search"]);
+    ).resolves.toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+      "tako_search",
+      "tako_visualize",
+    ]);
+  });
+
+  it("tier 'free' on ChatGPT cannot widen past the submitted surface via ?tools=", async () => {
+    await expect(
+      listToolNames({
+        tier: "free",
+        client: "chatgpt",
+        enabledOptionalToolNames: new Set([
+          "tako_agent_start",
+          "tako_agent_wait",
+          "get_credit_balance",
+          "tako_graph_search",
+        ]),
+      }),
+    ).resolves.toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+      "tako_search",
+      "tako_visualize",
+    ]);
   });
 
   it("omitting tier keeps the existing default (authenticated) surface", async () => {
@@ -703,6 +759,281 @@ describe("free-tier tool surface", () => {
       "tako_available_data",
       "tako_contents",
       "tako_search",
+    ]);
+  });
+});
+
+describe("auth challenges (ChatGPT link-account flow)", () => {
+  type ToolResult = {
+    content: Array<{ type: string; text?: string }>;
+    _meta?: Record<string, unknown>;
+    isError?: boolean;
+  };
+
+  /**
+   * Spin up the real MCP server and invoke one tool over an in-memory
+   * transport, returning the raw tool result.
+   */
+  async function callTool(
+    options: Parameters<typeof createMcpServer>[1],
+    name: string,
+    args: Record<string, unknown>,
+    tier?: "free" | "authenticated",
+  ): Promise<ToolResult> {
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" } as Env,
+      sendProgress: noopSendProgress,
+      client: options?.client ?? "unknown",
+      ...(tier !== undefined ? { tier } : {}),
+    };
+    const server = createMcpServer(ctx, options);
+    const mcpClient = new Client(
+      { name: "auth-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      return (await mcpClient.callTool({
+        name,
+        arguments: args,
+      })) as ToolResult;
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  // Both members of CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES, each with
+  // schema-valid arguments so the call reaches the dispatch gate (the SDK
+  // validates input BEFORE the gate — invalid args return -32602 instead).
+  it.each([
+    ["tako_contents", { url: "https://trytako.com/card/abc123" }],
+    [
+      "tako_visualize",
+      {
+        components: [
+          { component_type: "header", config: { title: "Revenue" } },
+        ],
+      },
+    ],
+  ] as const)(
+    "anonymous ChatGPT call to %s returns the www_authenticate challenge WITHOUT executing",
+    async (name, args) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await callTool(
+        {
+          tier: "free",
+          client: "chatgpt",
+          requestOrigin: "https://mcp.example.com",
+        },
+        name,
+        args as unknown as Record<string, unknown>,
+        "free",
+      );
+      expect(result.isError).toBe(true);
+      // The handler must never run on the shared free-tier account: no
+      // Django call, no spend, no data exposure.
+      expect(fetchMock).not.toHaveBeenCalled();
+      const challenges = result._meta?.["mcp/www_authenticate"] as string[];
+      expect(challenges).toHaveLength(1);
+      expect(challenges[0]).toContain('error="insufficient_scope"');
+      expect(challenges[0]).toContain(
+        'resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"',
+      );
+      expect(challenges[0]).toContain("error_description=");
+    },
+  );
+
+  it("a tier set ONLY on ToolContext still engages the dispatch gate (fail-closed default)", async () => {
+    // Regression guard for the gate's input resolution: a future call
+    // site that declares the tier on ctx but forgets options.tier must
+    // not silently get the permissive default (PR #183 review finding) —
+    // createMcpServer resolves options.tier ?? ctx.tier.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await callTool(
+      { client: "chatgpt", requestOrigin: "https://mcp.example.com" },
+      "tako_contents",
+      { url: "https://trytako.com/card/abc123" },
+      "free", // ctx.tier only — options.tier deliberately omitted
+    );
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      result._meta?.["mcp/www_authenticate"] as string[] | undefined,
+    ).toHaveLength(1);
+  });
+
+  it("authenticated ChatGPT calls to auth-required tools execute without a challenge", async () => {
+    // Regression guard for the dispatch gate's complement: a linked
+    // (authenticated) connection must reach the real handler — a gate
+    // keyed on the wrong tier source would block paying users on the two
+    // submitted tools. The mocked 200 body doesn't match the contents
+    // wire shape, so the handler may still map an error result; the
+    // assertions that matter are "Django WAS called" and "no challenge".
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, { title: "t", content: "c" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await callTool(
+      { client: "chatgpt", requestOrigin: "https://mcp.example.com" },
+      "tako_contents",
+      { url: "https://trytako.com/card/abc123" },
+    );
+    expect(fetchMock).toHaveBeenCalled();
+    expect(result._meta?.["mcp/www_authenticate"]).toBeUndefined();
+  });
+
+  it("anonymous ChatGPT calls to free tools still execute (no challenge)", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r1" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await callTool(
+      { tier: "free", client: "chatgpt" },
+      "tako_search",
+      { query: "US GDP" },
+      "free",
+    );
+    expect(fetchMock).toHaveBeenCalled();
+    expect(result._meta?.["mcp/www_authenticate"]).toBeUndefined();
+  });
+
+  it("a Django 401 on ChatGPT attaches the reauth challenge to the mapped error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(401, { detail: "Invalid API key." })),
+    );
+    const result = await callTool(
+      { client: "chatgpt", requestOrigin: "https://mcp.example.com" },
+      "tako_search",
+      { query: "US GDP" },
+    );
+    expect(result.isError).toBe(true);
+    const challenges = result._meta?.["mcp/www_authenticate"] as string[];
+    expect(challenges).toHaveLength(1);
+    expect(challenges[0]).toContain('error="invalid_token"');
+    expect(challenges[0]).toContain("error_description=");
+    // The existing structured error detail is preserved alongside.
+    expect(
+      (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
+    ).toBe("unauthorized");
+  });
+
+  it("a Django 401 on the FREE tier does not claim the caller's session expired", async () => {
+    // On free tier the rejected credential is the SHARED free-tier key,
+    // not a user session — surfacing "sign in again" there would mask a
+    // shared-key outage as a per-user auth failure (adversarial review
+    // finding). The plain unauthorized error must pass through unchanged.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(401, { detail: "Invalid API key." })),
+    );
+    const result = await callTool(
+      {
+        tier: "free",
+        client: "chatgpt",
+        requestOrigin: "https://mcp.example.com",
+      },
+      "tako_search",
+      { query: "US GDP" },
+      "free",
+    );
+    expect(result.isError).toBe(true);
+    expect(result._meta?.["mcp/www_authenticate"]).toBeUndefined();
+    expect(
+      (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
+    ).toBe("unauthorized");
+  });
+
+  it("a Django 401 on non-ChatGPT clients keeps the error result unchanged", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(401, { detail: "Invalid API key." })),
+    );
+    const result = await callTool(
+      { client: "claude", requestOrigin: "https://mcp.example.com" },
+      "tako_search",
+      { query: "US GDP" },
+    );
+    expect(result.isError).toBe(true);
+    expect(result._meta?.["mcp/www_authenticate"]).toBeUndefined();
+  });
+});
+
+describe("withChatGptToolSecuritySchemes", () => {
+  const JSON_CT = { "content-type": "application/json" };
+
+  it("passes non-JSON (SSE) responses through untouched", async () => {
+    const res = new Response("event: message\ndata: {}\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    });
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
+  });
+
+  it("returns the original response when the body is not valid JSON (body stays readable)", async () => {
+    const res = new Response("{not json", { headers: JSON_CT });
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
+    expect(out).toBe(res);
+    // The adapter reads a clone — the original body must not be consumed.
+    await expect(out.text()).resolves.toBe("{not json");
+  });
+
+  it("returns the original response for non-tools/list JSON bodies", async () => {
+    const res = new Response(
+      JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+      { headers: JSON_CT },
+    );
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
+  });
+
+  it("rewrites tools/list, drops the stale content-length, and keeps status", async () => {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      result: { tools: [{ name: "tako_search" }] },
+    });
+    const res = new Response(body, {
+      status: 200,
+      headers: { ...JSON_CT, "content-length": String(body.length) },
+    });
+    const out = await withChatGptToolSecuritySchemes(res, "free");
+    expect(out).not.toBe(res);
+    expect(out.status).toBe(200);
+    expect(out.headers.get("content-length")).toBeNull();
+    const json = (await out.json()) as {
+      result: { tools: Array<{ securitySchemes?: unknown }> };
+    };
+    // Anonymous (free) listing: the free tool advertises noauth + oauth2.
+    expect(json.result.tools[0]?.securitySchemes).toEqual([
+      { type: "noauth" },
+      { type: "oauth2", scopes: ["mcp"] },
+    ]);
+  });
+
+  it("resolves schemes per-connection: authenticated listings are oauth2-only", async () => {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      result: { tools: [{ name: "tako_search" }] },
+    });
+    const res = new Response(body, { headers: JSON_CT });
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
+    const json = (await out.json()) as {
+      result: { tools: Array<{ securitySchemes?: unknown }> };
+    };
+    expect(json.result.tools[0]?.securitySchemes).toEqual([
+      { type: "oauth2", scopes: ["mcp"] },
     ]);
   });
 });

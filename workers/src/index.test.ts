@@ -239,12 +239,23 @@ describe("worker routing", () => {
       "tako_search",
     ]);
 
-    // Every runtime tool advertises per-tool OAuth via _meta, reverse-DNS
+    // Every runtime tool advertises per-tool auth via _meta, reverse-DNS
     // namespaced per the MCP _meta rules (the only field the SDK preserves).
+    // Non-ChatGPT clients keep the pre-existing oauth2-only constant —
+    // `noauth` is scoped to anonymous ChatGPT listings only (see
+    // securitySchemesForTool), so this authenticated no-UA request shows
+    // the same values it always did.
     for (const t of body.result.tools) {
       expect(t._meta?.["com.tako/securitySchemes"]).toEqual([
         { type: "oauth2", scopes: ["mcp"] },
       ]);
+      // The top-level `securitySchemes` field is a ChatGPT-only
+      // compatibility injection (`withChatGptToolSecuritySchemes`) — this
+      // request has no User-Agent, so non-ChatGPT descriptors must NOT
+      // carry it.
+      expect(
+        (t as { securitySchemes?: unknown }).securitySchemes,
+      ).toBeUndefined();
       // No User-Agent → client `unknown`, which resolves the ChatGPT
       // override family (see `annotationClientFamily` in
       // tools/_surface.ts): retrieval is closed-world under the Apps
@@ -275,6 +286,59 @@ describe("worker routing", () => {
       expect(meta?.ui).toBeUndefined();
       expect(meta?.["ui/resourceUri"]).toBeUndefined();
       expect(meta?.["openai/outputTemplate"]).toBeUndefined();
+    }
+  });
+
+  it("POST /mcp tools/list serves ChatGPT the five submitted tools with top-level securitySchemes", async () => {
+    // ChatGPT's Apps SDK reads `securitySchemes` at the descriptor TOP
+    // LEVEL (developers.openai.com/apps-sdk/build/auth). The MCP SDK
+    // drops unknown descriptor fields, so `handleMcpRequest` injects the
+    // field into the buffered response for ChatGPT clients only
+    // (`withChatGptToolSecuritySchemes`).
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "ChatGPT/1.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        tools: Array<{
+          name: string;
+          securitySchemes?: Array<{ type: string; scopes?: string[] }>;
+        }>;
+      };
+    };
+    // The default authenticated ChatGPT surface = exactly the five tools
+    // chatgpt-app-submission.json declares (visualize is default-on for
+    // ChatGPT; the agent pair needs ?tools=agent).
+    expect(body.result.tools.map((t) => t.name).sort()).toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+      "tako_search",
+      "tako_visualize",
+    ]);
+    // AUTHENTICATED connection: the caller is already linked, so no tool
+    // advertises `noauth` — schemes are per-connection, and advertising
+    // anonymous capability to a linked client could invite a host to
+    // route calls onto the shared free-tier account. The anonymous
+    // (pre-link) listing is where `noauth` appears — asserted in
+    // freetier.test.ts.
+    const oauth2 = { type: "oauth2", scopes: ["mcp"] };
+    for (const t of body.result.tools) {
+      expect(t.securitySchemes, t.name).toEqual([oauth2]);
     }
   });
 
