@@ -90,10 +90,12 @@ type Input = z.infer<typeof inputSchema>;
 
 // INTERNAL full output shape: normalises the wire into the handler's return
 // value (always arrays, never undefined; the generated AnswerResponse stays
-// the wire-guard). NOT the advertised schema — the full content reaches the
-// model as rendered markdown (renderText below), and the ADVERTISED
-// outputSchema is the slim structuredContent shape so hosts that count
-// structuredContent toward context don't pay for the content twice.
+// the wire-guard). NOT the advertised schema: the advertised one is loosely
+// typed on the content fields so a backend wire change can't fail
+// structured-output validation. Both carry the same payload — it rides in
+// `structuredContent`, and the markdown text channel (renderText below) is a
+// readable index of it (prose answer + a rows pointer per cited card), not a
+// second copy, so hosts counting both channels don't pay for it twice.
 const fullOutputSchema = z.object({
   answer: z.string(),
   cards: z.array(takoCardSchema),

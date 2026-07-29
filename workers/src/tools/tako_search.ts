@@ -125,15 +125,21 @@ const inputSchema = z.object({
 
 type Input = z.infer<typeof inputSchema>;
 
-// The ADVERTISED output schema is the SLIM structuredContent shape (widget
-// fields + request_id/usage/guidance): the full results — cards, web results,
-// glossary — reach the model as a rendered markdown text channel instead
-// (renderText below), and structuredContent shrinks to machine essentials so
-// hosts that count it toward context don't pay for the content twice. The
-// full internal shape (searchOutputShape) still types the handler's return
-// value; it is loose-compatible with the slim schema, so the SDK's
-// structured-output validation passes for both. The generated SearchResponse
-// stays the wire-guard (safeParse on the raw backend data before mapping).
+// The ADVERTISED output schema. The payload — cards (with their rows), web
+// results, glossary — rides in `structuredContent`, the spec-natural channel
+// for a tool that advertises an `outputSchema`; the markdown text channel
+// (renderText below) is a readable INDEX of it, carrying headlines and
+// `rowsPointer()` lines rather than a second copy, so hosts that count both
+// channels toward context don't pay for the content twice.
+//
+// The name says "slim" for history, not behavior: `slimSearchStructured` is
+// now a full spread. What the schema still does is stay LOOSELY typed on the
+// content fields, so a backend wire change can't fail structured-output
+// validation — the drift failure `_search_results.ts` documents. The full
+// internal shape (searchOutputShape) types the handler's return value and is
+// loose-compatible with this one, so validation passes for both, and the
+// generated SearchResponse stays the wire-guard (safeParse on the raw backend
+// data before mapping).
 const outputSchema = searchSlimOutputShape;
 
 type Output = z.infer<typeof outputSchema>;
