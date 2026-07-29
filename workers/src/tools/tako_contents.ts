@@ -62,8 +62,10 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
       `The result URLs to fetch, 1-${MAX_CONTENTS_URLS} per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an \`error\` instead of a payload).`,
     ),
   // Legacy single-URL form, kept so an in-flight caller pinned to the old
-  // schema keeps working. `urls` is the documented shape; exactly one of the
-  // two must be present.
+  // schema keeps working. `urls` is the documented shape. Not enforced as
+  // mutually exclusive on purpose: if a caller sends both, `urls` wins and
+  // `url` is ignored, which is friendlier than 400-ing a request we can
+  // serve. At least one is required (the handler rejects neither).
   url: ContentsRequest.shape.url
     .min(1)
     .optional()

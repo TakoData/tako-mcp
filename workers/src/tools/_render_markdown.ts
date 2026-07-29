@@ -123,9 +123,6 @@ export function slimAnswerStructured(o: AnswerFullOutput): Record<string, unknow
 // Rendering helpers
 // ---------------------------------------------------------------------------
 
-const cell = (v: unknown): string =>
-  v === null || v === undefined ? "" : String(v).replaceAll("|", "\\|").replaceAll("\n", " ");
-
 /**
  * Fence opaque/untrusted text with a backtick run LONGER than any run inside
  * it (min 3), so the content can neither close the fence early nor forge the
@@ -145,13 +142,6 @@ function fenced(text: string, lang = ""): string {
 /** Flatten upstream text destined for a single-line slot (titles, meta): an
  *  embedded newline would otherwise start a fresh line the content controls. */
 const oneLine = (v: string): string => v.replace(/\s*\n\s*/g, " ").trim();
-
-function markdownTable(header: string[], rows: unknown[][]): string {
-  const head = `| ${header.map(cell).join(" | ")} |`;
-  const rule = `|${header.map(() => "---").join("|")}|`;
-  const body = rows.map((r) => `| ${r.map(cell).join(" | ")} |`);
-  return [head, rule, ...body].join("\n");
-}
 
 type LooseContent = {
   content_format?: string | null;
@@ -177,51 +167,6 @@ function rowsPointer(content: TakoCard["content"]): string | undefined {
   const total = c.total_rows ?? undefined;
   const of = total !== undefined && total > shown ? ` of ${total}` : "";
   return `data: ${shown}${of} rows in structuredContent.cards[].content (full export via tako_contents).`;
-}
-
-/** Render a card's inline rows: dataset/records → markdown table, csv → fence. */
-function renderContentRows(content: TakoCard["content"]): string | undefined {
-  if (content == null) return undefined;
-  const c = content as LooseContent;
-  const totalNote = (shown: number): string => {
-    const total = c.total_rows ?? undefined;
-    const cut = c.truncated === true;
-    if (total !== undefined && total > shown) {
-      return `data (${shown} most recent of ${total} rows — full export via tako_contents):`;
-    }
-    return cut ? `data (${shown} rows, truncated):` : `data (${shown} rows):`;
-  };
-
-  if (c.dataset && Array.isArray(c.dataset.rows) && c.dataset.rows.length > 0) {
-    const cols = Array.isArray(c.dataset.columns)
-      ? c.dataset.columns.map((col) =>
-          col !== null && typeof col === "object" && "name" in (col as object)
-            ? String((col as { name?: unknown }).name ?? "")
-            : String(col),
-        )
-      : [];
-    const rows = c.dataset.rows.filter(Array.isArray) as unknown[][];
-    if (rows.length === 0) return undefined;
-    const width = cols.length > 0 ? cols.length : (rows[0] as unknown[]).length;
-    const header = cols.length > 0 ? cols : Array.from({ length: width }, (_v, i) => `c${i + 1}`);
-    return `${totalNote(rows.length)}\n${markdownTable(header, rows)}`;
-  }
-
-  if (Array.isArray(c.records) && c.records.length > 0) {
-    const first = c.records[0] as Record<string, unknown>;
-    const keys = Object.keys(first);
-    if (keys.length === 0) return undefined;
-    const rows = c.records.map((r) => keys.map((k) => r[k]));
-    return `${totalNote(c.records.length)}\n${markdownTable(keys, rows)}`;
-  }
-
-  if (typeof c.data === "string" && c.data.trim() !== "") {
-    const lines = c.data.split("\n").filter((l) => l !== "");
-    const shown = Math.max(0, lines.length - 1); // minus header line
-    return `${totalNote(shown)}\n${fenced(c.data.trim(), "csv")}`;
-  }
-
-  return undefined;
 }
 
 /** Names riding on a card's sources/methodologies arrays (paragraphs live in
@@ -349,8 +294,8 @@ function renderCard(card: TakoCard, idx: number): string {
 }
 
 function renderWebResult(w: WebResult, idx: number): string {
-  // Titles/meta/snippets are upstream web content: single-line slots are
-  // newline-flattened and snippets fenced so a page can't forge the
+  // Titles/meta are upstream web content: single-line slots are
+  // newline-flattened so a page can't forge the
   // document's own sections (see `fenced`).
   const lines: string[] = [`${idx + 1}. Title: ${oneLine(w.title)}`, `URL: ${w.url}`];
   const meta: string[] = [];
@@ -359,10 +304,9 @@ function renderWebResult(w: WebResult, idx: number): string {
     meta.push(`Published: ${oneLine(w.publish_date)}`);
   }
   if (meta.length > 0) lines.push(meta.join(" · "));
-  // Snippet omitted on purpose — it rides verbatim in
+  // Snippet omitted on purpose: it rides verbatim in
   // structuredContent.web_results. Prose-heavy text is the most expensive
   // thing to carry twice, and this is the channel that had the duplicate.
-  void fenced;
   return lines.join("\n");
 }
 
@@ -694,9 +638,8 @@ export interface ContentsBatchLike {
 }
 
 /** structuredContent for tako_contents: the full batch INCLUDING each item's
- *  payload, so a structuredContent-reading client gets the page text/rows.
- *  `renderText` stays the readable copy for text-reading clients; see the
- *  note on renderContentsText about why this one still duplicates. */
+ *  payload. This is the ONLY copy — `renderContentsText` emits a pointer, not
+ *  a duplicate, for the same reason search cards get `rowsPointer()`. */
 export function slimContentsStructured(o: ContentsBatchLike): Record<string, unknown> {
   return { ...(o as unknown as Record<string, unknown>) };
 }
@@ -705,6 +648,20 @@ export function slimContentsStructured(o: ContentsBatchLike): Record<string, unk
  *  json payloads fenced), led by the passage note and trailed by a one-line
  *  metadata footer. This is where the JSON-escaping tax on 100k-char pages
  *  actually dies. */
+/** One line naming the payload that rode in structuredContent, in place of a
+ *  second copy of it. */
+function payloadPointer(o: ContentsOutputLike): string | undefined {
+  if (typeof o.data === "string" && o.data !== "") {
+    const kind = o.format === undefined ? "page text" : `${o.format} data`;
+    return `${kind}: ${o.data.length} chars in structuredContent.results[].data`;
+  }
+  if (Array.isArray(o.records)) {
+    return `${o.records.length} records in structuredContent.results[].records`;
+  }
+  if (o.dataset !== undefined) return "dataset in structuredContent.results[].dataset";
+  return undefined;
+}
+
 function renderContentsItem(o: ContentsOutputLike): string {
   const blocks: string[] = [];
   // A failed url in a batch renders as its error and nothing else — the other
@@ -726,13 +683,13 @@ function renderContentsItem(o: ContentsOutputLike): string {
   // rides verbatim: the JSON-escaping tax stays dead, only the boundary is
   // back. Card csv/json get the same treatment (a cell containing ``` would
   // otherwise close the fence early).
-  if (o.data !== undefined) {
-    blocks.push(fenced(o.data, o.format === "csv" ? "csv" : "text"));
-  } else if (o.records !== undefined) {
-    blocks.push(fenced(JSON.stringify(o.records), "json"));
-  } else if (o.dataset !== undefined) {
-    blocks.push(fenced(JSON.stringify(o.dataset), "json"));
-  }
+  // The payload rides in structuredContent, NOT here. Emitting it in both
+  // channels would ship the same page text twice on every call — up to 10
+  // urls x a 100k-char inline cap — which is the exact doubling this module
+  // removes for search cards via rowsPointer(). A pointer keeps the text
+  // channel a readable index of what arrived.
+  const payload = payloadPointer(o);
+  if (payload !== undefined) blocks.push(payload);
 
   const meta: string[] = [`cost: $${o.cost}`];
   if (o.total_rows !== undefined) meta.push(`total_rows: ${o.total_rows}`);
