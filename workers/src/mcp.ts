@@ -67,7 +67,7 @@ import type {
  * returns, so a mismatch surfaces as "wrong server" in tooling.
  */
 export const SERVER_NAME = "tako-mcp";
-export const SERVER_VERSION = "0.14.0"; // x-release-please-version
+export const SERVER_VERSION = "0.15.0"; // x-release-please-version
 
 /**
  * Server-level usage guidance, returned as the MCP `instructions` field on
