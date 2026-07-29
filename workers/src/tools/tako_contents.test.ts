@@ -11,7 +11,7 @@ vi.mock("../django.js", async (importOriginal) => ({
 
 import { DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoUnauthorizedError, djangoPost } from "../django.js";
 import { djangoErrorToToolResult } from "../mcp.js";
-import tool, { MAX_CONTENTS_URLS } from "./tako_contents.js";
+import tool, { BATCH_CHAR_BUDGET, MAX_CONTENTS_URLS } from "./tako_contents.js";
 
 const ctx = { token: "t", env: {} as never, client: "claude" as const, sendProgress: vi.fn() };
 
@@ -403,24 +403,32 @@ describe("tako_contents handler", () => {
   // defaulting to 100k chars) reconstructed the exact ~250k-token blowup the
   // single-URL 100k default exists to prevent — just spread across urls
   // instead of concentrated in one. BATCH_CHAR_BUDGET splits the DEFAULT
-  // evenly across the batch instead.
-  it("splits the default max_chars across a batch instead of 100k-per-url unbounded", async () => {
+  // evenly across the batch instead. Derives expectations off the imported
+  // constant rather than hardcoding its current value, so tuning
+  // BATCH_CHAR_BUDGET (see its doc comment — it's a starting guess, not a
+  // measured number) doesn't also require hunting down stale test numbers.
+  it("splits the default max_chars across a batch that drives it below the single-URL 100k default", async () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://x" }],
       request_id: "r-batch-chars",
     });
-    // BATCH_CHAR_BUDGET (200_000) / 4 = 50_000 — below the single-URL 100k
-    // default, so this batch is where the split actually bites.
-    await tool.handler(
-      { urls: ["https://a", "https://b", "https://c", "https://d"], mode: "inline", content_format: "csv" },
-      ctx,
-    );
+    // A batch size chosen to land strictly below the 100k single-URL
+    // default, so this test is where the split actually bites regardless of
+    // BATCH_CHAR_BUDGET's current value.
+    const batchSize = Math.ceil(BATCH_CHAR_BUDGET / 100_000) + 1;
+    const expectedPerUrl = Math.floor(BATCH_CHAR_BUDGET / batchSize);
+    expect(expectedPerUrl).toBeLessThan(100_000); // sanity: this batch size DOES trigger the split
+    const urls = Array.from({ length: batchSize }, (_, i) => `https://u${i}`);
+    await tool.handler({ urls, mode: "inline", content_format: "csv" }, ctx);
     for (const call of vi.mocked(djangoPost).mock.calls) {
-      expect((call[3] as { max_chars?: number }).max_chars).toBe(50_000);
+      expect((call[3] as { max_chars?: number }).max_chars).toBe(expectedPerUrl);
     }
   });
 
-  it("a 2-url batch is unaffected (200_000 / 2 = 100_000, same as the single-URL default)", async () => {
+  it("a 2-url batch is unaffected when BATCH_CHAR_BUDGET / 2 is still >= the single-URL 100k default", async () => {
+    // True for any BATCH_CHAR_BUDGET >= 200_000, which the ⚠️ judgment-call
+    // doc comment on the constant commits to staying at or above.
+    expect(Math.floor(BATCH_CHAR_BUDGET / 2)).toBeGreaterThanOrEqual(100_000);
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://x" }],
       request_id: "r-batch-chars-2",
@@ -432,6 +440,37 @@ describe("tako_contents handler", () => {
     for (const call of vi.mocked(djangoPost).mock.calls) {
       expect((call[3] as { max_chars?: number }).max_chars).toBe(100_000);
     }
+  });
+
+  it("logs when the derived batch cap actually cuts a page (observability for tuning BATCH_CHAR_BUDGET)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const batchSize = Math.ceil(BATCH_CHAR_BUDGET / 100_000) + 1;
+    const perUrlCap = Math.floor(BATCH_CHAR_BUDGET / batchSize);
+    // A page exactly at the derived cap — the same "length >= maxChars"
+    // signal the handler already uses to derive `truncated` for web text.
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x".repeat(perUrlCap), cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars-log",
+    });
+    const urls = Array.from({ length: batchSize }, (_, i) => `https://u${i}`);
+    await tool.handler({ urls, mode: "inline", content_format: "csv" }, ctx);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("batch max_chars cap bit"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("does NOT log the cap-bit warning when the caller set max_chars explicitly", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const batchSize = Math.ceil(BATCH_CHAR_BUDGET / 100_000) + 1;
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x".repeat(5000), cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars-explicit-log",
+    });
+    const urls = Array.from({ length: batchSize }, (_, i) => `https://u${i}`);
+    await tool.handler({ urls, mode: "inline", content_format: "csv", max_chars: 5000 }, ctx);
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("batch max_chars cap bit"));
+    warnSpy.mockRestore();
   });
 
   it("an EXPLICIT max_chars is never split by batch size — the caller's deliberate choice rides as-is", async () => {

@@ -70,17 +70,33 @@ export const MAX_CONTENTS_URLS = 10;
  * batch keeps that ceiling meaningful regardless of how many URLs a call
  * fans out to.
  *
- * ⚠️ Judgment call: 200_000 is a round starting number (2x the single-URL
- * default), not a measured one — tune it against real multi-URL prompts if
- * it turns out too tight (a 10-way batch would land at 20k chars per page,
- * which may cut mid-filing on dense sources) or too loose. It bounds only
- * the SILENT DEFAULT — a caller that explicitly sets `max_chars` keeps that
- * value as-is (multiplied by however many URLs they batch), consistent with
- * this tool's over-asks-fail-fast-not-silently-clamped design for `max_rows`
- * — an explicit ask is the caller's deliberate, informed choice, not a
- * default any URL count should be silently overriding.
+ * ⚠️ Judgment call: 250_000 is still a picked starting number, not a
+ * measured one, but it's chosen to hold the total roughly flat against the
+ * single-URL default rather than scale it up — a `BATCH_CHAR_BUDGET` batch
+ * call costs about the same total context as one large single-URL call did
+ * before batching existed, split thinner across more urls, not a bigger
+ * total budget just because more urls were named. 2-URL batches are
+ * unaffected (250_000 / 2 = 125_000 > the 100k single-URL default, so
+ * `Math.min` below still floors at 100k); a 10-URL batch lands at 25k
+ * chars/page (~6k tokens), plenty for typical news/press-release pages,
+ * tight for a dense filing — which is exactly the case where a caller
+ * should fetch that one url alone, use `query` (passages bypass this split
+ * entirely — see fetchOne), or set `max_chars` explicitly.
+ *
+ * `fetchOne` logs (`console.warn`, grep "batch max_chars cap bit") whenever
+ * this DERIVED cap actually cuts a page — i.e. a signal for whether 250_000
+ * needs to move, without waiting on someone to notice a truncated batch
+ * result and file it. Tune against that once it's had traffic, not from
+ * this comment's arithmetic alone.
+ *
+ * It bounds only the SILENT DEFAULT — a caller that explicitly sets
+ * `max_chars` keeps that value as-is (multiplied by however many URLs they
+ * batch), consistent with this tool's over-asks-fail-fast-not-silently-
+ * clamped design for `max_rows` — an explicit ask is the caller's
+ * deliberate, informed choice, not a default any URL count should be
+ * silently overriding.
  */
-export const BATCH_CHAR_BUDGET = 200_000;
+export const BATCH_CHAR_BUDGET = 250_000;
 
 const inputSchema = ContentsRequest.pick({ url: true }).extend({
   urls: z
@@ -391,6 +407,17 @@ async function fetchOne(
     dataText.length >= maxChars
   ) {
     cut = true;
+    // Observability for tuning BATCH_CHAR_BUDGET (currently a guessed
+    // starting number, not a measured one — see its doc comment): only
+    // when the DERIVED default actually bit (batching drove the per-url
+    // cap below the single-URL 100k default) AND the page was long enough
+    // to hit it. An explicit caller max_chars getting cut is normal,
+    // expected behavior and not logged here.
+    if (maxCharsAsked === undefined && perUrlDefaultCap < 100_000) {
+      console.warn(
+        `[tako] tako_contents batch max_chars cap bit tool=tako_contents batch_size=${batchSize} per_url_cap=${perUrlDefaultCap}`,
+      );
+    }
   }
   if (
     passageQuery !== undefined &&
