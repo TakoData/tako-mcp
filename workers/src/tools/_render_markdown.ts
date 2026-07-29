@@ -89,15 +89,6 @@ export interface AnswerFullOutput {
   [key: string]: unknown;
 }
 
-const WIDGET_KEYS = [
-  "pub_id",
-  "embed_url",
-  "image_url",
-  "dark_mode",
-  "width",
-  "height",
-] as const;
-
 /**
  * structuredContent for tako_search: the FULL payload.
  *
@@ -157,9 +148,15 @@ type LooseContent = {
 function rowsPointer(content: TakoCard["content"]): string | undefined {
   if (content == null) return undefined;
   const c = content as LooseContent;
+  // `|| undefined`, not bare lengths: a channel present but EMPTY (e.g.
+  // `dataset.rows: []`) must fall through to the next one, and `0 ?? x` does
+  // NOT fall through (nullish coalescing only treats null/undefined as
+  // empty) — `0 || x` does. Without this, a card whose dataset channel rides
+  // empty but whose records channel is populated silently drops the pointer
+  // entirely (shown lands on 0 from the first branch, never reaching records).
   const shown =
-    (Array.isArray(c.dataset?.rows) ? c.dataset.rows.length : undefined) ??
-    (Array.isArray(c.records) ? c.records.length : undefined) ??
+    (Array.isArray(c.dataset?.rows) ? c.dataset.rows.length : undefined) ||
+    (Array.isArray(c.records) ? c.records.length : undefined) ||
     (typeof c.data === "string" && c.data.trim() !== ""
       ? Math.max(0, c.data.split("\n").filter((l) => l !== "").length - 1)
       : undefined);
@@ -644,10 +641,6 @@ export function slimContentsStructured(o: ContentsBatchLike): Record<string, unk
   return { ...(o as unknown as Record<string, unknown>) };
 }
 
-/** tako_contents as text: the payload itself (page text raw, csv fenced,
- *  json payloads fenced), led by the passage note and trailed by a one-line
- *  metadata footer. This is where the JSON-escaping tax on 100k-char pages
- *  actually dies. */
 /** One line naming the payload that rode in structuredContent, in place of a
  *  second copy of it. */
 function payloadPointer(o: ContentsOutputLike): string | undefined {
@@ -678,11 +671,6 @@ function renderContentsItem(o: ContentsOutputLike): string {
     );
   }
 
-  // Page text is upstream web content — fenced (dynamic length) so it can't
-  // forge this document's own note/footer framing. Inside the fence it still
-  // rides verbatim: the JSON-escaping tax stays dead, only the boundary is
-  // back. Card csv/json get the same treatment (a cell containing ``` would
-  // otherwise close the fence early).
   // The payload rides in structuredContent, NOT here. Emitting it in both
   // channels would ship the same page text twice on every call — up to 10
   // urls x a 100k-char inline cap — which is the exact doubling this module
@@ -700,9 +688,10 @@ function renderContentsItem(o: ContentsOutputLike): string {
   return blocks.join("\n\n");
 }
 
-/** tako_contents as text: one section per requested url, each with the payload
- *  itself (page text raw, csv fenced, json payloads fenced). This is where the
- *  JSON-escaping tax on 100k-char pages actually dies. A single-url call renders
+/** tako_contents as text: one section per requested url, each naming its
+ *  payload with a `payloadPointer()` line (the payload itself rides only in
+ *  structuredContent — see `slimContentsStructured`), led by the passage
+ *  note and trailed by a one-line metadata footer. A single-url call renders
  *  as one section, so the batch shape costs nothing in the common case. */
 export function renderContentsText(o: ContentsBatchLike): string {
   const items = o.results ?? [];

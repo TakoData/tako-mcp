@@ -392,9 +392,16 @@ describe("renderAgentRunMarkdown + slim", () => {
 });
 
 describe("renderContentsText + slim", () => {
-  it("web text: note leads, a payload pointer replaces the text, metadata footers", () => {
+  // `url` rides on every real entry (the handler sets it on both success
+  // and failure paths — see tako_contents.ts), so every mock below carries
+  // one: a prior version of this test omitted it and asserted
+  // `md.startsWith("> 2 match(es)")`, which only held because the url LINE
+  // that precedes the note in real output was missing — a shape production
+  // never emits.
+  it("web text: url leads, note follows, a payload pointer replaces the text, metadata footers", () => {
     const md = renderContentsText({
       results: [{
+        url: "https://example.com/a",
         note: "2 match(es) for the phrase \"RevPAR\"",
         data: "line one\nline two",
         truncated: true,
@@ -402,7 +409,9 @@ describe("renderContentsText + slim", () => {
       }],
       cost: 0.001,
     });
-    expect(md.startsWith("> 2 match(es)")).toBe(true);
+    expect(md.startsWith("https://example.com/a")).toBe(true);
+    expect(md).toContain("> 2 match(es)");
+    expect(md.indexOf("https://example.com/a")).toBeLessThan(md.indexOf("> 2 match(es)"));
     // The payload itself rides in structuredContent; the text names it.
     expect(md).not.toContain("line one");
     expect(md).toContain("in structuredContent");
@@ -413,6 +422,7 @@ describe("renderContentsText + slim", () => {
   it("card csv is named by a pointer, with total_rows in the footer", () => {
     const md = renderContentsText({
       results: [{
+        url: "https://tako.com/card/abc",
         format: "csv",
         data: "date,v\n2026-01-01,1",
         total_rows: 1500,
@@ -428,6 +438,7 @@ describe("renderContentsText + slim", () => {
   it("url mode renders the download link + expiry", () => {
     const md = renderContentsText({
       results: [{
+        url: "https://tako.com/card/abc",
         download_url: "https://signed/csv",
         expires_at: "2026-07-29T00:00:00Z",
         cost: 0,
@@ -437,7 +448,33 @@ describe("renderContentsText + slim", () => {
     expect(md).toContain("Download: https://signed/csv (expires 2026-07-29T00:00:00Z)");
   });
 
-  it("slims structuredContent to metadata only (payload channels dropped)", () => {
+  it("a batch of >1 results renders a header, one numbered section per url, and a total-cost footer", () => {
+    const md = renderContentsText({
+      results: [
+        { url: "https://a", data: "page A text", cost: 1 },
+        { url: "https://gated", error: "Fetch failed (403: card is not exportable).", cost: 0 },
+        { url: "https://c", format: "csv", data: "x,y\n1,2", total_rows: 1, cost: 0.001 },
+      ],
+      cost: 1.001,
+    });
+    expect(md).toContain("## Contents (3 urls, 1 failed)");
+    expect(md).toContain("### 1. https://a");
+    expect(md).toContain("### 2. https://gated");
+    expect(md).toContain("### 3. https://c");
+    // The failed entry renders its error and nothing else — no payload
+    // pointer, no cost/total_rows footer for that one entry.
+    expect(md).toContain("> Fetch failed (403: card is not exportable).");
+    expect(md).toContain("in structuredContent.results[].data");
+    expect(md).toContain("_total cost: $1.001_");
+  });
+
+  // Split deliberately: the two halves guard different things, and it was
+  // exactly THIS test collapsed into one — title claiming the payload was
+  // dropped, body actually asserting it was present — that let the
+  // double-billing regression (see §6/§7) through review undetected. A
+  // future change that puts the payload back into the text channel must
+  // fail a test whose name says so, not one whose name says the opposite.
+  it("carries the full payload in structuredContent (the only copy)", () => {
     const slim = slimContentsStructured({
       results: [{ note: "n", data: "big page text", format: "csv", total_rows: 3, cost: 0.5 }],
       cost: 0.5,
@@ -446,7 +483,9 @@ describe("renderContentsText + slim", () => {
       results: [{ note: "n", data: "big page text", format: "csv", total_rows: 3, cost: 0.5 }],
       cost: 0.5,
     });
-    // ...and the text channel carries a pointer, never a second copy.
+  });
+
+  it("keeps the payload OUT of the text channel — a pointer only", () => {
     const md = renderContentsText({
       results: [{ note: "n", data: "big page text", format: "csv", total_rows: 3, cost: 0.5 }],
       cost: 0.5,
