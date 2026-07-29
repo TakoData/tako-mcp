@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.15.0](https://github.com/TakoData/tako-mcp/compare/v0.14.0...v0.15.0) (2026-07-29)
+
+
+### Features
+
+* **contents:** expose max_chars with a context-sized 100k default ([cedddc5](https://github.com/TakoData/tako-mcp/commit/cedddc552d5d063e4e8af89eacc578ef78757b90))
+* **mcp:** ChatGPT OAuth tool discovery — top-level securitySchemes + auth challenges ([bf8ea26](https://github.com/TakoData/tako-mcp/commit/bf8ea26a8f6919d6f6761aee2ce25cf11bb3bce5))
+* **mcp:** ChatGPT OAuth tool discovery — top-level securitySchemes + auth challenges ([a46a6d2](https://github.com/TakoData/tako-mcp/commit/a46a6d2cade05236590f44cff90c0cfce971b2a8))
+* **mcp:** log tool and transport errors server-side ([350e0cc](https://github.com/TakoData/tako-mcp/commit/350e0cc1a58db70cbc7c23a19fee1c8483adf8e8))
+* **mcp:** per-tool securitySchemes metadata + OAuth challenge helpers ([210c40e](https://github.com/TakoData/tako-mcp/commit/210c40ee6f746a340b6f7909a792650c9613d255))
+* **mcp:** per-tool securitySchemes metadata + OAuth challenge helpers ([8dd6795](https://github.com/TakoData/tako-mcp/commit/8dd67950547929841b421d966f1c3bcfb6441486))
+* **mcp:** wire per-tool securitySchemes + free-tier auth challenges ([5c77fe2](https://github.com/TakoData/tako-mcp/commit/5c77fe2928ead38f7e102b2453e4adacc994af23))
+* **search,answer:** raise web snippet_max_chars to 2000 ([a6ccb65](https://github.com/TakoData/tako-mcp/commit/a6ccb6541041795cd65f60cc2d49223fc3483f87))
+* **tools:** break the punt-and-retry loop — dense first responses, deterministic verdicts, discovery handles ([5b6c7d5](https://github.com/TakoData/tako-mcp/commit/5b6c7d5df6afbcdfdcc8f0f6a43a75968240c892))
+* **tools:** break the punt-and-retry loop — dense first responses, deterministic verdicts, discovery handles ([37b3ace](https://github.com/TakoData/tako-mcp/commit/37b3ace69a54410168cbd30e21aced2c7fe0116c))
+* **tools:** extend markdown rendering to available_data, agent runs, contents ([0fe9240](https://github.com/TakoData/tako-mcp/commit/0fe9240b3aa5630e8347d922da258953fb045220))
+* **tools:** gated-card values routing, source glossary, minimal contents envelope ([5ea683f](https://github.com/TakoData/tako-mcp/commit/5ea683f8c8fc2e4804f6474f90de4afd4ce99381))
+* **tools:** gated-card values routing, source glossary, minimal contents envelope ([1670801](https://github.com/TakoData/tako-mcp/commit/167080174c282368b086ffe600f2c8d2dd9f92d3))
+* **tools:** render search/answer results as markdown; slim structuredContent ([80a77b0](https://github.com/TakoData/tako-mcp/commit/80a77b0746297f2cd31987563d4b6d7d18df64f5))
+
+
+### Bug Fixes
+
+* **mcp:** address PR [#183](https://github.com/TakoData/tako-mcp/issues/183) review — per-connection schemes, fail-closed tier, equality guard ([d7cb2ae](https://github.com/TakoData/tako-mcp/commit/d7cb2ae8682fcf01eab9b8c6de8c4e5d68b2aa47))
+* **mcp:** apply code-review findings to the securitySchemes branch ([878d7f1](https://github.com/TakoData/tako-mcp/commit/878d7f14af305554a597a455a8ff1ff00fa5ce21))
+* **render:** fence upstream content, render orphaned/dropped card fields, enforce slim-schema conformance ([1fb48e4](https://github.com/TakoData/tako-mcp/commit/1fb48e4f292d56081ed1b3a228c96c47030029b7))
+* **tools:** address PR review — honest preview default, term-fair windows, scoped verdicts, gated next_call ([2be208b](https://github.com/TakoData/tako-mcp/commit/2be208bd90c0d86453e8436ad6cc951593514797))
+* **tools:** address review notes — shared searchedData helper, honest filter-miss header ([33fd47b](https://github.com/TakoData/tako-mcp/commit/33fd47bdd7c2925d710f54c2956d3937ee941716))
+* **tools:** align coverage cap with server count cap + teach the q/coverage_filter split ([1cf5169](https://github.com/TakoData/tako-mcp/commit/1cf5169907bfca9fdae739485f22a0ca816d9426))
+* **tools:** dial coverage cap to 200 names / 4 pages on the free first-call tool ([bba0441](https://github.com/TakoData/tako-mcp/commit/bba044127dd5eae91c399f45322b6c26edae7eb4))
+* **widget:** probe iframe capability instead of sniffing window.openai ([9714de8](https://github.com/TakoData/tako-mcp/commit/9714de853c95205a413ee76b22820448f60dca2b))
+* **widget:** probe iframe capability instead of sniffing window.openai ([c715ad2](https://github.com/TakoData/tako-mcp/commit/c715ad29b104b616ce78ba09264f2717c70d685c))
+* **widget:** sequence iframe probe against the image; robustify load detection ([1144e5f](https://github.com/TakoData/tako-mcp/commit/1144e5f63692022ffc8a468d8be7e05c41ad3669))
+
+
+### Reverts
+
+* **mcp:** move ChatGPT securitySchemes work to its own branch ([df06f63](https://github.com/TakoData/tako-mcp/commit/df06f639a656f639d5bb998202ada6708a47b292))
+
+
+### Chores
+
+* regen registry after merging main — lhm.plugin.json picks up the new tool params ([70209f9](https://github.com/TakoData/tako-mcp/commit/70209f98c4de4d5c2d3e63f0b3a2c3ebc311ab18))
+
+
+### Documentation
+
+* **llms-full:** glossary paragraphs live in the markdown Source Notes section ([204ddf0](https://github.com/TakoData/tako-mcp/commit/204ddf03d7a7b41aff8a44633cb05a76649bea3a))
+* **mcp:** align tier/surface docs and guard errors with actual behavior (PR [#183](https://github.com/TakoData/tako-mcp/issues/183) round 2) ([49bdf51](https://github.com/TakoData/tako-mcp/commit/49bdf51344812f2fc5fbc3baa41de119b92a2401))
+* sync llms-full.txt + registry with the new tool params ([95844fb](https://github.com/TakoData/tako-mcp/commit/95844fb0ee3bd429a37e0958971aa6339fe05440))
+
 ## [0.14.0](https://github.com/TakoData/tako-mcp/compare/v0.13.0...v0.14.0) (2026-07-28)
 
 
