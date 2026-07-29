@@ -649,9 +649,15 @@ export interface ContentsOutputLike {
   [key: string]: unknown;
 }
 
-/** structuredContent for tako_contents: the metadata WITHOUT the payload
- *  channels (data/records/dataset live in the text). */
-export function slimContentsStructured(o: ContentsOutputLike): Record<string, unknown> {
+/** The batch envelope: one entry per requested url, positionally aligned. */
+export interface ContentsBatchLike {
+  results: ContentsOutputLike[];
+  cost: number;
+  [key: string]: unknown;
+}
+
+/** Strip the payload channels from one item, keeping its metadata. */
+function slimContentsItem(o: ContentsOutputLike): Record<string, unknown> {
   const { data, records, dataset, note, ...meta } = o;
   void data;
   void records;
@@ -660,12 +666,24 @@ export function slimContentsStructured(o: ContentsOutputLike): Record<string, un
   return meta;
 }
 
+/** structuredContent for tako_contents: per-item metadata WITHOUT the payload
+ *  channels (data/records/dataset live in the text). */
+export function slimContentsStructured(o: ContentsBatchLike): Record<string, unknown> {
+  return { ...o, results: o.results.map(slimContentsItem) };
+}
+
 /** tako_contents as text: the payload itself (page text raw, csv fenced,
  *  json payloads fenced), led by the passage note and trailed by a one-line
  *  metadata footer. This is where the JSON-escaping tax on 100k-char pages
  *  actually dies. */
-export function renderContentsText(o: ContentsOutputLike): string {
+function renderContentsItem(o: ContentsOutputLike): string {
   const blocks: string[] = [];
+  // A failed url in a batch renders as its error and nothing else — the other
+  // entries are untouched, so the model reads N-1 payloads plus one reason.
+  if (typeof o.error === "string") {
+    return `${oneLine(String(o.url ?? ""))}\n\n> ${o.error}`;
+  }
+  if (o.url !== undefined) blocks.push(oneLine(String(o.url)));
   if (o.note !== undefined) blocks.push(`> ${o.note}`);
 
   if (o.download_url !== undefined) {
@@ -694,4 +712,18 @@ export function renderContentsText(o: ContentsOutputLike): string {
   blocks.push(`_${meta.join(" · ")}_`);
 
   return blocks.join("\n\n");
+}
+
+/** tako_contents as text: one section per requested url, each with the payload
+ *  itself (page text raw, csv fenced, json payloads fenced). This is where the
+ *  JSON-escaping tax on 100k-char pages actually dies. A single-url call renders
+ *  as one section, so the batch shape costs nothing in the common case. */
+export function renderContentsText(o: ContentsBatchLike): string {
+  const items = o.results ?? [];
+  if (items.length === 0) return "No content fetched.";
+  if (items.length === 1) return renderContentsItem(items[0] as ContentsOutputLike);
+  const failed = items.filter((r) => typeof r.error === "string").length;
+  const header = `## Contents (${items.length} urls${failed > 0 ? `, ${failed} failed` : ""})`;
+  const sections = items.map((r, i) => `### ${i + 1}. ${renderContentsItem(r)}`);
+  return [header, ...sections, `_total cost: $${o.cost}_`].join("\n\n");
 }
