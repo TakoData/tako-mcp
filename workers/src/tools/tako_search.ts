@@ -44,21 +44,21 @@ import {
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Fastest, direct retrieval of data or metrics from the live web and proprietary data sources, returned as structured cards and web links; the top card auto-renders inline as a chart. It replaces a generic web search for data lookups.",
+  "Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.",
   "",
-  "Best for: grabbing a known figure or metric — a value, time series, price, score, schedule, forecast, poll, or prediction-market number. It is cheap and fast, built to fan out: many narrow queries fired in parallel retrieve far better than one broad query, and you assemble the multi-part result yourself.",
+  "It locates data — and for `exportable: true` cards it also includes a free 20-row preview by default (`include_contents`) — but a license-gated card carries no rows at all (headline value only, via `description`), and a web result is only a snippet, not a value. For a plain \"what is X\", `tako_answer` (pin the card's `nodes` ids) is still the faster path: one written figure beats parsing a preview table yourself, and reaching here first for that costs an extra round trip that re-sends the whole conversation.",
+  "",
+  "Best for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_answer` or `tako_contents`. It is cheap and fast, and built for exactly this fan-out.",
   "",
   "Coverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.",
   "",
-  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When unsure the data exists or its exact name, run `tako_available_data` first (free) — the recommended first step for a data lookup; it hands you the exact names to query here.',
+  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric\'s exact name, run `tako_available_data` (free) instead of guessing here.',
   "",
-  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. When no data card fits the query, the `web_results` can be your fallback: call `tako_contents` on the most relevant one's url to read its full page text (web urls are always fetchable; a card's full csv needs `exportable: true`).",
+  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. To read a web result in full, call `tako_contents` on its url (web urls are always fetchable; a card's full csv needs `exportable: true`).",
   "",
   "Non-exportable cards (`exportable: false`, usually license-gated) return no rows: read the headline value from the card's `description` when it carries one, or get specific figures via `tako_answer` with the card's `nodes` ids pinned (each such card carries a `values_hint` saying exactly this).",
   "",
-  "If you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
-  "",
-  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, recent rows), then Web Results, then source notes. Machine essentials (request_id, usage, chart-widget fields) ride separately in structuredContent.",
+  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (request_id, usage, chart-widget fields).",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -125,15 +125,21 @@ const inputSchema = z.object({
 
 type Input = z.infer<typeof inputSchema>;
 
-// The ADVERTISED output schema is the SLIM structuredContent shape (widget
-// fields + request_id/usage/guidance): the full results — cards, web results,
-// glossary — reach the model as a rendered markdown text channel instead
-// (renderText below), and structuredContent shrinks to machine essentials so
-// hosts that count it toward context don't pay for the content twice. The
-// full internal shape (searchOutputShape) still types the handler's return
-// value; it is loose-compatible with the slim schema, so the SDK's
-// structured-output validation passes for both. The generated SearchResponse
-// stays the wire-guard (safeParse on the raw backend data before mapping).
+// The ADVERTISED output schema. The payload — cards (with their rows), web
+// results, glossary — rides in `structuredContent`, the spec-natural channel
+// for a tool that advertises an `outputSchema`; the markdown text channel
+// (renderText below) is a readable INDEX of it, carrying headlines and
+// `rowsPointer()` lines rather than a second copy, so hosts that count both
+// channels toward context don't pay for the content twice.
+//
+// The name says "slim" for history, not behavior: `slimSearchStructured` is
+// now a full spread. What the schema still does is stay LOOSELY typed on the
+// content fields, so a backend wire change can't fail structured-output
+// validation — the drift failure `_search_results.ts` documents. The full
+// internal shape (searchOutputShape) types the handler's return value and is
+// loose-compatible with this one, so validation passes for both, and the
+// generated SearchResponse stays the wire-guard (safeParse on the raw backend
+// data before mapping).
 const outputSchema = searchSlimOutputShape;
 
 type Output = z.infer<typeof outputSchema>;

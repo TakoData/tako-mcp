@@ -560,11 +560,13 @@ const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
  * not being covered, and every retry is a priced call the model burns on a
  * loop that never converges.
  *
- * The wording is mirrored (as a "HARD STOP on retries" bullet) in the three
- * bundled skills' SKILL.md files under skills/ and their embedded copies in
- * README.md — keep the recovery recipe (free tako_available_data check →
- * at most ONE pinned retry → stop) consistent across all copies when
- * editing any of them.
+ * This protocol is mirrored in the three bundled skills' SKILL.md files
+ * under skills/ and their embedded copies in README.md, each as the
+ * "Empty result (zero cards)" bullet. What must stay consistent is the
+ * RECIPE — free tako_available_data check → at most ONE pinned retry →
+ * stop and answer from the web results — not the phrasing; pin an
+ * invariant here rather than a quoted sentence, so a reworded skill does
+ * not silently make this comment a lie. Update all four copies together.
  */
 function buildZeroResultGuidance(
   hasWebResults: boolean,

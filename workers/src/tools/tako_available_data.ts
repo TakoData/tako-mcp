@@ -65,25 +65,22 @@ const DESCRIPTION = [
   "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
   "",
   "Tips:",
-  'If your lookup names both a thing and a measure ("Carnival passenger cruise days"), split it: the entity goes in `q`, the metric words go in `coverage_filter` — never the whole phrase in `q`. `q` only resolves the name to a node; metric words passed there are lost, and the coverage comes back unfiltered.',
+  'Look up ONE name at a time, not a full question: for "Carnival passenger cruise days" pass q="Carnival" and read the metric you want off coverage.names — a whole phrase in `q` resolves nothing.',
   "One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The coverage.names answer all of them at once — never loop one call per name.",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.",
-  "Each match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search. When the target is unambiguous (a coverage_filter was applied, or the coverage is small), `next_call` is that follow-up prewritten (query + pinned node_ids) — run it verbatim.",
-  'Hunting one specific metric on a broad entity? Pass `coverage_filter` ("charges-off", "margin" — whole words as they appear in the name) — it filters server-side across the FULL coverage, so it finds names a truncated list buries.',
+  "Each match's coverage.names lists the exact metric/entity names — reuse them verbatim in a follow-up tako_search. When the coverage is small enough to be unambiguous, `next_call` is that follow-up prewritten (query + pinned node_ids) — run it verbatim.",
+  "A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.",
 ].join("\n");
 
 const inputSchema = z.object({
   q: z.string().min(2).describe(
-    'The NAME of one entity or one metric to look up (min 2 chars). Not a full question: if your lookup names both a thing and a measure ("Carnival passenger cruise days"), put the entity here ("Carnival") and the metric words in coverage_filter ("passenger cruise days").',
+    'The NAME of one entity or one metric to look up (min 2 chars). Not a full question: for "Carnival passenger cruise days" pass "Carnival" and read the metric off the returned coverage.names.',
   ),
   types: z.enum(["entity", "metric"]).optional().describe(
     'Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both.',
   ),
   label: z.enum(NER_LABELS).optional().describe(
     "NER label to prefer (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...).",
-  ),
-  coverage_filter: z.string().min(1).optional().describe(
-    'Hunting one specific metric? Case-insensitive filter matching WORDS in the coverage names + aliases, applied server-side across the FULL coverage (e.g. q="Capital One", coverage_filter="charges-off"). Use whole words as they appear in the name — a partial word ("charge" for "charges") may not match. Use when the unfiltered list came back truncated without the metric you expected; omit for the general coverage overview.',
   ),
 });
 
@@ -127,7 +124,7 @@ const fullOutputSchema = z.object({
     })
     .nullable()
     .describe(
-      "Ready-to-run follow-up, present only when the target is UNAMBIGUOUS — a coverage_filter was applied, or the coverage list is small: call tako_search with exactly this query and node_ids (pinned) to fetch the confirmed series in one step. Null otherwise (a broad entity's top metric is arbitrary — compose your own entity + metric query from coverage.names instead of spending a priced search on a guess).",
+      "Ready-to-run follow-up, present only when the target is UNAMBIGUOUS — the coverage list is small enough that its top metric is the obvious one: call tako_search with exactly this query and node_ids (pinned) to fetch the confirmed series in one step. Null otherwise (a broad entity's top metric is arbitrary — compose your own entity + metric query from coverage.names instead of spending a priced search on a guess).",
     ),
 });
 type FullOutput = z.infer<typeof fullOutputSchema>;
@@ -236,10 +233,6 @@ const tako_available_data = {
               node_id: node.id, relation, limit: PAGE_LIMIT,
             };
             if (cursor !== null) relatedQuery.cursor = cursor;
-            // Server-side substring filter (names + aliases) — searches the
-            // FULL coverage, not the fetched window, and composes with the
-            // pagination: filtered pages fill with matches only.
-            if (input.coverage_filter !== undefined) relatedQuery.q = input.coverage_filter;
             let relatedRaw: unknown;
             try {
               relatedRaw = await djangoGet<unknown>(
@@ -310,15 +303,14 @@ const tako_available_data = {
         query: input.q,
         matches,
         otherMatches: other_matches,
-        coverageFilter: input.coverage_filter,
       }),
       matches,
       other_matches,
       // The discovery-to-fetch handle: agents that stop at prose re-derive a
       // query and often miss; this is the same example the summary names, in
-      // directly runnable form. Gated on an unambiguous target (filter
-      // applied, or a small coverage list) — see buildNextCall.
-      next_call: buildNextCall(matches, input.coverage_filter !== undefined),
+      // directly runnable form. Gated on a coverage list small enough to make
+      // the target unambiguous — see buildNextCall.
+      next_call: buildNextCall(matches),
     };
   },
   renderText(output, _ctx) {

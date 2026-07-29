@@ -9,9 +9,9 @@ vi.mock("../django.js", async (importOriginal) => ({
   djangoGet: vi.fn(),
 }));
 
-import { DjangoError, DjangoHttpError, DjangoNotFoundError, djangoPost } from "../django.js";
+import { DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoUnauthorizedError, djangoPost } from "../django.js";
 import { djangoErrorToToolResult } from "../mcp.js";
-import tool from "./tako_contents.js";
+import tool, { BATCH_CHAR_BUDGET, MAX_CONTENTS_URLS } from "./tako_contents.js";
 
 const ctx = { token: "t", env: {} as never, client: "claude" as const, sendProgress: vi.fn() };
 
@@ -74,6 +74,131 @@ describe("tako_contents input schema", () => {
 });
 
 describe("tako_contents handler", () => {
+  const item = (data: string, cost = 0.01) => ({
+    contents: [{ content_format: null, data, cost, url: null, expires_at: null, source_url: "https://src" }],
+    request_id: "r",
+  });
+  const CALL = { mode: "inline", content_format: "csv", max_chars: 100_000 } as const;
+
+  it("batches: N urls -> ONE call, N subrequests, results positionally aligned", async () => {
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(item("page A"))
+      .mockResolvedValueOnce(item("page B"))
+      .mockResolvedValueOnce(item("page C"));
+    const out = await tool.handler(
+      { urls: ["https://a", "https://b", "https://c"], ...CALL },
+      ctx,
+    );
+    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(3);
+    expect(out.results).toHaveLength(3);
+    expect(out.results.map((r) => r.url)).toEqual(["https://a", "https://b", "https://c"]);
+    expect(out.results.map((r) => r.data)).toEqual(["page A", "page B", "page C"]);
+    // Each url is billed independently; the envelope reports the sum.
+    expect(out.cost).toBeCloseTo(0.03);
+  });
+
+  it("one url failing does NOT discard the others; its entry carries the guidance", async () => {
+    const gated = new DjangoHttpError({ path: "/api/v1/contents/", method: "POST", status: 403, body: "forbidden" });
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(item("page A"))
+      .mockRejectedValueOnce(gated)
+      .mockResolvedValueOnce(item("page C"));
+    const out = await tool.handler(
+      { urls: ["https://a", "https://gated", "https://c"], ...CALL },
+      ctx,
+    );
+    expect(out.results).toHaveLength(3);
+    expect(out.results[0]?.data).toBe("page A");
+    // Position preserved: the failure stays at index 1 rather than compacting
+    // out and re-mapping every later index onto the wrong url.
+    expect(out.results[1]?.url).toBe("https://gated");
+    expect(out.results[1]?.data).toBeUndefined();
+    expect(out.results[1]?.error).toContain("403");
+    expect(out.results[2]?.data).toBe("page C");
+  });
+
+  it("when EVERY url fails it throws, so a single-url 403 keeps its self-correcting envelope", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(new DjangoHttpError({ path: "/api/v1/contents/", method: "POST", status: 403, body: "forbidden" }));
+    await expect(
+      tool.handler({ urls: ["https://gated"], ...CALL }, ctx),
+    ).rejects.toBeInstanceOf(DjangoHttpError);
+  });
+
+  // Review finding: `errorText` gated on `DjangoHttpError` specifically, but
+  // DjangoNotFoundError/DjangoUnauthorizedError/DjangoBadRequestError/
+  // DjangoTimeoutError/DjangoResponseParseError are SIBLING subclasses of the
+  // base DjangoError, not subclasses of DjangoHttpError — so a partial-batch
+  // 404 silently lost its modelGuidance (fell through to the bare
+  // `reason.message`) and everything else leaked the internal request path
+  // into model-visible text. Single-URL calls never hit this: an unmatched
+  // reason there re-throws whole into djangoErrorToToolResult instead of
+  // being stringified by errorText.
+  it("a 404 failing alongside other urls in a batch keeps its self-correcting modelGuidance (not the bare status)", async () => {
+    const notFound = new DjangoNotFoundError({
+      path: "/api/v1/contents/", method: "POST", body: '{"detail":"no exportable data"}',
+    });
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(item("page A"))
+      .mockRejectedValueOnce(notFound);
+    const out = await tool.handler(
+      { urls: ["https://a", "https://missing"], ...CALL },
+      ctx,
+    );
+    expect(out.results[1]?.error).toContain("found nothing downloadable");
+    expect(out.results[1]?.error).toContain("no exportable data");
+    expect(out.results[1]?.error).not.toBe("Django returned 404 for POST /api/v1/contents/.");
+  });
+
+  it("a 401 failing alongside other urls in a batch does not leak the internal request path", async () => {
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(item("page A"))
+      .mockRejectedValueOnce(
+        new DjangoUnauthorizedError({ path: "/api/v1/contents/", method: "POST", body: "" }),
+      );
+    const out = await tool.handler(
+      { urls: ["https://a", "https://unauthed"], ...CALL },
+      ctx,
+    );
+    expect(out.results[1]?.error).toContain("401");
+    // AGENTS.md Safety Rules: error text must never expose internal URLs.
+    expect(out.results[1]?.error).not.toContain("/api/v1/contents");
+    expect(out.results[1]?.error).not.toContain("Django returned");
+  });
+
+  it("accepts the legacy single `url` form as urls: [url]", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(item("legacy"));
+    const out = await tool.handler({ url: "https://legacy", ...CALL }, ctx);
+    expect(out.results).toHaveLength(1);
+    expect(out.results[0]?.data).toBe("legacy");
+    expect(out.results[0]?.url).toBe("https://legacy");
+  });
+
+  it("rejects (with a helpful message, not a bare schema error) when neither `url` nor `urls` is given", async () => {
+    // The schema cannot express "at least one of these two optional fields" —
+    // this runtime check is the ONLY enforcement of that constraint.
+    await expect(tool.handler({ ...CALL }, ctx)).rejects.toThrow(/at least one URL/);
+    expect(djangoPost).not.toHaveBeenCalled();
+  });
+
+  it("when both `url` and `urls` are sent, `urls` wins silently (documented, not a 400)", async () => {
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(item("page A"))
+      .mockResolvedValueOnce(item("page B"));
+    const out = await tool.handler(
+      { url: "https://legacy-ignored", urls: ["https://a", "https://b"], ...CALL },
+      ctx,
+    );
+    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(2);
+    expect(out.results.map((r) => r.url)).toEqual(["https://a", "https://b"]);
+    expect(out.results.some((r) => r.url === "https://legacy-ignored")).toBe(false);
+  });
+
+  it("caps the batch so one call cannot fan out unbounded", () => {
+    const many = Array.from({ length: MAX_CONTENTS_URLS + 1 }, (_, i) => `https://u${i}`);
+    expect(() => tool.inputSchema.parse({ urls: many })).toThrow();
+    expect(() => tool.inputSchema.parse({ urls: [] })).toThrow();
+  });
+
   it("inline mode (default): returns CSV data inline with total_rows/truncated, no download_url", async () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [
@@ -91,14 +216,14 @@ describe("tako_contents handler", () => {
       request_id: "r1",
     });
     const out = await tool.handler(
-      { url: "https://tako.com/card/abc", mode: "inline", content_format: "csv", max_chars: 100_000 },
+      { urls: ["https://tako.com/card/abc"], mode: "inline", content_format: "csv", max_chars: 100_000 },
       ctx,
     );
     expect(tool.name).toBe("tako_contents");
-    expect(out.format).toBe("csv");
-    expect(out.data).toBe("name,value\nA,1\nB,2");
-    expect(out.total_rows).toBe(1500);
-    expect(out.truncated).toBe(true);
+    expect(out.results[0]?.format).toBe("csv");
+    expect(out.results[0]?.data).toBe("name,value\nA,1\nB,2");
+    expect(out.results[0]?.total_rows).toBe(1500);
+    expect(out.results[0]?.truncated).toBe(true);
     // Minimal envelope: url-mode fields are OMITTED inline, not null.
     expect(out).not.toHaveProperty("download_url");
     expect(out).not.toHaveProperty("expires_at");
@@ -124,12 +249,12 @@ describe("tako_contents handler", () => {
       request_id: "r2",
     });
     const out = await tool.handler(
-      { url: "https://example.com/a", mode: "inline", content_format: "csv", max_chars: 100_000 },
+      { urls: ["https://example.com/a"], mode: "inline", content_format: "csv", max_chars: 100_000 },
       ctx,
     );
     // Web text carries no `format` — the envelope is essentially {data, cost}.
     expect(out).not.toHaveProperty("format");
-    expect(out.data).toBe("hello world");
+    expect(out.results[0]?.data).toBe("hello world");
     expect(out).not.toHaveProperty("download_url");
     expect(out).not.toHaveProperty("truncated"); // complete → omitted, not false
     expect(out.cost).toBe(1); // web text is metered
@@ -150,11 +275,11 @@ describe("tako_contents handler", () => {
     const out = await tool.handler(parsed, ctx);
     // Passages, not the full dump — data is PURE page text; the match summary
     // rides separately in `note`.
-    expect(out.data).toContain("$142.11");
-    expect(out.data).not.toContain("match(es)");
-    expect(out.note).toContain("match(es)");
-    expect((out.data as string).length).toBeLessThan(page.length / 2);
-    expect(out.truncated).toBe(true);
+    expect(out.results[0]?.data).toContain("$142.11");
+    expect(out.results[0]?.data).not.toContain("match(es)");
+    expect(out.results[0]?.note).toContain("match(es)");
+    expect((out.results[0]?.data as string).length).toBeLessThan(page.length / 2);
+    expect(out.results[0]?.truncated).toBe(true);
     // `query` is an MCP-layer knob: the backend body must not carry it
     // (extra="forbid" would 400 the request).
     expect(vi.mocked(djangoPost).mock.calls[0]![3]).not.toHaveProperty("query");
@@ -179,7 +304,7 @@ describe("tako_contents handler", () => {
     });
     const out = await tool.handler(parsed, ctx);
     // CSV passes through untouched — no passage header injected into data.
-    expect(out.data).toBe("name,value\nRevPAR,142.11\nADR,190.55");
+    expect(out.results[0]?.data).toBe("name,value\nRevPAR,142.11\nADR,190.55");
   });
 
   it("query with no match: deterministic NOT FOUND notice instead of silence", async () => {
@@ -193,8 +318,8 @@ describe("tako_contents handler", () => {
       url: "https://example.com/a", query: "zebra unicorn",
     });
     const out = await tool.handler(parsed, ctx);
-    expect(out.note).toContain("NOT FOUND");
-    expect(out.data).toContain("a page about something else"); // head kept for orientation
+    expect(out.results[0]?.note).toContain("NOT FOUND");
+    expect(out.results[0]?.data).toContain("a page about something else"); // head kept for orientation
   });
 
   it("url mode: returns the presigned download_url + expiry, no inline data", async () => {
@@ -211,11 +336,11 @@ describe("tako_contents handler", () => {
       request_id: "r3",
     });
     const out = await tool.handler(
-      { url: "https://tako.com/card/abc", mode: "url", content_format: "csv", max_chars: 100_000 },
+      { urls: ["https://tako.com/card/abc"], mode: "url", content_format: "csv", max_chars: 100_000 },
       ctx,
     );
-    expect(out.download_url).toBe("https://signed/csv");
-    expect(out.expires_at).toBe("2026-06-26T00:00:00Z");
+    expect(out.results[0]?.download_url).toBe("https://signed/csv");
+    expect(out.results[0]?.expires_at).toBe("2026-06-26T00:00:00Z");
     expect(out).not.toHaveProperty("data");
     expect(out).not.toHaveProperty("total_rows");
     expect(out).not.toHaveProperty("truncated");
@@ -227,7 +352,7 @@ describe("tako_contents handler", () => {
       request_id: "r4",
     });
     await tool.handler(
-      { url: "https://example.com/a", mode: "url", content_format: "csv", max_chars: 100_000 },
+      { urls: ["https://example.com/a"], mode: "url", content_format: "csv", max_chars: 100_000 },
       ctx,
     );
     const call = vi.mocked(djangoPost).mock.calls[0]!;
@@ -274,6 +399,97 @@ describe("tako_contents handler", () => {
     expect((call[3] as { max_chars?: number }).max_chars).toBe(100_000);
   });
 
+  // Review finding: with no batch-wide budget, a 10-url default batch (each
+  // defaulting to 100k chars) reconstructed the exact ~250k-token blowup the
+  // single-URL 100k default exists to prevent — just spread across urls
+  // instead of concentrated in one. BATCH_CHAR_BUDGET splits the DEFAULT
+  // evenly across the batch instead. Derives expectations off the imported
+  // constant rather than hardcoding its current value, so tuning
+  // BATCH_CHAR_BUDGET (see its doc comment — it's a starting guess, not a
+  // measured number) doesn't also require hunting down stale test numbers.
+  it("splits the default max_chars across a batch that drives it below the single-URL 100k default", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars",
+    });
+    // A batch size chosen to land strictly below the 100k single-URL
+    // default, so this test is where the split actually bites regardless of
+    // BATCH_CHAR_BUDGET's current value.
+    const batchSize = Math.ceil(BATCH_CHAR_BUDGET / 100_000) + 1;
+    const expectedPerUrl = Math.floor(BATCH_CHAR_BUDGET / batchSize);
+    expect(expectedPerUrl).toBeLessThan(100_000); // sanity: this batch size DOES trigger the split
+    const urls = Array.from({ length: batchSize }, (_, i) => `https://u${i}`);
+    await tool.handler({ urls, mode: "inline", content_format: "csv" }, ctx);
+    for (const call of vi.mocked(djangoPost).mock.calls) {
+      expect((call[3] as { max_chars?: number }).max_chars).toBe(expectedPerUrl);
+    }
+  });
+
+  it("a 2-url batch is unaffected when BATCH_CHAR_BUDGET / 2 is still >= the single-URL 100k default", async () => {
+    // True for any BATCH_CHAR_BUDGET >= 200_000, which the ⚠️ judgment-call
+    // doc comment on the constant commits to staying at or above.
+    expect(Math.floor(BATCH_CHAR_BUDGET / 2)).toBeGreaterThanOrEqual(100_000);
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars-2",
+    });
+    await tool.handler(
+      { urls: ["https://a", "https://b"], mode: "inline", content_format: "csv" },
+      ctx,
+    );
+    for (const call of vi.mocked(djangoPost).mock.calls) {
+      expect((call[3] as { max_chars?: number }).max_chars).toBe(100_000);
+    }
+  });
+
+  it("logs when the derived batch cap actually cuts a page (observability for tuning BATCH_CHAR_BUDGET)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const batchSize = Math.ceil(BATCH_CHAR_BUDGET / 100_000) + 1;
+    const perUrlCap = Math.floor(BATCH_CHAR_BUDGET / batchSize);
+    // A page exactly at the derived cap — the same "length >= maxChars"
+    // signal the handler already uses to derive `truncated` for web text.
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x".repeat(perUrlCap), cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars-log",
+    });
+    const urls = Array.from({ length: batchSize }, (_, i) => `https://u${i}`);
+    await tool.handler({ urls, mode: "inline", content_format: "csv" }, ctx);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("batch max_chars cap bit"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("does NOT log the cap-bit warning when the caller set max_chars explicitly", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const batchSize = Math.ceil(BATCH_CHAR_BUDGET / 100_000) + 1;
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x".repeat(5000), cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars-explicit-log",
+    });
+    const urls = Array.from({ length: batchSize }, (_, i) => `https://u${i}`);
+    await tool.handler({ urls, mode: "inline", content_format: "csv", max_chars: 5000 }, ctx);
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("batch max_chars cap bit"));
+    warnSpy.mockRestore();
+  });
+
+  it("an EXPLICIT max_chars is never split by batch size — the caller's deliberate choice rides as-is", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars-explicit",
+    });
+    await tool.handler(
+      {
+        urls: ["https://a", "https://b", "https://c", "https://d"],
+        mode: "inline", content_format: "csv", max_chars: 300_000,
+      },
+      ctx,
+    );
+    for (const call of vi.mocked(djangoPost).mock.calls) {
+      expect((call[3] as { max_chars?: number }).max_chars).toBe(300_000);
+    }
+  });
+
   it("url mode: omits max_chars from the wire unless the caller set one (full file, cache key preserved)", async () => {
     vi.mocked(djangoPost).mockResolvedValue({
       contents: [
@@ -308,7 +524,7 @@ describe("tako_contents handler", () => {
     });
     const parsed = tool.inputSchema.parse({ url: "https://example.com/a", max_chars: 50 });
     const out = await tool.handler(parsed, ctx);
-    expect(out.truncated).toBe(true);
+    expect(out.results[0]?.truncated).toBe(true);
     // Below the cap → complete → omitted (see the web-text test above).
   });
 
@@ -341,8 +557,8 @@ describe("tako_contents handler", () => {
       content_format: "json_records",
     });
     const out = await tool.handler(parsed, ctx);
-    expect(out.format).toBe("json_records");
-    expect(out.records).toEqual([
+    expect(out.results[0]?.format).toBe("json_records");
+    expect(out.results[0]?.records).toEqual([
       { name: "A", value: 1 },
       { name: "B", value: 2 },
     ]);
@@ -385,8 +601,8 @@ describe("tako_contents handler", () => {
       content_format: "json_compact",
     });
     const out = await tool.handler(parsed, ctx);
-    expect(out.format).toBe("json_compact");
-    expect(out.dataset?.rows).toEqual([
+    expect(out.results[0]?.format).toBe("json_compact");
+    expect(out.results[0]?.dataset?.rows).toEqual([
       ["A", 1],
       ["B", 2],
     ]);
@@ -397,7 +613,7 @@ describe("tako_contents handler", () => {
   it("throws when the endpoint returns no content item", async () => {
     vi.mocked(djangoPost).mockResolvedValue({ contents: [], request_id: "r5" });
     await expect(
-      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx),
+      tool.handler({ urls: ["https://tako.com/card/x"], mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx),
     ).rejects.toThrow(/no downloadable content/);
   });
 
@@ -411,7 +627,7 @@ describe("tako_contents handler", () => {
       }),
     );
     const err = await tool
-      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
+      .handler({ urls: ["https://tako.com/card/x"], mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
       .then(() => {
         throw new Error("expected the handler to reject");
       })
@@ -433,7 +649,7 @@ describe("tako_contents handler", () => {
       }),
     );
     const err = await tool
-      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
+      .handler({ urls: ["https://tako.com/card/x"], mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
       .then(() => {
         throw new Error("expected the handler to reject");
       })
@@ -452,7 +668,7 @@ describe("tako_contents handler", () => {
       }),
     );
     const err = await tool
-      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
+      .handler({ urls: ["https://tako.com/card/x"], mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
       .then(() => {
         throw new Error("expected the handler to reject");
       })
@@ -471,7 +687,7 @@ describe("tako_contents handler", () => {
       }),
     );
     const err = (await tool
-      .handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
+      .handler({ urls: ["https://tako.com/card/x"], mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx)
       .catch((e: unknown) => e)) as DjangoError;
     // Mirror registerTool: a DjangoError maps to a structured tool result that
     // keeps the full envelope AND shows the verbatim guidance (detail spliced
@@ -495,7 +711,7 @@ describe("tako_contents handler", () => {
       }),
     );
     await expect(
-      tool.handler({ url: "https://tako.com/card/x", mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx),
+      tool.handler({ urls: ["https://tako.com/card/x"], mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx),
     ).rejects.toThrow(/returned 500/);
   });
 });
