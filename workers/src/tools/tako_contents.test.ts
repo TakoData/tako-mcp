@@ -9,7 +9,7 @@ vi.mock("../django.js", async (importOriginal) => ({
   djangoGet: vi.fn(),
 }));
 
-import { DjangoError, DjangoHttpError, DjangoNotFoundError, djangoPost } from "../django.js";
+import { DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoUnauthorizedError, djangoPost } from "../django.js";
 import { djangoErrorToToolResult } from "../mcp.js";
 import tool, { MAX_CONTENTS_URLS } from "./tako_contents.js";
 
@@ -124,12 +124,73 @@ describe("tako_contents handler", () => {
     ).rejects.toBeInstanceOf(DjangoHttpError);
   });
 
+  // Review finding: `errorText` gated on `DjangoHttpError` specifically, but
+  // DjangoNotFoundError/DjangoUnauthorizedError/DjangoBadRequestError/
+  // DjangoTimeoutError/DjangoResponseParseError are SIBLING subclasses of the
+  // base DjangoError, not subclasses of DjangoHttpError — so a partial-batch
+  // 404 silently lost its modelGuidance (fell through to the bare
+  // `reason.message`) and everything else leaked the internal request path
+  // into model-visible text. Single-URL calls never hit this: an unmatched
+  // reason there re-throws whole into djangoErrorToToolResult instead of
+  // being stringified by errorText.
+  it("a 404 failing alongside other urls in a batch keeps its self-correcting modelGuidance (not the bare status)", async () => {
+    const notFound = new DjangoNotFoundError({
+      path: "/api/v1/contents/", method: "POST", body: '{"detail":"no exportable data"}',
+    });
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(item("page A"))
+      .mockRejectedValueOnce(notFound);
+    const out = await tool.handler(
+      { urls: ["https://a", "https://missing"], ...CALL },
+      ctx,
+    );
+    expect(out.results[1]?.error).toContain("found nothing downloadable");
+    expect(out.results[1]?.error).toContain("no exportable data");
+    expect(out.results[1]?.error).not.toBe("Django returned 404 for POST /api/v1/contents/.");
+  });
+
+  it("a 401 failing alongside other urls in a batch does not leak the internal request path", async () => {
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(item("page A"))
+      .mockRejectedValueOnce(
+        new DjangoUnauthorizedError({ path: "/api/v1/contents/", method: "POST", body: "" }),
+      );
+    const out = await tool.handler(
+      { urls: ["https://a", "https://unauthed"], ...CALL },
+      ctx,
+    );
+    expect(out.results[1]?.error).toContain("401");
+    // AGENTS.md Safety Rules: error text must never expose internal URLs.
+    expect(out.results[1]?.error).not.toContain("/api/v1/contents");
+    expect(out.results[1]?.error).not.toContain("Django returned");
+  });
+
   it("accepts the legacy single `url` form as urls: [url]", async () => {
     vi.mocked(djangoPost).mockResolvedValue(item("legacy"));
     const out = await tool.handler({ url: "https://legacy", ...CALL }, ctx);
     expect(out.results).toHaveLength(1);
     expect(out.results[0]?.data).toBe("legacy");
     expect(out.results[0]?.url).toBe("https://legacy");
+  });
+
+  it("rejects (with a helpful message, not a bare schema error) when neither `url` nor `urls` is given", async () => {
+    // The schema cannot express "at least one of these two optional fields" —
+    // this runtime check is the ONLY enforcement of that constraint.
+    await expect(tool.handler({ ...CALL }, ctx)).rejects.toThrow(/at least one URL/);
+    expect(djangoPost).not.toHaveBeenCalled();
+  });
+
+  it("when both `url` and `urls` are sent, `urls` wins silently (documented, not a 400)", async () => {
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(item("page A"))
+      .mockResolvedValueOnce(item("page B"));
+    const out = await tool.handler(
+      { url: "https://legacy-ignored", urls: ["https://a", "https://b"], ...CALL },
+      ctx,
+    );
+    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(2);
+    expect(out.results.map((r) => r.url)).toEqual(["https://a", "https://b"]);
+    expect(out.results.some((r) => r.url === "https://legacy-ignored")).toBe(false);
   });
 
   it("caps the batch so one call cannot fan out unbounded", () => {
@@ -336,6 +397,58 @@ describe("tako_contents handler", () => {
     await tool.handler(parsed, ctx);
     const call = vi.mocked(djangoPost).mock.calls[0]!;
     expect((call[3] as { max_chars?: number }).max_chars).toBe(100_000);
+  });
+
+  // Review finding: with no batch-wide budget, a 10-url default batch (each
+  // defaulting to 100k chars) reconstructed the exact ~250k-token blowup the
+  // single-URL 100k default exists to prevent — just spread across urls
+  // instead of concentrated in one. BATCH_CHAR_BUDGET splits the DEFAULT
+  // evenly across the batch instead.
+  it("splits the default max_chars across a batch instead of 100k-per-url unbounded", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars",
+    });
+    // BATCH_CHAR_BUDGET (200_000) / 4 = 50_000 — below the single-URL 100k
+    // default, so this batch is where the split actually bites.
+    await tool.handler(
+      { urls: ["https://a", "https://b", "https://c", "https://d"], mode: "inline", content_format: "csv" },
+      ctx,
+    );
+    for (const call of vi.mocked(djangoPost).mock.calls) {
+      expect((call[3] as { max_chars?: number }).max_chars).toBe(50_000);
+    }
+  });
+
+  it("a 2-url batch is unaffected (200_000 / 2 = 100_000, same as the single-URL default)", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars-2",
+    });
+    await tool.handler(
+      { urls: ["https://a", "https://b"], mode: "inline", content_format: "csv" },
+      ctx,
+    );
+    for (const call of vi.mocked(djangoPost).mock.calls) {
+      expect((call[3] as { max_chars?: number }).max_chars).toBe(100_000);
+    }
+  });
+
+  it("an EXPLICIT max_chars is never split by batch size — the caller's deliberate choice rides as-is", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "x", cost: 1, source_url: "https://x" }],
+      request_id: "r-batch-chars-explicit",
+    });
+    await tool.handler(
+      {
+        urls: ["https://a", "https://b", "https://c", "https://d"],
+        mode: "inline", content_format: "csv", max_chars: 300_000,
+      },
+      ctx,
+    );
+    for (const call of vi.mocked(djangoPost).mock.calls) {
+      expect((call[3] as { max_chars?: number }).max_chars).toBe(300_000);
+    }
   });
 
   it("url mode: omits max_chars from the wire unless the caller set one (full file, cache key preserved)", async () => {

@@ -1,5 +1,8 @@
 /**
- * `tako_contents` — fetch the downloadable content behind a result URL.
+ * `tako_contents` — fetch the downloadable content behind one or more result
+ * URLs (1-10 per call — see `MAX_CONTENTS_URLS` — fanned out as concurrent
+ * subrequests; each URL is billed independently and one URL's failure never
+ * fails the others).
  * Wraps `POST /api/v1/contents`. A Tako card URL resolves to the card's data —
  * CSV by default, or JSON via `content_format` (json_records → `records`,
  * json_compact → `dataset`); any other URL resolves to the page's extracted
@@ -9,7 +12,7 @@
  * search/answer set `content` via the lenient supports_data_export() while
  * this endpoint gates on the stricter export_safe(), so a content-bearing
  * card can still 403 (the handler maps that to a self-correcting message).
- * One URL per call. A Tako card CSV is capped at a 20-row free default in BOTH modes;
+ * A Tako card CSV is capped at a 20-row free default in BOTH modes;
  * `max_rows` raises that up to a 2000-row ceiling — there is no uncapped export.
  * `mode` controls only delivery, not the row count: "inline" (default) returns
  * the (capped) content in the response body — total_rows/truncated report the
@@ -21,7 +24,7 @@
  */
 import { z } from "zod";
 
-import { DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } from "../django.js";
+import { DjangoError, DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } from "../django.js";
 import { ContentsDeliveryMode, ContentsRequest, ContentsResponse, TakoDataset } from "../generated/schemas.js";
 import { logWireGuardFailure } from "./_log.js";
 import { extractPassages } from "./_passages.js";
@@ -33,7 +36,7 @@ import {
 import type { ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Fetch the real content behind one result URL from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.",
+  "Fetch the real content behind result URLs (1-10 per call) from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.",
   "",
   "Best for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.",
   "",
@@ -51,6 +54,33 @@ const DESCRIPTION = [
  *  fans out to N subrequests; this bounds both the Workers subrequest budget
  *  and the bill a single call can run up. */
 export const MAX_CONTENTS_URLS = 10;
+/**
+ * Per-call ceiling on TOTAL default (caller did not set `max_chars`) web-text
+ * characters across a batch, divided evenly across the URLs being fetched.
+ *
+ * Single-URL calls are unaffected: `Math.min(100_000, floor(200_000 / 1))` is
+ * still 100_000, the existing default. The problem is purely a batch one —
+ * the 100_000-per-URL default exists specifically because the backend's own
+ * default (up to 1,000,000 chars / ~250k tokens) was "observed in the wild
+ * and unreadable for any client" (see the `max_chars` schema comment below),
+ * but that guard was written before batching existed: at `MAX_CONTENTS_URLS`
+ * (10), 10 unrelated web pages defaulting to 100k chars each reconstructs the
+ * exact ~250k-token blowup the 100k default was added to prevent, just
+ * spread across urls instead of one. Dividing a fixed total budget across the
+ * batch keeps that ceiling meaningful regardless of how many URLs a call
+ * fans out to.
+ *
+ * ⚠️ Judgment call: 200_000 is a round starting number (2x the single-URL
+ * default), not a measured one — tune it against real multi-URL prompts if
+ * it turns out too tight (a 10-way batch would land at 20k chars per page,
+ * which may cut mid-filing on dense sources) or too loose. It bounds only
+ * the SILENT DEFAULT — a caller that explicitly sets `max_chars` keeps that
+ * value as-is (multiplied by however many URLs they batch), consistent with
+ * this tool's over-asks-fail-fast-not-silently-clamped design for `max_rows`
+ * — an explicit ask is the caller's deliberate, informed choice, not a
+ * default any URL count should be silently overriding.
+ */
+export const BATCH_CHAR_BUDGET = 200_000;
 
 const inputSchema = ContentsRequest.pick({ url: true }).extend({
   urls: z
@@ -98,10 +128,18 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
   // the FULL page text (up to 1M chars ≈ 250k tokens — observed in the wild and
   // unreadable for any client), so the HANDLER defaults it DOWN to a
   // context-sized 100k — but only where the text reaches the model:
-  //   inline, no query → 100k (billing is per page, so the cap costs nothing)
+  //   inline, no query → 100k, SPLIT ACROSS THE BATCH when batching (see
+  //                      BATCH_CHAR_BUDGET) so N urls defaulting to 100k each
+  //                      doesn't reconstruct the ~250k-token blowup this cap
+  //                      exists to prevent, just spread across urls instead
+  //                      of one (billing is per page regardless, so the cap
+  //                      only trims what reaches you — an explicit max_chars
+  //                      is NEVER split, only this silent default is)
   //   inline + query   → pinned to the 1M ceiling (passages scan the FULL
   //                      text; a capped scan would turn "term at char 300k"
-  //                      into a false "deterministic miss")
+  //                      into a false "deterministic miss") — not subject to
+  //                      the batch split either, since extractPassages trims
+  //                      the final output far below whatever was fetched
   //   url mode         → omitted (nothing reaches the model; the cap would
   //                      truncate the downloaded FILE and, because max_chars
   //                      is part of the backend's S3 cache key, bust every
@@ -115,7 +153,7 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
     .lte(1_000_000)
     .optional()
     .describe(
-      "Web URLs only: character cap on the extracted page text (max 1,000,000 = full text). Inline fetches default to 100,000 — billing is per page regardless, so the cap only trims what reaches you, and `truncated: true` reports a cut. Raise it when you need a full long document inline. In url mode the downloaded file is the full text unless you set this (an explicit value caps the file too). Ignored when `query` is set (passages always scan the full text) and for Tako card URLs (use max_rows).",
+      "Web URLs only: character cap on the extracted page text (max 1,000,000 = full text). Inline fetches default to 100,000 PER URL when fetching one url, less when batching several (a shared per-call character budget split across the batch — set this explicitly to opt out and get the full 100,000, or more, per url regardless of batch size). Billing is per page regardless, so the cap only trims what reaches you, and `truncated: true` reports a cut. Raise it when you need a full long document inline. In url mode the downloaded file is the full text unless you set this (an explicit value caps the file too). Ignored when `query` is set (passages always scan the full text) and for Tako card URLs (use max_rows).",
     ),
   // MCP-layer feature, deliberately NOT part of the wire body (the handler
   // strips it): the worker fetches the page text and slices out the passages
@@ -202,13 +240,26 @@ type Output = z.infer<typeof outputSchema>;
 type Input = z.infer<typeof inputSchema>;
 
 /** One URL's failure, as text the model can act on. Prefers the
- *  self-correcting `modelGuidance` the 403/404 paths attach, so a gated card
- *  inside a batch still explains itself instead of surfacing a bare status. */
+ *  self-correcting `modelGuidance` any DjangoError path attaches (403/404
+ *  today), so a gated card inside a batch still explains itself instead of
+ *  surfacing a bare status. Gated on `DjangoError` — the base class every
+ *  transport error extends — not `DjangoHttpError`, one of several SIBLING
+ *  subclasses (DjangoNotFoundError, DjangoUnauthorizedError,
+ *  DjangoBadRequestError, DjangoTimeoutError, DjangoResponseParseError; see
+ *  django.ts). Gating on the subclass silently dropped 404's modelGuidance
+ *  and, for the rest, leaked `Django returned <status> for POST
+ *  /api/v1/contents/` (the internal path) into model-visible text — the
+ *  single-URL path never had this bug because an unmatched reason there
+ *  re-throws whole into djangoErrorToToolResult instead of being stringified
+ *  here. `body` lives on most but not all subclasses (DjangoTimeoutError and
+ *  DjangoResponseParseError carry no response body), hence the guard. */
 function errorText(reason: unknown): string {
-  if (reason instanceof DjangoHttpError) {
+  if (reason instanceof DjangoError) {
     if (reason.modelGuidance !== undefined) return reason.modelGuidance;
-    const detail = extractErrorDetail(reason.body);
-    return `Fetch failed (${reason.status}${detail !== undefined ? `: ${detail}` : ""}).`;
+    const body = "body" in reason ? (reason as { body: string }).body : undefined;
+    const detail = body !== undefined ? extractErrorDetail(body) : undefined;
+    const status = reason.status !== undefined ? String(reason.status) : "transport error";
+    return `Fetch failed (${status}${detail !== undefined ? `: ${detail}` : ""}).`;
   }
   return reason instanceof Error ? reason.message : String(reason);
 }
@@ -217,6 +268,7 @@ async function fetchOne(
   url: string,
   input: Input,
   ctx: ToolContext,
+  batchSize: number,
 ): Promise<ContentItemOutput> {
   // `query`/`urls` are MCP-layer knobs, NOT wire fields — strip them or the
   // backend's extra="forbid" 400s the request. The rest conforms to the
@@ -226,14 +278,23 @@ async function fetchOne(
   void _url;
   const inline = input.mode !== "url";
   // Effective web-text cap (see the max_chars schema comment for the full
-  // rationale): query pins the ceiling so passages scan the whole page;
-  // plain inline defaults to 100k; url mode sends nothing unless the caller
-  // set a cap explicitly — an undefined here both leaves the wire field off
-  // and disables the derived-truncation check below.
+  // rationale): query pins the ceiling so passages scan the whole page (the
+  // BATCH_CHAR_BUDGET split doesn't apply here — extractPassages trims the
+  // final output far below whatever the backend fetches, so this branch
+  // never reaches the multi-URL blowup BATCH_CHAR_BUDGET guards against);
+  // plain inline with NO caller-set max_chars defaults to 100k, split evenly
+  // across the batch (see BATCH_CHAR_BUDGET) so a 10-URL default batch
+  // doesn't silently reconstruct the ~250k-token blowup that default exists
+  // to prevent; an EXPLICIT caller max_chars is left untouched regardless of
+  // batch size (the caller's deliberate choice, not a default); url mode
+  // sends nothing unless the caller set a cap explicitly — an undefined here
+  // both leaves the wire field off and disables the derived-truncation check
+  // below.
+  const perUrlDefaultCap = Math.max(1, Math.floor(BATCH_CHAR_BUDGET / batchSize));
   const maxChars =
     inline && passageQuery !== undefined
       ? 1_000_000
-      : maxCharsAsked ?? (inline ? 100_000 : undefined);
+      : maxCharsAsked ?? (inline ? Math.min(100_000, perUrlDefaultCap) : undefined);
   const body = {
     ...rest,
     url,
@@ -398,7 +459,7 @@ const takoContents = {
     // subrequests issued concurrently. allSettled, not all — one URL's 403
     // (a license-gated card) must not discard the pages that did resolve.
     const settled = await Promise.allSettled(
-      targets.map((u) => fetchOne(u, input, ctx)),
+      targets.map((u) => fetchOne(u, input, ctx, targets.length)),
     );
     const results = settled.map((s, i) => {
       const url = targets[i] as string;
