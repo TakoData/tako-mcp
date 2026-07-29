@@ -211,7 +211,7 @@ describe("tako_search request body", () => {
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
     expect(body.sources).toEqual({
       data: { count: 10, include_contents: false },
-      web: { count: 10, include_contents: false },
+      web: { count: 10, include_contents: false, snippet_max_chars: 2000 },
     });
   });
 
@@ -241,7 +241,7 @@ describe("tako_search request body", () => {
       data: { count: 10, include_contents: true },
       // web is pinned false regardless of the flag — page text is billed per
       // page and fetched on demand via tako_contents, never auto-inlined.
-      web: { count: 10, include_contents: false },
+      web: { count: 10, include_contents: false, snippet_max_chars: 2000 },
     });
   });
 
@@ -332,7 +332,7 @@ describe("tako_search response mapping", () => {
     expect(out.web_results).toHaveLength(1);
     expect(out.web_results[0]?.url).toBe("https://example.com/a");
     // Zero cards (even with web hits) still carries anti-retry guidance.
-    expect(out.guidance).toMatch(/do not retry/i);
+    expect(out.guidance).toMatch(/do not re-search/i);
   });
 
   it("populates auto-chain widget fields when the top card has card_id", async () => {

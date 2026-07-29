@@ -35,9 +35,12 @@ const MIN_TERM_LEN = 3;
 const NO_MATCH_HEAD_CHARS = 2000;
 
 export interface PassageResult {
-  /** The model-facing replacement for the full page text. */
+  /** The extracted passages (or, on a miss, the head of the page) — pure page
+   *  text, no header. The header lives in `note` so `data` stays clean. */
   data: string;
-  /** Whether any passage matched (false → `data` is the no-match notice + head). */
+  /** Match summary + next-step instruction, surfaced as the output's `note`. */
+  note: string;
+  /** Whether any passage matched (false → `data` is the page head). */
   matched: boolean;
   /** Whether any of the page text was omitted from `data`. */
   truncated: boolean;
@@ -170,11 +173,11 @@ export function extractPassages(text: string, query: string): PassageResult {
   if (hits.length === 0) {
     const head = text.slice(0, NO_MATCH_HEAD_CHARS);
     return {
-      data: [
-        `[tako_contents] Query "${query.trim()}" NOT FOUND in this page's text (${text.length} chars scanned, phrase and per-term). Treat this as a deterministic miss for this page — do not refetch it with a reworded query; try a different url. The first ${head.length} chars follow for orientation:`,
-        "",
-        head,
-      ].join("\n"),
+      data: head,
+      note:
+        `Query "${query.trim()}" NOT FOUND in this page's text (${text.length} chars scanned, phrase and per-term). ` +
+        `Treat this as a deterministic miss for this page — do not refetch it with a reworded query; try a different url. ` +
+        `data carries the first ${head.length} chars for orientation.`,
       matched: false,
       truncated: text.length > head.length,
     };
@@ -190,13 +193,13 @@ export function extractPassages(text: string, query: string): PassageResult {
     return `${prefix}${text.slice(start, end)}${suffix}`;
   });
   const covered = windows.reduce((sum, { start, end }) => sum + (end - start), 0);
-  const header =
-    `[tako_contents] ${hits.length}${saturated ? "+" : ""} match(es) for ${tier} — ` +
-    `${passages.length} passage(s) extracted from ${text.length} chars of page text. ` +
-    `Omit \`query\` to fetch the full text instead.`;
 
   return {
-    data: [header, "", passages.join("\n\n[…]\n\n")].join("\n"),
+    data: passages.join("\n\n[…]\n\n"),
+    note:
+      `${hits.length}${saturated ? "+" : ""} match(es) for ${tier} — ` +
+      `${passages.length} passage(s) extracted from ${text.length} chars of page text. ` +
+      `Omit \`query\` to fetch the full text instead.`,
     matched: true,
     truncated: covered < text.length,
   };

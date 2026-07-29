@@ -135,7 +135,7 @@ describe("tako_answer handler", () => {
     expect(body.query).toBe("What was US GDP in 2024?");
     expect(body.sources).toEqual({
       data: { include_contents: false },
-      web: { include_contents: false },
+      web: { include_contents: false, snippet_max_chars: 2000 },
     });
     // old flat shape + grounding-era nested inputs must NOT be present
     expect(body.source_indexes).toBeUndefined();
@@ -406,7 +406,7 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
     expect(body.sources).toEqual({
       data: { include_contents: true },
-      web: { include_contents: false },
+      web: { include_contents: false, snippet_max_chars: 2000 },
     });
   });
 

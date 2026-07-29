@@ -26,15 +26,20 @@ import {
 } from "./_chart_widget.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
+  renderSearchMarkdown,
+  searchSlimOutputShape,
+  slimSearchStructured,
+} from "./_render_markdown.js";
+import {
   buildSearchOutput,
-  dedupeCardBoilerplate,
+  hoistSourceGlossary,
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
-  searchOutputShape,
   slimCard,
   slimWebResult,
   takoCardSchema,
   webResultSchema,
+  type SearchOutput,
 } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
@@ -49,7 +54,11 @@ const DESCRIPTION = [
   "",
   "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. When no data card fits the query, the `web_results` can be your fallback: call `tako_contents` on the most relevant one's url to read its full page text (web urls are always fetchable; a card's full csv needs `exportable: true`).",
   "",
+  "Non-exportable cards (`exportable: false`, usually license-gated) return no rows: read the headline value from the card's `description` when it carries one, or get specific figures via `tako_answer` with the card's `nodes` ids pinned (each such card carries a `values_hint` saying exactly this).",
+  "",
   "If you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
+  "",
+  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, recent rows), then Web Results, then source notes. Machine essentials (request_id, usage, chart-widget fields) ride separately in structuredContent.",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -116,20 +125,16 @@ const inputSchema = z.object({
 
 type Input = z.infer<typeof inputSchema>;
 
-// Parity-check outcome: Path 2 — keep the hand-written outputSchema as the
-// MCP facade and validate the raw wire against the generated SearchResponse
-// contract before mapping.
-//
-// The generated SearchResponse has cards/web_results as *optional* (may be
-// absent on the wire). The hand-written facade (searchOutputShape) normalises
-// them to required arrays (defaulting ?? []) and also includes auto-chain
-// widget fields (pub_id, embed_url, image_url, dark_mode, width, height) that
-// are not present in SearchResponse. If we switched to outputSchema =
-// SearchResponse directly, existing widget tests would fail and the inline
-// chart rendering would break. The generated SearchResponse is therefore used
-// as the wire-guard (SearchResponse.safeParse on raw data) while the
-// hand-written schema remains the tool's advertised output shape.
-const outputSchema = z.object(searchOutputShape);
+// The ADVERTISED output schema is the SLIM structuredContent shape (widget
+// fields + request_id/usage/guidance): the full results — cards, web results,
+// glossary — reach the model as a rendered markdown text channel instead
+// (renderText below), and structuredContent shrinks to machine essentials so
+// hosts that count it toward context don't pay for the content twice. The
+// full internal shape (searchOutputShape) still types the handler's return
+// value; it is loose-compatible with the slim schema, so the SDK's
+// structured-output validation passes for both. The generated SearchResponse
+// stays the wire-guard (safeParse on the raw backend data before mapping).
+const outputSchema = searchSlimOutputShape;
 
 type Output = z.infer<typeof outputSchema>;
 
@@ -161,7 +166,10 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
     // Web page text is billed per page, so it is never auto-inlined regardless
     // of `include_contents` (which governs only the free Tako card preview).
     // The model fetches web text on demand via tako_contents(url).
-    sources.web = { count: input.count, include_contents: false };
+    // snippet_max_chars 2000 (backend default 1000): a meatier free excerpt
+    // per web result, so the model picks the right url for a priced
+    // tako_contents follow-up from a real excerpt instead of a headline.
+    sources.web = { count: input.count, include_contents: false, snippet_max_chars: 2000 };
   }
   const body: z.input<typeof SearchRequest> = {
     query: input.query,
@@ -190,7 +198,9 @@ const tako_search = {
     // closed-world there. See `annotationsByClient` in types.ts.
     chatgpt: { openWorldHint: false },
   },
-  async handler(input, ctx): Promise<Output> {
+  // Declared as the FULL internal shape (assignable to the slim advertised
+  // Output via its loose index signature) so tests and hooks keep real types.
+  async handler(input, ctx): Promise<SearchOutput> {
     // v3 SearchRequest takes a per-source `sources` OBJECT — an index is
     // searched iff its key is present, and `count` / `include_contents` are
     // per-source. The old flat `source_indexes` + `output_settings.count`
@@ -234,18 +244,31 @@ const tako_search = {
     const cap = input.include_contents
       ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
       : null;
-    return buildSearchOutput(
-      dedupeCardBoilerplate(cards.data.map((c) => slimCard(c, cap))),
+    const { cards: slimCards, glossary } = hoistSourceGlossary(
+      cards.data.map((c) => slimCard(c, cap)),
+    );
+    const output = buildSearchOutput(
+      slimCards,
       webResults.data.map(slimWebResult),
       wire.request_id,
       wire.usage ?? null,
       ctx.env,
       input.sources,
     );
+    // Glossary spreads on LAST so it serializes after the data — truncating
+    // clients then drop boilerplate first.
+    return glossary === undefined ? output : { ...output, sources_glossary: glossary };
+  },
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderSearchMarkdown(output as SearchOutput);
+  },
+  slimStructured(output) {
+    return slimSearchStructured(output as SearchOutput);
   },
   async extraMeta(output, ctx) {
-    // Skip the fetch on ChatGPT: its widget bundle takes the iframe
-    // path (`window.openai` defined → `shouldUseInteractiveIframe()`
+    // Skip the fetch on ChatGPT: its widget bundle takes the committed
+    // iframe path (`window.openai` defined → `hasOpenAiRuntime()`
     // true in `_chart_widget.ts`), which renders `embed_url` directly
     // and never reads `image_data_url` from `_meta`. Without this
     // gate we pay the full chart-render latency
