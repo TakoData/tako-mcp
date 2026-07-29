@@ -64,6 +64,7 @@ A search returns several cards and **#0 is frequently not what was asked for**. 
 - Growth rate / ratio → pull the levels, then compute: tako_answer {"query": "Apple annual revenue for FY24 and FY25", "sources": ["data", "web"]} → compute the % change yourself
 - Breadth recon → one narrow `tako_search` per company in parallel with `"sources": ["data"]` to see what exists; switch to `tako_answer` per company once you need the figures
 - Not in the graph → tako_answer {"query": "When is Nvidia's next earnings date?", "sources": ["data", "web"]} → no card carries it; the answer comes from the web citations, so say the figure is web-sourced
+
 ## Output (tight and structured)
 1) A 1–2 line read of the finding, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card

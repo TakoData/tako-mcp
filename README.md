@@ -250,8 +250,8 @@ Tools are discovered automatically via the MCP `tools/list` handshake, so your c
 | Tool | Description |
 | ---- | ----------- |
 | `tako_search` | **Pull the data to work with.** Fast search over Tako's curated graph and the live web; each card inlines its most-recent rows free (the 20-row inline allowance; `preview_rows` caps it down, `tako_contents` exports more, priced). Top result renders inline as a chart (an interactive MCP Apps widget on ChatGPT, a chart image elsewhere) with an **Open in Tako** link. Choose `sources` (`data`, `web`, or both) and `effort` (`fast` / `instant`). Parallelize broad questions into narrow single entity+metric searches for far better retrieval. |
-| `tako_answer` | **Ask one specific data question, get the answer.** A single grounded, citation-backed prose answer, already written for you — relay it directly. Cited data cards inline their recent rows alongside the prose; when zero data cards ground the answer, a `guidance` field says so deterministically (pivot, don't rephrase-retry). Ground in `data`, `web`, or both. |
-| `tako_contents` | Fetch the content behind a result URL: a Tako card returns a CSV, any other URL returns the page's extracted text — pass `query` to get just the matching passages of a long page. Cards must be marked `exportable: true` (web URLs are exempt). |
+| `tako_answer` | **Ask one specific data question, get the answer.** A single grounded, citation-backed prose answer, already written for you — relay it directly. Cited data cards carry a rows-count pointer alongside the prose, with the rows themselves in `structuredContent` (`cards[].content`); when zero data cards ground the answer, a `guidance` field says so deterministically (pivot, don't rephrase-retry). Ground in `data`, `web`, or both. |
+| `tako_contents` | Fetch the content behind result URLs (1-10 per call, batched): a Tako card returns a CSV, any other URL returns the page's extracted text — pass `query` to get just the matching passages of a long page. Cards must be marked `exportable: true` (web URLs are exempt). |
 | `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search/answer. Returns the coverage names, a `node_id` to pin, and — when the target is unambiguous — a ready-to-run `next_call` (search query + pinned nodes) to fetch the confirmed series. Free and fast. |
 
 **Free tier (no credentials):** an unauthenticated connection can run `tako_search`, `tako_answer`, and `tako_available_data` only, capped at 10 requests/min per IP. Most clients list just those three; ChatGPT also lists `tako_contents` and `tako_visualize`, which return a sign-in prompt until the account is linked. Authenticate (OAuth or Bearer) for the full surface above plus the opt-in tools below, under your own account limits.
@@ -398,6 +398,7 @@ A search returns several cards and **#0 is frequently not what was asked for**. 
 - Growth rate / ratio → pull the levels, then compute: tako_answer {"query": "Apple annual revenue for FY24 and FY25", "sources": ["data", "web"]} → compute the % change yourself
 - Breadth recon → one narrow `tako_search` per company in parallel with `"sources": ["data"]` to see what exists; switch to `tako_answer` per company once you need the figures
 - Not in the graph → tako_answer {"query": "When is Nvidia's next earnings date?", "sources": ["data", "web"]} → no card carries it; the answer comes from the web citations, so say the figure is web-sourced
+
 ## Output (tight and structured)
 1) A 1–2 line read of the finding, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card
@@ -480,6 +481,7 @@ Field names depend on the response format, so the checks below name the **concep
 - App usage → tako_answer {"query": "How many monthly active users does the Spotify app have?", "sources": ["data", "web"]} → say whether you quoted SimilarWeb or company-reported MAU
 - Cohort fan-out → `tako_search` with `"sources": ["data"]` to see which domains are covered, then one `tako_answer` per domain for the figures
 - Brand-shaped ask ("how much traffic does Netflix get?") → resolve to the domain yourself and ask about `netflix.com`; never answer from a subscriber card
+
 ## Output (tight and structured)
 1) A 1–2 line read of the traffic, referencing the inline chart
 2) SimilarWeb — as-of month, and say so plainly when a figure came from the web rather than a card
@@ -568,6 +570,7 @@ Tako auto-renders #0, and for macro the **least-specific or stalest card often r
 - Indicator-name question (free; note the arg is `q`) → tako_available_data {"q": "US core PCE"} → then pin the exact name: tako_answer {"query": "US core PCE price index % change", "sources": ["data"]}
 - Parallel multi-metric → four calls for CPI, core CPI, core PCE (% change) and PCE (% change); `tako_search` with `"sources": ["data"]` to see what exists, `tako_answer` per metric when you need the values (take the "(% Change)" cards; plain "PCE Price Index" cards are index levels)
 - Bloc-level ask → no Eurozone card exists; query member countries in parallel and aggregate, or take the figure from the web citations and label it web-sourced
+
 ## Output (tight and structured)
 1) A 1–2 line read of the indicator, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card

@@ -52,6 +52,7 @@ Field names depend on the response format, so the checks below name the **concep
 - App usage → tako_answer {"query": "How many monthly active users does the Spotify app have?", "sources": ["data", "web"]} → say whether you quoted SimilarWeb or company-reported MAU
 - Cohort fan-out → `tako_search` with `"sources": ["data"]` to see which domains are covered, then one `tako_answer` per domain for the figures
 - Brand-shaped ask ("how much traffic does Netflix get?") → resolve to the domain yourself and ask about `netflix.com`; never answer from a subscriber card
+
 ## Output (tight and structured)
 1) A 1–2 line read of the traffic, referencing the inline chart
 2) SimilarWeb — as-of month, and say so plainly when a figure came from the web rather than a card

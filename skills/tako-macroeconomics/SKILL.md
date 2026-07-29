@@ -58,6 +58,7 @@ Tako auto-renders #0, and for macro the **least-specific or stalest card often r
 - Indicator-name question (free; note the arg is `q`) → tako_available_data {"q": "US core PCE"} → then pin the exact name: tako_answer {"query": "US core PCE price index % change", "sources": ["data"]}
 - Parallel multi-metric → four calls for CPI, core CPI, core PCE (% change) and PCE (% change); `tako_search` with `"sources": ["data"]` to see what exists, `tako_answer` per metric when you need the values (take the "(% Change)" cards; plain "PCE Price Index" cards are index levels)
 - Bloc-level ask → no Eurozone card exists; query member countries in parallel and aggregate, or take the figure from the web citations and label it web-sourced
+
 ## Output (tight and structured)
 1) A 1–2 line read of the indicator, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card
