@@ -28,9 +28,9 @@ import { extractPassages } from "./_passages.js";
 import {
   renderContentsText,
   slimContentsStructured,
-  type ContentsOutputLike,
+  type ContentsBatchLike,
 } from "./_render_markdown.js";
-import type { ToolModule } from "./types.js";
+import type { ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
   "Fetch the real content behind one result URL from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.",
@@ -47,10 +47,27 @@ const DESCRIPTION = [
 // silently join the MCP input surface), then re-describe them for the MCP
 // surface — including the one documented divergence (default mode → inline),
 // the `max_rows` row cap, and the `content_format` serialization.
+/** Max URLs per call. The backend takes one URL per request, so a batch
+ *  fans out to N subrequests; this bounds both the Workers subrequest budget
+ *  and the bill a single call can run up. */
+export const MAX_CONTENTS_URLS = 10;
+
 const inputSchema = ContentsRequest.pick({ url: true }).extend({
-  // The spec has no minLength on `url`; re-add the prior local .min(1) guard so
-  // an empty-string url is rejected at the MCP layer instead of hitting the API.
-  url: ContentsRequest.shape.url.min(1),
+  urls: z
+    .array(ContentsRequest.shape.url.min(1))
+    .min(1)
+    .max(MAX_CONTENTS_URLS)
+    .optional()
+    .describe(
+      `The result URLs to fetch, 1-${MAX_CONTENTS_URLS} per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an \`error\` instead of a payload).`,
+    ),
+  // Legacy single-URL form, kept so an in-flight caller pinned to the old
+  // schema keeps working. `urls` is the documented shape; exactly one of the
+  // two must be present.
+  url: ContentsRequest.shape.url
+    .min(1)
+    .optional()
+    .describe("Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`."),
   mode: ContentsDeliveryMode
     .default("inline")
     .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
@@ -120,7 +137,7 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
 // Minimal-envelope output: every field is omitted when it carries nothing —
 // a web-page fetch is essentially {data, cost}, matching how a model actually
 // reads it, instead of ten fields of nulls around one payload.
-const outputSchema = z.object({
+const itemSchema = z.object({
   // Passage-extraction summary (present only when `query` was used): match
   // count + how to get the full text. Kept OUT of `data` so `data` is pure
   // page text.
@@ -155,7 +172,199 @@ const outputSchema = z.object({
   cost: z.number(),
 });
 
+type ContentItemOutput = z.infer<typeof itemSchema>;
+
+// Batch envelope. `results` is positionally aligned with the requested urls,
+// so results[i] always describes urls[i] — including the failures, which carry
+// `error` in place of a payload rather than being dropped (a compacted array
+// would silently re-map every index after the first failure).
+const outputSchema = z.object({
+  results: z.array(
+    itemSchema.extend({
+      // Which requested URL this entry is for — the array is positional, but
+      // an explicit url survives reordering and truncation downstream.
+      url: z.string(),
+      // Present INSTEAD of a payload when this URL alone failed. The other
+      // entries are unaffected.
+      error: z.string().optional(),
+    }),
+  ),
+  // Sum of the per-item costs actually charged across the batch.
+  cost: z.number(),
+});
+
 type Output = z.infer<typeof outputSchema>;
+
+/** Fetch ONE url. Throws on failure so the caller can decide whether a single
+ *  URL's error degrades to an entry or fails the whole batch. */
+type Input = z.infer<typeof inputSchema>;
+
+/** One URL's failure, as text the model can act on. Prefers the
+ *  self-correcting `modelGuidance` the 403/404 paths attach, so a gated card
+ *  inside a batch still explains itself instead of surfacing a bare status. */
+function errorText(reason: unknown): string {
+  if (reason instanceof DjangoHttpError) {
+    if (reason.modelGuidance !== undefined) return reason.modelGuidance;
+    const detail = extractErrorDetail(reason.body);
+    return `Fetch failed (${reason.status}${detail !== undefined ? `: ${detail}` : ""}).`;
+  }
+  return reason instanceof Error ? reason.message : String(reason);
+}
+
+async function fetchOne(
+  url: string,
+  input: Input,
+  ctx: ToolContext,
+): Promise<ContentItemOutput> {
+  // `query`/`urls` are MCP-layer knobs, NOT wire fields — strip them or the
+  // backend's extra="forbid" 400s the request. The rest conforms to the
+  // generated ContentsRequest contract (url + mode + optional max_rows).
+  const { query: passageQuery, max_chars: maxCharsAsked, urls: _urls, url: _url, ...rest } = input;
+  void _urls;
+  void _url;
+  const inline = input.mode !== "url";
+  // Effective web-text cap (see the max_chars schema comment for the full
+  // rationale): query pins the ceiling so passages scan the whole page;
+  // plain inline defaults to 100k; url mode sends nothing unless the caller
+  // set a cap explicitly — an undefined here both leaves the wire field off
+  // and disables the derived-truncation check below.
+  const maxChars =
+    inline && passageQuery !== undefined
+      ? 1_000_000
+      : maxCharsAsked ?? (inline ? 100_000 : undefined);
+  const body = {
+    ...rest,
+    url,
+    ...(maxChars !== undefined ? { max_chars: maxChars } : {}),
+  };
+  void (body satisfies z.input<typeof ContentsRequest>);
+  let raw: unknown;
+  try {
+    raw = await djangoPost<unknown>(
+      ctx.env,
+      ctx.token,
+      "/api/v1/contents/",
+      body,
+      { timeoutMs: 60_000 },
+    );
+  } catch (err) {
+    // Map the two "this URL has no exportable content" statuses to
+    // self-correcting messages so the model stops retrying and falls back
+    // to the card's preview/metadata. Per the OpenAPI contract: 403 is the
+    // export-safe gate (e.g. protected-source export); 404 is "does not
+    // exist or has no exportable data". Both are framed as the LIKELY
+    // cause — not asserted fact — since 403 in particular can have other
+    // causes (cf. _graph.ts, where a 403 on /beta/graph is an edge block,
+    // not a query problem). The backend's detail is spliced in only when
+    // extractErrorDetail recognises a structured envelope — a raw slice
+    // would flood the model text with an edge/WAF HTML block page.
+    //
+    // Note the 403 message does NOT claim the card lacked a `content`
+    // attribute: the search/answer adapter sets `content` via the lenient
+    // supports_data_export(), while this endpoint gates on the stricter
+    // export_safe() — so the card that lands here may well have carried
+    // one (presence is necessary for export, not sufficient).
+    // Attach a self-correcting message via `modelGuidance` and re-throw the
+    // ORIGINAL DjangoError (rather than a plain Error). registerTool then
+    // routes it through djangoErrorToToolResult, so contents 403/404 keep the
+    // same `_meta["tako/error"]` envelope (kind/status/body) every other tool
+    // emits, while the model still sees the guidance in the text channel.
+    // The guidance already splices the recognised backend detail, so
+    // djangoErrorToToolResult uses it verbatim (no second splice).
+    if (err instanceof DjangoHttpError && err.status === 403) {
+      const detail = extractErrorDetail(err.body);
+      err.modelGuidance = `The contents endpoint refused this export (403${detail !== undefined ? `: ${detail}` : ""}). For a Tako card this usually means the export gate rejected it as unexportable — possible even for an \`exportable: true\` card, since that flag is necessary for export but does not guarantee it. Don't retry or rephrase; use the card's title, inline preview, and chart instead. Never call tako_contents on a card whose result had \`exportable: false\` (equivalently, a missing or null \`content\` attribute).`;
+      throw err;
+    }
+    if (err instanceof DjangoNotFoundError) {
+      const detail = extractErrorDetail(err.body);
+      err.modelGuidance = `The contents endpoint found nothing downloadable at that URL (404${detail !== undefined ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result had \`exportable: true\` (a non-null \`content\` attribute) are exportable.`;
+      throw err;
+    }
+    throw err;
+  }
+  // Validate the raw wire response against the generated ContentsResponse so
+  // backend drift (renamed fields, restructured contents array) throws here
+  // instead of silently mapping to nulls downstream.
+  const wireResult = ContentsResponse.safeParse(raw);
+  if (!wireResult.success) {
+    // Zod detail goes to the server log only — the raw issue dump is
+    // upstream-echoed content and noise for the model (Safety Rules).
+    logWireGuardFailure("tako_contents", "ContentsResponse", wireResult.error, raw);
+    throw new Error(
+      "Tako contents endpoint returned an unexpected wire shape. Retry once; if it persists, flag it to the Tako team.",
+    );
+  }
+  const wire = wireResult.data;
+  const item = wire.contents?.[0];
+  if (!item) {
+    logWireGuardFailure("tako_contents", "empty-contents", undefined, raw);
+    throw new Error(
+      "Tako contents endpoint returned no downloadable content for that URL.",
+    );
+  }
+  // Passage extraction (web text + inline mode only): replace the full page
+  // text with the windows around the query's matches, and surface the match
+  // summary as `note`. Card payloads (content_format "csv"/"json_*") and
+  // url-mode responses (no inline data) pass through untouched. Billing is
+  // unchanged — the full text was fetched; this only slims what reaches the
+  // model. Web text is identified by a MISSING content_format (cards always
+  // carry one).
+  let dataText = item.data ?? undefined;
+  let note: string | undefined;
+  let cut = item.truncated ?? false;
+  // Derive `truncated` for capped web text: the backend's `truncated` flag
+  // is rows-only (never set on the web route), so a page cut at max_chars
+  // would otherwise arrive with no truncation signal at all — and the
+  // minimal envelope reads absence as "complete". Length AT the cap is
+  // treated as cut; the false positive (a page exactly cap-length) is
+  // vanishingly rare next to the guaranteed false "complete" on every long
+  // page. Web text is identified by a missing content_format (cards always
+  // carry one).
+  if (
+    item.content_format == null &&
+    typeof dataText === "string" &&
+    maxChars !== undefined &&
+    dataText.length >= maxChars
+  ) {
+    cut = true;
+  }
+  if (
+    passageQuery !== undefined &&
+    item.content_format == null &&
+    typeof dataText === "string"
+  ) {
+    const extracted = extractPassages(dataText, passageQuery);
+    dataText = extracted.data;
+    note = extracted.note;
+    cut = cut || extracted.truncated;
+  }
+  // Minimal envelope: include a field only when it carries something. Key
+  // order is payload-first (note explains data, so it leads), metadata last —
+  // truncating clients then lose the trailing chrome, never the content. A
+  // web fetch is {data, cost}; url mode is {download_url, expires_at, cost};
+  // source_url only rides when the fetch was redirected off the requested url.
+  const parsed = itemSchema.safeParse({
+    ...(note !== undefined ? { note } : {}),
+    ...(dataText !== undefined ? { data: dataText } : {}),
+    ...(item.records != null ? { records: item.records } : {}),
+    ...(item.dataset != null ? { dataset: item.dataset } : {}),
+    ...(item.content_format != null ? { format: item.content_format } : {}),
+    ...(item.total_rows != null ? { total_rows: item.total_rows } : {}),
+    ...(cut ? { truncated: true } : {}),
+    ...(item.url != null ? { download_url: item.url } : {}),
+    ...(item.expires_at != null ? { expires_at: item.expires_at } : {}),
+    ...(item.source_url != null && item.source_url !== url
+      ? { source_url: item.source_url }
+      : {}),
+    cost: item.cost ?? 0,
+  });
+  if (!parsed.success) {
+    logWireGuardFailure("tako_contents", "output-normalise", parsed.error, raw);
+    throw new Error("Tako contents endpoint returned an unexpected shape.");
+  }
+  return parsed.data;
+}
 
 const takoContents = {
   name: "tako_contents",
@@ -175,153 +384,42 @@ const takoContents = {
     chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<Output> {
-    // `query` is an MCP-layer knob (passage extraction below), NOT a wire
-    // field — strip it or the backend's extra="forbid" 400s the request. The
-    // rest conforms to the generated ContentsRequest contract (url + mode +
-    // optional max_rows); max_rows, when omitted, is absent from `input` and so
-    // dropped from the JSON body — the backend then applies its 20-row default.
-    const { query: passageQuery, max_chars: maxCharsAsked, ...rest } = input;
-    const inline = input.mode !== "url";
-    // Effective web-text cap (see the max_chars schema comment for the full
-    // rationale): query pins the ceiling so passages scan the whole page;
-    // plain inline defaults to 100k; url mode sends nothing unless the caller
-    // set a cap explicitly — an undefined here both leaves the wire field off
-    // and disables the derived-truncation check below.
-    const maxChars =
-      inline && passageQuery !== undefined
-        ? 1_000_000
-        : maxCharsAsked ?? (inline ? 100_000 : undefined);
-    const body = {
-      ...rest,
-      ...(maxChars !== undefined ? { max_chars: maxChars } : {}),
-    };
-    void (body satisfies z.input<typeof ContentsRequest>);
-    let raw: unknown;
-    try {
-      raw = await djangoPost<unknown>(
-        ctx.env,
-        ctx.token,
-        "/api/v1/contents/",
-        body,
-        { timeoutMs: 60_000 },
-      );
-    } catch (err) {
-      // Map the two "this URL has no exportable content" statuses to
-      // self-correcting messages so the model stops retrying and falls back
-      // to the card's preview/metadata. Per the OpenAPI contract: 403 is the
-      // export-safe gate (e.g. protected-source export); 404 is "does not
-      // exist or has no exportable data". Both are framed as the LIKELY
-      // cause — not asserted fact — since 403 in particular can have other
-      // causes (cf. _graph.ts, where a 403 on /beta/graph is an edge block,
-      // not a query problem). The backend's detail is spliced in only when
-      // extractErrorDetail recognises a structured envelope — a raw slice
-      // would flood the model text with an edge/WAF HTML block page.
-      //
-      // Note the 403 message does NOT claim the card lacked a `content`
-      // attribute: the search/answer adapter sets `content` via the lenient
-      // supports_data_export(), while this endpoint gates on the stricter
-      // export_safe() — so the card that lands here may well have carried
-      // one (presence is necessary for export, not sufficient).
-      // Attach a self-correcting message via `modelGuidance` and re-throw the
-      // ORIGINAL DjangoError (rather than a plain Error). registerTool then
-      // routes it through djangoErrorToToolResult, so contents 403/404 keep the
-      // same `_meta["tako/error"]` envelope (kind/status/body) every other tool
-      // emits, while the model still sees the guidance in the text channel.
-      // The guidance already splices the recognised backend detail, so
-      // djangoErrorToToolResult uses it verbatim (no second splice).
-      if (err instanceof DjangoHttpError && err.status === 403) {
-        const detail = extractErrorDetail(err.body);
-        err.modelGuidance = `The contents endpoint refused this export (403${detail !== undefined ? `: ${detail}` : ""}). For a Tako card this usually means the export gate rejected it as unexportable — possible even for an \`exportable: true\` card, since that flag is necessary for export but does not guarantee it. Don't retry or rephrase; use the card's title, inline preview, and chart instead. Never call tako_contents on a card whose result had \`exportable: false\` (equivalently, a missing or null \`content\` attribute).`;
-        throw err;
-      }
-      if (err instanceof DjangoNotFoundError) {
-        const detail = extractErrorDetail(err.body);
-        err.modelGuidance = `The contents endpoint found nothing downloadable at that URL (404${detail !== undefined ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result had \`exportable: true\` (a non-null \`content\` attribute) are exportable.`;
-        throw err;
-      }
-      throw err;
-    }
-    // Validate the raw wire response against the generated ContentsResponse so
-    // backend drift (renamed fields, restructured contents array) throws here
-    // instead of silently mapping to nulls downstream.
-    const wireResult = ContentsResponse.safeParse(raw);
-    if (!wireResult.success) {
-      // Zod detail goes to the server log only — the raw issue dump is
-      // upstream-echoed content and noise for the model (Safety Rules).
-      logWireGuardFailure("tako_contents", "ContentsResponse", wireResult.error, raw);
+    const targets = input.urls ?? (input.url !== undefined ? [input.url] : []);
+    if (targets.length === 0) {
       throw new Error(
-        "Tako contents endpoint returned an unexpected wire shape. Retry once; if it persists, flag it to the Tako team.",
+        "tako_contents needs at least one URL: pass `urls: [\"…\"]` (1-" +
+          MAX_CONTENTS_URLS +
+          " per call).",
       );
     }
-    const wire = wireResult.data;
-    const item = wire.contents?.[0];
-    if (!item) {
-      logWireGuardFailure("tako_contents", "empty-contents", undefined, raw);
-      throw new Error(
-        "Tako contents endpoint returned no downloadable content for that URL.",
-      );
-    }
-    // Passage extraction (web text + inline mode only): replace the full page
-    // text with the windows around the query's matches, and surface the match
-    // summary as `note`. Card payloads (content_format "csv"/"json_*") and
-    // url-mode responses (no inline data) pass through untouched. Billing is
-    // unchanged — the full text was fetched; this only slims what reaches the
-    // model. Web text is identified by a MISSING content_format (cards always
-    // carry one).
-    let dataText = item.data ?? undefined;
-    let note: string | undefined;
-    let cut = item.truncated ?? false;
-    // Derive `truncated` for capped web text: the backend's `truncated` flag
-    // is rows-only (never set on the web route), so a page cut at max_chars
-    // would otherwise arrive with no truncation signal at all — and the
-    // minimal envelope reads absence as "complete". Length AT the cap is
-    // treated as cut; the false positive (a page exactly cap-length) is
-    // vanishingly rare next to the guaranteed false "complete" on every long
-    // page. Web text is identified by a missing content_format (cards always
-    // carry one).
-    if (
-      item.content_format == null &&
-      typeof dataText === "string" &&
-      maxChars !== undefined &&
-      dataText.length >= maxChars
-    ) {
-      cut = true;
-    }
-    if (
-      passageQuery !== undefined &&
-      item.content_format == null &&
-      typeof dataText === "string"
-    ) {
-      const extracted = extractPassages(dataText, passageQuery);
-      dataText = extracted.data;
-      note = extracted.note;
-      cut = cut || extracted.truncated;
-    }
-    // Minimal envelope: include a field only when it carries something. Key
-    // order is payload-first (note explains data, so it leads), metadata last —
-    // truncating clients then lose the trailing chrome, never the content. A
-    // web fetch is {data, cost}; url mode is {download_url, expires_at, cost};
-    // source_url only rides when the fetch was redirected off the requested url.
-    const parsed = outputSchema.safeParse({
-      ...(note !== undefined ? { note } : {}),
-      ...(dataText !== undefined ? { data: dataText } : {}),
-      ...(item.records != null ? { records: item.records } : {}),
-      ...(item.dataset != null ? { dataset: item.dataset } : {}),
-      ...(item.content_format != null ? { format: item.content_format } : {}),
-      ...(item.total_rows != null ? { total_rows: item.total_rows } : {}),
-      ...(cut ? { truncated: true } : {}),
-      ...(item.url != null ? { download_url: item.url } : {}),
-      ...(item.expires_at != null ? { expires_at: item.expires_at } : {}),
-      ...(item.source_url != null && item.source_url !== input.url
-        ? { source_url: item.source_url }
-        : {}),
-      cost: item.cost ?? 0,
+    // Fan out: the backend takes ONE url per request, so a batch is N
+    // subrequests issued concurrently. allSettled, not all — one URL's 403
+    // (a license-gated card) must not discard the pages that did resolve.
+    const settled = await Promise.allSettled(
+      targets.map((u) => fetchOne(u, input, ctx)),
+    );
+    const results = settled.map((s, i) => {
+      const url = targets[i] as string;
+      if (s.status === "fulfilled") return { ...s.value, url };
+      return { url, cost: 0, error: errorText(s.reason) };
     });
-    if (!parsed.success) {
-      logWireGuardFailure("tako_contents", "output-normalise", parsed.error, raw);
+    // Every URL failed: there is no partial payload worth returning, so
+    // re-throw the first failure. That keeps the single-URL path behaving
+    // exactly as before — DjangoHttpError with its self-correcting
+    // `modelGuidance` still reaches registerTool's error envelope.
+    const firstFailure = settled.find((s) => s.status === "rejected");
+    if (firstFailure !== undefined && results.every((r) => r.error !== undefined)) {
+      throw (firstFailure as PromiseRejectedResult).reason;
+    }
+    const parsedBatch = outputSchema.safeParse({
+      results,
+      cost: results.reduce((sum, r) => sum + (r.cost ?? 0), 0),
+    });
+    if (!parsedBatch.success) {
+      logWireGuardFailure("tako_contents", "output-normalise", parsedBatch.error, results);
       throw new Error("Tako contents endpoint returned an unexpected shape.");
     }
-    return parsed.data;
+    return parsedBatch.data;
   },
   // The payload (page text / csv / json) reaches the model as plain text —
   // this is where the JSON-escaping tax on 100k-char pages dies — and
@@ -329,10 +427,10 @@ const takoContents = {
   // already validates the slim subset.
   renderText(output, _ctx) {
     void _ctx;
-    return renderContentsText(output as unknown as ContentsOutputLike);
+    return renderContentsText(output as unknown as ContentsBatchLike);
   },
   slimStructured(output) {
-    return slimContentsStructured(output as unknown as ContentsOutputLike);
+    return slimContentsStructured(output as unknown as ContentsBatchLike);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

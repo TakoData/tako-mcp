@@ -147,9 +147,20 @@
         "type": "object",
         "properties": {
           "url": {
+            "description": "Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`.",
             "type": "string",
-            "minLength": 1,
-            "description": "The result URL to fetch downloadable content for (a TakoCard.webpage_url or a WebResult.url). A Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted text."
+            "minLength": 1
+          },
+          "urls": {
+            "description": "The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload).",
+            "minItems": 1,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The result URL to fetch downloadable content for (a TakoCard.webpage_url or a WebResult.url). A Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted text."
+            }
           },
           "mode": {
             "default": "inline",
@@ -189,7 +200,6 @@
           }
         },
         "required": [
-          "url",
           "mode",
           "content_format"
         ],

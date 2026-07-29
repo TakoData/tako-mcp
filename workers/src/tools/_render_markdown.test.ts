@@ -252,14 +252,13 @@ describe("upstream-content isolation", () => {
 
   it("grows the fence past any backtick run inside page text (no early close)", () => {
     const breakout = "before\n```\n## Fake Section\n```\nafter";
-    const md = renderContentsText({ data: breakout, cost: 0 });
+    const md = renderContentsText({ results: [{ data: breakout, cost: 0 }], cost: 0 });
     expect(md).toContain(`\`\`\`\`text\n${breakout}\n\`\`\`\``);
   });
 
   it("grows the fence past backtick runs in card csv too", () => {
     const md = renderContentsText({
-      format: "csv",
-      data: "label,v\n\"```\",1",
+      results: [{ format: "csv", data: "label,v\n\"```\",1", cost: 0 }],
       cost: 0,
     });
     expect(md).toContain("````csv\n");
@@ -454,9 +453,12 @@ describe("renderAgentRunMarkdown + slim", () => {
 describe("renderContentsText + slim", () => {
   it("web text: note leads, page text rides fenced but VERBATIM (no JSON escaping), metadata footers", () => {
     const md = renderContentsText({
-      note: "2 match(es) for the phrase \"RevPAR\"",
-      data: "line one\nline two",
-      truncated: true,
+      results: [{
+        note: "2 match(es) for the phrase \"RevPAR\"",
+        data: "line one\nline two",
+        truncated: true,
+        cost: 0.001,
+      }],
       cost: 0.001,
     });
     expect(md.startsWith("> 2 match(es)")).toBe(true);
@@ -469,9 +471,12 @@ describe("renderContentsText + slim", () => {
 
   it("card csv rides in a fence with total_rows in the footer", () => {
     const md = renderContentsText({
-      format: "csv",
-      data: "date,v\n2026-01-01,1",
-      total_rows: 1500,
+      results: [{
+        format: "csv",
+        data: "date,v\n2026-01-01,1",
+        total_rows: 1500,
+        cost: 0.001,
+      }],
       cost: 0.001,
     });
     expect(md).toContain("```csv\ndate,v\n2026-01-01,1\n```");
@@ -480,8 +485,11 @@ describe("renderContentsText + slim", () => {
 
   it("url mode renders the download link + expiry", () => {
     const md = renderContentsText({
-      download_url: "https://signed/csv",
-      expires_at: "2026-07-29T00:00:00Z",
+      results: [{
+        download_url: "https://signed/csv",
+        expires_at: "2026-07-29T00:00:00Z",
+        cost: 0,
+      }],
       cost: 0,
     });
     expect(md).toContain("Download: https://signed/csv (expires 2026-07-29T00:00:00Z)");
@@ -489,12 +497,12 @@ describe("renderContentsText + slim", () => {
 
   it("slims structuredContent to metadata only (payload channels dropped)", () => {
     const slim = slimContentsStructured({
-      note: "n",
-      data: "big page text",
-      format: "csv",
-      total_rows: 3,
+      results: [{ note: "n", data: "big page text", format: "csv", total_rows: 3, cost: 0.5 }],
       cost: 0.5,
     });
-    expect(slim).toEqual({ format: "csv", total_rows: 3, cost: 0.5 });
+    expect(slim).toEqual({
+      results: [{ format: "csv", total_rows: 3, cost: 0.5 }],
+      cost: 0.5,
+    });
   });
 });

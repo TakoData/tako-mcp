@@ -230,8 +230,11 @@
       "parameters": {
         "url": {
           "type": "string",
-          "description": "The result URL to fetch downloadable content for (a TakoCard.webpage_url or a WebResult.url). A Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted text.",
-          "required": true
+          "description": "Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`."
+        },
+        "urls": {
+          "type": "array",
+          "description": "The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload)."
         },
         "mode": {
           "type": "string",
