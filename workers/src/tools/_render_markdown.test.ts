@@ -382,7 +382,7 @@ describe("renderAvailableDataMarkdown + slim", () => {
     expect(md.startsWith("Tako's proprietary data")).toBe(true);
     expect(md).toContain("**Tesla, Inc.** (`ent_tsla`) — metrics (187 total):");
     expect(md).toContain("Revenue, Gross Margin");
-    expect(md).toContain("…and 185 more server-side");
+    expect(md).toContain("…and 185 more not shown (treat a name you don't see as unconfirmed, not absent).");
     expect(md).toContain('```json\n{"tool":"tako_search"');
   });
 

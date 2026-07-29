@@ -286,56 +286,37 @@ describe("buildSummary", () => {
     expect(s).toContain("next_call");
   });
 
-  it("coverage_filter header claims a filter-miss only when every drill loaded", () => {
-    const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
-    // Pure filter-miss (all drills loaded, zero matched) → filter header.
-    const pure = buildSummary({
-      query: "tesla", matches: [bare], otherMatches: [], coverageFilter: "zebra",
-    });
-    expect(pure).toContain('no coverage matching coverage_filter "zebra"');
-    // A transient drill failure in the mix → the filter verdict is unproven;
-    // generic header, per-match lines carry the detail.
-    const mixed = buildSummary({
-      query: "tesla",
-      matches: [bare, unavailableMatch(entityNode())],
-      otherMatches: [],
-      coverageFilter: "zebra",
-    });
-    expect(mixed).toContain("but none with live data coverage:");
-    expect(mixed).not.toContain('no coverage matching coverage_filter "zebra":');
-  });
-
   it("buildNextCall: handle from the first match WITH coverage; null when none has any", () => {
-    expect(buildNextCall([appleMatch], false)).toEqual({
+    expect(buildNextCall([appleMatch])).toEqual({
       tool: "tako_search",
       query: "Apple Inc. Revenue",
       node_ids: ["apple-inc"],
     });
-    expect(buildNextCall([inflationMatch], false)).toEqual({
+    expect(buildNextCall([inflationMatch])).toEqual({
       tool: "tako_search",
       query: "United States Inflation Rate",
       node_ids: ["inflation-rate"],
     });
     const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
     // Skips the coverage-less match, lands on the one with names.
-    expect(buildNextCall([bare, appleMatch], false)?.query).toBe("Apple Inc. Revenue");
-    expect(buildNextCall([bare], false)).toBeNull();
-    expect(buildNextCall([unavailableMatch(entityNode())], false)).toBeNull();
+    expect(buildNextCall([bare, appleMatch])?.query).toBe("Apple Inc. Revenue");
+    expect(buildNextCall([bare])).toBeNull();
+    expect(buildNextCall([unavailableMatch(entityNode())])).toBeNull();
   });
 
-  it("buildNextCall gates on ambiguity: broad unfiltered coverage → null; filtered → handle", () => {
+  it("buildNextCall gates on ambiguity: broad coverage → null, small coverage → handle", () => {
     const broad = buildMatch(
       entityNode({ id: "cof", name: "Capital One" }),
       group("metrics", ["A", "B", "C", "D"], 250),
     );
-    expect(buildNextCall([broad], false)).toBeNull(); // > NEXT_CALL_MAX_NAMES, no filter
-    expect(buildNextCall([broad], true)?.query).toBe("Capital One A"); // filter = intent
-    // At the boundary: a small list is unambiguous even unfiltered.
+    // A broad entity's top metric is arbitrary — no handle, at any time.
+    expect(buildNextCall([broad])).toBeNull();
+    // A small list is unambiguous.
     const small = buildMatch(
       entityNode({ id: "x", name: "X Corp" }),
       group("metrics", ["A", "B", "C"], 3),
     );
-    expect(buildNextCall([small], false)?.query).toBe("X Corp A");
+    expect(buildNextCall([small])?.query).toBe("X Corp A");
   });
 
   it("keeps the preview constants positive", () => {

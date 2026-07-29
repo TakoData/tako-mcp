@@ -315,33 +315,32 @@ describe("tako_available_data", () => {
     expect(out.matches[0]?.coverage.truncated).toBe(true);
   });
 
-  it("threads coverage_filter as q into every drill page, never into graph/search", async () => {
+  it("never narrows a drill server-side: the drill carries no q (full coverage, always)", async () => {
+    // coverage_filter used to thread the caller's term into the drill's `q`.
+    // It produced bare negatives the model would not trust, so it re-called
+    // this tool unfiltered anyway — the filtered call was pure overhead.
+    // Drills are now always unfiltered; a truncated list is the honest cost.
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { results: [searchHit("cof", "Capital One Financial")] }),
       jsonResponse(200, drill("cof", "Capital One Financial", "metrics", ["Net charges-off/(Recoveries) (Quarterly)"], 3)),
     ]);
-    const out = await takoAvailableData.handler(
-      { q: "capital one", coverage_filter: "charge" }, CTX,
-    );
+    const out = await takoAvailableData.handler({ q: "capital one" }, CTX);
     const searchUrl = new URL(requestFrom(fetchMock.mock.calls[0]).url);
-    expect(searchUrl.searchParams.get("q")).toBe("capital one"); // entity term, unfiltered
+    expect(searchUrl.searchParams.get("q")).toBe("capital one");
     const drillUrl = new URL(requestFrom(fetchMock.mock.calls[1]).url);
-    expect(drillUrl.searchParams.get("q")).toBe("charge");
+    expect(drillUrl.searchParams.get("q")).toBeNull();
     expect(out.found).toBe(true);
-    expect(out.summary).toContain('matching "charge"');
+    expect(out.summary).not.toContain("matching");
   });
 
-  it("a zero-match coverage_filter reads as 'filter matched nothing', NOT a coverage gap", async () => {
+  it("empty coverage reads as a genuine gap the agent can act on", async () => {
     mockFetchSequence([
       jsonResponse(200, { results: [searchHit("cof", "Capital One Financial")] }),
       jsonResponse(200, drill("cof", "Capital One Financial", "metrics", [])),
     ]);
-    const out = await takoAvailableData.handler(
-      { q: "capital one", coverage_filter: "zebra" }, CTX,
-    );
+    const out = await takoAvailableData.handler({ q: "capital one" }, CTX);
     expect(out.found).toBe(false);
-    expect(out.summary).toContain('coverage_filter "zebra"');
-    expect(out.summary).not.toContain("no metrics for it yet");
+    expect(out.summary).toContain("no metrics for it yet");
   });
 
   it("returns a ready-to-run next_call handle when the coverage list is small (unambiguous)", async () => {
@@ -373,25 +372,6 @@ describe("tako_available_data", () => {
     expect(out.next_call).toBeNull();
     expect(out.summary).not.toContain("next_call");
     expect(out.summary).toContain('(e.g. "Capital One Financial EV/NTM Revenue")');
-  });
-
-  it("emits next_call for a broad coverage WHEN a coverage_filter narrowed it to intent", async () => {
-    mockFetchSequence([
-      jsonResponse(200, { results: [searchHit("cof", "Capital One Financial")] }),
-      jsonResponse(200, drill(
-        "cof", "Capital One Financial", "metrics",
-        ["Net charges-off/(Recoveries) (Quarterly)", "Net charges-off/(Recoveries) (Annual)",
-         "Net charges-off ratio", "Charges-off, gross"], 4,
-      )),
-    ]);
-    const out = await takoAvailableData.handler(
-      { q: "capital one", coverage_filter: "charges-off" }, CTX,
-    );
-    expect(out.next_call).toEqual({
-      tool: "tako_search",
-      query: "Capital One Financial Net charges-off/(Recoveries) (Quarterly)",
-      node_ids: ["cof"],
-    });
   });
 
   it("next_call is null when no match has coverage (never a handle for data-less names)", async () => {
