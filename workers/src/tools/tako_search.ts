@@ -46,7 +46,7 @@ import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.",
   "",
-  "It locates data; it does not deliver values. A card's rows are usually license-gated and a web result is a snippet, so a search tells you WHAT EXISTS and WHERE — the figures come from `tako_answer` (pin the card's `nodes` ids). Reaching here for a plain \"what is X\" costs an extra round trip that re-sends the whole conversation.",
+  "It locates data — and for `exportable: true` cards it also includes a free 20-row preview by default (`include_contents`) — but a license-gated card carries no rows at all (headline value only, via `description`), and a web result is only a snippet, not a value. For a plain \"what is X\", `tako_answer` (pin the card's `nodes` ids) is still the faster path: one written figure beats parsing a preview table yourself, and reaching here first for that costs an extra round trip that re-sends the whole conversation.",
   "",
   "Best for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_answer` or `tako_contents`. It is cheap and fast, and built for exactly this fan-out.",
   "",
