@@ -28,10 +28,22 @@ import {
   type WebResult,
 } from "./_search_results.js";
 
-/** The advertised (slim) structuredContent shape for tako_search. Loose so
- *  the handler's FULL output object still satisfies it type-wise; the wire
- *  value is the slimmed object from `slimSearchStructured`. */
+/** The advertised structuredContent shape for tako_search. Loose so the
+ *  handler's full output satisfies it; `cards`/`web_results` are declared
+ *  because they ARE the payload a structuredContent-reading client needs —
+ *  advertising only the metadata is what made those clients read an empty
+ *  envelope. Declared loosely (the card shape is the backend's, and pinning
+ *  it here would reintroduce the wire-drift failure `_search_results.ts`
+ *  documents). */
 export const searchSlimOutputShape = z.looseObject({
+  cards: z
+    .array(z.looseObject({}))
+    .optional()
+    .describe("The data cards — the payload. Each carries its title, description (headline value), facts, and inline rows under `content`."),
+  web_results: z
+    .array(z.looseObject({}))
+    .optional()
+    .describe("Web results with their snippets."),
   request_id: z.string(),
   usage: usageSchema
     .nullable()
@@ -43,8 +55,12 @@ export const searchSlimOutputShape = z.looseObject({
   ...autoChainShape,
 });
 
-/** The advertised (slim) structuredContent shape for tako_answer. */
+/** The advertised structuredContent shape for tako_answer. Carries the
+ *  synthesized answer and its citations for the same reason as search. */
 export const answerSlimOutputShape = z.looseObject({
+  answer: z.string().optional().describe("The synthesized, citation-backed answer."),
+  cards: z.array(z.looseObject({})).optional().describe("Cards cited by the answer."),
+  web_results: z.array(z.looseObject({})).optional().describe("Web results cited by the answer."),
   request_id: z.string(),
   usage: usageSchema
     .nullable()
@@ -82,27 +98,25 @@ const WIDGET_KEYS = [
   "height",
 ] as const;
 
-/** structuredContent for tako_search: widget fields + machine essentials. */
+/**
+ * structuredContent for tako_search: the FULL payload.
+ *
+ * This is the MCP-spec-natural channel — a client that reads structuredContent
+ * (the obvious choice when a tool advertises an outputSchema) must find the
+ * cards there, not an empty envelope. Slimming this side to metadata made
+ * those clients silently perform worse than ones reading the text block.
+ *
+ * The payload is carried EXACTLY ONCE: `renderText` is a compact index
+ * (titles, headline values, pointers) rather than a second copy of the rows,
+ * so hosts that count both channels are not billed twice.
+ */
 export function slimSearchStructured(o: SearchOutput): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    request_id: o.request_id,
-    usage: o.usage,
-  };
-  if (o.guidance !== undefined) out.guidance = o.guidance;
-  for (const k of WIDGET_KEYS) {
-    if (o[k] !== undefined) out[k] = o[k];
-  }
-  return out;
+  return { ...(o as unknown as Record<string, unknown>) };
 }
 
-/** structuredContent for tako_answer: machine essentials only. */
+/** structuredContent for tako_answer: the full payload, same rationale. */
 export function slimAnswerStructured(o: AnswerFullOutput): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    request_id: o.request_id,
-    usage: o.usage,
-  };
-  if (o.guidance !== undefined) out.guidance = o.guidance;
-  return out;
+  return { ...(o as unknown as Record<string, unknown>) };
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +161,23 @@ type LooseContent = {
   total_rows?: number | null;
   truncated?: boolean | null;
 };
+
+/** One line describing the rows that rode in structuredContent, instead of a
+ *  second copy of them. */
+function rowsPointer(content: TakoCard["content"]): string | undefined {
+  if (content == null) return undefined;
+  const c = content as LooseContent;
+  const shown =
+    (Array.isArray(c.dataset?.rows) ? c.dataset.rows.length : undefined) ??
+    (Array.isArray(c.records) ? c.records.length : undefined) ??
+    (typeof c.data === "string" && c.data.trim() !== ""
+      ? Math.max(0, c.data.split("\n").filter((l) => l !== "").length - 1)
+      : undefined);
+  if (shown === undefined || shown === 0) return undefined;
+  const total = c.total_rows ?? undefined;
+  const of = total !== undefined && total > shown ? ` of ${total}` : "";
+  return `data: ${shown}${of} rows in structuredContent.cards[].content (full export via tako_contents).`;
+}
 
 /** Render a card's inline rows: dataset/records → markdown table, csv → fence. */
 function renderContentRows(content: TakoCard["content"]): string | undefined {
@@ -306,7 +337,12 @@ function renderCard(card: TakoCard, idx: number): string {
     if (rendered.length > 0) lines.push(rendered.join("\n"));
   }
 
-  const rows = renderContentRows(card.content);
+  // Rows are NOT duplicated here: the full payload rides in structuredContent
+  // (see slimSearchStructured). Emitting them in both channels would bill the
+  // model twice for the same table on every host that counts content AND
+  // structuredContent. A one-line pointer keeps the text channel a readable
+  // index of what arrived.
+  const rows = rowsPointer(card.content);
   if (rows !== undefined) lines.push(rows);
 
   return lines.join("\n");
@@ -323,9 +359,10 @@ function renderWebResult(w: WebResult, idx: number): string {
     meta.push(`Published: ${oneLine(w.publish_date)}`);
   }
   if (meta.length > 0) lines.push(meta.join(" · "));
-  if (typeof w.snippet === "string" && w.snippet.trim() !== "") {
-    lines.push(fenced(w.snippet.trim()));
-  }
+  // Snippet omitted on purpose — it rides verbatim in
+  // structuredContent.web_results. Prose-heavy text is the most expensive
+  // thing to carry twice, and this is the channel that had the duplicate.
+  void fenced;
   return lines.join("\n");
 }
 
@@ -656,20 +693,12 @@ export interface ContentsBatchLike {
   [key: string]: unknown;
 }
 
-/** Strip the payload channels from one item, keeping its metadata. */
-function slimContentsItem(o: ContentsOutputLike): Record<string, unknown> {
-  const { data, records, dataset, note, ...meta } = o;
-  void data;
-  void records;
-  void dataset;
-  void note;
-  return meta;
-}
-
-/** structuredContent for tako_contents: per-item metadata WITHOUT the payload
- *  channels (data/records/dataset live in the text). */
+/** structuredContent for tako_contents: the full batch INCLUDING each item's
+ *  payload, so a structuredContent-reading client gets the page text/rows.
+ *  `renderText` stays the readable copy for text-reading clients; see the
+ *  note on renderContentsText about why this one still duplicates. */
 export function slimContentsStructured(o: ContentsBatchLike): Record<string, unknown> {
-  return { ...o, results: o.results.map(slimContentsItem) };
+  return { ...(o as unknown as Record<string, unknown>) };
 }
 
 /** tako_contents as text: the payload itself (page text raw, csv fenced,
