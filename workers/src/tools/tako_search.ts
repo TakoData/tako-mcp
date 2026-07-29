@@ -44,19 +44,19 @@ import {
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Fastest, direct retrieval of data or metrics from the live web and proprietary data sources, returned as structured cards and web links; the top card auto-renders inline as a chart. It replaces a generic web search for data lookups.",
+  "Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.",
   "",
-  "Best for: grabbing a known figure or metric — a value, time series, price, score, schedule, forecast, poll, or prediction-market number. It is cheap and fast, built to fan out: many narrow queries fired in parallel retrieve far better than one broad query, and you assemble the multi-part result yourself.",
+  "It locates data; it does not deliver values. A card's rows are usually license-gated and a web result is a snippet, so a search tells you WHAT EXISTS and WHERE — the figures come from `tako_answer` (pin the card's `nodes` ids). Reaching here for a plain \"what is X\" costs an extra round trip that re-sends the whole conversation.",
+  "",
+  "Best for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_answer` or `tako_contents`. It is cheap and fast, and built for exactly this fan-out.",
   "",
   "Coverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.",
   "",
-  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When unsure the data exists or its exact name, run `tako_available_data` first (free) — the recommended first step for a data lookup; it hands you the exact names to query here.',
+  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric\'s exact name, run `tako_available_data` (free) instead of guessing here.',
   "",
-  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. When no data card fits the query, the `web_results` can be your fallback: call `tako_contents` on the most relevant one's url to read its full page text (web urls are always fetchable; a card's full csv needs `exportable: true`).",
+  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. To read a web result in full, call `tako_contents` on its url (web urls are always fetchable; a card's full csv needs `exportable: true`).",
   "",
   "Non-exportable cards (`exportable: false`, usually license-gated) return no rows: read the headline value from the card's `description` when it carries one, or get specific figures via `tako_answer` with the card's `nodes` ids pinned (each such card carries a `values_hint` saying exactly this).",
-  "",
-  "If you aren’t prioritizing grabbing specific data or showing charts/tables, and just want a synthesized, written answer to a more specific data question, use `tako_answer` instead.",
   "",
   "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, recent rows), then Web Results, then source notes. Machine essentials (request_id, usage, chart-widget fields) ride separately in structuredContent.",
 ].join("\n");

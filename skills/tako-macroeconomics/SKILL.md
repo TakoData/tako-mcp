@@ -17,10 +17,10 @@ Tako serves macro indicators as interactive, citation-backed charts. All tools b
 **Coverage is country-keyed.** Individual countries resolve well (US, China, Japan, India). Multi-country blocs are weak: `"Eurozone inflation rate"` returns a Polymarket contract instead of an indicator, and `"Euro area CPI inflation rate"` returns nothing at all. For a bloc, query member countries and aggregate yourself, or take the figure from the web results and say so.
 
 ## Pick the tool
-- `tako_search` — indicator as a chart (default).
-- `tako_answer` — one known value, in prose ("What is the current US unemployment rate?"). Relay verbatim.
-- `tako_available_data` — FREE: resolve the exact indicator name + `node_id`. When the target is unambiguous, its `next_call` output is the follow-up search prewritten — run it verbatim.
-- Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → fire one narrow `tako_search` per country in parallel and rank from the results.
+- `tako_answer` — **the default for any "<country> <indicator>" question.** Returns the value in prose with its cited chart and rows attached, so one priced call finishes the job. Relay the `answer` verbatim.
+- `tako_search` — for **breadth or a chart**, not a number: scanning several countries or indicator variants to see what exists, or pulling the card when the chart is the deliverable. FRED/OECD/BIS cards do export, so search is more useful here than in the licensed-data skills — but it still costs a round trip to turn a card into a figure.
+- `tako_available_data` — FREE, and the right tool when the question is **what Tako covers**, or when many variants exist and you need the exact indicator name (mandatory for PCE — see below). Not a warm-up before every lookup.
+- Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → one narrow call per country in parallel, then rank. Use `tako_search` if you only need to see what exists, `tako_answer` when you need each figure.
 
 ## Query patterns (Critical)
 - Query is COUNTRY + INDICATOR: `"US CPI inflation"`, `"US unemployment rate"`, `"US federal funds rate"` (which resolves to the Effective Federal Funds Rate, not the FOMC target range).
@@ -52,13 +52,12 @@ Tako auto-renders #0, and for macro the **least-specific or stalest card often r
 - Reference the chart in prose; do NOT re-post the card's image URL as a markdown image — that double-renders the inline chart.
 
 ## Examples
-- Single → tako_search {"query": "US CPI inflation", "sources": ["data", "web"]} → pick the card matching the variant asked for, not #0 by default
-- Parallel multi-metric → four calls: "US CPI inflation", "US core CPI inflation", "US core PCE price index % change", "US PCE price index % change" — coverage confirmed via tako_available_data first, so use `"sources": ["data"]` to keep the fan-out lean (take each card titled "(% Change)"; the plain "PCE Price Index" cards are index levels)
-- Cross-country → tako_search {"query": "US vs China inflation", "sources": ["data", "web"]}
-- Indicator-name pre-check (free; note the arg is `q`) → tako_available_data {"q": "US core PCE"}
-- Known value, prose → tako_answer {"query": "What is the current US federal funds rate?", "sources": ["data", "web"]}
-- Bloc-level ask → no Eurozone card exists; query member countries in parallel and aggregate, or use the web results and label the figure web-sourced
-
+- Single (the common case) → tako_answer {"query": "What is the current US CPI inflation rate?", "sources": ["data", "web"]} → check the cited card matches the variant asked for
+- Cross-country → tako_answer {"query": "How does US inflation compare with China's?", "sources": ["data", "web"]}
+- Chart is the deliverable → tako_search {"query": "US vs China inflation", "sources": ["data", "web"]} → embed the card
+- Indicator-name question (free; note the arg is `q`) → tako_available_data {"q": "US core PCE"} → then pin the exact name: tako_answer {"query": "US core PCE price index % change", "sources": ["data"]}
+- Parallel multi-metric → four calls for CPI, core CPI, core PCE (% change) and PCE (% change); `tako_search` with `"sources": ["data"]` to see what exists, `tako_answer` per metric when you need the values (take the "(% Change)" cards; plain "PCE Price Index" cards are index levels)
+- Bloc-level ask → no Eurozone card exists; query member countries in parallel and aggregate, or take the figure from the web citations and label it web-sourced
 ## Output (tight and structured)
 1) A 1–2 line read of the indicator, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card

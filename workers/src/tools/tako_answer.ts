@@ -23,13 +23,15 @@ import {
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Ask one specific data question; get one synthesized answer grounded in the data or web tako cites.",
+  "START HERE for any question that wants a value, figure, or finding: ask one specific data question, get one synthesized answer grounded in the data or web tako cites.",
   "",
-  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a search card is `exportable: false` (usually license-gated), ask here with its node_ids pinned to get the figures.",
+  "It is the only tool whose single response can finish the job: it reads the cited pages internally, inlines the cited cards' rows, and returns a coverage verdict. Retrieval hands back captions and links you must then chase, and every extra round trip re-sends the whole conversation.",
   "",
-  "`tako_search` is the counterpart for fast, parallel retrieval of data cards; the Tako Answer Agent handles open-ended, multi-step research.",
+  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its node_ids pinned to get the figures.",
   "",
-  "Grounds over BOTH data and web by default. When unsure the proprietary data exists or its exact name, run `tako_available_data` first (free, instant) — the recommended first step — then pin the node_ids it returns here for an accurate, grounded answer. Cited data cards inline their recent rows by default (see include_contents/preview_rows), so the series arrives with the answer; for the full history or a cited page's text, call `tako_contents` on its url.",
+  "Reach past it only for a different job: `tako_search` for breadth recon and chart cards (it locates data, it does not carry values), `tako_available_data` when the question is what Tako covers, the Answer Agent for open-ended research.",
+  "",
+  "Grounds over BOTH data and web by default; pin node_ids when you have them. Cited cards inline their recent rows (see include_contents/preview_rows), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
   "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, recent rows) and web citations, then source notes. Machine essentials (request_id, usage, guidance) ride separately in structuredContent.",
 ].join("\n");

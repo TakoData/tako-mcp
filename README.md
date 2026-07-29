@@ -353,11 +353,11 @@ Broader than statutory financials — assume coverage and check rather than talk
 Reliably NOT in the data graph, and where web carries the answer instead: forward-looking calendar facts (`"Nvidia next earnings date"` returns an Overview card with no date, while the web results have it), revenue for companies with no filings or analyst coverage (`"OpenAI annualized revenue"` returns zero cards), and anything qualitative (moat, strategy, management commentary).
 
 ## Pick the tool by what you want back
-- `tako_search` — the data as a chart. Default for "<company> <metric>" and "<A> vs <B> <metric>". One card renders inline (see Pick the right card).
-- `tako_answer` — one specific STATED value, in prose ("What was Apple's FY25 revenue?" → "$416.2 billion"). Relay the `answer` verbatim. It retrieves reported values; it does NOT compute derivations — for a growth rate, ratio, or margin change, pull the underlying levels and compute yourself.
-- `tako_available_data` — FREE pre-check: confirm a metric exists and grab its exact name + `node_id` before spending a priced call. When the target is unambiguous, its `next_call` output is that follow-up search prewritten — run it verbatim. It also surfaces entity ambiguity early (`"Costco"` matches both Costco Wholesale Corporation and Costco Wholesale Australia).
+- `tako_answer` — **the default for any "<company> <metric>" question.** It returns the figure in prose ("What was Apple's FY25 revenue?" → "$416.2 billion") with its cited cards and their rows attached, so one priced call finishes the job. Relay the `answer` verbatim. It retrieves reported values; it does NOT compute derivations — for a growth rate, ratio, or margin change, pull the underlying levels and compute yourself.
+- `tako_search` — reach for it when you want **breadth or a chart**, not a number: fanning out across several companies or metrics to see what exists, or pulling the card when the chart itself is the deliverable. Its cards are captions — S&P Global and Visible Alpha rows are license-gated — so a search that returns the right card still owes you a `tako_answer` call for the value. One card renders inline (see Pick the right card).
+- `tako_available_data` — FREE, and the right tool when the question is **what Tako covers**: does this metric exist, under what exact name, for which entity. It also surfaces entity ambiguity early (`"Costco"` matches both Costco Wholesale Corporation and Costco Wholesale Australia). Not a warm-up before every lookup — go straight to `tako_answer` when you just want the number.
 - Protected sources are read-only: S&P Global, FactSet, Visible Alpha, and CoinMarketCap cards come back not exportable, with NO inline preview rows, and `tako_contents` cannot export their CSV — a licensing wall, not an error, so never retry the export. Read the headline value from the card's `description`, cite the chart, or ask `tako_answer` for the number. (Fiscal.ai cards export normally.)
-- Cohort/ranking asks ("which of the largest US chipmakers grew revenue fastest since 2020?") → resolve the cohort yourself, fire one narrow `tako_search` per member in parallel, and rank from the results.
+- Cohort/ranking asks ("which of the largest US chipmakers grew revenue fastest since 2020?") → resolve the cohort yourself, fire one narrow call per member in parallel, and rank from the results. This is search's home ground when you only need to see what exists; use `tako_answer` per member when you need the actual figures.
 
 ## Query patterns (Critical)
 - Query is ENTITY + METRIC: `"Nvidia revenue"`, `"Tesla free cash flow"`, `"Coca-Cola dividend yield"`. One entity + one metric per call, plus a cadence word (`quarterly`/`annual`) to steer the period.
@@ -391,14 +391,13 @@ A search returns several cards and **#0 is frequently not what was asked for**. 
 - `tako_answer` prose may cite a different fiscal period than the embedded card's latest point — reconcile them so text and chart agree.
 
 ## Examples
-- Single metric → tako_search {"query": "Nvidia quarterly revenue", "sources": ["data", "web"]} — chart grounds the number, web results add the earnings release
-- Comparison → tako_search {"query": "Coca-Cola vs PepsiCo revenue", "sources": ["data", "web"]} → confirm both entities are in the chosen card's `nodes` before treating it as a comparison
-- Coverage pre-check (free; note the arg is `q`) → tako_available_data {"q": "Costco"} → coverage confirmed, so the follow-up can go data-only: tako_search {"query": "Costco Wholesale Corporation revenue", "sources": ["data"]}
-- Known value, prose → tako_answer {"query": "What was Microsoft's FY2024 net income?", "sources": ["data", "web"]}
-- Growth rate / ratio → pull the levels, then compute: tako_search {"query": "Apple annual revenue", "sources": ["data", "web"]} → compute FY25 vs FY24 % change yourself
-- Ranking → resolve the cohort, then parallel narrow searches with `"sources": ["data"]` to keep the fan-out lean: tako_search {"query": "Nvidia annual revenue", "sources": ["data"]} + one per remaining company → compute growth and rank yourself
-- Not in the graph → tako_search {"query": "Nvidia next earnings date", "sources": ["data", "web"]} → the data card has no date; answer from the web results and say the figure is web-sourced
-
+- Single metric (the common case) → tako_answer {"query": "What was Nvidia's most recent quarterly revenue?", "sources": ["data", "web"]} — the figure, its cited chart, and the earnings release in one call
+- Comparison → tako_answer {"query": "How do Coca-Cola and PepsiCo compare on annual revenue?", "sources": ["data", "web"]} → check both entities appear in the cited card's `nodes` before treating it as a comparison
+- Chart is the deliverable → tako_search {"query": "Coca-Cola vs PepsiCo revenue", "sources": ["data", "web"]} → embed the card; ask `tako_answer` if you also need the values
+- Coverage question (free; note the arg is `q`) → tako_available_data {"q": "Costco"} → then pin what it returns: tako_answer {"query": "Costco Wholesale Corporation annual revenue", "sources": ["data"]}
+- Growth rate / ratio → pull the levels, then compute: tako_answer {"query": "Apple annual revenue for FY24 and FY25", "sources": ["data", "web"]} → compute the % change yourself
+- Breadth recon → one narrow `tako_search` per company in parallel with `"sources": ["data"]` to see what exists; switch to `tako_answer` per company once you need the figures
+- Not in the graph → tako_answer {"query": "When is Nvidia's next earnings date?", "sources": ["data", "web"]} → no card carries it; the answer comes from the web citations, so say the figure is web-sourced
 ## Output (tight and structured)
 1) A 1–2 line read of the finding, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card
@@ -452,11 +451,11 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts. All 
 - Empty also means "not covered in Tako," NOT that the domain has no traffic — don't infer a fact from silence.
 
 ## Pick the tool
-- `tako_search` — traffic as a chart (default; one card renders inline).
-- `tako_answer` — one number, in prose ("How many monthly visits does netflix.com get?").
-- `tako_available_data` — FREE brand→entity resolver (see the empty-result bullet for its limits on domains).
+- `tako_answer` — **the default for "how much traffic does <domain> get".** Returns the number in prose with its cited chart attached. This matters more here than anywhere: SimilarWeb is licensed, so a search card carries NO rows — the figure lives in the card's `description` or comes from here.
+- `tako_search` — for **breadth or a chart**: the ranked top-sites card, a head-to-head embed, or scanning several domains to see which are covered. Its cards are captions, never rows.
+- `tako_available_data` — FREE brand→entity resolver, and the right tool when the question is what Tako covers. Do NOT use it to rule a domain out (see the empty-result bullet).
 - SimilarWeb is a protected source, so EVERY traffic card is read-only: not exportable, no inline preview rows, and `tako_contents` cannot export the CSV — a licensing wall, not an error, so never call `tako_contents` on a traffic card. The numbers live in the card's `description` (latest value + % change over the period) and the chart; for one specific figure use `tako_answer`. (Web-result urls remain fetchable.)
-- Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search`, then one narrow search per domain in parallel and compute growth from each card's `description`.
+- Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search` (breadth is its job), then one `tako_answer` per domain in parallel and compute growth from the figures.
 
 ## Reading a result
 Every card carries a title, a `description` holding the headline value, and retrieval facts — whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
@@ -475,13 +474,12 @@ Field names depend on the response format, so the checks below name the **concep
 - Point at any extra cards by linking their titles to their chart URLs — embed only the top card.
 
 ## Examples
-- Single domain → tako_search {"query": "netflix.com monthly visits", "sources": ["data", "web"]} — chart grounds the number, web results add context
-- Head-to-head → tako_search {"query": "youtube.com vs netflix.com monthly visits", "sources": ["data", "web"]} → read absolute visits off the per-domain cards, not the comparison card's % change
-- Ranking → tako_search {"query": "top websites by visits", "sources": ["data", "web"]}
-- App usage → tako_search {"query": "Spotify app monthly active users", "sources": ["data", "web"]}
-- Cohort fan-out (per-domain growth) → parallel narrow searches with `"sources": ["data"]` to keep the fan-out lean: tako_search {"query": "netflix.com monthly visits", "sources": ["data"]} + one per remaining domain
-- Brand-shaped ask ("how much traffic does Netflix get?") → resolve to the domain yourself and query `"netflix.com monthly visits"`; never answer from a subscriber card
-
+- Single domain (the common case) → tako_answer {"query": "How many monthly visits does netflix.com get?", "sources": ["data", "web"]} — the figure plus its cited SimilarWeb chart
+- Head-to-head → tako_answer {"query": "How do youtube.com and netflix.com compare on monthly visits?", "sources": ["data", "web"]} → absolute visits come from the per-domain figures, not a comparison card's % change
+- Chart or ranking is the deliverable → tako_search {"query": "top websites by visits", "sources": ["data", "web"]} → embed the ranked card
+- App usage → tako_answer {"query": "How many monthly active users does the Spotify app have?", "sources": ["data", "web"]} → say whether you quoted SimilarWeb or company-reported MAU
+- Cohort fan-out → `tako_search` with `"sources": ["data"]` to see which domains are covered, then one `tako_answer` per domain for the figures
+- Brand-shaped ask ("how much traffic does Netflix get?") → resolve to the domain yourself and ask about `netflix.com`; never answer from a subscriber card
 ## Output (tight and structured)
 1) A 1–2 line read of the traffic, referencing the inline chart
 2) SimilarWeb — as-of month, and say so plainly when a figure came from the web rather than a card
@@ -529,10 +527,10 @@ Tako serves macro indicators as interactive, citation-backed charts. All tools b
 **Coverage is country-keyed.** Individual countries resolve well (US, China, Japan, India). Multi-country blocs are weak: `"Eurozone inflation rate"` returns a Polymarket contract instead of an indicator, and `"Euro area CPI inflation rate"` returns nothing at all. For a bloc, query member countries and aggregate yourself, or take the figure from the web results and say so.
 
 ## Pick the tool
-- `tako_search` — indicator as a chart (default).
-- `tako_answer` — one known value, in prose ("What is the current US unemployment rate?"). Relay verbatim.
-- `tako_available_data` — FREE: resolve the exact indicator name + `node_id`. When the target is unambiguous, its `next_call` output is the follow-up search prewritten — run it verbatim.
-- Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → fire one narrow `tako_search` per country in parallel and rank from the results.
+- `tako_answer` — **the default for any "<country> <indicator>" question.** Returns the value in prose with its cited chart and rows attached, so one priced call finishes the job. Relay the `answer` verbatim.
+- `tako_search` — for **breadth or a chart**, not a number: scanning several countries or indicator variants to see what exists, or pulling the card when the chart is the deliverable. FRED/OECD/BIS cards do export, so search is more useful here than in the licensed-data skills — but it still costs a round trip to turn a card into a figure.
+- `tako_available_data` — FREE, and the right tool when the question is **what Tako covers**, or when many variants exist and you need the exact indicator name (mandatory for PCE — see below). Not a warm-up before every lookup.
+- Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → one narrow call per country in parallel, then rank. Use `tako_search` if you only need to see what exists, `tako_answer` when you need each figure.
 
 ## Query patterns (Critical)
 - Query is COUNTRY + INDICATOR: `"US CPI inflation"`, `"US unemployment rate"`, `"US federal funds rate"` (which resolves to the Effective Federal Funds Rate, not the FOMC target range).
@@ -564,13 +562,12 @@ Tako auto-renders #0, and for macro the **least-specific or stalest card often r
 - Reference the chart in prose; do NOT re-post the card's image URL as a markdown image — that double-renders the inline chart.
 
 ## Examples
-- Single → tako_search {"query": "US CPI inflation", "sources": ["data", "web"]} → pick the card matching the variant asked for, not #0 by default
-- Parallel multi-metric → four calls: "US CPI inflation", "US core CPI inflation", "US core PCE price index % change", "US PCE price index % change" — coverage confirmed via tako_available_data first, so use `"sources": ["data"]` to keep the fan-out lean (take each card titled "(% Change)"; the plain "PCE Price Index" cards are index levels)
-- Cross-country → tako_search {"query": "US vs China inflation", "sources": ["data", "web"]}
-- Indicator-name pre-check (free; note the arg is `q`) → tako_available_data {"q": "US core PCE"}
-- Known value, prose → tako_answer {"query": "What is the current US federal funds rate?", "sources": ["data", "web"]}
-- Bloc-level ask → no Eurozone card exists; query member countries in parallel and aggregate, or use the web results and label the figure web-sourced
-
+- Single (the common case) → tako_answer {"query": "What is the current US CPI inflation rate?", "sources": ["data", "web"]} → check the cited card matches the variant asked for
+- Cross-country → tako_answer {"query": "How does US inflation compare with China's?", "sources": ["data", "web"]}
+- Chart is the deliverable → tako_search {"query": "US vs China inflation", "sources": ["data", "web"]} → embed the card
+- Indicator-name question (free; note the arg is `q`) → tako_available_data {"q": "US core PCE"} → then pin the exact name: tako_answer {"query": "US core PCE price index % change", "sources": ["data"]}
+- Parallel multi-metric → four calls for CPI, core CPI, core PCE (% change) and PCE (% change); `tako_search` with `"sources": ["data"]` to see what exists, `tako_answer` per metric when you need the values (take the "(% Change)" cards; plain "PCE Price Index" cards are index levels)
+- Bloc-level ask → no Eurozone card exists; query member countries in parallel and aggregate, or take the figure from the web citations and label it web-sourced
 ## Output (tight and structured)
 1) A 1–2 line read of the indicator, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card
