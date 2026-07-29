@@ -37,19 +37,21 @@ export const PAGE_LIMIT = 100;
 // are the tool's primary payload — each is a term the agent reuses in a
 // follow-up tako_search — so the drill paginates well past the old one-page
 // window (which buried anything behind the backend's fixed, boilerplate-first
-// order), but caps the token cost for the very largest nodes (a metric
-// tracked across thousands of entities). Held BELOW the server's counting cap
-// (graph/related stops counting related items at 250 and reports
-// `total_capped`) as a deliberate token/latency trade on the free,
-// recommended-first-call tool: 200 names normally fit in ceil(200/100) = 2
-// sequential pages where 250 forces 3. Names are reordered headline-first
+// order). Matched to the server's OWN counting cap (graph/related stops
+// counting related items at 250 and reports `total_capped`) rather than set
+// tighter, so this is a genuine ceiling, not a second, lower cap layered on
+// top of the server's: a node at or under 250 gets its COMPLETE coverage list,
+// never a truncated one. (Previously capped at 200 as a page-count trade —
+// that silently hid names past it, e.g. a ~250-metric entity's tail; the one
+// extra sequential page (ceil(250/100) = 3 vs 2) buys back full coverage for
+// every node up to the server's own cap.) Names are reordered headline-first
 // across everything FETCHED before this slice is taken, so low-signal
-// accounting names are what the cap drops, and `total`/`truncated` still
-// report when more exist server-side — a "200 of 250+" list is explained,
-// not an unexplained second cap.
-export const MAX_COVERAGE_NAMES = 200;
+// accounting names are what a genuine >250 cap still drops, and
+// `total`/`truncated` still report when more exist server-side — a
+// "250 of 400+" list is explained, not an unexplained second cap.
+export const MAX_COVERAGE_NAMES = 250;
 // Hard ceiling on coverage-drill round-trips per node, independent of the
-// item-count target above. Normally ceil(200/100) = 2 pages suffice; the
+// item-count target above. Normally ceil(250/100) = 3 pages suffice; the
 // slack covers a server that pages smaller than PAGE_LIMIT without letting a
 // pathological page size serialize dozens of sequential calls.
 export const MAX_COVERAGE_PAGES = 4;
