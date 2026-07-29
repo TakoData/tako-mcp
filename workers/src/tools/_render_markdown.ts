@@ -466,7 +466,7 @@ export function renderAvailableDataMarkdown(o: AvailableDataFullOutput): string 
     const names = m.coverage.names.join(", ");
     const more =
       m.coverage.truncated && m.coverage.total > m.coverage.names.length
-        ? ` …and ${m.coverage.total - m.coverage.names.length} more server-side (narrow with coverage_filter).`
+        ? ` …and ${m.coverage.total - m.coverage.names.length} more not shown (treat a name you don't see as unconfirmed, not absent).`
         : "";
     blocks.push(`${head}\n${names}${more}`);
   }

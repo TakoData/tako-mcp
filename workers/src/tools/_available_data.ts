@@ -194,38 +194,30 @@ function labelSuffix(m: CoverageMatch): string {
   return m.label ? ` (${m.label})` : "";
 }
 
-function coverageClause(g: CoverageGroup, filter?: string): string {
-  const matching = filter !== undefined ? ` matching "${filter}"` : "";
+function coverageClause(g: CoverageGroup): string {
   if (g.kind === "entities") {
-    return `tracked for ${countStr(g)} ${plural(g.total, "entity", "entities")}${matching}`;
+    return `tracked for ${countStr(g)} ${plural(g.total, "entity", "entities")}`;
   }
-  return `${countStr(g)} ${plural(g.total, "metric", "metrics")}${matching}`;
+  return `${countStr(g)} ${plural(g.total, "metric", "metrics")}`;
 }
 
-// A zero-coverage line means two different things with and without a
-// coverage_filter: unfiltered it is a genuine gap; filtered it only means the
-// FILTER matched nothing — the entity may still hold hundreds of metrics, so
-// the phrasing must steer the agent to drop the filter, not to conclude "no
-// data" and walk away.
-function emptyClause(kind: CoverageKind, filter?: string): string {
-  if (filter !== undefined) {
-    const what = kind === "entities" ? "tracked entities" : "metrics";
-    return `resolved, but no ${what} match coverage_filter "${filter}" — the coverage itself may be non-empty; re-call without coverage_filter (or with a different word from the metric's name) to see it`;
-  }
+// A zero-coverage line is now unambiguous: the drill covers the whole
+// coverage, so "none" is a genuine gap the agent can act on and report.
+function emptyClause(kind: CoverageKind): string {
   return kind === "entities"
     ? "resolved, but Tako isn't tracking it against any entities yet"
     : "resolved, but Tako holds no metrics for it yet";
 }
 
-function matchLine(m: CoverageMatch, filter?: string): string {
+function matchLine(m: CoverageMatch): string {
   const head = `**${m.name}${labelSuffix(m)}**`;
   if (m.unavailable) {
     return `${head} — resolved, but Tako couldn't load its coverage right now (temporary); retry.`;
   }
   if (m.coverage.total === 0) {
-    return `${head} — ${emptyClause(m.coverage.kind, filter)}.`;
+    return `${head} — ${emptyClause(m.coverage.kind)}.`;
   }
-  return `${head} — ${coverageClause(m.coverage, filter)}.`;
+  return `${head} — ${coverageClause(m.coverage)}.`;
 }
 
 /** A directly runnable follow-up fetch: tako_search args, ready to copy. */
@@ -261,13 +253,10 @@ function exampleSearch(matches: CoverageMatch[]): NextCall | null {
  * null when no match has coverage (a handle for a name just reported as
  * data-less would steer the agent into a search that misses).
  */
-export function buildNextCall(
-  matches: CoverageMatch[],
-  filtered: boolean,
-): NextCall | null {
+export function buildNextCall(matches: CoverageMatch[]): NextCall | null {
   const m = matches.find((x) => !x.unavailable && x.coverage.names.length > 0);
   if (!m) return null;
-  if (!filtered && m.coverage.names.length > NEXT_CALL_MAX_NAMES) return null;
+  if (m.coverage.names.length > NEXT_CALL_MAX_NAMES) return null;
   return exampleSearch(matches);
 }
 
@@ -282,10 +271,8 @@ export function buildSummary(input: {
   query: string;
   matches: CoverageMatch[];
   otherMatches: OtherMatch[];
-  /** The caller's coverage_filter, when one was applied to the drills. */
-  coverageFilter?: string | undefined;
 }): string {
-  const { query, matches, otherMatches, coverageFilter } = input;
+  const { query, matches, otherMatches } = input;
 
   if (matches.length === 0) {
     return `Tako has no data-graph node matching "${query}". Tako may still have relevant public/web data — try tako_search directly, or rephrase the entity or metric name.`;
@@ -304,22 +291,13 @@ export function buildSummary(input: {
   const covers = "Tako's proprietary data has live, continuously-updated coverage of";
   let header: string;
   if (withData === 0) {
-    // Under a coverage_filter, "none" only means the filter matched nothing —
-    // don't let the header claim a total coverage gap the tool didn't check.
-    // But only claim a pure filter-miss when every drill actually LOADED: if
-    // any match is unavailable (transient failure), the filter verdict is
-    // unproven — fall back to the generic header and let the per-match lines
-    // explain which drill failed.
-    const anyUnavailable = matches.some((m) => m.unavailable === true);
-    header = coverageFilter !== undefined && !anyUnavailable
-      ? `Resolved ${matchesOf}, but no coverage matching coverage_filter "${coverageFilter}":`
-      : `Resolved ${matchesOf}, but none with live data coverage:`;
+    header = `Resolved ${matchesOf}, but none with live data coverage:`;
   } else if (withData < n) {
     header = `${covers} ${withData} of ${matchesOf}:`;
   } else {
     header = `${covers} ${matchesOf}:`;
   }
-  const lines = matches.map((m) => matchLine(m, coverageFilter));
+  const lines = matches.map((m) => matchLine(m));
 
   const blocks: string[] = [header, "", lines.join("\n\n")];
 
@@ -333,7 +311,7 @@ export function buildSummary(input: {
   // Mirror the tool's next_call gate: advertise the ready-made handle only
   // when one is actually emitted; otherwise steer to composing a precise
   // entity + metric query (still showing a concrete example).
-  const handle = buildNextCall(matches, coverageFilter !== undefined);
+  const handle = buildNextCall(matches);
   const example = exampleSearch(matches);
   if (handle) {
     blocks.push(
