@@ -33,7 +33,7 @@ const DESCRIPTION = [
   "",
   "Grounds over BOTH data and web by default; pin node_ids when you have them. Cited cards inline their recent rows (see include_contents/preview_rows), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
-  "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, recent rows) and web citations, then source notes. Machine essentials (request_id, usage, guidance) ride separately in structuredContent.",
+  "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (request_id, usage, guidance).",
 ].join("\n");
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).
