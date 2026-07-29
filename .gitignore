@@ -18,7 +18,11 @@
 docs/superpowers/
 
 # Workers / Node
-node_modules/
+# No trailing slash: a `node_modules/` pattern matches directories ONLY, so a
+# `node_modules` SYMLINK (git stores it as a mode-120000 blob, not a tree) slips
+# past it and gets committed — which is exactly how one landed in this repo from
+# a worktree that symlinked back to the main checkout's installed deps.
+node_modules
 .wrangler/
 workers/dist/
 # Wrangler local-only env (per-developer DB / Tako web app overrides). Do not
