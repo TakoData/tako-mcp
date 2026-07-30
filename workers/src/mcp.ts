@@ -493,9 +493,11 @@ export function structuredContentFor(
     }
   }
   // A conforming slim can still carry undeclared keys when the tool's OWN
-  // output object is passed through (loose zod accepts them); strip anyway so
-  // what ships always matches what was published.
-  return narrow(slim, "conforming slim") ?? slim;
+  // output object is passed through (loose zod accepts them); strip them so
+  // what ships always matches what was published. Narrowed WITHOUT a re-parse,
+  // unlike the degradation paths above: slim has already conformed, and
+  // removing keys the schema never declared cannot invalidate it.
+  return tool.outputSchema === undefined ? slim : pickDeclared(tool.outputSchema, slim);
 }
 
 /**
@@ -1165,6 +1167,10 @@ function registerTool(
   );
 }
 
+/** Upstream statuses that clear on their own: worth one retry of the same
+ *  call, as opposed to a 4xx that needs the request changed. */
+const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
+
 /**
  * Convert a `DjangoError` into an MCP `CallToolResult` with `isError: true`.
  * Each subtype maps to a distinct `kind` discriminator so clients can branch
@@ -1186,10 +1192,6 @@ function registerTool(
  * Exported for unit testing — the wire contract is stable enough that
  * Phase 2 tests can rely on the `kind` strings here.
  */
-/** Upstream statuses that clear on their own: worth one retry of the same
- *  call, as opposed to a 4xx that needs the request changed. */
-const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
-
 export function djangoErrorToToolResult(err: DjangoError): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;

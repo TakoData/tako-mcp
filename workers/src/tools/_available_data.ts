@@ -55,11 +55,11 @@ export const PAGE_LIMIT = 100;
 // counting related items at 250 and reports `total_capped`) rather than set
 // tighter, so this is a genuine ceiling, not a second, lower cap layered on
 // top of the server's: a node at or under 250 gets its COMPLETE coverage list.
-// Names are reordered headline-first
-// across everything FETCHED before this slice is taken, so low-signal
-// accounting names are what the cap drops, and `total`/`truncated` still
-// report when more exist server-side — a "200 of 250+" list is explained,
-// not an unexplained second cap.
+// Names are reordered headline-first across everything FETCHED before this
+// slice is taken, so low-signal accounting names are what a genuine >250 cap
+// still drops, and `total`/`truncated` still report when more exist
+// server-side — a "250 of 400+" list is explained, not an unexplained second
+// cap.
 export const MAX_COVERAGE_NAMES = 250;
 // Hard ceiling on coverage-drill round-trips per node, independent of the
 // item-count target above. Normally ceil(250/100) = 3 pages suffice; the
@@ -419,13 +419,15 @@ export const toRef = (n: { id: string; name: string; type: string }): ResolvedRe
  * pointing at a metric we could not find would spend a priced call on a guess.
  */
 export function buildPairNextCall(
-  entityQuery: string,
   metricQuery: string,
   pair: PairResolution,
 ): NextCall | null {
   // No entity → the summary is routing the caller elsewhere (a bare-domain
   // tako_search); a handle here would contradict it.
   if (pair.metric === null || pair.entity === null) return null;
+  // The RESOLVED entity name, not the caller's `q`: it is the canonical form
+  // the graph knows ("Carnival Corporation Ltd." for `q="Carnival"`), which is
+  // what makes the query text line up with the pinned metric node.
   const subject = pair.entity.name;
   return {
     tool: "tako_answer",
@@ -528,10 +530,17 @@ export function buildSummary(input: {
   // ~110 chars instead of the ~8.3k a second full coverage list costs.
   const probed = otherMatches.filter((o) => o.node_id !== undefined);
   if (probed.length > 0) {
-    const lines = probed.map(
-      (o) =>
-        `- ${o.name} — ${o.coverage_total ?? 0}${o.coverage_total === 0 ? "" : "+"} ${plural(o.coverage_total ?? 0, "metric", "metrics")} (\`${o.node_id}\`)`,
-    );
+    const lines = probed.map((o) => {
+      const count = o.coverage_total ?? 0;
+      // The noun follows the node's OWN coverage direction — a metric node's
+      // coverage is the ENTITIES tracking it, not metrics. Hardcoding "metrics"
+      // mislabelled every metric-node receipt (`Inflation Rate — 63+ metrics`),
+      // which reads as a nonsense claim about the graph's shape.
+      const kind = coverageKindFor(o.type);
+      const noun =
+        kind === "metrics" ? plural(count, "metric", "metrics") : plural(count, "entity", "entities");
+      return `- ${oneLine(o.name)} — ${count}${count === 0 ? "" : "+"} ${noun} (\`${oneLine(o.node_id as string)}\`)`;
+    });
     blocks.push(
       "",
       `Also resolved (not listed in full — re-run with the one you want, or pin its node_id):\n${lines.join("\n")}`,
