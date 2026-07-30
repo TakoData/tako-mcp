@@ -19,6 +19,10 @@
  */
 import { z } from "zod";
 
+// Flattens upstream text destined for a single-line slot (titles, meta, node
+// names): an embedded newline would otherwise start a fresh line the CONTENT
+// controls. Defined next to the summary builder that needs the same guarantee,
+// so the two channels cannot drift into flattening differently.
 import { oneLine } from "./_available_data.js";
 import {
   autoChainShape,
@@ -130,10 +134,6 @@ function fenced(text: string, lang = ""): string {
   const fence = "`".repeat(Math.max(3, longest + 1));
   return `${fence}${lang}\n${text}\n${fence}`;
 }
-
-/** Flatten upstream text destined for a single-line slot (titles, meta): an
- *  embedded newline would otherwise start a fresh line the content controls. */
-
 
 type LooseContent = {
   content_format?: string | null;

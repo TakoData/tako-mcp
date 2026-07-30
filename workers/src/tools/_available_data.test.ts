@@ -289,6 +289,43 @@ describe("buildSummary", () => {
     expect(s).toContain("Also matched: Other0, Other1, Other2, Other3, Other4, and 3 more.");
   });
 
+  // A PROBED candidate (one we spent a limit=1 coverage probe on) gets a
+  // one-line receipt with its id and count instead of a full coverage list —
+  // ~110 chars against the ~8.3k a second list costs.
+  it("probed candidates get an id + count receipt, not a coverage list", () => {
+    const s = buildSummary({
+      query: "apple",
+      matches: [appleMatch],
+      otherMatches: [{ name: "Apple Hospitality", type: "entity", node_id: "ent::aph::1", coverage_total: 12 }],
+    });
+    expect(s).toContain("Also resolved");
+    expect(s).toContain("- Apple Hospitality — 12+ metrics (`ent::aph::1`)");
+  });
+
+  // The noun must follow the node's OWN coverage direction: a metric node's
+  // coverage is the ENTITIES tracking it. Hardcoding "metrics" produced
+  // `Inflation Rate — 63+ metrics`, a nonsense claim about the graph's shape.
+  it("a probed METRIC node's receipt counts entities, not metrics", () => {
+    const s = buildSummary({
+      query: "inflation",
+      matches: [inflationMatch],
+      otherMatches: [{ name: "Core Inflation Rate", type: "metric", node_id: "mt::core_cpi::1", coverage_total: 40 }],
+    });
+    expect(s).toContain("- Core Inflation Rate — 40+ entities (`mt::core_cpi::1`)");
+    expect(s).not.toContain("40+ metrics");
+  });
+
+  // Zero coverage is a real answer and must not render as "0+" — the `+` means
+  // "the server stopped counting", which is never true of an empty list.
+  it("a zero-coverage receipt drops the '+' floor marker", () => {
+    const s = buildSummary({
+      query: "apple",
+      matches: [appleMatch],
+      otherMatches: [{ name: "Apple Shell", type: "entity", node_id: "ent::shell::1", coverage_total: 0 }],
+    });
+    expect(s).toContain("- Apple Shell — 0 metrics (`ent::shell::1`)");
+  });
+
   it("next-step example: entity → 'Name Metric', metric → 'Entity Name', pointing at next_call", () => {
     expect(buildSummary({ query: "apple", matches: [appleMatch], otherMatches: [] }))
       .toContain('query "Apple Inc. Revenue"');

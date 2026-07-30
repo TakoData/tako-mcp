@@ -14,6 +14,12 @@ import {
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
   orderCardsByUsefulness,
+  // The single source of the pin recipe: tako_search's zero-result guidance and
+  // this tool's zero-card verdict must name the SAME form, or the model learns
+  // two and only one works. Measured on prod (2026-07-29): re-asking here with
+  // only the ENTITY node pinned at the default strict:false returned a
+  // byte-identical zero-card response — $0.009 for nothing.
+  PINNED_RETRY,
   searchedData,
   slimCard,
   slimWebResult,
@@ -169,15 +175,6 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
     locale: input.locale,
   } satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
 }
-
-// The one retry worth spending. Measured on prod (2026-07-29): re-asking with
-// only the ENTITY node pinned, at the default `strict:false`, returned a
-// byte-identical zero-card response — the old wording ("re-ask pinning its
-// node_ids") named the one variant that does nothing, so following it cost
-// $0.009 and changed nothing. Pinning the METRIC node WITH `strict:true`
-// returned exactly that metric's card. The recipe below is that difference.
-const PINNED_RETRY =
-  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all";
 
 /**
  * The zero-data-card verdict, worded by whether web results ground the

@@ -588,6 +588,21 @@ export const searchedData = (s: SearchedSources): boolean =>
 const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
 
 /**
+ * How to spend the ONE pinned retry. Measured on prod (2026-07-29): a pin at
+ * the default `strict:false` did not steer retrieval at all — a deliberately
+ * WRONG node changed nothing, and pinning a metric node without strict
+ * returned a DIFFERENT metric's card. The same metric node WITH `strict:true`
+ * returned exactly that card. So "pinning its node_ids" alone described the
+ * variant that does nothing; this names the one that works.
+ *
+ * Exported because `tako_answer`'s zero-card guidance needs the identical
+ * recipe: two tools whose recovery advice drifts apart teach the model two
+ * different pin forms, and only one of them works. One string, one place.
+ */
+export const PINNED_RETRY =
+  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all";
+
+/**
  * Recovery protocol for a zero-CARD search. Rewording the same query almost
  * never flips a miss into a hit — misses come from query SHAPE (compound
  * query, brand instead of domain, unresolved entity) or from the data simply
@@ -602,15 +617,6 @@ const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
  * invariant here rather than a quoted sentence, so a reworded skill does
  * not silently make this comment a lie. Update all four copies together.
  */
-// How to spend the ONE pinned retry. Measured on prod (2026-07-29): a pin at
-// the default `strict:false` did not steer retrieval at all — a deliberately
-// WRONG node changed nothing, and pinning a metric node without strict
-// returned a DIFFERENT metric's card. The same metric node WITH `strict:true`
-// returned exactly that card. So "pinning its node_ids" alone described the
-// variant that does nothing; this names the one that works.
-const PINNED_RETRY =
-  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all";
-
 function buildZeroResultGuidance(
   hasWebResults: boolean,
   sources: SearchedSources,

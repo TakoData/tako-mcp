@@ -535,7 +535,7 @@ const tako_available_data = {
         }),
         matches: [],
         other_matches: [],
-        next_call: metricConfident ? buildPairNextCall(input.q, metricQuery, pair) : null,
+        next_call: metricConfident ? buildPairNextCall(metricQuery, pair) : null,
         entity: pair.entity,
         metric: pair.metric,
         entity_alternates: pair.entity_alternates,
