@@ -46,6 +46,31 @@ import { GOLDEN_CASES } from "./golden-queries.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PANEL_PORT ?? 8801);
 
+/**
+ * Load `.env` ourselves.
+ *
+ * Nothing in this repo sources `.env` for a plain `npm run` — wrangler reads its
+ * own vars and the other scripts expect keys already exported. So a key sitting
+ * in `.env` reached this process only if you remembered to export it by hand,
+ * which meant "I added the key" and "agent mode is off" were true at the same
+ * time. Reading the file here removes that whole class of confusion.
+ *
+ * Existing environment wins: an explicitly exported key must beat the file, so
+ * `ANTHROPIC_API_KEY=... npm run panel` still overrides.
+ */
+const originalEnv = new Map(Object.entries(process.env));
+const loadedEnvFiles: string[] = [];
+for (const candidate of [join(HERE, "..", "..", ".env"), join(HERE, "..", ".env")]) {
+  try {
+    process.loadEnvFile(candidate);
+    // Put back anything the file overwrote that was already set explicitly.
+    for (const [key, value] of originalEnv) process.env[key] = value;
+    loadedEnvFiles.push(candidate);
+  } catch {
+    // Absent or unreadable: not an error, the vars may simply be exported.
+  }
+}
+
 // Claude's own default. Overridable from the panel; kept here so the default
 // tracks the model the server is actually tuned against.
 const DEFAULT_MODEL = "claude-opus-5";
@@ -235,85 +260,144 @@ async function callTool(
 }
 
 // ---------------------------------------------------------------------------
-// Agent mode: let Claude route, and watch what it picks
+// Agent mode: let Claude route, and watch every step of it
 // ---------------------------------------------------------------------------
 
-interface TraceStep {
-  kind: "text" | "tool_call" | "stop";
-  text?: string;
-  tool?: string;
-  input?: unknown;
-  result?: {
-    isError: boolean;
-    ms: number;
-    chars: number;
-    cost_usd: number | null;
-    next_call: unknown;
-    preview: string;
-  };
+/**
+ * A `next_call` this server handed the model, kept so the next tool call can be
+ * checked against it.
+ *
+ * This is the single most useful thing the panel reports. The whole
+ * discovery-to-fetch design rests on the model running the emitted handle
+ * VERBATIM — and the failure mode is silent: the model reads the handle, then
+ * issues its own almost-identical call without `strict`, which is the variant
+ * measured to do nothing. Watching for that is the difference between "the
+ * instructions look right" and "the instructions work".
+ */
+interface PendingHandle {
+  fromTool: string;
+  call: { tool?: string; query?: string; node_ids?: string[]; strict?: boolean };
 }
 
+type Adherence = "verbatim" | "deviated" | "ignored" | null;
+
+/** Did this call run the pending handle as issued? */
+function checkAdherence(
+  pending: PendingHandle | null,
+  toolName: string,
+  args: Record<string, unknown>,
+): { adherence: Adherence; detail: string } {
+  if (pending === null) return { adherence: null, detail: "" };
+  const want = pending.call;
+  if (toolName !== want.tool) {
+    return { adherence: "ignored", detail: `handle named ${String(want.tool)}, model called ${toolName}` };
+  }
+  const diffs: string[] = [];
+  if (args.query !== want.query) diffs.push(`query: wanted ${JSON.stringify(want.query)}, sent ${JSON.stringify(args.query)}`);
+  const sentIds = Array.isArray(args.node_ids) ? (args.node_ids as string[]) : [];
+  const wantIds = want.node_ids ?? [];
+  if (JSON.stringify(sentIds) !== JSON.stringify(wantIds)) {
+    diffs.push(`node_ids: wanted ${JSON.stringify(wantIds)}, sent ${JSON.stringify(sentIds)}`);
+  }
+  if (args.strict !== want.strict) diffs.push(`strict: wanted ${String(want.strict)}, sent ${String(args.strict)}`);
+  return diffs.length === 0
+    ? { adherence: "verbatim", detail: "ran the emitted handle exactly" }
+    : { adherence: "deviated", detail: diffs.join("; ") };
+}
+
+/** One SSE event out to the browser. */
+type Emit = (event: string, data: unknown) => void;
+
 /**
- * Run one question through Claude with this server's tools attached.
+ * Run one question through Claude with this server's tools attached, streaming
+ * every step as it happens.
  *
- * `includeStructured` is a real experiment knob, not a convenience: our design
- * puts the machine handles (node ids, `next_call`) in `structuredContent`, and
- * MCP clients differ on whether they forward it to the model. Turning it off
- * shows how the server behaves for a client that only passes the text channel —
- * which is the pessimistic case every instruction here has to survive.
+ * Streaming is not polish: an agent run makes several real network calls and can
+ * take half a minute, and a panel that shows nothing until it finishes is
+ * indistinguishable from one that has hung.
+ *
+ * `includeStructured` is a real experiment knob. Our design puts the machine
+ * handles (node ids, `next_call`) in `structuredContent`, and MCP clients differ
+ * on whether they forward it. Turning it off shows how the server behaves for a
+ * text-only client — the pessimistic case every instruction has to survive.
  */
 async function runAgent(
   target: Target,
   question: string,
   model: string,
   includeStructured: boolean,
-): Promise<{ ok: boolean; error?: string; trace: TraceStep[]; tokens: { in: number; out: number }; cost_usd: number }> {
+  emit: Emit,
+): Promise<void> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (apiKey === undefined) {
-    return {
-      ok: false,
-      error: "ANTHROPIC_API_KEY is not set — add it to .env (it is gitignored) and restart the panel. Raw mode works without it.",
-      trace: [], tokens: { in: 0, out: 0 }, cost_usd: 0,
-    };
+    emit("error", {
+      message:
+        "ANTHROPIC_API_KEY is not set. Add it to .env at the repo root and restart the panel (the panel reads .env itself). Raw mode works without it.",
+    });
+    return;
   }
 
   const { instructions, tools } = await connect(target);
-  const trace: TraceStep[] = [];
+  emit("start", {
+    model,
+    target: target.id,
+    tools: tools.map((t) => t.name),
+    instructions,
+    include_structured: includeStructured,
+    // The exact published description of each tool the model is choosing
+    // between — the other half of what actually drives routing.
+    tool_descriptions: Object.fromEntries(tools.map((t) => [t.name, t.description])),
+  });
+
   const messages: Array<{ role: "user" | "assistant"; content: unknown }> = [
     { role: "user", content: question },
   ];
   let tokensIn = 0;
   let tokensOut = 0;
   let cost = 0;
+  let pending: PendingHandle | null = null;
 
-  for (let turn = 0; turn < MAX_AGENT_TURNS; turn += 1) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 4096,
-        // The server's OWN instructions as the system prompt — exactly the
-        // channel a real MCP client puts them in.
-        system: instructions,
-        tools: tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.inputSchema,
-        })),
-        messages,
-      }),
-    });
+  for (let turn = 1; turn <= MAX_AGENT_TURNS; turn += 1) {
+    emit("turn", { turn });
+    let res: Response;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 4096,
+          // The server's OWN instructions as the system prompt — exactly the
+          // channel a real MCP client puts them in.
+          system: instructions,
+          tools: tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.inputSchema,
+          })),
+          messages,
+        }),
+      });
+    } catch (err) {
+      emit("error", { message: `could not reach the Anthropic API: ${String(err)}` });
+      return;
+    }
     if (!res.ok) {
-      return {
-        ok: false,
-        error: `Anthropic API ${res.status}: ${(await res.text()).slice(0, 400)}`,
-        trace, tokens: { in: tokensIn, out: tokensOut }, cost_usd: cost,
-      };
+      const body = (await res.text()).slice(0, 600);
+      emit("error", {
+        message: `Anthropic API ${res.status}`,
+        detail: body,
+        hint: res.status === 401
+          ? "That key was rejected. Check ANTHROPIC_API_KEY in .env — a Console key starts with `sk-ant-`."
+          : res.status === 404
+            ? `The model name may be wrong for this account: ${model}`
+            : "",
+      });
+      return;
     }
     const body = (await res.json()) as {
       content: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
@@ -322,15 +406,22 @@ async function runAgent(
     };
     tokensIn += body.usage?.input_tokens ?? 0;
     tokensOut += body.usage?.output_tokens ?? 0;
+    emit("usage", { tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: cost });
 
     for (const block of body.content) {
       if (block.type === "text" && block.text !== undefined && block.text.trim() !== "") {
-        trace.push({ kind: "text", text: block.text });
+        emit("text", { text: block.text });
       }
     }
     if (body.stop_reason !== "tool_use") {
-      trace.push({ kind: "stop", text: body.stop_reason });
-      break;
+      emit("done", {
+        stop_reason: body.stop_reason,
+        turns: turn,
+        tokens_in: tokensIn,
+        tokens_out: tokensOut,
+        cost_usd: cost,
+      });
+      return;
     }
 
     messages.push({ role: "assistant", content: body.content });
@@ -338,39 +429,67 @@ async function runAgent(
     for (const block of body.content) {
       if (block.type !== "tool_use" || block.name === undefined) continue;
       const args = (block.input ?? {}) as Record<string, unknown>;
-      const report = await callTool(target, block.name, args);
-      cost += report.cost_usd ?? 0;
-      trace.push({
-        kind: "tool_call",
+      const { adherence, detail } = checkAdherence(pending, block.name, args);
+      emit("tool_call", {
         tool: block.name,
         input: args,
-        result: {
-          isError: report.isError || !report.ok,
-          ms: report.ms,
-          chars: report.chars + report.structured_chars,
-          cost_usd: report.cost_usd,
-          next_call: report.next_call,
-          preview: (report.error ?? report.text).slice(0, 600),
-        },
+        adherence,
+        adherence_detail: detail,
+        expected: pending?.call ?? null,
       });
-      // What the model gets back. Text always; structuredContent only when the
-      // knob is on, mirroring how clients actually differ.
+
+      const report = await callTool(target, block.name, args);
+      cost += report.cost_usd ?? 0;
+
+      // What the model gets back, byte for byte. Surfacing this is the point:
+      // if routing goes wrong, the cause is almost always in here.
       const parts: string[] = [report.error ?? report.text];
       if (includeStructured && report.structuredContent !== null) {
         parts.push(`structuredContent:\n${JSON.stringify(report.structuredContent)}`);
       }
+      const sentToModel = parts.join("\n\n");
+
+      emit("tool_result", {
+        tool: block.name,
+        ok: report.ok,
+        isError: report.isError || !report.ok,
+        ms: report.ms,
+        text: report.error ?? report.text,
+        structuredContent: report.structuredContent,
+        chars_text: report.chars,
+        chars_structured: report.structured_chars,
+        approx_tokens: report.approx_tokens,
+        cost_usd: report.cost_usd,
+        next_call: report.next_call,
+        sent_to_model: sentToModel,
+        sent_chars: sentToModel.length,
+      });
+      emit("usage", { tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: cost });
+
+      // A fresh handle supersedes the old one; a call that produced none clears
+      // it, so adherence is only ever judged against a handle actually on offer.
+      pending = report.next_call == null
+        ? null
+        : { fromTool: block.name, call: report.next_call as PendingHandle["call"] };
+
       toolResults.push({
         type: "tool_result",
         tool_use_id: block.id,
-        content: parts.join("\n\n"),
+        content: sentToModel,
         ...(report.isError || !report.ok ? { is_error: true } : {}),
       });
     }
     messages.push({ role: "user", content: toolResults });
   }
-
-  return { ok: true, trace, tokens: { in: tokensIn, out: tokensOut }, cost_usd: cost };
+  emit("done", {
+    stop_reason: `hit the ${MAX_AGENT_TURNS}-turn ceiling`,
+    turns: MAX_AGENT_TURNS,
+    tokens_in: tokensIn,
+    tokens_out: tokensOut,
+    cost_usd: cost,
+  });
 }
+
 
 // ---------------------------------------------------------------------------
 // HTTP
@@ -444,20 +563,34 @@ const server = createServer((req, res) => {
         json(res, 200, await callTool(target, name, args));
         return;
       }
+      // Server-sent events, so each step lands in the UI as it happens rather
+      // than the page sitting blank for half a minute.
       if (req.method === "POST" && url.pathname === "/api/agent") {
         const body = await readBody(req);
         const target = targetById(String(body.target));
         if (target === undefined) return json(res, 400, { error: "unknown target" });
-        json(
-          res,
-          200,
+        res.writeHead(200, {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        const emit: Emit = (event, data) => {
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+        try {
           await runAgent(
             target,
             String(body.question ?? ""),
             String(body.model ?? DEFAULT_MODEL),
             body.include_structured !== false,
-          ),
-        );
+            emit,
+          );
+        } catch (err) {
+          // Any unexpected throw still has to reach the UI — an SSE stream that
+          // just stops looks identical to a hang.
+          emit("error", { message: String(err) });
+        }
+        res.end();
         return;
       }
       res.writeHead(404, { "content-type": "text/plain" });
@@ -468,15 +601,32 @@ const server = createServer((req, res) => {
   })();
 });
 
+/** Where a key came from, so "I added the key" and "agent mode is off" can
+ *  never both be true without the reason being on screen. */
+const keySource = (name: string): string => {
+  if (process.env[name] === undefined) return "not set";
+  return originalEnv.has(name) ? "from environment" : "from .env";
+};
+
 server.listen(PORT, () => {
-  console.log(`\n  Tako MCP panel → http://localhost:${PORT}\n`);
+  console.log(`\n  Tako MCP panel → http://localhost:${PORT}`);
+  console.log(`  (the worker itself is on :8799 — opening that shows a 404, which is expected)\n`);
+  console.log(
+    loadedEnvFiles.length > 0
+      ? `  .env loaded: ${loadedEnvFiles.join(", ")}`
+      : "  .env: none found (expecting keys to be exported)",
+  );
+  console.log("");
   for (const t of TARGETS) {
     const auth = t.token === undefined ? "NO TOKEN" : "authed";
     console.log(`    ${t.id.padEnd(8)} ${t.url}  (${auth})`);
   }
-  if (process.env.ANTHROPIC_API_KEY === undefined) {
-    console.log("\n    agent mode OFF — set ANTHROPIC_API_KEY to enable it (raw mode works without)\n");
-  } else {
-    console.log("\n    agent mode ON\n");
-  }
+  console.log("");
+  console.log(`    TAKO_STAGING_API_KEY  ${keySource("TAKO_STAGING_API_KEY")}`);
+  console.log(`    ANTHROPIC_API_KEY     ${keySource("ANTHROPIC_API_KEY")}`);
+  console.log(
+    process.env.ANTHROPIC_API_KEY === undefined
+      ? "\n    agent mode OFF — add ANTHROPIC_API_KEY to .env and restart (raw mode works without)\n"
+      : "\n    agent mode ON\n",
+  );
 });

@@ -77,6 +77,22 @@
   .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   @media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
   .note { font-size: 12px; color: var(--dim); }
+  .accent { color: var(--accent); }
+  .turn {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--dim); border-top: 1px solid var(--line);
+    padding-top: 8px; margin: 6px 0 10px;
+  }
+  details { margin: 5px 0; }
+  summary {
+    cursor: pointer; font-size: 12px; color: var(--dim);
+    padding: 3px 0; user-select: none;
+  }
+  summary:hover { color: var(--accent); }
+  details[open] > pre {
+    margin-top: 6px; padding: 8px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 6px;
+  }
   /* `!important` is load-bearing: a toggled section that also needs a display
      mode must get it from a CLASS, never an inline style, or the inline rule
      wins and the section never hides. Use `.stack` below for that layout. */
@@ -170,6 +186,16 @@
         Clients differ on whether they forward <code>structuredContent</code>. Turn it off to see how routing
         holds up for a text-only client — the pessimistic case every instruction has to survive.
       </div>
+    </div>
+    <div class="card">
+      <h2>What the model was given</h2>
+      <div class="note" style="margin-bottom:8px">
+        The two things that actually drive routing. If it picks the wrong tool, the reason is in here.
+      </div>
+      <details><summary>system prompt (the server's <code>instructions</code>)</summary>
+        <pre id="run-instructions" class="scroll"></pre></details>
+      <details><summary>tool descriptions as published</summary>
+        <pre id="run-tools" class="scroll"></pre></details>
     </div>
     <div class="card">
       <h2>Trace</h2>
@@ -308,67 +334,208 @@ async function runNext() {
   await run();
 }
 
-function renderTrace(res) {
-  const box = $("trace");
-  box.innerHTML = "";
-  if (!res.ok) {
-    $("agent-stats").innerHTML = '<span class="bad">agent run failed</span>';
-    const p = document.createElement("pre");
-    p.className = "bad"; p.textContent = res.error ?? "unknown error";
-    box.appendChild(p);
+// ---------------------------------------------------------------------------
+// Agent trace: streamed, and readable enough to debug routing from
+// ---------------------------------------------------------------------------
+
+const esc = (v) => String(v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+let runState = { tools: 0, tokensIn: 0, tokensOut: 0, cost: 0, verbatim: 0, deviated: 0, ignored: 0 };
+
+function renderRunStats(extra = "") {
+  const s = runState;
+  const bits = [
+    `<span><b>${s.tools}</b> tool call${s.tools === 1 ? "" : "s"}</span>`,
+    `<span><b>${s.tokensIn.toLocaleString()}</b> in / <b>${s.tokensOut.toLocaleString()}</b> out tokens (exact)</span>`,
+    `<span class="warn">Tako spend $<b>${s.cost.toFixed(4)}</b></span>`,
+  ];
+  // The headline verdict for this whole PR: did the model run the handles it
+  // was given, as given?
+  if (s.verbatim) bits.push(`<span class="ok"><b>${s.verbatim}</b> handle${s.verbatim === 1 ? "" : "s"} run verbatim</span>`);
+  if (s.deviated) bits.push(`<span class="bad"><b>${s.deviated}</b> deviated</span>`);
+  if (s.ignored) bits.push(`<span class="warn"><b>${s.ignored}</b> ignored</span>`);
+  if (extra) bits.push(extra);
+  $("agent-stats").innerHTML = bits.join("");
+}
+
+/** A collapsible payload block — full content, never truncated. */
+function details(label, body, cls = "") {
+  const d = document.createElement("details");
+  const sum = document.createElement("summary");
+  sum.innerHTML = label;
+  const pre = document.createElement("pre");
+  pre.className = `scroll ${cls}`;
+  pre.textContent = body;
+  d.append(sum, pre);
+  return d;
+}
+
+const traceBox = () => $("trace");
+const addStep = (node) => {
+  traceBox().appendChild(node);
+  node.scrollIntoView({ block: "nearest" });
+};
+
+const ADHERENCE = {
+  verbatim: ['<span class="ok">ran the handle verbatim</span>', "ok"],
+  deviated: ['<span class="bad">DEVIATED from the emitted handle</span>', "bad"],
+  ignored: ['<span class="warn">ignored the emitted handle</span>', "warn"],
+};
+
+function onEvent(name, d) {
+  if (name === "start") {
+    $("run-instructions").textContent = d.instructions || "(server sent no instructions)";
+    $("run-tools").textContent = Object.entries(d.tool_descriptions)
+      .map(([n, desc]) => `── ${n} ──\n${desc}`).join("\n\n");
+    const head = document.createElement("div");
+    head.className = "step";
+    head.innerHTML = `<h3 class="dim">run started</h3><div class="note">model <code>${esc(d.model)}</code> · target <code>${esc(d.target)}</code> · ${d.tools.length} tools offered · structuredContent ${d.include_structured ? "forwarded" : "WITHHELD"}</div>`;
+    addStep(head);
     return;
   }
-  const tools = res.trace.filter((s) => s.kind === "tool_call");
-  $("agent-stats").innerHTML = [
-    `<span><b>${tools.length}</b> tool call${tools.length === 1 ? "" : "s"}</span>`,
-    `<span><b>${res.tokens.in.toLocaleString()}</b> in / <b>${res.tokens.out.toLocaleString()}</b> out tokens (exact)</span>`,
-    `<span class="warn">Tako spend $<b>${res.cost_usd.toFixed(4)}</b></span>`,
-  ].join("");
-
-  for (const step of res.trace) {
-    const d = document.createElement("div");
-    if (step.kind === "text") {
-      d.className = "step";
-      d.innerHTML = `<h3 class="dim">assistant</h3>`;
-      const p = document.createElement("pre"); p.textContent = step.text;
-      d.appendChild(p);
-    } else if (step.kind === "tool_call") {
-      d.className = "step tool";
-      const r = step.result;
-      const flags = [
-        `${r.ms} ms`,
-        `${r.chars.toLocaleString()} chars`,
-        r.cost_usd !== null ? `$${r.cost_usd.toFixed(4)}` : "free",
-        r.next_call ? "next_call present" : "",
-        r.isError ? "ERROR" : "",
-      ].filter(Boolean).join(" · ");
-      d.innerHTML = `<h3><span class="ok">→ ${step.tool}</span> <span class="dim" style="font-weight:400">${flags}</span></h3>`;
-      const a = document.createElement("pre");
-      a.textContent = JSON.stringify(step.input);
-      d.appendChild(a);
-      const p = document.createElement("pre");
-      p.className = r.isError ? "bad" : "dim";
-      p.textContent = r.preview + (r.chars > 600 ? "\n…" : "");
-      d.appendChild(p);
-    } else {
-      d.className = "step";
-      d.innerHTML = `<h3 class="dim">stopped: ${step.text}</h3>`;
+  if (name === "turn") {
+    const t = document.createElement("div");
+    t.className = "turn";
+    t.textContent = `turn ${d.turn}`;
+    addStep(t);
+    return;
+  }
+  if (name === "usage") {
+    runState.tokensIn = d.tokens_in; runState.tokensOut = d.tokens_out; runState.cost = d.cost_usd;
+    renderRunStats('<span class="dim">running…</span>');
+    return;
+  }
+  if (name === "text") {
+    const d2 = document.createElement("div");
+    d2.className = "step";
+    d2.innerHTML = `<h3 class="dim">assistant says</h3>`;
+    const pre = document.createElement("pre");
+    pre.textContent = d.text;
+    d2.appendChild(pre);
+    addStep(d2);
+    return;
+  }
+  if (name === "tool_call") {
+    runState.tools += 1;
+    if (d.adherence === "verbatim") runState.verbatim += 1;
+    if (d.adherence === "deviated") runState.deviated += 1;
+    if (d.adherence === "ignored") runState.ignored += 1;
+    const box = document.createElement("div");
+    box.className = "step tool";
+    box.id = `call-${runState.tools}`;
+    const badge = d.adherence ? ` — ${ADHERENCE[d.adherence][0]}` : "";
+    box.innerHTML = `<h3><span class="accent">→ calls ${esc(d.tool)}</span>${badge}</h3>`;
+    const args = document.createElement("pre");
+    args.textContent = JSON.stringify(d.input, null, 2);
+    box.appendChild(args);
+    if (d.adherence && d.adherence !== "verbatim") {
+      const why = document.createElement("div");
+      why.className = `note ${ADHERENCE[d.adherence][1]}`;
+      why.textContent = d.adherence_detail;
+      box.appendChild(why);
+      box.appendChild(details("what the handle said to run", JSON.stringify(d.expected, null, 2), "dim"));
     }
-    box.appendChild(d);
+    addStep(box);
+    return;
+  }
+  if (name === "tool_result") {
+    const box = $(`call-${runState.tools}`) ?? traceBox();
+    const flags = [
+      `${d.ms} ms`,
+      `${d.chars_text.toLocaleString()} chars text`,
+      `${d.chars_structured.toLocaleString()} structured`,
+      `~${d.approx_tokens.toLocaleString()} tokens`,
+      d.cost_usd !== null ? `<span class="warn">$${d.cost_usd.toFixed(4)}</span>` : '<span class="ok">free</span>',
+      d.next_call ? '<span class="ok">emitted a next_call</span>' : '<span class="dim">no next_call</span>',
+      d.isError ? '<span class="bad">isError</span>' : "",
+    ].filter(Boolean).join(" · ");
+    const line = document.createElement("div");
+    line.className = "note";
+    line.style.margin = "6px 0";
+    line.innerHTML = `← returned: ${flags}`;
+    box.appendChild(line);
+    // Full payloads, collapsed. Truncating is what makes a trace useless the
+    // moment you actually need it.
+    box.appendChild(details("text channel — what the model reads", d.text || "(empty)", d.isError ? "bad" : ""));
+    if (d.structuredContent !== null) {
+      box.appendChild(details("structuredContent", JSON.stringify(d.structuredContent, null, 2)));
+    }
+    box.appendChild(details(
+      `exactly what was sent back to the model <span class="dim">(${d.sent_chars.toLocaleString()} chars)</span>`,
+      d.sent_to_model, "dim",
+    ));
+    if (d.next_call) {
+      const nc = document.createElement("div");
+      nc.className = "note";
+      nc.innerHTML = `handle offered for the next call: <code>${esc(JSON.stringify(d.next_call))}</code>`;
+      box.appendChild(nc);
+    }
+    return;
+  }
+  if (name === "done") {
+    const d2 = document.createElement("div");
+    d2.className = "step";
+    d2.innerHTML = `<h3 class="ok">finished</h3><div class="note">stop reason: ${esc(d.stop_reason)} · ${d.turns} turn${d.turns === 1 ? "" : "s"}</div>`;
+    addStep(d2);
+    renderRunStats();
+    return;
+  }
+  if (name === "error") {
+    const d2 = document.createElement("div");
+    d2.className = "step";
+    d2.innerHTML = `<h3 class="bad">error</h3>`;
+    const pre = document.createElement("pre");
+    pre.className = "bad";
+    pre.textContent = [d.message, d.detail, d.hint].filter(Boolean).join("\n\n");
+    d2.appendChild(pre);
+    addStep(d2);
+    renderRunStats('<span class="bad">failed</span>');
   }
 }
 
+/**
+ * Read the SSE stream by hand rather than with EventSource, because the run has
+ * to be started with a POST body (question, model, target) and EventSource is
+ * GET-only.
+ */
 async function ask() {
   $("ask").disabled = true;
-  $("agent-stats").innerHTML = '<span class="dim">thinking… (each tool call is a real request)</span>';
-  $("trace").innerHTML = "";
+  runState = { tools: 0, tokensIn: 0, tokensOut: 0, cost: 0, verbatim: 0, deviated: 0, ignored: 0 };
+  traceBox().innerHTML = "";
+  $("agent-stats").innerHTML = '<span class="dim">starting… (each tool call is a real request)</span>';
   try {
-    renderTrace(await post("/api/agent", {
-      target: target(),
-      question: $("question").value,
-      model: $("model").value,
-      include_structured: $("incl-structured").checked,
-    }));
+    const res = await fetch("/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        target: target(),
+        question: $("question").value,
+        model: $("model").value,
+        include_structured: $("incl-structured").checked,
+      }),
+    });
+    if (!res.ok || !res.body) {
+      onEvent("error", { message: `panel returned ${res.status}`, detail: await res.text() });
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE frames are separated by a blank line; keep any partial tail.
+      const frames = buf.split("\n\n");
+      buf = frames.pop() ?? "";
+      for (const frame of frames) {
+        const ev = /^event: (.+)$/m.exec(frame);
+        const data = /^data: (.+)$/m.exec(frame);
+        if (ev && data) onEvent(ev[1], JSON.parse(data[1]));
+      }
+    }
+  } catch (err) {
+    onEvent("error", { message: String(err) });
   } finally {
     $("ask").disabled = false;
   }
