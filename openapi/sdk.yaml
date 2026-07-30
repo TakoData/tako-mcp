@@ -46,6 +46,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
+        '529':
+          description: 'Tako is overloaded and did not process this request. Do not
+            retry automatically. The response carries the header x-should-retry: false.
+            Send the request again later.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
       security:
       - apiKey: []
   /v1/answer:
@@ -85,6 +93,14 @@ paths:
                 $ref: '#/components/schemas/BaseAPIError'
         '408':
           description: The request exceeded the processing time limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseAPIError'
+        '529':
+          description: 'Tako is overloaded and did not process this request. Do not
+            retry automatically. The response carries the header x-should-retry: false.
+            Send the request again later.'
           content:
             application/json:
               schema:
@@ -879,6 +895,7 @@ components:
       - FORBIDDEN
       - NOT_FOUND
       - SERVICE_UNAVAILABLE
+      - SERVICE_OVERLOADED
       title: APIErrorType
     AgentAnswerAssumption:
       properties:
