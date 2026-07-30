@@ -19,6 +19,7 @@ import {
   detectMcpClient,
   djangoErrorToToolResult,
   logSdkValidationRejections,
+  SERVER_INSTRUCTIONS,
   structuredContentFor,
   withChatGptToolSecuritySchemes,
 } from "./mcp.js";
@@ -292,8 +293,32 @@ describe("djangoErrorToToolResult", () => {
     // 5xx SERVER-error body stays in `_meta` only — not spliced into the text
     // content. It carries no LLM-actionable detail and a noisy upstream body
     // (often an HTML error page) would flood the text channel.
-    expect(result.content[0]).toEqual({ type: "text", text: err.message });
+    expect(result.content[0]?.text).toContain(err.message);
     expect(result.content[0]?.text).not.toContain("service unavailable");
+    // 503 is transient: the model is told to retry the same call rather than
+    // read it as a permanent failure and abandon the tool.
+    expect(result.content[0]?.text).toContain("retry the SAME call once");
+  });
+
+  it("does NOT invite a retry on a non-transient 5xx", () => {
+    const err = new DjangoHttpError({
+      path: "/api/v1/whatever", method: "GET", status: 500, body: "boom",
+    });
+    const text = djangoErrorToToolResult(err).content[0]?.text ?? "";
+    expect(text).toBe(err.message);
+    expect(text).not.toContain("retry");
+  });
+
+  it("leaves a handler's own modelGuidance untouched", () => {
+    // tako_contents' self-correcting 403 text is already actionable; appending
+    // a generic retry line would contradict "fall back, don't retry".
+    const err = new DjangoHttpError({
+      path: "/api/v1/contents", method: "POST", status: 503, body: "x",
+    });
+    err.modelGuidance = "Fall back to the card preview; do not retry.";
+    expect(djangoErrorToToolResult(err).content[0]?.text).toBe(
+      "Fall back to the card preview; do not retry.",
+    );
   });
 
   it("splices a 403 (protected-source) body into the text content, not just _meta", () => {
@@ -1133,7 +1158,13 @@ describe("structuredContentFor", () => {
     expect(structured).toEqual({ request_id: "r1" });
   });
 
-  it("falls back to the FULL output (and logs) when the slim drifts from the schema", () => {
+  // Serving the FULL output on drift was the old behaviour and it was the bug:
+  // the SDK republishes our schemas as strict (`additionalProperties: false`),
+  // so an object carrying `cards`/`sources_glossary` is rejected outright and a
+  // spec-compliant client discards the ENTIRE result — text block included — on
+  // a call already billed. Narrow to the declared keys instead: drop the
+  // extras, never the answer.
+  it("narrows to the declared keys (and logs) when the slim drifts from the schema", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const structured = structuredContentFor(
       {
@@ -1144,7 +1175,8 @@ describe("structuredContentFor", () => {
       },
       full,
     );
-    expect(structured).toEqual(full);
+    expect(structured).toEqual({ request_id: "r1" });
+    expect(structured).not.toHaveProperty("cards");
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("does not conform"),
       expect.anything(),
@@ -1152,7 +1184,7 @@ describe("structuredContentFor", () => {
     errorSpy.mockRestore();
   });
 
-  it("falls back to the full output when the slimmer throws", () => {
+  it("narrows to the declared keys when the slimmer throws", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const structured = structuredContentFor(
       {
@@ -1164,12 +1196,27 @@ describe("structuredContentFor", () => {
       },
       full,
     );
-    expect(structured).toEqual(full);
+    expect(structured).toEqual({ request_id: "r1" });
     errorSpy.mockRestore();
   });
 
-  it("serves the full output untouched when no slimmer is declared", () => {
-    expect(structuredContentFor({ name: "t", outputSchema }, full)).toEqual(full);
+  it("narrows the full output when no slimmer is declared", () => {
+    expect(structuredContentFor({ name: "t", outputSchema }, full)).toEqual({
+      request_id: "r1",
+    });
+  });
+
+  // Last resort: if even the narrowed object cannot satisfy the schema there is
+  // nothing conforming to send, and omitting is spec-legal where a rejected
+  // result is fatal. The payload rides in the text channel regardless.
+  it("omits structuredContent when narrowing still cannot conform", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const structured = structuredContentFor(
+      { name: "t", outputSchema, slimStructured: () => ({ usage: null }) },
+      { cards: ["only undeclared keys"] },
+    );
+    expect(structured).toBeUndefined();
+    errorSpy.mockRestore();
   });
 
   it("serves the slim object as-is when the tool declares no outputSchema", () => {
@@ -1179,5 +1226,27 @@ describe("structuredContentFor", () => {
         full,
       ),
     ).toEqual({ anything: 1 });
+  });
+});
+
+describe("SERVER_INSTRUCTIONS", () => {
+  it("names every tool an agent must choose between", () => {
+    for (const tool of ["tako_search", "tako_answer", "tako_available_data"]) {
+      expect(SERVER_INSTRUCTIONS).toContain(tool);
+    }
+  });
+
+  it("states the pin form that actually steers retrieval", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("strict: true");
+    expect(SERVER_INSTRUCTIONS).toMatch(/METRIC node id/i);
+  });
+
+  it("documents the `metric` fast path on tako_available_data", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/Pass `metric` alongside `q`/);
+  });
+
+  it("stays short enough to sit in a system prompt", () => {
+    // Guard against drift: this is prime real estate, not a manual.
+    expect(SERVER_INSTRUCTIONS.length).toBeLessThan(2000);
   });
 });
