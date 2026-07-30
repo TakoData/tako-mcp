@@ -91,7 +91,7 @@ paths:
                 $ref: '#/components/schemas/BaseAPIError'
       security:
       - apiKey: []
-  /beta/graph/search:
+  /v1/graph/search:
     get:
       tags:
       - tako
@@ -101,9 +101,10 @@ paths:
         resolve the metric and the entity here, then ask /v3/search or /v1/answer
         for that entity + metric combination. Requires an API key. Note: Tako does
         not yet filter results to the production-ready inventory. A returned metric
-        or entity without a production fact table can 404 when you pass it to /beta/graph/related.
+        or entity without a production fact table can 404 when you pass it to /v1/graph/related.
         Pass label to prefer a NER label (a ranking boost, not a filter); by default
-        Tako infers the label from q.'
+        Tako infers the label from q. This endpoint was previously at /beta/graph/search.
+        That path still works until 1 February 2027. Move to /v1/graph/search.'
       operationId: graphSearch
       parameters:
       - description: Search text (min 2 chars).
@@ -178,7 +179,7 @@ paths:
                 $ref: '#/components/schemas/BaseAPIError'
       security:
       - apiKey: []
-  /beta/graph/related:
+  /v1/graph/related:
     get:
       tags:
       - tako
@@ -191,7 +192,8 @@ paths:
         stable `key`. Pass `relation`=<key> plus cursor to paginate that one group.
         Pass the optional q to narrow by a case-insensitive substring on names and
         aliases (for example, the metrics of an entity that match ''gdp''). Requires
-        an API key.'
+        an API key. This endpoint was previously at /beta/graph/related. That path
+        still works until 1 February 2027. Move to /v1/graph/related.'
       operationId: graphRelated
       parameters:
       - description: Opaque public id of the node.
@@ -297,14 +299,15 @@ paths:
                 $ref: '#/components/schemas/BaseAPIError'
       security:
       - apiKey: []
-  /beta/graph/node/{id}:
+  /v1/graph/node/{id}:
     get:
       tags:
       - tako
       summary: Get a graph node by id
-      description: Resolve a single node by its opaque public id. Search cards, /beta/graph/search,
-        and /beta/graph/related return these ids. Returns the node's name, type, aliases,
-        and description. Requires an API key.
+      description: Resolve a single node by its opaque public id. Search cards, /v1/graph/search,
+        and /v1/graph/related return these ids. Returns the node's name, type, aliases,
+        and description. Requires an API key. This endpoint was previously at /beta/graph/node/{id}.
+        That path still works until 1 February 2027. Move to /v1/graph/node/{id}.
       operationId: graphNode
       parameters:
       - description: Opaque public id of the node.
@@ -1988,7 +1991,7 @@ components:
           type: array
           maxItems: 20
           title: Node Ids
-          description: 'Graph node ids to pin into the search; the /beta/graph endpoints
+          description: 'Graph node ids to pin into the search; the /v1/graph endpoints
             return these ids. Pinned nodes always become retrieval candidates and
             get a strong boost; organic results do not change. Ids are not durable
             across knowledge-graph rebuilds: the search skips an id that no longer
@@ -3349,7 +3352,7 @@ components:
           title: Nodes
           description: Graph nodes (entities and metrics) behind this card. The response
             includes them by default. Absent for web-only cards or when node resolution
-            was not available. Use each id with /beta/graph/node/{id} for full detail
+            was not available. Use each id with /v1/graph/node/{id} for full detail
             (aliases, subtype), or pass ids in sources.data.node_ids to pin these
             nodes in future searches.
         metric_definitions:
@@ -3404,7 +3407,7 @@ components:
 
         no `aliases` and no `subtype`. Callers that need the full node resolve
 
-        the id via /beta/graph/node/{id}.'
+        the id via /v1/graph/node/{id}.'
     TakoCardSource:
       properties:
         source_name:
