@@ -89,7 +89,9 @@ export const SERVER_INSTRUCTIONS = [
   "",
   '`tako_search` also searches the live web alongside the proprietary data graph (default sources are data + web), so one call can stand in for a separate web search on questions that mix data with context. A built-in web search tool remains the right choice when the query is clearly outside Tako\'s coverage or Tako returned nothing relevant.',
   "",
-  "If unsure whether Tako has the data, `tako_available_data` is free and confirms coverage plus the exact metric names to query.",
+  "`tako_answer` is the counterpart for ONE specific question (\"what was X's Y?\"): it returns a single synthesized, cited answer with the series inlined. Use `tako_search` to retrieve and compare cards, `tako_answer` to answer one question — and prefer `tako_answer` for a named metric, including license-gated cards whose rows no other tool can return.",
+  "",
+  "If unsure whether Tako has the data, `tako_available_data` is free. Pass `metric` alongside `q` when you know the measure (`q=\"Nvidia\"`, `metric=\"gross margin\"`) and it returns the resolved entity+metric pair with their node ids and a ready-to-run follow-up; omit `metric` to browse everything an entity has. Pin the METRIC node id it gives you, with `strict: true` — an entity-only pin, or a pin without strict, does not steer retrieval.",
 ].join("\n");
 
 /**
@@ -411,41 +413,89 @@ export function createMcpServer(
 }
 
 /**
+ * Keep only the keys the advertised `outputSchema` actually declares.
+ *
+ * `registerTool` takes a `ZodRawShape`, so the SDK rebuilds our schemas as
+ * STRICT `z.object`s and publishes `additionalProperties: false` — the
+ * `z.looseObject` looseness we declare them with does not survive
+ * registration. Any undeclared key therefore makes a spec-compliant client
+ * (the official Python SDK among them) reject the whole result, text block
+ * included, on a call the caller has already been billed for.
+ */
+function pickDeclared(
+  schema: AnyToolModule["outputSchema"],
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  const shape = (schema as unknown as { shape?: Record<string, unknown> } | undefined)?.shape;
+  if (shape === undefined) return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(shape)) {
+    if (key in value) out[key] = value[key];
+  }
+  return out;
+}
+
+/**
  * The `structuredContent` for a tool result: the tool's `slimStructured`
- * output when it's declared AND conforms to the advertised `outputSchema`,
- * else the full handler output (correct, just token-heavier).
+ * output when it's declared AND conforms to the advertised `outputSchema`.
  *
  * The conformance parse is what enforces the pairing contract in `types.ts`
  * ("the returned value MUST conform to the tool's advertised
  * `outputSchema`") — five hand-maintained slim/schema pairs across two
  * files, where an unchecked drift ships a result spec-compliant clients
- * reject. Fail-open like the throw path: log server-side, serve the full
- * output. Exported for tests.
+ * reject.
+ *
+ * DEGRADATION, and why it is not "serve the full output": that fallback was
+ * measured to be the worst available option. The full object carries
+ * `sources_glossary`, `cards`, `web_results` and more, none of them declared,
+ * so against the published `additionalProperties: false` it is guaranteed to
+ * be rejected — and a strict client discards the ENTIRE result, including the
+ * text block that holds the answer. The failure fires on data-grounded
+ * responses (they are the ones with a glossary), so it destroys precisely the
+ * good ones.
+ *
+ * Instead: narrow to the declared keys and re-check. That drops the undeclared
+ * extras rather than the answer. Only if the narrowed object still fails do we
+ * omit `structuredContent` altogether — spec-legal, and the payload rides in
+ * the text channel by design either way. Exported for tests.
  */
 export function structuredContentFor(
   tool: Pick<AnyToolModule, "name" | "outputSchema" | "slimStructured">,
   output: unknown,
-): Record<string, unknown> {
+): Record<string, unknown> | undefined {
   const full = output as Record<string, unknown>;
-  if (tool.slimStructured === undefined) return full;
+  const narrow = (value: Record<string, unknown>, why: string): Record<string, unknown> | undefined => {
+    if (tool.outputSchema === undefined) return value;
+    const picked = pickDeclared(tool.outputSchema, value);
+    if (tool.outputSchema.safeParse(picked).success) return picked;
+    console.error(
+      `[mcp] ${tool.name}: ${why}, and narrowing to declared keys still does not conform — omitting structuredContent`,
+    );
+    return undefined;
+  };
+
+  if (tool.slimStructured === undefined) return narrow(full, "no slimStructured hook");
   let slim: Record<string, unknown>;
   try {
     slim = tool.slimStructured(output);
   } catch (err) {
     console.error(`slimStructured hook failed for ${tool.name}:`, err);
-    return full;
+    return narrow(full, "slimStructured threw");
   }
   if (tool.outputSchema !== undefined) {
     const conforms = tool.outputSchema.safeParse(slim);
     if (!conforms.success) {
       console.error(
-        `[mcp] slimStructured for ${tool.name} does not conform to its outputSchema — serving the full output:`,
+        `[mcp] slimStructured for ${tool.name} does not conform to its outputSchema:`,
         conforms.error.message,
       );
-      return full;
+      return narrow(full, "slim did not conform");
     }
   }
-  return slim;
+  // A conforming slim can still carry undeclared keys when the tool's OWN
+  // output object is passed through (loose zod accepts them); strip anyway so
+  // what ships always matches what was published.
+  return narrow(slim, "conforming slim") ?? slim;
 }
 
 /**
@@ -1104,7 +1154,8 @@ function registerTool(
         _meta?: Record<string, unknown>;
       } = { content };
       if (tool.outputSchema !== undefined) {
-        result.structuredContent = structuredContentFor(tool, output);
+        const structured = structuredContentFor(tool, output);
+        if (structured !== undefined) result.structuredContent = structured;
       }
       if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
         result._meta = resultMeta;
@@ -1135,6 +1186,10 @@ function registerTool(
  * Exported for unit testing — the wire contract is stable enough that
  * Phase 2 tests can rely on the `kind` strings here.
  */
+/** Upstream statuses that clear on their own: worth one retry of the same
+ *  call, as opposed to a 4xx that needs the request changed. */
+const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
+
 export function djangoErrorToToolResult(err: DjangoError): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;
@@ -1183,12 +1238,24 @@ export function djangoErrorToToolResult(err: DjangoError): {
   // 403/404 text) wins and is used verbatim — it already folds in any backend
   // detail, so it must NOT be re-spliced. Otherwise fall back to `err.message`,
   // splicing the recognised 4xx detail as usual.
-  const text =
+  const base =
     err.modelGuidance !== undefined
       ? err.modelGuidance
       : is4xx && detailText !== undefined
         ? `${err.message}: ${detailText}`
         : err.message;
+  // Transient statuses carry no LLM-actionable body, so without this they
+  // reach the model as a bare "Django returned 408 for POST /api/v1/answer/" —
+  // indistinguishable from a permanent failure, which pushes the agent to
+  // abandon Tako on an error that a single retry clears. Observed live: a
+  // cold-path answer call 408'd, then returned the figure on the very next
+  // attempt. `_graph.ts` already gives graph calls this treatment; this is the
+  // same signal for every other endpoint. A handler's own `modelGuidance`
+  // wins untouched — it is already self-correcting by construction.
+  const text =
+    err.modelGuidance === undefined && err.status !== undefined && RETRYABLE_STATUS.has(err.status)
+      ? `${base} This is a transient upstream condition, not a bad request: retry the SAME call once after a short backoff before changing approach.`
+      : base;
   return {
     content: [{ type: "text", text }],
     _meta: { "tako/error": detail },
