@@ -20,7 +20,8 @@
     "schemas:gen": "tsx scripts/gen-schemas.ts",
     "schemas:check": "tsx scripts/gen-schemas.ts --check",
     "smoke": "tsx scripts/smoke.ts",
-    "golden": "tsx scripts/golden.ts"
+    "golden": "tsx scripts/golden.ts",
+    "panel": "tsx scripts/panel.ts"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^10.1.1",
