@@ -23,6 +23,50 @@ describe("worker routing", () => {
     expect(res.status).toBe(404);
   });
 
+  // Regression: Cursor tombstoned the transport against production.
+  //
+  // Streamable HTTP reserves 404-on-a-session-request to mean "this session
+  // is gone, re-initialize", and requires 405 from a server that does not
+  // offer the optional server->client SSE stream. We run stateless (no
+  // Mcp-Session-Id is ever issued) so we genuinely do not offer that
+  // stream — but GET /mcp used to fall through to the catch-all 404, so
+  // Cursor read it as session death, re-initialized, retried, and after
+  // 5 consecutive session-404s disabled the transport permanently:
+  //
+  //   Failed to open SSE stream
+  //   Tombstoning streamable HTTP transport after 5 consecutive
+  //   session HTTP 404 responses; automatic retry disabled
+  //
+  // 405 tells the client "this method is not available here" without
+  // implying the session died, which is what Context7 and AWS's remote
+  // servers return and why they connect cleanly in Cursor.
+  describe("unsupported methods on /mcp return 405, never 404", () => {
+    for (const method of ["GET", "DELETE"] as const) {
+      it(`${method} /mcp returns 405 with Allow: POST`, async () => {
+        const res = await SELF.fetch("https://example.com/mcp", {
+          method,
+          headers: { accept: "text/event-stream" },
+        });
+        expect(res.status).toBe(405);
+        expect(res.headers.get("allow")).toBe("POST");
+      });
+    }
+
+    it("GET /mcp does not 404 even when a stale Mcp-Session-Id is sent", async () => {
+      // A client that had previously been handed a session id (or invented
+      // one) must still not be told the session expired.
+      const res = await SELF.fetch("https://example.com/mcp", {
+        method: "GET",
+        headers: {
+          accept: "text/event-stream",
+          "mcp-session-id": "stale-session-from-a-previous-connection",
+        },
+      });
+      expect(res.status).not.toBe(404);
+      expect(res.status).toBe(405);
+    });
+  });
+
   it("GET /.well-known/openai-apps-challenge returns the configured token as plain text", async () => {
     // OpenAI's connector-directory domain-verification flow GETs this
     // URL during submission and matches the response body verbatim

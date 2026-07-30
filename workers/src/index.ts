@@ -45,12 +45,40 @@ export default {
       return handleIconRequest(url.pathname);
     }
 
-    // GET /mcp (SSE resubscription), DELETE /mcp (session terminate), and
-    // OPTIONS /mcp (browser CORS preflight) are intentionally unrouted:
-    // stateless JSON-response mode does not use GET/DELETE, and current
-    // MCP clients (Claude Desktop, CLI) do not issue preflights. Revisit
-    // when Phase 2 introduces streaming tools or browser-based clients —
-    // see the `transport.close()` TODO in `mcp.ts`.
+    // GET /mcp (server->client SSE stream) and DELETE /mcp (session
+    // terminate) are genuinely not offered: we run stateless JSON-response
+    // mode and never issue an `Mcp-Session-Id`, so there is no session to
+    // resubscribe to or tear down.
+    //
+    // They must still answer 405, not fall through to the catch-all 404.
+    // Streamable HTTP gives those two codes different meanings: 405 means
+    // "this method is not available here" (the spec's prescribed reply from
+    // a server that does not offer the optional SSE stream), while 404 on a
+    // session-bearing request means "your session is gone, re-initialize".
+    //
+    // Cursor obeys that distinction. Against the 404 it re-initialized,
+    // re-issued the GET, and after 5 consecutive session-404s disabled the
+    // transport for good:
+    //
+    //   Failed to open SSE stream
+    //   Tombstoning streamable HTTP transport after 5 consecutive session
+    //   HTTP 404 responses; automatic retry disabled
+    //
+    // Claude Desktop and Claude Code never hit this because they do not
+    // open the GET stream, which is why it went unnoticed. Context7 and
+    // AWS's remote servers both return 405 here and connect cleanly.
+    if (
+      (request.method === "GET" || request.method === "DELETE") &&
+      url.pathname === "/mcp"
+    ) {
+      return new Response("method not allowed", {
+        status: 405,
+        headers: {
+          allow: "POST",
+          "content-type": "text/plain; charset=utf-8",
+        },
+      });
+    }
 
     // OpenAI connector-directory domain verification. During the
     // submission flow OpenAI hits this URL and expects to read back
