@@ -9,7 +9,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { buildSearchOutput, hoistSourceGlossary, slimCard, slimCardContent } from "./_search_results.js";
+import {
+  buildSearchOutput,
+  hoistSourceGlossary,
+  orderCardsByUsefulness,
+  slimCard,
+  slimCardContent,
+} from "./_search_results.js";
 import type { ResultContent, TakoCard } from "./_search_results.js";
 
 import type { Env } from "../env.js";
@@ -266,7 +272,35 @@ describe("slimCard — values_hint on gated cards", () => {
     const hint = slimCard(card, 5).values_hint;
     expect(hint).toContain("not exportable");
     expect(hint).toContain("tako_answer");
-    expect(hint).toContain('["n1","n2"]');
+    // The METRIC node alone, with strict — pinning the entity too re-admits
+    // every other card for that entity, and without strict a pin is inert.
+    expect(hint).toContain('["n2"]');
+    expect(hint).not.toContain("n1");
+    expect(hint).toContain("strict:true");
+  });
+
+  it("falls back to the mt:: id prefix when the card's nodes arrive untyped", () => {
+    const card: TakoCard = {
+      card_id: "c1",
+      exportable: false,
+      nodes: [
+        { id: "ent::acme::1", name: "Acme", type: "" },
+        { id: "mt::revenue::2", name: "Revenue", type: "" },
+      ],
+    };
+    expect(slimCard(card, 5).values_hint).toContain('["mt::revenue::2"]');
+  });
+
+  it("advises no pin at all when the card carries no metric node", () => {
+    // Silence beats steering the model into the variant measured to misfire.
+    const card: TakoCard = {
+      card_id: "c1",
+      exportable: false,
+      nodes: [{ id: "ent::acme::1", name: "Acme", type: "entity" }],
+    };
+    const hint = slimCard(card, 5).values_hint;
+    expect(hint).toContain("tako_answer");
+    expect(hint).not.toContain("node_ids");
   });
 
   it("stamps a node-less hint when the gated card has no nodes", () => {
@@ -343,12 +377,12 @@ describe("buildSearchOutput — zero-card guidance", () => {
   it("gives a web-only search web-shaped guidance instead of node-pinning advice", () => {
     const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"]);
     expect(out.guidance).toMatch(/do not retry/i);
-    expect(out.guidance).not.toMatch(/pinning node_ids/);
+    expect(out.guidance).not.toMatch(/node_id/);
   });
 
   it("treats the legacy \"tako\" source alias as data", () => {
     const out = buildSearchOutput([], [], "req-6", null, ENV, ["tako"]);
-    expect(out.guidance).toMatch(/pinning node_ids/);
+    expect(out.guidance).toMatch(/node_id/);
   });
 
   it("omits guidance when any card is present", () => {
@@ -502,5 +536,135 @@ describe("hoistSourceGlossary", () => {
       (hoistable as unknown as { sources: Array<{ source_description: string }> })
         .sources[0]?.source_description,
     ).toBe(para);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// orderCardsByUsefulness
+// ---------------------------------------------------------------------------
+//
+// The failure this ordering exists for, verbatim from prod (2026-07-29):
+// `tako_search "US inflation rate"` ranked `United States Inflation Rate`
+// (newest row 2024-01-01) ABOVE `United States CPI Inflation Rate (Seasonally
+// Adjusted)` (newest row 2026-06-01). Read top-down, that answers "what is US
+// inflation" with a 2½-year-old figure.
+
+const seriesCard = (
+  card_id: string,
+  lastTimestamp: string,
+  extra: Record<string, unknown> = {},
+): TakoCard =>
+  ({
+    card_id,
+    content: {
+      content_format: "json_compact",
+      dataset: {
+        columns: [{ name: "Timestamp", type: "datetime" }, { name: "v", type: "number" }],
+        rows: [["2020-01-01T00:00:00+00:00", 1], [lastTimestamp, 2]],
+      },
+    },
+    ...extra,
+  }) as TakoCard;
+
+describe("orderCardsByUsefulness", () => {
+  it("puts the fresher series first (the live stale-top-card failure)", () => {
+    const stale = seriesCard("annual", "2024-01-01T00:00:00+00:00");
+    const fresh = seriesCard("cpi_sa", "2026-06-01T00:00:00+00:00");
+    expect(orderCardsByUsefulness([stale, fresh]).map((c) => c.card_id)).toEqual([
+      "cpi_sa",
+      "annual",
+    ]);
+  });
+
+  it("demotes row-less Overview cards below real series cards", () => {
+    const overview = { card_id: "overview", title: "Earnings & Estimates Overview" } as TakoCard;
+    const series = seriesCard("gross_margin", "2026-06-01T00:00:00+00:00");
+    expect(orderCardsByUsefulness([overview, series]).map((c) => c.card_id)).toEqual([
+      "gross_margin",
+      "overview",
+    ]);
+  });
+
+  it("falls back to data_freshness.data_as_of when no rows are inlined", () => {
+    // include_contents:false strips rows, so the declared as-of date is the
+    // only recency signal left. The backend ships it as an OBJECT.
+    const older = { card_id: "older", data_freshness: { data_as_of: "2024-03-31" } } as TakoCard;
+    const newer = { card_id: "newer", data_freshness: { data_as_of: "2026-06-30" } } as TakoCard;
+    expect(orderCardsByUsefulness([older, newer]).map((c) => c.card_id)).toEqual([
+      "newer",
+      "older",
+    ]);
+  });
+
+  it("breaks remaining ties on relevance, then on backend order (stable)", () => {
+    const low = { card_id: "low", relevance: "Low" } as TakoCard;
+    const high = { card_id: "high", relevance: "High" } as TakoCard;
+    expect(orderCardsByUsefulness([low, high]).map((c) => c.card_id)).toEqual(["high", "low"]);
+
+    const a = { card_id: "a" } as TakoCard;
+    const b = { card_id: "b" } as TakoCard;
+    const c = { card_id: "c" } as TakoCard;
+    expect(orderCardsByUsefulness([a, b, c]).map((x) => x.card_id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("orders only — never drops, folds, or mutates the input", () => {
+    const input = [
+      seriesCard("stale", "2024-01-01T00:00:00+00:00"),
+      seriesCard("fresh", "2026-06-01T00:00:00+00:00"),
+      { card_id: "no_rows" } as TakoCard,
+    ];
+    const snapshot = JSON.stringify(input);
+    const out = orderCardsByUsefulness(input);
+    expect(out).toHaveLength(3);
+    expect([...out].map((c) => c.card_id).sort()).toEqual(["fresh", "no_rows", "stale"]);
+    expect(JSON.stringify(input)).toBe(snapshot); // immutable
+  });
+
+  it("drives the widget: buildSearchOutput lifts the REORDERED top card", () => {
+    const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+    const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00");
+    const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00");
+    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"]);
+    expect(out.cards[0]?.card_id).toBe("fresh_second");
+    // The chart the host renders must not disagree with the document.
+    expect(out.pub_id).toBe("fresh_second");
+  });
+});
+
+describe("orderCardsByUsefulness — as-of presence", () => {
+  it("ranks a card that declares data_freshness above one that declares none", () => {
+    // Both row-less (exportable:false cards carry no inline rows), so without
+    // this rule they tie and backend order wins — which put an
+    // `Earnings & Estimates Overview` above the actual gross-margin series.
+    const overview = { card_id: "overview", title: "Earnings & Estimates Overview" } as TakoCard;
+    const dated = {
+      card_id: "actuals",
+      data_freshness: { data_as_of: "2025-12-31" },
+    } as TakoCard;
+    expect(orderCardsByUsefulness([overview, dated]).map((c) => c.card_id)).toEqual([
+      "actuals",
+      "overview",
+    ]);
+  });
+
+  it("still puts a rowed card above a merely-dated one", () => {
+    const dated = { card_id: "dated", data_freshness: { data_as_of: "2026-06-30" } } as TakoCard;
+    const rowed = seriesCard("rowed", "2024-01-01T00:00:00+00:00");
+    expect(orderCardsByUsefulness([dated, rowed]).map((c) => c.card_id)).toEqual([
+      "rowed",
+      "dated",
+    ]);
+  });
+});
+
+describe("zero-card guidance routes back to tako_answer, not tako_contents", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+
+  it("names tako_answer's retry and warns off tako_contents", () => {
+    for (const sources of [["data", "web"], ["data"]]) {
+      const g = buildSearchOutput([], [], "req", null, ENV, sources).guidance ?? "";
+      expect(g).toContain("tako_available_data");
+      expect(g).toContain("strict:true");
+    }
   });
 });

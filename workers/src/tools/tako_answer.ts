@@ -13,6 +13,7 @@ import {
   hoistSourceGlossary,
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
+  orderCardsByUsefulness,
   searchedData,
   slimCard,
   slimWebResult,
@@ -27,11 +28,11 @@ const DESCRIPTION = [
   "",
   "It is the only tool whose single response can finish the job: it reads the cited pages internally, inlines the cited cards' rows, and returns a coverage verdict. Retrieval hands back captions and links you must then chase, and every extra round trip re-sends the whole conversation.",
   "",
-  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its node_ids pinned to get the figures.",
+  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.",
   "",
   "Reach past it only for a different job: `tako_search` for breadth recon and chart cards (it locates data, it does not carry values), `tako_available_data` when the question is what Tako covers, the Answer Agent for open-ended research.",
   "",
-  "Grounds over BOTH data and web by default; pin node_ids when you have them. Cited cards inline their recent rows (see include_contents/preview_rows), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
+  "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Cited cards inline their recent rows (see include_contents/preview_rows), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
   "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (request_id, usage, guidance).",
 ].join("\n");
@@ -169,6 +170,15 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
   } satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
 }
 
+// The one retry worth spending. Measured on prod (2026-07-29): re-asking with
+// only the ENTITY node pinned, at the default `strict:false`, returned a
+// byte-identical zero-card response — the old wording ("re-ask pinning its
+// node_ids") named the one variant that does nothing, so following it cost
+// $0.009 and changed nothing. Pinning the METRIC node WITH `strict:true`
+// returned exactly that metric's card. The recipe below is that difference.
+const PINNED_RETRY =
+  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all";
+
 /**
  * The zero-data-card verdict, worded by whether web results ground the
  * answer. With web grounding the prose may be a complete, correct answer
@@ -179,9 +189,9 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
  */
 function buildDataGapGuidance(hasWebResults: boolean): string {
   if (hasWebResults) {
-    return "Data-coverage note: ZERO curated data cards ground this answer — it is web-grounded only (machine check: cards.length === 0). If the prose answers the question, use it as-is. If you specifically wanted Tako's proprietary series, do NOT rephrase-and-retry tako_answer (priced, rarely converges): confirm coverage once with tako_available_data (free) and re-ask pinning its node_ids, or accept the web-grounded answer.";
+    return `Data-coverage note: ZERO curated data cards ground this answer — it is web-grounded only (machine check: cards.length === 0). If the prose answers the question, use it as-is. If you specifically wanted Tako's proprietary series, do NOT rephrase-and-retry tako_answer (priced, rarely converges): confirm coverage once with tako_available_data (free), then re-ask ONCE — ${PINNED_RETRY} — and state the period you need in the query. Do NOT reach for tako_contents: it cannot return rows for a card this answer did not cite, and it always 403s on license-gated cards.`;
   }
-  return "Data-coverage verdict: ZERO curated data cards (and no web results) ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry tako_answer; every retry is priced and this loop rarely converges. Recover in ONE step: either call tako_available_data (free) to confirm coverage and re-ask once pinning its node_ids, or pivot to other sources now.";
+  return `Data-coverage verdict: ZERO curated data cards (and no web results) ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry tako_answer; every retry is priced and this loop rarely converges. Recover in ONE step: call tako_available_data (free) to confirm coverage, then re-ask HERE once (${PINNED_RETRY}), stating the period you need in the query. Do NOT reach for tako_contents — it returns rows only for an exportable card you already have, and 403s on license-gated ones. If tako_available_data shows no coverage, the metric is genuinely absent: say so and use another source.`;
 }
 
 const takoAnswer = {
@@ -248,8 +258,22 @@ const takoAnswer = {
     const cap = (input.include_contents ?? true)
       ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
       : null;
+    // Order cards most-useful-first (see orderCardsByUsefulness) — the
+    // Overview-card-outranks-the-series-card and stale-top-card failures show
+    // up here exactly as they do in tako_search.
+    //
+    // Guarded: if the answer prose carries positional citation markers
+    // ("[1]", "[2]"), those indexes refer to the backend's card order, and
+    // reordering would silently repoint every citation. Observed answers carry
+    // no markers, so this is a safety valve for a shape we have not seen
+    // rather than a known case — but a mis-citation is worse than a stale
+    // top card, so the ordering yields.
+    const citesByPosition = /\[\d+\]/.test(parsed.data.answer);
+    const ordered = citesByPosition
+      ? parsed.data.cards
+      : orderCardsByUsefulness(parsed.data.cards);
     const { cards, glossary } = hoistSourceGlossary(
-      parsed.data.cards.map((c) => slimCard(c, cap)),
+      ordered.map((c) => slimCard(c, cap)),
     );
     const web_results = parsed.data.web_results.map(slimWebResult);
     return {
