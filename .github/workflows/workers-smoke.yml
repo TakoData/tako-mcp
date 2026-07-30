@@ -90,3 +90,21 @@ jobs:
           SMOKE_BASE_URL: ${{ inputs.base_url || env.STAGING_BASE_URL }}
           TAKO_SMOKE_API_TOKEN: ${{ secrets.TAKO_SMOKE_API_TOKEN }}
         run: npm run smoke
+
+      # Routing regressions, which smoke cannot see: smoke asserts the protocol
+      # works, golden asserts the ANSWERS are right (the gate demotes the wrong
+      # company, a nonsense metric emits no priced handle, an abbreviation still
+      # resolves). Runs after smoke because a protocol failure makes routing
+      # results meaningless, and reuses the same secret.
+      #
+      # `continue-on-error` deliberately: these assertions run against LIVE
+      # graph data, so a legitimate upstream data change can turn one red
+      # without anything being broken in this repo. The step surfaces the
+      # failure in the run summary without blocking a deploy that smoke already
+      # passed — tighten this once the case set has proven stable.
+      - name: Golden queries
+        continue-on-error: true
+        env:
+          GOLDEN_BASE_URL: ${{ inputs.base_url || env.STAGING_BASE_URL }}
+          TAKO_GOLDEN_API_TOKEN: ${{ secrets.TAKO_SMOKE_API_TOKEN }}
+        run: npm run golden

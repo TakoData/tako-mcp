@@ -243,16 +243,20 @@ try {
       }
     | undefined;
   assert(adStructured, "tako_available_data missing structuredContent");
-  assert(
-    typeof adStructured.summary === "string" && adStructured.summary.length > 0,
-    "tako_available_data returned an empty summary",
-  );
+  // The prose summary and the coverage-name lists render into the TEXT
+  // channel; structuredContent carries the machine handles (found,
+  // matches[].node_id, next_call). Assert each where it actually lives.
+  const adText = (adResult.content as Array<{ type?: string; text?: string }>)
+    .filter((b) => b.type === "text")
+    .map((b) => b.text ?? "")
+    .join("\n");
+  assert(adText.length > 0, "tako_available_data returned empty text");
   assert(
     Array.isArray(adStructured.matches) && adStructured.matches.length > 0 &&
       typeof adStructured.matches[0]?.node_id === "string",
     "tako_available_data returned no matches with a node_id",
   );
-  ok(`tako_available_data "${CANARY_QUERY}" → ${adStructured.matches.length} matches, summary present`);
+  ok(`tako_available_data "${CANARY_QUERY}" → ${adStructured.matches.length} matches with node_ids`);
 
   // ----- b) tako_answer canary ------------------------------------------
   const taResult = await callOk(client, "tako_answer", {
@@ -272,24 +276,31 @@ try {
   // Default mode is "inline": the card's CSV comes back in `data` (20-row
   // default; raise max_rows up to 2,000), with download_url null.
   const tcInline = await callOk(client, "tako_contents", { url: topResultUrl });
+  // tako_contents is BATCHED: the payload rides in `results[]`, one entry per
+  // requested url, with `cost` at the envelope root. Reading `.data` off the
+  // root predates that change and always came back undefined.
   const tcInlineStructured = tcInline.structuredContent as
-    | { download_url?: string | null; data?: string | null; total_rows?: number | null }
+    | { cost?: number; results?: Array<{ data?: string | null; total_rows?: number | null; download_url?: string | null }> }
     | undefined;
   assert(tcInlineStructured, "tako_contents (inline) missing structuredContent");
+  const tcFirst = tcInlineStructured.results?.[0];
   assert(
-    typeof tcInlineStructured.data === "string" && tcInlineStructured.data.length > 0,
-    `tako_contents inline mode returned no data: ${JSON.stringify(tcInlineStructured?.data)}`,
+    typeof tcFirst?.data === "string" && tcFirst.data.length > 0,
+    `tako_contents inline mode returned no data: ${JSON.stringify(tcInlineStructured)?.slice(0, 160)}`,
   );
-  ok(`tako_contents {url} → inline data present (${tcInlineStructured.total_rows ?? "?"} rows)`);
+  ok(`tako_contents {url} → inline data present (${tcFirst?.total_rows ?? "?"} rows)`);
 
   // mode:"url" returns a short-lived presigned download link instead.
   const tcUrl = await callOk(client, "tako_contents", { url: topResultUrl, mode: "url" });
-  const tcUrlStructured = tcUrl.structuredContent as { download_url?: string | null } | undefined;
+  const tcUrlStructured = tcUrl.structuredContent as
+    | { results?: Array<{ download_url?: string | null }> }
+    | undefined;
   assert(tcUrlStructured, "tako_contents (url) missing structuredContent");
+  const tcUrlFirst = tcUrlStructured.results?.[0];
   assert(
-    typeof tcUrlStructured.download_url === "string" &&
-      /^https?:\/\//.test(tcUrlStructured.download_url),
-    `tako_contents.download_url is not http(s): ${JSON.stringify(tcUrlStructured?.download_url)}`,
+    typeof tcUrlFirst?.download_url === "string" &&
+      /^https?:\/\//.test(tcUrlFirst.download_url),
+    `tako_contents.download_url is not http(s): ${JSON.stringify(tcUrlFirst?.download_url)}`,
   );
   ok(`tako_contents {url, mode:"url"} → download_url present`);
 
