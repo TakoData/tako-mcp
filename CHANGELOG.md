@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.15.1](https://github.com/TakoData/tako-mcp/compare/v0.15.0...v0.15.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **available_data:** raise MAX_COVERAGE_NAMES to match the server's own cap ([68837a2](https://github.com/TakoData/tako-mcp/commit/68837a2a74fbc5706d2a371da9571f2d581637d8))
+* **contents:** address PR review — error gate, batch char budget, batching docs ([e91e204](https://github.com/TakoData/tako-mcp/commit/e91e204f1f85998c8d2405a6482a7fb0346aa5e7))
+* **contents:** bump BATCH_CHAR_BUDGET to 250k + log when the derived cap bites ([192d337](https://github.com/TakoData/tako-mcp/commit/192d337b5e384f02b701c04ec242b5bc0129c598))
+* correct the research skills against live results; batch contents URLs; fix the structuredContent envelope ([7d7ce88](https://github.com/TakoData/tako-mcp/commit/7d7ce88ede8f1653122d41a1ddfbf20bc50018c8))
+* **render:** address PR review — stale docs, dead code, rowsPointer bug ([dff2260](https://github.com/TakoData/tako-mcp/commit/dff22604e3b935a8b70a510bae5fb0e3c434ae17))
+* **render:** stop duplicating the tako_contents payload across both channels ([e0245a8](https://github.com/TakoData/tako-mcp/commit/e0245a86ee7e837e38ea10e831e55fe571ab41e4))
+* **tools:** soften tako_search's overstated "does not deliver values" claim ([6be8ad0](https://github.com/TakoData/tako-mcp/commit/6be8ad08d70e4d4e268ba0473ee3e02f31d9fb54))
+* **tools:** stop claiming card rows arrive in the markdown text ([ed3b940](https://github.com/TakoData/tako-mcp/commit/ed3b94093476a60cfb44c689065b0fab29a769b8))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([3f32ebe](https://github.com/TakoData/tako-mcp/commit/3f32ebea69e0ab4870081f3e9fd3091c5d49c44c))
+* **registry:** regenerate for the tako_contents/tako_search description fixes ([f56630e](https://github.com/TakoData/tako-mcp/commit/f56630e0436fdd9c2c16a1e0925e7136839a14e8))
+* **registry:** regenerate for the tako_search/tako_answer description fix ([8703062](https://github.com/TakoData/tako-mcp/commit/87030626beccfed0b05e1d019528c1cafe260835))
+* sync OpenAPI spec from monorepo ([fbe9c2c](https://github.com/TakoData/tako-mcp/commit/fbe9c2c9897b86ed6549ac0be05434b2f79cb559))
+* sync OpenAPI spec from TakoData/tako ([5c12645](https://github.com/TakoData/tako-mcp/commit/5c12645da170a76f66d371b7d071ea992e7717bb))
+* untrack the workers/node_modules symlink (merge blocker) ([cfe5e74](https://github.com/TakoData/tako-mcp/commit/cfe5e74179a1d2a947759abfb1579d61704ffbc3))
+
+
+### Documentation
+
+* **llms-full:** rows ride in structuredContent, not the prose ([04e2160](https://github.com/TakoData/tako-mcp/commit/04e21600688bbbb73976dd4e7aebe346a215b8f5))
+* **skills:** cut em-dash overuse in the reframed prose ([48e5830](https://github.com/TakoData/tako-mcp/commit/48e58300d4ca4e57ea5e37f8c579359b5503b133))
+* sync remaining stale wording + missing blank lines from review ([2821048](https://github.com/TakoData/tako-mcp/commit/28210485c48ecdd544d967b40e64ec1a09730a90))
+* **tools:** correct two comments still describing the pre-inversion envelope ([1ee1396](https://github.com/TakoData/tako-mcp/commit/1ee139616bf91c75a8e044969e2366e037b7afcf))
+
+
+### Refactors
+
+* **routing:** make tako_answer the entry point, tako_search the specialist ([1bb4be0](https://github.com/TakoData/tako-mcp/commit/1bb4be065e849df651dcf846bbba9b9841cd9055))
+
 ## [0.15.0](https://github.com/TakoData/tako-mcp/compare/v0.14.0...v0.15.0) (2026-07-29)
 
 
