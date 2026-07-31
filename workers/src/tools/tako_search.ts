@@ -35,6 +35,7 @@ import {
   hoistSourceGlossary,
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
+  PINNED_FROM_CARD,
   slimCard,
   slimWebResult,
   takoCardSchema,
@@ -46,7 +47,7 @@ import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.",
   "",
-  "It locates data — and for `exportable: true` cards it also includes a free 20-row preview by default (`include_contents`) — but a license-gated card carries no rows at all (headline value only, via `description`), and a web result is only a snippet, not a value. For a plain \"what is X\", `tako_answer` (pin the card's `nodes` ids) is still the faster path: one written figure beats parsing a preview table yourself, and reaching here first for that costs an extra round trip that re-sends the whole conversation.",
+  `It locates data — and for \`exportable: true\` cards it also includes a free 20-row preview by default (\`include_contents\`) — but a license-gated card carries no rows at all (headline value only, via \`description\`), and a web result is only a snippet, not a value. For a plain "what is X", \`tako_answer\` is the better-suited tool: one written figure beats parsing a preview table yourself, and reaching here first for that costs an extra round trip that re-sends the whole conversation. To ask it about a card you already have, ${PINNED_FROM_CARD}.`,
   "",
   "Best for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_answer` or `tako_contents`. It is cheap and fast, and built for exactly this fan-out.",
   "",
@@ -56,7 +57,7 @@ const DESCRIPTION = [
   "",
   "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. To read a web result in full, call `tako_contents` on its url (web urls are always fetchable; a card's full csv needs `exportable: true`).",
   "",
-  "Non-exportable cards (`exportable: false`, usually license-gated) return no rows: read the headline value from the card's `description` when it carries one, or get specific figures via `tako_answer` with the card's `nodes` ids pinned (each such card carries a `values_hint` saying exactly this).",
+  `Non-exportable cards (\`exportable: false\`, usually license-gated) return no rows: read the headline value from the card's \`description\` when it carries one, or get specific figures via \`tako_answer\` — ${PINNED_FROM_CARD} (each such card carries a \`values_hint\` saying exactly this).`,
   "",
   "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (request_id, usage, chart-widget fields).",
 ].join("\n");

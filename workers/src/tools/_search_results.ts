@@ -632,6 +632,19 @@ export const PINNED_RETRY =
   "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all";
 
 /**
+ * The same recipe for the card-in-hand case. {@link PINNED_RETRY} sources the
+ * id from `tako_available_data`'s `coverage.items[]`, which is the wrong place
+ * to point a caller who already holds a search card — its ids are on
+ * `cards[].nodes[]`. Two constants rather than one because the SOURCE of the id
+ * genuinely differs; the pin FORM (metric node alone, `strict:true`) must not.
+ * Both exist so `tako_search`'s description stops restating the form by hand:
+ * it was restated in two places and both drifted back to the broken variant
+ * (every node id on the card, no `strict`) — the one measured to misfire.
+ */
+export const PINNED_FROM_CARD =
+  "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card, or omitting strict, does not steer retrieval";
+
+/**
  * Recovery protocol for a zero-CARD search. Rewording the same query almost
  * never flips a miss into a hit — misses come from query SHAPE (compound
  * query, brand instead of domain, unresolved entity) or from the data simply
