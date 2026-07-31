@@ -331,8 +331,12 @@ describe("tako_search response mapping", () => {
 
     expect(out.web_results).toHaveLength(1);
     expect(out.web_results[0]?.url).toBe("https://example.com/a");
-    // Zero cards (even with web hits) still carries anti-retry guidance.
-    expect(out.guidance).toMatch(/do not re-search/i);
+    // Zero cards still carries guidance — but this is a WEB-ONLY search, so it
+    // must not claim anything about data coverage, and must not ban the one
+    // recovery available (refining the query). It previously asserted a blanket
+    // "do not re-search", which is the misfire.
+    expect(out.guidance).toMatch(/Refine and re-search/i);
+    expect(out.guidance).not.toMatch(/do NOT re-search/i);
   });
 
   it("populates auto-chain widget fields when the top card has card_id", async () => {

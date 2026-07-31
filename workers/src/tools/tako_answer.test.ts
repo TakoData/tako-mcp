@@ -467,9 +467,65 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
       takoAnswer.inputSchema.parse({ query: "hotel RevPAR Q3" }),
       CTX,
     );
-    expect(out.guidance).toContain("and no web results");
+    expect(out.guidance).toContain("zero web results");
     expect(out.guidance).toContain("Do NOT rephrase-and-retry");
     expect(out.guidance).not.toContain("web-grounded only");
+    // The ban names what it is about. A flat "do not retry" reads as "stop
+    // working", and on a web-shaped question one narrower ask is the right move.
+    expect(out.guidance).toContain("hoping the same question lands a data series");
+    expect(out.guidance).toMatch(/WEB axis only/);
+  });
+
+  // tako_answer synthesizes ONE answer per call, so a multi-entity web question
+  // ("how does each of these handle X") returns one blended answer. Re-asking
+  // the same broad question is the loop that does not converge; asking it once
+  // per entity is not a retry at all. The guidance has to say so, or the
+  // anti-retry sentence reads as "stop after one call".
+  it("tells a web-grounded answer to DECOMPOSE rather than re-ask", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        answer: "Per the docs, both support it.",
+        cards: [],
+        web_results: [{ title: "docs", url: "https://example.com/docs" }],
+        request_id: "req-gap-web",
+      }),
+    ]);
+    const out = await takoAnswer.handler(
+      takoAnswer.inputSchema.parse({ query: "how do these APIs handle pagination" }),
+      CTX,
+    );
+    const g = out.guidance ?? "";
+    expect(g).toContain("web-grounded only");
+    expect(g).toContain("DECOMPOSE");
+    expect(g).toMatch(/One narrow question per entity, provider or site/);
+    // Scoped, not blanket: the ban is about hunting a data series.
+    expect(g).toContain("do NOT rephrase-and-retry tako_answer for it");
+  });
+
+  // The default sources are ["data","web"], so this branch is only reached by a
+  // caller who narrowed to ["data"] — meaning the web was never queried. The
+  // verdict used to be built from `hasWebResults` alone and therefore claimed
+  // "and no web results", reporting a second source's outcome from the first
+  // source's evidence, then told the model to treat the metric as absent.
+  it("does not claim the web came back empty when the web was never searched", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        answer: "I couldn't find that in the provided sources.",
+        cards: [],
+        web_results: [],
+        request_id: "req-gap-data-only",
+      }),
+    ]);
+    const out = await takoAnswer.handler(
+      takoAnswer.inputSchema.parse({ query: "hotel RevPAR Q3", sources: ["data"] }),
+      CTX,
+    );
+    const g = out.guidance ?? "";
+    expect(g).not.toContain("zero web results");
+    expect(g).toContain("DATA source only");
+    // Names the cheap next step instead of declaring the figure unavailable.
+    expect(g).toMatch(/sources:\["data","web"\]/);
+    expect(g).not.toMatch(/genuinely absent/);
   });
 
   it("no guidance on a web-only ask (no data verdict to render)", async () => {

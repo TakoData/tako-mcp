@@ -650,6 +650,59 @@ export const searchedData = (s: SearchedSources): boolean =>
 const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
 
 /**
+ * The WEB axis carve-out — the other half of the anti-retry rule.
+ *
+ * "Do not rephrase and retry" was measured on DATA queries, where rewording
+ * almost never flips a miss into a hit and every attempt is priced. It was
+ * then written as advice about the whole call, which made it misfire on
+ * questions the data graph was never going to answer: a zero-card
+ * `tako_search` told the model "the data graph does not cover this — do NOT
+ * re-search with rephrasings" even when the question was a docs or reference
+ * lookup whose answer is entirely on the web, and where re-searching per
+ * entity or per provider is precisely the strategy that works. Measured
+ * against the field, a competing web-search MCP wins those questions with
+ * 5-6 targeted calls per question; our own guidance was telling the model to
+ * stop after one.
+ *
+ * So the ban is scoped to what it was measured on. Rephrasing to hunt for a
+ * CARD does not converge. Refining a WEB query does, and fanning out narrow
+ * queries beats one broad one — the same rule the tool descriptions already
+ * give for the data side ("one entity + one metric per query"), applied to
+ * the web side.
+ *
+ * `sources: ["web"]` on those follow-ups is not a guess: a response carrying
+ * web results and zero cards has just DEMONSTRATED the graph does not hold
+ * this, which is the exact precondition `sources`' own description sets for
+ * narrowing ("only for content a data graph cannot hold").
+ *
+ * Exported so `tako_answer`'s data-gap guidance carries the identical
+ * carve-out. Two tools whose recovery advice disagrees teach the model that
+ * one of them is wrong.
+ */
+export const REFINE_WEB_FREELY =
+  'Re-searching is NOT banned here — what does not converge is rephrasing to hunt for a data CARD. If what you actually need is web content (docs, reference pages, news, qualitative claims), refine and re-search freely: prefer SEVERAL narrow queries (one per entity, provider or site) over one broad one, and pass sources:["web"] on them, since this response has already shown the graph does not hold it.';
+
+/**
+ * The same carve-out for `tako_answer`, where the move is DECOMPOSITION rather
+ * than refinement.
+ *
+ * `tako_answer` synthesizes one answer per call, so a question spanning several
+ * entities or providers ("how does each of these APIs handle X") gets one
+ * blended answer built from whatever the single retrieval happened to surface.
+ * Re-asking the same broad question is the loop that does not converge; asking
+ * it once per entity is not a retry at all, it is the shape the tool wants —
+ * the same "one entity per query" rule its own description gives for the data
+ * side.
+ *
+ * Stated as guidance rather than implemented as internal fan-out on purpose:
+ * splitting a question server-side would multiply a priced call without the
+ * caller asking, and the model is the only party that knows which entities the
+ * question actually covers.
+ */
+export const DECOMPOSE_WEB_ASK =
+  "If the answer lives on the web rather than in the data graph, do not re-ask this same question: DECOMPOSE it. One narrow question per entity, provider or site, asked in parallel, beats one broad question — that is not a retry, it is the shape this tool answers best, and it is how a multi-part web question gets a complete answer instead of a blended one.";
+
+/**
  * Recovery protocol for a zero-CARD search. Rewording the same query almost
  * never flips a miss into a hit — misses come from query SHAPE (compound
  * query, brand instead of domain, unresolved entity) or from the data simply
@@ -663,6 +716,14 @@ const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
  * stop and answer from the web results — not the phrasing; pin an
  * invariant here rather than a quoted sentence, so a reworded skill does
  * not silently make this comment a lie. Update all four copies together.
+ *
+ * {@link REFINE_WEB_FREELY} is deliberately NOT mirrored into those three:
+ * they are data-domain skills (equity research, macro indicators, site
+ * traffic) whose questions are metric lookups by construction, so the
+ * data-axis recipe is the whole story there. The carve-out matters for the
+ * TOOL guidance, which serves arbitrary questions — including ones with no
+ * data answer at all. Absence from the skills is the intended state, not
+ * drift.
  */
 function buildZeroResultGuidance(
   hasWebResults: boolean,
@@ -670,20 +731,27 @@ function buildZeroResultGuidance(
 ): string {
   if (hasWebResults) {
     return [
-      "This search returned web results but no data cards. That usually means the data graph does not cover this query, not that the wording was unlucky, so do NOT re-search with rephrasings.",
+      "This search returned web results but no data cards. That is a verdict about the DATA GRAPH only: it does not cover this query, and rewording will not change that.",
       "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
       `If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, and then ${PINNED_RETRY}.`,
+      REFINE_WEB_FREELY,
     ].join(" ");
   }
   if (!searchedData(sources)) {
+    // Web-only search, nothing back. There is no data verdict to report here —
+    // the data source was never queried — and a bare "do not retry" was simply
+    // wrong: on a web-only query, the QUERY is the only lever there is, so
+    // refining it is the whole recovery. This branch used to ban the one move
+    // available.
     return [
-      "No results — do NOT retry this query or rephrasings of it; every search is priced, and the live web returned nothing here.",
-      "If a data metric is what you are after, check tako_available_data (free) for coverage and run ONE data-source search;",
-      "otherwise stop calling Tako for this question and answer from other tools.",
+      "No results from the web for this query. The data source was not searched, so this is NOT a coverage verdict about Tako's graph — it means the query itself came back empty.",
+      "Refine and re-search: narrow to one entity, provider or site per query rather than one broad query, or name the specific doc/page you expect to find.",
+      "If a data metric is what you are actually after, check tako_available_data (free) for coverage and run ONE data-source search.",
+      "Stop only once a couple of genuinely different framings have come back empty.",
     ].join(" ");
   }
   return [
-    "No results — do NOT retry this query or rephrasings of it; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
+    "No results — do NOT retry this query or rephrasings of it hoping a data card appears; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
     "Recover in order: (1) call tako_available_data (free) with the entity to learn the exact metric names + node_ids Tako actually has;",
     `(2) if it confirms coverage, spend your ONE remaining search on that exact name and ${PINNED_RETRY}` +
       (searchedWeb(sources)
