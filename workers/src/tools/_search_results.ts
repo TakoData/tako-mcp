@@ -752,10 +752,21 @@ export const NARROWER_WEB_ATTEMPT =
  * This protocol is mirrored in the three bundled skills' SKILL.md files
  * under skills/ and their embedded copies in README.md, each as the
  * "Empty result (zero cards)" bullet. What must stay consistent is the
- * RECIPE — free tako_available_data check → at most ONE pinned retry →
- * stop and answer from the web results — not the phrasing; pin an
- * invariant here rather than a quoted sentence, so a reworded skill does
- * not silently make this comment a lie. Update all four copies together.
+ * RECIPE — free tako_available_data check → ONE retry on the exact metric
+ * NAME, unpinned → stop and answer from the web results — not the phrasing;
+ * pin an invariant here rather than a quoted sentence, so a reworded skill
+ * does not silently make this comment a lie. Update all four copies together.
+ *
+ * WHY THE SKILLS DO NOT PIN, while {@link PINNED_RETRY} here does. Not drift —
+ * the same measurement under a tighter budget. `PINNED_RETRY` describes a TWO
+ * step sequence (pin correctly; if that comes back empty, drop the pin), which
+ * the tool guidance can afford because it is advising a caller with no fixed
+ * call budget. The skills cap at 2 priced searches per question, so they have
+ * exactly ONE retry to spend and have to pick an arm: measured, 11 of 20 handles
+ * retrieve FEWER cards pinned than unpinned, while the canonical NAME helps 9 of
+ * 15. So the skills spend their one retry on the name and skip the pin, and
+ * mention pinning only for what it is good at — disambiguating a near-duplicate
+ * metric once one has actually shown up. Same knowledge, one call instead of two.
  *
  * {@link REFINE_WEB_FREELY} is deliberately NOT mirrored into those three:
  * they are data-domain skills (equity research, macro indicators, site
@@ -770,6 +781,26 @@ function buildZeroResultGuidance(
   sources: SearchedSources,
 ): string {
   if (hasWebResults) {
+    // A web-only search has zero cards BY CONSTRUCTION — the data index was
+    // never queried — so the branch below would report a graph verdict from
+    // evidence that does not exist, and `REFINE_WEB_FREELY` would close with
+    // "this response has already shown the graph does not hold it", which it has
+    // not. That is precisely the defect `buildDataGapGuidance` fixes via
+    // `searchedWebToo`, in the mirror direction: one source's outcome reported as
+    // two sources' worth of verdict.
+    //
+    // Nothing on the data axis belongs here either — no coverage check, no pin
+    // recipe — because the caller narrowed the sources deliberately. The one
+    // useful data-side sentence is how to GET a coverage answer, which is the
+    // cheap re-ask.
+    if (!searchedData(sources)) {
+      return [
+        "This search returned web results. It ran on the WEB source only, so it says NOTHING about whether Tako's data graph covers this — do not report a coverage gap on the strength of it.",
+        "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
+        "Need more? Refine and re-search freely: prefer SEVERAL narrow queries (one per entity, provider or site) over one broad one.",
+        'If a chart, dataset or proprietary figure is what you actually want, re-run with sources:["data","web"] (same price) or check tako_available_data (free) — that is what answers the coverage question.',
+      ].join(" ");
+    }
     return [
       "This search returned web results but no data cards. That is a verdict about the DATA GRAPH only: it does not cover this query, and rewording will not change that.",
       "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",

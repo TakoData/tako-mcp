@@ -17,7 +17,7 @@
  */
 
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
@@ -331,6 +331,16 @@ const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 // Checked for pin-form drift only (its contents are hand-written prose, and it
 // embeds the bundled skills' recovery protocols verbatim).
 const README_PATH = resolve(REPO_ROOT, "README.md");
+// The bundled skills are model-facing prose that advises pinning, and NEITHER
+// existing guard could see them: `_pin_form.test.ts` walks tool descriptions,
+// and this function was only given llms-full.txt and README. That is the same
+// gap that let the broken form survive in llms-full.txt, so close it by
+// enumeration rather than waiting for the next survivor.
+const SKILL_PATHS = [
+  resolve(REPO_ROOT, "skills", "tako-financial-research", "SKILL.md"),
+  resolve(REPO_ROOT, "skills", "tako-macroeconomics", "SKILL.md"),
+  resolve(REPO_ROOT, "skills", "tako-web-traffic", "SKILL.md"),
+];
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
 
 // Filename conventions for the tools/ directory. A tool module is any `.ts`
@@ -655,9 +665,19 @@ async function main(): Promise<void> {
   //     ("or you're pinning `node_ids`", about narrowing `sources`) that no
   //     regex separates from instructions, so only the unambiguous rule runs
   //     there. See pinFormProblem.
+  //
+  //     The bundled skills carry the SAME descriptive `sources` sentence README
+  //     is exempted for, so they join at `requireStrict: false` too. Verified:
+  //     all three are clean under the unambiguous rule, and each trips the
+  //     strict rule on that one sentence alone.
   assertPinFormInDocs([
     { file: "llms-full.txt", text: llmsFull, requireStrict: true },
     { file: "README.md", text: readFileSync(README_PATH, "utf8"), requireStrict: false },
+    ...SKILL_PATHS.map((path) => ({
+      file: relative(REPO_ROOT, path),
+      text: readFileSync(path, "utf8"),
+      requireStrict: false,
+    })),
   ]);
 
   // 4. ChatGPT app-submission parity: the hand-maintained submission

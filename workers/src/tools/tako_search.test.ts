@@ -335,8 +335,24 @@ describe("tako_search response mapping", () => {
     // must not claim anything about data coverage, and must not ban the one
     // recovery available (refining the query). It previously asserted a blanket
     // "do not re-search", which is the misfire.
-    expect(out.guidance).toMatch(/Refine and re-search/i);
-    expect(out.guidance).not.toMatch(/do NOT re-search/i);
+    //
+    // The assertions below used to be `/Refine and re-search/i` alone, which
+    // `REFINE_WEB_FREELY` ("refine and re-search freely") satisfied from the
+    // WRONG branch — so the test passed while the claim its own comment names
+    // went unchecked, and the rendered guidance really did report a graph
+    // verdict. Assert the absence of every data-axis claim, not a string two
+    // branches share.
+    const g = out.guidance ?? "";
+    expect(g).toMatch(/WEB source only/);
+    expect(g).toMatch(/refine and re-search/i);
+    expect(g).not.toMatch(/do NOT re-search/i);
+    // No verdict about a source that was never queried.
+    expect(g).not.toMatch(/DATA GRAPH only/);
+    expect(g).not.toMatch(/already shown the graph does not hold it/);
+    // No data-axis recovery either: the caller narrowed sources deliberately.
+    expect(g).not.toMatch(/node_id/);
+    expect(g).not.toMatch(/strict/);
+    expect(g).not.toMatch(/hard filter/);
   });
 
   it("populates auto-chain widget fields when the top card has card_id", async () => {

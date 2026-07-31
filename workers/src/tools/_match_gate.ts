@@ -219,19 +219,36 @@ export function sameTokens(a: string, b: string): boolean {
  * dead anyway; the caller now picks from the alternates instead of being handed a
  * dead handle.
  *
- * A candidate's own NAME still vouches in either direction: a name that contains
+ * The NAME path is held to the same standard, and used to not be. It accepted
+ * BOTH directions, but only one of them was ever justified: a name CONTAINING
  * the query is a specialisation of what was asked (`Gross Margin (%)` for
- * "gross margin"), which is real evidence.
+ * "gross margin"), which is real evidence. The reverse — name ⊆ query — is the
+ * identical "covers part of the query" defect this change bans on the alias
+ * path, and it made the two flagship rejections turn on a SPELLING rather than
+ * on the rule:
+ *
+ *   ("AWS revenue",  name `Revenues`)   rejected     <- plural, so not a subset
+ *   ("AWS revenue",  name `Revenue`)    ACCEPTED     <- singular, so a subset
+ *   ("total assets", name `Total Odds`) rejected
+ *   ("total assets", name `Assets`)      ACCEPTED
+ *
+ * A node named `Revenue` vouching for "AWS revenue" is the same wrong pin as the
+ * alias case, reached one line higher up. Both call sites pass a single HALF of
+ * the query (`metricQuery`, or `input.q` in the swap probe), so a candidate whose
+ * name is narrower than that half is not answering it. Dropped, and no existing
+ * test depended on it — 86 passed with the direction removed before the tests
+ * below were added to pin the new behaviour.
  */
 export function confidentMatch(query: string, candidate: MatchCandidate): boolean {
   const q = matchTokens(query);
   if (q.size === 0) return false;
   const name = matchTokens(candidate.name);
-  if (name.size > 0 && (contains(name, q) || contains(q, name))) return true;
+  if (name.size > 0 && contains(name, q)) return true;
   for (const alias of candidate.aliases ?? []) {
     if (typeof alias !== "string" || alias === "") continue;
-    const a = matchTokens(alias);
-    if (a.size === q.size && contains(q, a)) return true;
+    // Exactly `sameTokens(query, alias)`. Re-tokenising a query of at most a few
+    // tokens per alias is not worth an inline copy of the rule.
+    if (sameTokens(query, alias)) return true;
   }
   return false;
 }
