@@ -359,13 +359,32 @@ describe("buildSearchOutput — zero-card guidance", () => {
     expect(out.guidance).toMatch(/tako_available_data/);
   });
 
-  it("still fires on zero cards WITH web_results — steering to the web fallback, not a re-search", () => {
+  it("still fires on zero cards WITH web_results — steering to the web fallback", () => {
     // The common default-source miss: no data card, some web hits. This is
     // exactly the "reword and retry for a chart" loop case, so guidance must
     // not be silently skipped here.
     const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"]);
-    expect(out.guidance).toMatch(/do not re-search/i);
     expect(out.guidance).toMatch(/web_results/);
+    // The verdict is scoped to the graph, not to the whole call.
+    expect(out.guidance).toMatch(/DATA GRAPH only/);
+  });
+
+  // THE MISFIRE. This branch used to say "do NOT re-search with rephrasings"
+  // flat out, which is right for hunting a data card and wrong for every
+  // question whose answer is on the web: a docs or reference lookup is won by
+  // re-searching per entity or per provider, and the guidance was telling the
+  // model to stop after one call. The ban must name the DATA axis and the
+  // carve-out must be explicit — a model reading this cannot be left to infer
+  // that web refinement is still allowed.
+  it("does not ban web re-searching when zero cards come back with web results", () => {
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"]);
+    const g = out.guidance ?? "";
+    expect(g).toContain("Re-searching is NOT banned here");
+    // Names the fan-out that wins these questions.
+    expect(g).toMatch(/SEVERAL narrow queries/);
+    expect(g).toMatch(/one per entity, provider or site/);
+    // Any surviving blanket ban would read as one of these.
+    expect(g).not.toMatch(/do NOT re-search with rephrasings/i);
   });
 
   it("tailors the both-empty protocol for a data-only search (web fallback allowed on the single retry)", () => {
@@ -374,10 +393,19 @@ describe("buildSearchOutput — zero-card guidance", () => {
     expect(out.guidance).toMatch(/"web"/);
   });
 
-  it("gives a web-only search web-shaped guidance instead of node-pinning advice", () => {
+  // A web-only search that came back empty has NO data verdict to report (the
+  // data source was never queried) and exactly one lever available: the query.
+  // This branch used to ban that lever — "do NOT retry this query or
+  // rephrasings of it" — which left the model with nothing to do at all.
+  it("tells a web-only search to refine, and claims nothing about graph coverage", () => {
     const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"]);
-    expect(out.guidance).toMatch(/do not retry/i);
-    expect(out.guidance).not.toMatch(/node_id/);
+    const g = out.guidance ?? "";
+    expect(g).not.toMatch(/node_id/);
+    expect(g).toMatch(/Refine and re-search/i);
+    expect(g).toMatch(/NOT a coverage verdict/i);
+    expect(g).not.toMatch(/do NOT retry/i);
+    // Still not an invitation to loop forever.
+    expect(g).toMatch(/Stop only once/i);
   });
 
   it("treats the legacy \"tako\" source alias as data", () => {

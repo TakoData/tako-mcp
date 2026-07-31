@@ -14,6 +14,11 @@ import {
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
   orderCardsByUsefulness,
+  // The web-axis half of the anti-retry rule, shared with tako_search's
+  // zero-result guidance for the same reason PINNED_RETRY is: a recovery
+  // protocol that differs between the two tools teaches the model that one of
+  // them is wrong.
+  DECOMPOSE_WEB_ASK,
   // The single source of the pin recipe: tako_search's zero-result guidance and
   // this tool's zero-card verdict must name the SAME form, or the model learns
   // two and only one works. Measured on prod (2026-07-29): re-asking here with
@@ -183,12 +188,22 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
  * index, not read as "this answer failed". Without web grounding it is the
  * hard anti-retry stop. Both are deterministic (cards.length === 0), never
  * inferred from the prose.
+ *
+ * `searchedWebToo` is what keeps the no-web-results branch honest. It used to
+ * read "ZERO curated data cards (and no web results)" off `hasWebResults`
+ * alone, so a deliberate `sources: ["data"]` ask — where the web was never
+ * queried — was told the web had come back empty as well, and then told to
+ * treat the metric as absent. Two sources' worth of verdict from one source's
+ * evidence. When web was not searched, the honest recovery is to search it.
  */
-function buildDataGapGuidance(hasWebResults: boolean): string {
-  if (hasWebResults) {
-    return `Data-coverage note: ZERO curated data cards ground this answer — it is web-grounded only (machine check: cards.length === 0). If the prose answers the question, use it as-is. If you specifically wanted Tako's proprietary series, do NOT rephrase-and-retry tako_answer (priced, rarely converges): confirm coverage once with tako_available_data (free), then re-ask ONCE — ${PINNED_RETRY} — and state the period you need in the query. Do NOT reach for tako_contents: it cannot return rows for a card this answer did not cite, and it always 403s on license-gated cards.`;
+function buildDataGapGuidance(hasWebResults: boolean, searchedWebToo: boolean): string {
+  if (!hasWebResults && !searchedWebToo) {
+    return `Data-coverage verdict: ZERO curated data cards ground this answer (machine check: cards.length === 0). This ran with the DATA source only, so nothing here says anything about web coverage — do not read it as "not available anywhere". Cheapest next step: re-ask with sources:["data","web"] (same price) before concluding the figure is unavailable. If you want the proprietary series specifically, confirm coverage once with tako_available_data (free), then re-ask ONCE — ${PINNED_RETRY} — stating the period you need. Do NOT reach for tako_contents: it returns rows only for an exportable card you already have, and 403s on license-gated ones.`;
   }
-  return `Data-coverage verdict: ZERO curated data cards (and no web results) ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry tako_answer; every retry is priced and this loop rarely converges. Recover in ONE step: call tako_available_data (free) to confirm coverage, then re-ask HERE once (${PINNED_RETRY}), stating the period you need in the query. Do NOT reach for tako_contents — it returns rows only for an exportable card you already have, and 403s on license-gated ones. If tako_available_data shows no coverage, the metric is genuinely absent: say so and use another source.`;
+  if (hasWebResults) {
+    return `Data-coverage note: ZERO curated data cards ground this answer — it is web-grounded only (machine check: cards.length === 0). If the prose answers the question, use it as-is. If you specifically wanted Tako's proprietary series, do NOT rephrase-and-retry tako_answer for it (priced, rarely converges): confirm coverage once with tako_available_data (free), then re-ask ONCE — ${PINNED_RETRY} — and state the period you need in the query. Do NOT reach for tako_contents: it cannot return rows for a card this answer did not cite, and it always 403s on license-gated cards. ${DECOMPOSE_WEB_ASK}`;
+  }
+  return `Data-coverage verdict: ZERO curated data cards AND zero web results ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry tako_answer hoping the same question lands a data series; every retry is priced and that loop rarely converges. Recover in ONE step: call tako_available_data (free) to confirm coverage, then re-ask HERE once (${PINNED_RETRY}), stating the period you need in the query. Do NOT reach for tako_contents — it returns rows only for an exportable card you already have, and 403s on license-gated ones. If tako_available_data shows no coverage, the metric is genuinely absent from the graph: say so and use another source. One exception to the stop, on the WEB axis only: a genuinely narrower question (one entity, one provider, one site) is worth a single attempt, because an empty web result usually means the question was too broad rather than unanswerable.`;
 }
 
 const takoAnswer = {
@@ -285,7 +300,12 @@ const takoAnswer = {
       // a web-cited answer may be complete and correct — the verdict then
       // scopes itself to the DATA index instead of impugning the answer.
       ...(searchedData(input.sources) && cards.length === 0
-        ? { guidance: buildDataGapGuidance(web_results.length > 0) }
+        ? {
+            guidance: buildDataGapGuidance(
+              web_results.length > 0,
+              input.sources.includes("web"),
+            ),
+          }
         : {}),
       // Glossary spreads on LAST so it serializes after the data — truncating
       // clients then drop boilerplate first.
