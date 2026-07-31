@@ -1231,9 +1231,35 @@ describe("structuredContentFor", () => {
 
 describe("SERVER_INSTRUCTIONS", () => {
   it("names every tool an agent must choose between", () => {
-    for (const tool of ["tako_search", "tako_answer", "tako_available_data"]) {
+    for (const tool of [
+      "tako_search",
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+    ]) {
       expect(SERVER_INSTRUCTIONS).toContain(tool);
     }
+  });
+
+  // The instructions sit ABOVE the tool descriptions in the host's system
+  // prompt, so when the two disagree the instructions win. They disagreed:
+  // the descriptions call `tako_available_data` the recommended first step
+  // while the instructions opened by sending every data question to
+  // `tako_search` and mentioned `tako_available_data` once, last, behind
+  // "if unsure". Observed on claude.ai as search-first routing.
+  it("introduces tako_available_data before either priced retrieval tool", () => {
+    const free = SERVER_INSTRUCTIONS.indexOf("`tako_available_data`");
+    const answer = SERVER_INSTRUCTIONS.indexOf("`tako_answer`");
+    const search = SERVER_INSTRUCTIONS.indexOf("`tako_search`");
+    expect(free).toBeGreaterThan(-1);
+    expect(free).toBeLessThan(answer);
+    expect(free).toBeLessThan(search);
+  });
+
+  // `tako_answer` (specific figure) and `tako_search` (breadth) are different
+  // jobs, not a ranked pipeline — an ordering invites the model to chain them.
+  it("presents answer and search as a choice, not a sequence", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/different jobs/i);
   });
 
   it("states the pin form that actually steers retrieval", () => {

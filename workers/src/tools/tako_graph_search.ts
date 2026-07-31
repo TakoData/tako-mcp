@@ -19,9 +19,11 @@ const NER_LABELS = [
 ] as const;
 
 const DESCRIPTION = [
-  "Resolve a name to Tako data-graph node ids — to see what Tako has, and to pin (`node_ids`) into `tako_search` / `tako_answer`. Free and fast.",
+  "Resolve a name to Tako data-graph node ids — to see what Tako has, and to pin one into `tako_search` / `tako_answer`. Free and fast.",
   "",
   "Best for: grounding a query, or checking whether Tako covers an entity or metric.",
+  "",
+  "Pin the METRIC node id ALONE, with `strict: true`, and name the entity in the query text — pinning an entity id, or pinning without strict, does not steer retrieval.",
   "",
   "Tips:",
   'One kind per call — a thing (`types: "entity"`) or a measure (`types: "metric"`), not both.',
