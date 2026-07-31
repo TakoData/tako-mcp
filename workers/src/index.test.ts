@@ -814,6 +814,48 @@ describe("worker routing", () => {
     expect(body.result.tools).toHaveLength(6);
   });
 
+  it("POST /mcp tools/list actually SERVES the web-snippet contract to the client", async () => {
+    // End-to-end counterpart to the unit guards in tako_search.test.ts /
+    // tako_answer.test.ts. Those assert the wording sits on the advertised zod
+    // schema; this asserts it survives `.shape` extraction in mcp.ts and the
+    // SDK's zod→JSON-Schema conversion and reaches the wire. Worth a second
+    // test because the bug being guarded was precisely a description that
+    // existed, read correctly in source, and was served to nobody — it lived
+    // on `webResultSchema`, which is the wire-parse guard, not the advertised
+    // schema. A unit test on the zod object alone would not have caught the
+    // serialization half of that.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 101, method: "tools/list", params: {} }),
+    });
+    const body = (await res.json()) as {
+      result: {
+        tools: Array<{
+          name: string;
+          outputSchema?: { properties?: { web_results?: { description?: string } } };
+        }>;
+      };
+    };
+
+    for (const name of ["tako_search", "tako_answer"]) {
+      const tool = body.result.tools.find((t) => t.name === name);
+      expect(tool, `${name} missing from tools/list`).toBeDefined();
+      const desc = tool?.outputSchema?.properties?.web_results?.description;
+      // The three things a client cannot infer from a snippet's value alone:
+      // it is query-selected rather than the page opening, it may be
+      // non-contiguous, and absence is legitimate.
+      expect(desc, `${name} serves no web_results description`).toBeDefined();
+      expect(desc).toMatch(/selected against/i);
+      expect(desc).toContain(" … ");
+      expect(desc).toMatch(/null/);
+    }
+  });
+
   it("POST /mcp tools/list serves one client-agnostic tako_search description", async () => {
     // `tako_search` is now fast-only (`/api/v3/search`) with no in-tool
     // deep path, so the per-client description split is gone: every host

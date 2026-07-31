@@ -21,6 +21,7 @@
  *   8. Clean empty (0 cards + 0 web_results) → resolves, no throw, no widget.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import type { Env } from "../env.js";
 import { SearchRequest } from "../generated/schemas.js";
@@ -428,6 +429,31 @@ describe("tako_search widget + contract guard", () => {
   it("reshapes flat input into a contract-valid search body", () => {
     const body = buildSearchBody(tako_search.inputSchema.parse({ query: "US GDP" }));
     expect(() => SearchRequest.parse(body)).not.toThrow();
+  });
+
+  it("documents the snippet contract on the ADVERTISED output schema, where a client can read it", () => {
+    // Regression guard for a real miss: the first version of the highlights
+    // change put this wording on `webResultSchema.snippet`. That schema is the
+    // wire-parse guard and the internal shape — neither is advertised — so the
+    // guidance reached no client at all. The advertised schema declares
+    // `web_results` as a LOOSE array (deliberate wire-drift protection), which
+    // means per-element descriptions are dropped and the array description is
+    // the only model-facing slot. Assert against the serialized JSON Schema,
+    // because that is what `tools/list` actually ships.
+    const json = JSON.stringify(z.toJSONSchema(tako_search.outputSchema));
+    const web = (
+      z.toJSONSchema(tako_search.outputSchema) as {
+        properties?: { web_results?: { description?: string } };
+      }
+    ).properties?.web_results?.description;
+
+    expect(web).toBeDefined();
+    // The three properties a reader cannot infer from the value itself.
+    expect(web).toMatch(/selected against/i); // not the page's opening text
+    expect(web).toContain(" … "); // passages may be non-contiguous
+    expect(web).toMatch(/null/); // absence is a legitimate outcome
+    // And it has to survive serialization, not just live on the zod object.
+    expect(json).toContain("selected against");
   });
 
   it("asks for Exa highlights as the web snippet, so the excerpt is answer-bearing", () => {

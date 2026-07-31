@@ -177,16 +177,13 @@ export const webResultSchema = z
         "The web page URL. Always fetchable via tako_contents for the page's full text (web urls need no `exportable` flag, unlike cards) — a fallback you can read when no Tako data card fits the query.",
       ),
     // Tako asks for Exa highlights (see buildSearchBody / buildAnswerBody), so
-    // this is query-selected passages, not the page's opening text. Two
-    // properties of that follow, and both are load-bearing for a reader: the
-    // snippet can be absent, and it can be non-contiguous.
-    snippet: z
-      .string()
-      .nullable()
-      .optional()
-      .describe(
-        "Query-relevant passages from the page, selected against the query — not the page's opening text, so it usually carries the answer-bearing sentences. It may hold more than one passage from different parts of the page, joined by ' … '. Read it as a whole; do not quote it as one continuous sentence, and do not cut it to a fixed length. null when the page yielded no relevant passage — the result still keeps its slot, and its url is still fetchable via tako_contents.",
-      ),
+    // this is query-selected passages, not the page's opening text: it can be
+    // absent, and it can be non-contiguous. The MODEL-FACING wording for that
+    // lives on `web_results` in the two slim shapes in _render_markdown.ts —
+    // this schema is the wire-parse guard and the internal shape, neither of
+    // which is advertised, so a `.describe()` here would document the field
+    // for maintainers only. Kept as a plain field to avoid implying otherwise.
+    snippet: z.string().nullable().optional(),
     source_name: z.string().nullable().optional(),
     publish_date: z.string().nullable().optional(),
     // 1-based citation index — set on Agent API results, null on raw retrieval.

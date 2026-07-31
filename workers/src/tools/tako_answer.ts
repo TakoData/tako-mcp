@@ -181,6 +181,7 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
   // characters. Two things to know if answer quality or latency moves:
   //  - the arbiter now reads passages that may be non-contiguous, joined by
   //    " … ". No prompt here says so; the arbiter's own prompt is upstream.
+  //    The client-facing note is on `answerSlimOutputShape.web_results`.
   //  - Exa selects highlights with an LLM, so they cost time (+35ms median,
   //    up to +488ms observed upstream) against a hard 1.5s web-retrieval
   //    budget whose breach drops web grounding entirely rather than
