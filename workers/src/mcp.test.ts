@@ -1273,9 +1273,38 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/different jobs/i);
   });
 
-  it("states the pin form that actually steers retrieval", () => {
-    expect(SERVER_INSTRUCTIONS).toContain("strict: true");
-    expect(SERVER_INSTRUCTIONS).toMatch(/METRIC node id/i);
+  // Inverted deliberately. The pin form USED to be asserted here, and the
+  // A/B retired it: pinning happened on 12% of runs with the server-level copy
+  // and 11% without, so the third copy of the recipe (tool descriptions and
+  // every `next_call` carry the other two) bought tokens on every request and
+  // no behaviour. Pinning happens when a result hands over a ready-to-run
+  // call, not when the system prompt lectures about parameters.
+  //
+  // Asserting its ABSENCE is the point: per-tool mechanics drift back into
+  // this string precisely because it reads as the authoritative place to put
+  // them. `_pin_form.test.ts` still guarantees the form is stated correctly
+  // everywhere it does belong.
+  it("keeps per-tool call mechanics OUT — no pin recipe at server level", () => {
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/strict/i);
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/node[_ ]?ids?/i);
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/METRIC node/i);
+  });
+
+  // The discovery trigger. On a host with several servers connected this is
+  // the only thing that makes a model reach for Tako at all — a tool
+  // description cannot do it, since reading one means already having chosen
+  // Tako. Cheap to delete as "filler" during a trim; the most expensive line
+  // here to lose.
+  it("keeps the domain list that makes the server discoverable", () => {
+    for (const domain of ["finance", "economics", "website/app traffic", "elections"]) {
+      expect(SERVER_INSTRUCTIONS).toContain(domain);
+    }
+  });
+
+  // The one line with a measured behavioural effect, so it is pinned verbatim
+  // rather than by paraphrase.
+  it("keeps the answer-vs-search split in its measured phrasing", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("pick one, don't chain them");
   });
 
   // `tako_available_data` answers coverage questions in its own right, not
