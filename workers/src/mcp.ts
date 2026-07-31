@@ -77,13 +77,25 @@ export const SERVER_VERSION = "0.15.3"; // x-release-please-version
  * and the reason models otherwise default to their built-in web search
  * even with Tako connected.
  *
- * SCOPE — the division of labour with the tool descriptions, which is what
- * keeps this short. These instructions answer only "which tool, and why
- * Tako at all". Everything parameter-shaped — argument examples, the `q` +
- * `metric` split, response fields, recovery protocols — belongs in the
- * description of the tool that takes it, where it is read at the moment it
- * applies. Restating those here bought a second copy the model pays for on
- * every request, whether or not it ends up calling Tako.
+ * SCOPE — the rule, and it is a rule rather than a preference: these
+ * instructions carry ONLY cross-tool workflow and when-to-choose-this-server
+ * knowledge. Anything about how to call one tool belongs in that tool's
+ * description, where it is read at the moment it applies.
+ *
+ * That rule is what removed the pin-form paragraph ("the METRIC node id
+ * ALONE, with `strict: true`"). It was the THIRD copy of the same advice —
+ * the tool descriptions carry it, and so does every `next_call` the results
+ * hand back — and the A/B says the system-level copy does nothing: pinning
+ * happened on 12% of runs with it and 11% without. Pinning happens when a
+ * tool result hands the model a ready-to-run call, not when the system
+ * prompt lectures it about parameters. Restating per-tool mechanics here
+ * bought a copy the model pays for on every request, whether or not it ends
+ * up calling Tako, and bought no behaviour.
+ *
+ * Do not re-add it, or the `q` + `metric` split, or response fields, or
+ * recovery protocols. If a future edit is tempted, the test is: would this
+ * sentence still be true and useful to a model that never calls Tako? Only
+ * routing and coverage claims pass.
  *
  * Register is imperative, not expository: state what to do, not what the
  * tool "does". A draft opened a paragraph with "is free and does two
@@ -96,34 +108,48 @@ export const SERVER_VERSION = "0.15.3"; // x-release-please-version
  * non-obvious routing, a proprietary graph whose coverage a model cannot
  * guess, versus their single well-understood job — but not 8x more.
  *
- * Two framings ARE load-bearing and must survive future edits:
+ * Three things ARE load-bearing and must survive future edits:
  *
- *   1. The web-search claim belongs to TAKO, not to `tako_search`. Both
+ *   1. The DOMAIN LIST. It reads like filler and it is the opposite: on a
+ *      host with many servers connected, it is the only discovery trigger
+ *      Tako has. A tool description cannot do this job, because the model
+ *      has to already be looking at Tako's tools to read one. This is the
+ *      paragraph that earns the `instructions` field.
+ *
+ *   2. The web-search claim belongs to TAKO, not to `tako_search`. Both
  *      retrieval tools search the live web, so attaching it to one made
  *      "use tako_search for data questions" the first thing the model
  *      read — which is how these instructions came to contradict every
- *      tool description on the surface. It still stops short of banning
- *      the host's built-in search: over-broad claims erode trust in the
- *      whole surface and misroute queries Tako can't serve.
+ *      tool description on the surface.
  *
- *   2. `tako_answer` and `tako_search` are a CHOICE, not a ranking, and
- *      `tako_available_data` answers coverage questions in its own right
- *      — not merely as a gate in front of the priced tools. "What does
- *      Tako have on X" is a question worth asking on its own, and the
- *      answer shapes which metric is worth asking for at all.
+ *   3. `tako_answer` and `tako_search` are a CHOICE, not a ranking — the
+ *      "pick one, don't chain them" phrasing, which is the only line here
+ *      with a measured behavioural effect, so keep it verbatim rather than
+ *      paraphrased. `tako_available_data` answers coverage questions in its
+ *      own right too, not merely as a gate in front of the priced tools:
+ *      "what does Tako have on X" is worth asking on its own, and the answer
+ *      shapes which metric is worth asking for at all.
+ *
+ * REMOVED DELIBERATELY, not by oversight: the closing hedge "Use a built-in
+ * web search when the query is clearly outside Tako's coverage, or Tako
+ * returned nothing relevant." The zero-result `guidance` on each tool now
+ * says when to pivot off Tako, at the moment it applies and with the actual
+ * result in hand, which is strictly better placement than a standing caveat
+ * every request pays for. Note the tension this leaves: the paragraph's claim
+ * is now unhedged, and the original worry was that over-broad claims erode a
+ * model's trust in the whole surface. Watch routing on questions Tako cannot
+ * serve; if misrouting shows up, this hedge is the first thing to restore.
  */
 export const SERVER_INSTRUCTIONS = [
   "Tako is a live-data search engine: structured, citation-backed results with inline charts, over a proprietary data graph and the live web.",
   "",
-  "For questions about data or metrics — finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health — reach for Tako before a generic web search: it returns live, chartable, citation-backed data a web search cannot. Tako searches the web too (default sources are data + web), so one call covers a question that mixes data with context. Use a built-in web search when the query is clearly outside Tako's coverage, or Tako returned nothing relevant.",
+  "For questions about data or metrics — finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health — reach for Tako before a generic web search: it returns live, chartable, citation-backed data a web search cannot. Tako searches the web too (default sources are data + web), so one call covers a question that mixes data with context.",
   "",
   "`tako_available_data` is free. Ask it what data Tako has on an entity or a metric, and build the real question around the coverage it reports; ask it for a measure's exact name before spending a priced call.",
   "",
   "`tako_answer` and `tako_search` do different jobs — pick one, don't chain them. `tako_answer` for ONE specific figure: a synthesized, cited answer with the series inlined, and the only tool that returns values for license-gated cards. `tako_search` for breadth: many data cards and web results at once, or when the chart or embed is the deliverable.",
   "",
   "`tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.",
-  "",
-  "When pinning: the METRIC node id ALONE, with `strict: true`. An entity-only pin, or a pin without strict, does not steer retrieval.",
 ].join("\n");
 
 /**
