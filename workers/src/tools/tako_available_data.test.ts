@@ -785,15 +785,26 @@ describe("tako_available_data — metric confidence is judged on what is shown",
     expect(out.next_call).toBeNull();
   });
 
-  it("a plausible ALTERNATE still vouches — abbreviations never match their expansion", async () => {
-    // `capex` → `Capital Expenditure` shares no token, so rank-0 alone can
-    // never be the test; the visible alternate `CapEx to Revenue` carries it.
+  it("an abbreviation is vouched for by its expansion's OWN alias, at rank 0", async () => {
+    // This case used to be cited as proof that rank 0 alone could not be the
+    // test — `capex` shares no NAME token with `Capital Expenditure`, so a
+    // confident alternate had to carry it. That premise is false on live data:
+    // measured on staging, `Capital Expenditure` carries the aliases
+    // ["CAPEX", "CapEx", "Capex", "Capital Expenditure Actual",
+    //  "Capital Spending"], so rank 0 passes on its own via `alias ⊆ query`,
+    // which is exactly the shape confidentMatch documents for abbreviations.
+    // Verified the same way for `ROA` → `Return on Assets` (alias "ROA") and
+    // `revenue` → `Revenues` (alias "Revenue"). Fixture now carries the real
+    // alias lists.
     mockFetchSequence([
       jsonResponse(200, { results: [searchHit("ent::cvx::1", "Chevron Corporation")] }),
       jsonResponse(200, {
         results: [
-          searchHit("mt::a::1", "Capital Expenditure", "metric", "METRIC"),
-          searchHit("mt::b::2", "CapEx to Revenue", "metric", "METRIC"),
+          {
+            ...searchHit("mt::a::1", "Capital Expenditure", "metric", "METRIC"),
+            aliases: ["CAPEX", "CapEx", "Capex", "Capital Expenditure Actual", "Capital Spending"],
+          },
+          { ...searchHit("mt::b::2", "CapEx to Revenue", "metric", "METRIC"), aliases: [] },
         ],
       }),
     ]);
@@ -801,6 +812,48 @@ describe("tako_available_data — metric confidence is judged on what is shown",
     expect(out.metric?.name).toBe("Capital Expenditure");
     expect(out.found).toBe(true);
     expect(out.next_call?.node_ids).toEqual(["mt::a::1"]);
+  });
+
+  it("WITHHOLDS the handle when rank 0 is unvetted, even if an alternate passes", async () => {
+    // TAKO-3754, live on staging: `q="Pfizer", metric="R&D expense"`. Rank 0
+    // fails confidentMatch and rank 2 passes, and the verdict used to be
+    // `.some()` over the window while the pin still took rank 0 — so rank 2's
+    // confidence licensed a "run verbatim" handle pinning OPERATING COSTS for an
+    // R&D question. Real alias lists, so the containment outcomes are the live
+    // ones.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::pfizer::1", "Pfizer Inc.")] }),
+      jsonResponse(200, {
+        results: [
+          {
+            ...searchHit("mt::opex::1", "Operating costs and expenses", "metric", "METRIC"),
+            aliases: ["Expenses", "Total Operating Expenses", "costs", "expenditures", "spending"],
+          },
+          {
+            ...searchHit("mt::rd_norm::2", "R&D Expenses (Normalized)", "metric", "METRIC"),
+            aliases: ["R&D Exp", "r&d costs", "research and development expenses"],
+          },
+          searchHit("mt::rd_amer::3", "Research & development expense (R&D) - Americas", "metric", "METRIC"),
+        ],
+      }),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Pfizer", metric: "R&D expense" }, CTX);
+
+    // No priced handle for a node nobody vetted.
+    expect(out.next_call).toBeNull();
+    expect(out.found).toBe(false);
+    // Backend order is preserved — confidentMatch decides confidence, never
+    // order (promoting rank 2 was measured to pick ratios over real metrics).
+    expect(out.metric?.node_id).toBe("mt::opex::1");
+    // The recovery has to stay available: every candidate keeps its node id, so
+    // the caller can pin one deliberately. This is what a live agent run did on
+    // its own, choosing R&D Expenses (Normalized).
+    expect(out.metric_alternates?.map((m) => m.node_id)).toEqual([
+      "mt::rd_norm::2",
+      "mt::rd_amer::3",
+    ]);
+    expect(out.summary).toContain("NO metric confidently matches");
+    expect(out.summary).toContain("Pick one deliberately");
   });
 });
 
