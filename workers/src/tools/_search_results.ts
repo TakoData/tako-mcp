@@ -50,6 +50,39 @@ export const resultContentSchema = z
   .loose();
 export type ResultContent = z.infer<typeof resultContentSchema>;
 
+/**
+ * How to spend the ONE pinned retry. Measured on prod (2026-07-29): a pin at
+ * the default `strict:false` did not steer retrieval at all — a deliberately
+ * WRONG node changed nothing, and pinning a metric node without strict
+ * returned a DIFFERENT metric's card. The same metric node WITH `strict:true`
+ * returned exactly that card. So "pinning its node_ids" alone described the
+ * variant that does nothing; this names the one that works.
+ *
+ * Exported because `tako_answer`'s zero-card guidance needs the identical
+ * recipe: two tools whose recovery advice drifts apart teach the model two
+ * different pin forms, and only one of them works. One string, one place.
+ */
+export const PINNED_RETRY =
+  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all";
+
+/**
+ * The same recipe for the card-in-hand case. {@link PINNED_RETRY} sources the
+ * id from `tako_available_data`'s `coverage.items[]`, which is the wrong place
+ * to point a caller who already holds a search card — its ids are on
+ * `cards[].nodes[]`. Two constants rather than one because the SOURCE of the id
+ * genuinely differs; the pin FORM (metric node alone, `strict:true`) must not.
+ * Both exist so `tako_search`'s description stops restating the form by hand:
+ * it was restated in two places and both drifted back to the broken variant
+ * (every node id on the card, no `strict`) — the one measured to misfire.
+ *
+ * DECLARED HERE, above `takoCardSchema`, deliberately: the `values_hint` field
+ * description interpolates it, and that schema is built at module evaluation
+ * time. Declared after the schema it would be in its temporal dead zone, and
+ * importing this module would throw ReferenceError on load.
+ */
+export const PINNED_FROM_CARD =
+  "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card, or omitting strict, does not steer retrieval";
+
 // Backend TakoCard (api/ga/v3/search/types.py::TakoCard). Loose so a richer
 // backend card doesn't break parsing. Shared by tako_search + tako_answer.
 export const takoCardSchema = z
@@ -89,7 +122,7 @@ export const takoCardSchema = z
       .string()
       .optional()
       .describe(
-        "Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — headline in `description` when the card carries one, specific figures via tako_answer with node_ids pinned.",
+        `Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — headline in \`description\` when the card carries one, specific figures via tako_answer, where you ${PINNED_FROM_CARD}.`,
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
@@ -173,6 +206,35 @@ function temporalMagnitude(v: unknown): number | null {
     return Number.isNaN(t) ? null : t;
   }
   return null;
+}
+
+/**
+ * Parse a cell into an epoch-ms magnitude comparable ACROSS cards, or null.
+ *
+ * `temporalMagnitude` is safe where it is used by `capRecentRows`, which only
+ * ever compares two values from the SAME card and so cannot mix scales. Card
+ * ORDERING compares across cards, where a bare number passed through unchanged
+ * is not comparable to a `Date.parse` result: an annual series whose `date`-typed
+ * column holds `2024` yields 2024 against ~1.7e12 for any string-dated card,
+ * sorting it below every one of them — including genuinely staler series.
+ *
+ * So each recognised shape is converted to epoch-ms, and anything unrecognised
+ * returns null rather than a number on an unknown scale. A null simply means
+ * "no freshness signal from this cell", which the caller already handles.
+ */
+function comparableEpoch(v: unknown): number | null {
+  if (typeof v === "number") {
+    if (!Number.isFinite(v)) return null;
+    // A bare year, the shape annual series use.
+    if (v >= 1000 && v <= 9999) return Date.UTC(Math.trunc(v), 0, 1);
+    // Epoch seconds vs milliseconds, split by magnitude. Both bounds cover
+    // 1973-2286, comfortably outside the year range above and either side of
+    // any date this data carries.
+    if (v >= 1e8 && v < 1e11) return v * 1000;
+    if (v >= 1e11 && v < 1e14) return v;
+    return null;
+  }
+  return temporalMagnitude(v);
 }
 
 // Order of a row sequence from the temporal value of its first vs last row:
@@ -387,8 +449,26 @@ export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
 // card actually carries a description — an unverified pointer is worse than
 // none.
 function valuesHint(card: TakoCard): string {
-  const ids = (card.nodes ?? []).map((n) => n.id);
-  const pin = ids.length > 0 ? ` with node_ids ${JSON.stringify(ids)} pinned` : "";
+  // Pin the METRIC node ALONE, with strict. This used to emit every node id on
+  // the card — entity AND metric — and never mentioned `strict`, which is the
+  // one combination measured to do nothing: at the default `strict:false` a pin
+  // does not steer retrieval at all, and under `strict:true` the entity id
+  // re-admits every other card for that entity (strict is an OR over pinned
+  // nodes), which once turned "no such card" into a plausible-looking WRONG
+  // metric. Same correction already applied to next_call and the zero-card
+  // guidance; this hint was the last place still advising the broken form.
+  //
+  // `type` is the wire's own discriminator; the `mt::` id prefix is a fallback
+  // for cards whose nodes arrive untyped. With neither, no pin is advised —
+  // silence beats steering the model into the variant that misfires.
+  const nodes = card.nodes ?? [];
+  const metricIds = nodes
+    .filter((n) => n.type === "metric" || n.id.startsWith("mt::"))
+    .map((n) => n.id);
+  const pin =
+    metricIds.length > 0
+      ? ` with node_ids ${JSON.stringify(metricIds)} pinned and strict:true`
+      : "";
   const headline =
     typeof card.description === "string" && card.description.trim() !== ""
       ? "headline value is in description; "
@@ -488,6 +568,22 @@ export const usageSchema = z
   .loose();
 export type Usage = z.infer<typeof usageSchema>;
 
+/**
+ * The ADVERTISED shape of `usage` — the headline figure only.
+ *
+ * `usageSchema` above stays the internal contract (it parses and types the
+ * wire, breakdown included, and the breakdown is still EMITTED). This declares
+ * just `total_cost_usd` because publishing the nested compute/data objects cost
+ * 197 tokens on each of tako_search and tako_answer — ~394 of a 7,235-token
+ * connect surface — to describe a per-call cost breakdown no routing decision
+ * reads. Loose, so the emitted breakdown still validates: nested loose objects
+ * publish permissive `additionalProperties`, unlike the top level which the SDK
+ * rebuilds strict.
+ */
+export const usageAdvertisedSchema = z
+  .object({ total_cost_usd: z.number() })
+  .loose();
+
 // Auto-chain widget fields lifted to the output root when the top card
 // has a card_id. Read by the chart widget (tako_search inline render).
 export const autoChainShape = {
@@ -576,7 +672,7 @@ function buildZeroResultGuidance(
     return [
       "This search returned web results but no data cards. That usually means the data graph does not cover this query, not that the wording was unlucky, so do NOT re-search with rephrasings.",
       "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
-      "If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, pinning its node_ids.",
+      `If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, and then ${PINNED_RETRY}.`,
     ].join(" ");
   }
   if (!searchedData(sources)) {
@@ -589,7 +685,7 @@ function buildZeroResultGuidance(
   return [
     "No results — do NOT retry this query or rephrasings of it; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
     "Recover in order: (1) call tako_available_data (free) with the entity to learn the exact metric names + node_ids Tako actually has;",
-    "(2) if it confirms coverage, spend your ONE remaining search on that exact name, pinning node_ids" +
+    `(2) if it confirms coverage, spend your ONE remaining search on that exact name and ${PINNED_RETRY}` +
       (searchedWeb(sources)
         ? ";"
         : ' (adding "web" as a fallback source on that same single retry is fine);'),
@@ -600,19 +696,152 @@ function buildZeroResultGuidance(
 }
 
 /**
+ * The newest data point a card actually carries, as a comparable epoch
+ * magnitude — derived from the rows already parsed, so it needs no extra
+ * field to be populated and cannot be fooled by a title.
+ *
+ * null when the card carries no temporal rows: an Overview/summary card, or
+ * any card under `include_contents: false`.
+ */
+function latestDataPoint(card: TakoCard): number | null {
+  const content = card.content as LooseContent | null | undefined;
+  if (content == null) return null;
+  const magnitudes: number[] = [];
+  const dataset = content.dataset;
+  if (dataset && Array.isArray(dataset.rows)) {
+    const idx = temporalColumnIndex(dataset.columns);
+    if (idx >= 0) {
+      for (const row of dataset.rows) {
+        if (!Array.isArray(row)) continue;
+        const m = comparableEpoch(row[idx]);
+        if (m !== null) magnitudes.push(m);
+      }
+    }
+  } else if (Array.isArray(content.records) && content.records.length > 0) {
+    const key = recordDateKey(content.records);
+    if (key !== undefined) {
+      for (const record of content.records) {
+        const m = comparableEpoch(record[key]);
+        if (m !== null) magnitudes.push(m);
+      }
+    }
+  }
+  return magnitudes.length === 0 ? null : Math.max(...magnitudes);
+}
+
+/**
+ * The card's declared as-of date as an epoch magnitude. The backend ships
+ * `data_freshness` as an OBJECT (`{"data_as_of": "2026-03-31"}`) on search
+ * cards and as a bare string elsewhere — accept both, the same way the
+ * markdown renderer does.
+ *
+ * Goes through `comparableEpoch`, not `temporalMagnitude`, for the same reason
+ * `latestDataPoint` does: this feeds a CROSS-CARD comparator, so a bare numeric
+ * `data_as_of` (`2024`) passed through unchanged would be compared against
+ * ~1.7e12 from any string-dated card in the same as-of tier. The backend ships
+ * strings today and nothing is broken, but the rule worth being able to state
+ * without exception is that every cross-card comparison normalises first.
+ */
+function freshnessEpoch(card: TakoCard): number | null {
+  const value = (card as Record<string, unknown>).data_freshness;
+  if (typeof value === "string") return comparableEpoch(value);
+  if (value !== null && typeof value === "object") {
+    return comparableEpoch((value as { data_as_of?: unknown }).data_as_of);
+  }
+  return null;
+}
+
+const RELEVANCE_WORDS: Record<string, number> = { high: 3, medium: 2, low: 1 };
+
+/** Retrieval relevance as a number: the gated numeric score, else the coarse
+ *  word unentitled responses carry instead, else 0. */
+function relevanceRank(card: TakoCard): number {
+  const rec = card as Record<string, unknown>;
+  if (typeof rec.relevance_score === "number") return rec.relevance_score;
+  if (typeof rec.relevance === "string") {
+    return RELEVANCE_WORDS[rec.relevance.trim().toLowerCase()] ?? 0;
+  }
+  return 0;
+}
+
+/**
+ * Order cards most-useful-first. ORDERING ONLY — no card is dropped, nothing
+ * is folded, and every tie falls back to the backend's own order.
+ *
+ * Why this exists: the backend's rank is not recency-aware, and its #1 can be
+ * materially staler than its #2. Measured on prod (2026-07-29),
+ * `tako_search "US inflation rate"` returned `United States Inflation Rate`
+ * (latest row 2024-01-01, 2.9%) ABOVE `United States CPI Inflation Rate
+ * (Seasonally Adjusted)` (latest row 2026-06-01, 3.5%). A model reading the
+ * document top-down answers from card #1 and reports a 2½-year-old figure as
+ * current — a wrong number carrying a citation, which is the worst failure
+ * this server can produce. Separately, `Earnings & Estimates Overview` cards
+ * (no rows at all) were observed outranking the actual series card.
+ *
+ * The comparator, in order:
+ *   1. cards WITH temporal rows above cards without (series beats Overview)
+ *   2. fresher newest-data-point first
+ *   3. fresher declared `data_as_of` first (the fallback when rows are absent,
+ *      e.g. `include_contents: false`)
+ *   4. higher retrieval relevance
+ *   5. backend order (stable)
+ *
+ * Deliberately NOT recency-aware in one respect: an explicitly historical ask
+ * ("annual inflation since 1960") wants the older annual series, which this
+ * demotes to #2. Demotion is recoverable — the card is still present with its
+ * range in the description — which is exactly why this orders instead of
+ * pruning.
+ */
+export function orderCardsByUsefulness(cards: readonly TakoCard[]): TakoCard[] {
+  // Decorate-sort-undecorate: computes each signal once, and makes the sort
+  // stable regardless of engine so ties keep the backend's ordering.
+  return cards
+    .map((card, index) => ({
+      card,
+      index,
+      rows: latestDataPoint(card),
+      asOf: freshnessEpoch(card),
+      relevance: relevanceRank(card),
+    }))
+    .sort((a, b) => {
+      const aHasRows = a.rows !== null;
+      const bHasRows = b.rows !== null;
+      if (aHasRows !== bHasRows) return aHasRows ? -1 : 1;
+      if (a.rows !== null && b.rows !== null && a.rows !== b.rows) return b.rows - a.rows;
+      // Declaring an as-of date is itself evidence of a dated series, the same
+      // way carrying temporal rows is. Without this, two row-less cards tie and
+      // fall through to backend order — which is how `Earnings & Estimates
+      // Overview` (no freshness) kept rank 1 over `Actuals - Normalized Gross
+      // Margin` (freshness 2025-12-31) on a gross-margin query, both being
+      // exportable:false and therefore row-less.
+      const aHasAsOf = a.asOf !== null;
+      const bHasAsOf = b.asOf !== null;
+      if (aHasAsOf !== bHasAsOf) return aHasAsOf ? -1 : 1;
+      if (a.asOf !== null && b.asOf !== null && a.asOf !== b.asOf) return b.asOf - a.asOf;
+      if (a.relevance !== b.relevance) return b.relevance - a.relevance;
+      return a.index - b.index;
+    })
+    .map((d) => d.card);
+}
+
+/**
  * Build the tako_search output: the cards + web_results + request_id, plus
  * auto-chain widget fields lifted from the top card when it has a card_id
  * (so the host renders that chart inline). Endpoint-agnostic — only needs
  * a card_id, which v3 TakoCards carry.
  */
 export function buildSearchOutput(
-  cards: TakoCard[],
+  rawCards: TakoCard[],
   webResults: WebResult[],
   requestId: string,
   usage: Usage | null,
   env: Env,
   searchedSources: readonly string[],
 ): SearchOutput {
+  // Order before anything reads cards[0]: the widget/pub_id fields below lift
+  // the TOP card, so the chart the host renders follows the same ordering the
+  // model reads instead of diverging from it.
+  const cards = orderCardsByUsefulness(rawCards);
   const base: SearchOutput = {
     cards,
     web_results: webResults,

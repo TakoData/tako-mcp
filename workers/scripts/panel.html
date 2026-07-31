@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tako MCP panel</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #16191f; --panel2: #1c2029; --line: #2a2f3a;
+    --fg: #e6e8ec; --dim: #9aa2b1; --accent: #7dd3fc; --ok: #86efac;
+    --warn: #fcd34d; --bad: #fca5a5; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9; --panel: #fff; --panel2: #f0f2f5; --line: #d9dde4;
+      --fg: #15181d; --dim: #5b6470; --accent: #0369a1; --ok: #15803d;
+      --warn: #a16207; --bad: #b91c1c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  header {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 10;
+  }
+  h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  .grow { flex: 1; }
+  select, input, textarea, button {
+    font: inherit; color: var(--fg); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px;
+  }
+  textarea { font-family: var(--mono); font-size: 12.5px; width: 100%; resize: vertical; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button.on { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  main { padding: 16px; display: grid; gap: 16px; max-width: 1500px; }
+  .cols { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 950px) { .cols { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .card > h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--dim); margin: 0 0 10px; font-weight: 650;
+  }
+  label { display: block; font-size: 12px; color: var(--dim); margin: 10px 0 4px; }
+  label:first-of-type { margin-top: 0; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  pre {
+    font-family: var(--mono); font-size: 12px; margin: 0; white-space: pre-wrap;
+    word-break: break-word; overflow-x: auto;
+  }
+  .scroll { max-height: 460px; overflow-y: auto; }
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--dim); margin-bottom: 10px; }
+  .stats b { color: var(--fg); font-weight: 600; }
+  .pill {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px;
+    border: 1px solid var(--line); background: var(--panel2);
+  }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .dim { color: var(--dim); }
+  .presets { display: grid; gap: 3px; max-height: 300px; overflow-y: auto; }
+  .presets button {
+    text-align: left; background: transparent; border: 1px solid transparent;
+    padding: 5px 7px; font-size: 12px; border-radius: 5px;
+  }
+  .presets button:hover { background: var(--panel2); border-color: var(--line); }
+  .presets .why { color: var(--dim); font-size: 11px; display: block; }
+  .step { border-left: 2px solid var(--line); padding: 0 0 14px 12px; margin-left: 4px; }
+  .step.tool { border-left-color: var(--accent); }
+  .step h3 { font-size: 12.5px; margin: 0 0 5px; font-weight: 650; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
+  .note { font-size: 12px; color: var(--dim); }
+  .accent { color: var(--accent); }
+  .turn {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--dim); border-top: 1px solid var(--line);
+    padding-top: 8px; margin: 6px 0 10px;
+  }
+  details { margin: 5px 0; }
+  summary {
+    cursor: pointer; font-size: 12px; color: var(--dim);
+    padding: 3px 0; user-select: none;
+  }
+  summary:hover { color: var(--accent); }
+  details[open] > pre {
+    margin-top: 6px; padding: 8px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  /* `!important` is load-bearing: a toggled section that also needs a display
+     mode must get it from a CLASS, never an inline style, or the inline rule
+     wins and the section never hides. Use `.stack` below for that layout. */
+  .hide { display: none !important; }
+  .stack { display: grid; gap: 16px; }
+  code { font-family: var(--mono); font-size: 12px; background: var(--panel2); padding: 1px 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tako MCP panel</h1>
+  <div class="tabs">
+    <button id="tab-raw" class="on">Raw call</button>
+    <button id="tab-agent">Agent mode</button>
+  </div>
+  <div class="grow"></div>
+  <label style="margin:0">target</label>
+  <select id="target"></select>
+  <span id="target-note" class="pill"></span>
+</header>
+
+<main>
+  <!-- ------------------------------------------------------------------ RAW -->
+  <section id="view-raw" class="cols">
+    <div class="stack">
+      <div class="card">
+        <h2>Call</h2>
+        <label for="tool">tool</label>
+        <select id="tool" style="width:100%"></select>
+        <div id="tool-cost" class="note" style="margin-top:6px"></div>
+        <label for="args">arguments (JSON)</label>
+        <textarea id="args" rows="7">{ "q": "Carnival", "metric": "passenger cruise days" }</textarea>
+        <div class="row" style="margin-top:10px">
+          <button id="run" class="primary">Run</button>
+          <button id="run-next" disabled title="Runs the next_call exactly as emitted">Run next_call verbatim</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Golden presets</h2>
+        <div class="note" style="margin-bottom:8px">
+          The exact cases <code>npm run golden</code> pins — including the ones that used to fail.
+        </div>
+        <div id="presets" class="presets"></div>
+      </div>
+
+      <div class="card">
+        <h2>Server instructions</h2>
+        <div class="note" style="margin-bottom:8px">
+          What the model is told before it sees a single tool. Straight off the initialize handshake.
+        </div>
+        <pre id="instructions" class="scroll dim"></pre>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="card">
+        <h2>Result</h2>
+        <div id="stats" class="stats"><span class="dim">no call yet</span></div>
+        <div class="split">
+          <div>
+            <h2>Text channel <span class="dim">(what the model reads)</span></h2>
+            <pre id="out-text" class="scroll"></pre>
+          </div>
+          <div>
+            <h2>structuredContent <span class="dim">(machine handles)</span></h2>
+            <pre id="out-structured" class="scroll"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- AGENT -->
+  <section id="view-agent" class="stack hide">
+    <div class="card">
+      <h2>Ask Claude — it routes using this server's real instructions and tool descriptions</h2>
+      <div id="agent-off" class="note hide warn"></div>
+      <label for="question">question</label>
+      <textarea id="question" rows="2">What was Carnival's passenger cruise days last quarter?</textarea>
+      <div class="row" style="margin-top:10px">
+        <button id="ask" class="primary">Ask</button>
+        <label style="margin:0">model</label>
+        <input id="model" style="width:230px">
+        <label style="margin:0;display:flex;gap:6px;align-items:center">
+          <input type="checkbox" id="incl-structured" checked>
+          forward structuredContent to the model
+        </label>
+      </div>
+      <div class="note" style="margin-top:8px">
+        Clients differ on whether they forward <code>structuredContent</code>. Turn it off to see how routing
+        holds up for a text-only client — the pessimistic case every instruction has to survive.
+      </div>
+    </div>
+    <div class="card">
+      <h2>What the model was given</h2>
+      <div class="note" style="margin-bottom:8px">
+        The two things that actually drive routing. If it picks the wrong tool, the reason is in here.
+      </div>
+      <details><summary>system prompt (the server's <code>instructions</code>)</summary>
+        <pre id="run-instructions" class="scroll"></pre></details>
+      <details><summary>tool descriptions as published</summary>
+        <pre id="run-tools" class="scroll"></pre></details>
+    </div>
+    <div class="card">
+      <h2>Trace</h2>
+      <div id="agent-stats" class="stats"><span class="dim">no run yet</span></div>
+      <div id="trace"></div>
+    </div>
+  </section>
+</main>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const FREE_TOOLS = new Set(["tako_available_data", "tako_graph_search", "tako_graph_related", "tako_graph_node", "get_credit_balance"]);
+
+let cfg = { targets: [], presets: [], agent_enabled: false, default_model: "" };
+let lastNextCall = null;
+
+const post = async (path, body) => {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return r.json();
+};
+
+const target = () => $("target").value;
+
+function renderTargetNote() {
+  const t = cfg.targets.find((x) => x.id === target());
+  const note = $("target-note");
+  if (!t) { note.textContent = ""; return; }
+  note.textContent = t.live ? "PRODUCTION — real spend" : t.url;
+  note.className = t.live ? "pill bad" : "pill dim";
+}
+
+function renderToolCost() {
+  const name = $("tool").value;
+  const free = FREE_TOOLS.has(name);
+  $("tool-cost").innerHTML = free
+    ? '<span class="ok">free</span> — graph endpoints only, no billed call'
+    : '<span class="warn">priced</span> — this spends a real API call';
+}
+
+async function loadTools() {
+  const res = await post("/api/tools", { target: target() });
+  const sel = $("tool");
+  sel.innerHTML = "";
+  if (res.error) {
+    $("instructions").textContent = `could not connect:\n\n${res.error}\n\nIs the target running? For "local", start it with:\n  cd workers && npx wrangler dev --env staging --port 8799`;
+    $("instructions").className = "scroll bad";
+    return;
+  }
+  $("instructions").className = "scroll dim";
+  $("instructions").textContent = res.instructions || "(server sent no instructions)";
+  for (const t of res.tools) {
+    const o = document.createElement("option");
+    o.value = t.name; o.textContent = t.name;
+    sel.appendChild(o);
+  }
+  sel.value = res.tools.some((t) => t.name === "tako_available_data") ? "tako_available_data" : sel.value;
+  renderToolCost();
+}
+
+function renderPresets() {
+  const box = $("presets");
+  box.innerHTML = "";
+  for (const p of cfg.presets) {
+    const b = document.createElement("button");
+    b.innerHTML = `${p.id}<span class="why">${p.why}</span>`;
+    b.onclick = () => {
+      $("tool").value = p.tool;
+      $("args").value = JSON.stringify(p.args, null, 2);
+      renderToolCost();
+      $("run").click();
+    };
+    box.appendChild(b);
+  }
+}
+
+function renderResult(r) {
+  if (!r.ok) {
+    $("stats").innerHTML = `<span class="bad">call failed</span>`;
+    $("out-text").textContent = r.error ?? "unknown error";
+    $("out-text").className = "scroll bad";
+    $("out-structured").textContent = "";
+    $("run-next").disabled = true;
+    return;
+  }
+  $("out-text").className = "scroll";
+  const bits = [
+    `<span><b>${r.ms}</b> ms</span>`,
+    `<span><b>${r.chars.toLocaleString()}</b> chars text</span>`,
+    `<span><b>${r.structured_chars.toLocaleString()}</b> chars structured</span>`,
+    `<span title="chars/3.6 — the exact figure is tokenizer-specific">~<b>${r.approx_tokens.toLocaleString()}</b> tokens (approx)</span>`,
+  ];
+  if (r.cost_usd !== null) bits.push(`<span class="warn">$<b>${r.cost_usd.toFixed(4)}</b></span>`);
+  bits.push(r.isError
+    ? '<span class="bad">isError: true</span>'
+    : '<span class="ok">ok</span>');
+  const found = r.structuredContent?.found;
+  if (found !== undefined) {
+    bits.push(found ? '<span class="ok">found: true</span>' : '<span class="warn">found: false</span>');
+  }
+  bits.push(r.next_call ? '<span class="ok">next_call present</span>' : '<span class="dim">next_call null</span>');
+  $("stats").innerHTML = bits.join("");
+  $("out-text").textContent = r.text || "(empty text channel)";
+  $("out-structured").textContent = r.structuredContent === null
+    ? "(no structuredContent — omitted or not declared)"
+    : JSON.stringify(r.structuredContent, null, 2);
+  lastNextCall = r.next_call;
+  $("run-next").disabled = !r.next_call;
+}
+
+async function run() {
+  let args;
+  try { args = JSON.parse($("args").value); }
+  catch (e) { $("stats").innerHTML = `<span class="bad">arguments are not valid JSON: ${e.message}</span>`; return; }
+  $("run").disabled = true;
+  $("stats").innerHTML = '<span class="dim">calling…</span>';
+  try {
+    renderResult(await post("/api/call", { target: target(), name: $("tool").value, arguments: args }));
+  } finally {
+    $("run").disabled = false;
+  }
+}
+
+async function runNext() {
+  const nc = lastNextCall;
+  if (!nc) return;
+  // Exactly the shape the tool emitted — the point is to prove the handle runs
+  // verbatim, so nothing here is reshaped or "helpfully" adjusted.
+  const args = { query: nc.query, node_ids: nc.node_ids, strict: nc.strict, sources: ["data"] };
+  $("tool").value = nc.tool;
+  $("args").value = JSON.stringify(args, null, 2);
+  renderToolCost();
+  await run();
+}
+
+// ---------------------------------------------------------------------------
+// Agent trace: streamed, and readable enough to debug routing from
+// ---------------------------------------------------------------------------
+
+const esc = (v) => String(v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+let runState = { tools: 0, tokensIn: 0, tokensOut: 0, cost: 0, verbatim: 0, deviated: 0, ignored: 0 };
+
+function renderRunStats(extra = "") {
+  const s = runState;
+  const bits = [
+    `<span><b>${s.tools}</b> tool call${s.tools === 1 ? "" : "s"}</span>`,
+    `<span><b>${s.tokensIn.toLocaleString()}</b> in / <b>${s.tokensOut.toLocaleString()}</b> out tokens (exact)</span>`,
+    `<span class="warn">Tako spend $<b>${s.cost.toFixed(4)}</b></span>`,
+  ];
+  // The headline verdict for this whole PR: did the model run the handles it
+  // was given, as given?
+  if (s.verbatim) bits.push(`<span class="ok"><b>${s.verbatim}</b> handle${s.verbatim === 1 ? "" : "s"} run verbatim</span>`);
+  if (s.deviated) bits.push(`<span class="bad"><b>${s.deviated}</b> deviated</span>`);
+  if (s.ignored) bits.push(`<span class="warn"><b>${s.ignored}</b> ignored</span>`);
+  if (extra) bits.push(extra);
+  $("agent-stats").innerHTML = bits.join("");
+}
+
+/** A collapsible payload block — full content, never truncated. */
+function details(label, body, cls = "") {
+  const d = document.createElement("details");
+  const sum = document.createElement("summary");
+  sum.innerHTML = label;
+  const pre = document.createElement("pre");
+  pre.className = `scroll ${cls}`;
+  pre.textContent = body;
+  d.append(sum, pre);
+  return d;
+}
+
+const traceBox = () => $("trace");
+const addStep = (node) => {
+  traceBox().appendChild(node);
+  node.scrollIntoView({ block: "nearest" });
+};
+
+const ADHERENCE = {
+  verbatim: ['<span class="ok">ran the handle verbatim</span>', "ok"],
+  deviated: ['<span class="bad">DEVIATED from the emitted handle</span>', "bad"],
+  ignored: ['<span class="warn">ignored the emitted handle</span>', "warn"],
+};
+
+function onEvent(name, d) {
+  if (name === "start") {
+    $("run-instructions").textContent = d.instructions || "(server sent no instructions)";
+    $("run-tools").textContent = Object.entries(d.tool_descriptions)
+      .map(([n, desc]) => `── ${n} ──\n${desc}`).join("\n\n");
+    const head = document.createElement("div");
+    head.className = "step";
+    head.innerHTML = `<h3 class="dim">run started</h3><div class="note">model <code>${esc(d.model)}</code> · target <code>${esc(d.target)}</code> · ${d.tools.length} tools offered · structuredContent ${d.include_structured ? "forwarded" : "WITHHELD"}</div>`;
+    addStep(head);
+    return;
+  }
+  if (name === "turn") {
+    const t = document.createElement("div");
+    t.className = "turn";
+    t.textContent = `turn ${d.turn}`;
+    addStep(t);
+    return;
+  }
+  if (name === "usage") {
+    runState.tokensIn = d.tokens_in; runState.tokensOut = d.tokens_out; runState.cost = d.cost_usd;
+    renderRunStats('<span class="dim">running…</span>');
+    return;
+  }
+  if (name === "text") {
+    const d2 = document.createElement("div");
+    d2.className = "step";
+    d2.innerHTML = `<h3 class="dim">assistant says</h3>`;
+    const pre = document.createElement("pre");
+    pre.textContent = d.text;
+    d2.appendChild(pre);
+    addStep(d2);
+    return;
+  }
+  if (name === "tool_call") {
+    runState.tools += 1;
+    if (d.adherence === "verbatim") runState.verbatim += 1;
+    if (d.adherence === "deviated") runState.deviated += 1;
+    if (d.adherence === "ignored") runState.ignored += 1;
+    const box = document.createElement("div");
+    box.className = "step tool";
+    box.id = `call-${runState.tools}`;
+    const badge = d.adherence ? ` — ${ADHERENCE[d.adherence][0]}` : "";
+    box.innerHTML = `<h3><span class="accent">→ calls ${esc(d.tool)}</span>${badge}</h3>`;
+    const args = document.createElement("pre");
+    args.textContent = JSON.stringify(d.input, null, 2);
+    box.appendChild(args);
+    if (d.adherence && d.adherence !== "verbatim") {
+      const why = document.createElement("div");
+      why.className = `note ${ADHERENCE[d.adherence][1]}`;
+      why.textContent = d.adherence_detail;
+      box.appendChild(why);
+      box.appendChild(details("what the handle said to run", JSON.stringify(d.expected, null, 2), "dim"));
+    }
+    addStep(box);
+    return;
+  }
+  if (name === "tool_result") {
+    const box = $(`call-${runState.tools}`) ?? traceBox();
+    const flags = [
+      `${d.ms} ms`,
+      `${d.chars_text.toLocaleString()} chars text`,
+      `${d.chars_structured.toLocaleString()} structured`,
+      `~${d.approx_tokens.toLocaleString()} tokens`,
+      d.cost_usd !== null ? `<span class="warn">$${d.cost_usd.toFixed(4)}</span>` : '<span class="ok">free</span>',
+      d.next_call ? '<span class="ok">emitted a next_call</span>' : '<span class="dim">no next_call</span>',
+      d.isError ? '<span class="bad">isError</span>' : "",
+    ].filter(Boolean).join(" · ");
+    const line = document.createElement("div");
+    line.className = "note";
+    line.style.margin = "6px 0";
+    line.innerHTML = `← returned: ${flags}`;
+    box.appendChild(line);
+    // Full payloads, collapsed. Truncating is what makes a trace useless the
+    // moment you actually need it.
+    box.appendChild(details("text channel — what the model reads", d.text || "(empty)", d.isError ? "bad" : ""));
+    if (d.structuredContent !== null) {
+      box.appendChild(details("structuredContent", JSON.stringify(d.structuredContent, null, 2)));
+    }
+    box.appendChild(details(
+      `exactly what was sent back to the model <span class="dim">(${d.sent_chars.toLocaleString()} chars)</span>`,
+      d.sent_to_model, "dim",
+    ));
+    if (d.next_call) {
+      const nc = document.createElement("div");
+      nc.className = "note";
+      nc.innerHTML = `handle offered for the next call: <code>${esc(JSON.stringify(d.next_call))}</code>`;
+      box.appendChild(nc);
+    }
+    return;
+  }
+  if (name === "done") {
+    const d2 = document.createElement("div");
+    d2.className = "step";
+    d2.innerHTML = `<h3 class="ok">finished</h3><div class="note">stop reason: ${esc(d.stop_reason)} · ${d.turns} turn${d.turns === 1 ? "" : "s"}</div>`;
+    addStep(d2);
+    renderRunStats();
+    return;
+  }
+  if (name === "error") {
+    const d2 = document.createElement("div");
+    d2.className = "step";
+    d2.innerHTML = `<h3 class="bad">error</h3>`;
+    const pre = document.createElement("pre");
+    pre.className = "bad";
+    pre.textContent = [d.message, d.detail, d.hint].filter(Boolean).join("\n\n");
+    d2.appendChild(pre);
+    addStep(d2);
+    renderRunStats('<span class="bad">failed</span>');
+  }
+}
+
+/**
+ * Read the SSE stream by hand rather than with EventSource, because the run has
+ * to be started with a POST body (question, model, target) and EventSource is
+ * GET-only.
+ */
+async function ask() {
+  $("ask").disabled = true;
+  runState = { tools: 0, tokensIn: 0, tokensOut: 0, cost: 0, verbatim: 0, deviated: 0, ignored: 0 };
+  traceBox().innerHTML = "";
+  $("agent-stats").innerHTML = '<span class="dim">starting… (each tool call is a real request)</span>';
+  try {
+    const res = await fetch("/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        target: target(),
+        question: $("question").value,
+        model: $("model").value,
+        include_structured: $("incl-structured").checked,
+      }),
+    });
+    if (!res.ok || !res.body) {
+      onEvent("error", { message: `panel returned ${res.status}`, detail: await res.text() });
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE frames are separated by a blank line; keep any partial tail.
+      const frames = buf.split("\n\n");
+      buf = frames.pop() ?? "";
+      for (const frame of frames) {
+        const ev = /^event: (.+)$/m.exec(frame);
+        const data = /^data: (.+)$/m.exec(frame);
+        if (ev && data) onEvent(ev[1], JSON.parse(data[1]));
+      }
+    }
+  } catch (err) {
+    onEvent("error", { message: String(err) });
+  } finally {
+    $("ask").disabled = false;
+  }
+}
+
+function showTab(which) {
+  const raw = which === "raw";
+  $("view-raw").classList.toggle("hide", !raw);
+  $("view-agent").classList.toggle("hide", raw);
+  $("tab-raw").classList.toggle("on", raw);
+  $("tab-agent").classList.toggle("on", !raw);
+}
+
+(async () => {
+  cfg = await (await fetch("/api/config")).json();
+  const sel = $("target");
+  for (const t of cfg.targets) {
+    const o = document.createElement("option");
+    o.value = t.id; o.textContent = t.label;
+    sel.appendChild(o);
+  }
+  $("model").value = cfg.default_model;
+  if (!cfg.agent_enabled) {
+    $("agent-off").classList.remove("hide");
+    $("agent-off").textContent = "Agent mode is off: ANTHROPIC_API_KEY is not set. Add it to .env (gitignored) and restart the panel.";
+    $("ask").disabled = true;
+  }
+  renderTargetNote();
+  renderPresets();
+  await loadTools();
+
+  sel.onchange = async () => { renderTargetNote(); await loadTools(); };
+  $("tool").onchange = renderToolCost;
+  $("run").onclick = run;
+  $("run-next").onclick = runNext;
+  $("ask").onclick = ask;
+  $("tab-raw").onclick = () => showTab("raw");
+  $("tab-agent").onclick = () => showTab("agent");
+})();
+</script>
+</body>
+</html>

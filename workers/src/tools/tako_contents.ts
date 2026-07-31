@@ -40,7 +40,7 @@ const DESCRIPTION = [
   "",
   "Best for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.",
   "",
-  "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) always 403. Never call this on them; their headline value is in the card's `description` (when present) and specific figures come from `tako_answer` (see the card's `values_hint`). Call only on `exportable: true` cards, and even then a rare card still 403s: fall back, don't retry.",
+  "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Get their figures from `tako_answer` instead: pin the card's METRIC node_id with strict:true and state the period you need in the query (e.g. \"...for FY2023-FY2025\"), which is what turns a headline number into a series. Call this tool only on `exportable: true` cards; even then a rare card 403s — bounce to tako_answer the same way, do not retry here.",
   "",
   "Web URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
 ].join("\n");

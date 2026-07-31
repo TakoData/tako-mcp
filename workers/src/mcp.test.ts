@@ -19,6 +19,7 @@ import {
   detectMcpClient,
   djangoErrorToToolResult,
   logSdkValidationRejections,
+  SERVER_INSTRUCTIONS,
   structuredContentFor,
   withChatGptToolSecuritySchemes,
 } from "./mcp.js";
@@ -292,8 +293,32 @@ describe("djangoErrorToToolResult", () => {
     // 5xx SERVER-error body stays in `_meta` only — not spliced into the text
     // content. It carries no LLM-actionable detail and a noisy upstream body
     // (often an HTML error page) would flood the text channel.
-    expect(result.content[0]).toEqual({ type: "text", text: err.message });
+    expect(result.content[0]?.text).toContain(err.message);
     expect(result.content[0]?.text).not.toContain("service unavailable");
+    // 503 is transient: the model is told to retry the same call rather than
+    // read it as a permanent failure and abandon the tool.
+    expect(result.content[0]?.text).toContain("retry the SAME call once");
+  });
+
+  it("does NOT invite a retry on a non-transient 5xx", () => {
+    const err = new DjangoHttpError({
+      path: "/api/v1/whatever", method: "GET", status: 500, body: "boom",
+    });
+    const text = djangoErrorToToolResult(err).content[0]?.text ?? "";
+    expect(text).toBe(err.message);
+    expect(text).not.toContain("retry");
+  });
+
+  it("leaves a handler's own modelGuidance untouched", () => {
+    // tako_contents' self-correcting 403 text is already actionable; appending
+    // a generic retry line would contradict "fall back, don't retry".
+    const err = new DjangoHttpError({
+      path: "/api/v1/contents", method: "POST", status: 503, body: "x",
+    });
+    err.modelGuidance = "Fall back to the card preview; do not retry.";
+    expect(djangoErrorToToolResult(err).content[0]?.text).toBe(
+      "Fall back to the card preview; do not retry.",
+    );
   });
 
   it("splices a 403 (protected-source) body into the text content, not just _meta", () => {
@@ -1133,7 +1158,13 @@ describe("structuredContentFor", () => {
     expect(structured).toEqual({ request_id: "r1" });
   });
 
-  it("falls back to the FULL output (and logs) when the slim drifts from the schema", () => {
+  // Serving the FULL output on drift was the old behaviour and it was the bug:
+  // the SDK republishes our schemas as strict (`additionalProperties: false`),
+  // so an object carrying `cards`/`sources_glossary` is rejected outright and a
+  // spec-compliant client discards the ENTIRE result — text block included — on
+  // a call already billed. Narrow to the declared keys instead: drop the
+  // extras, never the answer.
+  it("narrows to the declared keys (and logs) when the slim drifts from the schema", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const structured = structuredContentFor(
       {
@@ -1144,7 +1175,8 @@ describe("structuredContentFor", () => {
       },
       full,
     );
-    expect(structured).toEqual(full);
+    expect(structured).toEqual({ request_id: "r1" });
+    expect(structured).not.toHaveProperty("cards");
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("does not conform"),
       expect.anything(),
@@ -1152,7 +1184,7 @@ describe("structuredContentFor", () => {
     errorSpy.mockRestore();
   });
 
-  it("falls back to the full output when the slimmer throws", () => {
+  it("narrows to the declared keys when the slimmer throws", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const structured = structuredContentFor(
       {
@@ -1164,12 +1196,27 @@ describe("structuredContentFor", () => {
       },
       full,
     );
-    expect(structured).toEqual(full);
+    expect(structured).toEqual({ request_id: "r1" });
     errorSpy.mockRestore();
   });
 
-  it("serves the full output untouched when no slimmer is declared", () => {
-    expect(structuredContentFor({ name: "t", outputSchema }, full)).toEqual(full);
+  it("narrows the full output when no slimmer is declared", () => {
+    expect(structuredContentFor({ name: "t", outputSchema }, full)).toEqual({
+      request_id: "r1",
+    });
+  });
+
+  // Last resort: if even the narrowed object cannot satisfy the schema there is
+  // nothing conforming to send, and omitting is spec-legal where a rejected
+  // result is fatal. The payload rides in the text channel regardless.
+  it("omits structuredContent when narrowing still cannot conform", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const structured = structuredContentFor(
+      { name: "t", outputSchema, slimStructured: () => ({ usage: null }) },
+      { cards: ["only undeclared keys"] },
+    );
+    expect(structured).toBeUndefined();
+    errorSpy.mockRestore();
   });
 
   it("serves the slim object as-is when the tool declares no outputSchema", () => {
@@ -1179,5 +1226,84 @@ describe("structuredContentFor", () => {
         full,
       ),
     ).toEqual({ anything: 1 });
+  });
+});
+
+describe("SERVER_INSTRUCTIONS", () => {
+  it("names every tool an agent must choose between", () => {
+    for (const tool of [
+      "tako_search",
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+    ]) {
+      expect(SERVER_INSTRUCTIONS).toContain(tool);
+    }
+  });
+
+  // The instructions sit ABOVE the tool descriptions in the host's system
+  // prompt, so when the two disagree the instructions win. They disagreed:
+  // the descriptions call `tako_available_data` the recommended first step
+  // while the instructions opened by sending every data question to
+  // `tako_search` and mentioned `tako_available_data` once, last, behind
+  // "if unsure". Observed on claude.ai as search-first routing.
+  it("introduces tako_available_data before either priced retrieval tool", () => {
+    const free = SERVER_INSTRUCTIONS.indexOf("`tako_available_data`");
+    const answer = SERVER_INSTRUCTIONS.indexOf("`tako_answer`");
+    const search = SERVER_INSTRUCTIONS.indexOf("`tako_search`");
+    expect(free).toBeGreaterThan(-1);
+    expect(free).toBeLessThan(answer);
+    expect(free).toBeLessThan(search);
+  });
+
+  // `tako_answer` (specific figure) and `tako_search` (breadth) are different
+  // jobs, not a ranked pipeline — an ordering invites the model to chain them.
+  it("presents answer and search as a choice, not a sequence", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/different jobs/i);
+  });
+
+  it("states the pin form that actually steers retrieval", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("strict: true");
+    expect(SERVER_INSTRUCTIONS).toMatch(/METRIC node id/i);
+  });
+
+  // `tako_available_data` answers coverage questions in its own right, not
+  // only as a gate in front of the priced tools: "what does Tako have on X"
+  // is worth asking on its own, and the answer shapes which metric is worth
+  // asking for at all. A draft framed the tool as "start there when unsure",
+  // which collapsed it to a precondition and dropped the coverage half to a
+  // trailing clause. Assert both jobs by MEANING, not by example strings —
+  // the argument examples live in the tool's own description now.
+  it("names both of tako_available_data's jobs — coverage AND name resolution", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/what data Tako has/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/exact name/i);
+  });
+
+  // Parameter-shaped guidance (argument examples, the q+metric split, response
+  // fields, recovery protocols) belongs in the description of the tool that
+  // takes it, read at the moment it applies. Duplicating it here bought a
+  // second copy the model pays for on every request, Tako-bound or not.
+  it("carries no argument-level examples — those live in the descriptions", () => {
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/`q="/);
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/`metric="/);
+  });
+
+  // Register check. "is free and does two jobs" spends the highest-value
+  // tokens on the surface describing the shape of the next sentence. Exa's
+  // hosted MCP (836 chars across 2 tools, no instructions at all) never does
+  // this: one imperative per line, no meta-commentary.
+  it("states what to do, not what the tools 'do'", () => {
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/does two jobs/i);
+  });
+
+  it("stays short enough to sit in a system prompt", () => {
+    // Guard against drift: this is prime real estate, not a manual. Ratcheted
+    // from 2000 once the parameter-level duplication moved into the tool
+    // descriptions — a ceiling only enforces a budget while it is close to
+    // actual. For scale: Exa's hosted MCP ships 836 chars of description
+    // across 2 tools and no instructions at all (mcp.exa.ai, 2026-07-31).
+    // Tako needs more than Exa (4+ tools, non-obvious routing, coverage a
+    // model cannot guess) but the gap should be justified per sentence.
+    expect(SERVER_INSTRUCTIONS.length).toBeLessThan(1600);
   });
 });

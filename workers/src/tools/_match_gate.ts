@@ -1,0 +1,219 @@
+/**
+ * Name plausibility for graph candidates — the relevance gate.
+ *
+ * `/api/beta/graph/search` is a fuzzy matcher and its nodes carry NO score
+ * field, so there is nothing backend-side to threshold on. Without a gate the
+ * top hits for a query are frequently about something else entirely, and
+ * `tako_available_data` reports coverage for whatever it drilled: measured on
+ * staging (2026-07-29) `q="Carnival Corporation"` returned `found: true`
+ * describing **Cuscal Limited**, and `q="UnitedHealth Group"` spent half its
+ * two-slot drill budget on **Blackstone Inc.**
+ *
+ * The rule is bidirectional token containment against the candidate's name OR
+ * any of its aliases: one side's token set must contain the other's. Symmetry
+ * is what makes it work in both directions the tool is used —
+ *
+ *   query ⊆ candidate   `Carnival` → `Carnival Corporation Ltd.`
+ *   candidate ⊆ query   `Carnival passenger cruise days` → `Passenger Cruise Days`
+ *
+ * Aliases are mandatory, not a refinement: `q="SpaceX"` resolves
+ * `Space Exploration Technologies Corp.`, which shares ZERO name tokens with
+ * the query and matches only through its alias list. A name-only gate would
+ * reject the correct answer and report an honest gap where data exists. Same
+ * mechanism carries `Nestle` → `Nestlé S.A.` (via diacritic folding) and
+ * `UNH` → `UnitedHealth Group Incorporated`.
+ *
+ * Deliberately NOT a ranker. Among candidates that pass, the backend's own
+ * order is kept: `q="Delta"` passes both `Delta Air Lines, Inc.` (rank 0,
+ * correct) and `Delta Corp Limited`, which tie on coverage AND both carry an
+ * exact alias "Delta" — no rank-independent signal separates them, so backend
+ * rank is the only thing that resolves that class.
+ *
+ * `_`-prefixed so the registry codegen (`gen-registry.ts`) skips it.
+ */
+
+/**
+ * Corporate suffixes and articles carry no discriminating signal — every
+ * company has them, so leaving them in makes unrelated firms look similar
+ * ("Zzzqq Industries" vs "Daikin Industries"). `group` is deliberately NOT
+ * here: it distinguishes (UnitedHealth Group, SoftBank Group) rather than
+ * blurring.
+ */
+const NOISE_TOKENS = new Set([
+  "inc", "corp", "corporation", "plc", "ltd", "limited", "co", "sa", "ag",
+  "nv", "llc", "lp", "holdings", "holding", "company", "the", "and", "of",
+]);
+
+/**
+ * Normalise a name to a comparable token set: strip diacritics (so `Nestlé`
+ * matches `Nestle`), lowercase, split on anything non-alphanumeric, and drop
+ * the noise tokens above.
+ */
+export function matchTokens(value: string): Set<string> {
+  // NFKD splits "é" into "e" + U+0301; stripping the combining-marks block
+  // (U+0300–U+036F) leaves the ASCII base letter. Written as escapes so the
+  // range survives any editor/encoding round-trip.
+  const ascii = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const raw = ascii.split(/[^a-z0-9]+/).filter((t) => t !== "");
+
+  // Re-join runs of single characters, so dotted initialisms survive splitting
+  // as one token: "S.A." \u2192 ["s","a"] \u2192 "sa" (a noise suffix), "U.S." \u2192 "us".
+  // Done by run-length rather than by stripping dots globally, because
+  // stripping dots would fuse "netflix.com" into "netflixcom" and stop it
+  // matching "Netflix, Inc." \u2014 domains are a real query shape here.
+  const merged: string[] = [];
+  let run: string[] = [];
+  const flush = (): void => {
+    if (run.length > 1) merged.push(run.join(""));
+    else if (run.length === 1) merged.push(run[0] as string);
+    run = [];
+  };
+  for (const token of raw) {
+    if (token.length === 1) run.push(token);
+    else {
+      flush();
+      merged.push(token);
+    }
+  }
+  flush();
+
+  const out = new Set<string>();
+  for (const token of merged) {
+    if (!NOISE_TOKENS.has(token)) out.add(token);
+  }
+  return out;
+}
+
+const contains = (outer: Set<string>, inner: Set<string>): boolean => {
+  for (const token of inner) if (!outer.has(token)) return false;
+  return true;
+};
+
+/** One candidate's comparable surfaces: its own name plus every alias. */
+export interface MatchCandidate {
+  name: string;
+  aliases?: readonly string[] | null | undefined;
+}
+
+/**
+ * Is `candidate` a plausible match for `query`?
+ *
+ * True when the query's token set and the candidate's (name or any alias)
+ * either contains the other. Empty token sets never match — a query of pure
+ * punctuation must not pass everything.
+ */
+export function plausibleMatch(query: string, candidate: MatchCandidate): boolean {
+  const q = matchTokens(query);
+  if (q.size === 0) return false;
+  const surfaces = [candidate.name, ...(candidate.aliases ?? [])];
+  for (const surface of surfaces) {
+    if (typeof surface !== "string" || surface === "") continue;
+    const c = matchTokens(surface);
+    if (c.size === 0) continue;
+    if (contains(c, q) || contains(q, c)) return true;
+  }
+  return false;
+}
+
+/**
+ * Keep only plausible candidates, in the backend's order (see the "not a
+ * ranker" note above). Returns the ORIGINAL list when nothing passes — the
+ * fail-open contract: a gate that is too strict must degrade to today's
+ * behaviour, never to an empty answer, because a false "Tako has no data on X"
+ * is worse than the noise the gate exists to remove.
+ */
+export function gateCandidates<T extends MatchCandidate>(
+  query: string,
+  candidates: readonly T[],
+): { kept: T[]; gated: boolean } {
+  // Name matches rank above alias-only matches, order preserved within each
+  // group. This is NOT general re-ranking (see the note above) — it is the one
+  // defence against poisoned alias data, which is real and observed: on
+  // staging `Cuscal Limited` (an Australian credit-union services company)
+  // carries "Carnival Corp", "Carnival Corporation", "Carnival Cruise" and four
+  // more Carnival aliases, and it comes back at RANK 0 for
+  // `q="Carnival Corporation"`. A gate treating names and aliases alike keeps
+  // it there; preferring the node whose OWN NAME matches drops it below the
+  // real Carnival nodes. Tracked for a data fix in KE-804.
+  //
+  // What this partition does NOT do is decide relevance, and it must not be
+  // read as doing so. Two things it gets wrong on live data, both handled
+  // downstream by coverage rather than here:
+  //
+  //   - `q="SpaceX"` returns a node literally NAMED `SpaceX` alongside
+  //     `Space Exploration Technologies Corp.`, so a name match DOES survive to
+  //     outrank the alias match and this function returns the impostor at rank
+  //     0. The right answer still gets rendered, but only because the impostor
+  //     carries zero coverage and the promotion in `tako_available_data` fires.
+  //   - A bare name match is not evidence of relevance at all:
+  //     `US Savings Inflation Securities` name-matches `q="US inflation"` and
+  //     holds one metric. See SHELL_COVERAGE_MAX.
+  //
+  // Ties (both name matches, e.g. Delta Air Lines vs Delta Corp) keep the
+  // backend's order.
+  const byName: T[] = [];
+  const byAlias: T[] = [];
+  for (const c of candidates) {
+    if (plausibleMatch(query, { name: c.name })) byName.push(c);
+    else if (plausibleMatch(query, c)) byAlias.push(c);
+  }
+  const kept = [...byName, ...byAlias];
+  return kept.length > 0 ? { kept, gated: true } : { kept: [...candidates], gated: false };
+}
+
+/**
+ * Do two names normalise to the SAME token set?
+ *
+ * Much stronger evidence than containment: it fires only when the caller typed
+ * a name that, after folding and suffix-stripping, is exactly a candidate's.
+ * Used to promote a verbatim metric name that the backend ranked low —
+ * `metric="CPI Inflation Rate (Seasonally Adjusted)"` returns that exact node
+ * at rank 3, below `Inflation Rate`, so it fell outside the three candidates
+ * the response shows.
+ *
+ * Deliberately NOT used on the entity half: `q="Delta"` token-equals
+ * `Delta Corp Limited` ({delta} after suffix stripping) but the correct answer
+ * is `Delta Air Lines, Inc.`, which does not — promotion there would actively
+ * pick the wrong company.
+ */
+export function sameTokens(a: string, b: string): boolean {
+  const x = matchTokens(a);
+  const y = matchTokens(b);
+  if (x.size === 0 || x.size !== y.size) return false;
+  for (const t of x) if (!y.has(t)) return false;
+  return true;
+}
+
+/**
+ * A stricter match used for the CONFIDENCE verdict, not for the gate.
+ *
+ * The gate accepts a match on any surface in either direction, which is right
+ * for deciding "is this candidate worth showing". It is too loose for deciding
+ * "does anything here actually answer the question", because a candidate can
+ * vouch for itself through an alias BROADER than the query:
+ * `metric="index level"` reported found:true via `Employment Index`, whose
+ * alias `employment level index` is a strict superset of {index, level}.
+ *
+ * So aliases only vouch when they introduce NO new tokens (alias ⊆ query).
+ * That is exactly the shape of a legitimate abbreviation — measured,
+ * `ROA`→`Return on Assets`, `P/E ratio`→`Price to Earnings (P/E)`,
+ * `FCF`→`Free Cash Flow` and `capex`→`Capital Expenditure` are ALL alias-only
+ * with no name match at all, and every one of them has `alias ⊆ query`.
+ * Requiring a name match instead would break all four.
+ *
+ * A candidate's own NAME still vouches in either direction: a name that
+ * contains the query is a specialisation of what was asked
+ * (`Gross Margin (%)` for "gross margin"), which is real evidence.
+ */
+export function confidentMatch(query: string, candidate: MatchCandidate): boolean {
+  const q = matchTokens(query);
+  if (q.size === 0) return false;
+  const name = matchTokens(candidate.name);
+  if (name.size > 0 && (contains(name, q) || contains(q, name))) return true;
+  for (const alias of candidate.aliases ?? []) {
+    if (typeof alias !== "string" || alias === "") continue;
+    const a = matchTokens(alias);
+    if (a.size > 0 && contains(q, a)) return true;
+  }
+  return false;
+}

@@ -77,19 +77,53 @@ export const SERVER_VERSION = "0.15.3"; // x-release-please-version
  * and the reason models otherwise default to their built-in web search
  * even with Tako connected.
  *
- * Tone is deliberate: steer data/metric questions to `tako_search` and
- * position it as a capable web-search substitute, WITHOUT banning the
- * host's built-in search — over-broad claims erode the model's trust in
- * the whole tool surface and misroute queries Tako can't serve.
+ * SCOPE — the division of labour with the tool descriptions, which is what
+ * keeps this short. These instructions answer only "which tool, and why
+ * Tako at all". Everything parameter-shaped — argument examples, the `q` +
+ * `metric` split, response fields, recovery protocols — belongs in the
+ * description of the tool that takes it, where it is read at the moment it
+ * applies. Restating those here bought a second copy the model pays for on
+ * every request, whether or not it ends up calling Tako.
+ *
+ * Register is imperative, not expository: state what to do, not what the
+ * tool "does". A draft opened a paragraph with "is free and does two
+ * jobs", which spends the highest-value tokens on the surface describing
+ * the shape of the sentence that follows. Measured against the field:
+ * Exa's hosted MCP (mcp.exa.ai, checked 2026-07-31) ships 836 chars of
+ * tool description across 2 tools and NO `instructions` at all; its
+ * guidance is one imperative per line ("describe the ideal page, not
+ * keywords"), never a rationale. We need more than Exa — 4+ tools with
+ * non-obvious routing, a proprietary graph whose coverage a model cannot
+ * guess, versus their single well-understood job — but not 8x more.
+ *
+ * Two framings ARE load-bearing and must survive future edits:
+ *
+ *   1. The web-search claim belongs to TAKO, not to `tako_search`. Both
+ *      retrieval tools search the live web, so attaching it to one made
+ *      "use tako_search for data questions" the first thing the model
+ *      read — which is how these instructions came to contradict every
+ *      tool description on the surface. It still stops short of banning
+ *      the host's built-in search: over-broad claims erode trust in the
+ *      whole surface and misroute queries Tako can't serve.
+ *
+ *   2. `tako_answer` and `tako_search` are a CHOICE, not a ranking, and
+ *      `tako_available_data` answers coverage questions in its own right
+ *      — not merely as a gate in front of the priced tools. "What does
+ *      Tako have on X" is a question worth asking on its own, and the
+ *      answer shapes which metric is worth asking for at all.
  */
 export const SERVER_INSTRUCTIONS = [
-  "Tako is a live-data search engine returning structured, citation-backed results with inline charts.",
+  "Tako is a live-data search engine: structured, citation-backed results with inline charts, over a proprietary data graph and the live web.",
   "",
-  "For questions involving data or metrics — finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, polls, prediction markets, demographics, energy, real estate, health — check `tako_search` before reaching for a generic web search tool: it returns live, chartable, citation-backed data a web search cannot.",
+  "For questions about data or metrics — finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health — reach for Tako before a generic web search: it returns live, chartable, citation-backed data a web search cannot. Tako searches the web too (default sources are data + web), so one call covers a question that mixes data with context. Use a built-in web search when the query is clearly outside Tako's coverage, or Tako returned nothing relevant.",
   "",
-  '`tako_search` also searches the live web alongside the proprietary data graph (default sources are data + web), so one call can stand in for a separate web search on questions that mix data with context. A built-in web search tool remains the right choice when the query is clearly outside Tako\'s coverage or Tako returned nothing relevant.',
+  "`tako_available_data` is free. Ask it what data Tako has on an entity or a metric, and build the real question around the coverage it reports; ask it for a measure's exact name before spending a priced call.",
   "",
-  "If unsure whether Tako has the data, `tako_available_data` is free and confirms coverage plus the exact metric names to query.",
+  "`tako_answer` and `tako_search` do different jobs — pick one, don't chain them. `tako_answer` for ONE specific figure: a synthesized, cited answer with the series inlined, and the only tool that returns values for license-gated cards. `tako_search` for breadth: many data cards and web results at once, or when the chart or embed is the deliverable.",
+  "",
+  "`tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.",
+  "",
+  "When pinning: the METRIC node id ALONE, with `strict: true`. An entity-only pin, or a pin without strict, does not steer retrieval.",
 ].join("\n");
 
 /**
@@ -411,41 +445,95 @@ export function createMcpServer(
 }
 
 /**
+ * Keep only the keys the advertised `outputSchema` actually declares.
+ *
+ * `registerTool` takes a `ZodRawShape`, so the SDK rebuilds our schemas as
+ * STRICT `z.object`s and publishes `additionalProperties: false` — the
+ * `z.looseObject` looseness we declare them with does not survive
+ * registration. Any undeclared key therefore makes a spec-compliant client
+ * (the official Python SDK among them) reject the whole result, text block
+ * included, on a call the caller has already been billed for.
+ */
+function pickDeclared(
+  schema: AnyToolModule["outputSchema"],
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  const shape = (schema as unknown as { shape?: Record<string, unknown> } | undefined)?.shape;
+  if (shape === undefined) return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(shape)) {
+    if (key in value) out[key] = value[key];
+  }
+  return out;
+}
+
+/**
  * The `structuredContent` for a tool result: the tool's `slimStructured`
- * output when it's declared AND conforms to the advertised `outputSchema`,
- * else the full handler output (correct, just token-heavier).
+ * output when it's declared AND conforms to the advertised `outputSchema`.
  *
  * The conformance parse is what enforces the pairing contract in `types.ts`
  * ("the returned value MUST conform to the tool's advertised
  * `outputSchema`") — five hand-maintained slim/schema pairs across two
  * files, where an unchecked drift ships a result spec-compliant clients
- * reject. Fail-open like the throw path: log server-side, serve the full
- * output. Exported for tests.
+ * reject.
+ *
+ * DEGRADATION, and why it is not "serve the full output": that fallback was
+ * measured to be the worst available option. The full object carries
+ * `sources_glossary`, `cards`, `web_results` and more, none of them declared,
+ * so against the published `additionalProperties: false` it is guaranteed to
+ * be rejected — and a strict client discards the ENTIRE result, including the
+ * text block that holds the answer. The failure fires on data-grounded
+ * responses (they are the ones with a glossary), so it destroys precisely the
+ * good ones.
+ *
+ * Instead: narrow to the declared keys and re-check. That drops the undeclared
+ * extras rather than the answer. Only if the narrowed object still fails do we
+ * omit `structuredContent` altogether. That is NOT spec-legal either — a tool
+ * declaring an `outputSchema` is required to return conforming structured
+ * results, so omission violates the spec too. It is simply the cheaper
+ * violation: the caller loses the structured channel, where shipping a payload
+ * every strict client rejects loses the whole result, text block included. The
+ * payload rides in the text channel by design either way. Exported for tests.
  */
 export function structuredContentFor(
   tool: Pick<AnyToolModule, "name" | "outputSchema" | "slimStructured">,
   output: unknown,
-): Record<string, unknown> {
+): Record<string, unknown> | undefined {
   const full = output as Record<string, unknown>;
-  if (tool.slimStructured === undefined) return full;
+  const narrow = (value: Record<string, unknown>, why: string): Record<string, unknown> | undefined => {
+    if (tool.outputSchema === undefined) return value;
+    const picked = pickDeclared(tool.outputSchema, value);
+    if (tool.outputSchema.safeParse(picked).success) return picked;
+    console.error(
+      `[mcp] ${tool.name}: ${why}, and narrowing to declared keys still does not conform — omitting structuredContent`,
+    );
+    return undefined;
+  };
+
+  if (tool.slimStructured === undefined) return narrow(full, "no slimStructured hook");
   let slim: Record<string, unknown>;
   try {
     slim = tool.slimStructured(output);
   } catch (err) {
     console.error(`slimStructured hook failed for ${tool.name}:`, err);
-    return full;
+    return narrow(full, "slimStructured threw");
   }
   if (tool.outputSchema !== undefined) {
     const conforms = tool.outputSchema.safeParse(slim);
     if (!conforms.success) {
       console.error(
-        `[mcp] slimStructured for ${tool.name} does not conform to its outputSchema — serving the full output:`,
+        `[mcp] slimStructured for ${tool.name} does not conform to its outputSchema:`,
         conforms.error.message,
       );
-      return full;
+      return narrow(full, "slim did not conform");
     }
   }
-  return slim;
+  // A conforming slim can still carry undeclared keys when the tool's OWN
+  // output object is passed through (loose zod accepts them); strip them so
+  // what ships always matches what was published. Narrowed WITHOUT a re-parse,
+  // unlike the degradation paths above: slim has already conformed, and
+  // removing keys the schema never declared cannot invalidate it.
+  return tool.outputSchema === undefined ? slim : pickDeclared(tool.outputSchema, slim);
 }
 
 /**
@@ -1104,7 +1192,8 @@ function registerTool(
         _meta?: Record<string, unknown>;
       } = { content };
       if (tool.outputSchema !== undefined) {
-        result.structuredContent = structuredContentFor(tool, output);
+        const structured = structuredContentFor(tool, output);
+        if (structured !== undefined) result.structuredContent = structured;
       }
       if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
         result._meta = resultMeta;
@@ -1113,6 +1202,10 @@ function registerTool(
     }) as Parameters<McpServer["registerTool"]>[2],
   );
 }
+
+/** Upstream statuses that clear on their own: worth one retry of the same
+ *  call, as opposed to a 4xx that needs the request changed. */
+const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
 
 /**
  * Convert a `DjangoError` into an MCP `CallToolResult` with `isError: true`.
@@ -1183,12 +1276,24 @@ export function djangoErrorToToolResult(err: DjangoError): {
   // 403/404 text) wins and is used verbatim — it already folds in any backend
   // detail, so it must NOT be re-spliced. Otherwise fall back to `err.message`,
   // splicing the recognised 4xx detail as usual.
-  const text =
+  const base =
     err.modelGuidance !== undefined
       ? err.modelGuidance
       : is4xx && detailText !== undefined
         ? `${err.message}: ${detailText}`
         : err.message;
+  // Transient statuses carry no LLM-actionable body, so without this they
+  // reach the model as a bare "Django returned 408 for POST /api/v1/answer/" —
+  // indistinguishable from a permanent failure, which pushes the agent to
+  // abandon Tako on an error that a single retry clears. Observed live: a
+  // cold-path answer call 408'd, then returned the figure on the very next
+  // attempt. `_graph.ts` already gives graph calls this treatment; this is the
+  // same signal for every other endpoint. A handler's own `modelGuidance`
+  // wins untouched — it is already self-correcting by construction.
+  const text =
+    err.modelGuidance === undefined && err.status !== undefined && RETRYABLE_STATUS.has(err.status)
+      ? `${base} This is a transient upstream condition, not a bad request: retry the SAME call once after a short backoff before changing approach.`
+      : base;
   return {
     content: [{ type: "text", text }],
     _meta: { "tako/error": detail },

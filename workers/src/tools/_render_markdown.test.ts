@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  availableDataSlimOutputShape,
   renderAgentRunMarkdown,
   renderAnswerMarkdown,
   renderAvailableDataMarkdown,
@@ -20,6 +21,7 @@ import {
   slimAvailableDataStructured,
   slimContentsStructured,
   slimSearchStructured,
+  STRUCTURED_COVERAGE_ITEMS,
   type AnswerFullOutput,
 } from "./_render_markdown.js";
 import type { SearchOutput, TakoCard } from "./_search_results.js";
@@ -306,6 +308,10 @@ describe("renderAvailableDataMarkdown + slim", () => {
         type: "entity",
         coverage: {
           kind: "metrics",
+          items: [
+            { name: "Revenue", node_id: "mt_rev" },
+            { name: "Gross Margin", node_id: "mt_gm" },
+          ],
           names: ["Revenue", "Gross Margin"],
           total: 187,
           truncated: true,
@@ -314,7 +320,7 @@ describe("renderAvailableDataMarkdown + slim", () => {
       },
     ],
     other_matches: [],
-    next_call: { tool: "tako_search" as const, query: "Tesla, Inc. Revenue", node_ids: ["ent_tsla"] },
+    next_call: { tool: "tako_search" as const, query: "Tesla, Inc. Revenue", node_ids: ["mt_rev"], strict: true },
   };
 
   it("renders summary, coverage names with node id, truncation note, and next_call fence", () => {
@@ -326,12 +332,55 @@ describe("renderAvailableDataMarkdown + slim", () => {
     expect(md).toContain('```json\n{"tool":"tako_search"');
   });
 
-  it("slims structuredContent to found/query/next_call", () => {
-    expect(Object.keys(slimAvailableDataStructured(output)).sort()).toEqual([
-      "found",
-      "next_call",
-      "query",
+  // structuredContent used to be {found, query, next_call} — with next_call
+  // null on every real query, that left the machine channel carrying a bare
+  // boolean while the node ids the follow-up needs sat in prose. The ids are
+  // the whole point of the discovery step, so they must be here.
+  it("carries matches with their node ids in structuredContent", () => {
+    const slim = slimAvailableDataStructured(output);
+    expect(Object.keys(slim).sort()).toEqual(["found", "matches", "next_call", "query"]);
+    const matches = slim.matches as Array<Record<string, unknown>>;
+    expect(matches[0]?.node_id).toBe("ent_tsla");
+    const coverage = matches[0]?.coverage as Record<string, unknown>;
+    expect(coverage.items).toEqual([
+      { name: "Revenue", node_id: "mt_rev" },
+      { name: "Gross Margin", node_id: "mt_gm" },
     ]);
+    expect(coverage.items_truncated).toBe(false);
+    // The name list stays a text-channel job; the structured channel does not
+    // re-ship it.
+    expect(coverage).not.toHaveProperty("names");
+  });
+
+  it("caps structured coverage items and flags the cut", () => {
+    const many = {
+      ...output,
+      matches: [
+        {
+          ...output.matches[0]!,
+          coverage: {
+            ...output.matches[0]!.coverage,
+            items: Array.from({ length: STRUCTURED_COVERAGE_ITEMS + 5 }, (_v, i) => ({
+              name: `m${i}`,
+              node_id: `mt_${i}`,
+            })),
+          },
+        },
+      ],
+    };
+    const coverage = (slimAvailableDataStructured(many).matches as Array<Record<string, unknown>>)[0]
+      ?.coverage as Record<string, unknown>;
+    expect((coverage.items as unknown[]).length).toBe(STRUCTURED_COVERAGE_ITEMS);
+    expect(coverage.items_truncated).toBe(true);
+  });
+
+  // The slimmer's output must satisfy the ADVERTISED schema or mcp.ts logs a
+  // conformance failure and falls back to serving the full output — which
+  // would silently undo the slimming.
+  it("conforms to the advertised slim schema", () => {
+    expect(
+      availableDataSlimOutputShape.safeParse(slimAvailableDataStructured(output)).success,
+    ).toBe(true);
   });
 });
 

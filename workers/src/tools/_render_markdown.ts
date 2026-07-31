@@ -19,9 +19,14 @@
  */
 import { z } from "zod";
 
+// Flattens upstream text destined for a single-line slot (titles, meta, node
+// names): an embedded newline would otherwise start a fresh line the CONTENT
+// controls. Defined next to the summary builder that needs the same guarantee,
+// so the two channels cannot drift into flattening differently.
+import { oneLine } from "./_available_data.js";
 import {
   autoChainShape,
-  usageSchema,
+  usageAdvertisedSchema,
   type SearchOutput,
   type TakoCard,
   type Usage,
@@ -45,7 +50,7 @@ export const searchSlimOutputShape = z.looseObject({
     .optional()
     .describe("Web results with their snippets."),
   request_id: z.string(),
-  usage: usageSchema
+  usage: usageAdvertisedSchema
     .nullable()
     .describe("Cost-plus usage for this request (null when not metered)."),
   guidance: z
@@ -62,7 +67,7 @@ export const answerSlimOutputShape = z.looseObject({
   cards: z.array(z.looseObject({})).optional().describe("Cards cited by the answer."),
   web_results: z.array(z.looseObject({})).optional().describe("Web results cited by the answer."),
   request_id: z.string(),
-  usage: usageSchema
+  usage: usageAdvertisedSchema
     .nullable()
     .describe("Cost-plus usage for this request (null when not metered)."),
   guidance: z
@@ -129,10 +134,6 @@ function fenced(text: string, lang = ""): string {
   const fence = "`".repeat(Math.max(3, longest + 1));
   return `${fence}${lang}\n${text}\n${fence}`;
 }
-
-/** Flatten upstream text destined for a single-line slot (titles, meta): an
- *  embedded newline would otherwise start a fresh line the content controls. */
-const oneLine = (v: string): string => v.replace(/\s*\n\s*/g, " ").trim();
 
 type LooseContent = {
   content_format?: string | null;
@@ -378,9 +379,31 @@ export function renderAnswerMarkdown(o: AnswerFullOutput): string {
 // tako_available_data
 // ---------------------------------------------------------------------------
 
+/**
+ * How many coverage entries per match ride in `structuredContent`. The full
+ * (up to MAX_COVERAGE_NAMES) name list is already in the markdown text; this
+ * channel exists to hand over the ids for a PINNED follow-up, and metric
+ * entries are ordered headline-first, so the useful ones are at the front.
+ * Capped because name+id pairs for 200 metrics would roughly double the
+ * response for a payload the model reads once.
+ */
+export const STRUCTURED_COVERAGE_ITEMS = 25;
+
+const resolvedRefShape = z.object({
+  node_id: z.string(),
+  name: z.string(),
+  type: z.string(),
+});
+
+const coverageItemShape = z.object({
+  name: z.string(),
+  node_id: z.string().describe("Pin this in a follow-up's node_ids WITH strict:true."),
+});
+
 /** Advertised (slim) structuredContent shape for tako_available_data: the
- *  machine-checkable verdict + the ready-to-run follow-up. The summary and
- *  coverage-name lists ride in the markdown text. */
+ *  machine-checkable verdict, the resolved matches with their node ids, and
+ *  the ready-to-run follow-up. The prose summary and the full coverage-name
+ *  lists ride in the markdown text. */
 export const availableDataSlimOutputShape = z.looseObject({
   found: z
     .boolean()
@@ -388,15 +411,60 @@ export const availableDataSlimOutputShape = z.looseObject({
       "True when at least one match has live data coverage — not mere node resolution.",
     ),
   query: z.string(),
+  matches: z
+    .array(
+      z.looseObject({
+        node_id: z.string(),
+        name: z.string(),
+        type: z.string(),
+        unavailable: z.boolean().optional(),
+        coverage: z.looseObject({
+          kind: z.string(),
+          total: z.number(),
+          truncated: z.boolean(),
+          items: z.array(coverageItemShape),
+          // Optional in the ADVERTISED shape (not in the emitted value) for
+          // the same reason every slim shape here is loose: the handler's FULL
+          // output must stay assignable to it, and the full CoverageGroup
+          // carries no slim-channel bookkeeping field. `slimAvailableData-
+          // Structured` always emits it.
+          items_truncated: z
+            .boolean()
+            .optional()
+            .describe(
+              "More coverage entries exist than are listed here — the full NAME list is in the text channel.",
+            ),
+        }),
+      }),
+    )
+    .describe(
+      "The resolved matches and their coverage, each entry carrying the node id to pin. To fetch a specific metric precisely: call tako_search or tako_answer with node_ids=[<the metric's node_id>] AND strict:true — an entity-only pin without strict does not steer retrieval.",
+    ),
   next_call: z
     .object({
-      tool: z.literal("tako_search"),
+      tool: z.enum(["tako_search", "tako_answer"]),
       query: z.string(),
       node_ids: z.array(z.string()),
+      strict: z.boolean(),
     })
     .nullable()
     .describe(
-      "Ready-to-run follow-up when coverage was found: call tako_search with exactly this query and node_ids pinned. Null when no match has coverage.",
+      "Ready-to-run follow-up: call this tool with exactly this query, node_ids and strict. node_ids holds the METRIC node only — strict is an OR over pinned nodes, so adding the entity id widens the filter back out. Null when no metric resolved.",
+    ),
+  // Lookup path (`metric` supplied): the resolved pair. Optional because the
+  // discovery path returns `matches` instead.
+  metric_query: z.string().optional(),
+  entity: resolvedRefShape.nullable().optional(),
+  metric: resolvedRefShape
+    .nullable()
+    .optional()
+    .describe("The metric whose node_id belongs in the follow-up's node_ids."),
+  entity_alternates: z.array(resolvedRefShape).optional(),
+  metric_alternates: z
+    .array(resolvedRefShape)
+    .optional()
+    .describe(
+      "Runners-up. The top metric is right ~80% of the time and the top three ~93-95%, so check these before accepting the primary.",
     ),
 });
 
@@ -407,6 +475,7 @@ interface CoverageMatchLike {
   unavailable?: boolean | undefined;
   coverage: {
     kind: string;
+    items: Array<{ name: string; node_id: string }>;
     names: string[];
     total: number;
     truncated: boolean;
@@ -415,33 +484,128 @@ interface CoverageMatchLike {
   [key: string]: unknown;
 }
 
+export interface ResolvedRefLike {
+  node_id: string;
+  name: string;
+  type: string;
+}
+
 export interface AvailableDataFullOutput {
   found: boolean;
   query: string;
   summary: string;
   matches: CoverageMatchLike[];
   other_matches: Array<{ name: string; type: string }>;
-  next_call: { tool: "tako_search"; query: string; node_ids: string[] } | null;
+  next_call: { tool: "tako_search" | "tako_answer"; query: string; node_ids: string[]; strict: boolean } | null;
+  /** False when the gate failed open — the matches are low-confidence. */
+  confident?: boolean | undefined;
+  metric_query?: string | undefined;
+  entity?: ResolvedRefLike | null | undefined;
+  metric?: ResolvedRefLike | null | undefined;
+  entity_alternates?: ResolvedRefLike[] | undefined;
+  metric_alternates?: ResolvedRefLike[] | undefined;
   [key: string]: unknown;
 }
 
 export function slimAvailableDataStructured(
   o: AvailableDataFullOutput,
 ): Record<string, unknown> {
-  return { found: o.found, query: o.query, next_call: o.next_call };
+  return {
+    found: o.found,
+    query: o.query,
+    // The node ids the whole discovery→fetch handoff depends on. They were
+    // previously text-only (as prose inside `**Name** (`id`)`), so an agent
+    // reading structuredContent got a bare `found` boolean and nothing to act
+    // on. Names stay capped here (STRUCTURED_COVERAGE_ITEMS) because the full
+    // list is in the text; the ids are the part text can't cheaply carry.
+    matches: o.matches.map((m) => ({
+      node_id: m.node_id,
+      name: m.name,
+      type: m.type,
+      ...(m.unavailable === true ? { unavailable: true } : {}),
+      coverage: {
+        kind: m.coverage.kind,
+        total: m.coverage.total,
+        truncated: m.coverage.truncated,
+        items: m.coverage.items.slice(0, STRUCTURED_COVERAGE_ITEMS),
+        items_truncated: m.coverage.items.length > STRUCTURED_COVERAGE_ITEMS,
+      },
+    })),
+    next_call: o.next_call,
+    ...(o.metric_query === undefined ? {} : { metric_query: o.metric_query }),
+    ...(o.entity === undefined ? {} : { entity: o.entity }),
+    ...(o.metric === undefined ? {} : { metric: o.metric }),
+    ...(o.entity_alternates === undefined ? {} : { entity_alternates: o.entity_alternates }),
+    ...(o.metric_alternates === undefined ? {} : { metric_alternates: o.metric_alternates }),
+  };
 }
 
 /** The coverage report: the deterministic summary, then each match's full
  *  coverage-name list (the primary payload — these are the exact terms to
  *  reuse in tako_search), then the runnable next_call. */
+function renderRef(label: string, ref: ResolvedRefLike, alternates: ResolvedRefLike[]): string {
+  // Names are upstream content in a single-line slot — flattened so an
+  // embedded newline cannot start a line that mimics this very format.
+  const lines = [`${label}  ${oneLine(ref.name)}  \`${oneLine(ref.node_id)}\``];
+  if (alternates.length > 0) {
+    lines.push(
+      `${" ".repeat(label.length)}  alternates: ${alternates
+        .map((a) => `${oneLine(a.name)} (\`${oneLine(a.node_id)}\`)`)
+        .join(" · ")}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * The LOOKUP path's document: what was asked, what each half resolved to (with
+ * ids), the runners-up, and one runnable call.
+ *
+ * Echoing the resolution back is the point. The top metric is right ~80% of the
+ * time, and when it is wrong it is wrong VISIBLY — `metric="total revenue"`
+ * resolves `Total Odds` with `Revenues` sitting at rank 1. Printing the name
+ * the tool actually picked, next to the alternates, lets the model catch that
+ * for free instead of pinning a confidently wrong node.
+ */
+export function renderAvailableDataPairMarkdown(o: AvailableDataFullOutput): string {
+  const blocks: string[] = [o.summary];
+  const rows: string[] = [];
+  if (o.entity != null) {
+    rows.push(renderRef("entity", o.entity, o.entity_alternates ?? []));
+  }
+  if (o.metric != null) {
+    rows.push(renderRef("metric", o.metric, o.metric_alternates ?? []));
+  }
+  if (rows.length > 0) blocks.push(rows.join("\n"));
+
+  if (o.next_call !== null) {
+    // The embedded query is caller input — dynamic fence, same as web text.
+    blocks.push(`next_call (run verbatim):\n${fenced(JSON.stringify(o.next_call), "json")}`);
+  }
+  return blocks.join("\n\n");
+}
+
 export function renderAvailableDataMarkdown(o: AvailableDataFullOutput): string {
+  // The lookup path resolves a pair instead of drilling a coverage list.
+  if (o.metric_query !== undefined && o.matches.length === 0) {
+    return renderAvailableDataPairMarkdown(o);
+  }
+  // Nothing plausibly matched. The handler now skips the coverage drill on this
+  // path entirely, so there are no names left to print and this is belt and
+  // braces rather than the thing doing the work — kept because the summary
+  // already disclaims these resolutions ("almost certainly NOT what you asked
+  // for") and appending a coverage list under one would contradict it. Before
+  // the drill was skipped, this suppressed ~8.5k chars elaborating on an answer
+  // we had just disclaimed, while `structuredContent` still carried the totals
+  // — the two channels disagreed. Both now report no coverage.
+  if (o.confident === false) return o.summary;
   const blocks: string[] = [o.summary];
 
   for (const m of o.matches) {
     if (m.unavailable === true || m.coverage.names.length === 0) continue;
     const total = `${m.coverage.total}${m.coverage.capped ? "+" : ""}`;
-    const head = `**${m.name}** (\`${m.node_id}\`) — ${m.coverage.kind} (${total} total):`;
-    const names = m.coverage.names.join(", ");
+    const head = `**${oneLine(m.name)}** (\`${oneLine(m.node_id)}\`) — ${m.coverage.kind} (${total} total):`;
+    const names = m.coverage.names.map(oneLine).join(", ");
     const more =
       m.coverage.truncated && m.coverage.total > m.coverage.names.length
         ? ` …and ${m.coverage.total - m.coverage.names.length} more not shown (treat a name you don't see as unconfirmed, not absent).`
