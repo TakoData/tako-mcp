@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p test/widget/tsconfig.json",
-    "test": "vitest run && vitest run -c vitest.widget.config.ts",
+    "test": "vitest run && vitest run -c vitest.widget.config.ts && vitest run -c vitest.scripts.config.ts",
     "test:watch": "vitest",
     "dev": "wrangler dev",
     "dev:staging": "wrangler dev --env staging",

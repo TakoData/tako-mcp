@@ -22,19 +22,14 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { ADVISES_PINNING, PLURAL_UNQUALIFIED } from "./_pin_form_rules.js";
 import { PINNED_FROM_CARD, PINNED_RETRY, takoCardSchema } from "./_search_results.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 
-/**
- * Prose that advises pinning. Deliberately narrow: it matches an instruction
- * to pin, not any mention of the word — descriptions legitimately discuss
- * `node_ids` as a parameter without prescribing a form (e.g. "harvesting node
- * ids and urls to feed tako_answer").
- */
-const ADVISES_PINNING = /\bpin(?:ning|ned)?\b[^.]{0,120}\bnode[_ ]?ids?\b|\bnode[_ ]?ids?\b[^.]{0,60}\bpinned\b/i;
-
-/** The broken form: EVERY node id on the card, i.e. plural and unqualified. */
-const PLURAL_UNQUALIFIED = /\bthe (?:card's|cards') `?nodes`? ids\b/i;
+// The two patterns live in `_pin_form_rules.ts` so this guard and the
+// llms-full.txt guard in scripts/gen-registry.ts apply the IDENTICAL rule. They
+// were a hand-written pair once and the copies drifted, which is how the broken
+// form survived in two surfaces this file cannot reach.
 
 describe("advertised pin form", () => {
   it("the two canonical strings both name the metric node alone, with strict", () => {

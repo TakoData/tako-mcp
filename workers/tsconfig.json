@@ -18,7 +18,7 @@
     "allowJs": false,
     "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "vitest.widget.config.ts", "vitest.scripts.config.ts"],
   // test/widget is its own project (test/widget/tsconfig.json): those
   // tests typecheck against lib.dom, whose CacheStorage/BufferSource
   // globals conflict with @cloudflare/workers-types everywhere else.

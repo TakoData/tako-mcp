@@ -1,0 +1,334 @@
+/**
+ * Does what we SHIP in `structuredContent` conform to what we PUBLISH in
+ * `outputSchema`?
+ *
+ * Every other test in this repo validates against the zod schemas as authored.
+ * That is exactly the blind spot that shipped the `sources_glossary` bug for
+ * three server versions: we declare the advertised shapes with `z.looseObject`,
+ * so a `safeParse` accepts undeclared keys and every unit test passes — but
+ * `registerTool` takes a `ZodRawShape` and the SDK rebuilds it as a STRICT
+ * object, so what reaches a client says `additionalProperties: false`. Loose in
+ * process, strict on the wire. `tako_answer` and `tako_search` emitted
+ * `sources_glossary`, which no advertised schema declares, and the official
+ * Python SDK raised
+ *
+ *   RuntimeError: Invalid structured content returned by tool tako_answer:
+ *   Additional properties are not allowed ('sources_glossary' was unexpected)
+ *
+ * discarding the ENTIRE result — text block included — on a call already
+ * billed. ~1 in 5 calls, concentrated on the tool the instructions route to
+ * first.
+ *
+ * So this file deliberately does NOT use the authored zod schemas. It reads the
+ * JSON Schema the server actually publishes over a real `tools/list`, and
+ * validates with `CfWorkerJsonSchemaValidator` — the same validator the SDK
+ * client uses. Anything less permissive than a real client cannot see this bug
+ * class, which is the whole reason it survived manual testing.
+ */
+import { SELF } from "cloudflare:test";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+import { structuredContentFor } from "./mcp.js";
+import { TOOL_REGISTRY } from "./tools/_registry.js";
+import type { AnyToolModule } from "./tools/types.js";
+
+const AUTH_HEADER = "Bearer conformance-test-token";
+
+// Every optional tool, so the sweep covers the whole surface rather than the
+// default subset (see `_optional.ts`).
+const ALL_TOOLS_QUERY = "?tools=agent,visualize,credits,graph";
+
+interface PublishedSchema {
+  type?: string;
+  properties?: Record<string, unknown>;
+  required?: string[];
+  additionalProperties?: unknown;
+}
+
+let published: Map<string, PublishedSchema>;
+
+beforeAll(async () => {
+  const res = await SELF.fetch(`https://example.com/mcp${ALL_TOOLS_QUERY}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: AUTH_HEADER,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+  });
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
+    result: { tools: Array<{ name: string; outputSchema?: PublishedSchema }> };
+  };
+  published = new Map(
+    body.result.tools
+      .filter((t) => t.outputSchema !== undefined)
+      .map((t) => [t.name, t.outputSchema as PublishedSchema]),
+  );
+  expect(published.size).toBeGreaterThan(0);
+});
+
+const moduleFor = (name: string): AnyToolModule => {
+  const entry = TOOL_REGISTRY.find((t) => t.name === name);
+  if (entry === undefined) throw new Error(`no registry entry for ${name}`);
+  return entry as unknown as AnyToolModule;
+};
+
+const validate = async (schema: PublishedSchema, value: unknown): Promise<string | null> => {
+  // The validator's parameter type is the SDK's own JsonSchemaType; this is the
+  // raw JSON the server published, so the cast is the boundary between "what
+  // came off the wire" and "what the SDK types expect" — exactly the crossing
+  // this file exists to test.
+  const validator = new CfWorkerJsonSchemaValidator().getValidator(
+    schema as Parameters<CfWorkerJsonSchemaValidator["getValidator"]>[0],
+  );
+  const result = await validator(value);
+  return result.valid ? null : (result.errorMessage ?? "invalid");
+};
+
+/**
+ * A minimal value satisfying one published property schema.
+ *
+ * The sweep below needs its synthetic output to actually CONFORM, or every tool
+ * fails the required-key parse and diverts to the degradation path — which
+ * narrows too, so the sweep would pass without ever exercising the success path
+ * it exists to guard. (First draft of this file used `null` for every key and
+ * did exactly that: it stayed green with the narrowing removed.) Reads the
+ * PUBLISHED JSON Schema rather than the zod source, for the same reason the rest
+ * of the file does.
+ */
+function dummyFor(schema: unknown): unknown {
+  if (typeof schema !== "object" || schema === null) return null;
+  const s = schema as {
+    type?: string | string[];
+    anyOf?: unknown[];
+    enum?: unknown[];
+    const?: unknown;
+    properties?: Record<string, unknown>;
+    required?: string[];
+    items?: unknown;
+    pattern?: string;
+  };
+  if (s.const !== undefined) return s.const;
+  if (Array.isArray(s.enum) && s.enum.length > 0) return s.enum[0];
+  // Nullable fields arrive as anyOf:[T, null] — null is the cheapest satisfying
+  // value, so prefer it, else take the first branch.
+  if (Array.isArray(s.anyOf)) {
+    const nullable = s.anyOf.some(
+      (b) => typeof b === "object" && b !== null && (b as { type?: string }).type === "null",
+    );
+    return nullable ? null : dummyFor(s.anyOf[0]);
+  }
+  const type = Array.isArray(s.type) ? s.type[0] : s.type;
+  switch (type) {
+    case "string":
+      // Honour a pattern where one is declared (embed_url/image_url are http-only).
+      return s.pattern !== undefined && s.pattern.includes("http") ? "https://example.com" : "x";
+    case "number":
+    case "integer":
+      return 1;
+    case "boolean":
+      return true;
+    case "array":
+      return [];
+    case "null":
+      return null;
+    case "object": {
+      const out: Record<string, unknown> = {};
+      for (const key of s.required ?? []) out[key] = dummyFor(s.properties?.[key]);
+      return out;
+    }
+    default:
+      return null;
+  }
+}
+
+describe("published outputSchema conformance", () => {
+  // The precondition that makes every other assertion here matter. If the SDK
+  // ever stops republishing our loose shapes as strict, this flips and the
+  // sweep below becomes theatre — better to be told than to keep asserting
+  // against a constraint that no longer exists.
+  it("the SDK publishes additionalProperties:false for our loose shapes", () => {
+    const permissive = [...published.entries()].filter(
+      ([, schema]) => schema.additionalProperties !== false,
+    );
+    expect(permissive.map(([name]) => name)).toEqual([]);
+  });
+
+  // The invariant, swept over every tool: whatever `structuredContentFor`
+  // returns carries ONLY keys the published schema declares. Synthetic output
+  // rather than per-tool fixtures on purpose — the property is about key sets,
+  // so it holds for any input, and a fixture per tool would rot.
+  it("never returns a key the published schema does not declare", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const offenders: string[] = [];
+    const diverted: string[] = [];
+    for (const [name, schema] of published) {
+      const declared = new Set(Object.keys(schema.properties ?? {}));
+      // Undeclared keys shaped like the ones that actually leaked, on top of a
+      // conforming base so the SUCCESS path is what gets exercised.
+      const output: Record<string, unknown> = {
+        sources_glossary: { "S&P Global": "A source paragraph." },
+        __never_declared__: true,
+      };
+      for (const key of declared) {
+        output[key] = dummyFor(schema.properties?.[key]);
+      }
+      const before = errorSpy.mock.calls.length;
+      const structured = structuredContentFor(moduleFor(name), output);
+      // A log here means the synthetic output could not conform and the tool
+      // took the degradation path — which narrows too, so the assertion would
+      // pass without covering the success path. Surface it rather than let the
+      // sweep quietly go hollow.
+      if (errorSpy.mock.calls.length > before) diverted.push(name);
+      for (const key of Object.keys(structured)) {
+        if (!declared.has(key)) offenders.push(`${name}.${key}`);
+      }
+    }
+    errorSpy.mockRestore();
+    expect(offenders).toEqual([]);
+    expect(diverted, "synthetic output failed to conform — sweep did not cover the success path").toEqual([]);
+  });
+
+  // A tool advertising an outputSchema MUST return structuredContent; the
+  // official TS SDK throws on its absence exactly as it throws on a mismatch.
+  it("never returns undefined for a tool that advertises an outputSchema", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const [name] of published) {
+      expect(structuredContentFor(moduleFor(name), { request_id: "r" }), name).not.toBeUndefined();
+    }
+    errorSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The regression itself, on realistic payloads.
+// ---------------------------------------------------------------------------
+
+const card = () => ({
+  card_id: "c1",
+  title: "NVIDIA Corporation Revenue",
+  description: "$60.9B",
+  exportable: true,
+  nodes: [
+    { id: "ent::nvidia::1", name: "NVIDIA Corporation", type: "entity" },
+    { id: "mt::revenue::1", name: "Revenue", type: "metric" },
+  ],
+  sources: [{ source_name: "S&P Global", source_description: "A long source paragraph." }],
+  content: {
+    content_format: "dataset",
+    dataset: { columns: [{ name: "date", type: "date" }], rows: [["2026-06-30"]] },
+  },
+});
+
+// The nested cost breakdown is emitted while only `total_cost_usd` is
+// advertised. That survives solely because `usageAdvertisedSchema` is `.loose()`
+// (nested loose objects publish permissive additionalProperties, unlike the top
+// level the SDK rebuilds strict), and `pickDeclared` is shallow — so it is worth
+// a real assertion rather than an assumption.
+const usage = () => ({
+  total_cost_usd: 0.009,
+  compute: { cost_usd: 0.008 },
+  data: { cost_usd: 0.001, datasets: 1 },
+});
+
+describe("realistic payloads validate against the published schema", () => {
+  const cases: Array<[string, () => Record<string, unknown>]> = [
+    [
+      "tako_answer",
+      () => ({
+        answer: "Revenue was $60.9B [1].",
+        cards: [card()],
+        web_results: [],
+        usage: usage(),
+        request_id: "req-answer",
+        // THE regression: attached whenever the cited cards carry source
+        // paragraphs, which is why it fired on data-grounded answers only.
+        sources_glossary: { "S&P Global": "A long source paragraph." },
+      }),
+    ],
+    [
+      "tako_search",
+      () => ({
+        cards: [card()],
+        web_results: [],
+        usage: { total_cost_usd: 0.007, compute: { cost_usd: 0.007 } },
+        request_id: "req-search",
+        pub_id: "p1",
+        embed_url: "https://trytako.com/embed/p1",
+        sources_glossary: { "S&P Global": "A long source paragraph." },
+      }),
+    ],
+    [
+      "tako_available_data",
+      () => ({
+        found: true,
+        query: "Nvidia",
+        // Rendered to the text channel, undeclared in the advertised shape.
+        summary: "Tako's proprietary data has live coverage of 1 match.",
+        matches: [
+          {
+            node_id: "ent::nvidia::1",
+            name: "NVIDIA Corporation",
+            type: "entity",
+            label: "ORG",
+            coverage: {
+              kind: "metrics",
+              items: [{ name: "Revenue", node_id: "mt::revenue::1" }],
+              names: ["Revenue"],
+              total: 1,
+              truncated: false,
+              capped: false,
+            },
+          },
+        ],
+        other_matches: [],
+        confident: true,
+        next_call: {
+          tool: "tako_search",
+          query: "NVIDIA Corporation Revenue",
+          node_ids: ["mt::revenue::1"],
+          strict: true,
+        },
+      }),
+    ],
+  ];
+
+  for (const [name, build] of cases) {
+    it(`${name}: conforms, and drops sources_glossary`, async () => {
+      const schema = published.get(name);
+      expect(schema, `${name} publishes no outputSchema`).toBeDefined();
+      const structured = structuredContentFor(moduleFor(name), build());
+      expect(structured).not.toBeUndefined();
+      expect(
+        await validate(schema as PublishedSchema, structured),
+        `${name} structuredContent does not conform to its own published schema`,
+      ).toBeNull();
+    });
+  }
+
+  // Belt and braces on the specific key, so a future refactor that reintroduces
+  // it fails with an obvious message rather than a JSON Schema error string.
+  it("sources_glossary never reaches structuredContent", () => {
+    for (const [name, build] of cases) {
+      expect(structuredContentFor(moduleFor(name), build()), name).not.toHaveProperty(
+        "sources_glossary",
+      );
+    }
+  });
+
+  // The emitted breakdown must survive despite only `total_cost_usd` being
+  // advertised — that is the point of keeping the nested schema loose.
+  it("keeps the emitted usage breakdown that the advertised shape does not name", () => {
+    const structured = structuredContentFor(moduleFor("tako_answer"), {
+      answer: "x",
+      cards: [],
+      web_results: [],
+      usage: usage(),
+      request_id: "r",
+    });
+    expect(structured.usage).toEqual(usage());
+  });
+});
