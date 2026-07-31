@@ -92,19 +92,23 @@ export const SERVER_VERSION = "0.15.3"; // x-release-please-version
  * rather than ranked, because they are: one pulls a specific figure, the
  * other retrieves cards and web results for a query. An earlier draft
  * ordered them, which invites the model to chain answer-then-search (or
- * the reverse) when the right move is to pick one. Only
- * `tako_available_data` is genuinely sequenced — it is free, so it costs
- * nothing to run first when coverage or the metric's exact name is in
- * doubt.
+ * the reverse) when the right move is to pick one.
+ *
+ * `tako_available_data` leads because it is free, but it is named for BOTH
+ * of its jobs, not just as a gate in front of the priced ones. Browsing an
+ * entity's coverage is a first-class question ("what does Tako have on
+ * Nvidia?") and the answer shapes which metric is worth asking for at all
+ * — a draft that framed the tool as "start there when unsure" reduced it
+ * to a precondition and lost that.
  */
 export const SERVER_INSTRUCTIONS = [
   "Tako is a live-data search engine returning structured, citation-backed results with inline charts.",
   "",
-  "For questions involving data or metrics — finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, polls, prediction markets, demographics, energy, real estate, health — reach for Tako before a generic web search tool: it returns live, chartable, citation-backed data a web search cannot. Tako searches the live web alongside its proprietary graph (default sources are data + web), so one call can stand in for a separate web search on questions that mix data with context. A built-in web search remains the right choice when the query is clearly outside Tako's coverage, or Tako returned nothing relevant.",
+  "For questions involving data or metrics — finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, polls, prediction markets, demographics, energy, real estate, health — reach for Tako before a generic web search tool: it returns live, chartable, citation-backed data a web search cannot. Tako also searches the live web alongside its proprietary graph (default sources are data + web), so one call covers a question mixing data with context. A built-in web search is still right when the query is clearly outside Tako's coverage, or Tako returned nothing relevant.",
   "",
-  "`tako_available_data` is free — start there on a data question whenever you are unsure the metric exists or what it is called. Pass `metric` alongside `q` when you know the measure (`q=\"Nvidia\"`, `metric=\"gross margin\"`) and it returns the resolved entity+metric pair with their node ids and a ready-to-run follow-up; omit `metric` to browse everything an entity has.",
+  "`tako_available_data` is free and does two jobs. Coverage: `q=\"Nvidia\"` lists every metric Tako tracks on it, `q=\"Inflation Rate\"` every entity that metric is tracked across — ask when you want to know what data exists on something, and plan the actual question around what comes back. Lookup: Pass `metric` alongside `q` (`q=\"Nvidia\"`, `metric=\"gross margin\"`) and it resolves the entity+metric pair, with node ids and a ready-to-run follow-up.",
   "",
-  "`tako_answer` and `tako_search` do different jobs — pick by what you need, don't chain them. `tako_answer` for ONE specific figure (\"what was X's Y?\"): a single synthesized, cited answer with the series inlined. It is fast and the fewest calls, so it is the default for a named metric, and the only tool that returns values for license-gated cards. `tako_search` for breadth: many data cards and web results at once, fanning narrow queries out in parallel, or when the chart or embed is itself the deliverable.",
+  "`tako_answer` and `tako_search` do different jobs — pick by what you need, don't chain them. `tako_answer` for ONE specific figure (\"what was X's Y?\"): a single synthesized, cited answer with the series inlined. Fast and the fewest calls, so it is the default for a named metric, and the only tool returning values for license-gated cards. `tako_search` for breadth: many data cards and web results at once, narrow queries fanned out in parallel, or when the chart or embed is the deliverable.",
   "",
   "Pinning, on either: pin the METRIC node id ALONE, with `strict: true` — an entity-only pin, or a pin without strict, does not steer retrieval.",
   "",
