@@ -517,8 +517,12 @@ const tako_available_data = {
       // agent run escaped only by ignoring the handle.
       //
       // The window is NOT replaced by promoting whichever candidate passed:
-      // `confidentMatch` is token containment, so it decides confidence and
-      // never order (the same rule the entity half follows). Promotion was
+      // `confidentMatch` is a yes/no predicate over name and alias tokens — a
+      // name containing the query, or an alias equal to it — so it decides
+      // confidence and never order (the same rule the entity half follows).
+      // ("Containment" described it before the alias path became equality and
+      // the name path lost its narrower-than-query direction; both examples
+      // below still pass under the current rule, via query ⊆ name.) Promotion was
       // implemented and measured to pick `CapEx to Revenue` over
       // `Capital Expenditure` and `Avnet Revenue Total Revenue` over
       // `Revenues` — a derived ratio and a junk node, both "confident" by
