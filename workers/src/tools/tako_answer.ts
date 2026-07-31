@@ -171,10 +171,22 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
   // Web include_contents stays pinned false regardless of the input flag:
   // page text is billed per page and is a large prose blob — never auto-fetch
   // it here (the model pulls it via tako_contents when it needs it).
-  // snippet_max_chars 2000 (backend default 1000): meatier free excerpts so a
-  // follow-up tako_contents lands on the right cited page. Mirrors tako_search.
+  // snippet_max_chars 2000 (the /v1/answer default is 1000): meatier free
+  // excerpts so a follow-up tako_contents lands on the right cited page.
+  // Mirrors tako_search.
+  //
+  // highlights: on /v1/answer the snippet is not only displayed, it IS the
+  // grounding text the arbiter reads, so this puts the answer-bearing
+  // sentences in front of the synthesizer instead of the page's opening
+  // characters. Two things to know if answer quality or latency moves:
+  //  - the arbiter now reads passages that may be non-contiguous, joined by
+  //    " … ". No prompt here says so; the arbiter's own prompt is upstream.
+  //  - Exa selects highlights with an LLM, so they cost time (+35ms median,
+  //    up to +488ms observed upstream) against a hard 1.5s web-retrieval
+  //    budget whose breach drops web grounding entirely rather than
+  //    returning it late. A rise in ungrounded answers points here first.
   if (input.sources.includes("web")) {
-    sources.web = { include_contents: false, snippet_max_chars: 2000 };
+    sources.web = { include_contents: false, snippet_max_chars: 2000, highlights: true };
   }
   // No `effort`/per-source `count` (unlike buildSearchBody): answer is
   // fast-pipeline + arbiter only, with no async/deep path (see handler).

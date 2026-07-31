@@ -135,7 +135,7 @@ describe("tako_answer handler", () => {
     expect(body.query).toBe("What was US GDP in 2024?");
     expect(body.sources).toEqual({
       data: { include_contents: false },
-      web: { include_contents: false, snippet_max_chars: 2000 },
+      web: { include_contents: false, snippet_max_chars: 2000, highlights: true },
     });
     // old flat shape + grounding-era nested inputs must NOT be present
     expect(body.source_indexes).toBeUndefined();
@@ -260,6 +260,20 @@ describe("tako_answer contract guards", () => {
       country_code: "US", locale: "en-US", strict: false,
     });
     // The generated backend contract must accept the reshaped body.
+    expect(() => SearchRequest.parse(body)).not.toThrow();
+  });
+
+  it("asks for Exa highlights on the web source the arbiter grounds on", () => {
+    const body = buildAnswerBody({
+      query: "nvidia data center revenue", sources: ["web"], include_contents: false,
+      preview_rows: 50, country_code: "US", locale: "en-US", strict: false,
+    });
+    // On /v1/answer the snippet is not just displayed — it is the grounding
+    // text the arbiter reads. Highlights put the answer-bearing sentences in
+    // that slot instead of the page's opening characters.
+    expect(body.sources?.web).toMatchObject({ highlights: true });
+    // And the key has to exist in the contract: sources.web is extra="forbid",
+    // so an unknown key is a 400 on every web answer, not a soft degrade.
     expect(() => SearchRequest.parse(body)).not.toThrow();
   });
 });
@@ -406,7 +420,7 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
     expect(body.sources).toEqual({
       data: { include_contents: true },
-      web: { include_contents: false, snippet_max_chars: 2000 },
+      web: { include_contents: false, snippet_max_chars: 2000, highlights: true },
     });
   });
 

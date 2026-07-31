@@ -211,7 +211,7 @@ describe("tako_search request body", () => {
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
     expect(body.sources).toEqual({
       data: { count: 10, include_contents: false },
-      web: { count: 10, include_contents: false, snippet_max_chars: 2000 },
+      web: { count: 10, include_contents: false, snippet_max_chars: 2000, highlights: true },
     });
   });
 
@@ -241,7 +241,7 @@ describe("tako_search request body", () => {
       data: { count: 10, include_contents: true },
       // web is pinned false regardless of the flag — page text is billed per
       // page and fetched on demand via tako_contents, never auto-inlined.
-      web: { count: 10, include_contents: false, snippet_max_chars: 2000 },
+      web: { count: 10, include_contents: false, snippet_max_chars: 2000, highlights: true },
     });
   });
 
@@ -427,6 +427,28 @@ describe("tako_search widget + contract guard", () => {
 
   it("reshapes flat input into a contract-valid search body", () => {
     const body = buildSearchBody(tako_search.inputSchema.parse({ query: "US GDP" }));
+    expect(() => SearchRequest.parse(body)).not.toThrow();
+  });
+
+  it("asks for Exa highlights as the web snippet, so the excerpt is answer-bearing", () => {
+    const body = buildSearchBody(
+      tako_search.inputSchema.parse({ query: "nvidia data center revenue", sources: ["web"] }),
+    );
+    // Not a cosmetic preference: with highlights off the snippet is the page's
+    // opening characters (nav chrome, press-release preamble); with it on the
+    // snippet is the passage Exa's model selects against the query. The whole
+    // point of the excerpt is to let the model pick a url for a priced
+    // tako_contents follow-up, and preamble does not support that choice.
+    expect(body.sources?.web).toMatchObject({ highlights: true });
+  });
+
+  it("keeps a web body with highlights valid against the backend contract", () => {
+    // sources.web is extra="forbid" server-side, so an unknown key is a 400 on
+    // every web search rather than a degraded one. This is the guard that the
+    // key we send is the key the synced spec declares.
+    const body = buildSearchBody(
+      tako_search.inputSchema.parse({ query: "US GDP", sources: ["data", "web"] }),
+    );
     expect(() => SearchRequest.parse(body)).not.toThrow();
   });
 });
