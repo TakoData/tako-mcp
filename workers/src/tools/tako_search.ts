@@ -173,10 +173,27 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
     // Web page text is billed per page, so it is never auto-inlined regardless
     // of `include_contents` (which governs only the free Tako card preview).
     // The model fetches web text on demand via tako_contents(url).
-    // snippet_max_chars 2000 (backend default 1000): a meatier free excerpt
-    // per web result, so the model picks the right url for a priced
-    // tako_contents follow-up from a real excerpt instead of a headline.
-    sources.web = { count: input.count, include_contents: false, snippet_max_chars: 2000 };
+    // snippet_max_chars 2000: an explicit cap, not the backend's per-endpoint
+    // default (4000 on /v3/search since TakoData/tako#28462). A meatier free
+    // excerpt per web result, so the model picks the right url for a priced
+    // tako_contents follow-up from a real excerpt instead of a headline —
+    // bounded, because count defaults to 10 here and the snippet rides
+    // verbatim in structuredContent, so the cap is a per-call token budget.
+    //
+    // highlights: the snippet becomes the passages Exa's model selects against
+    // the query instead of the page's opening characters. The opening is
+    // usually nav chrome and press-release preamble; the excerpt exists to let
+    // the model choose a url to spend tako_contents on, and preamble does not
+    // support that choice. Two consequences ride along, both handled by
+    // `webResultSchema.snippet`'s description rather than by reshaping here:
+    // a page with no highlight returns `snippet: null` (it keeps its slot),
+    // and one snippet may hold several non-contiguous passages joined by " … ".
+    sources.web = {
+      count: input.count,
+      include_contents: false,
+      snippet_max_chars: 2000,
+      highlights: true,
+    };
   }
   const body: z.input<typeof SearchRequest> = {
     query: input.query,
