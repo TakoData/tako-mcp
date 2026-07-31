@@ -630,6 +630,18 @@ describe("orderCardsByUsefulness", () => {
     ]);
   });
 
+  it("normalises a numeric data_as_of against a string-dated one (same rule as rows)", () => {
+    // The as-of tier is also a cross-card comparison, so it goes through
+    // `comparableEpoch` too. Un-normalised, `2011` would sort below a
+    // string-dated 2019 card and, worse, below every string-dated card forever.
+    const numericNewer = { card_id: "numeric_2026", data_freshness: { data_as_of: 2026 } } as TakoCard;
+    const stringOlder = { card_id: "string_2019", data_freshness: { data_as_of: "2019-01-01" } } as TakoCard;
+    expect(orderCardsByUsefulness([stringOlder, numericNewer]).map((c) => c.card_id)).toEqual([
+      "numeric_2026",
+      "string_2019",
+    ]);
+  });
+
   it("breaks remaining ties on relevance, then on backend order (stable)", () => {
     const low = { card_id: "low", relevance: "Low" } as TakoCard;
     const high = { card_id: "high", relevance: "High" } as TakoCard;
