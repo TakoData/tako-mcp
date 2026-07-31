@@ -522,7 +522,24 @@ export function buildPairSummary(input: {
   if (!metricConfident) {
     return `Resolved the entity, but NO metric confidently matches "${metricQuery}" — the closest names Tako holds are shown below and are probably NOT what you asked for. Pick one deliberately (pin its node_id with strict:true), or conclude Tako does not track this measure.`;
   }
-  return `Resolved "${entityQuery}" + "${metricQuery}". Run the next_call below verbatim; if it returns 0 cards, Tako has no card for this pair — that is the definitive answer, do not rephrase and retry.`;
+  // The zero-card advice used to read "Tako has no card for this pair — that is
+  // the definitive answer, do not rephrase and retry". Measured on staging
+  // 2026-07-31 (`npm run eval:pin`, 20 handles, matched arms, 3 repeats each),
+  // that is false: 11 of 20 retrieve FEWER cards pinned than unpinned, because
+  // `strict` is a hard filter and the graph holds near-duplicate metric nodes
+  // where only one twin carries cards (KE-812). Dropping the pin recovers the
+  // REAL metric, verified by card title, not a lookalike:
+  //
+  //   "Carnival Corporation passenger cruise days"  pinned [0,0,0]  unpinned [3,3,3]
+  //     -> Passenger Cruise Days 2 (Annual), Passenger cruise days (PCD) (Quarterly)
+  //   "Apple Inc. P/E ratio"       pinned [0,0,0]  unpinned [3,3,3]  -> P/E Annual, 32.55x
+  //   "United States CPI"          pinned [0,0,0]  unpinned [3,3,3]  -> 98.7% of GDP
+  //
+  // So the retry worth prescribing is not "the same call again" but "the same
+  // query WITHOUT the pin". It stays bounded — one specific retry, still no
+  // rephrase-and-vary loop, which is the thrash the old wording existed to stop
+  // (after a zero-card answer agents called tako_contents 56 times).
+  return `Resolved "${entityQuery}" + "${metricQuery}". Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node. If that is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
 }
 
 /** A `q` that looks like a hostname (has a dot, no spaces). */
