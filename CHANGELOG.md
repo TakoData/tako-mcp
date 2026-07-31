@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.2](https://github.com/TakoData/tako-mcp/compare/v0.15.1...v0.15.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **mcp:** answer 405 on GET/DELETE /mcp so Cursor stops tombstoning the transport ([539edc8](https://github.com/TakoData/tako-mcp/commit/539edc8f9c4ed4f282bc8d62f7950f7b64963386))
+* **mcp:** answer 405 on GET/DELETE /mcp, and add one-click install deeplinks ([9568fbd](https://github.com/TakoData/tako-mcp/commit/9568fbde11aa3b9613d75763a8f67a9d62abed36))
+
+
+### Documentation
+
+* add one-click install deeplinks for Cursor and VS Code ([935c692](https://github.com/TakoData/tako-mcp/commit/935c69257466d1791916e6b1eeb1612cd88dafde))
+* use Cursor's canonical install-mcp URL, not the /en/ locale form ([cca499e](https://github.com/TakoData/tako-mcp/commit/cca499e595ae6fecc887db66b049ad7f0d5ad31b))
+
 ## [0.15.1](https://github.com/TakoData/tako-mcp/compare/v0.15.0...v0.15.1) (2026-07-30)
 
 
