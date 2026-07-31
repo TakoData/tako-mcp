@@ -1271,6 +1271,19 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/Pass `metric` alongside `q`/);
   });
 
+  // `tako_available_data` answers two different questions, and the coverage
+  // one is not a precondition for the lookup one: "what does Tako have on
+  // Nvidia?" is a question a model asks on its own behalf, and what comes
+  // back shapes which metric is worth asking for. A draft that framed the
+  // tool only as "start there when unsure" collapsed it into a gate in
+  // front of the priced tools and dropped the browse half to a trailing
+  // clause. Pin both so a length trim cannot quietly restore that.
+  it("names both of tako_available_data's jobs — coverage AND lookup", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/two jobs/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/lists every metric/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/every entity that metric is tracked across/i);
+  });
+
   it("stays short enough to sit in a system prompt", () => {
     // Guard against drift: this is prime real estate, not a manual.
     expect(SERVER_INSTRUCTIONS.length).toBeLessThan(2000);
