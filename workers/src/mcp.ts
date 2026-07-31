@@ -456,8 +456,12 @@ function pickDeclared(
  *
  * Instead: narrow to the declared keys and re-check. That drops the undeclared
  * extras rather than the answer. Only if the narrowed object still fails do we
- * omit `structuredContent` altogether — spec-legal, and the payload rides in
- * the text channel by design either way. Exported for tests.
+ * omit `structuredContent` altogether. That is NOT spec-legal either — a tool
+ * declaring an `outputSchema` is required to return conforming structured
+ * results, so omission violates the spec too. It is simply the cheaper
+ * violation: the caller loses the structured channel, where shipping a payload
+ * every strict client rejects loses the whole result, text block included. The
+ * payload rides in the text channel by design either way. Exported for tests.
  */
 export function structuredContentFor(
   tool: Pick<AnyToolModule, "name" | "outputSchema" | "slimStructured">,

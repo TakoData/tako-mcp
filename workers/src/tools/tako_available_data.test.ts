@@ -142,11 +142,16 @@ describe("tako_available_data", () => {
 
   it("isolates a per-node coverage failure as an unavailable match", async () => {
     const fetchMock = mockFetchSequence([
-      jsonResponse(200, { results: [searchHit("a", "A"), searchHit("b", "B")] }),
-      jsonResponse(200, drill("a", "A", "metrics", ["Revenue"])),
+      jsonResponse(200, {
+        results: [searchHit("a", "Alpha Corp"), searchHit("b", "Alpha Holdings")],
+      }),
+      jsonResponse(200, drill("a", "Alpha Corp", "metrics", ["Revenue"])),
       jsonResponse(503, { detail: "graph store down" }),
     ]);
-    const out = await takoAvailableData.handler({ q: "x" }, CTX);
+    // `q` has to plausibly match BOTH fixtures: a query the relevance gate
+    // rejects outright short-circuits before any drill, which is a different
+    // path from the per-node failure this test is about.
+    const out = await takoAvailableData.handler({ q: "Alpha" }, CTX);
     expect(fetchMock.mock.calls).toHaveLength(3);
     // The winner still renders in full; the failed SELECTION probe degrades to
     // a zero count rather than sinking the call.
@@ -183,6 +188,112 @@ describe("tako_available_data", () => {
     ]);
   });
 
+  // The `q="US inflation"` shape, reproduced live on staging 2026-07-31: the
+  // gate ranks a name-matching SHELL first (`US Savings Inflation Securities`,
+  // 1 metric) and buried `United States` (250) in a receipt line, with
+  // `found: true` on the shell. Coverage has to outrank the name preference.
+  it("promotes a better-covered probe over a name-matching shell at rank 0", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, {
+        results: [
+          // Rank 0 passes the gate on its own NAME, so the partition puts it
+          // first. The two nodes that matter match only through an ALIAS
+          // ("US" ⊆ the query), which is what demotes them behind it — the
+          // exact mechanism of the live failure.
+          searchHit("us-savings", "US Savings Inflation Securities", "entity", "PRODUCT"),
+          { ...searchHit("united-states", "United States", "entity", "GPE"), aliases: ["US", "USA"] },
+          { ...searchHit("inflation-rate", "Inflation Rate", "metric", "METRIC"), aliases: ["Inflation"] },
+        ],
+      }),
+      // Rank 0's full drill: coverage 1 — non-zero, so the old zero-only
+      // promotion never fired here.
+      jsonResponse(200, drill("us-savings", "US Savings Inflation Securities", "metrics", ["Average Interest Rate"], 1)),
+      jsonResponse(200, drill("united-states", "United States", "metrics", ["CPI"], 250, true)),
+      jsonResponse(200, drill("inflation-rate", "Inflation Rate", "entities", ["US"], 63)),
+      // Round 2: the promoted candidate's full drill.
+      jsonResponse(200, drill("united-states", "United States", "metrics", ["CPI Inflation Rate"], 250, true)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "US inflation" }, CTX);
+    expect(fetchMock.mock.calls).toHaveLength(5);
+    // argmax, not first-non-zero: `Inflation Rate` (63) also has coverage.
+    expect(out.matches.map((m) => m.node_id)).toEqual(["united-states"]);
+    expect(out.found).toBe(true);
+    // The shell drops to a receipt line carrying its real count, so a caller
+    // who actually wanted it can still get there.
+    const demoted = out.other_matches.find((o) => o.node_id === "us-savings");
+    expect(demoted?.coverage_total).toBe(1);
+    // Only ONE full coverage list is rendered — the whole point of
+    // RENDER_FULL_N is not paying ~8.3k twice.
+    expect(out.matches).toHaveLength(1);
+    expect(out.next_call?.node_ids).not.toContain("us-savings");
+  });
+
+  it("leaves a well-covered rank 0 alone even when a probe out-covers it", async () => {
+    // `q="Delta"` — `Delta Air Lines, Inc.` (correct, rank 0) and
+    // `Delta Corp Limited` both sit at the 250 cap, and nothing
+    // rank-independent separates them. Promotion must not fire on a rank 0
+    // that is above SHELL_COVERAGE_MAX, or the gate's name preference and this
+    // rule would fight over ordinary queries.
+    mockFetchSequence([
+      jsonResponse(200, {
+        results: [
+          searchHit("delta-air", "Delta Air Lines, Inc."),
+          searchHit("delta-corp", "Delta Corp Limited"),
+        ],
+      }),
+      jsonResponse(200, drill("delta-air", "Delta Air Lines, Inc.", "metrics", ["Revenue"], 40)),
+      jsonResponse(200, drill("delta-corp", "Delta Corp Limited", "metrics", ["X"], 250, true)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Delta" }, CTX);
+    expect(out.matches.map((m) => m.node_id)).toEqual(["delta-air"]);
+    expect(out.other_matches.find((o) => o.node_id === "delta-corp")?.coverage_total).toBe(250);
+  });
+
+  it("does NOT promote when rank 0's coverage lookup failed (unavailable ≠ zero)", async () => {
+    // Observed live: a transient graph/related failure on `Delta Air Lines,
+    // Inc.` made rank 0 look coverage-less and promoted `Delta Corp Limited`,
+    // an unrelated company, into the answer. A failed lookup is not evidence.
+    mockFetchSequence([
+      jsonResponse(200, {
+        results: [
+          searchHit("delta-air", "Delta Air Lines, Inc."),
+          searchHit("delta-corp", "Delta Corp Limited"),
+        ],
+      }),
+      jsonResponse(503, { detail: "graph store down" }), // rank 0's drill fails
+      jsonResponse(200, drill("delta-corp", "Delta Corp Limited", "metrics", ["X"], 250, true)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Delta" }, CTX);
+    expect(out.matches.map((m) => m.node_id)).toEqual(["delta-air"]);
+    expect(out.matches[0]?.unavailable).toBe(true);
+    expect(out.found).toBe(false);
+    // The better-covered node is still named in a receipt, so a retry is not
+    // the caller's only move.
+    expect(out.other_matches.find((o) => o.node_id === "delta-corp")?.coverage_total).toBe(250);
+  });
+
+  it("fail-open skips the coverage drill and reports no coverage in either channel", async () => {
+    // Nothing plausibly matches, so the summary disclaims the resolutions and
+    // the renderer prints only that summary. Drilling would pay a paginated
+    // fetch plus probes for output nobody reads, and its totals used to reach
+    // structuredContent while the prose said the opposite.
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, {
+        results: [searchHit("tuesday-morning", "Tuesday Morning Corporation")],
+      }),
+    ]);
+    const out = await takoAvailableData.handler({ q: "the vibes of tuesday" }, CTX);
+    expect(fetchMock.mock.calls).toHaveLength(1); // search only — no drill, no probes
+    expect(out.found).toBe(false);
+    expect(out.confident).toBe(false);
+    expect(out.next_call).toBeNull();
+    // Resolution is still reported — it must not read as "no node matched".
+    expect(out.matches.map((m) => m.name)).toEqual(["Tuesday Morning Corporation"]);
+    expect(out.matches[0]?.coverage.total).toBe(0);
+    expect(out.matches[0]?.unavailable).toBeUndefined(); // never attempted ≠ failed
+    expect(out.summary).toContain("No graph node confidently matches");
+  });
+
   it("resolved node with empty coverage → found:false and a gap summary, no coverage claim", async () => {
     // Regression (end-to-end): node resolution alone must not read as "Tako
     // has data" — neither in `found` nor in the summary header.
@@ -198,11 +309,13 @@ describe("tako_available_data", () => {
 
   it("all coverage drills failing → found:false, gap summary over unavailable lines", async () => {
     mockFetchSequence([
-      jsonResponse(200, { results: [searchHit("a", "A"), searchHit("b", "B")] }),
+      jsonResponse(200, {
+        results: [searchHit("a", "Alpha Corp"), searchHit("b", "Alpha Holdings")],
+      }),
       jsonResponse(503, { detail: "down" }),
       jsonResponse(503, { detail: "down" }),
     ]);
-    const out = await takoAvailableData.handler({ q: "x" }, CTX);
+    const out = await takoAvailableData.handler({ q: "Alpha" }, CTX);
     expect(out.found).toBe(false);
     expect(out.summary).not.toContain("Tako's proprietary data has");
     expect(out.matches.every((m) => m.unavailable)).toBe(true);
@@ -225,10 +338,10 @@ describe("tako_available_data", () => {
 
   it("treats a malformed coverage payload as unavailable, not a hard failure", async () => {
     mockFetchSequence([
-      jsonResponse(200, { results: [searchHit("a", "A")] }),
+      jsonResponse(200, { results: [searchHit("a", "Alpha Corp")] }),
       jsonResponse(200, { totally: "wrong" }),
     ]);
-    const out = await takoAvailableData.handler({ q: "x" }, CTX);
+    const out = await takoAvailableData.handler({ q: "Alpha" }, CTX);
     expect(out.matches[0]?.unavailable).toBe(true);
   });
 

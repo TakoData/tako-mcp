@@ -175,6 +175,35 @@ function temporalMagnitude(v: unknown): number | null {
   return null;
 }
 
+/**
+ * Parse a cell into an epoch-ms magnitude comparable ACROSS cards, or null.
+ *
+ * `temporalMagnitude` is safe where it is used by `capRecentRows`, which only
+ * ever compares two values from the SAME card and so cannot mix scales. Card
+ * ORDERING compares across cards, where a bare number passed through unchanged
+ * is not comparable to a `Date.parse` result: an annual series whose `date`-typed
+ * column holds `2024` yields 2024 against ~1.7e12 for any string-dated card,
+ * sorting it below every one of them — including genuinely staler series.
+ *
+ * So each recognised shape is converted to epoch-ms, and anything unrecognised
+ * returns null rather than a number on an unknown scale. A null simply means
+ * "no freshness signal from this cell", which the caller already handles.
+ */
+function comparableEpoch(v: unknown): number | null {
+  if (typeof v === "number") {
+    if (!Number.isFinite(v)) return null;
+    // A bare year, the shape annual series use.
+    if (v >= 1000 && v <= 9999) return Date.UTC(Math.trunc(v), 0, 1);
+    // Epoch seconds vs milliseconds, split by magnitude. Both bounds cover
+    // 1973-2286, comfortably outside the year range above and either side of
+    // any date this data carries.
+    if (v >= 1e8 && v < 1e11) return v * 1000;
+    if (v >= 1e11 && v < 1e14) return v;
+    return null;
+  }
+  return temporalMagnitude(v);
+}
+
 // Order of a row sequence from the temporal value of its first vs last row:
 //   +1 descending (newest first) · -1 ascending (newest last) · 0 unknown.
 function orderDirection(firstVal: unknown, lastVal: unknown): 1 | -1 | 0 {
@@ -666,7 +695,7 @@ function latestDataPoint(card: TakoCard): number | null {
     if (idx >= 0) {
       for (const row of dataset.rows) {
         if (!Array.isArray(row)) continue;
-        const m = temporalMagnitude(row[idx]);
+        const m = comparableEpoch(row[idx]);
         if (m !== null) magnitudes.push(m);
       }
     }
@@ -674,7 +703,7 @@ function latestDataPoint(card: TakoCard): number | null {
     const key = recordDateKey(content.records);
     if (key !== undefined) {
       for (const record of content.records) {
-        const m = temporalMagnitude(record[key]);
+        const m = comparableEpoch(record[key]);
         if (m !== null) magnitudes.push(m);
       }
     }

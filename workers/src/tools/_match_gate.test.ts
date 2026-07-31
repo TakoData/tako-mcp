@@ -153,6 +153,25 @@ describe("gateCandidates — name matches outrank alias matches", () => {
     expect(gated).toBe(true);
     expect(kept.map((c) => c.name)).toEqual(["Space Exploration Technologies Corp."]);
   });
+
+  // The candidate set above is not the one staging returns: `q="SpaceX"` also
+  // returns a node literally NAMED `SpaceX`, which this partition therefore
+  // ranks FIRST — ahead of the company that has the data. Pinned so the gate is
+  // not credited with fixing a case it does not fix; what fixes it is the
+  // zero-coverage promotion in tako_available_data (see SHELL_COVERAGE_MAX),
+  // and the golden suite asserts the rendered outcome end to end.
+  it("does NOT rescue SpaceX on its own — a same-named impostor outranks", () => {
+    const impostor = { name: "SpaceX", aliases: [] };
+    const real = {
+      name: "Space Exploration Technologies Corp.",
+      aliases: ["SpaceX", "Space Exploration Technologies"],
+    };
+    const { kept } = gateCandidates("SpaceX", [impostor, real]);
+    expect(kept.map((c) => c.name)).toEqual([
+      "SpaceX",
+      "Space Exploration Technologies Corp.",
+    ]);
+  });
 });
 
 // Confidence is a stricter question than "worth showing". An alias BROADER

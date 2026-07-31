@@ -576,6 +576,40 @@ describe("orderCardsByUsefulness", () => {
     ]);
   });
 
+  // A `date`-typed column holding bare years is a real shape for annual
+  // series. Passed through unchanged, `2024` compares against ~1.7e12 for any
+  // string-dated card and sorts below every one of them — including genuinely
+  // staler ones. Same-card comparisons (capRecentRows) never saw this because
+  // both sides came from one parse path; ordering compares across cards.
+  const yearRowCard = (card_id: string, lastYear: number): TakoCard =>
+    ({
+      card_id,
+      content: {
+        content_format: "json_compact",
+        dataset: {
+          columns: [{ name: "Year", type: "date" }, { name: "v", type: "number" }],
+          rows: [[2000, 1], [lastYear, 2]],
+        },
+      },
+    }) as TakoCard;
+
+  it("compares bare-year rows on the same scale as string dates", () => {
+    const annual2026 = yearRowCard("annual_2026", 2026);
+    const stale2019 = seriesCard("stale_2019", "2019-01-01T00:00:00+00:00");
+    expect(orderCardsByUsefulness([stale2019, annual2026]).map((c) => c.card_id)).toEqual([
+      "annual_2026",
+      "stale_2019",
+    ]);
+  });
+
+  it("still orders two bare-year cards against each other", () => {
+    expect(
+      orderCardsByUsefulness([yearRowCard("old", 2011), yearRowCard("new", 2025)]).map(
+        (c) => c.card_id,
+      ),
+    ).toEqual(["new", "old"]);
+  });
+
   it("demotes row-less Overview cards below real series cards", () => {
     const overview = { card_id: "overview", title: "Earnings & Estimates Overview" } as TakoCard;
     const series = seriesCard("gross_margin", "2026-06-01T00:00:00+00:00");

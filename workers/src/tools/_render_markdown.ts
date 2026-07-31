@@ -26,7 +26,7 @@ import { z } from "zod";
 import { oneLine } from "./_available_data.js";
 import {
   autoChainShape,
-  usageSchema,
+  usageAdvertisedSchema,
   type SearchOutput,
   type TakoCard,
   type Usage,
@@ -50,7 +50,7 @@ export const searchSlimOutputShape = z.looseObject({
     .optional()
     .describe("Web results with their snippets."),
   request_id: z.string(),
-  usage: usageSchema
+  usage: usageAdvertisedSchema
     .nullable()
     .describe("Cost-plus usage for this request (null when not metered)."),
   guidance: z
@@ -67,7 +67,7 @@ export const answerSlimOutputShape = z.looseObject({
   cards: z.array(z.looseObject({})).optional().describe("Cards cited by the answer."),
   web_results: z.array(z.looseObject({})).optional().describe("Web results cited by the answer."),
   request_id: z.string(),
-  usage: usageSchema
+  usage: usageAdvertisedSchema
     .nullable()
     .describe("Cost-plus usage for this request (null when not metered)."),
   guidance: z
@@ -590,9 +590,14 @@ export function renderAvailableDataMarkdown(o: AvailableDataFullOutput): string 
   if (o.metric_query !== undefined && o.matches.length === 0) {
     return renderAvailableDataPairMarkdown(o);
   }
-  // Nothing plausibly matched: the summary already says these resolutions are
-  // almost certainly wrong, so printing 200 of their metric names would spend
-  // ~8.5k chars elaborating on an answer we just disclaimed.
+  // Nothing plausibly matched. The handler now skips the coverage drill on this
+  // path entirely, so there are no names left to print and this is belt and
+  // braces rather than the thing doing the work — kept because the summary
+  // already disclaims these resolutions ("almost certainly NOT what you asked
+  // for") and appending a coverage list under one would contradict it. Before
+  // the drill was skipped, this suppressed ~8.5k chars elaborating on an answer
+  // we had just disclaimed, while `structuredContent` still carried the totals
+  // — the two channels disagreed. Both now report no coverage.
   if (o.confident === false) return o.summary;
   const blocks: string[] = [o.summary];
 
