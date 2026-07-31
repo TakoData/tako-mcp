@@ -72,9 +72,9 @@ const NER_LABELS = [
 const DESCRIPTION = [
   "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.",
   "",
-  "The recommended first step for a data lookup: run this before tako_search / tako_answer whenever you're unsure the data exists or its exact name. It's free, it confirms coverage, and the exact names it returns make the follow-up priced call land precisely instead of guessing. (Skip it only for an obvious open-web query that no data graph would hold.)",
+  "Ask it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back. NOT a required first step — for a straightforward data question, tako_search or tako_answer directly is usually right.",
   "",
-  'Best for: any "what structured/proprietary data is there on X?" question, and for confirming a specific figure actually exists BEFORE you spend a priced tako_search / tako_answer — a cheap accuracy check that tells you whether the data exists and under exactly what name.',
+  "Worth one call first when you need a measure's EXACT name: resolving it to the canonical form measurably improves what the priced call retrieves (measured, 9 of 15 pairs; `AWS revenue` went from 0 cards to 3 once resolved to `Amazon Web Services, Inc.` + `Revenues`).",
   "",
   "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
   "",
@@ -84,7 +84,7 @@ const DESCRIPTION = [
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).",
   "Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. To land on exactly one metric, pin THAT node id alone with strict:true and name the entity in the query text; the call then returns that metric's card or nothing. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten (query + the metric node + strict) — run it verbatim.",
   "A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.",
-  "This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. The next_call is the check — 0 cards there is the definitive answer.",
+  "This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, retry the same query WITHOUT node_ids before concluding Tako has no data — the pin is a hard filter and the data is often held under a sibling node.",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -146,7 +146,7 @@ const coverageMatchSchema = z.object({
 // don't pay for the full name lists twice.
 const fullOutputSchema = z.object({
   found: z.boolean().describe(
-    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): both halves RESOLVED to confident graph nodes, and no coverage check was performed — a chart may still not exist behind them. Either way, running `next_call` is what confirms retrievable data exists; 0 cards from it is the definitive answer.",
+    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): both halves RESOLVED to confident graph nodes, and no coverage check was performed — a chart may still not exist behind them. Either way, running `next_call` is what confirms retrievable data exists — and 0 cards from it is NOT conclusive on its own: retry without `node_ids` first, since the pin is a hard filter over a graph that holds near-duplicate metric nodes.",
   ),
   query: z.string(),
   summary: z.string(),
