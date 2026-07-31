@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSearchOutput,
   hoistSourceGlossary,
+  NARROWER_WEB_ATTEMPT,
   orderCardsByUsefulness,
   slimCard,
   slimCardContent,
@@ -391,6 +392,20 @@ describe("buildSearchOutput — zero-card guidance", () => {
     const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"]);
     expect(out.guidance).toMatch(/tako_available_data/);
     expect(out.guidance).toMatch(/"web"/);
+    // No web-axis carve-out here: the web was never searched, so there is no
+    // empty web result to reinterpret. Step (2) already offers web as a fallback
+    // source, and both at once would contradict each other.
+    expect(out.guidance).not.toContain(NARROWER_WEB_ATTEMPT);
+  });
+
+  // tako_answer's both-empty branch has always allowed ONE narrower web attempt;
+  // this branch used to end flatly at "stop calling Tako for this question". Same
+  // situation, opposite verdict, on the most common Tako-has-nothing path — so it
+  // is now one shared constant rather than a sentence in one of the two tools.
+  it("allows the same single narrower web attempt tako_answer allows, when web was searched", () => {
+    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"]);
+    expect(out.guidance).toContain(NARROWER_WEB_ATTEMPT);
+    expect(out.guidance).toMatch(/WEB axis only/);
   });
 
   // A web-only search that came back empty has NO data verdict to report (the

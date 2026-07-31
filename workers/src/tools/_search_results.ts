@@ -63,7 +63,7 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * different pin forms, and only one of them works. One string, one place.
  *
  * THE UNPIN ESCAPE HATCH, and why advice about how to pin ends with advice to
- * stop pinning. A later matched-arm run (`npm run eval:pin`, 20 handles, 3
+ * stop pinning. A later matched-arm run on staging (2026-07-31: 20 handles, 3
  * repeats, the only variable being whether the resolved node is pinned) found
  * 11 of 20 retrieve FEWER cards pinned than unpinned — `strict` is a hard
  * filter and the graph holds near-duplicate metric nodes where only one twin
@@ -77,6 +77,11 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * absence. Both halves have to ride together, or `tako_available_data` tells
  * the model to unpin while these two tell it to pin, which is the same drift
  * this constant exists to prevent, one level up.
+ *
+ * Neither run is checked in — both were driven by hand against staging. The
+ * per-handle numbers live in `_available_data.ts`'s `buildPairSummary` comment
+ * (pinned vs unpinned, by handle) and in the commit that introduced this hatch;
+ * cite those rather than looking for a script to re-run.
  */
 export const PINNED_RETRY =
   "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all. If that pinned call returns 0 cards, run it once more with `node_ids` removed before concluding the data is absent: `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards, so the pin itself is sometimes what empties the result";
@@ -719,6 +724,25 @@ export const DECOMPOSE_WEB_ASK =
   "If the answer lives on the web rather than in the data graph, do not re-ask this same question: DECOMPOSE it. One narrow question per entity, provider or site, asked in parallel, beats one broad question — that is not a retry, it is the shape this tool answers best, and it is how a multi-part web question gets a complete answer instead of a blended one.";
 
 /**
+ * The one carve-out on the BOTH-empty stop — nothing from the data graph and
+ * nothing from the web.
+ *
+ * Shared rather than written twice. `tako_answer` carried this sentence inline
+ * while `tako_search`'s equivalent branch ended flatly at "stop calling Tako for
+ * this question", so on the single most common Tako-has-nothing path the two
+ * tools disagreed about whether one narrower web attempt was allowed. That is
+ * the same drift {@link PINNED_RETRY} and {@link DECOMPOSE_WEB_ASK} exist to
+ * prevent, and it is the reason it belongs in a constant: a model that reads
+ * both surfaces learns that one of them is wrong.
+ *
+ * Interpolated only where the web was ACTUALLY searched and came back empty. On
+ * a data-only call there is no empty web result to reinterpret — that path tells
+ * the caller to search the web at all, which is a different (and cheaper) move.
+ */
+export const NARROWER_WEB_ATTEMPT =
+  "One exception to the stop, on the WEB axis only: a genuinely narrower question (one entity, one provider, one site) is worth a single attempt, because an empty web result usually means the question was too broad rather than unanswerable.";
+
+/**
  * Recovery protocol for a zero-CARD search. Rewording the same query almost
  * never flips a miss into a hit — misses come from query SHAPE (compound
  * query, brand instead of domain, unresolved entity) or from the data simply
@@ -776,6 +800,12 @@ function buildZeroResultGuidance(
     "(3) if it shows no coverage, stop calling Tako for this question and answer from other sources",
     '— except website-traffic asks: the graph misses long-tail domains SimilarWeb still covers, so there the real coverage test is the one retry itself, as a bare-domain query ("kagi.com monthly visits").',
     'Rule out the usual shape mistakes before that one retry: one entity + one metric per query (split compound asks into parallel searches), and domains not brand names for website traffic ("netflix.com", not "Netflix").',
+    // Only when the web was actually searched and returned nothing — the same
+    // precondition tako_answer's equivalent branch carries, so the two tools give
+    // the identical verdict on the identical situation. When web was NOT
+    // searched, step (2) above already offers it as a fallback source, which is
+    // the cheaper move and would contradict this one.
+    ...(searchedWeb(sources) ? [NARROWER_WEB_ATTEMPT] : []),
   ].join(" ");
 }
 

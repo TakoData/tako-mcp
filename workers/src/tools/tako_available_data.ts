@@ -69,12 +69,21 @@ const NER_LABELS = [
   "MONEY", "METRIC", "STOCK_TICKER", "WEBSITE",
 ] as const;
 
+// The naming claim below deliberately carries NO worked example any more. It
+// used to cite `AWS revenue` -> `Amazon Web Services, Inc.` + `Revenues`, which
+// `confidentMatch`'s token-equality rule now rejects on purpose: the alias
+// `Revenue` accounts for only half of {aws, revenue}, and letting it vouch is
+// what shipped `Total Odds` for "total assets". So the example described a
+// resolution this tool no longer offers — the pair summary now calls those
+// closest names "probably NOT what you asked for". The aggregate measurement
+// (9 of 15) stands and predates that rule; any replacement example has to be
+// re-measured against the equality gate before it goes in here.
 const DESCRIPTION = [
   "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.",
   "",
   "Ask it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back. NOT a required first step — for a straightforward data question, tako_search or tako_answer directly is usually right.",
   "",
-  "Worth one call first when you need a measure's EXACT name: resolving it to the canonical form measurably improves what the priced call retrieves (measured, 9 of 15 pairs; `AWS revenue` went from 0 cards to 3 once resolved to `Amazon Web Services, Inc.` + `Revenues`).",
+  "Worth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).",
   "",
   "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
   "",

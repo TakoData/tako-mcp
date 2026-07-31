@@ -24,21 +24,43 @@
  * `node_ids` as a parameter without prescribing a form (e.g. "harvesting node
  * ids and urls to feed tako_answer").
  *
- * The stem is `nodes?` rather than `node`, because the BROKEN form's own
- * phrasing is "the card's `nodes` ids" — with the plural stem, so a `node[_ ]?`
- * pattern misses the very sentence the plural rule exists to catch. Found by the
- * unit test for that rule, which could not make it fire.
+ * The stem has to survive the punctuation real prose puts INSIDE it. The broken
+ * form's own phrasing is "the card's `nodes` ids" — plural stem, and a backtick
+ * between the two words — so `node[_ ]?ids?` misses the very sentence the plural
+ * rule exists to catch. Broadening the stem to `nodes?` alone was not enough: it
+ * is the backtick, not the `s`, that breaks the match. The separator class is
+ * what fixes it, and the two-part probe below is the regression:
+ *
+ *   "with its `node_ids` pinned"          -> caught (bare pin, no strict)
+ *   "with that card's `nodes` ids pinned" -> caught only after this change
  */
 export const ADVISES_PINNING =
-  /\bpin(?:ning|ned)?\b[^.]{0,120}\bnodes?[_ ]?ids?\b|\bnodes?[_ ]?ids?\b[^.]{0,60}\bpinned\b/i;
+  /\bpin(?:ning|ned)?\b[^.]{0,120}\bnodes?[_ `]{0,3}ids?\b|\bnodes?[_ `]{0,3}ids?\b[^.]{0,60}\bpinned\b/i;
 
 /**
  * The broken form: EVERY node id on the card, i.e. plural and unqualified.
  * Measured on prod (2026-07-29) — `strict` is an OR over pinned nodes, so
  * including the entity's id re-admits every other card for that entity, which
  * once turned "no such card" into a plausible-looking WRONG metric.
+ *
+ * The DETERMINER is a set, not the literal "the". Hardcoding "the" left the most
+ * likely reword uncaught, because the canonical strings this repo now ships say
+ * "pin THAT card's METRIC node id ALONE" — so "that card's `nodes` ids" is the
+ * form a future edit would most plausibly drift into, and `registry:check`
+ * passed on it. Verified: reverting llms-full.txt to that phrasing now fails.
+ *
+ * Deliberately NOT in the determiner set: "every" and "each". `PINNED_FROM_CARD`
+ * legitimately contains "pinning every node id on the card" inside the clause
+ * saying it does NOT work, and matching that would fail the correct advice.
+ *
+ * The stem stays anchored on the FIELD — backticked `nodes`, or bare plural
+ * "nodes" — rather than accepting a bare singular "node". Plural `ids` is still
+ * required. Both keep descriptive prose out: "harvest the node ids and urls"
+ * points at ids in general, not at a card's whole `nodes` array, and the form we
+ * prescribe ("the card's METRIC node id ALONE") is singular by construction.
  */
-export const PLURAL_UNQUALIFIED = /\bthe (?:card's|cards') `?nodes`? ids\b/i;
+export const PLURAL_UNQUALIFIED =
+  /\b(?:the|that|this|its)\s+(?:cards?['’]?s?\s+)?(?:`nodes?`|nodes)\s+ids\b/i;
 
 /**
  * A parameter-definition line, e.g. "- `strict` (boolean, default false): …".

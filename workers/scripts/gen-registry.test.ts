@@ -134,6 +134,38 @@ describe("assertPinFormInDocs", () => {
     ).toThrow(/every node id on the card/);
   });
 
+  // The determiner used to be hardcoded to "the", which left the most likely
+  // reword uncaught: the canonical strings this repo ships say "pin THAT card's
+  // METRIC node id ALONE", so "that card's `nodes` ids" is the phrasing a future
+  // edit drifts into — and `registry:check` passed on it. Two independent
+  // narrownesses had to be fixed for this to fire: the determiner set here, and
+  // `ADVISES_PINNING`'s stem, which could not span the backtick in "`nodes` ids".
+  it("rejects the plural form under any determiner, not just `the`", () => {
+    for (const phrasing of [
+      "Get figures via tako_answer with that card's `nodes` ids pinned.",
+      "Get figures via tako_answer with this card's `nodes` ids pinned.",
+      "Get figures via tako_answer with its `nodes` ids pinned.",
+      "Get figures via tako_answer with the cards' nodes ids pinned.",
+    ]) {
+      expect(() => assertPinFormInDocs(doc(phrasing)), phrasing).toThrow(
+        /every node id on the card/,
+      );
+    }
+  });
+
+  // The flip side: the rule must not fire on prose that mentions ids without
+  // pointing at a card's whole `nodes` array. `tako_search`'s description talks
+  // about harvesting ids to feed the other tools, and the form we PRESCRIBE is a
+  // singular metric node id.
+  it("does not flag descriptive id prose or the prescribed singular form", () => {
+    for (const phrasing of [
+      "Use it for breadth and to harvest the node ids and urls it returns.",
+      "Get figures via tako_answer, pinning that card's METRIC node id ALONE with `strict: true`.",
+    ]) {
+      expect(() => assertPinFormInDocs(doc(phrasing)), phrasing).not.toThrow();
+    }
+  });
+
   // The token `strict` appearing anywhere used to satisfy the rule, so a
   // sentence advising the bare pin AND explaining that omitting strict does not
   // work passed it. Only an affirmative strict:true counts.
@@ -162,6 +194,21 @@ describe("assertPinFormInDocs", () => {
         doc("- `node_ids` (array of strings, optional): Graph node ids to PIN into the data source."),
       ),
     ).not.toThrow();
+  });
+
+  // The plural rule runs twice by design — once document-wide as a safety net
+  // for whatever the sentence detector cannot see, once per sentence so the
+  // offending text can be quoted. One bad sentence must still produce ONE
+  // problem, or a real failure reads as two unrelated ones.
+  it("reports one offending sentence once, not once per layer", () => {
+    try {
+      assertPinFormInDocs(doc("Get figures with the card's `nodes` ids pinned."));
+      throw new Error("expected a throw");
+    } catch (err) {
+      const message = (err as Error).message;
+      expect(message).toMatch(/every node id on the card/);
+      expect(message.match(/every node id on the card/g)).toHaveLength(1);
+    }
   });
 
   it("reports the offending file and sentence", () => {

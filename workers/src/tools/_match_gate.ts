@@ -212,10 +212,12 @@ export function sameTokens(a: string, b: string): boolean {
  *                             citation is worse than none.
  *
  * Equality rejects both while keeping every abbreviation above (verified against
- * the real staging alias lists). It also drops `P/E ratio`→`Last Close Price /
- * Earnings`, where the alias `P/E` covers only half the query — no loss, since
- * pinning that node returned 0 cards in 5 of 5 runs; the caller now picks from
- * the alternates instead of being handed a dead handle.
+ * the real staging alias lists). It also drops `P/E ratio`→`Price to Earnings
+ * (P/E)`, whose alias `P/E` covers only half the query — no loss, since on
+ * staging that query resolves `Last Close Price / Earnings` at rank 0 and pinning
+ * THAT returned 0 cards in 5 of 5 runs, so the handle this pair used to emit was
+ * dead anyway; the caller now picks from the alternates instead of being handed a
+ * dead handle.
  *
  * A candidate's own NAME still vouches in either direction: a name that contains
  * the query is a specialisation of what was asked (`Gross Margin (%)` for

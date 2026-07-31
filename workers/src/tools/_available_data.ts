@@ -524,7 +524,8 @@ export function buildPairSummary(input: {
   }
   // The zero-card advice used to read "Tako has no card for this pair — that is
   // the definitive answer, do not rephrase and retry". Measured on staging
-  // 2026-07-31 (`npm run eval:pin`, 20 handles, matched arms, 3 repeats each),
+  // 2026-07-31 with matched arms — same tool, same query text, 20 handles, 3
+  // repeats each, the only variable being whether the resolved node is pinned —
   // that is false: 11 of 20 retrieve FEWER cards pinned than unpinned, because
   // `strict` is a hard filter and the graph holds near-duplicate metric nodes
   // where only one twin carries cards (KE-812). Dropping the pin recovers the
@@ -539,6 +540,10 @@ export function buildPairSummary(input: {
   // query WITHOUT the pin". It stays bounded — one specific retry, still no
   // rephrase-and-vary loop, which is the thrash the old wording existed to stop
   // (after a zero-card answer agents called tako_contents 56 times).
+  //
+  // The run itself was driven by hand against staging and is NOT checked in, so
+  // the per-handle table above is the record — treat it as the citation, not as a
+  // pointer to a script. Root cause (the near-duplicate metric nodes) is KE-812.
   return `Resolved "${entityQuery}" + "${metricQuery}". Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node. If that is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
 }
 
