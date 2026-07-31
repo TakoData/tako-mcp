@@ -45,10 +45,17 @@ export const searchSlimOutputShape = z.looseObject({
     .array(z.looseObject({}))
     .optional()
     .describe("The data cards — the payload. Each carries its title, description (headline value), facts, and inline rows under `content`."),
+  // The snippet contract lives HERE, not on `webResultSchema.snippet`. That
+  // schema is the wire-parse guard and the internal shape; this loose one is
+  // what `tools/list` advertises, so a per-element description there reaches
+  // no client. Element shapes stay loose on purpose (wire-drift protection),
+  // which leaves the array description as the only model-facing slot.
   web_results: z
     .array(z.looseObject({}))
     .optional()
-    .describe("Web results with their snippets."),
+    .describe(
+      "Web results, each with a `snippet`. A snippet is the passages selected against your query, not the page's opening text, so it usually carries the answer-bearing sentence. It may join passages from different parts of the page with ' … ': read it as a whole and do not quote it as one continuous sentence. `null` means that page had no relevant passage — its url is still fetchable via tako_contents.",
+    ),
   request_id: z.string(),
   usage: usageAdvertisedSchema
     .nullable()
@@ -65,7 +72,17 @@ export const searchSlimOutputShape = z.looseObject({
 export const answerSlimOutputShape = z.looseObject({
   answer: z.string().optional().describe("The synthesized, citation-backed answer."),
   cards: z.array(z.looseObject({})).optional().describe("Cards cited by the answer."),
-  web_results: z.array(z.looseObject({})).optional().describe("Web results cited by the answer."),
+  // Same reason as search: the advertised element shape is loose, so the
+  // array description is the only slot the model reads. Shorter here because
+  // on answer the snippets are citations behind synthesized prose, not the
+  // thing being triaged — but the non-contiguity warning still applies, since
+  // it is what stops a quote being fabricated across a " … " join.
+  web_results: z
+    .array(z.looseObject({}))
+    .optional()
+    .describe(
+      "Web results cited by the answer, each with a `snippet` of the passages selected against the question rather than the page's opening text. A snippet may join passages from different parts of the page with ' … ', so do not quote it as one continuous sentence. `null` means no relevant passage was found on that page.",
+    ),
   request_id: z.string(),
   usage: usageAdvertisedSchema
     .nullable()

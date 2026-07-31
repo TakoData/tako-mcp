@@ -184,10 +184,12 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
     // the query instead of the page's opening characters. The opening is
     // usually nav chrome and press-release preamble; the excerpt exists to let
     // the model choose a url to spend tako_contents on, and preamble does not
-    // support that choice. Two consequences ride along, both handled by
-    // `webResultSchema.snippet`'s description rather than by reshaping here:
-    // a page with no highlight returns `snippet: null` (it keeps its slot),
-    // and one snippet may hold several non-contiguous passages joined by " … ".
+    // support that choice. Two consequences ride along — a page with no
+    // highlight returns `snippet: null` and keeps its slot, and one snippet
+    // may hold several non-contiguous passages joined by " … ". Both are
+    // documented to the model on `searchSlimOutputShape.web_results`, which is
+    // the ADVERTISED schema; `webResultSchema.snippet` is the wire guard and
+    // is never sent to a client, so a description there would reach nobody.
     sources.web = {
       count: input.count,
       include_contents: false,

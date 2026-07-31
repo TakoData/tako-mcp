@@ -12,6 +12,7 @@
  *   - the absence of grounding-era fields (tako_selected, confidence)
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
@@ -261,6 +262,25 @@ describe("tako_answer contract guards", () => {
     });
     // The generated backend contract must accept the reshaped body.
     expect(() => SearchRequest.parse(body)).not.toThrow();
+  });
+
+  it("documents the snippet contract on the ADVERTISED output schema", () => {
+    // Same guard as tako_search: the advertised `web_results` array is loose,
+    // so its array-level description is the only place a client reads the
+    // snippet semantics. Shorter wording here than on search (these snippets
+    // are citations behind synthesized prose, not the thing being triaged),
+    // but the non-contiguity warning must survive — it is what stops a quote
+    // being fabricated across a " … " join.
+    const web = (
+      z.toJSONSchema(takoAnswer.outputSchema) as {
+        properties?: { web_results?: { description?: string } };
+      }
+    ).properties?.web_results?.description;
+
+    expect(web).toBeDefined();
+    expect(web).toMatch(/selected against/i);
+    expect(web).toContain(" … ");
+    expect(web).toMatch(/null/);
   });
 
   it("asks for Exa highlights on the web source the arbiter grounds on", () => {
