@@ -160,6 +160,8 @@ const fullOutputSchema = z.object({
       // full — enough to switch to one without re-running the tool.
       node_id: z.string().optional(),
       coverage_total: z.number().int().optional(),
+      // True when the server stopped counting — `coverage_total` is a floor.
+      coverage_capped: z.boolean().optional(),
     }),
   ),
   next_call: nextCallSchema
@@ -205,6 +207,18 @@ const tako_available_data = {
   async handler(input: Input, ctx): Promise<FullOutput> {
     // One `graph/search` probe. Extracted because the LOOKUP path runs two of
     // them (entity + metric) in parallel; the discovery path runs one.
+    //
+    // `types` and `label` are BOTH passed explicitly and neither is ever read
+    // from `input` here. `label` because it is an NER label for the ENTITY, and
+    // forwarding it to the metric probe measurably degrades that half
+    // (`label=METRIC` turned `Gross Margin (%)` into `Product Gross Margin`).
+    // `types` because this used to fall back to `input.types` when the argument
+    // was omitted, and the ONLY callers that omit it are the swap probes below,
+    // which are documented as unfiltered and are useless filtered: with
+    // `types="entity"` supplied, `q="gross margin", metric="Nvidia"` stopped
+    // being diagnosed as swapped and returned `found: true` with a runnable
+    // priced next_call for the inverted pair. An implicit read of `input` here
+    // reaches exactly the two probes that must not see it.
     const probe = async (
       q: string,
       types?: "entity" | "metric",
@@ -212,11 +226,6 @@ const tako_available_data = {
     ): Promise<GraphNode[]> => {
       const query: Record<string, string | number | boolean> = { q, limit: 10 };
       if (types !== undefined) query.types = types;
-      else if (input.types !== undefined) query.types = input.types;
-      // `label` is passed explicitly, never read from `input` here: it is an
-      // NER label for the ENTITY, and forwarding it to the metric probe
-      // measurably degrades that half — `label=METRIC` turned
-      // `Gross Margin (%)` into `Product Gross Margin`.
       if (label !== undefined) query.label = label;
 
       let raw: unknown;
@@ -336,20 +345,26 @@ const tako_available_data = {
     // call.
     const coverageProbe = async (
       node: GraphNode,
-    ): Promise<{ node: GraphNode; total: number }> => {
+    ): Promise<{ node: GraphNode; total: number; capped: boolean }> => {
       try {
         const raw = await djangoGet<unknown>(
           ctx.env, ctx.token, "/api/beta/graph/related",
           { query: { node_id: node.id, relation: coverageKindFor(node.type), limit: 1 }, timeoutMs: 15_000 },
         );
         const parsed = relatedShape.safeParse(raw);
-        return { node, total: parsed.success ? (parsed.data.relation?.total ?? 0) : 0 };
+        return {
+          node,
+          total: parsed.success ? (parsed.data.relation?.total ?? 0) : 0,
+          // Carried so the receipt line can say "250+" only where the server
+          // actually stopped counting — see OtherMatch.coverage_capped.
+          capped: parsed.success ? (parsed.data.relation?.total_capped ?? false) : false,
+        };
       } catch (err) {
         console.warn(
           `[tako] coverage probe failed tool=tako_available_data node=${node.id} (treated as zero):`,
           err,
         );
-        return { node, total: 0 };
+        return { node, total: 0, capped: false };
       }
     };
 
@@ -573,7 +588,9 @@ const tako_available_data = {
     }
 
     // ---- DISCOVERY path: browse what exists for one name -----------------
-    const results = await probe(input.q, undefined, input.label);
+    // `input.types` is applied HERE, at the one call site that wants it, rather
+    // than as a default inside `probe` (see the comment there).
+    const results = await probe(input.q, input.types, input.label);
     // 2) No node → fast exit, no related calls.
     if (results.length === 0) {
       return {
@@ -676,13 +693,23 @@ const tako_available_data = {
       best.total > rank0Coverage
     ) {
       const promotedDrill = await drillMatches([best.node]);
+      // UNAVAILABLE IS NOT ZERO, in this direction too. The `rank0Known` guard
+      // above refuses to PROMOTE on evidence we do not have; this refuses to
+      // DEMOTE on it. If the promoted node's own drill failed there is no list
+      // to render in rank 0's place, and displacing a rank 0 that DID load its
+      // coverage would turn a thin-but-real `found: true` into `found: false`
+      // plus a "couldn't load coverage, retry" line — strictly worse than the
+      // ordering the promotion set out to improve.
+      const promotionLoaded = promotedDrill.some(hasLiveCoverage);
       if (rank0Coverage === 0) {
         // Rank 0 has no list to render, so keeping it costs one summary line
         // and usefully tells the caller the name they typed does resolve
         // ("**SpaceX** — resolved, but Tako holds no metrics for it yet").
+        // Safe even if the promoted drill came back unavailable: rank 0 had
+        // nothing either way, and its "retry" line is the honest report.
         matches = [...firstDrill, ...promotedDrill];
         rendered = [...rendered, best.node];
-      } else {
+      } else if (promotionLoaded) {
         // Rank 0 has a thin list of its own. Rendering both would spend a
         // second ~8.3k coverage list on the loser, which is the cost
         // RENDER_FULL_N exists to avoid — so it drops to a receipt line,
@@ -695,9 +722,13 @@ const tako_available_data = {
             type: m.type,
             node_id: m.node_id,
             coverage_total: m.coverage.total,
+            coverage_capped: m.coverage.capped,
           })),
         );
       }
+      // else: the promoted drill failed and rank 0 has a real list — no
+      // promotion. The probe receipt still names the better-covered candidate
+      // with its node id, so the caller can switch without re-running.
     }
 
     const renderedIds = new Set(rendered.map((n) => n.id));
@@ -714,6 +745,7 @@ const tako_available_data = {
           type: pr.node.type,
           node_id: pr.node.id,
           coverage_total: pr.total,
+          coverage_capped: pr.capped,
         })),
       // Never inspected: name only.
       ...gate.kept

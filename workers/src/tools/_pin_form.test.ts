@@ -20,8 +20,9 @@
  * advises pinning is covered the day it is added.
  */
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
-import { PINNED_FROM_CARD, PINNED_RETRY } from "./_search_results.js";
+import { PINNED_FROM_CARD, PINNED_RETRY, takoCardSchema } from "./_search_results.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 
 /**
@@ -62,6 +63,38 @@ describe("advertised pin form", () => {
         /strict/,
       );
     }
+  });
+
+  // TOOL_REGISTRY carries tool DESCRIPTIONS only, so the loops above cannot see
+  // pin advice that lives in a schema field's `.describe()` — and that is
+  // exactly where a stale copy survived this sweep: `values_hint`'s description
+  // still read "via tako_answer with node_ids pinned" while `valuesHint()`, the
+  // function producing the value it documents, had already been corrected. The
+  // model reads both. Walk the published field descriptions too.
+  it("no published field description advises pinning without strict", () => {
+    const shape = (takoCardSchema as unknown as { shape: Record<string, unknown> }).shape;
+    const described: Array<[string, string]> = [];
+    for (const [field, schema] of Object.entries(shape)) {
+      const text = z.toJSONSchema(schema as z.ZodType, { io: "output" }) as {
+        description?: string;
+      };
+      if (typeof text.description === "string") described.push([field, text.description]);
+    }
+    expect(described.length).toBeGreaterThan(0);
+    for (const [field, text] of described) {
+      expect(text, `takoCardSchema.${field}`).not.toMatch(PLURAL_UNQUALIFIED);
+      if (!ADVISES_PINNING.test(text)) continue;
+      expect(text, `takoCardSchema.${field} advises pinning without strict`).toMatch(/strict/);
+    }
+  });
+
+  it("covers the field descriptions that actually carry pin advice today", () => {
+    // Same vacuous-pass guard as the registry loop below.
+    const shape = (takoCardSchema as unknown as { shape: Record<string, unknown> }).shape;
+    const hint = z.toJSONSchema(shape.values_hint as z.ZodType, { io: "output" }) as {
+      description?: string;
+    };
+    expect(hint.description ?? "").toMatch(ADVISES_PINNING);
   });
 
   it("covers the tools that actually carry pin advice today", () => {

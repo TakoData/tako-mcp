@@ -249,6 +249,35 @@ describe("tako_available_data", () => {
     expect(out.other_matches.find((o) => o.node_id === "delta-corp")?.coverage_total).toBe(250);
   });
 
+  // The mirror of the `rank0Known` guard below: unavailable is not zero in the
+  // DEMOTE direction either. If the promoted node's own drill fails there is
+  // nothing to render in rank 0's place, so displacing a rank 0 that DID load a
+  // thin list would turn `found: true` into `found: false` plus a
+  // "couldn't load coverage, retry" line — worse than the ordering it set out
+  // to improve.
+  it("does NOT demote a loaded rank 0 when the promoted node's drill fails", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        results: [
+          searchHit("us-savings", "US Savings Inflation Securities", "entity", "PRODUCT"),
+          { ...searchHit("united-states", "United States", "entity", "GPE"), aliases: ["US", "USA"] },
+        ],
+      }),
+      // Rank 0 loads a thin (shell-sized) list, so promotion is eligible.
+      jsonResponse(200, drill("us-savings", "US Savings Inflation Securities", "metrics", ["Average Interest Rate"], 1)),
+      jsonResponse(200, drill("united-states", "United States", "metrics", ["CPI"], 250, true)),
+      // Round 2: the promoted candidate's full drill fails.
+      jsonResponse(503, { detail: "graph store down" }),
+    ]);
+    const out = await takoAvailableData.handler({ q: "US inflation" }, CTX);
+    expect(out.matches.map((m) => m.node_id)).toEqual(["us-savings"]);
+    expect(out.matches[0]?.unavailable).toBeUndefined();
+    expect(out.found).toBe(true);
+    // The better-covered candidate is still named with its id, so switching to
+    // it does not require re-running the tool.
+    expect(out.other_matches.find((o) => o.node_id === "united-states")?.coverage_total).toBe(250);
+  });
+
   it("does NOT promote when rank 0's coverage lookup failed (unavailable ≠ zero)", async () => {
     // Observed live: a transient graph/related failure on `Delta Air Lines,
     // Inc.` made rank 0 look coverage-less and promoted `Delta Corp Limited`,
@@ -955,6 +984,28 @@ describe("tako_available_data — swapped argument detection", () => {
     // Names the corrected call rather than silently reinterpreting intent.
     expect(out.summary).toContain('q="Nvidia"');
     expect(out.summary).toContain('metric="gross margin"');
+  });
+
+  // `probe` used to fall back to `input.types` whenever its own `types`
+  // argument was omitted, and the ONLY callers that omit it are the two
+  // detection probes — which are useless filtered, because `types=entity`
+  // returns an entity for "gross margin" no matter how entity-unlike it is.
+  // So passing `types` silently disabled the detector: measured on this exact
+  // fixture, the swap stopped being diagnosed and the call returned
+  // found:true with a runnable PRICED next_call for the inverted pair.
+  it("still diagnoses a swap when the caller also passed `types`", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::gross::1", "Gross")] }),
+      jsonResponse(200, { results: [searchHit("mt::nv::1", "Nvidia Corporation Revenue Percentage", "metric", "METRIC")] }),
+      jsonResponse(200, { results: [searchHit("mt::gm::1", "Gross Margin (%)", "metric", "METRIC")] }),
+      jsonResponse(200, { results: [searchHit("ent::nv::1", "NVIDIA Corporation")] }),
+    ]);
+    const out = await takoAvailableData.handler(
+      { q: "gross margin", metric: "Nvidia", types: "entity" }, CTX,
+    );
+    expect(out.summary).toContain("look swapped");
+    expect(out.found).toBe(false);
+    expect(out.next_call).toBeNull();
   });
 
   it("does NOT fire when only the type looks inverted but the match is weak", async () => {

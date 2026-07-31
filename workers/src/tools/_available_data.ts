@@ -169,8 +169,15 @@ export interface OtherMatch {
   type: string;
   /** Present for candidates we coverage-probed but did not render in full. */
   node_id?: string;
-  /** Coverage count from the `limit=1` probe; `capped` totals are a floor. */
+  /** Coverage count from the `limit=1` probe; a floor when `capped`. */
   coverage_total?: number;
+  /**
+   * The server stopped counting at its own cap, so `coverage_total` is a floor
+   * ("250+") rather than an exact count. Carried from the probe because without
+   * it the receipt line printed "+" on EVERY non-zero total, which reads as
+   * "at least 63 entities" for a node the server counted exactly.
+   */
+  coverage_capped?: boolean;
 }
 
 const emptyGroup = (kind: CoverageKind): CoverageGroup => ({
@@ -507,7 +514,10 @@ export function buildPairSummary(input: {
       : `No graph node matches "${entityQuery}". Tako may still have relevant public/web data — try tako_search directly, or rephrase the name.`;
   }
   if (pair.metric === null) {
-    return `Resolved the entity but no metric matching "${metricQuery}". The metrics Tako actually holds for ${pair.entity.name} are listed below — pick one and re-run with it.`;
+    // `oneLine` on the resolved name for the same reason as the queries above:
+    // it is upstream content in a single-line slot, and a newline inside it
+    // renders a line indistinguishable from this tool's own match lines.
+    return `Resolved the entity but no metric matching "${metricQuery}". The metrics Tako actually holds for ${oneLine(pair.entity.name)} are listed below — pick one and re-run with it.`;
   }
   if (!metricConfident) {
     return `Resolved the entity, but NO metric confidently matches "${metricQuery}" — the closest names Tako holds are shown below and are probably NOT what you asked for. Pick one deliberately (pin its node_id with strict:true), or conclude Tako does not track this measure.`;
@@ -585,7 +595,12 @@ export function buildSummary(input: {
       const kind = coverageKindFor(o.type);
       const noun =
         kind === "metrics" ? plural(count, "metric", "metrics") : plural(count, "entity", "entities");
-      return `- ${oneLine(o.name)} — ${count}${count === 0 ? "" : "+"} ${noun} (\`${oneLine(o.node_id as string)}\`)`;
+      // "+" means "the server stopped counting, this is a floor" — the same
+      // meaning it carries in `countStr` for a rendered match. It used to print
+      // on every non-zero total, which claimed a floor for counts the server
+      // reported exactly (`Inflation Rate — 63+ entities` for exactly 63).
+      const floor = o.coverage_capped === true ? "+" : "";
+      return `- ${oneLine(o.name)} — ${count}${floor} ${noun} (\`${oneLine(o.node_id as string)}\`)`;
     });
     blocks.push(
       "",
@@ -594,7 +609,10 @@ export function buildSummary(input: {
   }
   const unprobed = otherMatches.filter((o) => o.node_id === undefined);
   if (unprobed.length > 0) {
-    const names = unprobed.slice(0, OTHER_MATCH_PREVIEW).map((o) => o.name);
+    // Flattened: every other slot that echoes an upstream name does the same,
+    // and this one is a bare comma-joined list where a newline is free to start
+    // a line that mimics the match lines above it.
+    const names = unprobed.slice(0, OTHER_MATCH_PREVIEW).map((o) => oneLine(o.name));
     const rest = unprobed.length - names.length;
     const tail = rest > 0 ? `, and ${rest} more` : "";
     blocks.push("", `Also matched: ${names.join(", ")}${tail}.`);

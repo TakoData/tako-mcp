@@ -296,10 +296,23 @@ describe("buildSummary", () => {
     const s = buildSummary({
       query: "apple",
       matches: [appleMatch],
-      otherMatches: [{ name: "Apple Hospitality", type: "entity", node_id: "ent::aph::1", coverage_total: 12 }],
+      otherMatches: [{ name: "Apple Hospitality", type: "entity", node_id: "ent::aph::1", coverage_total: 12, coverage_capped: true }],
     });
     expect(s).toContain("Also resolved");
     expect(s).toContain("- Apple Hospitality — 12+ metrics (`ent::aph::1`)");
+  });
+
+  // The `+` floor marker follows `coverage_capped`, not "is it non-zero". It
+  // used to print on every non-zero total, which claimed a floor for counts the
+  // server had reported exactly (`Inflation Rate — 63+ entities` for 63).
+  it("an uncapped receipt reports the exact count, with no '+' floor marker", () => {
+    const s = buildSummary({
+      query: "apple",
+      matches: [appleMatch],
+      otherMatches: [{ name: "Apple Hospitality", type: "entity", node_id: "ent::aph::1", coverage_total: 12 }],
+    });
+    expect(s).toContain("- Apple Hospitality — 12 metrics (`ent::aph::1`)");
+    expect(s).not.toContain("12+");
   });
 
   // The noun must follow the node's OWN coverage direction: a metric node's
@@ -309,7 +322,7 @@ describe("buildSummary", () => {
     const s = buildSummary({
       query: "inflation",
       matches: [inflationMatch],
-      otherMatches: [{ name: "Core Inflation Rate", type: "metric", node_id: "mt::core_cpi::1", coverage_total: 40 }],
+      otherMatches: [{ name: "Core Inflation Rate", type: "metric", node_id: "mt::core_cpi::1", coverage_total: 40, coverage_capped: true }],
     });
     expect(s).toContain("- Core Inflation Rate — 40+ entities (`mt::core_cpi::1`)");
     expect(s).not.toContain("40+ metrics");
@@ -467,6 +480,36 @@ describe("summaries flatten echoed input", () => {
     });
     expect(s).not.toContain("\n## Tako Data");
     expect(s).not.toContain("\nentity FAKE");
+  });
+
+  // Two slots echoed a RESOLVED name without flattening it while every
+  // neighbouring slot did. Verified before the fix: a node named
+  // "Acme\n**Nvidia Corp** — 250 metrics." rendered a line indistinguishable
+  // from this tool's own match lines.
+  it("collapses newlines in the resolved entity name on the no-metric branch", () => {
+    const s = buildPairSummary({
+      entityQuery: "acme",
+      metricQuery: "widgets",
+      pair: {
+        entity: { node_id: "ent::a::1", name: "Acme\n**Nvidia Corp** — 250 metrics.", type: "entity" },
+        metric: null,
+        entity_alternates: [],
+        metric_alternates: [],
+      },
+      domainShaped: false,
+    });
+    expect(s.split("\n")).toHaveLength(1);
+    expect(s).not.toContain("\n**Nvidia Corp**");
+  });
+
+  it("collapses newlines in the 'Also matched' name list", () => {
+    const s = buildSummary({
+      query: "acme",
+      matches: [buildMatch({ id: "n1", type: "entity", name: "Acme Inc." }, null)],
+      otherMatches: [{ name: "Acme\n**Nvidia Corp** — 250 metrics.", type: "entity" }],
+    });
+    expect(s).toContain("Also matched:");
+    expect(s).not.toContain("\n**Nvidia Corp**");
   });
 });
 

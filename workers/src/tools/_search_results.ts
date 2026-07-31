@@ -50,6 +50,39 @@ export const resultContentSchema = z
   .loose();
 export type ResultContent = z.infer<typeof resultContentSchema>;
 
+/**
+ * How to spend the ONE pinned retry. Measured on prod (2026-07-29): a pin at
+ * the default `strict:false` did not steer retrieval at all — a deliberately
+ * WRONG node changed nothing, and pinning a metric node without strict
+ * returned a DIFFERENT metric's card. The same metric node WITH `strict:true`
+ * returned exactly that card. So "pinning its node_ids" alone described the
+ * variant that does nothing; this names the one that works.
+ *
+ * Exported because `tako_answer`'s zero-card guidance needs the identical
+ * recipe: two tools whose recovery advice drifts apart teach the model two
+ * different pin forms, and only one of them works. One string, one place.
+ */
+export const PINNED_RETRY =
+  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all";
+
+/**
+ * The same recipe for the card-in-hand case. {@link PINNED_RETRY} sources the
+ * id from `tako_available_data`'s `coverage.items[]`, which is the wrong place
+ * to point a caller who already holds a search card — its ids are on
+ * `cards[].nodes[]`. Two constants rather than one because the SOURCE of the id
+ * genuinely differs; the pin FORM (metric node alone, `strict:true`) must not.
+ * Both exist so `tako_search`'s description stops restating the form by hand:
+ * it was restated in two places and both drifted back to the broken variant
+ * (every node id on the card, no `strict`) — the one measured to misfire.
+ *
+ * DECLARED HERE, above `takoCardSchema`, deliberately: the `values_hint` field
+ * description interpolates it, and that schema is built at module evaluation
+ * time. Declared after the schema it would be in its temporal dead zone, and
+ * importing this module would throw ReferenceError on load.
+ */
+export const PINNED_FROM_CARD =
+  "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card, or omitting strict, does not steer retrieval";
+
 // Backend TakoCard (api/ga/v3/search/types.py::TakoCard). Loose so a richer
 // backend card doesn't break parsing. Shared by tako_search + tako_answer.
 export const takoCardSchema = z
@@ -89,7 +122,7 @@ export const takoCardSchema = z
       .string()
       .optional()
       .describe(
-        "Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — headline in `description` when the card carries one, specific figures via tako_answer with node_ids pinned.",
+        `Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — headline in \`description\` when the card carries one, specific figures via tako_answer, where you ${PINNED_FROM_CARD}.`,
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
@@ -615,34 +648,6 @@ type SearchedSources = readonly string[];
 export const searchedData = (s: SearchedSources): boolean =>
   s.includes("data") || s.includes("tako");
 const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
-
-/**
- * How to spend the ONE pinned retry. Measured on prod (2026-07-29): a pin at
- * the default `strict:false` did not steer retrieval at all — a deliberately
- * WRONG node changed nothing, and pinning a metric node without strict
- * returned a DIFFERENT metric's card. The same metric node WITH `strict:true`
- * returned exactly that card. So "pinning its node_ids" alone described the
- * variant that does nothing; this names the one that works.
- *
- * Exported because `tako_answer`'s zero-card guidance needs the identical
- * recipe: two tools whose recovery advice drifts apart teach the model two
- * different pin forms, and only one of them works. One string, one place.
- */
-export const PINNED_RETRY =
-  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all";
-
-/**
- * The same recipe for the card-in-hand case. {@link PINNED_RETRY} sources the
- * id from `tako_available_data`'s `coverage.items[]`, which is the wrong place
- * to point a caller who already holds a search card — its ids are on
- * `cards[].nodes[]`. Two constants rather than one because the SOURCE of the id
- * genuinely differs; the pin FORM (metric node alone, `strict:true`) must not.
- * Both exist so `tako_search`'s description stops restating the form by hand:
- * it was restated in two places and both drifted back to the broken variant
- * (every node id on the card, no `strict`) — the one measured to misfire.
- */
-export const PINNED_FROM_CARD =
-  "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card, or omitting strict, does not steer retrieval";
 
 /**
  * Recovery protocol for a zero-CARD search. Rewording the same query almost
