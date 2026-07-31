@@ -473,18 +473,45 @@ const tako_available_data = {
             ]
           : metricHits;
       const metrics = orderedHits.map(toRef);
-      // Confidence is judged over the candidates we actually SHOW (the primary
-      // plus its alternates), not the whole result list. Judging the full list
-      // let an unrelated deep-rank candidate vouch for a primary nobody
-      // vetted: `metric="index level"` displayed `Employment Index` and still
-      // reported found:true because something further down happened to token-
-      // match. Judging rank 0 alone is too strict in the other direction —
-      // abbreviations and plurals never token-match their expansions
-      // (`capex` → `Capital Expenditure`, `revenue` → `Revenues`), which is
-      // why the ORDER stays the backend's.
-      const metricConfident = orderedHits
-        .slice(0, 1 + ALTERNATES_SHOWN)
-        .some((n) => confidentMatch(metricQuery, n));
+      // THE NODE WE PIN IS THE NODE THAT MUST PASS. Confidence is judged on
+      // rank 0 — the candidate `pair.metric` takes and `next_call` pins — and
+      // nothing else.
+      //
+      // This used to be `.some()` over the shown window (primary + alternates),
+      // which meant a confident SIBLING licensed a runnable, priced handle for a
+      // rank 0 that had failed the test. Measured on staging (2026-07-31),
+      // `q="Pfizer", metric="R&D expense"`:
+      //
+      //   rank 0  confident=false  Operating costs and expenses   <- pinned
+      //   rank 1  confident=false  R&D Expenses (Normalized)
+      //   rank 2  confident=true   Research & development expense (R&D) - Americas
+      //
+      // The tool emitted "run the next_call verbatim […] 0 cards means Tako has
+      // no card for this pair, do not rephrase and retry" pinning OPERATING
+      // COSTS for an R&D question, so an agent that obeys either reports
+      // operating costs as R&D spend or concludes the data is absent. A live
+      // agent run escaped only by ignoring the handle.
+      //
+      // The window is NOT replaced by promoting whichever candidate passed:
+      // `confidentMatch` is token containment, so it decides confidence and
+      // never order (the same rule the entity half follows). Promotion was
+      // implemented and measured to pick `CapEx to Revenue` over
+      // `Capital Expenditure` and `Avnet Revenue Total Revenue` over
+      // `Revenues` — a derived ratio and a junk node, both "confident" by
+      // containment while the correct metric fails on morphology. Backend order
+      // stays (~86% top-1, ~100% top-3 over 44 cases).
+      //
+      // So when rank 0 is unvetted the handle is WITHHELD rather than
+      // redirected: the summary switches to the "no metric confidently matches,
+      // pick one deliberately" branch with all three candidates and their node
+      // ids still visible, which is the recovery the live agent performed by
+      // itself. Costs a handle on some pairs where a good candidate is on
+      // screen; a priced call pinned to a node nobody vetted costs more.
+      //
+      // Retire in favour of the real fix once `graph/search` carries a
+      // relevance score (KE-805): score the candidates, pin the best. TAKO-3754.
+      const metricConfident =
+        orderedHits[0] !== undefined && confidentMatch(metricQuery, orderedHits[0]);
       const pair: PairResolution = {
         entity: entities[0] ?? null,
         metric: metrics[0] ?? null,

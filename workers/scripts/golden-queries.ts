@@ -85,6 +85,20 @@ export const GOLDEN_CASES: GoldenCase[] = [
     expect: { metric: "CPI Inflation Rate (Seasonally Adjusted)", found: true, nextCall: true },
   },
 
+  {
+    id: "lookup-unvetted-rank0-withholds",
+    why: "TAKO-3754: rank 0 `Operating costs and expenses` fails confidentMatch while rank 2 passes, and the `.some()` verdict licensed a run-verbatim handle pinning rank 0 for an R&D question",
+    args: { q: "Pfizer", metric: "R&D expense" },
+    expect: {
+      entity: "Pfizer",
+      found: false,
+      nextCall: false,
+      // The recovery must stay on screen: the caller picks deliberately from
+      // the alternates, which is what a live agent run did unaided.
+      present: ["R&D Expenses (Normalized)", "Pick one deliberately"],
+    },
+  },
+
   // ---- the relevance gate: wrong entities must not be reported ----------
   {
     id: "gate-poisoned-alias",
