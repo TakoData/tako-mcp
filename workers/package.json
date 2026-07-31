@@ -21,9 +21,13 @@
     "schemas:check": "tsx scripts/gen-schemas.ts --check",
     "smoke": "tsx scripts/smoke.ts",
     "golden": "tsx scripts/golden.ts",
-    "panel": "tsx scripts/panel.ts"
+    "panel": "tsx scripts/panel.ts",
+    "eval:web-snippet": "tsx scripts/evals/web-snippet/run.ts",
+    "eval:web-snippet:judge": "tsx scripts/evals/web-snippet/judge.ts",
+    "eval:web-snippet:report": "tsx scripts/evals/web-snippet/report.ts"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@apidevtools/swagger-parser": "^10.1.1",
     "@cloudflare/vitest-pool-workers": "^0.9.11",
     "@cloudflare/workers-types": "^4.20250617.0",
