@@ -32,7 +32,7 @@ import { TOOL_REGISTRY } from "./_registry.js";
 // form survived in two surfaces this file cannot reach.
 
 describe("advertised pin form", () => {
-  // A pinned zero is NOT proof of absence. Measured (`npm run eval:pin`, 20
+  // A pinned zero is NOT proof of absence. Measured on staging 2026-07-31 (20
   // handles, matched arms): 11 of 20 retrieve fewer cards pinned than unpinned,
   // because `strict` is a hard filter over a graph holding near-duplicate metric
   // nodes where only one twin carries cards. `tako_available_data` says so in

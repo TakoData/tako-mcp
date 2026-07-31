@@ -160,22 +160,29 @@ export function assertPinFormInDocs(
 ): void {
   const problems: string[] = [];
   for (const { file, text, requireStrict } of docs) {
-    // Document-wide, NOT gated on `pinAdvisingSentences`: mirrors how
-    // `_pin_form.test.ts` applies this rule to a whole description. Gating it
-    // was a hole — the broken form's own phrasing ("the card's `nodes` ids")
-    // has to be recognised by the detector before the rule can fire, and one
-    // stem away it was not.
-    if (PLURAL_UNQUALIFIED.test(text)) {
+    const sentenceProblems: string[] = [];
+    let pluralNamed = false;
+    for (const sentence of pinAdvisingSentences(text)) {
+      const problem = pinFormProblem(sentence, { requireStrict });
+      if (problem === null) continue;
+      if (PLURAL_UNQUALIFIED.test(sentence)) pluralNamed = true;
+      sentenceProblems.push(`${file}: ${problem}\n      "${sentence.slice(0, 160)}"`);
+    }
+    // Document-wide safety net for the plural rule, NOT gated on
+    // `pinAdvisingSentences`: mirrors how `_pin_form.test.ts` applies this rule
+    // to a whole description, and it is what actually caught the form that
+    // shipped in llms-full.txt — `ADVISES_PINNING` could not span the backtick
+    // in "`nodes` ids", so the sentence loop never saw the offending sentence.
+    // Both layers stay: the detector is a regex over prose and will have another
+    // blind spot eventually. Reported only when the sentence loop did not
+    // already name it, so one offending sentence yields one problem, with its
+    // text quoted where we have it.
+    if (!pluralNamed && PLURAL_UNQUALIFIED.test(text)) {
       problems.push(
         `${file}: advises pinning every node id on the card (the measured no-op); pin the METRIC node id ALONE`,
       );
     }
-    for (const sentence of pinAdvisingSentences(text)) {
-      const problem = pinFormProblem(sentence, { requireStrict });
-      if (problem !== null) {
-        problems.push(`${file}: ${problem}\n      "${sentence.slice(0, 160)}"`);
-      }
-    }
+    problems.push(...sentenceProblems);
   }
   if (problems.length > 0) {
     throw new Error(
