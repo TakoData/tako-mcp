@@ -227,10 +227,28 @@ describe("confidentMatch", () => {
     ).toBe(false);
   });
 
-  it("still accepts a NAME match in either direction", () => {
-    // A name containing the query is a specialisation of what was asked.
+  it("accepts a NAME that CONTAINS the query (a specialisation of what was asked)", () => {
     expect(confidentMatch("gross margin", { name: "Gross Margin (%)" })).toBe(true);
     expect(confidentMatch("revenue", { name: "Avnet Revenue Total Revenue" })).toBe(true);
+  });
+
+  // The name path accepted BOTH directions, so the alias fix could be sidestepped
+  // one line higher up: the two flagship rejections turned on the node being
+  // spelled plural, not on the rule. `Revenues` is not a subset of
+  // {aws, revenue} and was rejected; a node named `Revenue` IS, and vouched.
+  it("rejects a NAME narrower than the query, same rule as the alias path", () => {
+    expect(confidentMatch("AWS revenue", { name: "Revenues" })).toBe(false);
+    expect(confidentMatch("AWS revenue", { name: "Revenue" })).toBe(false);
+    expect(confidentMatch("total assets", { name: "Total Odds" })).toBe(false);
+    expect(confidentMatch("total assets", { name: "Assets" })).toBe(false);
+  });
+
+  // The entity half goes through the same function via the swap probe, and the
+  // surviving direction is what keeps it working: a full legal name contains the
+  // short name the caller typed.
+  it("keeps the entity swap probe working through the surviving direction", () => {
+    expect(confidentMatch("Apple", { name: "Apple Inc." })).toBe(true);
+    expect(confidentMatch("United States", { name: "United States of America" })).toBe(true);
   });
 
   it("rejects when nothing matches on any surface", () => {

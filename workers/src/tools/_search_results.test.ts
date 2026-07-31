@@ -388,6 +388,24 @@ describe("buildSearchOutput — zero-card guidance", () => {
     expect(g).not.toMatch(/do NOT re-search with rephrasings/i);
   });
 
+  // The mirror of buildDataGapGuidance's `searchedWebToo` fix. A web-only search
+  // has zero cards by construction, so the graph verdict below would be built
+  // from evidence that does not exist.
+  it("renders no graph verdict for a web-only search that DID return web results", () => {
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"]);
+    const g = out.guidance ?? "";
+    expect(g).toMatch(/WEB source only/);
+    expect(g).not.toMatch(/DATA GRAPH only/);
+    expect(g).not.toMatch(/already shown the graph does not hold it/);
+    // And none of the data-axis recovery, which does not apply to a deliberate
+    // web-only narrow.
+    expect(g).not.toMatch(/node_id/);
+    expect(g).not.toMatch(/strict/);
+    // It still names the way to GET a coverage answer, which is the cheap re-ask.
+    expect(g).toMatch(/sources:\["data","web"\]/);
+    expect(g).toMatch(/tako_available_data/);
+  });
+
   it("tailors the both-empty protocol for a data-only search (web fallback allowed on the single retry)", () => {
     const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"]);
     expect(out.guidance).toMatch(/tako_available_data/);
