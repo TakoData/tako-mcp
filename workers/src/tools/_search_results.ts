@@ -61,9 +61,25 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * Exported because `tako_answer`'s zero-card guidance needs the identical
  * recipe: two tools whose recovery advice drifts apart teach the model two
  * different pin forms, and only one of them works. One string, one place.
+ *
+ * THE UNPIN ESCAPE HATCH, and why advice about how to pin ends with advice to
+ * stop pinning. A later matched-arm run (`npm run eval:pin`, 20 handles, 3
+ * repeats, the only variable being whether the resolved node is pinned) found
+ * 11 of 20 retrieve FEWER cards pinned than unpinned — `strict` is a hard
+ * filter and the graph holds near-duplicate metric nodes where only one twin
+ * carries cards (KE-812). "Carnival Corporation passenger cruise days" went
+ * pinned [0,0,0] / unpinned [3,3,3], and the recovered cards were verified BY
+ * TITLE to be the requested metric rather than a lookalike.
+ *
+ * The two measurements do not disagree — the 2026-07-29 run asked how to pin
+ * so the pin bites, this one asks whether biting helps — but the ADVICE built
+ * on the first was wrong on its own: it made a pinned zero read as proof of
+ * absence. Both halves have to ride together, or `tako_available_data` tells
+ * the model to unpin while these two tell it to pin, which is the same drift
+ * this constant exists to prevent, one level up.
  */
 export const PINNED_RETRY =
-  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all";
+  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all. If that pinned call returns 0 cards, run it once more with `node_ids` removed before concluding the data is absent: `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards, so the pin itself is sometimes what empties the result";
 
 /**
  * The same recipe for the card-in-hand case. {@link PINNED_RETRY} sources the
