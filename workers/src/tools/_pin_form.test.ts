@@ -32,6 +32,19 @@ import { TOOL_REGISTRY } from "./_registry.js";
 // form survived in two surfaces this file cannot reach.
 
 describe("advertised pin form", () => {
+  // A pinned zero is NOT proof of absence. Measured (`npm run eval:pin`, 20
+  // handles, matched arms): 11 of 20 retrieve fewer cards pinned than unpinned,
+  // because `strict` is a hard filter over a graph holding near-duplicate metric
+  // nodes where only one twin carries cards. `tako_available_data` says so in
+  // its summary and description; if PINNED_RETRY does not, then search and
+  // answer tell the model to pin while available_data tells it to unpin.
+  it("PINNED_RETRY carries the unpin escape hatch, not just the pin form", () => {
+    expect(PINNED_RETRY).toMatch(/`node_ids` removed|without `?node_ids`?/i);
+    expect(PINNED_RETRY).toMatch(/hard filter/i);
+    // The claim that had to go: a pinned zero being conclusive on its own.
+    expect(PINNED_RETRY).not.toMatch(/definitive/i);
+  });
+
   it("the two canonical strings both name the metric node alone, with strict", () => {
     for (const [label, s] of [
       ["PINNED_RETRY", PINNED_RETRY],
