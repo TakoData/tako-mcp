@@ -31,6 +31,7 @@ import {
   coverageKindFor,
   RENDER_FULL_N,
   SELECT_TOP_N,
+  SHELL_COVERAGE_MAX,
   hasLiveCoverage,
   isDomainShaped,
   oneLine,
@@ -38,6 +39,7 @@ import {
   MAX_COVERAGE_PAGES,
   PAGE_LIMIT,
   toRef,
+  resolvedOnlyMatch,
   unavailableMatch,
 } from "./_available_data.js";
 import type { CoverageMatch, OtherMatch, PairResolution } from "./_available_data.js";
@@ -144,7 +146,7 @@ const coverageMatchSchema = z.object({
 // don't pay for the full name lists twice.
 const fullOutputSchema = z.object({
   found: z.boolean().describe(
-    "True when at least one match has live data coverage — not mere node resolution. A resolved node with no coverage (or whose coverage lookup failed) yields false.",
+    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): both halves RESOLVED to confident graph nodes, and no coverage check was performed — a chart may still not exist behind them. Either way, running `next_call` is what confirms retrievable data exists; 0 cards from it is the definitive answer.",
   ),
   query: z.string(),
   summary: z.string(),
@@ -563,6 +565,37 @@ const tako_available_data = {
     // `q="Carnival Corporation"` reported coverage for Cuscal Limited. Fails
     // open (every candidate kept) when nothing is plausible.
     const gate = gateCandidates(input.q, results);
+
+    // Nothing plausibly matched. Resolve, disclaim, and spend nothing further:
+    // the summary is about to say these are "almost certainly NOT what you
+    // asked for" and the renderer prints only that summary, so the paginated
+    // drill plus three probes below would be paid for output no one reads. It
+    // also fixes a channel disagreement — the drill's coverage totals reached
+    // `structuredContent` while the prose disclaimed them, so a structured
+    // reader saw coverage on a `found: false` response.
+    if (!gate.gated) {
+      const resolvedOnly = gate.kept.slice(0, SELECT_TOP_N).map(resolvedOnlyMatch);
+      const unlisted = gate.kept
+        .slice(SELECT_TOP_N)
+        .map((n) => ({ name: n.name, type: n.type }));
+      return {
+        found: false,
+        confident: false,
+        query: input.q,
+        summary: buildSummary({
+          confident: false,
+          query: input.q,
+          matches: resolvedOnly,
+          otherMatches: unlisted,
+        }),
+        matches: resolvedOnly,
+        other_matches: unlisted,
+        // No vetted target, so no runnable handle — a priced call must not be
+        // spent on a resolution we just disclaimed.
+        next_call: null,
+      };
+    }
+
     const candidates = gate.kept.slice(0, SELECT_TOP_N);
 
     // Inspect wide, render narrow. Round 1 runs the winner-candidate's FULL
@@ -577,18 +610,75 @@ const tako_available_data = {
 
     let matches = firstDrill;
     let rendered = candidates.slice(0, RENDER_FULL_N);
-    if (!firstDrill.some(hasLiveCoverage)) {
-      // Rank 0 was a zero-coverage name variant. Promote the first PROBED
-      // candidate that actually has coverage and drill that one instead.
-      const promoted = probes.find((pr) => pr.total > 0);
-      if (promoted !== undefined) {
-        matches = [...firstDrill, ...(await drillMatches([promoted.node]))];
-        rendered = [...rendered, promoted.node];
+    // Candidates displaced from the full render, kept as receipt lines.
+    const demoted: OtherMatch[] = [];
+
+    // COVERAGE OUTRANKS THE GATE'S NAME PREFERENCE.
+    //
+    // The gate ranks own-name matches above alias-only ones to survive poisoned
+    // aliases (KE-804), but a name match is not evidence that the node is the
+    // one the caller meant — see SHELL_COVERAGE_MAX for the two measured
+    // regressions this repairs. Coverage is the strongest rank-independent
+    // signal we have until `graph/search` returns a score (KE-805), so the
+    // best-covered probe takes over whenever rank 0 is a shell.
+    //
+    // argmax, not first-non-zero: `q="US inflation"` probes
+    // [United States 250, Inflation Rate 63, CPI Inflation Rate SA 1] and
+    // first-non-zero would depend on which of those the backend happened to
+    // rank first.
+    // UNAVAILABLE IS NOT ZERO. A drill that failed tells us nothing about the
+    // node's coverage, so it is no grounds to hand the caller a different
+    // entity. Observed live: `q="Delta"` hit a transient graph/related failure
+    // on `Delta Air Lines, Inc.` and promoted `Delta Corp Limited` — an
+    // unrelated company — into the answer, on evidence that did not exist. Left
+    // alone, rank 0 renders its own "couldn't load coverage, retry" line, which
+    // is both honest and actionable.
+    const rank0Known = firstDrill.every((m) => m.unavailable !== true);
+    const rank0Coverage = Math.max(
+      0,
+      ...firstDrill.filter(hasLiveCoverage).map((m) => m.coverage.total),
+    );
+    const best = probes.reduce<(typeof probes)[number] | undefined>(
+      (b, pr) => (pr.total > (b?.total ?? 0) ? pr : b),
+      undefined,
+    );
+    if (
+      rank0Known &&
+      best !== undefined &&
+      rank0Coverage <= SHELL_COVERAGE_MAX &&
+      best.total > rank0Coverage
+    ) {
+      const promotedDrill = await drillMatches([best.node]);
+      if (rank0Coverage === 0) {
+        // Rank 0 has no list to render, so keeping it costs one summary line
+        // and usefully tells the caller the name they typed does resolve
+        // ("**SpaceX** — resolved, but Tako holds no metrics for it yet").
+        matches = [...firstDrill, ...promotedDrill];
+        rendered = [...rendered, best.node];
+      } else {
+        // Rank 0 has a thin list of its own. Rendering both would spend a
+        // second ~8.3k coverage list on the loser, which is the cost
+        // RENDER_FULL_N exists to avoid — so it drops to a receipt line,
+        // carrying its node id and count for a caller who disagrees.
+        matches = promotedDrill;
+        rendered = [best.node];
+        demoted.push(
+          ...firstDrill.map((m) => ({
+            name: m.name,
+            type: m.type,
+            node_id: m.node_id,
+            coverage_total: m.coverage.total,
+          })),
+        );
       }
     }
 
     const renderedIds = new Set(rendered.map((n) => n.id));
     const other_matches: OtherMatch[] = [
+      // Displaced from the full render by a better-covered candidate. First,
+      // because it is what the backend ranked highest — a caller who wanted it
+      // should not have to read past the winner's receipts to find it.
+      ...demoted,
       // Probed but not rendered: one line each, carrying id + coverage count.
       ...probes
         .filter((pr) => !renderedIds.has(pr.node.id))
@@ -608,12 +698,12 @@ const tako_available_data = {
     return {
       // `found` mirrors the summary header: true only when some match carries
       // real coverage. Node resolution alone is not "data" — consumers key off
-      // this to narrow `sources` to ["data"].
-      found: gate.gated && matches.some(hasLiveCoverage),
-      confident: gate.gated,
+      // this to narrow `sources` to ["data"]. The un-gated case returned above,
+      // so reaching here already means the gate found something plausible.
+      found: matches.some(hasLiveCoverage),
+      confident: true,
       query: input.q,
       summary: buildSummary({
-        confident: gate.gated,
         query: input.q,
         matches,
         otherMatches: other_matches,
@@ -624,7 +714,7 @@ const tako_available_data = {
       // query and often miss; this is the same example the summary names, in
       // directly runnable form. Gated on a coverage list small enough to make
       // the target unambiguous — see buildNextCall.
-      next_call: gate.gated ? buildNextCall(matches) : null,
+      next_call: buildNextCall(matches),
     };
   },
   renderText(output, _ctx) {

@@ -129,14 +129,28 @@ export function gateCandidates<T extends MatchCandidate>(
   // Name matches rank above alias-only matches, order preserved within each
   // group. This is NOT general re-ranking (see the note above) — it is the one
   // defence against poisoned alias data, which is real and observed: on
-  // staging, `Cuscal Limited` (an Australian payments company) carries the
-  // aliases "Carnival Corp", "Carnival Corporation", "Carnival Cruise", so a
-  // gate that treats names and aliases alike ranks it above the actual
-  // `Carnival Corporation`. Preferring the node whose OWN NAME matches fixes
-  // that without breaking the case aliases exist for: `SpaceX` still resolves
-  // `Space Exploration Technologies Corp.` because no name match survives to
-  // outrank it. Ties (both name matches, e.g. Delta Air Lines vs Delta Corp)
-  // keep the backend's order.
+  // staging `Cuscal Limited` (an Australian credit-union services company)
+  // carries "Carnival Corp", "Carnival Corporation", "Carnival Cruise" and four
+  // more Carnival aliases, and it comes back at RANK 0 for
+  // `q="Carnival Corporation"`. A gate treating names and aliases alike keeps
+  // it there; preferring the node whose OWN NAME matches drops it below the
+  // real Carnival nodes. Tracked for a data fix in KE-804.
+  //
+  // What this partition does NOT do is decide relevance, and it must not be
+  // read as doing so. Two things it gets wrong on live data, both handled
+  // downstream by coverage rather than here:
+  //
+  //   - `q="SpaceX"` returns a node literally NAMED `SpaceX` alongside
+  //     `Space Exploration Technologies Corp.`, so a name match DOES survive to
+  //     outrank the alias match and this function returns the impostor at rank
+  //     0. The right answer still gets rendered, but only because the impostor
+  //     carries zero coverage and the promotion in `tako_available_data` fires.
+  //   - A bare name match is not evidence of relevance at all:
+  //     `US Savings Inflation Securities` name-matches `q="US inflation"` and
+  //     holds one metric. See SHELL_COVERAGE_MAX.
+  //
+  // Ties (both name matches, e.g. Delta Air Lines vs Delta Corp) keep the
+  // backend's order.
   const byName: T[] = [];
   const byAlias: T[] = [];
   for (const c of candidates) {

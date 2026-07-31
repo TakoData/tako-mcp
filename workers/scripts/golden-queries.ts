@@ -104,6 +104,25 @@ export const GOLDEN_CASES: GoldenCase[] = [
     args: { q: "Carnival" },
     expect: { found: true, present: ["Carnival Corporation Ltd."] },
   },
+  {
+    id: "gate-shell-loses-to-coverage",
+    why: "the gate's name preference put `US Savings Inflation Securities` (1 metric) above `United States` (250) and reported found:true on the shell — coverage must outrank a bare name match",
+    args: { q: "US inflation" },
+    expect: {
+      entity: "United States",
+      found: true,
+      present: ["United States"],
+      // The shell may still appear as a receipt line; what it must not be is
+      // the rendered match, which is the only place a full coverage list goes.
+      absent: ["**US Savings Inflation Securities (PRODUCT)** —"],
+    },
+  },
+  {
+    id: "gate-no-overpromotion",
+    why: "the coverage promotion must not fire on a well-covered rank 0: Delta Air Lines and Delta Corp both cap at 250 and only backend rank separates them",
+    args: { q: "Delta" },
+    expect: { entity: "Delta Air Lines", found: true },
+  },
 
   // ---- honest gaps: these must NOT claim coverage ------------------------
   {

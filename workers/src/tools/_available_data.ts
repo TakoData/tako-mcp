@@ -43,6 +43,31 @@ type GraphRelation = z.infer<typeof graphRelationSchema>;
  */
 export const SELECT_TOP_N = 4;
 export const RENDER_FULL_N = 1;
+/**
+ * Coverage total at or below which a rank-0 candidate is treated as a SHELL —
+ * a name variant, holding company or product stub rather than the subject the
+ * caller meant — and loses to a better-covered plausible candidate.
+ *
+ * Exists because `gateCandidates` prefers a candidate whose OWN NAME matches
+ * over an alias-only match (the defence against poisoned aliases, KE-804), and
+ * a bare name match is not evidence of relevance. Measured on staging
+ * (2026-07-31): `q="US inflation"` name-matches `US Savings Inflation
+ * Securities` (1 metric) and rendered it as the answer with `found: true`,
+ * burying `United States` (250 metrics) in a one-line receipt; `q="S&P 500
+ * earnings"` did the same with `Earnings` (3 entities) over `S&P Global Inc.`
+ * (250).
+ *
+ * 5 rather than a ratio because the failure is degeneracy, not proportion: the
+ * losers carried 1 and 3. An absolute floor leaves legitimately-narrow nodes
+ * alone, which a ratio would not — `q="Delta"` puts `Delta Air Lines, Inc.`
+ * and `Delta Corp Limited` both at the 250 cap, and `q="Inflation Rate"`
+ * resolves a 63-entity metric whose rivals are thinner. Both stay on the
+ * backend's order, which is the measured-correct outcome for them.
+ *
+ * Retire this together with the gate once `graph/search` carries a real
+ * relevance score (KE-805).
+ */
+export const SHELL_COVERAGE_MAX = 5;
 // graph/related page size for the coverage drill (the endpoint's maximum).
 // The tool paginates with the cursor, so this is a request-shaping knob, not
 // a cap on what the agent sees.
@@ -234,6 +259,27 @@ export function buildMatch(node: GraphNode, group: GraphRelation | null | undefi
  */
 export function hasLiveCoverage(m: CoverageMatch): boolean {
   return !m.unavailable && m.coverage.total > 0;
+}
+
+/**
+ * A match carrying its RESOLUTION only, with no coverage drilled.
+ *
+ * Used when the relevance gate failed open: the summary is about to disclaim
+ * these resolutions and the renderer suppresses their coverage lists, so
+ * drilling them would pay a paginated fetch plus probes for output nobody
+ * reads. Distinct from `unavailableMatch`, which claims the lookup FAILED —
+ * here it was never attempted, and an empty coverage group is the honest
+ * report. Keeps the two channels consistent: prose says nothing confidently
+ * matched, and `structuredContent` shows total 0 rather than contradicting it.
+ */
+export function resolvedOnlyMatch(node: GraphNode): CoverageMatch {
+  return {
+    node_id: node.id,
+    name: node.name,
+    type: node.type,
+    label: node.label ?? null,
+    coverage: emptyGroup(coverageKindFor(node.type)),
+  };
 }
 
 /** A match whose coverage lookup failed — resolved, but coverage unavailable. */

@@ -608,7 +608,12 @@ const keySource = (name: string): string => {
   return originalEnv.has(name) ? "from environment" : "from .env";
 };
 
-server.listen(PORT, () => {
+// Loopback ONLY, never 0.0.0.0. This process proxies to prod with
+// PROD_TAKO_API_KEY attached server-side and has no auth in front of it, so
+// binding every interface would let anyone on the same network spend priced
+// calls against that token. The header comment's "tokens stay in the process"
+// is only true with this bind.
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`\n  Tako MCP panel → http://localhost:${PORT}`);
   console.log(`  (the worker itself is on :8799 — opening that shows a 404, which is expected)\n`);
   console.log(
