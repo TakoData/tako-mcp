@@ -194,16 +194,32 @@ export function sameTokens(a: string, b: string): boolean {
  * `metric="index level"` reported found:true via `Employment Index`, whose
  * alias `employment level index` is a strict superset of {index, level}.
  *
- * So aliases only vouch when they introduce NO new tokens (alias ⊆ query).
- * That is exactly the shape of a legitimate abbreviation — measured,
- * `ROA`→`Return on Assets`, `P/E ratio`→`Price to Earnings (P/E)`,
- * `FCF`→`Free Cash Flow` and `capex`→`Capital Expenditure` are ALL alias-only
- * with no name match at all, and every one of them has `alias ⊆ query`.
- * Requiring a name match instead would break all four.
+ * So an alias vouches only when it accounts for the WHOLE query — its token set
+ * must EQUAL the query's, not merely be contained in it. That is exactly the
+ * shape of a legitimate abbreviation: measured, `ROA`→`Return on Assets`,
+ * `FCF`→`Free Cash Flow` and `capex`→`Capital Expenditure` are all alias-only
+ * with no name match at all, and in every one the alias IS the query.
  *
- * A candidate's own NAME still vouches in either direction: a name that
- * contains the query is a specialisation of what was asked
- * (`Gross Margin (%)` for "gross margin"), which is real evidence.
+ * The weaker `alias ⊆ query` rule was here first and let a broad node vouch on a
+ * PARTIAL match — covering the generic half of a two-token query and ignoring the
+ * distinctive half. Measured on staging 2026-07-31, that shipped wrong pins:
+ *
+ *   metric="AWS revenue"    → `Revenues` vouched via alias `Revenue`
+ *                             ({revenue} ⊆ {aws, revenue}), ignoring `aws`
+ *   metric="total assets"   → `Total Odds` — a SPORTS-BETTING metric — vouched
+ *                             via an alias covering just `total`, and pinning it
+ *                             returned a card 2 of 5 times. A wrong card with a
+ *                             citation is worse than none.
+ *
+ * Equality rejects both while keeping every abbreviation above (verified against
+ * the real staging alias lists). It also drops `P/E ratio`→`Last Close Price /
+ * Earnings`, where the alias `P/E` covers only half the query — no loss, since
+ * pinning that node returned 0 cards in 5 of 5 runs; the caller now picks from
+ * the alternates instead of being handed a dead handle.
+ *
+ * A candidate's own NAME still vouches in either direction: a name that contains
+ * the query is a specialisation of what was asked (`Gross Margin (%)` for
+ * "gross margin"), which is real evidence.
  */
 export function confidentMatch(query: string, candidate: MatchCandidate): boolean {
   const q = matchTokens(query);
@@ -213,7 +229,7 @@ export function confidentMatch(query: string, candidate: MatchCandidate): boolea
   for (const alias of candidate.aliases ?? []) {
     if (typeof alias !== "string" || alias === "") continue;
     const a = matchTokens(alias);
-    if (a.size > 0 && contains(q, a)) return true;
+    if (a.size === q.size && contains(q, a)) return true;
   }
   return false;
 }
