@@ -716,12 +716,19 @@ function latestDataPoint(card: TakoCard): number | null {
  * `data_freshness` as an OBJECT (`{"data_as_of": "2026-03-31"}`) on search
  * cards and as a bare string elsewhere — accept both, the same way the
  * markdown renderer does.
+ *
+ * Goes through `comparableEpoch`, not `temporalMagnitude`, for the same reason
+ * `latestDataPoint` does: this feeds a CROSS-CARD comparator, so a bare numeric
+ * `data_as_of` (`2024`) passed through unchanged would be compared against
+ * ~1.7e12 from any string-dated card in the same as-of tier. The backend ships
+ * strings today and nothing is broken, but the rule worth being able to state
+ * without exception is that every cross-card comparison normalises first.
  */
 function freshnessEpoch(card: TakoCard): number | null {
   const value = (card as Record<string, unknown>).data_freshness;
-  if (typeof value === "string") return temporalMagnitude(value);
+  if (typeof value === "string") return comparableEpoch(value);
   if (value !== null && typeof value === "object") {
-    return temporalMagnitude((value as { data_as_of?: unknown }).data_as_of);
+    return comparableEpoch((value as { data_as_of?: unknown }).data_as_of);
   }
   return null;
 }
