@@ -190,12 +190,41 @@ describe("confidentMatch", () => {
     ).toBe(false);
   });
 
-  it("accepts an abbreviation alias narrower than the query", () => {
+  it("accepts an abbreviation alias that IS the query", () => {
+    // The legitimate shape: the alias accounts for the whole query.
     expect(confidentMatch("ROA", { name: "Return on Assets", aliases: ["ROA"] })).toBe(true);
+    expect(confidentMatch("capex", { name: "Capital Expenditure", aliases: ["CAPEX"] })).toBe(true);
+    expect(confidentMatch("FCF", { name: "Free Cash Flow", aliases: ["FCF"] })).toBe(true);
+  });
+
+  it("rejects an alias that covers only PART of the query", () => {
+    // This assertion is the fix for two measured wrong pins. The old rule was
+    // `alias ⊆ query`, which let a broad node vouch by covering the generic half
+    // of a two-token query and ignoring the distinctive half:
+    //
+    //   metric="AWS revenue"  → `Revenues` via alias `Revenue`, ignoring `aws`
+    //   metric="total assets" → `Total Odds`, a SPORTS-BETTING metric, via an
+    //                           alias covering just `total`. Pinning it returned
+    //                           a card 2 of 5 times — a wrong card with a
+    //                           citation, worse than none.
+    expect(
+      confidentMatch("AWS revenue", { name: "Revenues", aliases: ["Income", "Revenue", "Sales"] }),
+    ).toBe(false);
+    expect(confidentMatch("total assets", { name: "Total Odds", aliases: ["Total"] })).toBe(false);
+  });
+
+  it("gives up `P/E ratio` as the cost of that, deliberately", () => {
+    // `P/E` covers {pe} but not {pe, ratio}, so equality rejects it and the pair
+    // resolves with no handle. Accepted rather than special-cased: on staging
+    // `metric="P/E ratio"` resolves `Last Close Price / Earnings` at rank 0, and
+    // pinning THAT returned 0 cards in 5 of 5 runs — so the handle it used to
+    // emit was dead anyway. The caller now picks from the alternates instead of
+    // being handed a dead pin. Carving out generic qualifiers like `ratio` was
+    // considered and rejected: `rate` is generic in "P/E ratio" and distinctive
+    // in "unemployment rate", so any such list mis-fires.
     expect(
       confidentMatch("P/E ratio", { name: "Price to Earnings (P/E)", aliases: ["P/E"] }),
-    ).toBe(true);
-    expect(confidentMatch("capex", { name: "Capital Expenditure", aliases: ["CAPEX"] })).toBe(true);
+    ).toBe(false);
   });
 
   it("still accepts a NAME match in either direction", () => {
