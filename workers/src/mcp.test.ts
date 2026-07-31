@@ -1267,25 +1267,43 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/METRIC node id/i);
   });
 
-  it("documents the `metric` fast path on tako_available_data", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/Pass `metric` alongside `q`/);
+  // `tako_available_data` answers coverage questions in its own right, not
+  // only as a gate in front of the priced tools: "what does Tako have on X"
+  // is worth asking on its own, and the answer shapes which metric is worth
+  // asking for at all. A draft framed the tool as "start there when unsure",
+  // which collapsed it to a precondition and dropped the coverage half to a
+  // trailing clause. Assert both jobs by MEANING, not by example strings —
+  // the argument examples live in the tool's own description now.
+  it("names both of tako_available_data's jobs — coverage AND name resolution", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/what data Tako has/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/exact name/i);
   });
 
-  // `tako_available_data` answers two different questions, and the coverage
-  // one is not a precondition for the lookup one: "what does Tako have on
-  // Nvidia?" is a question a model asks on its own behalf, and what comes
-  // back shapes which metric is worth asking for. A draft that framed the
-  // tool only as "start there when unsure" collapsed it into a gate in
-  // front of the priced tools and dropped the browse half to a trailing
-  // clause. Pin both so a length trim cannot quietly restore that.
-  it("names both of tako_available_data's jobs — coverage AND lookup", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/two jobs/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/lists every metric/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/every entity that metric is tracked across/i);
+  // Parameter-shaped guidance (argument examples, the q+metric split, response
+  // fields, recovery protocols) belongs in the description of the tool that
+  // takes it, read at the moment it applies. Duplicating it here bought a
+  // second copy the model pays for on every request, Tako-bound or not.
+  it("carries no argument-level examples — those live in the descriptions", () => {
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/`q="/);
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/`metric="/);
+  });
+
+  // Register check. "is free and does two jobs" spends the highest-value
+  // tokens on the surface describing the shape of the next sentence. Exa's
+  // hosted MCP (836 chars across 2 tools, no instructions at all) never does
+  // this: one imperative per line, no meta-commentary.
+  it("states what to do, not what the tools 'do'", () => {
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/does two jobs/i);
   });
 
   it("stays short enough to sit in a system prompt", () => {
-    // Guard against drift: this is prime real estate, not a manual.
-    expect(SERVER_INSTRUCTIONS.length).toBeLessThan(2000);
+    // Guard against drift: this is prime real estate, not a manual. Ratcheted
+    // from 2000 once the parameter-level duplication moved into the tool
+    // descriptions — a ceiling only enforces a budget while it is close to
+    // actual. For scale: Exa's hosted MCP ships 836 chars of description
+    // across 2 tools and no instructions at all (mcp.exa.ai, 2026-07-31).
+    // Tako needs more than Exa (4+ tools, non-obvious routing, coverage a
+    // model cannot guess) but the gap should be justified per sentence.
+    expect(SERVER_INSTRUCTIONS.length).toBeLessThan(1600);
   });
 });
