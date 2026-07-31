@@ -486,28 +486,43 @@ function pickDeclared(
  * responses (they are the ones with a glossary), so it destroys precisely the
  * good ones.
  *
- * Instead: narrow to the declared keys and re-check. That drops the undeclared
- * extras rather than the answer. Only if the narrowed object still fails do we
- * omit `structuredContent` altogether. That is NOT spec-legal either — a tool
- * declaring an `outputSchema` is required to return conforming structured
- * results, so omission violates the spec too. It is simply the cheaper
- * violation: the caller loses the structured channel, where shipping a payload
- * every strict client rejects loses the whole result, text block included. The
- * payload rides in the text channel by design either way. Exported for tests.
+ * Instead: narrow to the declared keys. That drops the undeclared extras rather
+ * than the answer, and it is the ONLY thing standing between a loose slim shape
+ * and a published `additionalProperties: false` — which is why it now runs on
+ * the success path too, not just on drift.
+ *
+ * LAST RESORT — narrowing cannot conform (a declared REQUIRED key is missing
+ * from the output): the narrowed object ships anyway. This used to omit
+ * `structuredContent` on the reasoning that losing the structured channel is
+ * cheaper than losing the whole result, and that reasoning was wrong. Both are
+ * fatal on a spec-compliant client: the official TS SDK throws
+ * "has an output schema but did not return structured content" for a MISSING
+ * structuredContent (client/index.js, the `!result.structuredContent` guard)
+ * and throws again for a non-conforming one. Omitting therefore buys nothing
+ * where it matters, while a PERMISSIVE client gets partial structured data from
+ * the narrowed object and nothing at all from omission. Emitting dominates.
+ *
+ * Unreachable by construction today, and kept only because "unreachable" is a
+ * property of the current types rather than of this function: every tool is
+ * declared `satisfies ToolModule<…, z.infer<typeof outputSchema>>`, so
+ * TypeScript already requires the advertised REQUIRED keys on the handler's
+ * return type. Reaching the log line below means a tool's declared shape and
+ * its runtime output have drifted apart — a repo bug, not a wire condition.
+ * The payload rides in the text channel by design either way. Exported for tests.
  */
 export function structuredContentFor(
   tool: Pick<AnyToolModule, "name" | "outputSchema" | "slimStructured">,
   output: unknown,
-): Record<string, unknown> | undefined {
+): Record<string, unknown> {
   const full = output as Record<string, unknown>;
-  const narrow = (value: Record<string, unknown>, why: string): Record<string, unknown> | undefined => {
+  const narrow = (value: Record<string, unknown>, why: string): Record<string, unknown> => {
     if (tool.outputSchema === undefined) return value;
     const picked = pickDeclared(tool.outputSchema, value);
     if (tool.outputSchema.safeParse(picked).success) return picked;
     console.error(
-      `[mcp] ${tool.name}: ${why}, and narrowing to declared keys still does not conform — omitting structuredContent`,
+      `[mcp] ${tool.name}: ${why}, and narrowing to declared keys STILL does not conform — a required declared key is missing from the output. Serving the narrowed object anyway (a spec-compliant client rejects it either way; a permissive one at least gets the fields present). Fix the tool's slim/schema pair.`,
     );
-    return undefined;
+    return picked;
   };
 
   if (tool.slimStructured === undefined) return narrow(full, "no slimStructured hook");
@@ -1192,8 +1207,10 @@ function registerTool(
         _meta?: Record<string, unknown>;
       } = { content };
       if (tool.outputSchema !== undefined) {
-        const structured = structuredContentFor(tool, output);
-        if (structured !== undefined) result.structuredContent = structured;
+        // Always present when an outputSchema is advertised: the spec requires
+        // it, and the official SDKs throw on its absence just as hard as on a
+        // mismatch (see structuredContentFor's LAST RESORT note).
+        result.structuredContent = structuredContentFor(tool, output);
       }
       if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
         result._meta = resultMeta;

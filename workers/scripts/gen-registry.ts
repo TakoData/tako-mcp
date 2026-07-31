@@ -23,6 +23,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 
 import {
+  pinAdvisingSentences,
+  pinFormProblem,
+  PLURAL_UNQUALIFIED,
+} from "../src/tools/_pin_form_rules.js";
+import {
   isToolOnSurface,
   toolAnnotationsForClient,
 } from "../src/tools/_surface.js";
@@ -130,6 +135,53 @@ export function assertLlmsFullCoverage(
       `llms-full.txt drift — hand-written docs out of sync with tool modules:\n  ${problems.join(
         "\n  ",
       )}\nUpdate llms-full.txt to match the tool surface.`,
+    );
+  }
+}
+
+/**
+ * Assert that the hand-written `llms-full.txt` advises the pin form measured to
+ * WORK: the METRIC node id alone, with `strict: true`.
+ *
+ * `_pin_form.test.ts` guards this invariant across tool descriptions and
+ * published field descriptions, but it walks in-process objects and cannot see a
+ * docs file. That gap is not hypothetical — it is where the broken form
+ * survived a sweep whose commit message claimed "every surface": llms-full.txt's
+ * tako_answer paragraph still read "ask here with its node_ids pinned", with no
+ * `strict`, describing the variant measured to do nothing.
+ *
+ * Sentence-level and pattern-based (shared with the vitest guard via
+ * `_pin_form_rules.ts`), so rewording the advice stays free and only the
+ * invariant is pinned. Runs inside `registry:check`, which already gates
+ * workers-ci and workers-deploy.
+ */
+export function assertPinFormInDocs(
+  docs: ReadonlyArray<{ file: string; text: string; requireStrict: boolean }>,
+): void {
+  const problems: string[] = [];
+  for (const { file, text, requireStrict } of docs) {
+    // Document-wide, NOT gated on `pinAdvisingSentences`: mirrors how
+    // `_pin_form.test.ts` applies this rule to a whole description. Gating it
+    // was a hole — the broken form's own phrasing ("the card's `nodes` ids")
+    // has to be recognised by the detector before the rule can fire, and one
+    // stem away it was not.
+    if (PLURAL_UNQUALIFIED.test(text)) {
+      problems.push(
+        `${file}: advises pinning every node id on the card (the measured no-op); pin the METRIC node id ALONE`,
+      );
+    }
+    for (const sentence of pinAdvisingSentences(text)) {
+      const problem = pinFormProblem(sentence, { requireStrict });
+      if (problem !== null) {
+        problems.push(`${file}: ${problem}\n      "${sentence.slice(0, 160)}"`);
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `pin-form drift — docs advise a pin form measured NOT to steer retrieval:\n  ${problems.join(
+        "\n  ",
+      )}\nUse the PINNED_RETRY / PINNED_FROM_CARD wording from workers/src/tools/_search_results.ts.`,
     );
   }
 }
@@ -269,6 +321,9 @@ const REGISTRY_PATH = resolve(REPO_ROOT, "registry", "server.json");
 const LOBEHUB_PATH = resolve(REPO_ROOT, "registry", "lhm.plugin.json");
 const BARREL_PATH = resolve(TOOLS_DIR, "_registry.ts");
 const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
+// Checked for pin-form drift only (its contents are hand-written prose, and it
+// embeds the bundled skills' recovery protocols verbatim).
+const README_PATH = resolve(REPO_ROOT, "README.md");
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
 
 // Filename conventions for the tools/ directory. A tool module is any `.ts`
@@ -584,7 +639,19 @@ async function main(): Promise<void> {
 
   // 3. llms-full.txt coverage: the hand-written doc must mention every tool,
   //    and any tool with a `### <name>` section must document all its params.
-  assertLlmsFullCoverage(registryTools, readFileSync(LLMS_FULL_PATH, "utf8"));
+  const llmsFull = readFileSync(LLMS_FULL_PATH, "utf8");
+  assertLlmsFullCoverage(registryTools, llmsFull);
+
+  // 3b. Pin-form: any doc sentence that advises pinning must name the form
+  //     measured to work. llms-full.txt is uniformly prescriptive about the
+  //     tool surface, so both rules apply; README mixes in descriptive mentions
+  //     ("or you're pinning `node_ids`", about narrowing `sources`) that no
+  //     regex separates from instructions, so only the unambiguous rule runs
+  //     there. See pinFormProblem.
+  assertPinFormInDocs([
+    { file: "llms-full.txt", text: llmsFull, requireStrict: true },
+    { file: "README.md", text: readFileSync(README_PATH, "utf8"), requireStrict: false },
+  ]);
 
   // 4. ChatGPT app-submission parity: the hand-maintained submission
   //    metadata must describe exactly the tools (and annotation hints)

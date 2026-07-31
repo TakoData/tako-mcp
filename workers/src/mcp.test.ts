@@ -1209,13 +1209,24 @@ describe("structuredContentFor", () => {
   // Last resort: if even the narrowed object cannot satisfy the schema there is
   // nothing conforming to send, and omitting is spec-legal where a rejected
   // result is fatal. The payload rides in the text channel regardless.
-  it("omits structuredContent when narrowing still cannot conform", () => {
+  // Last resort: a required declared key is missing, so nothing conforming can
+  // be built. Ship the narrowed object rather than omitting it. Both violate the
+  // spec and both are fatal on the official SDKs (which throw on a MISSING
+  // structuredContent as hard as on a mismatched one), but a permissive client
+  // gets the fields that are present from this and nothing from omission.
+  it("serves the narrowed object (never undefined) when narrowing cannot conform", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const structured = structuredContentFor(
       { name: "t", outputSchema, slimStructured: () => ({ usage: null }) },
       { cards: ["only undeclared keys"] },
     );
-    expect(structured).toBeUndefined();
+    expect(structured).not.toBeUndefined();
+    // Narrowed: the undeclared key is gone even on this path.
+    expect(structured).not.toHaveProperty("cards");
+    expect(structured).toEqual({});
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("STILL does not conform"),
+    );
     errorSpy.mockRestore();
   });
 

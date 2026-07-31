@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
+import { CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES } from "../src/tools/_surface.js";
 import {
   assertAllToolsDescribed,
   assertChatgptSubmissionParity,
   assertLlmsFullCoverage,
+  assertPinFormInDocs,
   buildLobehubPlugin,
   LOBEHUB_TOOL_ALLOWLIST,
   MCP_TOOL_ALLOWLIST,
@@ -101,6 +103,76 @@ describe("assertLlmsFullCoverage", () => {
   });
 });
 
+// The pin form measured to work is the METRIC node id ALONE with strict:true.
+// `_pin_form.test.ts` guards it across tool and field descriptions; this guards
+// the docs files it cannot reach, which is where the broken form survived a
+// sweep whose commit message claimed "every surface".
+describe("assertPinFormInDocs", () => {
+  const doc = (text: string, requireStrict = true) => [
+    { file: "d.txt", text, requireStrict },
+  ];
+
+  it("accepts advice that names the metric node alone with strict:true", () => {
+    expect(() =>
+      assertPinFormInDocs(
+        doc("Pin that card's METRIC node id ALONE with `strict: true` to get the figures."),
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects a bare node_ids pin (the form that shipped in llms-full.txt)", () => {
+    expect(() =>
+      assertPinFormInDocs(doc("Ask here with its node_ids pinned to get the figures.")),
+    ).toThrow(/without naming `strict: true`/);
+  });
+
+  it("rejects pinning every node id on the card", () => {
+    expect(() =>
+      assertPinFormInDocs(
+        doc("Get figures via tako_answer with the card's `nodes` ids pinned and strict: true."),
+      ),
+    ).toThrow(/every node id on the card/);
+  });
+
+  // The token `strict` appearing anywhere used to satisfy the rule, so a
+  // sentence advising the bare pin AND explaining that omitting strict does not
+  // work passed it. Only an affirmative strict:true counts.
+  it("is not satisfied by the word `strict` inside a negative clause", () => {
+    expect(() =>
+      assertPinFormInDocs(
+        doc("Ask here with its node_ids pinned — omitting strict does not steer retrieval."),
+      ),
+    ).toThrow(/without naming `strict: true`/);
+  });
+
+  // README documents when to narrow `sources` and mentions pinning as a
+  // PRECONDITION, not an instruction. No regex separates those, so the
+  // strict-naming rule is opt-in per file.
+  it("skips the strict rule where prose is not uniformly prescriptive", () => {
+    const descriptive =
+      'Narrow to `["data"]` only when you already know Tako has the metric (`tako_available_data` confirmed it, or you\'re pinning `node_ids`).';
+    expect(() => assertPinFormInDocs(doc(descriptive, false))).not.toThrow();
+    expect(() => assertPinFormInDocs(doc(descriptive, true))).toThrow();
+  });
+
+  // A parameter's own entry legitimately says "default false".
+  it("does not flag parameter-definition lines", () => {
+    expect(() =>
+      assertPinFormInDocs(
+        doc("- `node_ids` (array of strings, optional): Graph node ids to PIN into the data source."),
+      ),
+    ).not.toThrow();
+  });
+
+  it("reports the offending file and sentence", () => {
+    expect(() =>
+      assertPinFormInDocs([
+        { file: "llms-full.txt", text: "Re-ask with node_ids pinned.", requireStrict: true },
+      ]),
+    ).toThrow(/llms-full\.txt/);
+  });
+});
+
 describe("assertChatgptSubmissionParity", () => {
   // Fixture tool on ChatGPT's default authenticated surface: not optional,
   // not chatgpt-only/excluded, not a free-tier name — so the only gates it
@@ -122,18 +194,36 @@ describe("assertChatgptSubmissionParity", () => {
     tools: Record<string, { annotations?: Record<string, unknown> }>,
   ) => JSON.stringify({ tools });
 
+  // A REAL name, not a synthetic one. The function grew a second assertion —
+  // the anonymous ChatGPT surface must EQUAL the declared tools — which reads
+  // the real `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` constant, so a
+  // synthetic `tako_x` can never satisfy it. This test kept the old fixture and
+  // has been failing ever since, invisibly: `scripts/*.test.ts` matched no
+  // vitest project until `vitest.scripts.config.ts` existed, so it never ran.
+  //
+  // Using every anonymous-discoverable name keeps the fixture honest if that
+  // set changes: the parity assertion is EQUALITY in both directions, so a name
+  // added there without appearing here fails this test rather than passing
+  // vacuously.
+  const ANON_NAMES = [...CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES];
+
   it("passes when the declared tools and hints match the runtime descriptors", () => {
-    const t = tool("tako_x", { chatgpt: { openWorldHint: false } });
-    const declared = submission({
-      tako_x: {
-        annotations: {
-          readOnlyHint: true,
-          destructiveHint: false,
-          openWorldHint: false,
-        },
-      },
-    });
-    expect(() => assertChatgptSubmissionParity([t], declared)).not.toThrow();
+    const tools = ANON_NAMES.map((n) => tool(n, { chatgpt: { openWorldHint: false } }));
+    const declared = submission(
+      Object.fromEntries(
+        ANON_NAMES.map((n) => [
+          n,
+          {
+            annotations: {
+              readOnlyHint: true,
+              destructiveHint: false,
+              openWorldHint: false,
+            },
+          },
+        ]),
+      ),
+    );
+    expect(() => assertChatgptSubmissionParity(tools, declared)).not.toThrow();
   });
 
   it("throws when the top-level tools object is missing", () => {
