@@ -51,9 +51,10 @@
  * coverage otherwise.
  */
 import Anthropic from "@anthropic-ai/sdk";
-import { appendFileSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { judgedPathFor, positionalArg, resolveRaw } from "./paths.js";
 import type { Arm, CaseRow } from "./run.js";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -66,6 +67,10 @@ const MODEL = "claude-opus-5";
 const EFFORT = "medium";
 
 const client = new Anthropic();
+
+/** Flags that consume the argument after them. Named so the positional path
+ *  parser does not mistake a flag's value for the input file. */
+const VALUE_FLAGS = ["--top", "--conc"] as const;
 
 const flag = (name: string, fallback: number): number => {
   const i = process.argv.indexOf(`--${name}`);
@@ -244,43 +249,16 @@ export interface JudgedCase {
   answer_note: string;
 }
 
-/** The raw sweep to judge. Refuses to GUESS between candidates, on purpose.
- *
- *  This used to take `files.sort().at(-1)` as "the newest", which is wrong and
- *  quietly so: `-` (0x2D) sorts before `.` (0x2E), so `raw-<stamp>.jsonl` loses
- *  to `raw-<stamp>-full.jsonl` and the default picked a 4-case smoke run over
- *  the 26-case sweep sitting beside it — a run that reads as complete at a
- *  sixth of the denominator. mtime is no better: a fresh clone stamps every
- *  file with checkout order, so the "newest" file is whichever git wrote last.
- *
- *  There is no ordering here that means what the caller wants, so ambiguity is
- *  an error that lists the options rather than a coin flip. */
-function resolveRaw(): string {
-  const files = readdirSync(RESULTS)
-    .filter((f) => f.startsWith("raw-") && f.endsWith(".jsonl"))
-    .sort();
-  if (files.length === 0) {
-    console.error(`✘ no raw-*.jsonl in ${RESULTS} — run run.ts first`);
-    process.exit(1);
-  }
-  if (files.length === 1) return join(RESULTS, files[0] as string);
-  console.error(`✘ ${files.length} raw sweeps in results/ — name the one to judge:\n`);
-  for (const f of files) {
-    const cases = readFileSync(join(RESULTS, f), "utf8").split("\n").filter((l) => l.trim() !== "").length;
-    console.error(`    ${f}  (${cases} case${cases === 1 ? "" : "s"})`);
-  }
-  console.error(`\n  npx tsx scripts/evals/web-snippet/judge.ts <path-to-raw.jsonl>`);
-  process.exit(1);
-}
-
 async function main(): Promise<void> {
-  const rawPath = process.argv[2] ?? resolveRaw();
+  const rawPath = positionalArg(process.argv, VALUE_FLAGS) ?? resolveRaw(RESULTS, "judge", "judge.ts");
   const rows = readFileSync(rawPath, "utf8")
     .split("\n")
     .filter((l) => l.trim() !== "")
     .map((l) => JSON.parse(l) as CaseRow);
 
-  const out = rawPath.replace(/\/raw-/, "/judged-");
+  // Derived on the basename, and asserted to differ from the input — this
+  // write is what destroyed a sweep when the derivation silently no-op'd.
+  const out = judgedPathFor(rawPath);
   writeFileSync(out, "");
   console.log(`judging ${rows.length} cases from ${rawPath}`);
   console.log(`  model=${MODEL} effort=${EFFORT} top=${TOP_N} results/arm conc=${CONCURRENCY}\n`);
