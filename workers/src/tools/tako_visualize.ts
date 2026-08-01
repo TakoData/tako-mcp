@@ -425,6 +425,7 @@ const tako_visualize = {
     // PNG *is* the chart.
     return buildChartExtraMeta(output.image_url, {
       bakeImage: ctx.client !== "chatgpt",
+      env: ctx.env,
     });
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {

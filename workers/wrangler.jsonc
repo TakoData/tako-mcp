@@ -73,6 +73,21 @@
       "vars": {
         "DJANGO_BASE_URL": "https://staging.tako.com",
         "PUBLIC_BASE_URL": "https://staging.tako.com",
+        // STAGING ONLY — arms the `script-src` capability experiment. Origin
+        // of the CDN serving Tako's front-end assets: the real chart renderer
+        // (`Card.js` + its lazily imported chunks) and the Geist/Inter fonts.
+        //
+        // Setting it does two things and nothing else: adds this origin to the
+        // chart widget's declared `_meta.ui.csp.resourceDomains`, and ships a
+        // probe that reports whether the host's sandbox actually permits
+        // loading a script from it. See `nativeCardProbeMeta` in
+        // `src/tools/_chart_widget.ts` for what the answer unlocks.
+        //
+        // Deliberately ABSENT from the production block. Do not copy it there
+        // until the experiment has answered — a `resourceDomains` entry is a
+        // script-src grant, so it should not widen prod for a question staging
+        // can settle.
+        "PUBLIC_CDN_URL": "https://d12w4pyrrczi5e.cloudfront.net",
         // OpenAI connector-directory token issued for
         // `mcp.staging.tako.com`. Served as plain text from
         // `/.well-known/openai-apps-challenge`.

@@ -714,6 +714,138 @@ describe("committed iframe watchdog (executed)", () => {
   });
 });
 
+/**
+ * The script-src capability experiment, widget side.
+ *
+ * The whole design rests on one asymmetry: the probe requests a path that does
+ * not exist, so `error` fires either way. ALLOWED vs BLOCKED is decided by
+ * whether a `securitypolicyviolation` for `script-src` fired first. If that
+ * distinction is wrong, the experiment reports confident nonsense — which is
+ * worse than not running it.
+ */
+describe("script-src capability probe (executed)", () => {
+  const CDN = "https://cdn.example.test";
+  const PROBE_URL = `${CDN}/__tako-csp-probe__/probe.js`;
+
+  function probeNote(m: Mounted): HTMLElement | null {
+    return m.widgetWin.document.querySelector("[data-tako-csp-probe]");
+  }
+
+  /** Fire a script-src CSP violation, as a blocking host would. */
+  function fireScriptSrcViolation(m: Mounted): void {
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    const event = new WidgetEvent("securitypolicyviolation");
+    Object.assign(event, {
+      effectiveDirective: "script-src",
+      violatedDirective: "script-src",
+      blockedURI: PROBE_URL,
+    });
+    m.widgetWin.document.dispatchEvent(event);
+  }
+
+  /** The injected probe <script>, found by src. */
+  function probeScript(m: Mounted): HTMLScriptElement | null {
+    return m.widgetWin.document.querySelector(
+      `script[src="${PROBE_URL}"]`,
+    ) as HTMLScriptElement | null;
+  }
+
+  function deliverArmed(m: Mounted): void {
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL },
+        {
+          image_data_url: DATA_URL,
+          cdn_probe_script_url: PROBE_URL,
+          cdn_probe_origin: CDN,
+        },
+      ),
+      m.wrapperWin,
+    );
+  }
+
+  it("does not probe at all when the server did not arm it", () => {
+    // Production default. No injected script, no note, nothing.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL },
+        { image_data_url: DATA_URL },
+      ),
+      m.wrapperWin,
+    );
+    expect(probeScript(m)).toBeNull();
+    expect(probeNote(m)).toBeNull();
+  });
+
+  it("injects a script at the armed URL", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliverArmed(m);
+    expect(probeScript(m)).not.toBeNull();
+  });
+
+  it("reports ALLOWED when error fires with no CSP violation", () => {
+    // The 404 case: the host PERMITTED the request, the file just isn't there.
+    // This is the outcome that says native Card.js can work on this host.
+    const m = mountWidget(staticWidgetHtml());
+    deliverArmed(m);
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    probeScript(m)!.dispatchEvent(new WidgetEvent("error"));
+    expect(probeNote(m)?.getAttribute("data-tako-csp-probe")).toBe("ALLOWED");
+  });
+
+  it("reports BLOCKED when a script-src violation precedes the error", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliverArmed(m);
+    fireScriptSrcViolation(m);
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    probeScript(m)!.dispatchEvent(new WidgetEvent("error"));
+    expect(probeNote(m)?.getAttribute("data-tako-csp-probe")).toBe("BLOCKED");
+  });
+
+  it("ignores a violation for an unrelated directive", () => {
+    // An img-src report must not be misread as "scripts are blocked" — that
+    // would kill the whole plan on a false negative.
+    const m = mountWidget(staticWidgetHtml());
+    deliverArmed(m);
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    const event = new WidgetEvent("securitypolicyviolation");
+    Object.assign(event, { effectiveDirective: "img-src" });
+    m.widgetWin.document.dispatchEvent(event);
+    probeScript(m)!.dispatchEvent(new WidgetEvent("error"));
+    expect(probeNote(m)?.getAttribute("data-tako-csp-probe")).toBe("ALLOWED");
+  });
+
+  it("settles once — a later event cannot double-report", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliverArmed(m);
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    const el = probeScript(m)!;
+    el.dispatchEvent(new WidgetEvent("error"));
+    el.dispatchEvent(new WidgetEvent("error"));
+    expect(
+      m.widgetWin.document.querySelectorAll("[data-tako-csp-probe]").length,
+    ).toBe(1);
+  });
+
+  it("does not disturb the chart it rides along with", () => {
+    // The experiment must be observationally invisible to the render path.
+    const m = mountWidget(staticWidgetHtml());
+    deliverArmed(m);
+    fireImageLoad(m);
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
+    expect(widgetLink(m).getAttribute("href")).toBe(EMBED_URL);
+  });
+});
+
 describe("baked widget variant (executed)", () => {
   it("notifies size-changed to the parent on execution", () => {
     const html = __chart_widget_test_only__.buildBakedWidgetHtml({
