@@ -424,6 +424,21 @@ describe("worker routing", () => {
       "ui/resourceUri": "ui://tako/embed/chart",
       "openai/outputTemplate": "ui://tako/embed/chart",
     });
+    // The second widget owner. `tako_visualize` is on Claude's DEFAULT
+    // surface (no `?tools=visualize`) precisely so the tool whose entire
+    // output is a chart can render that chart inline here — a listing without
+    // the widget keys would leave it a link-only tool and defeat the point.
+    // Both tools share one `ui://tako/embed/chart` resource; `mcp.ts` dedupes
+    // the registration and still wires `_meta` onto each tool.
+    const takoVisualizeTool = body.result.tools.find(
+      (t) => t.name === "tako_visualize",
+    );
+    expect(takoVisualizeTool, "tako_visualize must be on claude's default surface").toBeDefined();
+    expect(takoVisualizeTool?._meta).toMatchObject({
+      ui: { resourceUri: "ui://tako/embed/chart" },
+      "ui/resourceUri": "ui://tako/embed/chart",
+      "openai/outputTemplate": "ui://tako/embed/chart",
+    });
   });
 
   it("POST /mcp tools/list serves canonical MCP annotations to claude UAs", async () => {
@@ -456,13 +471,29 @@ describe("worker routing", () => {
         }>;
       };
     };
-    // The 4 default retrieval tools keep the MCP spec's open-world,
-    // read-only meaning for claude.
-    expect(body.result.tools).toHaveLength(4);
-    for (const t of body.result.tools) {
+    // 4 retrieval tools + tako_visualize (default-on for widget clients).
+    expect(body.result.tools).toHaveLength(5);
+    // The 4 retrieval tools keep the MCP spec's open-world, read-only meaning
+    // for claude.
+    const retrieval = body.result.tools.filter(
+      (t) => t.name !== "tako_visualize",
+    );
+    expect(retrieval).toHaveLength(4);
+    for (const t of retrieval) {
       expect(t.annotations.openWorldHint, t.name).toBe(true);
       expect(t.annotations.readOnlyHint, t.name).toBe(true);
     }
+    // And `tako_visualize` keeps the CANONICAL readings on claude — a write
+    // (`readOnlyHint: false`) over a closed domain (`openWorldHint: false`,
+    // since it renders data the caller already supplied). Its
+    // `annotationsByClient.chatgpt` override widens `openWorldHint` to true
+    // for Apps review, which reads the hint as "publishes publicly visible
+    // state"; that override must NOT leak to claude, which reads it per spec.
+    const visualize = body.result.tools.find(
+      (t) => t.name === "tako_visualize",
+    );
+    expect(visualize?.annotations.readOnlyHint).toBe(false);
+    expect(visualize?.annotations.openWorldHint).toBe(false);
   });
 
   it("POST /mcp?tools=agent adds the agent split pair on ChatGPT clients", async () => {
@@ -649,9 +680,13 @@ describe("worker routing", () => {
     expect(names.has("tako_agent_wait")).toBe(false);
     expect(names.has("tako_search")).toBe(true);
     // Other opt-in tools stay absent — `?tools=agent` enables only the agent.
-    expect(names.has("tako_visualize")).toBe(false);
-    // 4 default tools + tako_agent = 5.
-    expect(body.result.tools).toHaveLength(5);
+    // Not `tako_visualize`: this is a claude UA, and visualize is default-on
+    // for widget clients (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES`), so its
+    // presence here says nothing about the alias. `credits` is the honest
+    // check that the alias widened nothing beyond the agent.
+    expect(names.has("get_credit_balance")).toBe(false);
+    // 4 defaults + tako_visualize (widget client) + tako_agent = 6.
+    expect(body.result.tools).toHaveLength(6);
   });
 
   it("POST /mcp?tools=<unknown> ignores the bad value and serves the default 4 tools", async () => {
@@ -659,13 +694,17 @@ describe("worker routing", () => {
     // connection: unknown tokens are dropped, no optional tool is enabled, and
     // the request layer still returns exactly the 4 defaults. This guards the
     // parser's "unknown token is never fatal" promise end-to-end.
+    //
+    // Deliberately a NON-widget UA: `tako_visualize` is default-on for
+    // chatgpt/claude, so on those clients "exactly the 4 defaults" is not the
+    // right expectation and the count would stop testing the parser.
     const res = await SELF.fetch("https://example.com/mcp?tools=nope", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        "user-agent": "claude-mcp-client/1.0",
+        "user-agent": "cursor-vscode/1.0",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -773,12 +812,12 @@ describe("worker routing", () => {
     expect(names.has("tako_graph_related")).toBe(true);
     expect(names.has("tako_graph_node")).toBe(true);
     expect(names.has("tako_available_data")).toBe(true);
-    // Other opt-ins stay off.
+    // Other opt-ins stay off. `tako_visualize` is excluded from this check:
+    // the UA is claude, where it is default-on for widget clients.
     expect(names.has("tako_agent")).toBe(false);
-    expect(names.has("tako_visualize")).toBe(false);
     expect(names.has("get_credit_balance")).toBe(false);
-    // 4 default tools + the 3 graph primitives = 7.
-    expect(body.result.tools).toHaveLength(7);
+    // 4 defaults + tako_visualize (widget client) + the 3 graph primitives = 8.
+    expect(body.result.tools).toHaveLength(8);
   });
 
   it("POST /mcp?tools=visualize,credits composes multiple single-tool aliases", async () => {

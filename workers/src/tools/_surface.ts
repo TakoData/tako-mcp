@@ -51,15 +51,57 @@ export const CHATGPT_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Optional tools that stay on the DEFAULT surface for ChatGPT only.
- * `tako_visualize` ships the chart widget ChatGPT renders; hiding it
- * behind `?tools=` would silently break the ChatGPT app experience,
- * so ChatGPT keeps it without opting in. Every other client must
- * enable it via `?tools=visualize`.
+ * Client families that render MCP Apps widgets inline, and therefore get
+ * widget `_meta` on their tool registrations instead of the portable
+ * inline-PNG `image` content block.
+ *
+ * ChatGPT renders the widget as a fully interactive iframe; Claude renders
+ * the same bundle via its image branch (claude.ai's host CSP blocks the
+ * cross-origin iframe today — anthropics/claude-ai-mcp#40 — and the bundle
+ * probes for that at runtime). Everything else — Cursor, Windsurf, Gemini
+ * CLI, LibreChat, Claude Code's terminal client — gets the PNG.
+ *
+ * This is the ONE definition of "widget client". `mcp.ts` computes
+ * `widgetSuppressed` from it, and {@link WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES}
+ * below keys off it too, so the tool that ships a widget and the clients that
+ * receive widget metadata cannot drift apart (they were two hand-maintained
+ * `client === …` comparisons in separate files before).
  */
-export const CHATGPT_DEFAULT_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "tako_visualize",
-]);
+export function isWidgetClient(client: McpClientKind): boolean {
+  return client === "chatgpt" || client === "claude";
+}
+
+/**
+ * Optional tools that stay on the DEFAULT surface for widget clients
+ * ({@link isWidgetClient}).
+ *
+ * `tako_visualize` is the second chart-widget owner: it turns data the agent
+ * already has into a Tako card and auto-chains it into the same
+ * `ui://tako/embed/chart` bundle `tako_search` uses. Hiding it behind
+ * `?tools=` on a host that renders widgets means the one tool whose entire
+ * output is a chart is missing from exactly the place that chart would
+ * render. So the membership rule is "does this client render the widget",
+ * which is why it keys off {@link isWidgetClient} rather than a hand-listed
+ * set of client kinds.
+ *
+ * Read `isWidgetClient` before assuming this covers "Claude" generally: the
+ * classifier deliberately buckets Claude Code (`claude-code/*`, and the
+ * Agent SDK under it) as `"unknown"`, because a terminal cannot render a
+ * widget. Default-on therefore reaches claude.ai and Claude Desktop and NOT
+ * Claude Code — including the Claude Code plugin, whose url is fixed in
+ * `plugin.json`. That is the intended outcome, not a gap to close: a
+ * terminal client gains no inline chart from this tool, so it would be
+ * paying the schema cost below for a link.
+ *
+ * Non-widget clients still opt in via `?tools=visualize`; there the payoff
+ * is a shareable embed URL rather than an inline chart, which is worth the
+ * ~3.5k tokens of standing schema only when asked for. That descriptor is
+ * by far the largest on the surface (a 20-member discriminated union), so
+ * this set is deliberately not "every optional tool with a widget".
+ */
+export const WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES: ReadonlySet<string> = new Set(
+  ["tako_visualize"],
+);
 
 /**
  * Auth-required tools that stay DISCOVERABLE (listed) on anonymous ChatGPT
@@ -95,14 +137,23 @@ export const CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES: ReadonlySet<string> =
  *    stated precisely: a client-controlled User-Agent can widen the
  *    anonymous LISTING (to the fixed, submission-declared set above),
  *    but nothing — not UA, not `?tools=` opt-ins, not
- *    {@link CHATGPT_DEFAULT_ON_TOOL_NAMES} — can widen what anonymous
+ *    {@link WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES} — can widen what anonymous
  *    connections can EXECUTE; that stays exactly `FREE_TIER_TOOL_NAMES`,
  *    enforced again at dispatch time in `mcp.ts`.
+ *
+ *    Note what this ordering means for `tako_visualize` on Claude: it is
+ *    default-on for widget clients (gate 2) but NOT free-tier-executable and
+ *    NOT anonymous-discoverable, and gate 1 runs first — so an anonymous
+ *    Claude connection does not list it, and an authenticated one does. That
+ *    is the intended shape (it is a priced, card-minting write), and it is
+ *    why adding it to gate 2 could not widen the anonymous surface even if
+ *    someone spoofed the UA.
  * 2. Opt-in gate: optional tools (see `OPTIONAL_TOOL_ALIASES` in
  *    `_optional.ts`) are excluded from the default surface and registered
- *    only when enabled via the `tools` query param — except tools ChatGPT
- *    keeps by default ({@link CHATGPT_DEFAULT_ON_TOOL_NAMES}). Applied
- *    before client-variant selection so a disabled tool never reaches it.
+ *    only when enabled via the `tools` query param — except tools widget
+ *    clients keep by default ({@link WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES}).
+ *    Applied before client-variant selection so a disabled tool never
+ *    reaches it.
  * 3. ChatGPT-only tools are hidden from everyone else.
  * 4. ChatGPT-excluded tools are hidden from ChatGPT.
  */
@@ -125,7 +176,7 @@ export function isToolOnSurface(
   if (
     OPTIONAL_TOOL_NAMES.has(name) &&
     !enabledOptionalToolNames.has(name) &&
-    !(client === "chatgpt" && CHATGPT_DEFAULT_ON_TOOL_NAMES.has(name))
+    !(isWidgetClient(client) && WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES.has(name))
   ) {
     return false;
   }
