@@ -37,7 +37,7 @@ import {
   resolvePublicApiBase,
   resolvePublicBase,
   resolvePublicCdnBase,
-  validatePublicOrigin,
+  resolveWidgetOrigin,
 } from "../env.js";
 import { EMBED_PROXY_PREFIX } from "../embed_proxy.js";
 import type {
@@ -187,44 +187,6 @@ export const INTERACTIVE_IFRAME_PROBE_ENABLED = false;
  * violation" is the ALLOWED answer — which means the probe needs no real
  * asset URL, and therefore no extra fetch on the request path to discover one.
  */
-/**
- * The origin the WIDGET should use to reach this worker.
- *
- * Order: the explicit `PUBLIC_MCP_URL` binding, else the request origin with
- * its scheme forced to https for any non-local host.
- *
- * The https coercion is not cosmetic. `request.url` reports `http://` whenever
- * TLS is terminated upstream (`wrangler dev`, ngrok, cloudflared), and this
- * value goes into two places that both hard-fail on it: a `connectDomains` CSP
- * entry, and a URL the widget fetches from an https document — mixed content,
- * blocked before the request leaves. Localhost is exempt because http is the
- * only thing that works there.
- *
- * Returns `undefined` when neither source is usable, and every caller treats
- * that as "no native card", so a bad value degrades to today's PNG.
- */
-export function resolveWidgetOrigin(
-  env: Env,
-  requestOrigin: string | undefined,
-): string | undefined {
-  if (env.PUBLIC_MCP_URL !== undefined && env.PUBLIC_MCP_URL !== "") {
-    return validatePublicOrigin(env.PUBLIC_MCP_URL, "PUBLIC_MCP_URL");
-  }
-  if (requestOrigin === undefined || requestOrigin === "") return undefined;
-  let url: URL;
-  try {
-    url = new URL(requestOrigin);
-  } catch {
-    return undefined;
-  }
-  const isLocal =
-    url.hostname === "localhost" ||
-    url.hostname === "127.0.0.1" ||
-    url.hostname === "[::1]";
-  if (url.protocol === "http:" && !isLocal) url.protocol = "https:";
-  return url.origin;
-}
-
 /**
  * URL of the CORS-readable embed-page proxy for one chart, or `undefined` when
  * the native-card path is not available.
@@ -1998,9 +1960,18 @@ export function buildChartAppUiResource(
     })(),
     resourceDomains: [
       ...new Set(
-        [webBase, resolvePublicApiBase(env), resolvePublicCdnBase(env)].filter(
-          (origin): origin is string => origin !== undefined,
-        ),
+        [
+          webBase,
+          resolvePublicApiBase(env),
+          // Our OWN origin, not the CDN: the native path serves Card.js, its
+          // chunks and the fonts through this worker's `/cdn-asset/` route,
+          // because the CDN answers CORS for tako.com alone and a module script
+          // is always a CORS fetch. Declaring the CDN here would be dead weight
+          // — nothing loads from it in the widget any more.
+          resolvePublicCdnBase(env) !== undefined
+            ? resolveWidgetOrigin(env, requestOrigin)
+            : undefined,
+        ].filter((origin): origin is string => origin !== undefined),
       ),
     ],
     // Dynamic-resource variant — registered as a `ResourceTemplate`,

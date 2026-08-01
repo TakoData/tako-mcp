@@ -16,13 +16,12 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type { Env } from "../env.js";
+import { type Env, resolveWidgetOrigin } from "../env.js";
 import {
   buildChartAppUiResourceFromOutputPubId,
   buildChartExtraMeta,
   nativeCardProbeMeta,
   nativeCardUrl,
-  resolveWidgetOrigin,
 } from "./_chart_widget.js";
 
 const CDN = "https://d12w4pyrrczi5e.cloudfront.net";
@@ -73,10 +72,23 @@ describe("declared resourceDomains", () => {
     );
   });
 
-  it("adds the CDN when armed, without dropping the existing origins", () => {
-    const ui = buildChartAppUiResourceFromOutputPubId(ARMED);
+  it("declares OUR origin when armed, not the CDN", () => {
+    // Assets are served through this worker's `/cdn-asset/` passthrough, not
+    // from the CDN: the CDN answers CORS for tako.com only, and a `type=module`
+    // script is always a CORS fetch. Declaring the CDN here would grant
+    // script-src to an origin nothing loads from.
+    const ui = buildChartAppUiResourceFromOutputPubId(
+      ARMED,
+      "https://mcp.tako.com",
+    );
     expect(ui.resourceDomains).toContain("https://tako.com");
-    expect(ui.resourceDomains).toContain(CDN);
+    expect(ui.resourceDomains).toContain("https://mcp.tako.com");
+    expect(ui.resourceDomains).not.toContain(CDN);
+  });
+
+  it("does not declare our origin when the origin is unknown", () => {
+    const ui = buildChartAppUiResourceFromOutputPubId(ARMED, undefined);
+    expect(ui.resourceDomains).toEqual(["https://tako.com"]);
   });
 
   it("leaves frameDomains alone either way", () => {

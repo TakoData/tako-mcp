@@ -87,7 +87,11 @@
         // until the experiment has answered — a `resourceDomains` entry is a
         // script-src grant, so it should not widen prod for a question staging
         // can settle.
-        "PUBLIC_CDN_URL": "https://d12w4pyrrczi5e.cloudfront.net",
+        // Staging's asset distribution — NOT production's. The embed page
+        // references the CDN of its own environment, and a mismatch is silent:
+        // zero URLs get rewritten, the card mounts, and no chart ever draws.
+        // The proxy logs loudly when it rewrites nothing, for exactly this.
+        "PUBLIC_CDN_URL": "https://d1iyjvzoctsna.cloudfront.net",
         // OpenAI connector-directory token issued for
         // `mcp.staging.tako.com`. Served as plain text from
         // `/.well-known/openai-apps-challenge`.
