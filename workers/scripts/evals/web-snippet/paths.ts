@@ -12,8 +12,28 @@
  *
  * One derivation in one place, so the next correction lands on both callers.
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+
+/** Refuse to overwrite a sweep that already exists.
+ *
+ *  Both write sides here open with `writeFileSync(path, "")`, which is a
+ *  truncation before it is a create. `EVAL_STAMP` defaults to `latest` and the
+ *  remaining test-plan item is a re-run against production, so a stamp reused
+ *  by habit destroys the JSONL the committed `RESULTS.md` reproduces from —
+ *  and the judged file has the same exposure (one careless re-judge during
+ *  this fix's own testing clobbered it, recovered only because git had it).
+ *
+ *  Given judge.ts and report.ts now refuse to guess which sweep to READ, the
+ *  write side refusing to clobber one is the same rule at the other end. */
+export function refuseToClobber(path: string, force: boolean): void {
+  if (force || !existsSync(path)) return;
+  console.error(
+    `✘ ${path} already exists — refusing to overwrite a sweep.\n` +
+      `  Name a different EVAL_STAMP, move the existing file, or pass --force.`,
+  );
+  process.exit(1);
+}
 
 /** `…/raw-<stamp>.jsonl` → `…/judged-<stamp>.jsonl`, on the basename.
  *

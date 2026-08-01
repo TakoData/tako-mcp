@@ -134,6 +134,29 @@ function main(): void {
     }
   }
   md.push("");
+  // What the clock covered. Stamped per call by run.ts; absent on sweeps
+  // collected before the timing fix, where `ms` closed at headers and so
+  // excluded a body-download component systematically larger on the text arm.
+  // Stated rather than assumed, so a pre-fix and a post-fix sweep are never
+  // read as the same measurement.
+  const timings = new Set(
+    (["search", "answer"] as const).flatMap((k) =>
+      ARMS.flatMap((a) => calls(rows, k, a).map((c) => c.timing ?? "headers")),
+    ),
+  );
+  if (timings.has("headers")) {
+    md.push(
+      "**Timed to response headers, not to a complete body.** `fetch` resolves at " +
+        "headers, so these numbers exclude body download — a component systematically " +
+        "larger on the text arm, whose payload is ~18% bigger. Every `highlights − text` " +
+        "delta below is therefore an **upper bound**: the true gap is smaller than shown. " +
+        "Sweeps collected after this was fixed are timed to the complete response and say so here.",
+    );
+    md.push("");
+  } else {
+    md.push("Timed to the complete response, body included.");
+    md.push("");
+  }
   md.push("**Web-grounding survival on /v1/answer** — the actual degradation mode. A");
   md.push("breach of the 1.5s retrieval budget does not return a slow answer; it returns");
   md.push("an answer with no web grounding at all. So a 200 with an empty `web_results`");
