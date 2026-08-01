@@ -118,6 +118,59 @@ export const DEFAULT_DARK_MODE = true;
 export const DEFAULT_WIDTH = 900;
 export const DEFAULT_HEIGHT = 720;
 
+/**
+ * Whether the widget may probe the interactive `embed_url` iframe behind the
+ * PNG on hosts that render via the image branch (i.e. Claude).
+ *
+ * OFF, and this is the fix for a user-visible bug rather than a tuning knob.
+ *
+ * The probe navigates a hidden iframe to `https://tako.com/embed/...`. On
+ * claude.ai that load is blocked by a hardcoded `frame-src 'self' blob: data:`
+ * outer CSP which ignores our declared `frameDomains`
+ * (anthropics/claude-ai-mcp#40) — so the probe fires a
+ * `securitypolicyviolation` inside the widget document EVERY time a chart
+ * renders. The bundle handles it fine (stays on the PNG), but the HOST sees a
+ * blocked subresource in the widget frame and surfaces
+ * "There was a problem displaying content from tako." to the user — on a chart
+ * that rendered perfectly.
+ *
+ * So the probe's only audience is the one host where it always fails, and its
+ * only observable effect there is an error message next to a working chart.
+ * ChatGPT never runs it (it takes the committed-iframe branch), and non-widget
+ * clients never load the bundle at all. Expected value: negative.
+ *
+ * Flipping this to `true` re-enables the auto-upgrade the probe was written
+ * for — the day claude.ai honors `frameDomains`, Claude users get the live
+ * interactive chart with no bundle change, just this constant and a deploy.
+ * That was the original design goal (no redeploy); one deploy is a small price
+ * for not shipping an error toast on every render.
+ */
+export const INTERACTIVE_IFRAME_PROBE_ENABLED = false;
+
+/**
+ * The `_meta` payload both chart tools ship for image-branch hosts: the baked
+ * PNG plus the probe flag. Shared so `tako_search` and `tako_visualize` cannot
+ * disagree about either — they had identical inline copies of the fetch, and
+ * the flag would have been a second thing to keep in sync.
+ *
+ * Returns `undefined` when there is no image URL or the fetch failed, matching
+ * the previous per-tool behavior (the hook is best-effort; the widget falls
+ * back to the remote `image_url` from `structuredContent`).
+ */
+export async function buildChartExtraMeta(
+  imageUrl: string | undefined,
+): Promise<Record<string, unknown> | undefined> {
+  if (imageUrl === undefined) return undefined;
+  const fetched = await fetchImageDataUrlAndDims(imageUrl);
+  if (fetched === undefined) return undefined;
+  return {
+    image_data_url: fetched.dataUrl,
+    image_natural_width: fetched.naturalWidth,
+    image_natural_height: fetched.naturalHeight,
+    interactive_probe: INTERACTIVE_IFRAME_PROBE_ENABLED,
+  };
+}
+
 // Assumed default chat-widget pixel width when computing the baked
 // widget's initial height from PNG dimensions. Real iframe widths vary
 // by host (Claude ~700-800, ChatGPT ~600-700, claude.ai mobile ~360);
@@ -687,7 +740,15 @@ const WIDGET_HTML = `<!doctype html>
     var h = opts.height;
     var validDataImage = opts.isDataUrl;
     var imgUrl = opts.imageUrl;
-    var allowProbe = opts.allowProbe !== false;
+    // Two independent permissions, both required. \`opts.allowProbe\` is the
+    // caller's (false on an iframe downgrade); \`probeEnabled\` is the SERVER's
+    // — \`interactive_probe\` in \`_meta\`, default false. See
+    // \`INTERACTIVE_IFRAME_PROBE_ENABLED\`: on claude.ai the probe is
+    // guaranteed to trip \`frame-src\` CSP, and the host reports that blocked
+    // subresource to the user as "There was a problem displaying content from
+    // tako." next to a chart that rendered fine. Off until claude.ai honors
+    // \`frameDomains\`.
+    var allowProbe = opts.allowProbe !== false && opts.probeEnabled === true;
       // Per anthropics/claude-ai-mcp#69 workaround:
       //   "After the MCP App renders content, explicitly measure the
       //    content and set it on <html>."
@@ -806,6 +867,16 @@ const WIDGET_HTML = `<!doctype html>
       return true;
   }
 
+  // Take the widget to zero height and mark it done. Used by the no-chart
+  // guard in render() and by the no-data watchdog at the bottom of the file.
+  function collapse() {
+    placeholder.classList.add("hidden");
+    document.documentElement.style.height = "0px";
+    document.body.style.height = "0px";
+    notifyHeight(0);
+    rendered = true;
+  }
+
   function render(structuredContent, meta) {
     if (rendered) return true;
     if (!structuredContent || typeof structuredContent !== "object") return false;
@@ -827,11 +898,7 @@ const WIDGET_HTML = `<!doctype html>
       typeof structuredContent.embed_url !== "string" &&
       typeof structuredContent.image_url !== "string"
     ) {
-      placeholder.classList.add("hidden");
-      document.documentElement.style.height = "0px";
-      document.body.style.height = "0px";
-      notifyHeight(0);
-      rendered = true;
+      collapse();
       log("no-chart payload, collapsed widget");
       return true;
     }
@@ -845,6 +912,9 @@ const WIDGET_HTML = `<!doctype html>
     // don't need the data URI because their CSP allows cross-origin
     // \`<img src>\`.
     var imgDataUrl = meta && typeof meta === "object" ? meta.image_data_url : undefined;
+    // Server-controlled probe opt-in. Absent/false → never probe.
+    var probeEnabled =
+      meta && typeof meta === "object" && meta.interactive_probe === true;
     var imgNaturalW = meta && typeof meta === "object" && typeof meta.image_natural_width === "number"
       ? meta.image_natural_width : 0;
     var imgNaturalH = meta && typeof meta === "object" && typeof meta.image_natural_height === "number"
@@ -910,6 +980,7 @@ const WIDGET_HTML = `<!doctype html>
         isDataUrl: validDataImage,
         imageUrl: imgUrl,
         allowProbe: true,
+        probeEnabled: probeEnabled,
       });
     } else if (validEmbed) {
       // No image at all but we have an embed_url — try the iframe even
@@ -990,6 +1061,27 @@ const WIDGET_HTML = `<!doctype html>
       }
     }, 250);
   }
+
+  // No-data watchdog. If nothing renderable has arrived by the time the
+  // \`window.openai\` polling window closes, collapse to zero height.
+  //
+  // The case this covers is a tool call that FAILED. An \`isError\` result
+  // carries no \`structuredContent\`, but the host has already mounted the
+  // widget for that call — so \`render()\` returns false, nothing paints, and
+  // the widget is left as an indeterminate ~1 px sliver (the initial
+  // \`notifyHeight(1)\`) with a hidden placeholder inside it, forever. Hosts
+  // reasonably read a mounted-but-never-painted frame as a display failure.
+  //
+  // Collapsing is the same thing the no-chart guard in \`render()\` already
+  // does for a SUCCESSFUL zero-card result; a failed call deserves the same
+  // treatment rather than a different one. \`rendered\` makes this a no-op once
+  // any chart has painted, and the 10 s bound matches the polling window so it
+  // cannot race a slow-but-arriving delivery.
+  setTimeout(function () {
+    if (rendered) return;
+    collapse();
+    log("no data arrived, collapsed widget");
+  }, 10000);
 
   // Subscribe to host updates. Multiple event-name candidates because
   // OpenAI's emitted name has drifted across SDK releases. Bind on both

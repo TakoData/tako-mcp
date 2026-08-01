@@ -1,5 +1,5 @@
 import { JSDOM, VirtualConsole } from "jsdom";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../../src/env.js";
 import {
@@ -316,17 +316,107 @@ describe("static widget bundle (executed)", () => {
     ) as Array<{ params: { height: number } }>;
     expect(sizeChanges.at(-1)?.params.height).toBe(0);
   });
+
+  it("collapses when NO tool-result ever arrives", () => {
+    // The failed-tool-call case. An `isError` result carries no
+    // `structuredContent`, but the host has already mounted the widget for
+    // that call — so nothing paints and the frame is left as an
+    // indeterminate ~1 px sliver forever, which a host reasonably reports as
+    // a display failure. A successful zero-card result already collapsed
+    // (test above); a failed call now gets the same treatment.
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(staticWidgetHtml());
+      // Nothing delivered at all.
+      expect(m.widgetWin.document.documentElement.style.height).not.toBe("0px");
+      vi.advanceTimersByTime(10_000);
+      expect(m.widgetWin.document.documentElement.style.height).toBe("0px");
+      const sizeChanges = m.toParent.filter(
+        (msg) =>
+          (msg as { method?: string }).method ===
+          "ui/notifications/size-changed",
+      ) as Array<{ params: { height: number } }>;
+      expect(sizeChanges.at(-1)?.params.height).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not collapse a chart that already rendered", () => {
+    // The watchdog must be a no-op once anything painted, or a slow host
+    // would have its working chart yanked at the 10 s mark.
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(staticWidgetHtml());
+      deliver(
+        m,
+        toolResult(
+          { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
+          { image_data_url: DATA_URL },
+        ),
+        m.wrapperWin,
+      );
+      fireImageLoad(m);
+      vi.advanceTimersByTime(20_000);
+      expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+      expect(m.widgetWin.document.documentElement.style.height).not.toBe("0px");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("interactive iframe capability probe (executed)", () => {
+  // `interactive_probe: true` is REQUIRED for any of this to run. The server
+  // ships it false (`INTERACTIVE_IFRAME_PROBE_ENABLED`) because on claude.ai
+  // the probe is guaranteed to trip `frame-src` CSP and the host surfaces that
+  // blocked subresource to the user as "There was a problem displaying content
+  // from tako." — next to a chart that rendered perfectly. These tests
+  // therefore describe the behavior that resumes when claude.ai honors
+  // `frameDomains` and the flag is flipped back on, NOT today's default.
   const CHART_RESULT = toolResult(
     { embed_url: EMBED_URL, image_url: IMAGE_URL },
     {
       image_data_url: DATA_URL,
       image_natural_width: 800,
       image_natural_height: 600,
+      interactive_probe: true,
     },
   );
+
+  it("does NOT probe by default — the server flag is off", () => {
+    // The fix, pinned. Same payload minus `interactive_probe`: the PNG must
+    // render and the iframe must never be navigated, so no CSP violation is
+    // ever raised inside the widget document.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL },
+        { image_data_url: DATA_URL },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
+    // The load handler is exactly where the probe would have been armed.
+    expect(widgetFrame(m).getAttribute("src")).toBeNull();
+  });
+
+  it("does not probe when the flag is present but false", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL },
+        { image_data_url: DATA_URL, interactive_probe: false },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    expect(widgetFrame(m).getAttribute("src")).toBeNull();
+  });
 
   it("probes the embed iframe in the background while showing the image", () => {
     const m = mountWidget(staticWidgetHtml());
