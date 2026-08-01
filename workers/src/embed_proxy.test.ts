@@ -15,7 +15,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "./env.js";
-import { handleEmbedProxy, parsePubId, sanitizeEmbedHtml } from "./embed_proxy.js";
+import {
+  handleCdnAssetProxy,
+  handleEmbedProxy,
+  parsePubId,
+  rewriteCdnUrls,
+  sanitizeEmbedHtml,
+} from "./embed_proxy.js";
 
 const OFF: Env = { DJANGO_BASE_URL: "https://tako.com" };
 const ON: Env = {
@@ -244,5 +250,137 @@ describe("handleEmbedProxy — experiment on", () => {
   it("rejects a write method", async () => {
     const res = await handleEmbedProxy(req(`/embed-html/${PUB_ID}`, "POST"), ON);
     expect(res?.status).toBe(405);
+  });
+});
+
+describe("rewriteCdnUrls", () => {
+  const CDN = "https://cdn.example.net";
+  const TARGET = "https://mcp.tako.com/cdn-asset";
+
+  it("repoints every occurrence and counts them", () => {
+    const html = `<script src="${CDN}/a/Card.js"></script><link href="${CDN}/f.css">`;
+    const out = rewriteCdnUrls(html, CDN, TARGET);
+    expect(out.rewrites).toBe(2);
+    expect(out.html).not.toContain(CDN);
+    expect(out.html).toContain(`${TARGET}/a/Card.js`);
+  });
+
+  it("produces no double slash", () => {
+    // Regression: the target used to carry a trailing slash while the CDN
+    // origin does not, yielding `/cdn-asset//archive/...` — which the asset
+    // route then rejected as a path climbing out of its origin. 400 on every
+    // asset, card mounts, no chart.
+    const out = rewriteCdnUrls(`src="${CDN}/archive/x.js"`, CDN, TARGET);
+    expect(out.html).toContain("/cdn-asset/archive/x.js");
+    expect(out.html).not.toContain("//archive");
+  });
+
+  it("rewrites staticPrefix, not just tags", () => {
+    // staticPrefix is the base Card.js builds runtime asset urls from, so this
+    // is what makes the lazily imported chunks come back through the proxy.
+    const out = rewriteCdnUrls(`{"staticPrefix": "${CDN}/archive/abc/"}`, CDN, TARGET);
+    expect(out.html).toContain(`"${TARGET}/archive/abc/"`);
+  });
+
+  it("reports zero when the page references a different CDN", () => {
+    // Staging and production use separate distributions and the mismatch is
+    // silent, so the count is the only signal. The proxy logs on zero.
+    const out = rewriteCdnUrls('src="https://other.net/x.js"', CDN, TARGET);
+    expect(out.rewrites).toBe(0);
+  });
+});
+
+describe("handleCdnAssetProxy", () => {
+  const ASSET = "/cdn-asset/archive/abc/vite_dist/assets/Card.js";
+
+  it("declines when the experiment is off", async () => {
+    await expect(handleCdnAssetProxy(req(ASSET), OFF)).resolves.toBeUndefined();
+  });
+
+  it("fetches from the CONFIGURED origin, never one from the request", async () => {
+    // This is what keeps the route from being an open proxy: the caller controls
+    // the path, never the host.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("export const x=1", {
+        status: 200,
+        headers: { "content-type": "application/javascript" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleCdnAssetProxy(req(ASSET), ON);
+    expect(res?.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `${ON.PUBLIC_CDN_URL}/archive/abc/vite_dist/assets/Card.js`,
+    );
+    expect(res?.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  it("rejects a path trying to climb out of the origin", async () => {
+    for (const bad of [
+      "/cdn-asset/../secrets",
+      "/cdn-asset//evil.net/x.js",
+      "/cdn-asset/a/../../b",
+      "/cdn-asset/",
+    ]) {
+      const res = await handleCdnAssetProxy(req(bad), ON);
+      // Either a hard 400 or a decline; never an upstream fetch.
+      expect([400, undefined]).toContain(res?.status);
+    }
+  });
+
+  it("rewrites CDN urls baked inside a JS bundle", async () => {
+    // Vite built Card.js with the CDN as its base, so some dynamic imports are
+    // absolute CDN urls the HTML rewrite never sees. Observed live as
+    // TabSection.js and useTransactionDrawer.js dying on CORS while the rest of
+    // the card rendered.
+    const body = `import("${ON.PUBLIC_CDN_URL}/archive/abc/vite_dist/assets/TabSection.js")`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(body, {
+          status: 200,
+          headers: {
+            "content-type": "application/javascript",
+            "cache-control": "public, max-age=31536000, immutable",
+          },
+        }),
+      ),
+    );
+    const res = await handleCdnAssetProxy(req(ASSET), ON);
+    const out = await res!.text();
+    expect(out).not.toContain("cloudfront.net");
+    expect(out).toContain("/cdn-asset/archive/abc/vite_dist/assets/TabSection.js");
+    // And must NOT claim immutability for a body we generated: doing so pinned a
+    // stale bundle in the browser for a year.
+    expect(res?.headers.get("cache-control")).toBe("public, max-age=86400");
+  });
+
+  it("passes an untouched asset through with its upstream caching", async () => {
+    // A font is byte-identical to upstream, so `immutable` stays honest.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("fontbytes", {
+          status: 200,
+          headers: {
+            "content-type": "font/woff2",
+            "cache-control": "public, max-age=31536000, immutable",
+          },
+        }),
+      ),
+    );
+    const res = await handleCdnAssetProxy(req("/cdn-asset/fonts/geist.woff2"), ON);
+    expect(res?.headers.get("cache-control")).toContain("immutable");
+    expect(res?.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  it("maps upstream failures without leaking them as success", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("no", { status: 404 })),
+    );
+    expect((await handleCdnAssetProxy(req(ASSET), ON))?.status).toBe(404);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
+    expect((await handleCdnAssetProxy(req(ASSET), ON))?.status).toBe(502);
   });
 });

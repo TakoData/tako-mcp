@@ -1,5 +1,5 @@
 import { CORS_PATHS, corsPreflight, withCors } from "./cors.js";
-import { handleEmbedProxy } from "./embed_proxy.js";
+import { handleCdnAssetProxy, handleEmbedProxy } from "./embed_proxy.js";
 import type { Env } from "./env.js";
 import { handleIconRequest } from "./icons.js";
 import { handleMcpRequest } from "./mcp.js";
@@ -53,6 +53,14 @@ export default {
     // route does not exist at all in production. See `embed_proxy.ts`.
     const embedProxied = await handleEmbedProxy(request, env);
     if (embedProxied !== undefined) return embedProxied;
+
+    // Companion passthrough for the assets that page references (Card.js, its
+    // lazily imported chunks, the Geist/Inter fonts). Tako's CDN answers CORS
+    // for `tako.com` only, and a `type="module"` script is always fetched in
+    // CORS mode, so serving them from our own origin is what makes the native
+    // card work inside a sandbox. Same gate, same fall-through to 404.
+    const assetProxied = await handleCdnAssetProxy(request, env);
+    if (assetProxied !== undefined) return assetProxied;
 
     // GET /mcp (server->client SSE stream) and DELETE /mcp (session
     // terminate) are genuinely not offered: we run stateless JSON-response

@@ -266,3 +266,41 @@ export function resolvePublicCdnBase(env: Env): string | undefined {
   }
   return validatePublicOrigin(env.PUBLIC_CDN_URL, "PUBLIC_CDN_URL");
 }
+
+/**
+ * The origin the WIDGET should use to reach this worker.
+ *
+ * Order: the explicit `PUBLIC_MCP_URL` binding, else the request origin with
+ * its scheme forced to https for any non-local host.
+ *
+ * The https coercion is not cosmetic. `request.url` reports `http://` whenever
+ * TLS is terminated upstream (`wrangler dev`, ngrok, cloudflared), and this
+ * value goes into two places that both hard-fail on it: a `connectDomains` CSP
+ * entry, and a URL the widget fetches from an https document — mixed content,
+ * blocked before the request leaves. Localhost is exempt because http is the
+ * only thing that works there.
+ *
+ * Returns `undefined` when neither source is usable, and every caller treats
+ * that as "no native card", so a bad value degrades to today's PNG.
+ */
+export function resolveWidgetOrigin(
+  env: Env,
+  requestOrigin: string | undefined,
+): string | undefined {
+  if (env.PUBLIC_MCP_URL !== undefined && env.PUBLIC_MCP_URL !== "") {
+    return validatePublicOrigin(env.PUBLIC_MCP_URL, "PUBLIC_MCP_URL");
+  }
+  if (requestOrigin === undefined || requestOrigin === "") return undefined;
+  let url: URL;
+  try {
+    url = new URL(requestOrigin);
+  } catch {
+    return undefined;
+  }
+  const isLocal =
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "[::1]";
+  if (url.protocol === "http:" && !isLocal) url.protocol = "https:";
+  return url.origin;
+}

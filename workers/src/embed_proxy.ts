@@ -41,10 +41,35 @@
  * Gated on `PUBLIC_CDN_URL`: with the experiment off (production default) this
  * route 404s exactly like any unknown path, so the surface is unchanged.
  */
-import { type Env, resolvePublicBase, resolvePublicCdnBase } from "./env.js";
+import {
+  type Env,
+  resolvePublicBase,
+  resolvePublicCdnBase,
+  resolveWidgetOrigin,
+} from "./env.js";
 
 /** Route prefix. The pub_id is the single trailing path segment. */
 export const EMBED_PROXY_PREFIX = "/embed-html/";
+
+/**
+ * Route prefix for the CDN asset passthrough. Everything after it is the
+ * asset's path on the configured CDN origin.
+ *
+ * This exists because Tako's asset CDN enforces a CORS origin allow-list that
+ * reflects `tako.com` and nothing else (measured 2026-08-01: `tako.com` gets
+ * `access-control-allow-origin: https://tako.com`; any other origin gets no
+ * header at all, and the staging distribution sends none even for tako.com).
+ * `Card.js` is `type="module"`, and module scripts are always fetched in CORS
+ * mode — so inside a widget sandbox every asset load failed with "blocked by
+ * CORS policy" even though CSP permitted the origin.
+ *
+ * Rather than wait on a CloudFront response-headers policy we do not control,
+ * the proxied page's CDN URLs are rewritten to this route and served from our
+ * own origin with `Access-Control-Allow-Origin: *`. Card.js's lazily imported
+ * chunks then resolve relative to ITS url — now ours — so they come back
+ * through here too, without any rewriting of the bundle itself.
+ */
+export const CDN_ASSET_PREFIX = "/cdn-asset/";
 
 /**
  * Upstream fetch bound. The widget shows the PNG until this resolves, so a slow
@@ -232,6 +257,33 @@ export async function handleEmbedProxy(
   }
 
   const sanitized = sanitizeEmbedHtml(new TextDecoder().decode(buffer));
+  // Repoint every CDN URL at our own passthrough. Without this the page loads
+  // in the widget and then every asset dies on the CDN's CORS allow-list — the
+  // exact half-render this route exists to avoid.
+  const widgetOrigin = resolveWidgetOrigin(env, new URL(request.url).origin);
+  const cdnBase = resolvePublicCdnBase(env);
+  let html = sanitized.html;
+  if (widgetOrigin !== undefined && cdnBase !== undefined) {
+    // No trailing slash on the target: the CDN origin has none either, so the
+    // page's paths already start with `/`. Appending the prefix WITH its slash
+    // produced `/cdn-asset//archive/...`, which the asset route then rejected as
+    // a path trying to climb out of its origin — a 400 on every asset.
+    const rewritten = rewriteCdnUrls(
+      html,
+      cdnBase,
+      `${widgetOrigin}${CDN_ASSET_PREFIX.replace(/\/$/, "")}`,
+    );
+    html = rewritten.html;
+    if (rewritten.rewrites === 0) {
+      // The page referenced a DIFFERENT CDN origin than `PUBLIC_CDN_URL` names
+      // — staging and production use separate distributions, and a mismatch is
+      // silent: the card mounts and never draws. Loud, because the symptom is
+      // not.
+      console.warn(
+        `[mcp] embed proxy rewrote 0 CDN urls for ${pubId} — PUBLIC_CDN_URL (${cdnBase}) likely does not match the origin this page references`,
+      );
+    }
+  }
   // Logged because a silent stop in stripping is how a csrfToken would begin
   // reaching a third-party sandbox unnoticed after an upstream redesign.
   if (!sanitized.removedCsrf) {
@@ -239,7 +291,7 @@ export async function handleEmbedProxy(
       `[mcp] embed proxy found no csrfToken island to strip for ${pubId} — upstream shape may have changed`,
     );
   }
-  return new Response(sanitized.html, {
+  return new Response(html, {
     status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
@@ -251,4 +303,153 @@ export async function handleEmbedProxy(
       "x-content-type-options": "nosniff",
     },
   });
+}
+
+/**
+ * Point every CDN URL in the page at our own asset passthrough.
+ *
+ * A plain global string replace of the CDN origin, which covers all four places
+ * the origin appears: the `Card.js` module `src`, the `<link>` hrefs (fonts.css,
+ * favicons), the font URLs inside that stylesheet's own fetch chain, and
+ * `staticPrefix` in the page-context island. That last one matters most — it is
+ * the base Card.js builds asset URLs from at runtime, so rewriting it is what
+ * makes the lazily imported view chunks come back through the proxy rather than
+ * straight to a CORS wall.
+ *
+ * Exported for tests.
+ */
+export function rewriteCdnUrls(
+  html: string,
+  cdnBase: string,
+  assetBase: string,
+): { html: string; rewrites: number } {
+  // `split`/`join` rather than a regex: the CDN origin is a literal with dots
+  // in it, and building a pattern from it would need escaping for no gain. The
+  // segment count also gives the rewrite tally for free.
+  const parts = html.split(cdnBase);
+  return { html: parts.join(assetBase), rewrites: parts.length - 1 };
+}
+
+/**
+ * Handle `GET /cdn-asset/{path}` — fetch the asset from the configured CDN
+ * origin and return it with CORS.
+ *
+ * The upstream ORIGIN is fixed by configuration (`PUBLIC_CDN_URL`), never taken
+ * from the request. That is the whole reason this is not an open proxy: a
+ * caller controls the path but can never redirect it to another host.
+ *
+ * Assets are content-hashed and served `immutable` with a one-year max-age
+ * upstream, so that is passed straight through — a cold cache costs ~400 KB for
+ * `Card.js` plus fonts, and every warm hit is free.
+ */
+export async function handleCdnAssetProxy(
+  request: Request,
+  env: Env,
+): Promise<Response | undefined> {
+  const cdnBase = resolvePublicCdnBase(env);
+  if (cdnBase === undefined) return undefined;
+  const url = new URL(request.url);
+  if (!url.pathname.startsWith(CDN_ASSET_PREFIX)) return undefined;
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, OPTIONS",
+        "access-control-max-age": "86400",
+      },
+    });
+  }
+  if (request.method !== "GET") return textResponse("method not allowed", 405);
+
+  const assetPath = url.pathname.slice(CDN_ASSET_PREFIX.length);
+  // No traversal, no protocol-relative escape, no empty path. The origin is
+  // fixed above, so this only has to keep the PATH from climbing out of it.
+  if (
+    assetPath === "" ||
+    assetPath.includes("..") ||
+    assetPath.startsWith("/") ||
+    assetPath.includes("\\")
+  ) {
+    return textResponse("bad asset path", 400);
+  }
+
+  const upstream = `${cdnBase}/${assetPath}${url.search}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(upstream, {
+      signal: controller.signal,
+      redirect: "follow",
+    });
+  } catch (err) {
+    console.warn(`[mcp] cdn asset proxy failed for ${assetPath}:`, err);
+    return textResponse("upstream unavailable", 502);
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) {
+    return textResponse(
+      "asset not available",
+      response.status === 404 ? 404 : 502,
+    );
+  }
+
+  const headers = new Headers();
+  const contentType = response.headers.get("content-type");
+  if (contentType !== null) headers.set("content-type", contentType);
+
+  // JavaScript gets the same origin rewrite the HTML got, because some chunk
+  // URLs are baked into the BUNDLE rather than the page. Vite built Card.js
+  // with the CDN as its base, so a handful of its dynamic imports are absolute
+  // CDN URLs that no amount of HTML rewriting reaches — observed as
+  // `TabSection.js` and `useTransactionDrawer.js` loading straight from
+  // CloudFront and dying on its CORS allow-list while the rest of the card
+  // rendered fine. Buffering to do a string replace costs holding ~1.5 MB
+  // briefly on a cold cache; the assets are immutable, so warm hits skip it.
+  const isJavaScript =
+    contentType !== null && /javascript|ecmascript/i.test(contentType);
+  if (isJavaScript) {
+    const widgetOrigin = resolveWidgetOrigin(env, url.origin);
+    const body = await response.text();
+    if (widgetOrigin !== undefined && body.includes(cdnBase)) {
+      const rewritten = rewriteCdnUrls(
+        body,
+        cdnBase,
+        `${widgetOrigin}${CDN_ASSET_PREFIX.replace(/\/$/, "")}`,
+      );
+      headers.set("access-control-allow-origin", "*");
+      headers.set("x-content-type-options", "nosniff");
+      // NOT the upstream `immutable, max-age=31536000`. Upstream can promise
+      // that because its URL is content-hashed; ours cannot, because we have
+      // rewritten the body to embed THIS worker's origin. Passing `immutable`
+      // through pinned a stale bundle in the browser for a year — it is how a
+      // fixed rewrite appeared not to work at all, since the cached copy still
+      // carried raw CDN urls. A day is plenty (the path is still hashed, so a
+      // new build is a new url) and it keeps the body's origin-dependence
+      // honest.
+      headers.set("cache-control", "public, max-age=86400");
+      return new Response(rewritten.html, { status: 200, headers });
+    }
+    headers.set("access-control-allow-origin", "*");
+    headers.set("x-content-type-options", "nosniff");
+    headers.set(
+      "cache-control",
+      response.headers.get("cache-control") ?? "public, max-age=3600",
+    );
+    return new Response(body, { status: 200, headers });
+  }
+  const cacheControl = response.headers.get("cache-control");
+  headers.set(
+    "cache-control",
+    cacheControl ?? "public, max-age=3600",
+  );
+  headers.set("access-control-allow-origin", "*");
+  // Fonts are subject to CORS even in `<link>`/`@font-face` form, and the
+  // stylesheet that requests them is now same-origin with the page, so this
+  // header is what keeps Geist/Inter from falling back to a system font.
+  headers.set("timing-allow-origin", "*");
+  headers.set("x-content-type-options", "nosniff");
+  return new Response(response.body, { status: 200, headers });
 }
