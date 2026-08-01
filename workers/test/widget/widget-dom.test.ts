@@ -846,6 +846,174 @@ describe("script-src capability probe (executed)", () => {
   });
 });
 
+/**
+ * Native-card upgrade: replacing the PNG with Tako's real interactive card by
+ * fetching the embed page through our CORS proxy and letting its own scripts
+ * run in the widget document.
+ *
+ * The property that matters more than the upgrade working is that FAILING
+ * leaves today's behavior exactly as it was. The PNG is painted first and the
+ * document is only opened once the markup is in hand, so every failure mode —
+ * 502, timeout, non-HTML, network error — has to be a no-op on screen.
+ */
+describe("native card upgrade (executed)", () => {
+  const NATIVE_URL = "https://mcp.example.test/embed-html/abc123";
+  const NATIVE_HTML =
+    "<!doctype html><html><body><div id='app'>REAL CARD</div></body></html>";
+
+  /** Deliver a chart with the native URL armed. */
+  function deliverNative(m: Mounted, url = NATIVE_URL): void {
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
+        { image_data_url: DATA_URL, native_card_url: url },
+      ),
+      m.wrapperWin,
+    );
+  }
+
+  /** Stub the widget window's fetch. */
+  function stubFetch(
+    m: Mounted,
+    impl: (url: string) => Promise<unknown>,
+  ): { calls: string[] } {
+    const calls: string[] = [];
+    (m.widgetWin as unknown as { fetch: unknown }).fetch = (url: string) => {
+      calls.push(String(url));
+      return impl(String(url));
+    };
+    return { calls };
+  }
+
+  function htmlResponse(body: string, ok = true): Promise<unknown> {
+    return Promise.resolve({
+      ok,
+      status: ok ? 200 : 502,
+      text: () => Promise.resolve(body),
+    });
+  }
+
+  it("does not attempt an upgrade when the server did not arm it", () => {
+    // Production default: no native_card_url, so no fetch at all.
+    const m = mountWidget(staticWidgetHtml());
+    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL },
+        { image_data_url: DATA_URL },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    expect(f.calls).toEqual([]);
+  });
+
+  it("paints the PNG first, then fetches the native card", () => {
+    const m = mountWidget(staticWidgetHtml());
+    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    deliverNative(m);
+    // The PNG is the committed baseline BEFORE any fetch happens.
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(f.calls).toEqual([]);
+    fireImageLoad(m);
+    expect(f.calls).toEqual([NATIVE_URL]);
+  });
+
+  it("keeps the PNG when the proxy errors", async () => {
+    const m = mountWidget(staticWidgetHtml());
+    stubFetch(m, () => htmlResponse("upstream error", false));
+    deliverNative(m);
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+    // Unchanged: same image, same click-through, document never opened.
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(widgetLink(m).getAttribute("href")).toBe(EMBED_URL);
+    expect(m.widgetWin.document.body.innerHTML).not.toContain("REAL CARD");
+  });
+
+  it("keeps the PNG when the fetch rejects", async () => {
+    const m = mountWidget(staticWidgetHtml());
+    stubFetch(m, () => Promise.reject(new Error("network down")));
+    deliverNative(m);
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(m.widgetWin.document.body.innerHTML).not.toContain("REAL CARD");
+  });
+
+  it("keeps the PNG when the body is not an HTML document", async () => {
+    // A proxy that starts returning JSON must not have it written into the
+    // document as markup.
+    const m = mountWidget(staticWidgetHtml());
+    stubFetch(m, () => htmlResponse('{"error":"UNIQUE-SENTINEL-BODY"}'));
+    deliverNative(m);
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    // A distinctive sentinel, not the word "error" — the widget's own markup
+    // legitimately contains that.
+    expect(m.widgetWin.document.body.innerHTML).not.toContain(
+      "UNIQUE-SENTINEL-BODY",
+    );
+  });
+
+  it("fetches at most once even if both image events fire", async () => {
+    const m = mountWidget(staticWidgetHtml());
+    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    deliverNative(m);
+    fireImageLoad(m);
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    widgetImg(m).dispatchEvent(new WidgetEvent("error"));
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(f.calls.length).toBe(1);
+  });
+
+  it("attempts the upgrade even when the PNG itself failed", async () => {
+    // Nothing to protect in that case, and the native card is the better
+    // outcome than a click-through link.
+    const m = mountWidget(staticWidgetHtml());
+    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    deliverNative(m);
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    widgetImg(m).dispatchEvent(new WidgetEvent("error"));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(f.calls).toEqual([NATIVE_URL]);
+  });
+
+  it("injects a height reporter into the markup it writes", async () => {
+    // `document.open()` discards the widget's own listeners, so without an
+    // injected reporter the host would size the card from a stale value.
+    let written = "";
+    const m = mountWidget(staticWidgetHtml());
+    stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    const doc = m.widgetWin.document as unknown as {
+      open: () => void;
+      write: (s: string) => void;
+      close: () => void;
+    };
+    doc.open = () => {};
+    doc.write = (s: string) => {
+      written += s;
+    };
+    doc.close = () => {};
+    deliverNative(m);
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(written).toContain("REAL CARD");
+    expect(written).toContain("ui/notifications/size-changed");
+    expect(written).toContain("notifyIntrinsicHeight");
+    // The reporter goes inside the body, not appended after </html>.
+    expect(written.indexOf("size-changed")).toBeLessThan(
+      written.indexOf("</body>"),
+    );
+  });
+});
+
 describe("baked widget variant (executed)", () => {
   it("notifies size-changed to the parent on execution", () => {
     const html = __chart_widget_test_only__.buildBakedWidgetHtml({

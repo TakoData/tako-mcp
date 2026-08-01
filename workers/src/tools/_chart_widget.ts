@@ -37,7 +37,9 @@ import {
   resolvePublicApiBase,
   resolvePublicBase,
   resolvePublicCdnBase,
+  validatePublicOrigin,
 } from "../env.js";
+import { EMBED_PROXY_PREFIX } from "../embed_proxy.js";
 import type {
   AppUiResource,
   ToolContext,
@@ -185,6 +187,66 @@ export const INTERACTIVE_IFRAME_PROBE_ENABLED = false;
  * violation" is the ALLOWED answer — which means the probe needs no real
  * asset URL, and therefore no extra fetch on the request path to discover one.
  */
+/**
+ * The origin the WIDGET should use to reach this worker.
+ *
+ * Order: the explicit `PUBLIC_MCP_URL` binding, else the request origin with
+ * its scheme forced to https for any non-local host.
+ *
+ * The https coercion is not cosmetic. `request.url` reports `http://` whenever
+ * TLS is terminated upstream (`wrangler dev`, ngrok, cloudflared), and this
+ * value goes into two places that both hard-fail on it: a `connectDomains` CSP
+ * entry, and a URL the widget fetches from an https document — mixed content,
+ * blocked before the request leaves. Localhost is exempt because http is the
+ * only thing that works there.
+ *
+ * Returns `undefined` when neither source is usable, and every caller treats
+ * that as "no native card", so a bad value degrades to today's PNG.
+ */
+export function resolveWidgetOrigin(
+  env: Env,
+  requestOrigin: string | undefined,
+): string | undefined {
+  if (env.PUBLIC_MCP_URL !== undefined && env.PUBLIC_MCP_URL !== "") {
+    return validatePublicOrigin(env.PUBLIC_MCP_URL, "PUBLIC_MCP_URL");
+  }
+  if (requestOrigin === undefined || requestOrigin === "") return undefined;
+  let url: URL;
+  try {
+    url = new URL(requestOrigin);
+  } catch {
+    return undefined;
+  }
+  const isLocal =
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "[::1]";
+  if (url.protocol === "http:" && !isLocal) url.protocol = "https:";
+  return url.origin;
+}
+
+/**
+ * URL of the CORS-readable embed-page proxy for one chart, or `undefined` when
+ * the native-card path is not available.
+ *
+ * Requires BOTH the experiment flag (`PUBLIC_CDN_URL` — without the asset CDN
+ * in `resourceDomains`, the proxied page's `Card.js` would be CSP-blocked and
+ * the upgrade would render a card with no chart in it) and a known request
+ * origin (the widget's own origin is opaque, so it cannot resolve a relative
+ * path back to this worker).
+ */
+export function nativeCardUrl(
+  env: Env,
+  origin: string | undefined,
+  pubId: string | undefined,
+): string | undefined {
+  if (resolvePublicCdnBase(env) === undefined) return undefined;
+  if (pubId === undefined || pubId === "") return undefined;
+  const base = resolveWidgetOrigin(env, origin);
+  if (base === undefined) return undefined;
+  return `${base}${EMBED_PROXY_PREFIX}${encodeURIComponent(pubId)}`;
+}
+
 export function nativeCardProbeMeta(env: Env): Record<string, unknown> {
   const cdnBase = resolvePublicCdnBase(env);
   if (cdnBase === undefined) return {};
@@ -208,11 +270,23 @@ export function nativeCardProbeMeta(env: Env): Record<string, unknown> {
  */
 export async function buildChartExtraMeta(
   imageUrl: string | undefined,
-  opts: { bakeImage: boolean; env?: Env },
+  opts: {
+    bakeImage: boolean;
+    env?: Env | undefined;
+    /** Request origin — needed to address this worker's embed proxy. */
+    origin?: string | undefined;
+    /** Chart id, for the per-chart proxy URL. */
+    pubId?: string | undefined;
+  },
 ): Promise<Record<string, unknown> | undefined> {
-  // Probe fields ride along on whatever else this returns. Empty unless
-  // `PUBLIC_CDN_URL` is set, so production is byte-identical.
+  // Probe + native-card fields ride along on whatever else this returns. Both
+  // are empty unless `PUBLIC_CDN_URL` is set, so production is byte-identical.
   const probe = opts.env !== undefined ? nativeCardProbeMeta(opts.env) : {};
+  const native =
+    opts.env !== undefined
+      ? nativeCardUrl(opts.env, opts.origin, opts.pubId)
+      : undefined;
+  if (native !== undefined) probe.native_card_url = native;
   if (imageUrl === undefined) {
     return Object.keys(probe).length > 0 ? probe : undefined;
   }
@@ -423,6 +497,44 @@ function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
 </body>
 </html>`;
 }
+
+/**
+ * Height reporter injected into the proxied embed page during a native upgrade.
+ *
+ * Lives here, as its own constant, because it is a `<script>` body nested
+ * inside the widget template which is itself a `<script>` body.
+ *
+ * The runtime value MUST contain a real `</script>`, since it is injected into
+ * a fetched HTML document. So the escaping cannot live in this constant — it
+ * happens where the value is interpolated into the widget template, which
+ * rewrites `</script` to `<\/script`. The HTML parser then no longer sees a
+ * closing tag, while JS still reads the string as `</script>`. Skipping that
+ * step truncates the entire widget bundle at this line, which is how it was
+ * found: every executing widget test failed at once.
+ *
+ * `__FALLBACK_HEIGHT__` is substituted at upgrade time. It covers the window
+ * where Card.js has mounted but not laid out, so `offsetHeight` reads 0 and the
+ * host would otherwise collapse the card to nothing.
+ */
+const NATIVE_HEIGHT_REPORTER = [
+  "<script>(function(){",
+  "function n(){",
+  "var h=(document.documentElement&&document.documentElement.offsetHeight)||0;",
+  "if(h<=0)h=__FALLBACK_HEIGHT__;",
+  "try{if(window.openai&&typeof window.openai.notifyIntrinsicHeight==='function')",
+  "window.openai.notifyIntrinsicHeight(h);}catch(e){}",
+  "try{window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',",
+  "params:{width:(document.documentElement&&document.documentElement.clientWidth)||0,height:h}},'*');}catch(e){}",
+  "}",
+  "n();",
+  "window.addEventListener('resize',n);",
+  "window.addEventListener('load',n);",
+  // Card.js mounts asynchronously and lazily imports its view chunks, so the
+  // first few reads land before the card has its real height. Re-report on a
+  // short ladder rather than once.
+  "setTimeout(n,400);setTimeout(n,1200);setTimeout(n,3000);",
+  "})();<\/script>",
+].join("");
 
 /**
  * Bundle the host loads into a sandboxed iframe. One thin `<iframe>`
@@ -797,6 +909,73 @@ const WIDGET_HTML = `<!doctype html>
     log("iframe watchdog armed", { src: url });
   }
 
+  // Native-card upgrade. Replace the PNG with Tako's REAL card — the same
+  // interactive document ChatGPT renders — by fetching the embed page through
+  // our CORS-enabled proxy and letting its own scripts run here.
+  //
+  // Shaped as an UPGRADE, never a first paint, and that is the whole safety
+  // story: the PNG is painted first and stays until this has the markup in
+  // hand. A slow proxy, a 502, a CSP surprise, or an upstream redesign all cost
+  // an upgrade and nothing else — the chart on screen is untouched. It is also
+  // why the fetch completes BEFORE \`document.open()\` is called: opening the
+  // document blanks it, so doing that speculatively would trade a working chart
+  // for a white box.
+  //
+  // Why the whole page rather than mounting Card.js ourselves: the page carries
+  // its config and theme as inline JSON islands and bootstraps from them.
+  // Writing the document verbatim means Tako's own bootstrap runs, so there is
+  // no mount contract to reverse-engineer and no second copy to keep in sync.
+  // \`document.write\` executes inserted scripts, including the
+  // \`type="module"\` Card.js tag and the chunks it imports.
+  var nativeStarted = false;
+  function upgradeToNativeCard(nativeUrl, fallbackHeight) {
+    if (nativeStarted || typeof nativeUrl !== "string" || nativeUrl === "") return;
+    nativeStarted = true;
+    var settled = false;
+    var timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      log("native card fetch timed out, staying on image", { url: nativeUrl });
+    }, 7000);
+    fetch(nativeUrl, { credentials: "omit" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
+      .then(function (html) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (typeof html !== "string" || html.indexOf("<html") === -1) {
+          throw new Error("not an html document");
+        }
+        // Height reporting must survive the swap: \`document.open()\` discards
+        // this script's document, listeners included. Injecting a reporter into
+        // the markup keeps the host sized correctly — the same
+        // size-changed / notifyIntrinsicHeight pair the baked variant sends.
+        var reporter = ${JSON.stringify(NATIVE_HEIGHT_REPORTER).replace(/<\/script/gi, "<\\/script")}.replace(
+          "__FALLBACK_HEIGHT__",
+          String(fallbackHeight || 0),
+        );
+        var patched =
+          html.indexOf("</body>") !== -1
+            ? html.replace("</body>", reporter + "</body>")
+            : html + reporter;
+        log("native card upgrading", { bytes: patched.length });
+        document.open();
+        document.write(patched);
+        document.close();
+      })
+      .catch(function (err) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        log("native card fetch failed, staying on image", {
+          error: String(err && err.message ? err.message : err),
+        });
+      });
+  }
+
   // \`script-src\` capability probe. Runs at most once, only when the server
   // armed it (\`_meta.cdn_probe_script_url\`, i.e. \`PUBLIC_CDN_URL\` is set),
   // and NEVER touches the chart. It exists to answer one question before any
@@ -847,12 +1026,22 @@ const WIDGET_HTML = `<!doctype html>
       try {
         var note = document.createElement("div");
         note.setAttribute("data-tako-csp-probe", verdict);
+        // \`position: fixed\` and NOT in normal flow, deliberately. The image
+        // path pins \`body.style.height\` to the chart's measured height and the
+        // host sizes its container to the height we notify, so a note appended
+        // after the chart in flow sits below both and is clipped away —
+        // rendered, invisible, and the one number this experiment exists to
+        // produce became devtools-only. Out of flow it also cannot perturb
+        // \`getBoundingClientRect().height\`, so the chart still measures and
+        // sizes exactly as it did.
         note.style.cssText =
-          "font:11px system-ui,-apple-system,sans-serif;padding:4px 6px;opacity:0.75;" +
-          (violated ? "color:#ff8080;" : "color:#7ddc94;");
+          "position:fixed;top:0;left:0;z-index:2147483647;max-width:100%;" +
+          "font:11px/1.4 system-ui,-apple-system,sans-serif;padding:3px 6px;" +
+          "background:rgba(8,10,14,0.92);border-radius:0 0 4px 0;" +
+          (violated ? "color:#ff8f8f;" : "color:#7ddc94;");
         note.textContent =
-          "script-src " + verdict + " for " + origin +
-          (violated ? " (host blocked it)" : " (host permitted it)");
+          "script-src " + verdict + " · " + origin +
+          (violated ? " (host BLOCKED it)" : " (host permitted it)");
         document.body.appendChild(note);
       } catch (e) { /* nothing to surface into */ }
       try { el.parentNode && el.parentNode.removeChild(el); } catch (e) {}
@@ -1012,6 +1201,7 @@ const WIDGET_HTML = `<!doctype html>
         // anthropics/claude-ai-mcp#40 is fixed), the probe upgrades to the
         // interactive chart once it does.
         if (validEmbed && allowProbe) probeInteractiveIframe(url, h);
+        upgradeToNativeCard(opts.nativeCardUrl, h);
       });
       // CSP / network error fallback. The most common trigger is
       // claude.ai's outer-document CSP (\`img-src 'self' blob: data:\`)
@@ -1045,6 +1235,7 @@ const WIDGET_HTML = `<!doctype html>
         // the interactive embed. \`probeStarted\` dedupes against the load
         // path — only one of load/error fires per image.
         if (validEmbed && allowProbe) probeInteractiveIframe(url, h);
+        upgradeToNativeCard(opts.nativeCardUrl, h);
       });
       // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
       // guard at the top of \`render()\` blocks any re-entry from a
@@ -1110,6 +1301,11 @@ const WIDGET_HTML = `<!doctype html>
     // Server-controlled probe opt-in. Absent/false → never probe.
     var probeEnabled =
       meta && typeof meta === "object" && meta.interactive_probe === true;
+    // Proxied embed-page URL for the native upgrade. Absent → PNG only.
+    var nativeCardUrl =
+      meta && typeof meta === "object" && typeof meta.native_card_url === "string"
+        ? meta.native_card_url
+        : "";
     // Independent of everything below: the script-src capability experiment.
     // Armed only when the server set \`PUBLIC_CDN_URL\`.
     if (meta && typeof meta === "object" && meta.cdn_probe_script_url) {
@@ -1199,6 +1395,7 @@ const WIDGET_HTML = `<!doctype html>
         imageUrl: imgUrl,
         allowProbe: true,
         probeEnabled: probeEnabled,
+        nativeCardUrl: nativeCardUrl,
       });
     } else if (validEmbed) {
       // No image at all but we have an embed_url — try the iframe even
@@ -1756,6 +1953,7 @@ export async function fetchPngContentBlock(
  */
 export function buildChartAppUiResource(
   env: Env,
+  requestOrigin: string | undefined,
   resolveUriFromInput: (input: unknown, output?: unknown) => string,
 ): AppUiResource {
   const webBase = resolvePublicBase(env);
@@ -1785,6 +1983,19 @@ export function buildChartAppUiResource(
     // spec `resourceDomains` must reach script-src/style-src/font-src, and
     // whether claude.ai honors that is the single unknown gating native
     // interactive cards there. Unset in production → this array is unchanged.
+    // Runtime fetches the widget makes — just this worker's own origin, for the
+    // native-card proxy. Empty when the experiment is off or the origin is
+    // unknown, and `mcp.ts` omits the key entirely then. Never tako.com: the
+    // widget always goes through our proxy, because the embed route itself
+    // serves no CORS header.
+    connectDomains: (() => {
+      if (resolvePublicCdnBase(env) === undefined) return [];
+      // Same resolver the native-card URL uses, so the origin we DECLARE and
+      // the origin the widget FETCHES can never disagree — a mismatch there is
+      // a CSP block that looks like a broken proxy.
+      const widgetOrigin = resolveWidgetOrigin(env, requestOrigin);
+      return widgetOrigin === undefined ? [] : [widgetOrigin];
+    })(),
     resourceDomains: [
       ...new Set(
         [webBase, resolvePublicApiBase(env), resolvePublicCdnBase(env)].filter(
@@ -1846,8 +2057,11 @@ export function buildChartAppUiResource(
  * Falls back to the static URI when there's no renderable top card. Shared by
  * tako_search and tako_visualize, which both render a chart widget this way.
  */
-export function buildChartAppUiResourceFromOutputPubId(env: Env): AppUiResource {
-  return buildChartAppUiResource(env, (_input, output) => {
+export function buildChartAppUiResourceFromOutputPubId(
+  env: Env,
+  requestOrigin?: string,
+): AppUiResource {
+  return buildChartAppUiResource(env, requestOrigin, (_input, output) => {
     const pubId =
       typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
         ? (output as { pub_id: string }).pub_id
