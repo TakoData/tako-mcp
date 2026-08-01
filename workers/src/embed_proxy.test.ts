@@ -384,3 +384,48 @@ describe("handleCdnAssetProxy", () => {
     expect((await handleCdnAssetProxy(req(ASSET), ON))?.status).toBe(502);
   });
 });
+
+describe("dark_mode forwarding", () => {
+  function stubHtml() {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(UPSTREAM_HTML, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("defaults to auto when the widget asks for nothing", async () => {
+    const f = stubHtml();
+    await handleEmbedProxy(req(`/embed-html/${PUB_ID}`), ON);
+    expect(String(f.mock.calls[0]?.[0])).toContain("dark_mode=auto");
+  });
+
+  it("forwards an explicit host theme", async () => {
+    // `auto` follows the OS; a host that themes itself independently would get
+    // a light card on a dark surface without this.
+    for (const v of ["true", "false"]) {
+      const f = stubHtml();
+      await handleEmbedProxy(req(`/embed-html/${PUB_ID}?dark_mode=${v}`), ON);
+      expect(String(f.mock.calls[0]?.[0])).toContain(`dark_mode=${v}`);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("ignores anything that is not one of the two literals", async () => {
+    // The value is interpolated into the upstream query, so it is allow-listed
+    // rather than sanitised.
+    for (const bad of ["auto&x=1", "1", "yes", "'; DROP", "true&evil=1"]) {
+      const f = stubHtml();
+      await handleEmbedProxy(
+        req(`/embed-html/${PUB_ID}?dark_mode=${encodeURIComponent(bad)}`),
+        ON,
+      );
+      expect(String(f.mock.calls[0]?.[0])).toContain("dark_mode=auto");
+      expect(String(f.mock.calls[0]?.[0])).not.toContain("evil");
+      vi.unstubAllGlobals();
+    }
+  });
+});

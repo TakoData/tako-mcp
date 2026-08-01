@@ -206,10 +206,19 @@ export async function handleEmbedProxy(
     });
   }
 
-  // `dark_mode=auto` matches what the tools write into `embed_url`: the embed
-  // page runs in the user's browser and resolves "auto" from
-  // `prefers-color-scheme`, so the card follows the host's theme.
-  const upstream = `${resolvePublicBase(env)}/embed/${pubId}/?dark_mode=auto`;
+  // `dark_mode` is forwarded when the widget asked for one, else `auto`.
+  //
+  // `auto` resolves from `prefers-color-scheme` in the viewer's browser, which
+  // tracks the OS — right when the host follows the OS, wrong when the user has
+  // themed the host itself (a dark ChatGPT on a light Mac would get a light
+  // card on a dark surface). Hosts that expose a theme let the widget ask
+  // explicitly; see `withHostTheme` in `_chart_widget.ts`. Only the two literal
+  // values are honoured, so this cannot smuggle anything into the upstream
+  // query.
+  const requested = url.searchParams.get("dark_mode");
+  const darkMode =
+    requested === "true" || requested === "false" ? requested : "auto";
+  const upstream = `${resolvePublicBase(env)}/embed/${pubId}/?dark_mode=${darkMode}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
   let response: Response;

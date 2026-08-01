@@ -362,9 +362,15 @@ function buildBakedWidgetHtml(opts: {
   // measures while the iframe is still at zero width, the image would
   // be 0×0 and body would collapse — the floor keeps the snapshot in
   // the right ballpark for that case (slight over-size at narrow
-  // widths is benign; cropping at wide widths is not). Body background
-  // pinned to a Tako-card-ish dark gray so the rounded corners on the
-  // chart card image don't show iframe-default white through.
+  // widths is benign; cropping at wide widths is not).
+  //
+  // Background is TRANSPARENT, not a Tako-ish dark gray as it once was.
+  // The dark fill was chosen so iframe-default white would not show through
+  // the chart card's rounded corners, but it solved that by painting an
+  // opaque rectangle — which on a light-themed host is a dark box with square
+  // corners sitting inside the host's rounded container. Transparent lets the
+  // host's own surface show through instead, so the only corners visible are
+  // the card's, in either theme.
   return `<!doctype html>
 <html lang="en" style="min-height: ${initialHeight}px;">
 <head>
@@ -373,7 +379,7 @@ function buildBakedWidgetHtml(opts: {
 <meta name="x-tako-widget" content="open_chart_ui_baked/v1" />
 <title>Tako chart</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; background: #0f1115; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
+  html, body { margin: 0; padding: 0; width: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
   #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
   #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
   #tako-embed-img { width: 100%; height: auto; max-height: ${MAX_INLINE_WIDGET_HEIGHT_PX}px; object-fit: contain; display: block; background: transparent; transition: opacity 120ms ease-out; }
@@ -445,7 +451,7 @@ function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
 <meta name="x-tako-widget" content="open_chart_ui_baked_fallback/v1" />
 <title>Tako chart</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; background: #0f1115; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
+  html, body { margin: 0; padding: 0; width: 100%; background: transparent; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
   .wrap { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; height: 100%; padding: 24px; box-sizing: border-box; text-align: center; }
   a { color: #4aa9ff; text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -635,6 +641,37 @@ const WIDGET_HTML = `<!doctype html>
   // user is looking at.
   function armEmbedOrigin(url) {
     try { embedOrigin = new URL(url).origin; } catch (e) { embedOrigin = null; }
+  }
+
+  // The host's declared theme, or null when it does not say.
+  //
+  // Both chart urls carry \`dark_mode=auto\`, which the embed page resolves from
+  // \`prefers-color-scheme\` INSIDE this iframe — i.e. from the OS. That is right
+  // whenever the host follows the OS and wrong whenever the user has themed the
+  // host itself: a dark ChatGPT on a light Mac renders a light card on a dark
+  // surface. Hosts that expose their theme are believed over the OS; the rest
+  // keep \`auto\`, which is still the best available guess.
+  function hostTheme() {
+    try {
+      var t = window.openai && window.openai.theme;
+      if (typeof t === "string" && t) {
+        var v = t.toLowerCase();
+        if (v.indexOf("dark") !== -1) return "dark";
+        if (v.indexOf("light") !== -1) return "light";
+      }
+    } catch (e) { /* no host runtime */ }
+    return null;
+  }
+
+  // Rewrite \`dark_mode\` on a chart url to match the host. Leaves the url alone
+  // when the host is silent, so \`auto\` survives rather than being guessed at.
+  function withHostTheme(url) {
+    var theme = hostTheme();
+    if (theme === null || typeof url !== "string") return url;
+    var want = theme === "dark" ? "true" : "false";
+    return url.indexOf("dark_mode=") !== -1
+      ? url.replace(/dark_mode=[^&]*/, "dark_mode=" + want)
+      : url + (url.indexOf("?") === -1 ? "?" : "&") + "dark_mode=" + want;
   }
 
   // Pick the rendering mode by CAPABILITY, not host identity.
@@ -1163,7 +1200,7 @@ const WIDGET_HTML = `<!doctype html>
         // anthropics/claude-ai-mcp#40 is fixed), the probe upgrades to the
         // interactive chart once it does.
         if (validEmbed && allowProbe) probeInteractiveIframe(url, h);
-        upgradeToNativeCard(opts.nativeCardUrl, h);
+        upgradeToNativeCard(withHostTheme(opts.nativeCardUrl), h);
       });
       // CSP / network error fallback. The most common trigger is
       // claude.ai's outer-document CSP (\`img-src 'self' blob: data:\`)
@@ -1197,7 +1234,7 @@ const WIDGET_HTML = `<!doctype html>
         // the interactive embed. \`probeStarted\` dedupes against the load
         // path — only one of load/error fires per image.
         if (validEmbed && allowProbe) probeInteractiveIframe(url, h);
-        upgradeToNativeCard(opts.nativeCardUrl, h);
+        upgradeToNativeCard(withHostTheme(opts.nativeCardUrl), h);
       });
       // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
       // guard at the top of \`render()\` blocks any re-entry from a
@@ -1304,8 +1341,9 @@ const WIDGET_HTML = `<!doctype html>
     var useIframe = hasOpenAiRuntime() && validEmbed;
 
     if (useIframe) {
-      if (frame.src !== url) frame.src = url;
-      armEmbedOrigin(url);
+      var themedUrl = withHostTheme(url);
+      if (frame.src !== themedUrl) frame.src = themedUrl;
+      armEmbedOrigin(themedUrl);
       // Aspect-derived when the server supplied the card's PNG dimensions,
       // otherwise the requested height as before.
       var fitted = aspectHeight(imgNaturalW, imgNaturalH);
