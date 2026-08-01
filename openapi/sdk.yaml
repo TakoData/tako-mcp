@@ -63,8 +63,7 @@ paths:
       summary: Answer
       description: Fast-pipeline retrieval plus an LLM-synthesized answer. Tako may
         omit sources that cannot provide usable text. This endpoint returns 3 web
-        results when you omit sources.web.count. The shared request schema shows a
-        default of 5, which applies to POST /v3/search.
+        results when you omit sources.web.count.
       operationId: answer
       requestBody:
         content:
@@ -456,6 +455,27 @@ paths:
                 type: object
                 required:
                 - error
+        '402':
+          description: Payment required. A PAYG API-credit balance is empty (error_type,
+            error_message, balance_cents), or the account has no subscription credits
+            left (error, message, upgrade_url).
+          content:
+            application/json:
+              schema:
+                properties:
+                  error_type:
+                    type: string
+                  error_message:
+                    type: string
+                  balance_cents:
+                    type: integer
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  upgrade_url:
+                    type: string
+                type: object
         '500':
           description: Internal server error
           content:
@@ -3920,12 +3940,15 @@ components:
     WebSourceSettings:
       properties:
         count:
-          type: integer
-          maximum: 20.0
-          minimum: 1.0
+          anyOf:
+          - type: integer
+            maximum: 20.0
+            minimum: 1.0
+          - type: 'null'
           title: Count
-          description: Maximum number of results to return for this source. 1-20.
-          default: 5
+          description: Maximum number of results to return for this source. The range
+            is 1 to 20. If you omit this field, the search endpoint returns 5 results
+            and the answer endpoint returns 3.
         include_contents:
           type: boolean
           title: Include Contents
@@ -3957,13 +3980,28 @@ components:
           description: Drop results from these domains (bare hosts, for example 'cnn.com').
             Max 20.
         snippet_max_chars:
-          type: integer
-          maximum: 20000.0
-          minimum: 1.0
+          anyOf:
+          - type: integer
+            maximum: 20000.0
+            minimum: 1.0
+          - type: 'null'
           title: Snippet Max Chars
           description: Character cap on the text excerpt returned per web result.
-            Default 1000, maximum 20000.
-          default: 1000
+            If you omit this field, the search endpoint applies 4000 and the answer
+            endpoint applies 1000. If you send a value, the server uses that value
+            exactly. The maximum is 20000.
+        highlights:
+          type: boolean
+          title: Highlights
+          description: 'Return query-relevant highlight passages as each web result''s
+            snippet, instead of the opening text of the page. Highlights usually carry
+            the answer-bearing sentences, and stay within snippet_max_chars. Tako
+            requests no page text when this field is true, so a page with no highlight
+            returns snippet: null. The snippet can also hold more than one passage
+            from different parts of the page, joined by '' … ''. Read the snippet
+            as a whole. Do not cut the snippet to a fixed length. Do not quote the
+            snippet as one continuous sentence. Default false.'
+          default: false
         article_content_max_chars:
           type: integer
           maximum: 1000000.0
