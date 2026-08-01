@@ -32,7 +32,12 @@
  * The widget HTML and its host-quirk code are a verbatim extraction of the
  * original inline chart-rendering implementation.
  */
-import { type Env, resolvePublicApiBase, resolvePublicBase } from "../env.js";
+import {
+  type Env,
+  resolvePublicApiBase,
+  resolvePublicBase,
+  resolvePublicCdnBase,
+} from "../env.js";
 import type {
   AppUiResource,
   ToolContext,
@@ -154,6 +159,44 @@ export const DEFAULT_HEIGHT = 720;
 export const INTERACTIVE_IFRAME_PROBE_ENABLED = false;
 
 /**
+ * `_meta` fields that arm the `script-src` capability probe in the widget, or
+ * `{}` when `PUBLIC_CDN_URL` is unset (production default — no probe, no
+ * behavior change at all).
+ *
+ * THE EXPERIMENT, in one place. It answers exactly one question: does this
+ * host's widget sandbox let a script load from an origin we declared in
+ * `_meta.ui.csp.resourceDomains`?
+ *
+ * Everything else needed for Claude to render Tako's REAL interactive card has
+ * already been measured and works (2026-07-31, against production):
+ *
+ *   - the embed page carries its own data — an 87 KB inline config island, no
+ *     runtime API call, so no auth and no data endpoint are needed;
+ *   - `Card.js` loads cross-origin from the CDN with CORS present, and its
+ *     lazily imported chunks (`FinancialStockChart.js`, `TabSection.js`, …)
+ *     resolve against the CDN, so no bundling change is needed;
+ *   - claude.ai already merges declared `connectDomains` into `connect-src`,
+ *     so the CSP plumbing is not wholesale ignored.
+ *
+ * The probe deliberately requests a path that does NOT exist. A 404 and a CSP
+ * block are told apart by the SIGNAL, not the outcome: a CSP refusal fires
+ * `securitypolicyviolation` with `effectiveDirective` starting `script-src`,
+ * while a permitted-but-missing file fires only `error`. So "error without a
+ * violation" is the ALLOWED answer — which means the probe needs no real
+ * asset URL, and therefore no extra fetch on the request path to discover one.
+ */
+export function nativeCardProbeMeta(env: Env): Record<string, unknown> {
+  const cdnBase = resolvePublicCdnBase(env);
+  if (cdnBase === undefined) return {};
+  return {
+    // Intentionally nonexistent — see the doc comment. Cache-busting suffix
+    // keeps a CDN 404 from being served from cache as something else.
+    cdn_probe_script_url: `${cdnBase}/__tako-csp-probe__/probe.js`,
+    cdn_probe_origin: cdnBase,
+  };
+}
+
+/**
  * The `_meta` payload both chart tools ship for image-branch hosts: the baked
  * PNG plus the probe flag. Shared so `tako_search` and `tako_visualize` cannot
  * disagree about either — they had identical inline copies of the fetch, and
@@ -165,23 +208,34 @@ export const INTERACTIVE_IFRAME_PROBE_ENABLED = false;
  */
 export async function buildChartExtraMeta(
   imageUrl: string | undefined,
-  opts: { bakeImage: boolean },
+  opts: { bakeImage: boolean; env?: Env },
 ): Promise<Record<string, unknown> | undefined> {
-  if (imageUrl === undefined) return undefined;
+  // Probe fields ride along on whatever else this returns. Empty unless
+  // `PUBLIC_CDN_URL` is set, so production is byte-identical.
+  const probe = opts.env !== undefined ? nativeCardProbeMeta(opts.env) : {};
+  if (imageUrl === undefined) {
+    return Object.keys(probe).length > 0 ? probe : undefined;
+  }
   // Iframe-branch clients (ChatGPT) never read the image bytes — but they DO
   // need the card's aspect ratio to size the cross-origin iframe, and two
   // integers cost a 64-byte ranged read instead of a ~170 KB render.
   if (!opts.bakeImage) {
     const dims = await fetchPngDimensions(imageUrl);
-    if (dims === undefined) return undefined;
+    if (dims === undefined) {
+      return Object.keys(probe).length > 0 ? probe : undefined;
+    }
     return {
+      ...probe,
       image_natural_width: dims.naturalWidth,
       image_natural_height: dims.naturalHeight,
     };
   }
   const fetched = await fetchImageDataUrlAndDims(imageUrl);
-  if (fetched === undefined) return undefined;
+  if (fetched === undefined) {
+    return Object.keys(probe).length > 0 ? probe : undefined;
+  }
   return {
+    ...probe,
     image_data_url: fetched.dataUrl,
     image_natural_width: fetched.naturalWidth,
     image_natural_height: fetched.naturalHeight,
@@ -743,6 +797,73 @@ const WIDGET_HTML = `<!doctype html>
     log("iframe watchdog armed", { src: url });
   }
 
+  // \`script-src\` capability probe. Runs at most once, only when the server
+  // armed it (\`_meta.cdn_probe_script_url\`, i.e. \`PUBLIC_CDN_URL\` is set),
+  // and NEVER touches the chart. It exists to answer one question before any
+  // work is committed to it: will this host execute a script from an origin we
+  // declared in \`_meta.ui.csp.resourceDomains\`?
+  //
+  // Reading the result: the requested path does not exist, so \`error\` is the
+  // expected outcome either way. What separates the two answers is whether a
+  // \`securitypolicyviolation\` for \`script-src\` fired first.
+  //
+  //   ALLOWED  → no violation (error = plain 404, the request was permitted)
+  //   BLOCKED  → violation with effectiveDirective starting "script-src"
+  //
+  // ALLOWED means Tako's real Card.js can render natively here, and Claude can
+  // have the same interactive card ChatGPT does.
+  var probeRan = false;
+  function runCspProbe(scriptUrl, origin) {
+    if (probeRan || typeof scriptUrl !== "string" || scriptUrl === "") return;
+    probeRan = true;
+    var violated = false;
+    // Declared BEFORE settle() closes over it and set inside it: without that,
+    // the 5 s backstop below re-entered settle() and logged the verdict twice.
+    var probeSettled = false;
+    function onViolation(event) {
+      var directive =
+        event && (event.effectiveDirective || event.violatedDirective);
+      if (typeof directive === "string" && directive.indexOf("script-src") === 0) {
+        violated = true;
+      }
+    }
+    document.addEventListener("securitypolicyviolation", onViolation);
+    var el = document.createElement("script");
+    el.src = scriptUrl;
+    function settle(how) {
+      if (probeSettled) return;
+      probeSettled = true;
+      document.removeEventListener("securitypolicyviolation", onViolation);
+      var verdict = violated ? "BLOCKED" : "ALLOWED";
+      log("CSP PROBE script-src " + verdict, {
+        origin: origin,
+        signal: how,
+        violation: violated,
+      });
+      // Surfaced in the widget as well as the console: whoever runs this
+      // experiment should not have to open devtools to read the one number it
+      // exists to produce. Appended, never replacing content, so a rendered
+      // chart is unaffected.
+      try {
+        var note = document.createElement("div");
+        note.setAttribute("data-tako-csp-probe", verdict);
+        note.style.cssText =
+          "font:11px system-ui,-apple-system,sans-serif;padding:4px 6px;opacity:0.75;" +
+          (violated ? "color:#ff8080;" : "color:#7ddc94;");
+        note.textContent =
+          "script-src " + verdict + " for " + origin +
+          (violated ? " (host blocked it)" : " (host permitted it)");
+        document.body.appendChild(note);
+      } catch (e) { /* nothing to surface into */ }
+      try { el.parentNode && el.parentNode.removeChild(el); } catch (e) {}
+    }
+    el.addEventListener("load", function () { settle("load"); });
+    el.addEventListener("error", function () { settle("error"); });
+    document.head.appendChild(el);
+    // Backstop: some hosts neither fire error nor a violation event.
+    setTimeout(function () { settle("timeout"); }, 5000);
+  }
+
   function log(label, payload) {
     try { console.log("[tako-widget]", label, payload); } catch (e) {}
   }
@@ -989,6 +1110,11 @@ const WIDGET_HTML = `<!doctype html>
     // Server-controlled probe opt-in. Absent/false → never probe.
     var probeEnabled =
       meta && typeof meta === "object" && meta.interactive_probe === true;
+    // Independent of everything below: the script-src capability experiment.
+    // Armed only when the server set \`PUBLIC_CDN_URL\`.
+    if (meta && typeof meta === "object" && meta.cdn_probe_script_url) {
+      runCspProbe(meta.cdn_probe_script_url, meta.cdn_probe_origin);
+    }
     var imgNaturalW = meta && typeof meta === "object" && typeof meta.image_natural_width === "number"
       ? meta.image_natural_width : 0;
     var imgNaturalH = meta && typeof meta === "object" && typeof meta.image_natural_height === "number"
@@ -1652,7 +1778,20 @@ export function buildChartAppUiResource(
     // base; the primary data-URI path needs no CSP. webBase covers any
     // future web-hosted asset. Deduped — staging/prod use one host for
     // both.
-    resourceDomains: [...new Set([webBase, resolvePublicApiBase(env)])],
+    // Plus, when the `PUBLIC_CDN_URL` experiment is armed, the front-end
+    // asset CDN — the origin that serves Tako's real `Card.js`, its lazily
+    // imported chunks, and the Geist/Inter fonts. Declaring it is what the
+    // `script-src` capability probe below actually measures: per the MCP Apps
+    // spec `resourceDomains` must reach script-src/style-src/font-src, and
+    // whether claude.ai honors that is the single unknown gating native
+    // interactive cards there. Unset in production → this array is unchanged.
+    resourceDomains: [
+      ...new Set(
+        [webBase, resolvePublicApiBase(env), resolvePublicCdnBase(env)].filter(
+          (origin): origin is string => origin !== undefined,
+        ),
+      ),
+    ],
     // Dynamic-resource variant — registered as a `ResourceTemplate`,
     // one URI per pub_id. Per-call tool result overrides
     // `_meta.ui.resourceUri` to point claude.ai at a specific

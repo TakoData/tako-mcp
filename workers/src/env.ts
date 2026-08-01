@@ -45,6 +45,34 @@ export interface Env {
    */
   PUBLIC_API_URL?: string;
   /**
+   * Optional origin of the CDN that serves Tako's web front-end assets —
+   * e.g. `https://d12w4pyrrczi5e.cloudfront.net`. Must NOT include a
+   * trailing slash.
+   *
+   * EXPERIMENT SWITCH, and unset everywhere by default. Its only job today is
+   * to enable the `script-src` capability probe in the chart widget (see
+   * `nativeCardProbeMeta` in `tools/_chart_widget.ts`): when set, the widget
+   * additionally declares this origin in `_meta.ui.csp.resourceDomains` and
+   * reports whether the host's sandbox actually permits loading a script from
+   * it.
+   *
+   * Why that matters: Tako's real chart renderer (`Card.js` + its lazily
+   * imported chunks, plus the Geist/Inter fonts) is served from this origin.
+   * Measured 2026-07-31 — it loads cross-origin cleanly in a normal browser
+   * (CORS present, chunks resolve against the CDN, no console errors), so the
+   * ONLY thing standing between Claude and the same interactive card ChatGPT
+   * already renders is whether claude.ai merges declared `resourceDomains`
+   * into `script-src`. The MCP Apps spec says it must; claude.ai demonstrably
+   * merges `connectDomains` into `connect-src` but its `script-src` handling
+   * is unreported (anthropics/claude-ai-mcp#40), and VS Code shipped this
+   * exact bug and fixed it (microsoft/vscode#286689). Unknown, cheap to
+   * measure, and gating a large piece of work — hence a probe rather than a
+   * guess.
+   *
+   * Leave unset in production. Set it on staging to run the experiment.
+   */
+  PUBLIC_CDN_URL?: string;
+  /**
    * HMAC-SHA256 signing secret for every JWT the OAuth subsystem mints
    * (auth codes, refresh tokens, access tokens, DCR client_ids, state /
    * session cookies). Optional: when unset, `/authorize`, `/token`,
@@ -201,4 +229,20 @@ export function resolvePublicApiBase(env: Env): string {
     env.PUBLIC_API_URL ?? env.DJANGO_BASE_URL,
     "PUBLIC_API_URL",
   );
+}
+
+/**
+ * The front-end asset CDN origin, or `undefined` when unconfigured.
+ *
+ * Unlike the web/API resolvers this does NOT fall back to `DJANGO_BASE_URL`:
+ * absence is meaningful (the experiment is off), and defaulting it would
+ * silently widen the widget's declared `resourceDomains` in production. Still
+ * validated as http(s) + trailing-slash-clean when present, since the value
+ * ends up in a CSP directive.
+ */
+export function resolvePublicCdnBase(env: Env): string | undefined {
+  if (env.PUBLIC_CDN_URL === undefined || env.PUBLIC_CDN_URL === "") {
+    return undefined;
+  }
+  return validatePublicOrigin(env.PUBLIC_CDN_URL, "PUBLIC_CDN_URL");
 }
