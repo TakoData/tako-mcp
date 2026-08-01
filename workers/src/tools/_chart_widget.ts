@@ -160,42 +160,35 @@ export const DEFAULT_HEIGHT = 720;
  */
 export const INTERACTIVE_IFRAME_PROBE_ENABLED = false;
 
-/**
- * `_meta` fields that arm the `script-src` capability probe in the widget, or
- * `{}` when `PUBLIC_CDN_URL` is unset (production default — no probe, no
- * behavior change at all).
- *
- * THE EXPERIMENT, in one place. It answers exactly one question: does this
- * host's widget sandbox let a script load from an origin we declared in
- * `_meta.ui.csp.resourceDomains`?
- *
- * Everything else needed for Claude to render Tako's REAL interactive card has
- * already been measured and works (2026-07-31, against production):
- *
- *   - the embed page carries its own data — an 87 KB inline config island, no
- *     runtime API call, so no auth and no data endpoint are needed;
- *   - `Card.js` loads cross-origin from the CDN with CORS present, and its
- *     lazily imported chunks (`FinancialStockChart.js`, `TabSection.js`, …)
- *     resolve against the CDN, so no bundling change is needed;
- *   - claude.ai already merges declared `connectDomains` into `connect-src`,
- *     so the CSP plumbing is not wholesale ignored.
- *
- * The probe deliberately requests a path that does NOT exist. A 404 and a CSP
- * block are told apart by the SIGNAL, not the outcome: a CSP refusal fires
- * `securitypolicyviolation` with `effectiveDirective` starting `script-src`,
- * while a permitted-but-missing file fires only `error`. So "error without a
- * violation" is the ALLOWED answer — which means the probe needs no real
- * asset URL, and therefore no extra fetch on the request path to discover one.
- */
+export function nativeCardProbeMeta(env: Env): Record<string, unknown> {
+  const cdnBase = resolvePublicCdnBase(env);
+  if (cdnBase === undefined) return {};
+  return {
+    // Intentionally nonexistent — see the doc comment. Cache-busting suffix
+    // keeps a CDN 404 from being served from cache as something else.
+    cdn_probe_script_url: `${cdnBase}/__tako-csp-probe__/probe.js`,
+    cdn_probe_origin: cdnBase,
+  };
+}
+
 /**
  * URL of the CORS-readable embed-page proxy for one chart, or `undefined` when
  * the native-card path is not available.
  *
- * Requires BOTH the experiment flag (`PUBLIC_CDN_URL` — without the asset CDN
- * in `resourceDomains`, the proxied page's `Card.js` would be CSP-blocked and
- * the upgrade would render a card with no chart in it) and a known request
- * origin (the widget's own origin is opaque, so it cannot resolve a relative
- * path back to this worker).
+ * Requires BOTH the `PUBLIC_CDN_URL` binding (it names the CDN whose assets the
+ * companion `/cdn-asset/` route proxies — without it the proxied page's
+ * `Card.js` has nowhere to load from) and a known request origin (the widget's
+ * own origin is opaque, so it cannot resolve a relative path back to this
+ * worker).
+ *
+ * Why this exists at all, recorded because it took a probe to establish: the
+ * host's sandbox DOES honour declared `resourceDomains` for `script-src`
+ * (claude.ai, measured 2026-08-01 with a control in the same document — an
+ * undeclared origin was blocked with a reported CSP violation while a declared
+ * one was permitted). CSP was never the obstacle. The obstacle was CORS: the
+ * asset CDN reflects `access-control-allow-origin` for `tako.com` alone, and a
+ * `type="module"` script is always a CORS fetch, which is why the assets are
+ * proxied rather than loaded directly.
  */
 export function nativeCardUrl(
   env: Env,
@@ -207,17 +200,6 @@ export function nativeCardUrl(
   const base = resolveWidgetOrigin(env, origin);
   if (base === undefined) return undefined;
   return `${base}${EMBED_PROXY_PREFIX}${encodeURIComponent(pubId)}`;
-}
-
-export function nativeCardProbeMeta(env: Env): Record<string, unknown> {
-  const cdnBase = resolvePublicCdnBase(env);
-  if (cdnBase === undefined) return {};
-  return {
-    // Intentionally nonexistent — see the doc comment. Cache-busting suffix
-    // keeps a CDN 404 from being served from cache as something else.
-    cdn_probe_script_url: `${cdnBase}/__tako-csp-probe__/probe.js`,
-    cdn_probe_origin: cdnBase,
-  };
 }
 
 /**
@@ -241,9 +223,9 @@ export async function buildChartExtraMeta(
     pubId?: string | undefined;
   },
 ): Promise<Record<string, unknown> | undefined> {
-  // Probe + native-card fields ride along on whatever else this returns. Both
-  // are empty unless `PUBLIC_CDN_URL` is set, so production is byte-identical.
-  const probe = opts.env !== undefined ? nativeCardProbeMeta(opts.env) : {};
+  // Native-card field rides along on whatever else this returns. Empty unless
+  // `PUBLIC_CDN_URL` is set, so production is byte-identical.
+  const probe: Record<string, unknown> = {};
   const native =
     opts.env !== undefined
       ? nativeCardUrl(opts.env, opts.origin, opts.pubId)
@@ -975,83 +957,6 @@ const WIDGET_HTML = `<!doctype html>
       });
   }
 
-  // \`script-src\` capability probe. Runs at most once, only when the server
-  // armed it (\`_meta.cdn_probe_script_url\`, i.e. \`PUBLIC_CDN_URL\` is set),
-  // and NEVER touches the chart. It exists to answer one question before any
-  // work is committed to it: will this host execute a script from an origin we
-  // declared in \`_meta.ui.csp.resourceDomains\`?
-  //
-  // Reading the result: the requested path does not exist, so \`error\` is the
-  // expected outcome either way. What separates the two answers is whether a
-  // \`securitypolicyviolation\` for \`script-src\` fired first.
-  //
-  //   ALLOWED  → no violation (error = plain 404, the request was permitted)
-  //   BLOCKED  → violation with effectiveDirective starting "script-src"
-  //
-  // ALLOWED means Tako's real Card.js can render natively here, and Claude can
-  // have the same interactive card ChatGPT does.
-  var probeRan = false;
-  function runCspProbe(scriptUrl, origin) {
-    if (probeRan || typeof scriptUrl !== "string" || scriptUrl === "") return;
-    probeRan = true;
-    var violated = false;
-    // Declared BEFORE settle() closes over it and set inside it: without that,
-    // the 5 s backstop below re-entered settle() and logged the verdict twice.
-    var probeSettled = false;
-    function onViolation(event) {
-      var directive =
-        event && (event.effectiveDirective || event.violatedDirective);
-      if (typeof directive === "string" && directive.indexOf("script-src") === 0) {
-        violated = true;
-      }
-    }
-    document.addEventListener("securitypolicyviolation", onViolation);
-    var el = document.createElement("script");
-    el.src = scriptUrl;
-    function settle(how) {
-      if (probeSettled) return;
-      probeSettled = true;
-      document.removeEventListener("securitypolicyviolation", onViolation);
-      var verdict = violated ? "BLOCKED" : "ALLOWED";
-      log("CSP PROBE script-src " + verdict, {
-        origin: origin,
-        signal: how,
-        violation: violated,
-      });
-      // Surfaced in the widget as well as the console: whoever runs this
-      // experiment should not have to open devtools to read the one number it
-      // exists to produce. Appended, never replacing content, so a rendered
-      // chart is unaffected.
-      try {
-        var note = document.createElement("div");
-        note.setAttribute("data-tako-csp-probe", verdict);
-        // \`position: fixed\` and NOT in normal flow, deliberately. The image
-        // path pins \`body.style.height\` to the chart's measured height and the
-        // host sizes its container to the height we notify, so a note appended
-        // after the chart in flow sits below both and is clipped away —
-        // rendered, invisible, and the one number this experiment exists to
-        // produce became devtools-only. Out of flow it also cannot perturb
-        // \`getBoundingClientRect().height\`, so the chart still measures and
-        // sizes exactly as it did.
-        note.style.cssText =
-          "position:fixed;top:0;left:0;z-index:2147483647;max-width:100%;" +
-          "font:11px/1.4 system-ui,-apple-system,sans-serif;padding:3px 6px;" +
-          "background:rgba(8,10,14,0.92);border-radius:0 0 4px 0;" +
-          (violated ? "color:#ff8f8f;" : "color:#7ddc94;");
-        note.textContent =
-          "script-src " + verdict + " · " + origin +
-          (violated ? " (host BLOCKED it)" : " (host permitted it)");
-        document.body.appendChild(note);
-      } catch (e) { /* nothing to surface into */ }
-      try { el.parentNode && el.parentNode.removeChild(el); } catch (e) {}
-    }
-    el.addEventListener("load", function () { settle("load"); });
-    el.addEventListener("error", function () { settle("error"); });
-    document.head.appendChild(el);
-    // Backstop: some hosts neither fire error nor a violation event.
-    setTimeout(function () { settle("timeout"); }, 5000);
-  }
-
   function log(label, payload) {
     try { console.log("[tako-widget]", label, payload); } catch (e) {}
   }
@@ -1305,11 +1210,6 @@ const WIDGET_HTML = `<!doctype html>
       meta && typeof meta === "object" && typeof meta.native_card_url === "string"
         ? meta.native_card_url
         : "";
-    // Independent of everything below: the script-src capability experiment.
-    // Armed only when the server set \`PUBLIC_CDN_URL\`.
-    if (meta && typeof meta === "object" && meta.cdn_probe_script_url) {
-      runCspProbe(meta.cdn_probe_script_url, meta.cdn_probe_origin);
-    }
     var imgNaturalW = meta && typeof meta === "object" && typeof meta.image_natural_width === "number"
       ? meta.image_natural_width : 0;
     var imgNaturalH = meta && typeof meta === "object" && typeof meta.image_natural_height === "number"

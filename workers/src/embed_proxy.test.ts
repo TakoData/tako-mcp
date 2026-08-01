@@ -429,3 +429,33 @@ describe("dark_mode forwarding", () => {
     }
   });
 });
+
+describe("asset rewrite bounds", () => {
+  it("streams an over-cap JS body through instead of buffering it", async () => {
+    // The origin is config-fixed so this is not an arbitrary-url risk, but a
+    // rewrite holds the body and its copy — the cap keeps the worst case bounded
+    // rather than trusting the CDN to stay reasonable.
+    const body = `import("${ON.PUBLIC_CDN_URL}/x.js")`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(body, {
+          status: 200,
+          headers: {
+            "content-type": "application/javascript",
+            "content-length": String(64 * 1024 * 1024),
+          },
+        }),
+      ),
+    );
+    const res = await handleCdnAssetProxy(
+      req("/cdn-asset/archive/abc/huge.js"),
+      ON,
+    );
+    expect(res?.status).toBe(200);
+    expect(res?.headers.get("access-control-allow-origin")).toBe("*");
+    // Unrewritten: correctness of the rewrite is traded for a bounded worst
+    // case, and the assets that matter are far below the cap.
+    expect(await res!.text()).toContain("cloudfront.net");
+  });
+});
