@@ -1033,3 +1033,47 @@ describe("baked widget variant (executed)", () => {
     ).toBe(EMBED_URL);
   });
 });
+
+/**
+ * Theme: the chart urls carry `dark_mode=auto`, which the embed page resolves
+ * from `prefers-color-scheme` INSIDE the widget iframe — i.e. from the OS. That
+ * is correct while the host follows the OS and wrong the moment the user themes
+ * the host itself, which is how a dark ChatGPT on a light machine ends up with a
+ * light card on a dark surface.
+ */
+describe("host theme (executed)", () => {
+  function themedFrameSrc(theme: string | undefined): string | null {
+    const m = mountWidget(staticWidgetHtml());
+    (m.widgetWin as unknown as { openai: Record<string, unknown> }).openai =
+      theme === undefined ? {} : { theme };
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+      m.wrapperWin,
+    );
+    return widgetFrame(m).getAttribute("src");
+  }
+
+  it("asks for a dark card when the host says dark", () => {
+    expect(themedFrameSrc("dark")).toContain("dark_mode=true");
+  });
+
+  it("asks for a light card when the host says light", () => {
+    expect(themedFrameSrc("light")).toContain("dark_mode=false");
+  });
+
+  it("handles namespaced theme values", () => {
+    // Hosts have shipped values like "dark-high-contrast"; substring, not equality.
+    expect(themedFrameSrc("dark-high-contrast")).toContain("dark_mode=true");
+  });
+
+  it("leaves auto alone when the host says nothing", () => {
+    // `auto` is still the best available guess; overriding it with a coin flip
+    // would be worse than following the OS.
+    expect(themedFrameSrc(undefined)).toContain("dark_mode=auto");
+  });
+
+  it("ignores an unrecognised theme value", () => {
+    expect(themedFrameSrc("solarized")).toContain("dark_mode=auto");
+  });
+});
