@@ -18,9 +18,11 @@
  *
  * Three things this judge does that a naive one does not:
  *
- * 1. **The arm is never in the prompt.** Snippets are labelled A/B by a
- *    per-item coin flip derived from the case id, so the judge cannot learn a
- *    position convention across items either.
+ * 1. **The arm is never in the prompt.** Snippet utility is scored one excerpt
+ *    at a time on an absolute rubric, with no arm label and no sibling to
+ *    compare against — so there is no position for a bias to attach to. The
+ *    A/B blinding below applies to the PAIRWISE answer judgement, which is the
+ *    only place two texts share a prompt.
  *
  * 2. **Every pairwise comparison is run TWICE with the order swapped**, and a
  *    result only counts if both orders agree. Position bias in pairwise LLM
@@ -155,7 +157,11 @@ async function judgeSnippet(query: string, snippet: string): Promise<SnippetVerd
     const block = res.content.find((b) => b.type === "text");
     if (block === undefined || block.type !== "text") return null;
     return JSON.parse(block.text) as SnippetVerdict;
-  } catch {
+  } catch (err) {
+    // Surfaced, not swallowed. A null here becomes an `unscored` row, and a
+    // silent one is indistinguishable from a genuine coverage gap — a bad key
+    // or a rate limit would read as "the snippet was unjudgeable".
+    console.error(`  judge error (snippet): ${String(err).slice(0, 200)}`);
     return null;
   }
 }
@@ -205,7 +211,10 @@ async function judgePair(query: string, a: string, b: string): Promise<PairSide 
     const block = res.content.find((bl) => bl.type === "text");
     if (block === undefined || block.type !== "text") return null;
     return (JSON.parse(block.text) as { winner: PairSide }).winner;
-  } catch {
+  } catch (err) {
+    // Same reason as judgeSnippet: one failed order collapses the whole case
+    // to `unscored`, so the cause has to be visible in the run log.
+    console.error(`  judge error (pair): ${String(err).slice(0, 200)}`);
     return null;
   }
 }
@@ -235,17 +244,37 @@ export interface JudgedCase {
   answer_note: string;
 }
 
-function newestRaw(): string {
-  const files = readdirSync(RESULTS).filter((f) => f.startsWith("raw-") && f.endsWith(".jsonl"));
+/** The raw sweep to judge. Refuses to GUESS between candidates, on purpose.
+ *
+ *  This used to take `files.sort().at(-1)` as "the newest", which is wrong and
+ *  quietly so: `-` (0x2D) sorts before `.` (0x2E), so `raw-<stamp>.jsonl` loses
+ *  to `raw-<stamp>-full.jsonl` and the default picked a 4-case smoke run over
+ *  the 26-case sweep sitting beside it — a run that reads as complete at a
+ *  sixth of the denominator. mtime is no better: a fresh clone stamps every
+ *  file with checkout order, so the "newest" file is whichever git wrote last.
+ *
+ *  There is no ordering here that means what the caller wants, so ambiguity is
+ *  an error that lists the options rather than a coin flip. */
+function resolveRaw(): string {
+  const files = readdirSync(RESULTS)
+    .filter((f) => f.startsWith("raw-") && f.endsWith(".jsonl"))
+    .sort();
   if (files.length === 0) {
     console.error(`✘ no raw-*.jsonl in ${RESULTS} — run run.ts first`);
     process.exit(1);
   }
-  return join(RESULTS, files.sort().at(-1) as string);
+  if (files.length === 1) return join(RESULTS, files[0] as string);
+  console.error(`✘ ${files.length} raw sweeps in results/ — name the one to judge:\n`);
+  for (const f of files) {
+    const cases = readFileSync(join(RESULTS, f), "utf8").split("\n").filter((l) => l.trim() !== "").length;
+    console.error(`    ${f}  (${cases} case${cases === 1 ? "" : "s"})`);
+  }
+  console.error(`\n  npx tsx scripts/evals/web-snippet/judge.ts <path-to-raw.jsonl>`);
+  process.exit(1);
 }
 
 async function main(): Promise<void> {
-  const rawPath = process.argv[2] ?? newestRaw();
+  const rawPath = process.argv[2] ?? resolveRaw();
   const rows = readFileSync(rawPath, "utf8")
     .split("\n")
     .filter((l) => l.trim() !== "")
@@ -260,18 +289,17 @@ async function main(): Promise<void> {
     // Flatten (arm, result) pairs first so the whole case fans out through one
     // pool instead of serialising arm after arm.
     const pending = (["text", "highlights"] as Arm[]).flatMap((arm) =>
-      (row.search[arm]?.results ?? []).slice(0, TOP_N).map((r, j) => ({ arm, r, j })),
+      (row.search[arm]?.results ?? []).slice(0, TOP_N).map((r) => ({ arm, r })),
     );
-    const snippets: JudgedSnippet[] = await pool(pending, async ({ arm, r, j }) => {
+    const snippets: JudgedSnippet[] = await pool(pending, async ({ arm, r }) => {
       if (r.snippet === null || r.snippet.trim() === "") {
         // Absent snippet: recorded as unscored, not as score 0. The highlights
         // arm can legitimately return null (no relevant passage), and the
         // report needs to count that separately from "useless".
         return { arm, url: r.url, chars: 0, score: null, reason: "snippet absent" };
       }
-      // Blinding is per (case, arm, index) so the judge sees no arm label and
-      // no stable position convention.
-      void coin(`${row.id}:${arm}:${j}`);
+      // No blinding step needed here: the prompt carries one excerpt and the
+      // query, never an arm label and never a sibling to rank it against.
       const v = await judgeSnippet(row.query, r.snippet);
       return {
         arm,

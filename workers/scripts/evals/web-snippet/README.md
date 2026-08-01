@@ -8,17 +8,29 @@ wired into CI.
 
 ```bash
 # 1. collect (priced: ~$0.032/case — 2 search + 2 answer calls)
+#    EVAL_STAMP names the output file; without it you get raw-latest.jsonl.
 EVAL_API_BASE=https://staging.tako.com TAKO_EVAL_API_KEY=$TAKO_STAGING_API_KEY \
-  npm run eval:web-snippet
+  EVAL_STAMP=2026-08-01-prod npm run eval:web-snippet
 #    --search-only  halves the spend    --limit N  first N cases
 
 # 2. score (Anthropic tokens, no Tako spend)
-ANTHROPIC_API_KEY=... npm run eval:web-snippet:judge
+ANTHROPIC_API_KEY=... npm run eval:web-snippet:judge -- \
+  scripts/evals/web-snippet/results/raw-2026-08-01-prod.jsonl
 #    --top N   results/arm to judge (default 5)   --conc N  concurrency (default 6)
 
 # 3. render → RESULTS.md
-npm run eval:web-snippet:report
+npm run eval:web-snippet:report -- \
+  scripts/evals/web-snippet/results/raw-2026-08-01-prod.jsonl
 ```
+
+**Name the raw file in steps 2 and 3.** Both scripts take it as an argument and
+refuse to guess when `results/` holds more than one sweep, listing the
+candidates with their case counts instead. There is no ordering that reliably
+means "the one you meant": a lexical sort puts `raw-<stamp>.jsonl` *after*
+`raw-<stamp>-full.jsonl` (`-` sorts before `.`), and mtime is checkout order on
+a fresh clone. Guessing wrong here regenerates the committed `RESULTS.md` from a
+smoke run, which reads exactly like a full sweep at a fraction of the
+denominator.
 
 | file | role |
 |---|---|
