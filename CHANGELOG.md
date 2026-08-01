@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.16.0](https://github.com/TakoData/tako-mcp/compare/v0.15.3...v0.16.0) (2026-07-31)
+
+
+### Features
+
+* **available_data:** entity+metric lookup, a relevance gate, and a pin form that works ([9efc25f](https://github.com/TakoData/tako-mcp/commit/9efc25fd3f6a23d52b6a14e501c965610a2cf7bc))
+
+
+### Bug Fixes
+
+* **available_data:** an alias must account for the whole query, not part of it ([c25016d](https://github.com/TakoData/tako-mcp/commit/c25016d8d61cf71d37ae8d5ac9223dc54719a729))
+* **available_data:** let coverage outrank the gate's name preference ([75c8305](https://github.com/TakoData/tako-mcp/commit/75c8305449860493074736a46a03a5cc252dc006))
+* **available_data:** only pin a metric node that passed the confidence test ([8b361cb](https://github.com/TakoData/tako-mcp/commit/8b361cb25583f13f455dcde39ac6b9c765b4998a))
+* **available_data:** six review findings, and the guard that missed two ([dc5f8c5](https://github.com/TakoData/tako-mcp/commit/dc5f8c5939102f02d8733946da76e143fc1d9bdb))
+* **available_data:** stop calling a zero-card pin definitive, and reposition the tool ([e8d5a15](https://github.com/TakoData/tako-mcp/commit/e8d5a1513a7fe484c56c2313bb2c16d80b441d45))
+* **guidance:** a pinned zero is not proof of absence, on every surface ([c4d8769](https://github.com/TakoData/tako-mcp/commit/c4d8769b49b148f0a49cf9fba9c19ab4d501369e))
+* **guidance:** scope the anti-retry rule to the data axis, not the whole call ([ee35f9c](https://github.com/TakoData/tako-mcp/commit/ee35f9c7f79c8e63421b19d11aaeb04008746bca))
+* **mcp:** never emit structuredContent that violates the published schema ([012a6f2](https://github.com/TakoData/tako-mcp/commit/012a6f22397e78db2fd11405b4164dfde3327478))
+* **panel:** read .env, stream the trace, and check next_call adherence ([8bb9049](https://github.com/TakoData/tako-mcp/commit/8bb90494a280ad4247b8e74a81730dc0af13b743))
+* **review:** close the four surfaces this PR left contradicting itself ([2669eec](https://github.com/TakoData/tako-mcp/commit/2669eec69b9cd7cfc05579ffbd7b280e754858ba))
+* **review:** honest source verdicts, one rule on both match paths, guarded skills ([2797e44](https://github.com/TakoData/tako-mcp/commit/2797e44446eb95b13d01935cf986023cad5656e9))
+* **routing:** every pin instruction names the form that actually works ([258f535](https://github.com/TakoData/tako-mcp/commit/258f5359164a0a970ff5bf9c631d261ba158e695))
+* **routing:** make the instructions agree with the tool descriptions ([825461b](https://github.com/TakoData/tako-mcp/commit/825461b4fe1a0ed7a82143a0c461416cc1a9b894))
+* **routing:** name both of available_data's jobs, not just the lookup ([9923530](https://github.com/TakoData/tako-mcp/commit/99235309e7a166ec54b0a119edf42640f39fdd51))
+* **search:** route the as-of tier through comparableEpoch too ([1e50ef7](https://github.com/TakoData/tako-mcp/commit/1e50ef78838dd3fe2a14f0e2dae549fb12d6be07))
+
+
+### Documentation
+
+* **available_data:** stop calling confidentMatch 'token containment' ([2b454ba](https://github.com/TakoData/tako-mcp/commit/2b454ba9dbec552139c8cf40ea15793c9228f079))
+
+
+### Refactors
+
+* **instructions:** cut per-tool mechanics from the server-level surface ([b01fb99](https://github.com/TakoData/tako-mcp/commit/b01fb995966ab17f696c212bf5f0d7f31208708d))
+* **mcp:** remove duplication and mislabelled output found in review ([dd2fd0d](https://github.com/TakoData/tako-mcp/commit/dd2fd0d215818a17e54ef60c9206895774f54bf4))
+* **routing:** cut the instructions to routing only, measured vs Exa ([22b5931](https://github.com/TakoData/tako-mcp/commit/22b59314ed0dcc193ed138f78a8aa54484a25507))
+
 ## [0.15.3](https://github.com/TakoData/tako-mcp/compare/v0.15.2...v0.15.3) (2026-07-31)
 
 
