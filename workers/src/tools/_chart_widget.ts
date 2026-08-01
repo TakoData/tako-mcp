@@ -359,6 +359,15 @@ const WIDGET_HTML = `<!doctype html>
   // embed page, not arbitrary cross-frame senders.
   var embedOrigin = null;
 
+  // How long an embed iframe gets to fire \`load\` before we decide it never
+  // will. Shared by both directions — \`probeInteractiveIframe\` (does this
+  // host allow the iframe at all?) and \`watchCommittedIframe\` (did the
+  // iframe we already showed actually render?) — so the two can't drift.
+  // A CSP block reports itself almost immediately via
+  // \`securitypolicyviolation\`, so this bound only governs the slow cases:
+  // suppressed violation events, network stalls, an endpoint that hangs.
+  var IFRAME_SETTLE_MS = 8000;
+
   // Pin the embed/probe iframe to an explicit pixel height. Hosts vary in
   // which of the three they read (inline \`style.height\`, the
   // \`min-height\` floor, and the \`height\` attribute), so set all three
@@ -519,8 +528,99 @@ const WIDGET_HTML = `<!doctype html>
     // at. \`succeed()\` arms it after the swap.
     frame.src = url;
     probeNavigated = true;
-    timer = setTimeout(function () { fail("timeout"); }, 8000);
+    timer = setTimeout(function () { fail("timeout"); }, IFRAME_SETTLE_MS);
     log("iframe probe started", { src: url });
+  }
+
+  // One watchdog per widget lifetime, same reasoning as \`probeStarted\`.
+  var watchStarted = false;
+
+  // Watch an iframe we have ALREADY shown the user, and downgrade to the PNG
+  // if it never loads. Used only on the \`window.openai\` path, which commits
+  // to the iframe up front instead of probing behind a PNG.
+  //
+  // Settle signals, mirroring the probe's:
+  //  - \`load\` on the frame → the embed rendered; stand down.
+  //  - \`securitypolicyviolation\` for \`frame-src\` → definitive host block.
+  //  - no \`load\` within the timeout → covers suppressed violation events,
+  //    network stalls, and an embed endpoint that never finishes.
+  //
+  // Same KNOWN GAP as the probe, in the opposite direction: \`load\` fires for
+  // any document the endpoint returns, so a Tako error page counts as a
+  // successful load and keeps the iframe. Closing that needs a positive
+  // signal from the embed page itself (the \`tako-embed-height\` message it
+  // does not emit yet), at which point BOTH this and \`onLoad\` in the probe
+  // should gate on it instead.
+  function watchCommittedIframe(url, imageOpts) {
+    if (watchStarted) return;
+    watchStarted = true;
+    var settled = false;
+    var timer = null;
+    function cleanup() {
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      document.removeEventListener("securitypolicyviolation", onViolation);
+      frame.removeEventListener("load", onLoad);
+    }
+    function downgrade(reason) {
+      if (settled) return;
+      cleanup();
+      // Unload and hide the frame before painting, so a late-arriving embed
+      // cannot appear on top of the PNG, and stop honoring its height
+      // messages.
+      embedOrigin = null;
+      frame.classList.add("hidden");
+      frame.src = "about:blank";
+      log("iframe never loaded, falling back to image", { reason: reason });
+      // No image to fall back to (ChatGPT skips the server-side PNG prefetch,
+      // so \`image_data_url\` is absent there — but \`image_url\` is present in
+      // structuredContent, which is what makes this path work). Surface the
+      // click-through rather than a silent empty frame.
+      if (imageOpts.imageSrc === null) {
+        placeholder.innerHTML = "";
+        placeholder.classList.remove("hidden");
+        if (imageOpts.validEmbed) {
+          var anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.target = "_blank";
+          anchor.rel = "noopener noreferrer";
+          anchor.textContent = "Open interactive chart →";
+          anchor.style.color = "#4aa9ff";
+          anchor.style.textDecoration = "none";
+          placeholder.appendChild(anchor);
+        } else {
+          placeholder.textContent = "Couldn't load chart.";
+        }
+        notifyHeight(240);
+        return;
+      }
+      paintImage({
+        embedUrl: url,
+        imageSrc: imageOpts.imageSrc,
+        validEmbed: imageOpts.validEmbed,
+        height: imageOpts.height,
+        isDataUrl: imageOpts.isDataUrl,
+        imageUrl: imageOpts.imageUrl,
+        // The iframe just failed. Do not go looking for it again.
+        allowProbe: false,
+      });
+    }
+    function onViolation(event) {
+      var directive =
+        event && (event.effectiveDirective || event.violatedDirective);
+      if (typeof directive === "string" && directive.indexOf("frame-src") === 0) {
+        downgrade("csp:" + directive);
+      }
+    }
+    function onLoad() {
+      if (settled) return;
+      cleanup();
+      log("committed iframe loaded", { src: url });
+    }
+    document.addEventListener("securitypolicyviolation", onViolation);
+    frame.addEventListener("load", onLoad);
+    timer = setTimeout(function () { downgrade("timeout"); }, IFRAME_SETTLE_MS);
+    log("iframe watchdog armed", { src: url });
   }
 
   function log(label, payload) {
@@ -571,77 +671,23 @@ const WIDGET_HTML = `<!doctype html>
     } catch (e) { /* host gone — nothing to do */ }
   }
 
-  function render(structuredContent, meta) {
-    if (rendered) return true;
-    if (!structuredContent || typeof structuredContent !== "object") return false;
-    // No-chart short-circuit: structured content arrived but contains
-    // no chart fields at all. \`tako_search\` produces this shape when it
-    // returns zero cards (a clean empty result) or when the top card has
-    // no \`card_id\` — either way there is no top card to render, so
-    // \`buildSearchOutput\` omits the widget URLs.
-    //
-    // Without this guard, the placeholder sits at "Loading chart…"
-    // forever and stacks a 240-px-tall empty widget box in the chat.
-    // Detect the empty shape by the absence of any chart URL:
-    // \`embed_url\` and \`image_url\` are mutually present-or-absent on the
-    // handler side (see \`buildSearchOutput\` in \`_search_results.ts\`),
-    // and \`image_data_url\` is derived from \`image_url\` server-side
-    // (\`extraMeta\` only runs when \`image_url\` is present), so the
-    // \`!image_url && !embed_url\` check covers all three.
-    if (
-      typeof structuredContent.embed_url !== "string" &&
-      typeof structuredContent.image_url !== "string"
-    ) {
-      placeholder.classList.add("hidden");
-      document.documentElement.style.height = "0px";
-      document.body.style.height = "0px";
-      notifyHeight(0);
-      rendered = true;
-      log("no-chart payload, collapsed widget");
-      return true;
-    }
-    var url = structuredContent.embed_url;
-    var imgUrl = structuredContent.image_url;
-    // \`image_data_url\` and PNG natural dimensions live on \`_meta\`
-    // (not on \`structuredContent\`) so the ~250 KB data URI doesn't
-    // get tokenized into the LLM's context window — claude.ai
-    // otherwise rejects the tool result as too large. Hosts using the
-    // \`window.openai\` path (ChatGPT) ignore \`_meta\` entirely; they
-    // don't need the data URI because their CSP allows cross-origin
-    // \`<img src>\`.
-    var imgDataUrl = meta && typeof meta === "object" ? meta.image_data_url : undefined;
-    var imgNaturalW = meta && typeof meta === "object" && typeof meta.image_natural_width === "number"
-      ? meta.image_natural_width : 0;
-    var imgNaturalH = meta && typeof meta === "object" && typeof meta.image_natural_height === "number"
-      ? meta.image_natural_height : 0;
-    // Defense-in-depth: re-validate URL/DataURL schemes before
-    // assigning to \`iframe.src\` / \`img.src\`. The handler validates
-    // server-side too, but the widget is the last hop before the DOM,
-    // so a hostile MCP server shipping \`javascript:\` would otherwise
-    // execute in the widget origin once dropped into \`src\`.
-    var validEmbed = typeof url === "string" && /^https?:\\/\\//.test(url);
-    var validDataImage = typeof imgDataUrl === "string" && imgDataUrl.indexOf("data:image/") === 0;
-    var validHttpImage = typeof imgUrl === "string" && /^https?:\\/\\//.test(imgUrl);
-    // Prefer the inlined \`data:\` URI over the cross-origin URL — the
-    // data URI works under restrictive \`img-src\` CSPs (claude.ai for
-    // custom connectors), while the http URL only renders on hosts
-    // with permissive img-src (ChatGPT and most others). Fall back to
-    // the http URL when the worker couldn't inline (size cap or fetch
-    // failure).
-    var imageSrc = validDataImage ? imgDataUrl : validHttpImage ? imgUrl : null;
-    var validImage = imageSrc !== null;
-    var h =
-      typeof structuredContent.height === "number" && structuredContent.height > 0
-        ? structuredContent.height
-        : 600;
-    var useIframe = hasOpenAiRuntime() && validEmbed;
-
-    if (useIframe) {
-      if (frame.src !== url) frame.src = url;
-      armEmbedOrigin(url);
-      setFrameHeight(h);
-      frame.classList.remove("hidden");
-    } else if (validImage) {
+  // Paint the static PNG baseline (and, when allowed, probe for an
+  // interactive upgrade behind it). Extracted verbatim from render()'s image
+  // branch so the ChatGPT iframe watchdog can fall BACK to it after render()
+  // has already committed — render() is one-shot via the \`rendered\` flag, so
+  // calling render() a second time could not do this.
+  //
+  // \`allowProbe\` is false on that downgrade path: the iframe has just been
+  // proven not to load, so probing it again would either fail twice or, worse,
+  // "succeed" on a Tako error page and swap the working PNG back out.
+  function paintImage(opts) {
+    var url = opts.embedUrl;
+    var imageSrc = opts.imageSrc;
+    var validEmbed = opts.validEmbed;
+    var h = opts.height;
+    var validDataImage = opts.isDataUrl;
+    var imgUrl = opts.imageUrl;
+    var allowProbe = opts.allowProbe !== false;
       // Per anthropics/claude-ai-mcp#69 workaround:
       //   "After the MCP App renders content, explicitly measure the
       //    content and set it on <html>."
@@ -660,11 +706,10 @@ const WIDGET_HTML = `<!doctype html>
       // the image because that's the pattern from the issue thread
       // that's reported to work; \`offsetHeight\` fallbacks cover hosts
       // where \`scrollHeight\` returns 0. The PNG-natural dimensions
-      // (\`imgNaturalW\` / \`imgNaturalH\`) are intentionally NOT used as
-      // a pre-size hint here — that was the prior approach that
-      // caused claude.ai to lock the outer iframe at the wrong height.
-      void imgNaturalW;
-      void imgNaturalH;
+      // (\`imgNaturalW\` / \`imgNaturalH\`, read in render()) are intentionally
+      // NOT used as a pre-size hint here — that was the prior approach that
+      // caused claude.ai to lock the outer iframe at the wrong height, and
+      // it is why they are not threaded into this function's \`opts\`.
 
       if (validEmbed) {
         imageLink.setAttribute("href", url);
@@ -710,7 +755,7 @@ const WIDGET_HTML = `<!doctype html>
         // embed iframe load (it doesn't on claude.ai until
         // anthropics/claude-ai-mcp#40 is fixed), the probe upgrades to the
         // interactive chart once it does.
-        if (validEmbed) probeInteractiveIframe(url, h);
+        if (validEmbed && allowProbe) probeInteractiveIframe(url, h);
       });
       // CSP / network error fallback. The most common trigger is
       // claude.ai's outer-document CSP (\`img-src 'self' blob: data:\`)
@@ -743,7 +788,7 @@ const WIDGET_HTML = `<!doctype html>
         // cross-origin \`img-src\` but allows \`frame-src\` can upgrade to
         // the interactive embed. \`probeStarted\` dedupes against the load
         // path — only one of load/error fires per image.
-        if (validEmbed) probeInteractiveIframe(url, h);
+        if (validEmbed && allowProbe) probeInteractiveIframe(url, h);
       });
       // Mark rendered BEFORE assigning src so the \`if (rendered) return\`
       // guard at the top of \`render()\` blocks any re-entry from a
@@ -759,6 +804,113 @@ const WIDGET_HTML = `<!doctype html>
       // content has actually rendered.
       log("img path queued", { src: validDataImage ? "<data:image>" : imgUrl });
       return true;
+  }
+
+  function render(structuredContent, meta) {
+    if (rendered) return true;
+    if (!structuredContent || typeof structuredContent !== "object") return false;
+    // No-chart short-circuit: structured content arrived but contains
+    // no chart fields at all. \`tako_search\` produces this shape when it
+    // returns zero cards (a clean empty result) or when the top card has
+    // no \`card_id\` — either way there is no top card to render, so
+    // \`buildSearchOutput\` omits the widget URLs.
+    //
+    // Without this guard, the placeholder sits at "Loading chart…"
+    // forever and stacks a 240-px-tall empty widget box in the chat.
+    // Detect the empty shape by the absence of any chart URL:
+    // \`embed_url\` and \`image_url\` are mutually present-or-absent on the
+    // handler side (see \`buildSearchOutput\` in \`_search_results.ts\`),
+    // and \`image_data_url\` is derived from \`image_url\` server-side
+    // (\`extraMeta\` only runs when \`image_url\` is present), so the
+    // \`!image_url && !embed_url\` check covers all three.
+    if (
+      typeof structuredContent.embed_url !== "string" &&
+      typeof structuredContent.image_url !== "string"
+    ) {
+      placeholder.classList.add("hidden");
+      document.documentElement.style.height = "0px";
+      document.body.style.height = "0px";
+      notifyHeight(0);
+      rendered = true;
+      log("no-chart payload, collapsed widget");
+      return true;
+    }
+    var url = structuredContent.embed_url;
+    var imgUrl = structuredContent.image_url;
+    // \`image_data_url\` and PNG natural dimensions live on \`_meta\`
+    // (not on \`structuredContent\`) so the ~250 KB data URI doesn't
+    // get tokenized into the LLM's context window — claude.ai
+    // otherwise rejects the tool result as too large. Hosts using the
+    // \`window.openai\` path (ChatGPT) ignore \`_meta\` entirely; they
+    // don't need the data URI because their CSP allows cross-origin
+    // \`<img src>\`.
+    var imgDataUrl = meta && typeof meta === "object" ? meta.image_data_url : undefined;
+    var imgNaturalW = meta && typeof meta === "object" && typeof meta.image_natural_width === "number"
+      ? meta.image_natural_width : 0;
+    var imgNaturalH = meta && typeof meta === "object" && typeof meta.image_natural_height === "number"
+      ? meta.image_natural_height : 0;
+    // Read but deliberately unused for sizing — see the note in paintImage.
+    // Kept parsed so the shape stays documented at the point of arrival.
+    void imgNaturalW;
+    void imgNaturalH;
+    // Defense-in-depth: re-validate URL/DataURL schemes before
+    // assigning to \`iframe.src\` / \`img.src\`. The handler validates
+    // server-side too, but the widget is the last hop before the DOM,
+    // so a hostile MCP server shipping \`javascript:\` would otherwise
+    // execute in the widget origin once dropped into \`src\`.
+    var validEmbed = typeof url === "string" && /^https?:\\/\\//.test(url);
+    var validDataImage = typeof imgDataUrl === "string" && imgDataUrl.indexOf("data:image/") === 0;
+    var validHttpImage = typeof imgUrl === "string" && /^https?:\\/\\//.test(imgUrl);
+    // Prefer the inlined \`data:\` URI over the cross-origin URL — the
+    // data URI works under restrictive \`img-src\` CSPs (claude.ai for
+    // custom connectors), while the http URL only renders on hosts
+    // with permissive img-src (ChatGPT and most others). Fall back to
+    // the http URL when the worker couldn't inline (size cap or fetch
+    // failure).
+    var imageSrc = validDataImage ? imgDataUrl : validHttpImage ? imgUrl : null;
+    var validImage = imageSrc !== null;
+    var h =
+      typeof structuredContent.height === "number" && structuredContent.height > 0
+        ? structuredContent.height
+        : 600;
+    var useIframe = hasOpenAiRuntime() && validEmbed;
+
+    if (useIframe) {
+      if (frame.src !== url) frame.src = url;
+      armEmbedOrigin(url);
+      setFrameHeight(h);
+      frame.classList.remove("hidden");
+      // Watchdog on the committed iframe — the mirror image of
+      // \`probeInteractiveIframe\`. That one starts from the PNG and upgrades
+      // to the iframe if the host allows it; this one starts from the iframe
+      // and falls back to the PNG if it never loads.
+      //
+      // Only this path lacked a fallback, and it is the path ChatGPT takes.
+      // \`hasOpenAiRuntime()\` says the host's CSP is *expected* to permit
+      // \`frameDomains\`, which is not the same as the embed actually
+      // rendering: a Tako embed outage, a slow render, or an OpenAI sandbox
+      // CSP change all left the widget showing an empty or blocked frame
+      // forever — while \`image_url\` sat unused in the same
+      // \`structuredContent\`, and would have rendered fine under ChatGPT's
+      // permissive \`img-src\`. Losing interactivity is a far cheaper failure
+      // than losing the chart.
+      watchCommittedIframe(url, {
+        imageSrc: imageSrc,
+        validEmbed: validEmbed,
+        height: h,
+        isDataUrl: validDataImage,
+        imageUrl: imgUrl,
+      });
+    } else if (validImage) {
+      return paintImage({
+        embedUrl: url,
+        imageSrc: imageSrc,
+        validEmbed: validEmbed,
+        height: h,
+        isDataUrl: validDataImage,
+        imageUrl: imgUrl,
+        allowProbe: true,
+      });
     } else if (validEmbed) {
       // No image at all but we have an embed_url — try the iframe even
       // on hosts we'd normally treat as restricted. Worst case the

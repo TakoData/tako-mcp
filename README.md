@@ -277,13 +277,13 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 | Alias | Tool(s) | What it's for |
 | ---- | ---- | ----------- |
 | `agent` | `tako_agent` (ChatGPT: `tako_agent_start` / `tako_agent_wait`) | Tako's **Answer Agent** — opinionated, multi-step research (~30–90s) across many retrievals, returning a synthesized answer plus chart cards |
-| `visualize` | `tako_visualize` | Author an embeddable chart/card from your own typed `components` (timeseries, bar, table, financial boxes…). On by default for ChatGPT, where it powers the widget |
+| `visualize` | `tako_visualize` | Author an embeddable chart/card from your own typed `components` (timeseries, bar, table, financial boxes…). **On by default for ChatGPT and Claude** — the hosts that render the chart widget inline; other clients opt in for the embed URL |
 | `credits` | `get_credit_balance` | Check the connected account's API credit balance |
 | `graph` | `tako_graph_search` / `tako_graph_related` / `tako_graph_node` | Low-level graph primitives behind `tako_available_data`: traversal relations, `q` filtering, cursor paging, full node detail |
 
 The param rides on the connection URL, so how you set it depends on your client:
 
-- **Claude.ai, Claude Desktop, ChatGPT (connectors):** include it in the URL you paste when adding the connector — e.g. `https://mcp.tako.com/mcp?tools=agent`. OAuth is unaffected (the server canonicalizes the resource, query string included). ChatGPT gets `visualize` automatically, no param needed.
+- **Claude.ai, Claude Desktop, ChatGPT (connectors):** include it in the URL you paste when adding the connector — e.g. `https://mcp.tako.com/mcp?tools=agent`. OAuth is unaffected (the server canonicalizes the resource, query string included). ChatGPT and Claude both get `visualize` automatically, no param needed.
 - **Config-file clients (Cursor, Windsurf, VS Code, …) and `claude mcp add`:** put it on the URL in your config:
 
 ```bash
@@ -292,7 +292,7 @@ claude mcp add tako-mcp --transport http "https://mcp.tako.com/mcp?tools=agent,v
   --header "Authorization: Bearer $TAKO_API_TOKEN"
 ```
 
-- **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). If you want opt-in tools, add the server yourself with `claude mcp add` and the `?tools=` param as above — keep only one Tako connection active so you don't get two copies of every tool (the plugin's bundled skills keep working regardless of which connection serves the tools).
+- **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). Note that `tako_visualize`'s default-on status does **not** follow the plugin into the terminal: Claude Code is a CLI, not a widget host, so it is classified alongside other non-widget clients and gets charts as inline images. The same plugin used on Claude.ai does get `tako_visualize` by default, because that host renders the widget. For opt-in tools in Claude Code — `agent`, `visualize`, `credits`, `graph` — add the server yourself with `claude mcp add` and the `?tools=` param as above, and keep only one Tako connection active so you don't get two copies of every tool (the plugin's bundled skills keep working regardless of which connection serves the tools).
 
 Only alias names are recognized; unknown values are ignored, so a typo never breaks the connection. Omit the parameter for the default surface.
 
@@ -616,7 +616,7 @@ The Worker extracts the Bearer (or OAuth-derived) token, validates the MCP reque
 <details>
 <summary><b>Breaking changes (v0.3.0)</b></summary>
 
-- The default tool surface is **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_available_data`**. Everything else is opt-in via `?tools=`: **`tako_agent`** (`agent`; ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), **`tako_visualize`** (`visualize`; default-on for ChatGPT), **`get_credit_balance`** (`credits`), and graph primitives **`tako_graph_search`** / **`tako_graph_related`** / **`tako_graph_node`** (`graph`).
+- The default tool surface is **`tako_search`**, **`tako_answer`**, **`tako_contents`**, **`tako_available_data`** — plus **`tako_visualize`** on ChatGPT and Claude, the hosts that render its chart inline. Everything else is opt-in via `?tools=`: **`tako_agent`** (`agent`; ChatGPT split pair **`tako_agent_start`** / **`tako_agent_wait`**), **`tako_visualize`** (`visualize`; needed only on clients that don't render widgets), **`get_credit_balance`** (`credits`), and graph primitives **`tako_graph_search`** / **`tako_graph_related`** / **`tako_graph_node`** (`graph`).
 - The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
 - The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
 

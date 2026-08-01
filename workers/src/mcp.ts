@@ -52,6 +52,7 @@ import {
 } from "./tools/_security.js";
 import {
   isToolOnSurface,
+  isWidgetClient,
   toolAnnotationsForClient,
 } from "./tools/_surface.js";
 import type {
@@ -766,9 +767,13 @@ function registerTool(
   // not a PNG. (The image-block/widget mutual exclusion is separately
   // guaranteed by the `ui === undefined` condition at the call-time
   // `extraContentBlocks` gate.)
+  // `isWidgetClient` is the shared definition in `tools/_surface.ts` — the
+  // same predicate that decides which clients keep `tako_visualize` on their
+  // default surface. Two inlined `client === …` comparisons in two files is
+  // how a widget-owning tool ends up registered on a client that never
+  // receives widget metadata (or vice versa).
   const widgetSuppressed =
-    (options.client !== "chatgpt" && options.client !== "claude") ||
-    options.widgetSuppressedForTool === true;
+    !isWidgetClient(options.client) || options.widgetSuppressedForTool === true;
   const inlinePngFallbackSuppressed = options.widgetSuppressedForTool === true;
   const ui =
     tool.appUiResource !== undefined && !widgetSuppressed

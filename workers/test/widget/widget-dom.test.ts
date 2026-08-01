@@ -438,6 +438,107 @@ describe("interactive iframe capability probe (executed)", () => {
   });
 });
 
+/**
+ * The mirror of the probe above: the `window.openai` path commits to the
+ * iframe up front, so it needs a way DOWN to the PNG when that iframe never
+ * renders. Before the watchdog this path had no fallback at all — a blocked
+ * or hanging embed left an empty frame in the chat forever, with `image_url`
+ * unused in the same payload.
+ *
+ * ChatGPT is the client that takes this path, and the server skips the PNG
+ * prefetch for it, so these results carry `image_url` and NO
+ * `_meta.image_data_url` — the real shape, not the Claude one.
+ */
+describe("committed iframe watchdog (executed)", () => {
+  /** ChatGPT-shaped payload: remote image URL, no baked data URI. */
+  const CHATGPT_RESULT = toolResult({
+    embed_url: EMBED_URL,
+    image_url: IMAGE_URL,
+  });
+
+  function mountChatGpt(): Mounted {
+    const m = mountWidget(staticWidgetHtml());
+    (m.widgetWin as unknown as { openai: object }).openai = {};
+    return m;
+  }
+
+  it("stands down once the committed iframe loads", () => {
+    const m = mountChatGpt();
+    deliver(m, CHATGPT_RESULT, m.wrapperWin);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    fireFrameLoad(m);
+    // Still the iframe, and no PNG was painted behind it.
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+    expect(widgetImg(m).getAttribute("src")).toBeNull();
+  });
+
+  it("falls back to the remote PNG when the host CSP blocks the iframe", () => {
+    const m = mountChatGpt();
+    deliver(m, CHATGPT_RESULT, m.wrapperWin);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    fireFrameSrcViolation(m);
+    // Frame unloaded and hidden; the image took over.
+    expect(widgetFrame(m).getAttribute("src")).toBe("about:blank");
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
+    expect(widgetImg(m).getAttribute("src")).toBe(IMAGE_URL);
+    // ...and the click-through still points at the interactive chart.
+    fireImageLoad(m);
+    expect(widgetLink(m).getAttribute("href")).toBe(EMBED_URL);
+    expect(widgetLink(m).classList.contains("hidden")).toBe(false);
+  });
+
+  it("does not re-probe the iframe it just abandoned", () => {
+    const m = mountChatGpt();
+    deliver(m, CHATGPT_RESULT, m.wrapperWin);
+    fireFrameSrcViolation(m);
+    // The fallback image loading is exactly when the PNG path would normally
+    // arm `probeInteractiveIframe`. It must not here: the iframe already
+    // failed, and a probe "succeeding" on an error page would swap the
+    // working PNG back out.
+    fireImageLoad(m);
+    expect(widgetFrame(m).getAttribute("src")).toBe("about:blank");
+    expect(widgetImg(m).getAttribute("src")).toBe(IMAGE_URL);
+  });
+
+  it("shows a click-through when the iframe fails and there is no image", () => {
+    const m = mountChatGpt();
+    deliver(m, toolResult({ embed_url: EMBED_URL }), m.wrapperWin);
+    fireFrameSrcViolation(m);
+    const placeholder = m.widgetWin.document.getElementById(
+      "tako-placeholder",
+    ) as HTMLElement;
+    expect(placeholder.classList.contains("hidden")).toBe(false);
+    const anchor = placeholder.querySelector("a");
+    expect(anchor?.getAttribute("href")).toBe(EMBED_URL);
+  });
+
+  it("ignores a violation for a directive other than frame-src", () => {
+    const m = mountChatGpt();
+    deliver(m, CHATGPT_RESULT, m.wrapperWin);
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    const event = new WidgetEvent("securitypolicyviolation");
+    Object.assign(event, { effectiveDirective: "img-src" });
+    m.widgetWin.document.dispatchEvent(event);
+    // An unrelated CSP report must not tear down a working chart.
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetImg(m).getAttribute("src")).toBeNull();
+  });
+
+  it("stops honoring embed-height messages after a downgrade", () => {
+    const m = mountChatGpt();
+    deliver(m, CHATGPT_RESULT, m.wrapperWin);
+    fireFrameSrcViolation(m);
+    fireImageLoad(m);
+    const before = widgetFrame(m).getAttribute("height");
+    deliverEmbedHeight(m, 999);
+    // `embedOrigin` was cleared on downgrade, so the abandoned embed can no
+    // longer resize the widget out from under the PNG.
+    expect(widgetFrame(m).getAttribute("height")).toBe(before);
+  });
+});
+
 describe("baked widget variant (executed)", () => {
   it("notifies size-changed to the parent on execution", () => {
     const html = __chart_widget_test_only__.buildBakedWidgetHtml({
