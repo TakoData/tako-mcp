@@ -440,12 +440,11 @@ describe("tako_search widget + contract guard", () => {
     // means per-element descriptions are dropped and the array description is
     // the only model-facing slot. Assert against the serialized JSON Schema,
     // because that is what `tools/list` actually ships.
-    const json = JSON.stringify(z.toJSONSchema(tako_search.outputSchema));
-    const web = (
-      z.toJSONSchema(tako_search.outputSchema) as {
-        properties?: { web_results?: { description?: string } };
-      }
-    ).properties?.web_results?.description;
+    const schema = z.toJSONSchema(tako_search.outputSchema) as {
+      properties?: { web_results?: { description?: string } };
+    };
+    const json = JSON.stringify(schema);
+    const web = schema.properties?.web_results?.description;
 
     expect(web).toBeDefined();
     // The three properties a reader cannot infer from the value itself.

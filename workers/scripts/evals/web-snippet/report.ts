@@ -40,13 +40,39 @@ const mean = (xs: number[]): number =>
   xs.length === 0 ? NaN : xs.reduce((a, b) => a + b, 0) / xs.length;
 const n = (x: number, d = 0): string => (Number.isNaN(x) ? "—" : x.toFixed(d));
 
-function newestRaw(): string {
-  const files = readdirSync(RESULTS).filter((f) => f.startsWith("raw-") && f.endsWith(".jsonl"));
+/** The raw sweep to report on. Refuses to guess — mirrors judge.ts, and the
+ *  stakes are higher here: this function's return value decides what gets
+ *  written into the committed RESULTS.md. Picking the wrong sweep silently
+ *  replaces a 26-case result with a 4-case one that reads identically. */
+function resolveRaw(): string {
+  const files = readdirSync(RESULTS)
+    .filter((f) => f.startsWith("raw-") && f.endsWith(".jsonl"))
+    .sort();
   if (files.length === 0) {
     console.error(`✘ no raw-*.jsonl in ${RESULTS} — run run.ts first`);
     process.exit(1);
   }
-  return join(RESULTS, files.sort().at(-1) as string);
+  if (files.length === 1) return join(RESULTS, files[0] as string);
+  console.error(`✘ ${files.length} raw sweeps in results/ — name the one to report on:\n`);
+  for (const f of files) {
+    const cases = readFileSync(join(RESULTS, f), "utf8").split("\n").filter((l) => l.trim() !== "").length;
+    console.error(`    ${f}  (${cases} case${cases === 1 ? "" : "s"})`);
+  }
+  console.error(`\n  npx tsx scripts/evals/web-snippet/report.ts <path-to-raw.jsonl>`);
+  process.exit(1);
+}
+
+/** The argument is the RAW sweep, not the judged file — report.ts derives the
+ *  judged path itself. Checked because passing `judged-*.jsonl` otherwise dies
+ *  deep in `calls()` with a bare "cannot read properties of undefined". */
+function assertRawShape(rows: CaseRow[], path: string): void {
+  const bad = rows.findIndex((r) => r.search === undefined || r.answer === undefined);
+  if (bad === -1) return;
+  console.error(
+    `✘ ${path.split("/").pop()} is not a raw sweep (row ${bad + 1} has no search/answer arms).\n` +
+      `  Pass the raw-*.jsonl; the judged file is picked up automatically.`,
+  );
+  process.exit(1);
 }
 
 function calls(rows: CaseRow[], kind: "search" | "answer", arm: Arm): CallRow[] {
@@ -54,11 +80,12 @@ function calls(rows: CaseRow[], kind: "search" | "answer", arm: Arm): CallRow[] 
 }
 
 function main(): void {
-  const rawPath = process.argv[2] ?? newestRaw();
+  const rawPath = process.argv[2] ?? resolveRaw();
   const rows = readFileSync(rawPath, "utf8")
     .split("\n")
     .filter((l) => l.trim() !== "")
     .map((l) => JSON.parse(l) as CaseRow);
+  assertRawShape(rows, rawPath);
 
   const judgedPath = rawPath.replace(/\/raw-/, "/judged-");
   const judged: JudgedCase[] = existsSync(judgedPath)
