@@ -777,7 +777,7 @@ function registerTool(
   const inlinePngFallbackSuppressed = options.widgetSuppressedForTool === true;
   const ui =
     tool.appUiResource !== undefined && !widgetSuppressed
-      ? tool.appUiResource(ctx.env)
+      ? tool.appUiResource(ctx.env, options.origin)
       : undefined;
 
   if (ui !== undefined) {
@@ -788,6 +788,9 @@ function registerTool(
     }
     if (ui.resourceDomains && ui.resourceDomains.length > 0) {
       csp.resourceDomains = ui.resourceDomains;
+    }
+    if (ui.connectDomains && ui.connectDomains.length > 0) {
+      csp.connectDomains = ui.connectDomains;
     }
     if (Object.keys(csp).length > 0) {
       uiMeta.csp = csp;
@@ -1014,6 +1017,7 @@ function registerTool(
         sendProgress,
         client: options.client,
         tier: options.tier,
+        origin: options.origin,
       };
       // Free-tier dispatch gate: auth-required tools can be LISTED on an
       // anonymous connection (ChatGPT needs the descriptor to offer its

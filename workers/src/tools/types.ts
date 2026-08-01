@@ -105,6 +105,19 @@ export interface ToolContext {
    *    tier stamped over this field — see `callCtx` in `registerTool`.)
    */
   tier?: Tier;
+  /**
+   * Origin of the incoming request (e.g. `https://mcp.tako.com`), stamped by
+   * `registerTool` from the same value that builds OAuth challenge URLs.
+   *
+   * Needed because some widget payloads have to reference THIS worker by
+   * absolute URL — the widget runs in a sandboxed iframe whose own origin is
+   * opaque, so it cannot resolve a relative path back to us. `extraMeta` uses
+   * it to hand the widget the native-card proxy URL.
+   *
+   * `undefined` outside an HTTP context (tests, non-HTTP callers). Consumers
+   * must degrade rather than assume.
+   */
+  origin?: string | undefined;
 }
 
 /**
@@ -182,6 +195,21 @@ export interface AppUiResource {
    * allowed; this is only needed for remote `<img src>` fallbacks.
    */
   resourceDomains?: string[];
+  /**
+   * Origins the widget may make runtime network requests to (`fetch`,
+   * XHR, WebSocket) — surfaces as `_meta.ui.csp.connectDomains` and maps to
+   * the CSP `connect-src` directive.
+   *
+   * Distinct from {@link resourceDomains}, which covers statically loaded
+   * assets (`script-src` / `style-src` / `font-src` / `img-src` /
+   * `media-src`). A CDN script goes in `resourceDomains`; an API the widget
+   * calls goes here. Measured on claude.ai 2026-08-01: declared
+   * `connectDomains` DO appear in the enforced `connect-src`, and declared
+   * `resourceDomains` DO reach `script-src` (an undeclared origin in the same
+   * document was blocked with a reported violation while the declared one was
+   * permitted). Only `frame-src` is hardcoded there.
+   */
+  connectDomains?: string[];
   /**
    * Optional dynamic-resource variant — registered as a `ResourceTemplate`
    * (one URI per per-call substitution). Used when the widget needs to
@@ -384,7 +412,7 @@ export interface ToolModule<
    * depend on env (e.g. `frameDomains` from `PUBLIC_BASE_URL`) can be
    * baked in at registration time. See {@link AppUiResource}.
    */
-  appUiResource?: (env: Env) => AppUiResource;
+  appUiResource?: (env: Env, requestOrigin?: string) => AppUiResource;
 }
 
 /**
@@ -423,5 +451,5 @@ export interface AnyToolModule {
     output: unknown,
     ctx: ToolContext,
   ) => Promise<Record<string, unknown> | undefined>;
-  appUiResource?: (env: Env) => AppUiResource;
+  appUiResource?: (env: Env, requestOrigin?: string) => AppUiResource;
 }

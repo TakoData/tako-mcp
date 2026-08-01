@@ -21,6 +21,8 @@ import {
   buildChartAppUiResourceFromOutputPubId,
   buildChartExtraMeta,
   nativeCardProbeMeta,
+  nativeCardUrl,
+  resolveWidgetOrigin,
 } from "./_chart_widget.js";
 
 const CDN = "https://d12w4pyrrczi5e.cloudfront.net";
@@ -114,5 +116,105 @@ describe("buildChartExtraMeta with the experiment armed", () => {
     expect(meta?.cdn_probe_origin).toBe(CDN);
     expect(meta).not.toHaveProperty("image_data_url");
     expect(meta).not.toHaveProperty("image_natural_width");
+  });
+});
+
+describe("resolveWidgetOrigin", () => {
+  it("prefers the explicit binding over the request origin", () => {
+    expect(
+      resolveWidgetOrigin(
+        { ...ARMED, PUBLIC_MCP_URL: "https://mcp.tako.com" },
+        "http://internal-host",
+      ),
+    ).toBe("https://mcp.tako.com");
+  });
+
+  it("forces https on a derived non-local origin", () => {
+    // `request.url` reads http:// behind any upstream TLS terminator (wrangler
+    // dev, ngrok, cloudflared). Emitting that into connectDomains and asking an
+    // https document to fetch it is a mixed-content block, not a warning.
+    expect(resolveWidgetOrigin(ARMED, "http://mcp.staging.tako.com")).toBe(
+      "https://mcp.staging.tako.com",
+    );
+  });
+
+  it("leaves an already-https origin alone", () => {
+    expect(resolveWidgetOrigin(ARMED, "https://mcp.tako.com")).toBe(
+      "https://mcp.tako.com",
+    );
+  });
+
+  it("keeps http for localhost, where it is the only thing that works", () => {
+    expect(resolveWidgetOrigin(ARMED, "http://localhost:8787")).toBe(
+      "http://localhost:8787",
+    );
+    expect(resolveWidgetOrigin(ARMED, "http://127.0.0.1:8787")).toBe(
+      "http://127.0.0.1:8787",
+    );
+  });
+
+  it("returns undefined when there is nothing usable", () => {
+    expect(resolveWidgetOrigin(ARMED, undefined)).toBeUndefined();
+    expect(resolveWidgetOrigin(ARMED, "")).toBeUndefined();
+    expect(resolveWidgetOrigin(ARMED, "not a url")).toBeUndefined();
+  });
+});
+
+describe("nativeCardUrl", () => {
+  it("is undefined when the experiment is off", () => {
+    expect(nativeCardUrl(BASE, "https://mcp.tako.com", "abc123")).toBeUndefined();
+  });
+
+  it("is undefined without a pub_id", () => {
+    expect(nativeCardUrl(ARMED, "https://mcp.tako.com", undefined)).toBeUndefined();
+    expect(nativeCardUrl(ARMED, "https://mcp.tako.com", "")).toBeUndefined();
+  });
+
+  it("is undefined when the origin cannot be resolved", () => {
+    // The widget's own origin is opaque, so it cannot resolve a relative path
+    // back to us — no origin means no native card, never a relative URL.
+    expect(nativeCardUrl(ARMED, undefined, "abc123")).toBeUndefined();
+  });
+
+  it("builds an https proxy URL under the embed-html prefix", () => {
+    expect(nativeCardUrl(ARMED, "http://mcp.staging.tako.com", "abc123")).toBe(
+      "https://mcp.staging.tako.com/embed-html/abc123",
+    );
+  });
+
+  it("percent-encodes the pub_id", () => {
+    // Defence in depth: the route validates the shape too, but this value is
+    // built into a URL, so it is encoded at construction rather than trusted.
+    expect(nativeCardUrl(ARMED, "https://m.test", "a/b")).toBe(
+      "https://m.test/embed-html/a%2Fb",
+    );
+  });
+});
+
+describe("declared connectDomains", () => {
+  it("is absent when the experiment is off", () => {
+    const ui = buildChartAppUiResourceFromOutputPubId(BASE, "https://mcp.tako.com");
+    expect(ui.connectDomains ?? []).toEqual([]);
+  });
+
+  it("matches the origin the native URL is built on", () => {
+    // If the declared origin and the fetched origin disagree, the fetch is
+    // CSP-blocked and it looks like a broken proxy.
+    const ui = buildChartAppUiResourceFromOutputPubId(
+      ARMED,
+      "http://mcp.staging.tako.com",
+    );
+    expect(ui.connectDomains).toEqual(["https://mcp.staging.tako.com"]);
+    expect(
+      nativeCardUrl(ARMED, "http://mcp.staging.tako.com", "x")?.startsWith(
+        ui.connectDomains![0]!,
+      ),
+    ).toBe(true);
+  });
+
+  it("is empty when the origin is unknown", () => {
+    expect(
+      buildChartAppUiResourceFromOutputPubId(ARMED, undefined).connectDomains ?? [],
+    ).toEqual([]);
   });
 });

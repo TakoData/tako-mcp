@@ -426,6 +426,8 @@ const tako_visualize = {
     return buildChartExtraMeta(output.image_url, {
       bakeImage: ctx.client !== "chatgpt",
       env: ctx.env,
+      origin: ctx.origin,
+      pubId: output.pub_id,
     });
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
@@ -433,8 +435,8 @@ const tako_visualize = {
     if (output.image_url === undefined) return [];
     return fetchPngContentBlock(output.image_url);
   },
-  appUiResource(env): AppUiResource {
-    return buildChartAppUiResourceFromOutputPubId(env);
+  appUiResource(env, requestOrigin): AppUiResource {
+    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

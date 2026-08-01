@@ -1,4 +1,5 @@
 import { CORS_PATHS, corsPreflight, withCors } from "./cors.js";
+import { handleEmbedProxy } from "./embed_proxy.js";
 import type { Env } from "./env.js";
 import { handleIconRequest } from "./icons.js";
 import { handleMcpRequest } from "./mcp.js";
@@ -44,6 +45,14 @@ export default {
     if (request.method === "GET" && url.pathname.startsWith("/icons/")) {
       return handleIconRequest(url.pathname);
     }
+
+    // CORS-readable proxy for Tako's chart embed page, so the MCP Apps widget
+    // can render the REAL interactive card rather than a PNG of it. Returns
+    // `undefined` — falling through to the 404 below — when the
+    // `PUBLIC_CDN_URL` experiment is off or the pub_id is malformed, so this
+    // route does not exist at all in production. See `embed_proxy.ts`.
+    const embedProxied = await handleEmbedProxy(request, env);
+    if (embedProxied !== undefined) return embedProxied;
 
     // GET /mcp (server->client SSE stream) and DELETE /mcp (session
     // terminate) are genuinely not offered: we run stateless JSON-response

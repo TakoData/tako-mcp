@@ -73,6 +73,26 @@ export interface Env {
    */
   PUBLIC_CDN_URL?: string;
   /**
+   * Optional public origin clients should use to reach THIS worker — e.g.
+   * `https://mcp.tako.com`. Must NOT include a trailing slash.
+   *
+   * Normally unnecessary: the request origin is derived from `request.url`,
+   * which is correct on a real Cloudflare deploy. It exists because that
+   * derivation is wrong whenever something sits in front of the worker and
+   * terminates TLS or rewrites the Host — a tunnel (ngrok/cloudflared) or
+   * `wrangler dev`, both of which yield `http://` and/or a host the outside
+   * world cannot reach. A widget that fetches an `http://` URL from an
+   * `https://` page is blocked as mixed content, and an unreachable host just
+   * fails, so the derived value has to be overridable.
+   *
+   * Scope is deliberately narrow: this is used ONLY for widget payload URLs
+   * (the native-card proxy URL and the `connectDomains` entry that permits
+   * fetching it). OAuth `resource_metadata` URLs keep tracking the real
+   * request origin, because those must match the `WWW-Authenticate` header the
+   * same request emits.
+   */
+  PUBLIC_MCP_URL?: string;
+  /**
    * HMAC-SHA256 signing secret for every JWT the OAuth subsystem mints
    * (auth codes, refresh tokens, access tokens, DCR client_ids, state /
    * session cookies). Optional: when unset, `/authorize`, `/token`,
@@ -175,7 +195,7 @@ export interface Env {
  * end-user's browser, so silent fallback on bad input would be a
  * security boundary.
  */
-function validatePublicOrigin(raw: string | undefined, label: string): string {
+export function validatePublicOrigin(raw: string | undefined, label: string): string {
   if (raw === undefined || raw === "") {
     throw new Error(
       `Neither ${label} nor DJANGO_BASE_URL is configured (empty or undefined binding)`,
