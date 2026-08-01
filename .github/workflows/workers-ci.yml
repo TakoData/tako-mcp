@@ -1,23 +1,35 @@
 name: workers-ci
 
 on:
-  # The two root files are guarded by `registry:check` (see
-  # `gen-registry.ts`: `assertChatgptSubmissionParity`,
-  # `assertLlmsFullCoverage`) — they must trigger this workflow or a PR
-  # editing only a guarded file skips the very guard that protects it.
+  # Every path below is covered by a guard this workflow runs, so each one has
+  # to trigger it — otherwise a PR editing only a guarded file skips the very
+  # guard that protects it. `registry:check` covers `chatgpt-app-submission.json`
+  # and `llms-full.txt` (see `gen-registry.ts`: `assertChatgptSubmissionParity`,
+  # `assertLlmsFullCoverage`); `scripts/skills.test.ts` covers `skills/**`,
+  # `.claude-plugin/**`, and `version.txt`.
+  #
+  # `skills/**` and `.claude-plugin/**` were missing here, and that is how a
+  # skill with unparseable YAML frontmatter shipped: the edit that broke it
+  # touched no triggering path, so CI never ran on the PR at all.
   push:
     branches: [main]
     paths:
       - 'workers/**'
       - 'registry/**'
+      - 'skills/**'
+      - '.claude-plugin/**'
       - 'chatgpt-app-submission.json'
       - 'llms-full.txt'
+      - 'version.txt'
   pull_request:
     paths:
       - 'workers/**'
       - 'registry/**'
+      - 'skills/**'
+      - '.claude-plugin/**'
       - 'chatgpt-app-submission.json'
       - 'llms-full.txt'
+      - 'version.txt'
   workflow_dispatch:
 
 concurrency:
