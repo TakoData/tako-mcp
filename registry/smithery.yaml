@@ -5,7 +5,7 @@ description: |
   data that the open web does not have. That includes company financials,
   macroeconomic indicators, web and app traffic, sports, US government
   spending, and more.
-version: 0.16.0
+version: 0.16.1
 license: MIT
 author:
   name: Tako
