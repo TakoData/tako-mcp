@@ -18,12 +18,19 @@ a coverage finding unless the failures are counted here first.
 | answer | text | 26 | 0 | 0 | 3.0 |
 | answer | highlights | 26 | 0 | 0 | 3.0 |
 
-## Latency — the gate on tako_answer
+## Latency — the answer gate, and the search cost
 
 Exa selects highlights with an LLM, so they cost time even though they cost
-no money. `GROUNDING_WEB_RETRIEVAL_TIMEOUT_S` is 1.5s and a breach does not
-return a slow answer — it returns no web grounding at all. So the max column
-decides this, not the median.
+no money. The two endpoints turn that cost into different questions and both
+rows below want reading:
+
+- **answer** has a cliff. `GROUNDING_WEB_RETRIEVAL_TIMEOUT_S` is 1.5s and a
+  breach does not return a slow answer — it returns no web grounding at all.
+  So the max column decides that one, not the median.
+- **search** has no cliff, so nothing here can fail; the paired median is
+  simply a price. `tako_search` is the higher-volume tool and defaults to
+  `count: 10`, so that price is paid far more often than the answer one —
+  read the search row against the byte and utility gains, not past it.
 
 Arm order is rotated per case, so neither arm systematically eats the cold cache.
 
@@ -62,13 +69,17 @@ passage returns `snippet: null` and keeps its slot. No text fallback was
 added upstream, on the basis of 0 nulls across ~40 results. This is the
 number that would overturn that.
 
-| arm | results | null snippets | at cap | median chars | mean chars | multi-passage |
+| arm | results | null snippets | at cap | median chars | mean chars | contains ` … ` |
 |---|---:|---:|---:|---:|---:|---:|
 | text | 260 | 0 | 167 | 1984 | 1896 | 2 |
 | highlights | 260 | 0 | 40 | 1887 | 1556 | 1 |
 
-`multi-passage` counts snippets containing the `" … "` join — the marker that
-a snippet is non-contiguous and must not be quoted as one sentence.
+`contains " … "` counts the separator, which is NOT the same as counting Exa
+joins — a source page's own ellipsis survives cleaning and looks identical.
+**The text arm is the false-positive floor**: it requests no highlights, so it
+structurally cannot contain a backend join, and whatever it reports is the
+detector reading source punctuation. Subtract that floor before reading the
+highlights row as evidence of multi-passage joining.
 
 ## Snippet utility (blind judge, 0-2)
 

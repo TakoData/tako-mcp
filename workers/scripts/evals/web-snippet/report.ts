@@ -115,12 +115,19 @@ function main(): void {
   }
 
   // ── Latency ──────────────────────────────────────────────────────────────
-  md.push("## Latency — the gate on tako_answer");
+  md.push("## Latency — the answer gate, and the search cost");
   md.push("");
   md.push("Exa selects highlights with an LLM, so they cost time even though they cost");
-  md.push("no money. `GROUNDING_WEB_RETRIEVAL_TIMEOUT_S` is 1.5s and a breach does not");
-  md.push("return a slow answer — it returns no web grounding at all. So the max column");
-  md.push("decides this, not the median.");
+  md.push("no money. The two endpoints turn that cost into different questions and both");
+  md.push("rows below want reading:");
+  md.push("");
+  md.push("- **answer** has a cliff. `GROUNDING_WEB_RETRIEVAL_TIMEOUT_S` is 1.5s and a");
+  md.push("  breach does not return a slow answer — it returns no web grounding at all.");
+  md.push("  So the max column decides that one, not the median.");
+  md.push("- **search** has no cliff, so nothing here can fail; the paired median is");
+  md.push("  simply a price. `tako_search` is the higher-volume tool and defaults to");
+  md.push("  `count: 10`, so that price is paid far more often than the answer one —");
+  md.push("  read the search row against the byte and utility gains, not past it.");
   md.push("");
   md.push("Arm order is rotated per case, so neither arm systematically eats the cold cache.");
   md.push("");
@@ -201,7 +208,7 @@ function main(): void {
   md.push("added upstream, on the basis of 0 nulls across ~40 results. This is the");
   md.push("number that would overturn that.");
   md.push("");
-  md.push("| arm | results | null snippets | at cap | median chars | mean chars | multi-passage |");
+  md.push("| arm | results | null snippets | at cap | median chars | mean chars | contains ` … ` |");
   md.push("|---|---:|---:|---:|---:|---:|---:|");
   const cap = rows[0]?.snippet_max_chars ?? 2000;
   for (const arm of ARMS) {
@@ -216,8 +223,12 @@ function main(): void {
     );
   }
   md.push("");
-  md.push("`multi-passage` counts snippets containing the `\" … \"` join — the marker that");
-  md.push("a snippet is non-contiguous and must not be quoted as one sentence.");
+  md.push("`contains \" … \"` counts the separator, which is NOT the same as counting Exa");
+  md.push("joins — a source page's own ellipsis survives cleaning and looks identical.");
+  md.push("**The text arm is the false-positive floor**: it requests no highlights, so it");
+  md.push("structurally cannot contain a backend join, and whatever it reports is the");
+  md.push("detector reading source punctuation. Subtract that floor before reading the");
+  md.push("highlights row as evidence of multi-passage joining.");
   md.push("");
 
   // ── Judged: snippet utility ──────────────────────────────────────────────

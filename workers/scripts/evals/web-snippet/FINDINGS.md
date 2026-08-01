@@ -49,6 +49,24 @@ highlights  "…NVDA rose on Friday after Amazon reaffirmed its commitment to th
 One probe was not a page shape. Highlights improved on every bucket except
 `neutral` (−0.03, inside noise), so the gain is not confined to press releases.
 
+### The cost side of the search row: +49ms median
+
+Highlights were slower on 18 of 26 search cases, median **+49ms**, max +522ms.
+Nothing gates on it — `tako_search` has no equivalent of the answer path's hard
+1.5s grounding budget, so there is no cliff here and no failure mode; it is a
+straight price. But `tako_search` is the higher-volume tool and defaults to
+`count: 10`, so it is a price paid far more often than anything on the answer
+path, and it deserves stating rather than leaving in the generated sheet for a
+reader to derive.
+
+**Accepted.** It is ~6.5% of a 750ms median, bought for 18% fewer snippet bytes
+and +0.14 blind utility. Two things make it an upper bound rather than a
+point estimate: the sweep timed to response headers, which excludes a body
+download that is systematically larger on the *text* arm (see the note in
+`RESULTS.md` — the true delta is smaller than +49ms), and n=1 per case from a
+laptop is not a p95. If search latency is ever the binding constraint, this is
+the number to re-measure properly, not to re-derive from this run.
+
 ## Coverage: the null-snippet risk did not materialise
 
 **0 null snippets in 260 highlight results.** Upstream measured 0 across ~40
@@ -58,10 +76,31 @@ sample, including two deliberately near-contentless queries (`market outlook`,
 `null`, because absence is in the contract even if it is rare — but no fallback
 is warranted on this evidence.
 
-Only 1 of 260 highlight snippets contained the `" … "` multi-passage join,
-matching the upstream finding that Exa returns one passage per URL in every
-configuration. The join is a guard against a vendor-default change, not a
-description of current behaviour.
+**Zero confirmed Exa joins, against a 2/260 false-positive floor on the
+detector.** `report.ts` counts the `" … "` separator, and the separator is not
+the same thing as a join: the backend emits it in exactly one place
+(`exa_provider.py:418`, `" … ".join(passages)`), but a source page's own
+ellipsis survives `_clean_excerpt`'s whitespace collapse and is indistinguishable
+from it.
+
+The text arm is what makes this legible. It requests no highlights and so
+*structurally cannot* contain a backend join — yet it reports **2 of 260**. Both
+are source punctuation: a rigzone.com article reading `…adjustments in April and
+November 2023 … met virtually on 5 July 2026`, and an MUFG page reading
+`…(without a Fed compass) … - By George Goncalves`. That 2 is the detector's
+floor, not a finding.
+
+The single highlights-arm hit is the **same rigzone.com URL at the same textual
+position** as one of them (`…April and November 2 ... 23 … met virtually…`,
+where the ` ... ` is the intra-passage newline collapse `exa_provider.py:408-417`
+documents). So it is the same source ellipsis, not a join.
+
+Net: 0 observed joins in 260 highlight results, consistent with the upstream
+finding that Exa returns one passage per URL in every configuration. The `" … "`
+wording in the tool contract is a guard against a vendor-default change, not a
+description of current behaviour — and because a reader cannot tell a join from
+a source's own ellipsis, the contract now attributes the separator to either
+cause rather than asserting a join.
 
 ## `tako_answer`: positive, thin, and one unexplained tail
 
