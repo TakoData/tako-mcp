@@ -93,6 +93,26 @@ describe("sanitizeEmbedHtml", () => {
     expect(out.html).not.toContain("googletagmanager.com");
   });
 
+  it("keeps staticPrefix while removing only csrfToken", () => {
+    // Regression: an earlier version replaced the whole island with `{}`, which
+    // also removed `staticPrefix` — the CDN base Card.js resolves its lazily
+    // imported view chunks against. The card mounted its title and skeleton and
+    // never drew a chart, silently.
+    const out = sanitizeEmbedHtml(UPSTREAM_HTML);
+    expect(out.removedCsrf).toBe(true);
+    expect(out.html).not.toContain("SECRET-TOKEN-VALUE");
+    expect(out.html).toContain("staticPrefix");
+    expect(out.html).toContain("https://cdn/");
+    expect(out.html).toContain("userLoggedIn");
+  });
+
+  it("leaves a non-JSON script that merely mentions csrfToken alone", () => {
+    const inline = '<script>var x="csrfToken is a word";</script>';
+    const out = sanitizeEmbedHtml(inline);
+    expect(out.html).toBe(inline);
+    expect(out.removedCsrf).toBe(false);
+  });
+
   it("keeps the card config and the Card.js tag intact", () => {
     // The whole point of proxying rather than reimplementing.
     const out = sanitizeEmbedHtml(UPSTREAM_HTML);
