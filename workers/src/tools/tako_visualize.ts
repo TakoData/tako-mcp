@@ -18,7 +18,7 @@ import {
   DEFAULT_DARK_MODE,
   DEFAULT_HEIGHT,
   DEFAULT_WIDTH,
-  fetchImageDataUrlAndDims,
+  buildChartExtraMeta,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
 import { logWireGuardFailure } from "./_log.js";
@@ -418,14 +418,7 @@ const tako_visualize = {
     // Skip the PNG prefetch on ChatGPT (its widget renders embed_url
     // directly) — mirrors tako_search.
     if (ctx.client === "chatgpt") return undefined;
-    if (output.image_url === undefined) return undefined;
-    const fetched = await fetchImageDataUrlAndDims(output.image_url);
-    if (fetched === undefined) return undefined;
-    return {
-      image_data_url: fetched.dataUrl,
-      image_natural_width: fetched.naturalWidth,
-      image_natural_height: fetched.naturalHeight,
-    };
+    return buildChartExtraMeta(output.image_url);
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;

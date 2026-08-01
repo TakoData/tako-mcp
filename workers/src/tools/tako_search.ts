@@ -21,7 +21,7 @@ import { djangoPost } from "../django.js";
 import { SearchRequest, SearchResponse } from "../generated/schemas.js";
 import {
   buildChartAppUiResourceFromOutputPubId,
-  fetchImageDataUrlAndDims,
+  buildChartExtraMeta,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
 import { logWireGuardFailure } from "./_log.js";
@@ -301,14 +301,7 @@ const tako_search = {
     // (`PNG_FETCH_TIMEOUT_MS` = 8s upper bound) on every ChatGPT
     // tool call just to populate a field the host throws away.
     if (ctx.client === "chatgpt") return undefined;
-    if (output.image_url === undefined) return undefined;
-    const fetched = await fetchImageDataUrlAndDims(output.image_url);
-    if (fetched === undefined) return undefined;
-    return {
-      image_data_url: fetched.dataUrl,
-      image_natural_width: fetched.naturalWidth,
-      image_natural_height: fetched.naturalHeight,
-    };
+    return buildChartExtraMeta(output.image_url);
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;
