@@ -86,6 +86,15 @@ const UPSTREAM_TIMEOUT_MS = 6_000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 /**
+ * Ceiling on a JavaScript body we will buffer in order to rewrite its CDN urls.
+ * `Card.js` is ~1.5 MB today and rewriting means holding the body and its copy,
+ * so this bounds the worst case at roughly twice this number. Anything larger
+ * streams through unrewritten — the assets that need rewriting (the entry bundle
+ * and its chunks) are all well under it.
+ */
+const MAX_JS_REWRITE_BYTES = 4 * 1024 * 1024;
+
+/**
  * Tako pub_ids are URL-safe base64-ish tokens (letters, digits, `-`, `_`) —
  * e.g. `VKd7qE8K9Ba16kMFENNQ`, `vilUFuRZgsjKYP0qbB-A`. Validating the shape is
  * what keeps this route from being an open redirector / SSRF primitive: the
@@ -420,6 +429,22 @@ export async function handleCdnAssetProxy(
   const isJavaScript =
     contentType !== null && /javascript|ecmascript/i.test(contentType);
   if (isJavaScript) {
+    // Only JavaScript is buffered, and only up to a bound. Everything else
+    // streams. The upstream origin is fixed by config so this is not an
+    // arbitrary-URL risk, but `Card.js` is already ~1.5 MB and a rewrite means
+    // holding the whole body plus its copy — worth a ceiling rather than
+    // trusting the CDN to stay reasonable forever. Over the cap, stream it
+    // through unrewritten: the assets that actually need rewriting are the
+    // entry bundle and its chunks, all far below this.
+    const declaredLength = Number(response.headers.get("content-length") ?? "0");
+    if (declaredLength > MAX_JS_REWRITE_BYTES) {
+      console.warn(
+        `[mcp] cdn asset ${assetPath} is ${declaredLength}B — over the rewrite cap, streaming unmodified`,
+      );
+      headers.set("access-control-allow-origin", "*");
+      headers.set("x-content-type-options", "nosniff");
+      return new Response(response.body, { status: 200, headers });
+    }
     const widgetOrigin = resolveWidgetOrigin(env, url.origin);
     const body = await response.text();
     if (widgetOrigin !== undefined && body.includes(cdnBase)) {
