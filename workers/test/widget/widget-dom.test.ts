@@ -552,6 +552,91 @@ describe("committed iframe watchdog (executed)", () => {
     return m;
   }
 
+  /**
+   * Give the widget document a real container width. jsdom performs no layout
+   * for iframes, so `documentElement.clientWidth` is 0 out of the box and the
+   * aspect math has nothing to multiply — which is also the production
+   * fallback path, so it has to be stubbed to test the fitted path at all.
+   */
+  const COLUMN_WIDTH = 700;
+  function setColumnWidth(m: Mounted, px: number): void {
+    Object.defineProperty(m.widgetWin.document.documentElement, "clientWidth", {
+      configurable: true,
+      get: () => px,
+    });
+  }
+
+  it("sizes the iframe to the CARD's aspect, not the requested height", () => {
+    // The "square shape with empty bands" bug. A plain Tako chart renders
+    // 2400x1101 (2.18:1), but the widget used to pin the frame to
+    // `structuredContent.height` — a flat 720 — inside a ~700 px chat column.
+    // That is a near-square box holding a 2.18:1 card, so the card painted
+    // short and left a band of empty background under it.
+    const m = mountChatGpt();
+    setColumnWidth(m, COLUMN_WIDTH);
+    const width = COLUMN_WIDTH;
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 720 },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      m.wrapperWin,
+    );
+    const expected = Math.round((width * 1101) / 2400);
+    expect(widgetFrame(m).getAttribute("height")).toBe(String(expected));
+    // Explicitly NOT the requested height.
+    expect(widgetFrame(m).getAttribute("height")).not.toBe("720");
+    // The host is told the same number, or the outer container keeps the band.
+    const sizeChanges = m.toParent.filter(
+      (msg) =>
+        (msg as { method?: string }).method === "ui/notifications/size-changed",
+    ) as Array<{ params: { height: number } }>;
+    expect(sizeChanges.at(-1)?.params.height).toBe(expected);
+  });
+
+  it("sizes a tall list card taller than a wide chart card", () => {
+    // Aspect is per-card, so one constant cannot serve all three shapes: a
+    // ranked top-sites card measures 2400x1845 (1.30:1) against a chart's
+    // 2.18:1. Same container, different frame height, or one of them is wrong.
+    const chart = mountChatGpt();
+    setColumnWidth(chart, COLUMN_WIDTH);
+    deliver(
+      chart,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      chart.wrapperWin,
+    );
+    const list = mountChatGpt();
+    setColumnWidth(list, COLUMN_WIDTH);
+    deliver(
+      list,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL },
+        { image_natural_width: 2400, image_natural_height: 1845 },
+      ),
+      list.wrapperWin,
+    );
+    const chartH = Number(widgetFrame(chart).getAttribute("height"));
+    const listH = Number(widgetFrame(list).getAttribute("height"));
+    expect(listH).toBeGreaterThan(chartH);
+  });
+
+  it("falls back to the requested height when dimensions are absent", () => {
+    // The dimensions fetch is best-effort (ranged read, 3 s bound). Losing it
+    // must cost a well-proportioned frame, not the chart.
+    const m = mountChatGpt();
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 640 }),
+      m.wrapperWin,
+    );
+    expect(widgetFrame(m).getAttribute("height")).toBe("640");
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+  });
+
   it("stands down once the committed iframe loads", () => {
     const m = mountChatGpt();
     deliver(m, CHATGPT_RESULT, m.wrapperWin);

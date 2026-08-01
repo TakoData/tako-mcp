@@ -417,8 +417,15 @@ const tako_visualize = {
   async extraMeta(output, ctx) {
     // Skip the PNG prefetch on ChatGPT (its widget renders embed_url
     // directly) — mirrors tako_search.
-    if (ctx.client === "chatgpt") return undefined;
-    return buildChartExtraMeta(output.image_url);
+    // ChatGPT gets DIMENSIONS ONLY (a 64-byte ranged read): its widget renders
+    // `embed_url` in an iframe and never reads the baked PNG, but it cannot
+    // measure that cross-origin iframe's content, so without the card's real
+    // aspect ratio the iframe falls back to a fixed height and leaves empty
+    // bands under a wide chart. Claude gets the full baked image — there the
+    // PNG *is* the chart.
+    return buildChartExtraMeta(output.image_url, {
+      bakeImage: ctx.client !== "chatgpt",
+    });
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;

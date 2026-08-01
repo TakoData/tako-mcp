@@ -78,6 +78,12 @@ export const MAX_INLINE_DATA_URL_BYTES = 400 * 1024;
 // fallback quickly than block the whole tool call on a slow render.
 export const PNG_FETCH_TIMEOUT_MS = 8_000;
 
+// Tighter bound for the dimensions-only ranged fetch. It reads 64 bytes and is
+// on the critical path of every ChatGPT chart call purely to size the iframe,
+// so it must not be able to add seconds to a tool call. Losing the dimensions
+// costs a correctly-proportioned iframe, not the chart.
+export const PNG_HEAD_FETCH_TIMEOUT_MS = 3_000;
+
 /**
  * MCP Apps widget URI. Stable — DO NOT bump.
  *
@@ -159,8 +165,20 @@ export const INTERACTIVE_IFRAME_PROBE_ENABLED = false;
  */
 export async function buildChartExtraMeta(
   imageUrl: string | undefined,
+  opts: { bakeImage: boolean },
 ): Promise<Record<string, unknown> | undefined> {
   if (imageUrl === undefined) return undefined;
+  // Iframe-branch clients (ChatGPT) never read the image bytes — but they DO
+  // need the card's aspect ratio to size the cross-origin iframe, and two
+  // integers cost a 64-byte ranged read instead of a ~170 KB render.
+  if (!opts.bakeImage) {
+    const dims = await fetchPngDimensions(imageUrl);
+    if (dims === undefined) return undefined;
+    return {
+      image_natural_width: dims.naturalWidth,
+      image_natural_height: dims.naturalHeight,
+    };
+  }
   const fetched = await fetchImageDataUrlAndDims(imageUrl);
   if (fetched === undefined) return undefined;
   return {
@@ -170,6 +188,29 @@ export async function buildChartExtraMeta(
     interactive_probe: INTERACTIVE_IFRAME_PROBE_ENABLED,
   };
 }
+
+/**
+ * Ceiling on the height an inline widget asks its host for.
+ *
+ * Claude renders MCP Apps cards inline at up to ~500 px and does NOT give the
+ * card its own scrollbar, so anything past that is CROPPED, not scrollable —
+ * a taller chart silently loses its bottom edge (axis labels, source line).
+ * Desktop fullscreen exists for dashboard-style views, but inline is the only
+ * mode on mobile and the default everywhere.
+ *
+ * This bites `tako_visualize` in particular: its `height` input accepts up to
+ * 2000, and `DEFAULT_HEIGHT` is 720 — both above the cap. Rather than request
+ * a height the host will crop at an unpredictable point, the widget clamps
+ * what it notifies and pairs that with `max-height` + `object-fit: contain`
+ * on the image, so an over-tall chart scales down whole instead of losing its
+ * bottom. Scaled-and-complete beats full-size-and-truncated for a chart whose
+ * axis is the point.
+ *
+ * Note this caps the WIDGET, never the chart: `embed_url` and the PNG keep the
+ * requested dimensions, so the click-through and the downloadable image are
+ * unaffected.
+ */
+const MAX_INLINE_WIDGET_HEIGHT_PX = 500;
 
 // Assumed default chat-widget pixel width when computing the baked
 // widget's initial height from PNG dimensions. Real iframe widths vary
@@ -245,7 +286,7 @@ function buildBakedWidgetHtml(opts: {
   html, body { margin: 0; padding: 0; width: 100%; background: #0f1115; color: #8b8f95; font: 14px system-ui, -apple-system, sans-serif; }
   #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
   #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
-  #tako-embed-img { width: 100%; height: auto; display: block; background: transparent; transition: opacity 120ms ease-out; }
+  #tako-embed-img { width: 100%; height: auto; max-height: ${MAX_INLINE_WIDGET_HEIGHT_PX}px; object-fit: contain; display: block; background: transparent; transition: opacity 120ms ease-out; }
 </style>
 </head>
 <body style="min-height: ${initialHeight}px;">
@@ -361,7 +402,7 @@ const WIDGET_HTML = `<!doctype html>
   #tako-embed { width: 100% !important; border: 0 !important; display: block; background: transparent; }
   #tako-embed-link { display: block; cursor: pointer; text-decoration: none; }
   #tako-embed-link:hover #tako-embed-img { opacity: 0.95; }
-  #tako-embed-img { width: 100%; height: auto; display: block; background: transparent; transition: opacity 120ms ease-out; }
+  #tako-embed-img { width: 100%; height: auto; max-height: ${MAX_INLINE_WIDGET_HEIGHT_PX}px; object-fit: contain; display: block; background: transparent; transition: opacity 120ms ease-out; }
   #tako-placeholder {
     display: flex; align-items: center; justify-content: center;
     width: 100%; min-height: 240px;
@@ -430,6 +471,32 @@ const WIDGET_HTML = `<!doctype html>
     frame.style.height = n + "px";
     frame.style.minHeight = n + "px";
     frame.setAttribute("height", String(n));
+  }
+
+  // Height for the embed iframe, derived from the CARD's real aspect ratio.
+  //
+  // A cross-origin iframe never sizes itself to its content, and the Tako embed
+  // page does not report its height, so this height is the only thing deciding
+  // the box. It used to be \`structuredContent.height\` — a flat 720 — against a
+  // chat column around 700 px wide. That is a near-square frame holding a card
+  // whose real aspect is 2.18:1 for a plain chart, so the card painted ~320 px
+  // tall and left ~400 px of empty background beneath it. Ranked/list cards run
+  // 1.30:1 and Stock Overviews 1.91:1, so no single constant fits any of them.
+  //
+  // \`image_natural_width/height\` carry the true per-card aspect (the server
+  // reads them off the chart PNG's header). Multiply by the live container
+  // width and the frame matches the card at any column width, mobile included.
+  //
+  // Returns null when we have no dimensions, so callers keep the old behavior
+  // rather than guessing.
+  function aspectHeight(naturalW, naturalH) {
+    if (!(naturalW > 0) || !(naturalH > 0)) return null;
+    var cw =
+      (document.documentElement && document.documentElement.clientWidth) ||
+      (document.body && document.body.clientWidth) ||
+      0;
+    if (!(cw > 0)) return null;
+    return Math.round((cw * naturalH) / naturalW);
   }
 
   // Record the embed iframe's origin so the \`tako-embed-height\` resize
@@ -798,7 +865,14 @@ const WIDGET_HTML = `<!doctype html>
         requestAnimationFrame(function () {
           var rectH = image.getBoundingClientRect().height;
           var offsetH = image.offsetHeight;
-          var renderedH = Math.round(rectH || offsetH || 0);
+          // Clamped: the host crops rather than scrolls past its inline
+          // ceiling, and \`max-height\` + \`object-fit: contain\` above has
+          // already scaled the image to fit, so asking for more would reserve
+          // empty space at best and lose the axis at worst.
+          var renderedH = Math.min(
+            Math.round(rectH || offsetH || 0),
+            ${MAX_INLINE_WIDGET_HEIGHT_PX}
+          );
           if (renderedH > 0) {
             document.documentElement.style.height = renderedH + "px";
             document.body.style.height = renderedH + "px";
@@ -919,10 +993,10 @@ const WIDGET_HTML = `<!doctype html>
       ? meta.image_natural_width : 0;
     var imgNaturalH = meta && typeof meta === "object" && typeof meta.image_natural_height === "number"
       ? meta.image_natural_height : 0;
-    // Read but deliberately unused for sizing — see the note in paintImage.
-    // Kept parsed so the shape stays documented at the point of arrival.
-    void imgNaturalW;
-    void imgNaturalH;
+    // The height actually pinned on the iframe, which the tail notifies. Starts
+    // as the requested height and is replaced by the aspect-derived one when
+    // the card's PNG dimensions are known.
+    var committedHeight = null;
     // Defense-in-depth: re-validate URL/DataURL schemes before
     // assigning to \`iframe.src\` / \`img.src\`. The handler validates
     // server-side too, but the widget is the last hop before the DOM,
@@ -948,8 +1022,26 @@ const WIDGET_HTML = `<!doctype html>
     if (useIframe) {
       if (frame.src !== url) frame.src = url;
       armEmbedOrigin(url);
-      setFrameHeight(h);
+      // Aspect-derived when the server supplied the card's PNG dimensions,
+      // otherwise the requested height as before.
+      var fitted = aspectHeight(imgNaturalW, imgNaturalH);
+      committedHeight = fitted !== null ? fitted : h;
+      setFrameHeight(committedHeight);
       frame.classList.remove("hidden");
+      // Reflow on column changes (host sidebar toggle, window resize, mobile
+      // rotation). Without this the frame keeps its mount-time height and the
+      // empty band comes back at the new width. Skipped once a downgrade has
+      // hidden the frame, and after an embed-reported height has taken over.
+      if (fitted !== null) {
+        window.addEventListener("resize", function () {
+          if (frame.classList.contains("hidden")) return;
+          var next = aspectHeight(imgNaturalW, imgNaturalH);
+          if (next === null) return;
+          committedHeight = next;
+          setFrameHeight(next);
+          notifyHeight(next);
+        });
+      }
       // Watchdog on the committed iframe — the mirror image of
       // \`probeInteractiveIframe\`. That one starts from the PNG and upgrades
       // to the iframe if the host allows it; this one starts from the iframe
@@ -1003,11 +1095,13 @@ const WIDGET_HTML = `<!doctype html>
     // atomically. \`h\` matches the height we just pinned on the iframe.
     placeholder.classList.add("hidden");
     rendered = true;
-    notifyHeight(h);
+    var finalHeight = committedHeight !== null ? committedHeight : h;
+    notifyHeight(finalHeight);
     log("rendered", {
       mode: useIframe ? "iframe" : "iframe-fallback",
       src: url,
-      height: h,
+      height: finalHeight,
+      fitted: committedHeight !== null,
     });
     return true;
   }
@@ -1291,6 +1385,64 @@ function parsePngDimensions(
   const height = view.getUint32(20);
   if (width === 0 || height === 0) return undefined;
   return { width, height };
+}
+
+/**
+ * Fetch ONLY a chart PNG's pixel dimensions, via a ranged request for the
+ * first 64 bytes.
+ *
+ * Exists because a Tako card's aspect ratio is per-card and not otherwise
+ * knowable server-side. Measured on production (2026-07-31): the render canvas
+ * is a fixed 2400 px WIDE but its height varies by card type — a plain chart
+ * comes back 2400x1101 (2.18:1), a Stock Overview 2400x1257 (1.91:1), a ranked
+ * top-sites card 2400x1845 (1.30:1). So the PNG header is a reliable read on
+ * how tall the card actually is.
+ *
+ * The widget needs that to size the cross-origin `embed_url` iframe. It cannot
+ * measure the iframe's content itself (cross-origin), and the embed page does
+ * not report its own height, so without this the only options are a fixed
+ * guess — which is what produced near-square iframes with a band of empty
+ * background under a 2.18:1 chart — or nothing.
+ *
+ * Ranged, not a full GET: dimensions live in the first 24 bytes, and the
+ * clients that need this (ChatGPT) never use the image bytes, so paying for a
+ * ~170 KB body and the full chart-render latency to learn two integers is
+ * exactly the cost `extraMeta` skips them for. A server that ignores `Range`
+ * answers 200 with the whole body; the parser only reads the head either way,
+ * so that degrades to correct-but-slower rather than broken.
+ *
+ * Best-effort: `undefined` on any failure, and the widget falls back to the
+ * requested height.
+ */
+export async function fetchPngDimensions(
+  url: string,
+): Promise<{ naturalWidth: number; naturalHeight: number } | undefined> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PNG_HEAD_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { Range: "bytes=0-63" },
+    });
+    // 206 (ranged) and 200 (server ignored Range) are both usable.
+    if (!response.ok && response.status !== 206) {
+      console.warn(
+        `[tako] chart PNG header fetch failed: HTTP ${response.status} from ${url}`,
+      );
+      return undefined;
+    }
+    const dims = parsePngDimensions(await response.arrayBuffer());
+    if (dims === undefined) {
+      console.warn(`[tako] chart PNG header was not a parseable PNG: ${url}`);
+      return undefined;
+    }
+    return { naturalWidth: dims.width, naturalHeight: dims.height };
+  } catch (err) {
+    console.warn(`[tako] chart PNG header fetch threw for ${url}:`, err);
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
