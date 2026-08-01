@@ -54,7 +54,7 @@ export const searchSlimOutputShape = z.looseObject({
     .array(z.looseObject({}))
     .optional()
     .describe(
-      "Web results, each with a `snippet`. A snippet is the passages selected against your query, not the page's opening text, so it usually carries the answer-bearing sentence. It may join passages from different parts of the page with ' … ': read it as a whole and do not quote it as one continuous sentence. `null` means that page had no relevant passage — its url is still fetchable via tako_contents.",
+      "Web results, each with a `snippet`. A snippet is the passages selected against your query, not the page's opening text, so it usually carries the answer-bearing sentence. A ' … ' inside one marks a discontinuity — either passages joined from different parts of the page, or the page's own ellipsis — so read it as a whole and never quote across it as one continuous sentence. `null` means that page had no relevant passage — its url is still fetchable via tako_contents.",
     ),
   request_id: z.string(),
   usage: usageAdvertisedSchema
@@ -81,7 +81,7 @@ export const answerSlimOutputShape = z.looseObject({
     .array(z.looseObject({}))
     .optional()
     .describe(
-      "Web results cited by the answer, each with a `snippet` of the passages selected against the question rather than the page's opening text. A snippet may join passages from different parts of the page with ' … ', so do not quote it as one continuous sentence. `null` means no relevant passage was found on that page.",
+      "Web results cited by the answer, each with a `snippet` of the passages selected against the question rather than the page's opening text. A ' … ' inside one marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one continuous sentence. `null` means no relevant passage was found on that page.",
     ),
   request_id: z.string(),
   usage: usageAdvertisedSchema
