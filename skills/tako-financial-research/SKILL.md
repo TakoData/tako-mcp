@@ -1,6 +1,7 @@
 ---
 name: tako-financial-research
-description: Company financials and markets via Tako (sources vary by metric — S&P Global, Fiscal.ai, Visible Alpha, Xignite, and others). Revenue, earnings vs. estimates, margins, valuation, stock quotes, and head-to-head company comparisons as citation-backed charts. Use for equity research, company deep-dives, competitor financial comparison, or any "what are/were <company>'s <financial metric>" question.
+description: >-
+  Company financials and markets via Tako (sources vary by metric — S&P Global, Fiscal.ai, Visible Alpha, Xignite, and others). Revenue, earnings vs. estimates, margins, valuation, stock quotes, and head-to-head company comparisons as citation-backed charts. Use for equity research, company deep-dives, competitor financial comparison, or any "what are/were <company>'s <financial metric>" question.
 ---
 
 # Financial Research (Tako)

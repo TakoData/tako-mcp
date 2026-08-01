@@ -1494,7 +1494,34 @@ export async function handleMcpRequest(
     // widget to ChatGPT and Claude (unknown clients fall back to the
     // inline PNG) and route ChatGPT through the agent split pair. See
     // `detectMcpClient` for the matching rules.
-    const client = detectMcpClient(request.headers.get("user-agent"));
+    const userAgent = request.headers.get("user-agent");
+    const client = detectMcpClient(userAgent);
+    // Log the RAW User-Agent next to the kind it resolved to, once per
+    // request. The UA is the only per-request client-identity signal we have
+    // (stateless transport: `initialize`'s `clientInfo` does not ride along on
+    // the later `tools/list` / `tools/call` POSTs), and `McpClientKind` decides
+    // the tool SET, widget registration, image content blocks, annotation
+    // labels, and the ChatGPT `securitySchemes` injection. A UA that
+    // `detectMcpClient` fails to recognize therefore degrades all five at once
+    // — silently, and to a surface that still works, which is exactly why it
+    // can go unnoticed.
+    //
+    // Until now nothing logged the UA itself: `detectMcpClient`'s own docblock
+    // asks for the real ChatGPT connector UA to be "confirmed against
+    // production request logs", and no such confirmation was possible, because
+    // the only ChatGPT-linked log line (`securitySchemes injected`) proves a
+    // match and says nothing when the match FAILS. One `wrangler tail` while a
+    // client connects now answers it.
+    //
+    // JSON.stringify, not raw interpolation: the UA is caller-controlled, and
+    // an embedded newline would otherwise forge a second log line (same
+    // log-injection reasoning as `django.ts`). Capped because a UA is
+    // untrusted length, not because any real one is long.
+    console.log(
+      `[mcp] request client=${client} ua=${JSON.stringify(
+        (userAgent ?? "(absent)").slice(0, 200),
+      )}`,
+    );
     // Opt-in tools: the agent is off by default and enabled per-connection
     // via `?tools=agent` (see `_optional.ts`). Parsing is tolerant — unknown
     // tokens are ignored, never fatal. Log the raw value and resolved set so

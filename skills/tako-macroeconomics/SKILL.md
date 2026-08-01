@@ -1,6 +1,7 @@
 ---
 name: tako-macroeconomics
-description: Macroeconomic and demographic indicators via Tako (sources vary — FRED, BLS, OECD, BIS, IMF, World Bank, Census). Inflation (CPI/PCE), unemployment, GDP, interest and policy rates, population, and cross-country comparisons as citation-backed charts. Use for macro monitoring, economic briefings, or any "what is/was <country>'s <indicator>" question.
+description: >-
+  Macroeconomic and demographic indicators via Tako (sources vary — FRED, BLS, OECD, BIS, IMF, World Bank, Census). Inflation (CPI/PCE), unemployment, GDP, interest and policy rates, population, and cross-country comparisons as citation-backed charts. Use for macro monitoring, economic briefings, or any "what is/was <country>'s <indicator>" question.
 ---
 
 # Macroeconomics (Tako)
