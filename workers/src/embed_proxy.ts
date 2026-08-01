@@ -100,13 +100,32 @@ export function sanitizeEmbedHtml(html: string): {
   let removedAnalytics = false;
 
   // The page-context island: a JSON <script> containing "csrfToken".
+  //
+  // Surgical, and it has to be. An earlier version replaced this island with
+  // `{}` — which also threw away `staticPrefix`, the CDN base Card.js resolves
+  // its lazily imported view chunks against. The card then mounted its title
+  // and skeleton and never drew a chart, with no error to explain why. Keep
+  // every key; delete exactly one.
   out = out.replace(
-    /<script\b[^>]*>(?:(?!<\/script>)[\s\S])*?csrfToken[\s\S]*?<\/script>/gi,
-    () => {
+    /<script\b([^>]*)>((?:(?!<\/script>)[\s\S])*?csrfToken[\s\S]*?)<\/script>/gi,
+    (whole, attrs: string, body: string) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body.trim());
+      } catch {
+        // Not the JSON island we expected (an inline script that merely
+        // mentions the word, say). Leave it alone rather than corrupt it, and
+        // do NOT claim to have stripped anything.
+        return whole;
+      }
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        return whole;
+      }
+      const rest = { ...(parsed as Record<string, unknown>) };
+      if (!("csrfToken" in rest)) return whole;
+      delete rest.csrfToken;
       removedCsrf = true;
-      // Replaced, not deleted: Card.js reads this island by position/type, so
-      // an empty stand-in of the same shape is safer than a missing element.
-      return '<script type="application/json" data-tako-stripped="page-context">{}</script>';
+      return `<script${attrs} data-tako-stripped="csrf">${JSON.stringify(rest)}</script>`;
     },
   );
 
