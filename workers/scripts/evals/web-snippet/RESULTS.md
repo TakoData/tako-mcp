@@ -34,6 +34,8 @@ Arm order is rotated per case, so neither arm systematically eats the cold cache
 | answer | text | 1738 | 2672 | 26 |
 | answer | highlights | 1694 | 8585 | 26 |
 
+**Timed to response headers, not to a complete body.** `fetch` resolves at headers, so these numbers exclude body download — a component systematically larger on the text arm, whose payload is ~18% bigger. Every `highlights − text` delta below is therefore an **upper bound**: the true gap is smaller than shown. Sweeps collected after this was fixed are timed to the complete response and say so here.
+
 **Web-grounding survival on /v1/answer** — the actual degradation mode. A
 breach of the 1.5s retrieval budget does not return a slow answer; it returns
 an answer with no web grounding at all. So a 200 with an empty `web_results`

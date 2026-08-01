@@ -43,6 +43,7 @@
  *
  *   --top N     judge only the first N web results per arm (default 5)
  *   --conc N    concurrent judge calls (default 6)
+ *   --force     overwrite an existing judged-<stamp>.jsonl (refused otherwise)
  *
  * `--top` is a real cap and the report prints it. Judging all 10 results per
  * arm is 572 judge calls for a 26-case run; the first 5 are the ones a model
@@ -54,7 +55,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { judgedPathFor, positionalArg, resolveRaw } from "./paths.js";
+import { judgedPathFor, positionalArg, refuseToClobber, resolveRaw } from "./paths.js";
 import type { Arm, CaseRow } from "./run.js";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -71,6 +72,7 @@ const client = new Anthropic();
 /** Flags that consume the argument after them. Named so the positional path
  *  parser does not mistake a flag's value for the input file. */
 const VALUE_FLAGS = ["--top", "--conc"] as const;
+const FORCE = process.argv.includes("--force");
 
 const flag = (name: string, fallback: number): number => {
   const i = process.argv.indexOf(`--${name}`);
@@ -259,6 +261,7 @@ async function main(): Promise<void> {
   // Derived on the basename, and asserted to differ from the input — this
   // write is what destroyed a sweep when the derivation silently no-op'd.
   const out = judgedPathFor(rawPath);
+  refuseToClobber(out, FORCE);
   writeFileSync(out, "");
   console.log(`judging ${rows.length} cases from ${rawPath}`);
   console.log(`  model=${MODEL} effort=${EFFORT} top=${TOP_N} results/arm conc=${CONCURRENCY}\n`);

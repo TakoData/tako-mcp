@@ -32,11 +32,13 @@
  *
  *   --search-only   skip the /v1/answer arms (halves the spend)
  *   --limit N       first N cases only
+ *   --force         overwrite an existing raw-<stamp>.jsonl (refused otherwise)
  */
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { WEB_SNIPPET_CASES, type WebSnippetCase } from "./cases.js";
+import { refuseToClobber } from "./paths.js";
 
 const apiBase = (process.env.EVAL_API_BASE ?? "https://staging.tako.com").replace(/\/+$/, "");
 const apiKey = process.env.TAKO_EVAL_API_KEY ?? process.env.TAKO_STAGING_API_KEY;
@@ -46,6 +48,7 @@ if (apiKey === undefined || apiKey === "") {
 }
 
 const searchOnly = process.argv.includes("--search-only");
+const force = process.argv.includes("--force");
 const limitArg = process.argv.indexOf("--limit");
 const limit = limitArg === -1 ? undefined : Number(process.argv[limitArg + 1]);
 
@@ -70,7 +73,12 @@ interface ResultRow {
 
 export interface CallRow {
   arm: Arm;
+  /** Wall clock for the whole exchange, body included. */
   ms: number;
+  /** What `ms` covers. Absent on sweeps collected before the timing fix, where
+   *  it was time-to-HEADERS and so understated the larger (text) payload more —
+   *  the report states which, so the two are never compared as if alike. */
+  timing?: "complete" | undefined;
   /** HTTP status; 0 when the request never completed. */
   status: number;
   error?: string | undefined;
@@ -124,10 +132,15 @@ async function call(path: string, query: string, arm: Arm, withCount: boolean): 
       headers: { "X-API-Key": apiKey as string, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const ms = Date.now() - t0;
+    // The clock closes AFTER the body is read, not when `fetch` resolves.
+    // `fetch` resolves at headers, and the arms differ ~18% in payload (1896 vs
+    // 1556 mean chars × 10 results), so timing to headers would exclude a
+    // component that is systematically LARGER on the text arm — inflating the
+    // `highlights − text` delta that the report calls the gating metric.
     const text = await res.text();
+    const ms = Date.now() - t0;
     if (!res.ok) {
-      return { arm, ms, status: res.status, error: text.slice(0, 300), results: [] };
+      return { arm, ms, timing: "complete", status: res.status, error: text.slice(0, 300), results: [] };
     }
     const data = JSON.parse(text) as {
       web_results?: ResultRow[];
@@ -139,6 +152,7 @@ async function call(path: string, query: string, arm: Arm, withCount: boolean): 
     const row: CallRow = {
       arm,
       ms,
+      timing: "complete",
       status: res.status,
       request_id: data.request_id ?? null,
       results: (data.web_results ?? []).map((r) => ({
@@ -153,7 +167,7 @@ async function call(path: string, query: string, arm: Arm, withCount: boolean): 
     if (typeof data.usage?.total_cost_usd === "number") row.cost_usd = data.usage.total_cost_usd;
     return row;
   } catch (err) {
-    return { arm, ms: Date.now() - t0, status: 0, error: String(err).slice(0, 300), results: [] };
+    return { arm, ms: Date.now() - t0, timing: "complete", status: 0, error: String(err).slice(0, 300), results: [] };
   }
 }
 
@@ -169,6 +183,8 @@ async function main(): Promise<void> {
   const outDir = join(dirname(new URL(import.meta.url).pathname), "results");
   mkdirSync(outDir, { recursive: true });
   const out = join(outDir, `raw-${process.env.EVAL_STAMP ?? "latest"}.jsonl`);
+  // Before the first priced call, and before the truncating open below.
+  refuseToClobber(out, force);
   writeFileSync(out, "");
 
   let spend = 0;
