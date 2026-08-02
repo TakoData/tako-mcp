@@ -73,24 +73,33 @@
       "vars": {
         "DJANGO_BASE_URL": "https://staging.tako.com",
         "PUBLIC_BASE_URL": "https://staging.tako.com",
-        // STAGING ONLY — arms the `script-src` capability experiment. Origin
-        // of the CDN serving Tako's front-end assets: the real chart renderer
-        // (`Card.js` + its lazily imported chunks) and the Geist/Inter fonts.
+        // STAGING ONLY — arms the NATIVE CARD experiment: Claude rendering
+        // Tako's own `Card.js` instead of a PNG of it. Origin of the CDN
+        // serving Tako's front-end assets (the real chart renderer, its lazily
+        // imported chunks, and the Geist/Inter fonts).
         //
-        // Setting it does two things and nothing else: adds this origin to the
-        // chart widget's declared `_meta.ui.csp.resourceDomains`, and ships a
-        // probe that reports whether the host's sandbox actually permits
-        // loading a script from it. See `nativeCardProbeMeta` in
-        // `src/tools/_chart_widget.ts` for what the answer unlocks.
+        // Setting it is not a one-line CSP tweak. It brings TWO PUBLIC HTTP
+        // ROUTES into existence — `/embed-html/{pub_id}` and `/cdn-asset/{path}`
+        // (`src/embed_proxy.ts`) — adds `_meta.native_card_url` to chart
+        // results, and adds a `connectDomains` entry for OUR origin. Unset,
+        // both routes decline and the router 404s them, so none of it exists.
         //
-        // Deliberately ABSENT from the production block. Do not copy it there
-        // until the experiment has answered — a `resourceDomains` entry is a
-        // script-src grant, so it should not widen prod for a question staging
-        // can settle.
-        // Staging's asset distribution — NOT production's. The embed page
-        // references the CDN of its own environment, and a mismatch is silent:
-        // zero URLs get rewritten, the card mounts, and no chart ever draws.
-        // The proxy logs loudly when it rewrites nothing, for exactly this.
+        // Note what it does NOT do: the widget declares this worker's origin in
+        // `resourceDomains`, never the CDN, because the assets are served
+        // through `/cdn-asset/` (the CDN answers CORS for tako.com alone, and a
+        // module script is always a CORS fetch). See `src/env.ts`.
+        //
+        // Deliberately ABSENT from the production block. Before copying it
+        // there: both routes are unauthenticated and were metered through the
+        // free-tier per-IP limiter for this reason, `/embed-html/` is confined
+        // to inert content types and `/cdn-asset/` to the `archive/` prefix.
+        // Re-read `embed_proxy.ts`'s header before promoting.
+        //
+        // Staging's asset distribution — NOT production's
+        // (`d12w4pyrrczi5e`, see `src/icons.ts`). The embed page references the
+        // CDN of its own environment, and a mismatch is silent: zero URLs get
+        // rewritten, the card mounts, and no chart ever draws. The proxy logs
+        // loudly when it rewrites nothing, for exactly this.
         "PUBLIC_CDN_URL": "https://d1iyjvzoctsna.cloudfront.net",
         // OpenAI connector-directory token issued for
         // `mcp.staging.tako.com`. Served as plain text from
