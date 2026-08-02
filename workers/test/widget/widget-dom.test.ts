@@ -637,6 +637,80 @@ describe("committed iframe watchdog (executed)", () => {
     expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
   });
 
+  /** Fire a `resize` on the widget window, as a host column change would. */
+  function fireResize(m: Mounted): void {
+    const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event })
+      .Event;
+    m.widgetWin.dispatchEvent(new WidgetEvent("resize"));
+  }
+
+  it("re-fits on resize", () => {
+    const m = mountChatGpt();
+    setColumnWidth(m, 400);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 720 },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      m.wrapperWin,
+    );
+    expect(widgetFrame(m).getAttribute("height")).toBe(
+      String(Math.round((400 * 1101) / 2400)),
+    );
+    setColumnWidth(m, 900);
+    fireResize(m);
+    expect(widgetFrame(m).getAttribute("height")).toBe(
+      String(Math.round((900 * 1101) / 2400)),
+    );
+  });
+
+  it("re-fits on resize even when the mount happened before layout", () => {
+    // The regression this pins: the listener used to be registered only
+    // `if (fitted !== null)`, and `fitted` is computed ONCE, at delivery time.
+    // `aspectHeight` returns null when `clientWidth` is 0 — the normal
+    // pre-layout state of a freshly mounted iframe — so a widget whose
+    // tool-result arrived before layout settled got no listener at all and kept
+    // the `structuredContent.height` fallback for the rest of its life, even
+    // once the column width became known. Which is precisely the empty-band bug
+    // the aspect fix exists to remove, reached by a different route.
+    const m = mountChatGpt();
+    // No `setColumnWidth`: clientWidth is 0, exactly as before layout.
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 720 },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      m.wrapperWin,
+    );
+    // Mounted on the fallback, as it must be — there is nothing to fit to yet.
+    expect(widgetFrame(m).getAttribute("height")).toBe("720");
+
+    // Layout settles and the host reflows.
+    setColumnWidth(m, COLUMN_WIDTH);
+    fireResize(m);
+    expect(widgetFrame(m).getAttribute("height")).toBe(
+      String(Math.round((COLUMN_WIDTH * 1101) / 2400)),
+    );
+  });
+
+  it("declines a resize that still has no width, rather than throwing", () => {
+    // `aspectHeight` returns null per-event, which is what makes unconditional
+    // registration safe.
+    const m = mountChatGpt();
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 720 },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      m.wrapperWin,
+    );
+    expect(() => fireResize(m)).not.toThrow();
+    expect(widgetFrame(m).getAttribute("height")).toBe("720");
+  });
+
   it("stands down once the committed iframe loads", () => {
     const m = mountChatGpt();
     deliver(m, CHATGPT_RESULT, m.wrapperWin);
@@ -827,6 +901,113 @@ describe("native card upgrade (executed)", () => {
     );
   });
 
+  /**
+   * Intercept the upgrade's 7 s bail timer so it can be fired on demand.
+   *
+   * The widget calls `setTimeout` from its OWN window, so the global fake-timer
+   * machinery does not see it; patch the window's method instead. Only the
+   * 7000 ms timer is captured — everything else (the probe, the log ladder)
+   * keeps its real behavior.
+   */
+  function captureBailTimer(m: Mounted): { fire: () => void; count: () => number } {
+    const captured: Array<() => void> = [];
+    const win = m.widgetWin as unknown as {
+      setTimeout: (fn: () => void, ms?: number) => unknown;
+    };
+    const real = win.setTimeout.bind(m.widgetWin);
+    win.setTimeout = (fn: () => void, ms?: number) => {
+      if (ms === 7000) {
+        captured.push(fn);
+        return 0;
+      }
+      return real(fn, ms);
+    };
+    return {
+      fire: () => captured.forEach((fn) => fn()),
+      count: () => captured.length,
+    };
+  }
+
+  it("keeps the PNG when the native fetch times out", async () => {
+    // The fourth failure mode. The other three (502, network, non-HTML) each
+    // had a test; this one did not, and it is the one with real ordering risk.
+    const m = mountWidget(staticWidgetHtml());
+    // A fetch that never settles.
+    stubFetch(m, () => new Promise(() => {}));
+    const bail = captureBailTimer(m);
+    deliverNative(m);
+    fireImageLoad(m);
+    expect(bail.count()).toBe(1);
+
+    bail.fire();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(m.widgetWin.document.body.innerHTML).not.toContain("REAL CARD");
+  });
+
+  it("ignores a native response that arrives AFTER the timeout", async () => {
+    // The timer sets `settled = true` but does not abort the fetch, so a late
+    // response still runs `.then`. The only thing standing between it and a
+    // `document.open()` over a working chart is the `if (settled) return` — so
+    // pin that guard, not the happy path.
+    const m = mountWidget(staticWidgetHtml());
+    let resolveFetch: ((v: unknown) => void) | undefined;
+    stubFetch(
+      m,
+      () =>
+        new Promise((res) => {
+          resolveFetch = res as (v: unknown) => void;
+        }),
+    );
+    const bail = captureBailTimer(m);
+    deliverNative(m);
+    fireImageLoad(m);
+
+    // Timeout first...
+    bail.fire();
+    await new Promise((r) => setTimeout(r, 10));
+    // ...then the response turns up anyway, with a perfectly good document.
+    resolveFetch!({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(NATIVE_HTML),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // It must not be written over the chart the user is already looking at.
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    expect(m.widgetWin.document.body.innerHTML).not.toContain("REAL CARD");
+  });
+
+  it("never fetches a relative url when the server armed no native card", () => {
+    // `nativeCardUrl` is `""` whenever `_meta.native_card_url` is absent — the
+    // production default — and `""` IS a string, so it slipped past
+    // `withHostTheme`'s `typeof` bail, took the append branch, and came back
+    // `"?dark_mode=true"`. That cleared `upgradeToNativeCard`'s own
+    // `nativeUrl === ""` guard, which sees the TRANSFORMED value, and reached
+    // `fetch("?dark_mode=true")` resolved against the widget document — a
+    // request in nobody's `connect-src`, i.e. the same blocked-subresource
+    // class the retired iframe probe was costing us.
+    //
+    // Needs a host theme to reproduce: `withHostTheme` is a no-op when
+    // `hostTheme()` returns null.
+    const m = mountWidget(staticWidgetHtml());
+    (m.widgetWin as unknown as { openai: object }).openai = { theme: "dark" };
+    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    deliver(
+      m,
+      toolResult(
+        // No `embed_url`, so `useIframe` is false and the PNG path runs even
+        // with `window.openai` present.
+        { image_url: IMAGE_URL, height: 600 },
+        { image_data_url: DATA_URL },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    expect(f.calls).toEqual([]);
+  });
+
   it("fetches at most once even if both image events fire", async () => {
     const m = mountWidget(staticWidgetHtml());
     const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
@@ -879,6 +1060,67 @@ describe("native card upgrade (executed)", () => {
     expect(written.indexOf("size-changed")).toBeLessThan(
       written.indexOf("</body>"),
     );
+  });
+
+  it("holds the native card to the host's inline height ceiling", async () => {
+    // `MAX_INLINE_WIDGET_HEIGHT_PX` is a host CONSTRAINT, not a preference:
+    // Claude renders inline up to ~500 px and gives the card no scrollbar, so
+    // anything past that is cropped and the card loses its bottom edge — the
+    // axis labels and the source line. The PNG path honours it in both
+    // directions (`max-height` + `object-fit: contain`, and a `Math.min` on
+    // what it notifies); the native card had no clamp at all, and after
+    // `document.open()` the CSS that enforced the ceiling is gone with the old
+    // document. It also carries strictly MORE than the PNG (range selectors,
+    // chart/table toggle, source line), so it is the likelier to exceed it.
+    //
+    // jsdom performs no layout, so `offsetHeight` is 0 and the reporter falls
+    // through to `__FALLBACK_HEIGHT__` — here the requested 600, over the cap.
+    // Exactly the case that matters.
+    const m = mountWidget(staticWidgetHtml());
+    stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    deliverNative(m);
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+
+    // The document was replaced by the real card...
+    expect(m.widgetWin.document.body.innerHTML).toContain("REAL CARD");
+    // ...and the reporter that came with it capped what it asked the host for,
+    // rather than requesting 600 and losing 100 px off the bottom.
+    const sizeChanges = m.toParent.filter(
+      (msg) =>
+        (msg as { method?: string }).method === "ui/notifications/size-changed",
+    ) as Array<{ params: { height: number } }>;
+    expect(sizeChanges.at(-1)?.params.height).toBe(500);
+
+    // And it scaled the document to fit rather than letting it be cropped —
+    // the document equivalent of `object-fit: contain`.
+    const root = m.widgetWin.document.documentElement;
+    expect(root.style.transform).toBe(`scale(${500 / 600})`);
+    expect(root.style.transformOrigin).toBe("top left");
+  });
+
+  it("leaves a card under the ceiling unscaled", async () => {
+    // The clamp must not touch the common case, or every short card gets a
+    // pointless transform and a blurrier render.
+    const m = mountWidget(staticWidgetHtml());
+    stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 300 },
+        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+
+    const sizeChanges = m.toParent.filter(
+      (msg) =>
+        (msg as { method?: string }).method === "ui/notifications/size-changed",
+    ) as Array<{ params: { height: number } }>;
+    expect(sizeChanges.at(-1)?.params.height).toBe(300);
+    expect(m.widgetWin.document.documentElement.style.transform).toBe("");
   });
 });
 

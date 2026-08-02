@@ -160,17 +160,6 @@ export const DEFAULT_HEIGHT = 720;
  */
 export const INTERACTIVE_IFRAME_PROBE_ENABLED = false;
 
-export function nativeCardProbeMeta(env: Env): Record<string, unknown> {
-  const cdnBase = resolvePublicCdnBase(env);
-  if (cdnBase === undefined) return {};
-  return {
-    // Intentionally nonexistent — see the doc comment. Cache-busting suffix
-    // keeps a CDN 404 from being served from cache as something else.
-    cdn_probe_script_url: `${cdnBase}/__tako-csp-probe__/probe.js`,
-    cdn_probe_origin: cdnBase,
-  };
-}
-
 /**
  * URL of the CORS-readable embed-page proxy for one chart, or `undefined` when
  * the native-card path is not available.
@@ -465,12 +454,39 @@ function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
  * `__FALLBACK_HEIGHT__` is substituted at upgrade time. It covers the window
  * where Card.js has mounted but not laid out, so `offsetHeight` reads 0 and the
  * host would otherwise collapse the card to nothing.
+ *
+ * It honors {@link MAX_INLINE_WIDGET_HEIGHT_PX} the same way the PNG path does,
+ * and it has to: that ceiling is a host constraint, not a preference — Claude
+ * crops past it rather than scrolling, so an over-tall card silently loses its
+ * bottom edge. The native card carries strictly MORE than the PNG (range
+ * selectors, the chart/table toggle, the source line), so it is the likelier of
+ * the two to exceed it, and `document.open()` has already discarded the CSS that
+ * enforced the ceiling for the image.
+ *
+ * The PNG scales down whole via `object-fit: contain`; a document cannot, so the
+ * equivalent here is an explicit `transform: scale()`. Each pass clears the
+ * previous fit before measuring, so the reading is always the card's natural
+ * height at the real frame width and the result cannot oscillate.
  */
 const NATIVE_HEIGHT_REPORTER = [
   "<script>(function(){",
+  "var CAP=" + String(MAX_INLINE_WIDGET_HEIGHT_PX) + ";",
   "function n(){",
-  "var h=(document.documentElement&&document.documentElement.offsetHeight)||0;",
+  "var d=document.documentElement;if(!d)return;",
+  // Measure UNSCALED: clear any fit applied on an earlier pass so `offsetHeight`
+  // reports the card's natural height rather than a previously scaled one.
+  "d.style.transform='';d.style.transformOrigin='';d.style.width='';",
+  "var h=d.offsetHeight||0;",
   "if(h<=0)h=__FALLBACK_HEIGHT__;",
+  // Over the host's inline ceiling: scale the whole document down to fit
+  // instead of letting the host crop the axis and source line off the bottom.
+  // Widening to `100/s`% first means the content still fills the frame after
+  // the transform shrinks it.
+  "if(h>CAP){var s=CAP/h;",
+  "d.style.transformOrigin='top left';",
+  "d.style.width=(100/s)+'%';",
+  "d.style.transform='scale('+s+')';",
+  "h=CAP;}",
   "try{if(window.openai&&typeof window.openai.notifyIntrinsicHeight==='function')",
   "window.openai.notifyIntrinsicHeight(h);}catch(e){}",
   "try{window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',",
@@ -633,6 +649,14 @@ const WIDGET_HTML = `<!doctype html>
   // host itself: a dark ChatGPT on a light Mac renders a light card on a dark
   // surface. Hosts that expose their theme are believed over the OS; the rest
   // keep \`auto\`, which is still the best available guess.
+  //
+  // Scope, stated plainly: \`window.openai.theme\` is the ONLY source, so this
+  // reads null on claude.ai. The MCP Apps path has no theme to read — the
+  // \`ui/initialize\` response carries none, and the spec defines none — so the
+  // native card there stays on \`dark_mode=auto\`, i.e. the OS-derived value.
+  // The proxy's \`dark_mode\` allow-list is deliberately forward-looking: it is
+  // exercised by ChatGPT's committed-iframe url today, and is ready for the
+  // MCP Apps path the day a host declares a theme.
   function hostTheme() {
     try {
       var t = window.openai && window.openai.theme;
@@ -647,9 +671,20 @@ const WIDGET_HTML = `<!doctype html>
 
   // Rewrite \`dark_mode\` on a chart url to match the host. Leaves the url alone
   // when the host is silent, so \`auto\` survives rather than being guessed at.
+  //
+  // The \`!url\` bail is load-bearing, not defensive noise. \`nativeCardUrl\` is
+  // \`""\` whenever \`_meta.native_card_url\` is absent — the production default —
+  // and \`""\` IS a string, so without this it fell past the \`typeof\` check into
+  // the append branch and returned \`"?dark_mode=true"\`. That cleared
+  // \`upgradeToNativeCard\`'s own \`nativeUrl === ""\` guard (it sees the
+  // transformed value, not the original) and reached
+  // \`fetch("?dark_mode=true")\`, resolved against the widget document — a
+  // request in nobody's \`connect-src\`, which is the same blocked-subresource
+  // class the retired iframe probe was costing us.
   function withHostTheme(url) {
+    if (!url || typeof url !== "string") return url;
     var theme = hostTheme();
-    if (theme === null || typeof url !== "string") return url;
+    if (theme === null) return url;
     var want = theme === "dark" ? "true" : "false";
     return url.indexOf("dark_mode=") !== -1
       ? url.replace(/dark_mode=[^&]*/, "dark_mode=" + want)
@@ -1254,16 +1289,24 @@ const WIDGET_HTML = `<!doctype html>
       // rotation). Without this the frame keeps its mount-time height and the
       // empty band comes back at the new width. Skipped once a downgrade has
       // hidden the frame, and after an embed-reported height has taken over.
-      if (fitted !== null) {
-        window.addEventListener("resize", function () {
-          if (frame.classList.contains("hidden")) return;
-          var next = aspectHeight(imgNaturalW, imgNaturalH);
-          if (next === null) return;
-          committedHeight = next;
-          setFrameHeight(next);
-          notifyHeight(next);
-        });
-      }
+      //
+      // Registered UNCONDITIONALLY, and that matters. Gating on
+      // \`fitted !== null\` looked equivalent but \`fitted\` is computed once, at
+      // delivery time, and \`aspectHeight\` returns null when \`clientWidth\` is 0 —
+      // the normal pre-layout state of a freshly mounted iframe. So a widget
+      // whose tool-result arrived before layout settled got NO listener at all
+      // and stayed on the \`structuredContent.height\` fallback for the rest of
+      // its life, even once the column width became known. That is the exact
+      // failure this block exists to prevent, reached by a different route.
+      // \`aspectHeight\` already declines per-event, so let it.
+      window.addEventListener("resize", function () {
+        if (frame.classList.contains("hidden")) return;
+        var next = aspectHeight(imgNaturalW, imgNaturalH);
+        if (next === null) return;
+        committedHeight = next;
+        setFrameHeight(next);
+        notifyHeight(next);
+      });
       // Watchdog on the committed iframe — the mirror image of
       // \`probeInteractiveIframe\`. That one starts from the PNG and upgrades
       // to the iframe if the host allows it; this one starts from the iframe
@@ -1628,11 +1671,24 @@ function parsePngDimensions(
  * background under a 2.18:1 chart — or nothing.
  *
  * Ranged, not a full GET: dimensions live in the first 24 bytes, and the
- * clients that need this (ChatGPT) never use the image bytes, so paying for a
- * ~170 KB body and the full chart-render latency to learn two integers is
- * exactly the cost `extraMeta` skips them for. A server that ignores `Range`
- * answers 200 with the whole body; the parser only reads the head either way,
- * so that degrades to correct-but-slower rather than broken.
+ * clients that need this (ChatGPT) never use the image bytes, so paying to
+ * TRANSFER a ~170 KB body to learn two integers is pure waste. A server that
+ * ignores `Range` answers 200 with the whole body; the parser only reads the
+ * head either way, so that degrades to correct-but-slower rather than broken.
+ *
+ * What the `Range` does NOT save is the render. `image_url` points at
+ * `/api/v1/image/{pub}/`, which renders the chart on demand, and no byte range
+ * can be served before the bytes exist. So the number that governs this call's
+ * worst case is {@link PNG_HEAD_FETCH_TIMEOUT_MS}, not the body size — size
+ * that timeout against chart-render latency, never against 64 bytes of
+ * transfer.
+ *
+ * That cost is on the critical path of every ChatGPT chart call, and is NOT
+ * behind `PUBLIC_CDN_URL`: this replaced an unconditional
+ * `if (ctx.client === "chatgpt") return undefined;`. Deliberate — ChatGPT
+ * renders `embed_url` in a cross-origin iframe it cannot measure, so without
+ * the card's true aspect its frame falls back to a fixed height and leaves the
+ * empty band under a wide chart that this branch exists to remove.
  *
  * Best-effort: `undefined` on any failure, and the widget falls back to the
  * requested height.
