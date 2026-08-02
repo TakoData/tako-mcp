@@ -23,6 +23,57 @@ describe("worker routing", () => {
     expect(res.status).toBe(404);
   });
 
+  // The native-card proxy routes, end to end through the router.
+  //
+  // All other coverage of these two is handler-level in `embed_proxy.test.ts`,
+  // which calls the functions directly and therefore cannot catch a WIRING
+  // mistake — ordering against the `/mcp` branch, or the fall-through to the
+  // catch-all 404. `index.ts` now awaits both on every request that gets past
+  // the icon route, so the wiring is worth one assertion of its own.
+  //
+  // The test environment has no `PUBLIC_CDN_URL` (it was added only under the
+  // `staging` env block in `wrangler.jsonc`), which makes this the production
+  // configuration — and "invisible in production" is property #1 of the whole
+  // feature.
+  describe("the native-card proxy routes do not exist without PUBLIC_CDN_URL", () => {
+    it("404s /embed-html/{pub_id}", async () => {
+      const res = await SELF.fetch(
+        "https://example.com/embed-html/VKd7qE8K9Ba16kMFENNQ",
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("404s /cdn-asset/{path}", async () => {
+      const res = await SELF.fetch(
+        "https://example.com/cdn-asset/archive/abc/vite_dist/assets/Card.js",
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("404s their preflights too, rather than advertising CORS", async () => {
+      for (const path of [
+        "/embed-html/VKd7qE8K9Ba16kMFENNQ",
+        "/cdn-asset/archive/abc/Card.js",
+      ]) {
+        const res = await SELF.fetch(`https://example.com${path}`, {
+          method: "OPTIONS",
+        });
+        expect(res.status, path).toBe(404);
+      }
+    });
+
+    it("still serves /health and POST /mcp, so the routes are inert not blocking", async () => {
+      // Both handlers are awaited ahead of most of the router. A regression that
+      // made them throw rather than decline would take the surface below them
+      // down with it — see the OAuth blast-radius case in `embed_proxy.test.ts`.
+      expect((await SELF.fetch("https://example.com/health")).status).toBe(200);
+      const res = await SELF.fetch("https://example.com/mcp", {
+        method: "GET",
+      });
+      expect(res.status).toBe(405);
+    });
+  });
+
   // Regression: Cursor tombstoned the transport against production.
   //
   // Streamable HTTP reserves 404-on-a-session-request to mean "this session
@@ -539,7 +590,7 @@ describe("worker routing", () => {
     // The default tools are still present alongside.
     expect(names.has("tako_search")).toBe(true);
     // `tako_visualize` is opt-in for other clients but default-on for
-    // ChatGPT (`CHATGPT_DEFAULT_ON_TOOL_NAMES`) — it powers the widget.
+    // widget clients (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES`) — it powers the widget.
     expect(names.has("tako_visualize")).toBe(true);
     // 4 defaults + tako_visualize (ChatGPT default-on) + the split pair = 7.
     expect(body.result.tools).toHaveLength(7);
@@ -614,7 +665,7 @@ describe("worker routing", () => {
     expect(names.has("tako_agent")).toBe(false);
     expect(names.has("tako_search")).toBe(true);
     // `tako_visualize` IS present without opting in — ChatGPT keeps it on
-    // the default surface (`CHATGPT_DEFAULT_ON_TOOL_NAMES`) for the widget.
+    // the default surface (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES`) for the widget.
     expect(names.has("tako_visualize")).toBe(true);
     // The other opt-in tools stay absent for ChatGPT too; the default
     // discovery tool is present.

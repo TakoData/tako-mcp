@@ -26,7 +26,7 @@
  * surface to save per-session context. They compose freely, e.g.
  * `?tools=visualize,credits`. Exception: `tako_visualize` stays on the
  * default surface for ChatGPT clients (it powers the chart widget) — see
- * `CHATGPT_DEFAULT_ON_TOOL_NAMES` in `_surface.ts`.
+ * `WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES` in `_surface.ts`.
  *
  * `graph` enables the three low-level graph primitives (search / related /
  * node). `tako_available_data` covers the common discovery path in one call,

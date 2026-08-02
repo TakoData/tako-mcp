@@ -49,25 +49,35 @@ export interface Env {
    * e.g. `https://d12w4pyrrczi5e.cloudfront.net`. Must NOT include a
    * trailing slash.
    *
-   * EXPERIMENT SWITCH, and unset everywhere by default. Its only job today is
-   * to enable the `script-src` capability probe in the chart widget (see
-   * `nativeCardProbeMeta` in `tools/_chart_widget.ts`): when set, the widget
-   * additionally declares this origin in `_meta.ui.csp.resourceDomains` and
-   * reports whether the host's sandbox actually permits loading a script from
-   * it.
+   * EXPERIMENT SWITCH, and unset everywhere by default. Setting it turns on the
+   * NATIVE CARD path — Claude rendering Tako's own `Card.js` instead of a PNG
+   * of it — which is materially more than a declared CSP entry. Specifically:
    *
-   * Why that matters: Tako's real chart renderer (`Card.js` + its lazily
-   * imported chunks, plus the Geist/Inter fonts) is served from this origin.
-   * Measured 2026-07-31 — it loads cross-origin cleanly in a normal browser
-   * (CORS present, chunks resolve against the CDN, no console errors), so the
-   * ONLY thing standing between Claude and the same interactive card ChatGPT
-   * already renders is whether claude.ai merges declared `resourceDomains`
-   * into `script-src`. The MCP Apps spec says it must; claude.ai demonstrably
-   * merges `connectDomains` into `connect-src` but its `script-src` handling
-   * is unreported (anthropics/claude-ai-mcp#40), and VS Code shipped this
-   * exact bug and fixed it (microsoft/vscode#286689). Unknown, cheap to
-   * measure, and gating a large piece of work — hence a probe rather than a
-   * guess.
+   *   1. Two public HTTP routes come into existence, `/embed-html/{pub_id}` and
+   *      `/cdn-asset/{path}` (`embed_proxy.ts`). Unset, both decline and the
+   *      router 404s them, so neither exists.
+   *   2. `_meta.native_card_url` is added to chart tool results, which is what
+   *      arms the widget's upgrade.
+   *   3. The widget declares OUR origin — not this one — in
+   *      `_meta.ui.csp.connectDomains` and `resourceDomains`, because the
+   *      assets are served through `/cdn-asset/` rather than from the CDN.
+   *
+   * Why the assets are proxied rather than loaded from here: this CDN reflects
+   * `access-control-allow-origin` for `tako.com` alone, and a `type="module"`
+   * script is always fetched in CORS mode, so every asset load inside a widget
+   * sandbox failed even where CSP permitted the origin. Serving them from our
+   * own origin removes the upstream dependency — which is also why declaring
+   * the CDN in `resourceDomains` would now be dead weight.
+   *
+   * The value must name the distribution the EMBED PAGE OF THAT ENVIRONMENT
+   * references; staging and production use different ones, and a mismatch is
+   * silent (zero URLs get rewritten, the card mounts, no chart draws). The
+   * proxy logs loudly when it rewrites nothing, for exactly that reason.
+   *
+   * A malformed value (trailing slash, unparseable, non-http scheme) disables
+   * the experiment rather than throwing — see `resolveProxyOrigins` in
+   * `embed_proxy.ts`, and note those handlers run ahead of the whole OAuth
+   * surface.
    *
    * Leave unset in production. Set it on staging to run the experiment.
    */

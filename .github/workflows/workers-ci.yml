@@ -1,16 +1,23 @@
 name: workers-ci
 
 on:
-  # Every path below is covered by a guard this workflow runs, so each one has
-  # to trigger it — otherwise a PR editing only a guarded file skips the very
-  # guard that protects it. `registry:check` covers `chatgpt-app-submission.json`
-  # and `llms-full.txt` (see `gen-registry.ts`: `assertChatgptSubmissionParity`,
-  # `assertLlmsFullCoverage`); `scripts/skills.test.ts` covers `skills/**`,
-  # `.claude-plugin/**`, and `version.txt`.
+  # The rule, stated as the property that actually prevents a skipped guard:
+  # every file a guard READS must be a trigger path. (Not the converse — that
+  # every trigger path is guarded, which is the weaker reading and lets a gap
+  # through.)
+  #
+  # What reads what: `registry:check` reads `chatgpt-app-submission.json`,
+  # `llms-full.txt`, `llms.txt` and `README.md` (see `gen-registry.ts` —
+  # `assertChatgptSubmissionParity`, `assertLlmsFullCoverage`,
+  # `assertPinFormInDocs`); `scripts/skills.test.ts` reads `skills/**`,
+  # `.claude-plugin/**`, `version.txt`, and `README.md` again (the SKILL.md
+  # frontmatter must match the README's copy-paste blocks byte for byte).
   #
   # `skills/**` and `.claude-plugin/**` were missing here, and that is how a
   # skill with unparseable YAML frontmatter shipped: the edit that broke it
-  # touched no triggering path, so CI never ran on the PR at all.
+  # touched no triggering path, so CI never ran on the PR at all. `README.md`
+  # was missing for the same reason and is now the input to two guards, so a
+  # README-only PR must run them.
   push:
     branches: [main]
     paths:
@@ -20,6 +27,8 @@ on:
       - '.claude-plugin/**'
       - 'chatgpt-app-submission.json'
       - 'llms-full.txt'
+      - 'llms.txt'
+      - 'README.md'
       - 'version.txt'
   pull_request:
     paths:
@@ -29,6 +38,8 @@ on:
       - '.claude-plugin/**'
       - 'chatgpt-app-submission.json'
       - 'llms-full.txt'
+      - 'llms.txt'
+      - 'README.md'
       - 'version.txt'
   workflow_dispatch:
 

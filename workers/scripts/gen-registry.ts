@@ -328,6 +328,14 @@ const REGISTRY_PATH = resolve(REPO_ROOT, "registry", "server.json");
 const LOBEHUB_PATH = resolve(REPO_ROOT, "registry", "lhm.plugin.json");
 const BARREL_PATH = resolve(TOOLS_DIR, "_registry.ts");
 const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
+// The short index. Agents fetch `llms.txt` and `llms-full.txt` alike to learn
+// the tool surface, but only the long one was guarded — so the two drifted:
+// `llms.txt` went on saying `tako_visualize` was "already on by default for
+// ChatGPT" after it became default-on for Claude too, and it never mentioned
+// the ChatGPT `tako_agent_start` / `tako_agent_wait` split at all. It has no
+// `### <tool>` sections, so `assertLlmsFullCoverage` degrades to exactly the
+// right check for an index: every tool has to be named somewhere in it.
+const LLMS_PATH = resolve(REPO_ROOT, "llms.txt");
 // Checked for pin-form drift only (its contents are hand-written prose, and it
 // embeds the bundled skills' recovery protocols verbatim).
 const README_PATH = resolve(REPO_ROOT, "README.md");
@@ -658,6 +666,8 @@ async function main(): Promise<void> {
   //    and any tool with a `### <name>` section must document all its params.
   const llmsFull = readFileSync(LLMS_FULL_PATH, "utf8");
   assertLlmsFullCoverage(registryTools, llmsFull);
+  // Same check against the short index, which agents fetch just as readily.
+  assertLlmsFullCoverage(registryTools, readFileSync(LLMS_PATH, "utf8"));
 
   // 3b. Pin-form: any doc sentence that advises pinning must name the form
   //     measured to work. llms-full.txt is uniformly prescriptive about the

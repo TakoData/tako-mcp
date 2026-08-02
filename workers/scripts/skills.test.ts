@@ -22,7 +22,15 @@
  * indicator characters, so colons, quotes, and apostrophes all pass through
  * untouched, and folding a single-line body yields the identical string the
  * plain scalar was meant to produce. The frontmatter here is byte-identical to
- * the README's blocks as a result, which makes the two copies diffable.
+ * the README's blocks as a result, and the parity test below is what keeps it
+ * that way — the drift between those two copies IS the recurrence mechanism.
+ *
+ * On the strength of the claim: the YAML-parses assertion was verified to fail
+ * on the pre-fix `tako-web-traffic/SKILL.md` (js-yaml 4.1.0 throws
+ * `bad indentation of a mapping entry (2:54)` on it), and the other two skills
+ * parsed cleanly at that same commit. So it is a real regression test for the
+ * file that broke, and a convention check for the other two — which is what the
+ * `>-` assertion is there to carry.
  *
  * Runs under the `scripts` vitest project (plain node, filesystem access) —
  * `src/**` runs in workerd and cannot read files.
@@ -92,6 +100,32 @@ describe("bundled plugin skills", () => {
         // happens to parse today breaks the moment someone adds a colon,
         // which is precisely how this shipped broken once already.
         expect(markdown).toMatch(/^description: >-$/m);
+      });
+
+      it("matches the README's copy-paste block byte for byte", () => {
+        // THE check the module docblock is actually arguing for.
+        //
+        // The recurrence mechanism was drift between two copies: b12e4c6 fixed
+        // the frontmatter in the README's manual-upload blocks and never in the
+        // SKILL.md files the plugin installs, and nothing noticed for as long
+        // as it took to find the dead skill. Byte-identical frontmatter is what
+        // makes the two copies diffable — but "they happen to be identical
+        // today" is not a guard, and neither `gen-registry.ts` nor
+        // `gen-schemas.ts` reads `skills/` at all.
+        //
+        // Without this, rewording a description in SKILL.md and leaving the
+        // README stale keeps the whole suite green — the exact failure the
+        // docblock calls proven-to-recur.
+        const readme = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
+        const block = new RegExp(
+          `^---\\nname: ${name}\\n([\\s\\S]*?)\\n---$`,
+          "m",
+        ).exec(readme);
+        expect(
+          block,
+          `README.md has no copy-paste block for ${name}`,
+        ).not.toBeNull();
+        expect(`name: ${name}\n${block![1]!}`).toBe(frontmatterOf(markdown));
       });
     });
   }
