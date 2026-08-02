@@ -19,9 +19,14 @@
  *      and a second ~1.5 KB island holds the theme (series colors, Geist fonts,
  *      tooltip, padding). Zero `fetch`/XHR/axios in the page. So there is no
  *      API to call and no credential to hold.
- *   2. `Card.js` loads cross-origin from the asset CDN with CORS present, and
- *      its lazily imported chunks resolve against the CDN, not against our
- *      document — so nothing needs bundling or rewriting.
+ *   2. `Card.js` and its lazily imported chunks are static assets with no API
+ *      behind them, so they only have to be REACHABLE — nothing needs bundling.
+ *      They are not, however, loadable straight from the CDN: it reflects CORS
+ *      for `tako.com` alone and a `type="module"` script is always a CORS
+ *      fetch, so they are served through `/cdn-asset/` instead and the page's
+ *      CDN urls are rewritten to match. (An earlier reading of this said CORS
+ *      was present and no rewriting was needed. That check passed only because
+ *      it ran from a `tako.com` page — the one origin on the allow-list.)
  *   3. claude.ai honors declared `resourceDomains` for `script-src`. Confirmed
  *      2026-08-01 with a control in the same document: an undeclared origin
  *      (fonts.googleapis.com) was blocked with a reported CSP violation while
@@ -39,7 +44,16 @@
  *     content from tako." Removing it removes a guaranteed false alarm.
  *
  * Gated on `PUBLIC_CDN_URL`: with the experiment off (production default) this
- * route 404s exactly like any unknown path, so the surface is unchanged.
+ * route 404s exactly like any unknown path, so the surface is unchanged. A
+ * MALFORMED value gates it off too rather than throwing — see
+ * `resolveProxyOrigins`, and note these handlers run ahead of the whole OAuth
+ * subsystem in `index.ts`.
+ *
+ * Neither route serves a document the browser will execute. `/embed-html/`
+ * answers `text/plain` with `Content-Security-Policy: sandbox`, and
+ * `/cdn-asset/` is confined to the `archive/` tree and reflects only inert
+ * content types. This origin is the OAuth origin; see the two constants and the
+ * response headers below for what that rules out.
  */
 import {
   type Env,
@@ -47,6 +61,7 @@ import {
   resolvePublicCdnBase,
   resolveWidgetOrigin,
 } from "./env.js";
+import { freeTierRateLimitKey } from "./freetier.js";
 
 /** Route prefix. The pub_id is the single trailing path segment. */
 export const EMBED_PROXY_PREFIX = "/embed-html/";
@@ -95,6 +110,145 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_JS_REWRITE_BYTES = 4 * 1024 * 1024;
 
 /**
+ * The only CDN path prefix these routes will serve.
+ *
+ * Measured against a real production embed page (2026-08-02): of its 16 CDN
+ * references, 15 sit under `archive/<sha>/` — `Card.js` and its `vite_dist`
+ * chunks, the Geist/Inter/Space-Grotesk fonts, the card images, and
+ * `staticPrefix` itself. The sixteenth is `previews/<hash>.png`, and it appears
+ * in exactly two places: a `<meta name="twitter:image">` and a `<noscript>`
+ * fallback `<img>`. Neither is fetched when JavaScript runs, which is the only
+ * condition under which the widget renders at all.
+ *
+ * So confining the route costs nothing the card uses, and it buys the thing
+ * that is otherwise hard to guarantee: the distribution fronts its S3 bucket at
+ * the ROOT, not at an `archive/`-only origin path (verified — `archive/`,
+ * `user-images/`, `content-style/` and `static/` all answer with the same S3
+ * `AccessDenied` rather than a CloudFront 404). Tako hands out presigned
+ * uploads into that bucket under `user-images/` and `content-style/` with a
+ * caller-supplied filename and no content-type conditions. Without this prefix
+ * an uploaded `.html` would be reachable at `/cdn-asset/user-images/...` and
+ * served as a document on `mcp.tako.com` — the OAuth origin.
+ */
+const ASSET_PATH_PREFIX = "archive/";
+
+/**
+ * Content types this route will reflect from the CDN. Anything else is served
+ * as `application/octet-stream`.
+ *
+ * Defense in depth behind {@link ASSET_PATH_PREFIX}. The prefix is what makes
+ * an attacker-influenced object unreachable; this is what keeps a surprise in
+ * the `archive/` tree from becoming an executable document on the OAuth origin
+ * anyway. The list is exactly what a chart needs — script, style, fonts,
+ * images, JSON, plain text — and notably excludes `text/html` and `image/svg+xml`,
+ * both of which script.
+ */
+const REFLECTABLE_CONTENT_TYPE_RE =
+  /^(?:application\/(?:javascript|ecmascript|json|wasm|font-woff2?)|text\/(?:javascript|ecmascript|css|plain)|font\/[a-z0-9.+-]+|image\/(?:png|jpeg|gif|webp|avif|x-icon|vnd\.microsoft\.icon))\b/i;
+
+/** What an unreflectable content type becomes. Inert, and never sniffed. */
+const INERT_CONTENT_TYPE = "application/octet-stream";
+
+/**
+ * Edge-cache hint for both upstream fetches, matching what `icons.ts` already
+ * does against this same distribution ("so subsequent worker invocations skip
+ * the CloudFront round-trip"). Without it every widget render pays a full
+ * origin round-trip per asset — and for JavaScript, a fresh buffer-and-replace
+ * of a ~1.5 MB body each time.
+ */
+const UPSTREAM_CACHE_TTL_S = 3600;
+
+/**
+ * `RequestInit` plus Cloudflare's `cf` extension.
+ *
+ * Spelled out rather than relying on `@cloudflare/workers-types` because this
+ * module is compiled by four separate tsconfig projects and only two of them
+ * load those types — `scripts/tsconfig.json` and `test/widget/tsconfig.json`
+ * pull it in transitively under DOM lib types, where `RequestInit` has no `cf`
+ * and a bare object literal is an excess-property error. Naming the type here
+ * makes the init a non-fresh value, so all four projects accept it.
+ */
+type CfFetchInit = RequestInit & {
+  cf?: { cacheEverything?: boolean; cacheTtl?: number };
+};
+
+/**
+ * Resolve every origin these two routes need, or `undefined` if any of them is
+ * malformed.
+ *
+ * The resolvers THROW on a bad binding rather than returning `undefined`, and
+ * that is deliberate — their values reach a browser, so a silent fallback would
+ * be a security boundary. But these handlers run in `index.ts` ahead of the
+ * entire OAuth subsystem, so an uncaught throw here does not degrade this
+ * feature, it 500s `/authorize`, `/token`, `/register`, `/login`,
+ * `/oauth/stytch_callback` and both discovery documents — from one trailing
+ * slash in `PUBLIC_CDN_URL`. `POST /mcp` returns earlier and survives, so tool
+ * traffic would look perfectly healthy while the connector could not log anyone
+ * in.
+ *
+ * Catching here keeps the blast radius exactly where it was before these routes
+ * existed, when the binding was only read while building a widget payload: a
+ * misconfigured experiment binding disables the experiment, the same as an
+ * unset one. The two routes are one feature — the embed page is useless without
+ * its assets — so any bad origin among them turns both off together.
+ */
+function resolveProxyOrigins(
+  env: Env,
+  requestOrigin: string,
+):
+  | { cdnBase: string; publicBase: string; widgetOrigin: string | undefined }
+  | undefined {
+  try {
+    const cdnBase = resolvePublicCdnBase(env);
+    if (cdnBase === undefined) return undefined;
+    return {
+      cdnBase,
+      publicBase: resolvePublicBase(env),
+      widgetOrigin: resolveWidgetOrigin(env, requestOrigin),
+    };
+  } catch (err) {
+    // Loud: this is indistinguishable from "experiment off" at the route, and
+    // the operator who set the binding expects it to have done something.
+    console.error(
+      "[mcp] native-card proxy disabled — malformed origin binding:",
+      err,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * Meter a proxy request against the free-tier per-IP limiter.
+ *
+ * These two routes sit above the rate-limited surface: `FREE_TIER_RATE_LIMITER`
+ * is otherwise consulted only inside `handleMcpRequest`. Left unmetered,
+ * `/cdn-asset/` is an unauthenticated `ACAO: *` mirror of a CloudFront
+ * distribution that buffers and string-replaces ~1.5 MB per JavaScript request,
+ * and `/embed-html/` lets an anonymous caller drive `/embed/{id}/` renders on
+ * Tako's own origin at whatever rate it likes.
+ *
+ * Fails OPEN, like every other use of this binding: a limiter outage must not
+ * take the card down. Returns a 429 rather than a JSON-RPC result because these
+ * are browser subresource fetches, not MCP traffic — nothing here has a request
+ * id to answer.
+ */
+async function rateLimited(request: Request, env: Env): Promise<Response | undefined> {
+  const limiter = env.FREE_TIER_RATE_LIMITER;
+  if (limiter === undefined) return undefined;
+  const key = freeTierRateLimitKey(request.headers.get("CF-Connecting-IP"));
+  try {
+    const { success } = await limiter.limit({ key });
+    if (success) return undefined;
+  } catch (err) {
+    console.error(
+      `[mcp] native-card proxy rate limiter error (failing open): ${String(err)}`,
+    );
+    return undefined;
+  }
+  return textResponse("too many requests", 429);
+}
+
+/**
  * Tako pub_ids are URL-safe base64-ish tokens (letters, digits, `-`, `_`) —
  * e.g. `VKd7qE8K9Ba16kMFENNQ`, `vilUFuRZgsjKYP0qbB-A`. Validating the shape is
  * what keeps this route from being an open redirector / SSRF primitive: the
@@ -124,6 +278,38 @@ export function parsePubId(pathname: string): string | undefined {
  *
  * Exported for tests.
  */
+/**
+ * Re-apply the script-breakout escaping that a JSON round-trip throws away.
+ *
+ * Django's `json_script` emits `<`, `>` and `&` as `<`, `>` and
+ * `&` inside the JSON string, specifically so no value can close the
+ * `<script>` element that carries it. `JSON.parse` decodes those back to
+ * literals and `JSON.stringify` re-emits them raw — so parsing an island and
+ * re-serializing it silently removes a control Django put there on purpose.
+ *
+ * Reproduced before fixing: a `title` of `a </script><img src=x onerror=...> b`
+ * survives Django's escaping intact and comes back out of the round-trip as a
+ * literal `</script><img ...>`, terminating the island early and turning the
+ * rest of the page into live markup.
+ *
+ * Latent rather than live today — the island this touches is `server_config`,
+ * whose five keys (`staticPrefix`, `csrfToken`, `userLoggedIn`, `hostContext`,
+ * `developerConsoleEnabled`) are all server-derived, and caller-authored card
+ * content lives in a separate `config-json` island this replace never matches.
+ * It re-arms the moment one user-influenced value joins that dict, which is
+ * reason enough to put the control back rather than depend on the key list.
+ *
+ * These three escapes are valid JSON and decode to exactly the same string, so
+ * the island's meaning is byte-for-byte unchanged for any consumer that parses
+ * it — only the HTML tokenizer sees a difference.
+ */
+function escapeJsonForScript(json: string): string {
+  return json
+    .replace(/</g, "\\u003C")
+    .replace(/>/g, "\\u003E")
+    .replace(/&/g, "\\u0026");
+}
+
 export function sanitizeEmbedHtml(html: string): {
   html: string;
   removedCsrf: boolean;
@@ -159,7 +345,7 @@ export function sanitizeEmbedHtml(html: string): {
       if (!("csrfToken" in rest)) return whole;
       delete rest.csrfToken;
       removedCsrf = true;
-      return `<script${attrs} data-tako-stripped="csrf">${JSON.stringify(rest)}</script>`;
+      return `<script${attrs} data-tako-stripped="csrf">${escapeJsonForScript(JSON.stringify(rest))}</script>`;
     },
   );
 
@@ -197,8 +383,9 @@ export async function handleEmbedProxy(
   request: Request,
   env: Env,
 ): Promise<Response | undefined> {
-  if (resolvePublicCdnBase(env) === undefined) return undefined;
   const url = new URL(request.url);
+  const origins = resolveProxyOrigins(env, url.origin);
+  if (origins === undefined) return undefined;
   const pubId = parsePubId(url.pathname);
   if (pubId === undefined) return undefined;
   if (request.method !== "GET" && request.method !== "OPTIONS") {
@@ -227,7 +414,11 @@ export async function handleEmbedProxy(
   const requested = url.searchParams.get("dark_mode");
   const darkMode =
     requested === "true" || requested === "false" ? requested : "auto";
-  const upstream = `${resolvePublicBase(env)}/embed/${pubId}/?dark_mode=${darkMode}`;
+
+  const limited = await rateLimited(request, env);
+  if (limited !== undefined) return limited;
+
+  const upstream = `${origins.publicBase}/embed/${pubId}/?dark_mode=${darkMode}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
   let response: Response;
@@ -238,8 +429,20 @@ export async function handleEmbedProxy(
       // credentials into a proxy whose output crosses into a sandbox would be
       // a way to leak a session.
       headers: { accept: "text/html" },
-      redirect: "follow",
-    });
+      // A 3xx is an upstream ERROR here, not an instruction. Following one
+      // would quietly break the guarantee the `handleCdnAssetProxy` docstring
+      // states and this route relies on just as much: the origin is fixed by
+      // configuration. That holds for the request we issue, but not for the
+      // response we serve — with `follow`, the `text/html` gate below, the
+      // sanitizer, and the body itself would all be judging a document from
+      // whatever host the redirect chain ended at, re-served under our origin
+      // with `ACAO: *`. Tako's origin does redirect on this class of path
+      // (canonical-host 301/308, and `redirect("/login")`), so this is not
+      // hypothetical — only currently same-host. `manual` turns a 3xx into a
+      // non-`ok` response, which falls into the error branch below.
+      redirect: "manual",
+      cf: { cacheEverything: true, cacheTtl: UPSTREAM_CACHE_TTL_S },
+    } satisfies CfFetchInit as CfFetchInit);
   } catch (err) {
     console.warn(`[mcp] embed proxy upstream failed for ${pubId}:`, err);
     return textResponse("upstream unavailable", 502);
@@ -251,7 +454,8 @@ export async function handleEmbedProxy(
     console.warn(
       `[mcp] embed proxy upstream HTTP ${response.status} for ${pubId}`,
     );
-    // Propagate not-found as not-found; everything else is a bad gateway.
+    // Propagate not-found as not-found; everything else — a 3xx included, see
+    // `redirect: "manual"` above — is a bad gateway.
     return textResponse(
       response.status === 404 ? "chart not found" : "upstream error",
       response.status === 404 ? 404 : 502,
@@ -278,10 +482,9 @@ export async function handleEmbedProxy(
   // Repoint every CDN URL at our own passthrough. Without this the page loads
   // in the widget and then every asset dies on the CDN's CORS allow-list — the
   // exact half-render this route exists to avoid.
-  const widgetOrigin = resolveWidgetOrigin(env, new URL(request.url).origin);
-  const cdnBase = resolvePublicCdnBase(env);
+  const { widgetOrigin, cdnBase } = origins;
   let html = sanitized.html;
-  if (widgetOrigin !== undefined && cdnBase !== undefined) {
+  if (widgetOrigin !== undefined) {
     // No trailing slash on the target: the CDN origin has none either, so the
     // page's paths already start with `/`. Appending the prefix WITH its slash
     // produced `/cdn-asset//archive/...`, which the asset route then rejected as
@@ -302,17 +505,48 @@ export async function handleEmbedProxy(
       );
     }
   }
-  // Logged because a silent stop in stripping is how a csrfToken would begin
-  // reaching a third-party sandbox unnoticed after an upstream redesign.
-  if (!sanitized.removedCsrf) {
-    console.warn(
-      `[mcp] embed proxy found no csrfToken island to strip for ${pubId} — upstream shape may have changed`,
+  // FAIL CLOSED on the property this module's tests name as invariant #3:
+  // nothing sensitive crosses into the sandbox.
+  //
+  // Every non-match path in `sanitizeEmbedHtml` returns the document untouched
+  // — `JSON.parse` throws, the parse yields a non-object, `csrfToken` is absent.
+  // That conservatism is right for the DOCUMENT (a mangled page is worse than
+  // an unsanitized one), but it must not extend to the TOKEN: an upstream key
+  // rename or a stray whitespace change would start forwarding a live CSRF
+  // token to a third party with nothing but a log line to say so.
+  //
+  // A missed strip on a body that still contains the token is therefore a 502.
+  // The route's whole failure story is that a failure costs an upgrade and
+  // leaves today's chart untouched — so the safe default here is no native
+  // card, not a forwarded credential.
+  if (!sanitized.removedCsrf && html.includes("csrfToken")) {
+    console.error(
+      `[mcp] embed proxy could not strip the csrfToken island for ${pubId} — refusing to forward it; upstream shape has likely changed`,
     );
+    return textResponse("upstream shape unrecognized", 502);
   }
   return new Response(html, {
     status: 200,
     headers: {
-      "content-type": "text/html; charset=utf-8",
+      // NOT `text/html`, and that is the point. This origin is the OAuth origin:
+      // `tako_oauth_state` and `tako_oauth_session` are set here with `Path=/`
+      // and no `Domain`, and the design's stated threat model assumes no XSS on
+      // `mcp.tako.com`. A browsable, executable document served from here could
+      // `fetch('/register')` (open DCR, unauthenticated), then drive
+      // `/authorize` + `/token` same-origin with the victim's session cookie
+      // attached and read the auth code out of a same-origin response — without
+      // ever touching the HttpOnly cookie.
+      //
+      // Nothing needs it to be HTML. The only consumer is `upgradeToNativeCard`
+      // in `_chart_widget.ts`, which does `fetch(...).then(r => r.text())` and
+      // writes the string into its OWN sandboxed document; it never dispatches
+      // on the content type (its sole shape check is `indexOf("<html")`).
+      "content-type": "text/plain; charset=utf-8",
+      // Belt to that brace: even if something did render this as a document,
+      // `sandbox` with no tokens denies scripts, forms, popups and same-origin,
+      // and `DENY` keeps it out of a frame.
+      "content-security-policy": "sandbox",
+      "x-frame-options": "DENY",
       "access-control-allow-origin": "*",
       // The widget re-reads this per chart; the upstream page is per-pub_id and
       // effectively immutable, so a short cache is safe and spares the origin.
@@ -326,13 +560,20 @@ export async function handleEmbedProxy(
 /**
  * Point every CDN URL in the page at our own asset passthrough.
  *
- * A plain global string replace of the CDN origin, which covers all four places
- * the origin appears: the `Card.js` module `src`, the `<link>` hrefs (fonts.css,
- * favicons), the font URLs inside that stylesheet's own fetch chain, and
- * `staticPrefix` in the page-context island. That last one matters most — it is
- * the base Card.js builds asset URLs from at runtime, so rewriting it is what
- * makes the lazily imported view chunks come back through the proxy rather than
- * straight to a CORS wall.
+ * A plain global string replace of the CDN origin PLUS the `archive/` prefix,
+ * which covers all four places that matter: the `Card.js` module `src`, the
+ * `<link>` hrefs (fonts.css, favicons), the font URLs inside that stylesheet's
+ * own fetch chain, and `staticPrefix` in the page-context island. That last one
+ * matters most — it is the base Card.js builds asset URLs from at runtime, so
+ * rewriting it is what makes the lazily imported view chunks come back through
+ * the proxy rather than straight to a CORS wall.
+ *
+ * Scoped to `archive/` so we only ever rewrite what {@link ASSET_PATH_PREFIX}
+ * will actually serve. The one CDN reference outside that tree on a real embed
+ * page is `previews/<hash>.png` in a `<meta twitter:image>` and a `<noscript>`
+ * `<img>`; leaving those pointing at the CDN is strictly better than rewriting
+ * them to a route that would decline — neither is ever fetched with JavaScript
+ * enabled, and an OG image belongs on the CDN regardless.
  *
  * Exported for tests.
  */
@@ -344,8 +585,11 @@ export function rewriteCdnUrls(
   // `split`/`join` rather than a regex: the CDN origin is a literal with dots
   // in it, and building a pattern from it would need escaping for no gain. The
   // segment count also gives the rewrite tally for free.
-  const parts = html.split(cdnBase);
-  return { html: parts.join(assetBase), rewrites: parts.length - 1 };
+  const parts = html.split(`${cdnBase}/${ASSET_PATH_PREFIX}`);
+  return {
+    html: parts.join(`${assetBase}/${ASSET_PATH_PREFIX}`),
+    rewrites: parts.length - 1,
+  };
 }
 
 /**
@@ -364,9 +608,10 @@ export async function handleCdnAssetProxy(
   request: Request,
   env: Env,
 ): Promise<Response | undefined> {
-  const cdnBase = resolvePublicCdnBase(env);
-  if (cdnBase === undefined) return undefined;
   const url = new URL(request.url);
+  const origins = resolveProxyOrigins(env, url.origin);
+  if (origins === undefined) return undefined;
+  const { cdnBase } = origins;
   if (!url.pathname.startsWith(CDN_ASSET_PREFIX)) return undefined;
   if (request.method === "OPTIONS") {
     return new Response(null, {
@@ -380,17 +625,40 @@ export async function handleCdnAssetProxy(
   }
   if (request.method !== "GET") return textResponse("method not allowed", 405);
 
+  // `url.pathname` is ALREADY dot-segment normalized, and that is what makes
+  // this safe rather than the checks below.
+  //
+  // The WHATWG path parser resolves `..` segments — and decodes `%2e` for the
+  // purpose of recognising them, so `%2e%2e`, `.%2e` and `%2E%2E` all collapse
+  // too — during `new URL(request.url)`, before this handler sees anything.
+  // Measured in workerd: `/cdn-asset/%2e%2e/%2e%2e/x` arrives as `/x`, and
+  // `/cdn-asset/archive/%2e%2e/%2e%2e/user-images/evil.html` as
+  // `/user-images/evil.html`. Neither still carries the route prefix, so both
+  // fail the `startsWith` above and fall through to the router's 404. Encoded
+  // SLASHES do survive (`b%2Fc.js` stays encoded), which is not traversal — it
+  // names an S3 key that literally contains a slash.
+  //
+  // The guards below are therefore defense in depth, kept because they are free
+  // and because they still hold if this is ever called with a hand-built path
+  // instead of a parsed Request. `embed_proxy.test.ts` pins the parser behavior
+  // directly, so a refactor that stops going through `URL` fails loudly.
   const assetPath = url.pathname.slice(CDN_ASSET_PREFIX.length);
-  // No traversal, no protocol-relative escape, no empty path. The origin is
-  // fixed above, so this only has to keep the PATH from climbing out of it.
+  // No traversal, no protocol-relative escape, no empty path, and nothing
+  // outside the one tree the card actually loads from. The origin is fixed
+  // above, so the rest only has to keep the PATH from climbing out of it —
+  // see `ASSET_PATH_PREFIX` for why confinement is not merely belt-and-braces.
   if (
     assetPath === "" ||
+    !assetPath.startsWith(ASSET_PATH_PREFIX) ||
     assetPath.includes("..") ||
     assetPath.startsWith("/") ||
     assetPath.includes("\\")
   ) {
     return textResponse("bad asset path", 400);
   }
+
+  const limited = await rateLimited(request, env);
+  if (limited !== undefined) return limited;
 
   const upstream = `${cdnBase}/${assetPath}${url.search}`;
   const controller = new AbortController();
@@ -399,8 +667,14 @@ export async function handleCdnAssetProxy(
   try {
     response = await fetch(upstream, {
       signal: controller.signal,
-      redirect: "follow",
-    });
+      // See `handleEmbedProxy` — a 3xx is an upstream error, not an
+      // instruction. Following one would make every decision below (the
+      // reflected content type, the body, `response.ok`) judge a response from
+      // a host the configuration never named, which is exactly the property
+      // this route's docstring claims it has.
+      redirect: "manual",
+      cf: { cacheEverything: true, cacheTtl: UPSTREAM_CACHE_TTL_S },
+    } satisfies CfFetchInit as CfFetchInit);
   } catch (err) {
     console.warn(`[mcp] cdn asset proxy failed for ${assetPath}:`, err);
     return textResponse("upstream unavailable", 502);
@@ -415,8 +689,25 @@ export async function handleCdnAssetProxy(
   }
 
   const headers = new Headers();
-  const contentType = response.headers.get("content-type");
-  if (contentType !== null) headers.set("content-type", contentType);
+  const upstreamContentType = response.headers.get("content-type");
+  // Reflect only inert types. Whatever MIME the CDN declares would otherwise
+  // become the MIME we serve on `mcp.tako.com` — the OAuth origin — and the
+  // distribution fronts an S3 bucket that also holds user-uploaded objects with
+  // caller-negotiated content types. `ASSET_PATH_PREFIX` already puts those out
+  // of reach; this keeps a surprise inside `archive/` from becoming a document
+  // anyway. `text/html` and `image/svg+xml` are deliberately absent — both
+  // script.
+  const contentType =
+    upstreamContentType !== null &&
+    REFLECTABLE_CONTENT_TYPE_RE.test(upstreamContentType)
+      ? upstreamContentType
+      : INERT_CONTENT_TYPE;
+  if (upstreamContentType !== null && contentType === INERT_CONTENT_TYPE) {
+    console.warn(
+      `[mcp] cdn asset ${assetPath} declared "${upstreamContentType}" — not reflectable, serving as ${INERT_CONTENT_TYPE}`,
+    );
+  }
+  headers.set("content-type", contentType);
 
   // JavaScript gets the same origin rewrite the HTML got, because some chunk
   // URLs are baked into the BUNDLE rather than the page. Vite built Card.js
@@ -426,27 +717,40 @@ export async function handleCdnAssetProxy(
   // CloudFront and dying on its CORS allow-list while the rest of the card
   // rendered fine. Buffering to do a string replace costs holding ~1.5 MB
   // briefly on a cold cache; the assets are immutable, so warm hits skip it.
-  const isJavaScript =
-    contentType !== null && /javascript|ecmascript/i.test(contentType);
+  const isJavaScript = /javascript|ecmascript/i.test(contentType);
   if (isJavaScript) {
     // Only JavaScript is buffered, and only up to a bound. Everything else
     // streams. The upstream origin is fixed by config so this is not an
     // arbitrary-URL risk, but `Card.js` is already ~1.5 MB and a rewrite means
     // holding the whole body plus its copy — worth a ceiling rather than
-    // trusting the CDN to stay reasonable forever. Over the cap, stream it
-    // through unrewritten: the assets that actually need rewriting are the
-    // entry bundle and its chunks, all far below this.
-    const declaredLength = Number(response.headers.get("content-length") ?? "0");
-    if (declaredLength > MAX_JS_REWRITE_BYTES) {
+    // trusting the CDN to stay reasonable forever. Over the cap, return it
+    // unrewritten: the assets that actually need rewriting are the entry bundle
+    // and its chunks, all far below this.
+    //
+    // The bound is read off the ACCUMULATED BODY, not off `content-length`.
+    // Workers strips `Content-Length` (with `Content-Encoding`) when it
+    // auto-decompresses a gzipped response — which is exactly how CloudFront
+    // serves JavaScript — so a declared-length check read `0` for `Card.js`,
+    // the one asset the cap was written for, and never tripped. Two smaller
+    // versions of the same hole: a non-numeric header yields `NaN`, and
+    // `NaN > cap` is `false`; and where the header IS present on a compressed
+    // response it describes compressed bytes while the cap governs a
+    // decompressed buffer. The body is the only honest measure of all three.
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > MAX_JS_REWRITE_BYTES) {
       console.warn(
-        `[mcp] cdn asset ${assetPath} is ${declaredLength}B — over the rewrite cap, streaming unmodified`,
+        `[mcp] cdn asset ${assetPath} is ${bytes.byteLength}B — over the rewrite cap, serving unmodified`,
       );
       headers.set("access-control-allow-origin", "*");
       headers.set("x-content-type-options", "nosniff");
-      return new Response(response.body, { status: 200, headers });
+      headers.set(
+        "cache-control",
+        response.headers.get("cache-control") ?? "public, max-age=3600",
+      );
+      return new Response(bytes, { status: 200, headers });
     }
-    const widgetOrigin = resolveWidgetOrigin(env, url.origin);
-    const body = await response.text();
+    const { widgetOrigin } = origins;
+    const body = new TextDecoder().decode(bytes);
     if (widgetOrigin !== undefined && body.includes(cdnBase)) {
       const rewritten = rewriteCdnUrls(
         body,
@@ -479,10 +783,13 @@ export async function handleCdnAssetProxy(
     "cache-control",
     cacheControl ?? "public, max-age=3600",
   );
-  headers.set("access-control-allow-origin", "*");
-  // Fonts are subject to CORS even in `<link>`/`@font-face` form, and the
-  // stylesheet that requests them is now same-origin with the page, so this
+  // Fonts are subject to CORS even in `<link>`/`@font-face` form, so THIS
   // header is what keeps Geist/Inter from falling back to a system font.
+  headers.set("access-control-allow-origin", "*");
+  // Not part of that: `timing-allow-origin` governs what the Resource Timing
+  // API is allowed to reveal about the request, and has no bearing on whether
+  // the font loads. Kept because it makes these fetches legible in a
+  // performance profile, which is the only thing it does.
   headers.set("timing-allow-origin", "*");
   headers.set("x-content-type-options", "nosniff");
   return new Response(response.body, { status: 200, headers });
