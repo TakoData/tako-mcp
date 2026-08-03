@@ -3,10 +3,61 @@ import { describe, expect, it } from "vitest";
 import type { Env } from "../env.js";
 import {
   __chart_widget_test_only__,
+  APP_UI_RESOURCE_URI,
+  appUiResourceUri,
   buildChartAppUiResourceFromOutputPubId,
 } from "./_chart_widget.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+
+describe("appUiResourceUri (dev cache-bust)", () => {
+  // Hosts cache the widget BY URI and claude.ai's cache outlives a connector
+  // remove/re-add, so a stale bundle is invisible unless the URI changes. This
+  // is the dev-only lever for that; it must be inert unless explicitly set.
+  it("is the stable URI when the suffix is unset", () => {
+    expect(appUiResourceUri({ DJANGO_BASE_URL: "https://x.test" } as never)).toBe(
+      APP_UI_RESOURCE_URI,
+    );
+  });
+
+  it("is the stable URI when the suffix is empty", () => {
+    expect(
+      appUiResourceUri({
+        DJANGO_BASE_URL: "https://x.test",
+        WIDGET_URI_SUFFIX: "",
+      } as never),
+    ).toBe(APP_UI_RESOURCE_URI);
+  });
+
+  it("appends a set suffix", () => {
+    expect(
+      appUiResourceUri({
+        DJANGO_BASE_URL: "https://x.test",
+        WIDGET_URI_SUFFIX: "dev42",
+      } as never),
+    ).toBe(APP_UI_RESOURCE_URI + "-dev42");
+  });
+
+  it("strips characters that would break the URI", () => {
+    // The value becomes a URI the host stores and reads back; a stray slash or
+    // space yields one that never resolves.
+    expect(
+      appUiResourceUri({
+        DJANGO_BASE_URL: "https://x.test",
+        WIDGET_URI_SUFFIX: "a b/c?d",
+      } as never),
+    ).toBe(APP_UI_RESOURCE_URI + "-abcd");
+  });
+
+  it("falls back to the stable URI when the suffix is all junk", () => {
+    expect(
+      appUiResourceUri({
+        DJANGO_BASE_URL: "https://x.test",
+        WIDGET_URI_SUFFIX: "///",
+      } as never),
+    ).toBe(APP_UI_RESOURCE_URI);
+  });
+});
 
 describe("chart widget HTML", () => {
   it("notifies height via the MCP Apps size-changed notification", () => {
