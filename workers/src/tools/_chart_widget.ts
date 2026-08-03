@@ -698,6 +698,12 @@ const WIDGET_HTML = `<!doctype html>
   // which is the same OS-derived guess as before.
   var mcpHostTheme = null;
 
+  // The host's own page background, when it sends one. This is the EXACT fix
+  // for the card's exposed corners: painting the widget canvas in the host's
+  // surface colour makes the square canvas invisible AND gives the corners the
+  // right backdrop, where \`color-scheme\` can only get close.
+  var mcpHostSurface = null;
+
   // Spec: "Views merge received fields with their current context state rather
   // than replacing it entirely." So a partial update that omits \`theme\` must
   // leave the known theme alone rather than clearing it.
@@ -708,12 +714,6 @@ const WIDGET_HTML = `<!doctype html>
     var surface = readHostSurface(hostContext);
     if (surface !== null) mcpHostSurface = surface;
   }
-
-  // The host's own page background, when it sends one. This is the EXACT fix
-  // for the card's exposed corners: painting the widget canvas in the host's
-  // surface colour makes the square canvas invisible AND gives the corners the
-  // right backdrop, where \`color-scheme\` can only get close.
-  var mcpHostSurface = null;
 
   // Per the MCP Apps spec, \`hostContext.styles.variables\` carries standardized
   // CSS custom properties. Take the primary background; fall back to the
@@ -739,7 +739,7 @@ const WIDGET_HTML = `<!doctype html>
   function safeCssColor(v) {
     if (typeof v !== "string" || v.length === 0 || v.length > 64) return false;
     if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return true;
-    return /^(rgb|rgba|hsl|hsla|oklch|oklab|lab|lch)\\(\\s*[0-9a-zA-Z.,%\\/\\s+-]*\\)$/.test(v);
+    return /^(rgb|rgba|hsl|hsla|oklch|oklab|lab|lch)\\(\\s*[0-9a-zA-Z.,%\\/\\s+-]+\\)$/.test(v);
   }
 
   // Substring, not equality: hosts have shipped values like
@@ -791,7 +791,7 @@ const WIDGET_HTML = `<!doctype html>
       var root = document.documentElement;
       // Tier 1 — exact, and safe to apply on ANY host: the canvas becomes the
       // host's own colour, so it cannot look like a box.
-      if (mcpHostSurface !== null) {
+      if (mcpHostSurface) {
         root.style.background = mcpHostSurface;
         if (document.body) document.body.style.background = mcpHostSurface;
         var t1 = hostTheme();
@@ -1137,10 +1137,10 @@ const WIDGET_HTML = `<!doctype html>
         // nested iframe and never reaches the native upgrade. The gate is
         // written explicitly so it stays correct if that changes. Injected LAST
         // so it wins over the page's own rules.
-        var scheme = mcpHostSurface !== null ? hostTheme() : mcpHostTheme;
+        var scheme = mcpHostSurface ? hostTheme() : mcpHostTheme;
         var surface = mcpHostSurface;
         var schemeStyle = "";
-        if (surface !== null) {
+        if (surface) {
           // Exact host surface — the square canvas becomes invisible.
           schemeStyle =
             '<style id="tako-host-scheme">:root,body{background:' + surface + '}' +

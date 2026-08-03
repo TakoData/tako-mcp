@@ -1322,6 +1322,28 @@ describe("mcp apps host theme (executed)", () => {
     expect(root.style.colorScheme).toBe("dark");
   });
 
+  it("refuses an empty functional colour", () => {
+    // `rgb()` parses as a function but is not a colour; assigning it is a
+    // silent no-op that would have suppressed the fallback tier.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      initResponse({
+        theme: "dark",
+        styles: { variables: { "--color-background-primary": "rgb()" } },
+      }),
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    const root = m.widgetWin.document.documentElement;
+    expect(root.style.background).toBe("");
+    expect(root.style.colorScheme).toBe("dark");
+  });
+
   it("refuses a host surface colour that is not a colour", () => {
     // Arrives over postMessage and is interpolated into an injected <style>,
     // so it is an injection sink. Allow-list a grammar, do not escape.
