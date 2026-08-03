@@ -9,8 +9,9 @@
  * API keys are hashed and shown exactly once (TAKO-3212) — there is no endpoint
  * that returns an existing raw key. Minting is additive and the backend
  * LRU-trims a user's MCP keys, so a fresh key per host never rotates another
- * host's still-valid key. Django authenticates the call from the
- * `stytch_session_jwt` cookie we set ourselves (server-to-server).
+ * host's still-valid key. Django authenticates the call from the Stytch session
+ * cookie we set ourselves (server-to-server) — whose NAME is per-zone, see
+ * `sessionCookieName`.
  */
 
 import type { Env } from "../env.js";
@@ -48,6 +49,39 @@ export class IdentityError extends Error {
 const STYTCH_JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
 /**
+ * Name of the Stytch session cookie Django reads, for a given backend origin.
+ *
+ * On the `.staging.tako.com` zone the session cookies are NAME-namespaced
+ * (`*_staging`), because the browser also delivers prod's `Domain=.tako.com`
+ * cookie — carrying the DEFAULT name — to `staging.tako.com`, where it would
+ * shadow the staging session. Django resolves the name per request host and
+ * reads ONLY that name (`candidate_session_jwts`), so sending the default name
+ * to `staging.tako.com` means it sees no cookie at all, 403s, and the caller
+ * surfaces the misleading "Your Tako sign-in expired."
+ *
+ * MIRRORS tako's `app/backend/auth/stytch/cookie_name_contract.json` — the
+ * single source of truth, which the Django backend and the frontend SDK each
+ * have a test against. This Worker lives in another repo, so no shared CI can
+ * catch drift here: if that contract gains a namespaced zone, update this rule
+ * too. The unauthorized branch in `handlers.ts` logs the status so the next
+ * drift shows up in `wrangler tail` instead of hiding as an expired sign-in.
+ */
+export function sessionCookieName(base: string): string {
+  let host: string;
+  try {
+    host = new URL(base).hostname.toLowerCase();
+  } catch {
+    // Unparseable origin — the default name is the safe choice; the caller's
+    // own `DJANGO_BASE_URL` guard rejects the value moments later anyway.
+    return "stytch_session_jwt";
+  }
+  if (host === "staging.tako.com" || host.endsWith(".staging.tako.com")) {
+    return "stytch_session_jwt_staging";
+  }
+  return "stytch_session_jwt";
+}
+
+/**
  * Mint the user's Tako API key by calling POST /api/v1/internal/mcp/api_key/
  * with the Stytch session JWT in a `Cookie` header. `clientName` (from the DCR
  * registration) names the key on the developer page. Returns the raw key.
@@ -78,8 +112,10 @@ export async function mintTakoApiKey(
       headers: {
         // `cookie` is a forbidden browser header, but Workers' fetch allows it
         // because the Worker is a server proxy. Django reads it via
-        // request.COOKIES.get("stytch_session_jwt").
-        cookie: `stytch_session_jwt=${stytchSessionJwt}`,
+        // `candidate_session_jwts(request)`, which resolves the cookie NAME
+        // from the request host — hence `sessionCookieName` rather than a
+        // hardcoded name.
+        cookie: `${sessionCookieName(base)}=${stytchSessionJwt}`,
         "content-type": "application/json",
         accept: "application/json",
       },
