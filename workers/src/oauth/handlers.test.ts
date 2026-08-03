@@ -1015,6 +1015,24 @@ describe("/login", () => {
     expect(html).toContain("New to Tako?");
   });
 
+  it("serves the dark-theme mark to a dark host, not the light-theme one", async () => {
+    // `favicon.svg` is the LIGHT-theme asset (dark ink) and
+    // `favicon-light.svg` is the dark-theme one — the naming reads backwards,
+    // and `mcp.ts`'s `icons` array is the reference for which is which.
+    // Hardcoding `favicon.svg` renders a near-invisible dark-on-dark mark for
+    // every user whose OS is in dark mode, which a screenshot caught.
+    const res = handleLogin(new Request("https://mcp.example.com/login"), envWith());
+    const html = await res.text();
+    expect(html).toContain("/icons/favicon-light.svg");
+    // The dark asset must be selected by the media query, not merely present.
+    expect(html).toMatch(
+      /<source[^>]+srcset="\/icons\/favicon-light\.svg"[^>]+media="\(prefers-color-scheme: dark\)"/,
+    );
+    // …and the light asset stays as the `<img>` fallback, so a host that
+    // states no preference still gets a visible mark.
+    expect(html).toMatch(/<img[^>]+src="\/icons\/favicon\.svg"/);
+  });
+
   it("renders only errors it issued itself, reflecting nothing", async () => {
     // `?error=` is attacker-controllable, so the page maps a CLOSED set of
     // codes to copy rather than escaping and echoing. Stronger than escaping:
