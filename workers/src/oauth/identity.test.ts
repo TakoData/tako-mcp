@@ -43,6 +43,32 @@ describe("mintTakoApiKey", () => {
     await expect(mintTakoApiKey(env, JWT, "Claude")).rejects.toMatchObject({ kind: "parse" });
   });
 
+  // The Stytch session cookie is NAME-namespaced on the `.staging.tako.com`
+  // zone (see `sessionCookieName`). Sending the default name there means Django
+  // reads no cookie at all and 403s, which the caller surfaces as the
+  // misleading "Your Tako sign-in expired." Table mirrors the `cases` in
+  // tako's `app/backend/auth/stytch/cookie_name_contract.json`.
+  const COOKIE_NAME_CASES: ReadonlyArray<readonly [string, string]> = [
+    ["https://staging.tako.com", "stytch_session_jwt_staging"],
+    ["https://developer.staging.tako.com", "stytch_session_jwt_staging"],
+    ["https://tako.com", "stytch_session_jwt"],
+    ["https://www.tako.com", "stytch_session_jwt"],
+    ["https://developer.tako.com", "stytch_session_jwt"],
+    ["http://localhost:8000", "stytch_session_jwt"],
+    ["https://staging.trytako.com", "stytch_session_jwt"],
+  ];
+
+  for (const [base, expectedName] of COOKIE_NAME_CASES) {
+    it(`sends the ${expectedName} cookie for ${base}`, async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(JSON.stringify({ key: "tako_sk_RAW" }), { status: 201 }));
+      await mintTakoApiKey({ DJANGO_BASE_URL: base } as never, JWT, "Claude");
+      const cookie = (fetchSpy.mock.calls[0]![1]!.headers as Record<string, string>).cookie;
+      expect(cookie).toBe(`${expectedName}=${JWT}`);
+    });
+  }
+
   it("rejects a malformed stytch JWT before fetching", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await expect(mintTakoApiKey(env, "not-a-jwt", "Claude")).rejects.toBeInstanceOf(IdentityError);
