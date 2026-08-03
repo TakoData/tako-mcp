@@ -53,11 +53,11 @@ const DESCRIPTION = [
   "",
   "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.",
   "",
-  "Reach past it only for a different job: `tako_search` for breadth recon and chart cards (it locates data, it does not carry values), `tako_available_data` when the question is what Tako covers, the Answer Agent for open-ended research.",
+  "Reach past it only for a different job: `tako_search` for breadth recon (it locates data, it does not carry values), `tako_available_data` when the question is what Tako covers, the Answer Agent for open-ended research.",
   "",
   "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Cited cards inline their recent rows (see include_contents/preview_rows), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
-  "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (request_id, usage, guidance).",
+  "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (request_id, usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.",
 ].join("\n");
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).
@@ -336,10 +336,18 @@ const takoAnswer = {
             ),
           }
         : {}),
-      // Chart for the top cited card — shared with tako_search via
-      // `topCardChartFields` so the two cannot render differently. Yields `{}`
-      // when nothing is citable, which is also the zero-card case.
-      ...topCardChartFields(cards, ctx.env),
+      // Chart for the top cited card. The URL CONSTRUCTION is shared with
+      // tako_search via `topCardChartFields`, so the two cannot disagree about
+      // how a card_id becomes a chart. Top-card SELECTION is deliberately not
+      // shared and can differ: `citesByPosition` above keeps the backend's
+      // order whenever the prose carries `[N]` markers (citation numbering has
+      // to match the text), and this tool orders RAW cards while search orders
+      // SLIMMED ones — so with `include_contents: false`, where `slimCardContent`
+      // blanks the rows `orderCardsByUsefulness` reads, search falls through to
+      // freshness while this still ranks on row dates. Same card set, possibly a
+      // different top card. Yields undefined when nothing is citable, which is
+      // also the zero-card case.
+      ...(topCardChartFields(cards, ctx.env) ?? {}),
       // Glossary spreads on LAST so it serializes after the data — truncating
       // clients then drop boilerplate first.
       ...(glossary === undefined ? {} : { sources_glossary: glossary }),
@@ -359,18 +367,17 @@ const takoAnswer = {
     // ChatGPT renders `embed_url` in an iframe and never reads the baked PNG,
     // but still needs the aspect ratio to size that iframe — dimensions only
     // there (a 64-byte ranged read instead of a ~170 KB render).
-    return buildChartExtraMeta((output as { image_url?: string }).image_url, {
+    return buildChartExtraMeta(output.image_url, {
       bakeImage: ctx.client !== "chatgpt",
       env: ctx.env,
       origin: ctx.origin,
-      pubId: (output as { pub_id?: string }).pub_id,
+      pubId: output.pub_id,
     });
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;
-    const imageUrl = (output as { image_url?: string }).image_url;
-    if (imageUrl === undefined) return [];
-    return fetchPngContentBlock(imageUrl);
+    if (output.image_url === undefined) return [];
+    return fetchPngContentBlock(output.image_url);
   },
   appUiResource(env, requestOrigin): AppUiResource {
     // `requestOrigin` must be forwarded: it is what `nativeCardUrl` and the
