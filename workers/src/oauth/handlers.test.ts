@@ -5,6 +5,7 @@ import {
   handleAuthorize,
   handleAuthServerMetadata,
   handleLogin,
+  handleLoginPassword,
   handleProtectedResourceMetadata,
   handleRegister,
   handleToken,
@@ -994,6 +995,341 @@ describe("/login", () => {
       expect(html).toContain("/oauth/stytch_callback");
       expect(html).toContain("Continue with Google");
     });
+  });
+
+  it("offers email + password directly, and no magic link", async () => {
+    // Plugin review requires a password field on the page itself. The magic
+    // link is gone deliberately, so its copy must not linger.
+    const res = handleLogin(new Request("https://mcp.example.com/login"), envWith());
+    const html = await res.text();
+    expect(html).toContain('type="password"');
+    expect(html).toContain('action="/login/password"');
+    expect(html).not.toContain("Email me a sign-in link");
+    expect(html).not.toContain("magicLinks");
+  });
+
+  it("links out for password reset and account creation", async () => {
+    const res = handleLogin(new Request("https://mcp.example.com/login"), envWith());
+    const html = await res.text();
+    expect(html).toContain("Forgot password?");
+    expect(html).toContain("New to Tako?");
+  });
+
+  it("renders only errors it issued itself, reflecting nothing", async () => {
+    // `?error=` is attacker-controllable, so the page maps a CLOSED set of
+    // codes to copy rather than escaping and echoing. Stronger than escaping:
+    // there is no path from URL text to the document at all, so the page can
+    // never become a phishing surface ("session expired, call this number").
+    for (const attempt of [
+      "<img src=x onerror=alert(1)>",
+      "call_this_number_now",
+    ]) {
+      const res = handleLogin(
+        new Request(
+          "https://mcp.example.com/login?error=" + encodeURIComponent(attempt),
+        ),
+        envWith(),
+      );
+      const html = await res.text();
+      expect(html).not.toContain(attempt);
+      expect(html).not.toContain("<img src=x");
+      // The error slot renders empty and CSS hides it (`.err:empty`).
+      expect(html).toContain('id="err" role="alert" aria-live="polite"></div>');
+    }
+  });
+
+  it("renders the mapped copy for a code it did issue", async () => {
+    const res = handleLogin(
+      new Request("https://mcp.example.com/login?error=no_user_password"),
+      envWith(),
+    );
+    expect(await res.text()).toContain("Continue with Google");
+  });
+});
+
+/* --------------------------- Password login --------------------------- */
+
+describe("POST /login/password", () => {
+  function limiterEnv(overrides: Partial<Env> = {}): Env {
+    return envWith({
+      LOGIN_RATE_LIMITER: { limit: async () => ({ success: true }) },
+      ...overrides,
+    });
+  }
+
+  function form(email: string, password: string): Request {
+    return new Request("https://mcp.example.com/login/password", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "sec-fetch-site": "same-origin",
+      },
+      body: new URLSearchParams({ email, password }).toString(),
+    });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("rejects a non-POST", async () => {
+    const res = await handleLoginPassword(
+      new Request("https://mcp.example.com/login/password"),
+      limiterEnv(),
+    );
+    expect(res.status).toBe(405);
+  });
+
+  it("503s when OAuth is not configured", async () => {
+    const res = await handleLoginPassword(
+      form("eric@trytako.com", "pw"),
+      ENV_NO_OAUTH,
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it("refuses a cross-site POST", async () => {
+    const req = new Request("https://mcp.example.com/login/password", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "sec-fetch-site": "cross-site",
+      },
+      body: new URLSearchParams({ email: "e@t.com", password: "pw" }).toString(),
+    });
+    const spy = vi.spyOn(globalThis, "fetch");
+    const res = await handleLoginPassword(req, limiterEnv());
+    expect(res.status).toBe(403);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the rate limiter binding is missing", async () => {
+    // An unauthenticated password endpoint with no limiter is a
+    // credential-stuffing oracle. Google sign-in still works.
+    const spy = vi.spyOn(globalThis, "fetch");
+    const res = await handleLoginPassword(form("e@t.com", "pw"), envWith());
+    expect(res.status).toBe(503);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("blocks a rate-limited attempt without calling Stytch", async () => {
+    // A browser form post, so the block comes back as the same redirect every
+    // other error uses — the message renders on the page instead of a bare
+    // 429 body. The property that matters is that Stytch is never reached.
+    const spy = vi.spyOn(globalThis, "fetch");
+    const env = envWith({
+      LOGIN_RATE_LIMITER: { limit: async () => ({ success: false }) },
+    });
+    const res = await handleLoginPassword(form("e@t.com", "pw"), env);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("error=rate_limited");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("blocks when the limiter itself throws (never fails open)", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    const env = envWith({
+      LOGIN_RATE_LIMITER: {
+        limit: async () => {
+          throw new Error("limiter exploded");
+        },
+      },
+    });
+    const res = await handleLoginPassword(form("e@t.com", "pw"), env);
+    expect(res.headers.get("location")).toContain("error=rate_limited");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("tells an MFA account to use Google rather than implying a bad password", async () => {
+    // Stytch answers 200 with an intermediate token and no session_jwt. This
+    // Worker has no second-factor UI, and Tako has /login/mfa routes, so real
+    // accounts hit this.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ intermediate_session_token: "ist-abc" }),
+        { status: 200 },
+      ),
+    );
+    const res = await handleLoginPassword(
+      form("eric@trytako.com", "correct-password"),
+      limiterEnv(),
+    );
+    expect(res.headers.get("location")).toContain("error=mfa_required");
+  });
+
+  it("meters on both the client IP and the email", async () => {
+    // Per-IP alone misses a slow spray from a botnet at one account; per-email
+    // alone misses one host trying many accounts.
+    const keys: string[] = [];
+    const env = envWith({
+      LOGIN_RATE_LIMITER: {
+        limit: async (opts: { key: string }) => {
+          keys.push(opts.key);
+          return { success: true };
+        },
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error_type: "invalid_credentials" }), {
+        status: 401,
+      }),
+    );
+    const req = form("eric@trytako.com", "pw");
+    req.headers.set("cf-connecting-ip", "203.0.113.7");
+    await handleLoginPassword(req, env);
+    expect(keys.some((k) => k.includes("203.0.113.7"))).toBe(true);
+    expect(keys.length).toBe(2);
+    // The email is hashed, never keyed in the clear.
+    expect(keys.some((k) => k.includes("eric@trytako.com"))).toBe(false);
+  });
+
+  it("redirects back to /login with a generic code on bad credentials", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error_type: "invalid_credentials" }), {
+        status: 401,
+      }),
+    );
+    const res = await handleLoginPassword(
+      form("eric@trytako.com", "wrong"),
+      limiterEnv(),
+    );
+    expect(res.status).toBe(302);
+    const loc = res.headers.get("location")!;
+    expect(loc).toContain("/login?error=invalid_credentials");
+  });
+
+  it("does not distinguish an unknown email from a wrong password", async () => {
+    // Enumeration: both must produce the same code.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error_type: "email_not_found" }), {
+        status: 404,
+      }),
+    );
+    const res = await handleLoginPassword(
+      form("nobody@trytako.com", "pw"),
+      limiterEnv(),
+    );
+    expect(res.headers.get("location")).toContain("error=invalid_credentials");
+  });
+
+  it("tells a Google-signup user to use Google", async () => {
+    // The one case that must NOT be collapsed: with the magic link gone, a
+    // passwordless account has no other hint about how to get in.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error_type: "no_user_password" }), {
+        status: 401,
+      }),
+    );
+    const res = await handleLoginPassword(
+      form("eric@trytako.com", "pw"),
+      limiterEnv(),
+    );
+    expect(res.headers.get("location")).toContain("error=no_user_password");
+  });
+
+  it("surfaces a reset-required password distinctly", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error_type: "reset_password" }), {
+        status: 401,
+      }),
+    );
+    const res = await handleLoginPassword(
+      form("eric@trytako.com", "pw"),
+      limiterEnv(),
+    );
+    expect(res.headers.get("location")).toContain("error=reset_password");
+  });
+
+  it("never puts the password or email in the redirect", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error_type: "invalid_credentials" }), {
+        status: 401,
+      }),
+    );
+    const res = await handleLoginPassword(
+      form("eric@trytako.com", "sup3rs3cret"),
+      limiterEnv(),
+    );
+    const loc = res.headers.get("location")!;
+    expect(loc).not.toContain("sup3rs3cret");
+    expect(loc).not.toContain("eric@trytako.com");
+  });
+
+  it("rejects a missing email or password before calling Stytch", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    const res = await handleLoginPassword(form("", ""), limiterEnv());
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("error=missing_fields");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("mints the session cookie and resumes /authorize on success", async () => {
+    // The whole point: a password login must land in exactly the same place a
+    // Google login does, via the same session cookie.
+    const env = limiterEnv();
+    const { challenge } = await pkcePair();
+    const clientId = await mintClientId(env, "https://client.example/cb");
+    const stateJwt = await signJwt(
+      {
+        type: "state",
+        client_id: clientId,
+        redirect_uri: "https://client.example/cb",
+        response_type: "code",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        state: "xyz",
+        scope: "mcp",
+        resource: null,
+        exp: Math.floor(Date.now() / 1000) + 600,
+      },
+      SIGN_KEY,
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          session_jwt: "aaa.bbb.ccc",
+          user: {
+            user_id: "user-test-1",
+            emails: [{ email: "eric@trytako.com" }],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const req = form("eric@trytako.com", "correct-password");
+    req.headers.set("cookie", `${STATE_COOKIE}=${stateJwt}`);
+
+    const res = await handleLoginPassword(req, env);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("/authorize");
+    // Both cookies ride on one response (session set, state cleared), so read
+    // the repeated header rather than the single-value getter.
+    const cookies = (res.headers as unknown as {
+      getSetCookie(): string[];
+    }).getSetCookie();
+    expect(cookies.some((c: string) => c.startsWith(SESSION_COOKIE))).toBe(true);
+    expect(cookies.some((c: string) => c.startsWith(STATE_COOKIE))).toBe(true);
+  });
+
+  it("explains the lost state cookie instead of a bare redirect loop", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          session_jwt: "aaa.bbb.ccc",
+          user: {
+            user_id: "u",
+            emails: [{ email: "eric@trytako.com" }],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const res = await handleLoginPassword(
+      form("eric@trytako.com", "correct-password"),
+      limiterEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("authorization request was lost");
   });
 });
 

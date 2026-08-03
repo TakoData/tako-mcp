@@ -39,7 +39,7 @@
  *   • Auth codes / access tokens / refresh tokens — all signed JWTs, no DB
  */
 
-import type { Env } from "../env.js";
+import { type Env, resolvePublicBase } from "../env.js";
 import {
   decryptAesGcm,
   encryptAesGcm,
@@ -48,11 +48,13 @@ import {
   verifyJwt,
 } from "./jwt.js";
 import {
+  authenticateStytchPassword,
   authenticateStytchToken,
   primaryEmail,
   StytchError,
   type StytchTokenKind,
 } from "./stytch.js";
+import type { StytchAuthenticateResult } from "./types.js";
 import {
   IdentityError,
   mintTakoApiKey,
@@ -1175,9 +1177,183 @@ export function handleLogin(req: Request, env: Env): Response {
   if (req.method !== "GET") {
     return new Response("method not allowed", { status: 405 });
   }
-  const origin = new URL(req.url).origin;
-  const callbackUrl = `${origin}/oauth/stytch_callback`;
-  return htmlResponse(loginPage(cfg.stytch.publicToken, callbackUrl));
+  const url = new URL(req.url);
+  const callbackUrl = `${url.origin}/oauth/stytch_callback`;
+  // Closed-set lookup, not free text — see `LOGIN_ERROR_COPY`.
+  const errorCode = url.searchParams.get("error");
+  const errorMessage =
+    errorCode !== null ? (LOGIN_ERROR_COPY[errorCode] ?? "") : "";
+  return htmlResponse(
+    loginPage(cfg.stytch.publicToken, callbackUrl, errorMessage, env),
+  );
+}
+
+/**
+ * Error codes `/login/password` may hand back to `/login` via `?error=`.
+ *
+ * A CLOSED set, mapped to copy server-side. The redirect param is
+ * attacker-controllable, so rendering arbitrary text from it would turn the
+ * sign-in page into a phishing surface ("your session expired, call this
+ * number"). Unknown codes render nothing at all.
+ *
+ * The split mirrors Tako's own `PasswordSignInPage.tsx`:
+ * `invalid_credentials` deliberately absorbs unknown-email AND wrong-password
+ * so the page cannot be used to enumerate accounts, while `no_user_password`
+ * and `reset_password` stay distinct because they are the two cases where the
+ * user needs to be told to do something different.
+ */
+const LOGIN_ERROR_COPY: Record<string, string> = {
+  invalid_credentials: "Incorrect email or password.",
+  missing_fields: "Enter both your email and password.",
+  no_user_password:
+    "This account signs in with Google. Use “Continue with Google” above.",
+  reset_password:
+    "Your password needs to be reset. Use “Forgot password?” below to get a reset link.",
+  rate_limited: "Too many sign-in attempts. Wait a minute and try again.",
+  server_error: "Something went wrong signing you in. Please try again.",
+  // This Worker has no second-factor UI. Google carries the factor itself, so
+  // it is the way through for an MFA account — say so rather than implying the
+  // password was wrong.
+  mfa_required:
+    "This account uses two-factor authentication, which isn’t supported here yet. Use “Continue with Google” above.",
+};
+
+/**
+ * Map a Stytch failure to one of `LOGIN_ERROR_COPY`'s codes.
+ *
+ * Stytch reports wrong-password as `invalid_credentials`/401 and unknown-email
+ * as `email_not_found`/`user_not_found`/404; both collapse to
+ * `invalid_credentials` here. Only the two actionable states survive as
+ * themselves.
+ */
+function loginErrorCode(err: StytchError): string {
+  switch (err.errorType) {
+    case "mfa_required":
+      return "mfa_required";
+    case "no_user_password":
+      return "no_user_password";
+    case "reset_password":
+    case "password_reset_required":
+      return "reset_password";
+    case "invalid_credentials":
+    case "email_not_found":
+    case "user_not_found":
+    case "password_does_not_match":
+      return "invalid_credentials";
+    default:
+      // An unmapped 401/404 is still a credential failure as far as the user
+      // is concerned; anything else is ours, not theirs.
+      return err.status === 401 || err.status === 404
+        ? "invalid_credentials"
+        : "server_error";
+  }
+}
+
+/**
+ * `POST /login/password` — authenticate an email + password against Stytch and
+ * resume the OAuth dance, landing in exactly the same place Google does.
+ *
+ * Ordering is deliberate: method → config → same-site → limiter → field
+ * presence → Stytch. Every gate that can reject without touching a password
+ * check runs first, so the expensive, attackable call is last.
+ */
+export async function handleLoginPassword(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  if (req.method !== "POST") {
+    return new Response("method not allowed", { status: 405 });
+  }
+  const cfg = readConfig(env);
+  if (cfg === null) return oauthDisabledResponse();
+  const url = new URL(req.url);
+
+  // CSRF: the form is same-origin, so a cross-site POST is either a forged
+  // login or a scanner. `Sec-Fetch-Site` is set by the browser and cannot be
+  // spoofed from page JS; a missing header (older browser, curl) is allowed
+  // through because the limiter below still bounds it.
+  const fetchSite = req.headers.get("sec-fetch-site");
+  if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") {
+    return new Response("cross-site form post rejected", { status: 403 });
+  }
+
+  // Fail-closed on the limiter — see `Env.LOGIN_RATE_LIMITER`.
+  const limiter = env.LOGIN_RATE_LIMITER;
+  if (typeof limiter?.limit !== "function") {
+    console.error(
+      "[login] LOGIN_RATE_LIMITER is unbound — refusing password sign-in " +
+        "(Google sign-in unaffected). Declare it under `ratelimits`.",
+    );
+    return errorPage(
+      503,
+      "Password sign-in is unavailable on this deployment. " +
+        "Use “Continue with Google”.",
+    );
+  }
+
+  const body = await req.formData().catch(() => null);
+  const email = String(body?.get("email") ?? "").trim();
+  const password = String(body?.get("password") ?? "");
+
+  // Meter BEFORE validating fields, on both axes. Per-IP alone misses a slow
+  // distributed spray at one account; per-email alone misses one host walking
+  // a list. The email is hashed so the rate-limit key space never holds
+  // plaintext addresses.
+  const ip = req.headers.get("cf-connecting-ip") ?? "unknown";
+  const emailKey = email === "" ? "empty" : await sha256B64Url(email.toLowerCase());
+  const verdicts = await Promise.all([
+    limiter.limit({ key: `login:ip:${ip}` }),
+    limiter.limit({ key: `login:email:${emailKey}` }),
+  ]).catch(() => null);
+  // A limiter that throws must not fail OPEN on this endpoint.
+  if (verdicts === null || verdicts.some((v) => !v.success)) {
+    // The response is a 302 (this is a browser form post, so the message
+    // belongs on the page) which means the status code carries no signal for
+    // abuse monitoring — log it so a stuffing run is visible in `wrangler
+    // tail`. IP only; the email is the thing being guessed at.
+    console.warn(
+      "[login] password sign-in rate-limited",
+      verdicts === null ? "(limiter threw)" : `ip=${ip}`,
+    );
+    return redirectToLogin(url, "rate_limited");
+  }
+
+  if (email === "" || password === "") {
+    return redirectToLogin(url, "missing_fields");
+  }
+
+  let stytchResult: StytchAuthenticateResult;
+  try {
+    stytchResult = await authenticateStytchPassword(cfg.stytch, email, password);
+  } catch (err) {
+    if (err instanceof StytchError) {
+      const code = loginErrorCode(err);
+      // Log the classification, never the credentials. `err.message` is built
+      // by `stytch.ts` from the path and status only.
+      console.error(
+        "[login] password sign-in failed:",
+        code,
+        err.errorType ?? err.status,
+      );
+      return redirectToLogin(url, code);
+    }
+    throw err;
+  }
+  return completeStytchLogin(req, url, cfg, stytchResult);
+}
+
+/**
+ * Bounce back to the sign-in page with a closed-set error code. Never carries
+ * the email or password — a redirect URL lands in browser history, `Referer`
+ * headers, and proxy logs.
+ */
+function redirectToLogin(url: URL, code: string): Response {
+  const target = new URL("/login", url.origin);
+  target.searchParams.set("error", code);
+  return new Response(null, {
+    status: 302,
+    headers: { location: target.toString(), "cache-control": "no-store" },
+  });
 }
 
 /**
@@ -1193,54 +1369,147 @@ function jsStringLiteral(s: string): string {
   return JSON.stringify(s).replace(/</g, "\\u003c");
 }
 
-function loginPage(stytchPublicToken: string, callbackUrl: string): string {
-  // The Stytch SDK is loaded over their CDN; `publicToken` and
-  // `callbackUrl` are the only Worker-side data the page needs.
-  // Both are embedded as JS string literals via `jsStringLiteral`,
-  // not HTML-escaped — they live inside <script>, not in HTML
-  // attributes / text.
+function loginPage(
+  stytchPublicToken: string,
+  callbackUrl: string,
+  errorMessage: string,
+  env: Env,
+): string {
+  // `publicToken` and `callbackUrl` are embedded as JS string literals via
+  // `jsStringLiteral`, not HTML-escaped — they live inside <script>, not in
+  // HTML attributes or text. `errorMessage` is the reverse: it lands in HTML
+  // text, so it goes through `escapeHtml`. It is already a value from the
+  // closed `LOGIN_ERROR_COPY` set, so this is belt-and-suspenders.
+  const safeError = escapeHtml(errorMessage);
+  // Deep links into Tako's real web app, which owns account creation, password
+  // reset, and MFA. Routes verified against `routeTree.gen.ts`
+  // (`/login/forgot-password`, `/signup`) — a dead link here is precisely the
+  // kind of thing a plugin reviewer clicks first.
+  const webBase = resolvePublicBase(env);
+  const forgotUrl = escapeHtml(`${webBase}/login/forgot-password`);
+  const signupUrl = escapeHtml(`${webBase}/signup`);
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign in — Tako</title>
+<title>Sign in to Tako</title>
+<link rel="icon" href="/icons/favicon.svg">
 <style>
-  :root { color-scheme: light dark; --fg: #111; --bg: #fff; --muted: #555; --border: #ddd; --accent: #111; --on-accent: #fff; --error: #c1121f; }
-  @media (prefers-color-scheme: dark) {
-    :root { --fg: #f5f5f5; --bg: #0b0b0b; --muted: #aaa; --border: #2a2a2a; --accent: #fff; --on-accent: #111; --error: #ff6b6b; }
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --surface: #ffffff; --fg: #141413; --muted: #73726c;
+    --line: #e5e4df; --line-strong: #d3d1ca; --accent: #141413;
+    --on-accent: #ffffff; --error-fg: #b4241f; --error-bg: #fdf3f2;
+    --error-line: #f3d3d1; --focus: #6b6a64; --shadow: 0 1px 2px rgba(20,20,19,.04), 0 8px 24px -12px rgba(20,20,19,.12);
   }
-  body { font-family: -apple-system, system-ui, "Segoe UI", sans-serif; margin: 0; padding: 3rem 1.5rem; max-width: 24rem; margin-inline: auto; color: var(--fg); background: var(--bg); }
-  h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
-  p { color: var(--muted); margin: 0 0 1.5rem; line-height: 1.55; }
-  button { width: 100%; padding: 0.75rem 1rem; font-size: 1rem; font-weight: 500; border-radius: 0.5rem; border: 1px solid var(--border); background: transparent; color: var(--fg); cursor: pointer; }
-  button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
-  button:hover { opacity: 0.85; }
-  .row { margin-bottom: 0.75rem; }
-  .or { text-align: center; color: var(--muted); margin: 1rem 0; font-size: 0.9rem; }
-  input[type=email] { width: 100%; padding: 0.7rem 0.9rem; font-size: 1rem; border-radius: 0.5rem; border: 1px solid var(--border); background: transparent; color: var(--fg); box-sizing: border-box; margin-bottom: 0.5rem; }
-  .err { color: var(--error); font-size: 0.85rem; min-height: 1.2rem; margin-top: 0.5rem; }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #191817; --surface: #201f1e; --fg: #f5f4ef; --muted: #a3a29c;
+      --line: #34332f; --line-strong: #44433d; --accent: #f5f4ef;
+      --on-accent: #191817; --error-fg: #f79f9a; --error-bg: #2a1d1c;
+      --error-line: #4a2e2c; --focus: #8a8880; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center;
+    justify-content: center; padding: 2rem 1.25rem; background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 100%; max-width: 25rem; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 14px; padding: 2rem 1.75rem;
+    box-shadow: var(--shadow);
+  }
+  .mark { width: 34px; height: 34px; display: block; margin: 0 0 1.25rem; }
+  h1 { font-size: 1.3rem; line-height: 1.25; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 0.375rem; }
+  .sub { color: var(--muted); font-size: 0.9rem; margin: 0 0 1.5rem; }
+  label { display: block; font-size: 0.8rem; font-weight: 500; margin: 0 0 0.375rem; }
+  input {
+    width: 100%; padding: 0.625rem 0.75rem; font-size: 0.9375rem; font-family: inherit;
+    color: var(--fg); background: transparent; border: 1px solid var(--line-strong);
+    border-radius: 8px; transition: border-color .12s ease, box-shadow .12s ease;
+  }
+  input:focus-visible {
+    outline: none; border-color: var(--focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 18%, transparent);
+  }
+  .field { margin-bottom: 0.875rem; }
+  button {
+    width: 100%; padding: 0.625rem 1rem; font: inherit; font-size: 0.9375rem;
+    font-weight: 500; border-radius: 8px; cursor: pointer;
+    transition: opacity .12s ease, border-color .12s ease;
+  }
+  button:hover { opacity: 0.88; }
+  button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .btn-primary { background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent); }
+  .btn-social {
+    background: transparent; color: var(--fg); border: 1px solid var(--line-strong);
+    display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+  }
+  .btn-social svg { width: 17px; height: 17px; flex: none; }
+  .divider { display: flex; align-items: center; gap: 0.75rem; margin: 1.25rem 0; color: var(--muted); font-size: 0.75rem; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .err {
+    display: flex; gap: 0.5rem; padding: 0.625rem 0.75rem; margin: 0 0 1.25rem;
+    background: var(--error-bg); border: 1px solid var(--error-line);
+    border-radius: 8px; color: var(--error-fg); font-size: 0.85rem;
+  }
+  .err:empty { display: none; }
+  .foot { margin: 1.25rem 0 0; font-size: 0.8125rem; color: var(--muted); text-align: center; }
+  .foot + .foot { margin-top: 0.5rem; }
+  a { color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--line-strong); }
+  a:hover { border-bottom-color: var(--fg); }
 </style>
 </head>
 <body>
-<h1>Sign in to Tako</h1>
-<p>Use your Tako account to authorize this connection.</p>
-<div class="row">
-  <button class="primary" id="google">Continue with Google</button>
-</div>
-<div class="or">or</div>
-<form id="magic">
-  <input type="email" name="email" placeholder="you@example.com" required autocomplete="email">
-  <button type="submit">Email me a sign-in link</button>
-</form>
-<div class="err" id="err"></div>
+<main class="card">
+  <img class="mark" src="/icons/favicon.svg" alt="Tako" width="34" height="34">
+  <h1>Sign in to Tako</h1>
+  <p class="sub">Authorize this connection with your Tako account.</p>
 
-<!-- Stytch's vanilla JS SDK. Loaded over their CDN without Subresource
-     Integrity because Stytch publishes a rolling URL and breaks SRI
-     pins on every revision. Trade-off: a compromise of js.stytch.com
-     would let an attacker run JS on this page (which only handles
-     login redirects — no Tako tokens are touched here). Revisit if
-     Stytch publishes versioned URLs with stable hashes. -->
+  <div class="err" id="err" role="alert" aria-live="polite">${safeError}</div>
+
+  <button type="button" class="btn-social" id="google">
+    <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+      <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.91c1.7-1.57 2.69-3.88 2.69-6.62z"/>
+      <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.91-2.26c-.81.54-1.84.86-3.05.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.34A9 9 0 0 0 9 18z"/>
+      <path fill="#FBBC05" d="M3.97 10.72a5.41 5.41 0 0 1 0-3.44V4.94H.96a9 9 0 0 0 0 8.12l3.01-2.34z"/>
+      <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.94l3.01 2.34C4.68 5.16 6.66 3.58 9 3.58z"/>
+    </svg>
+    Continue with Google
+  </button>
+
+  <div class="divider">or</div>
+
+  <form method="POST" action="/login/password" autocomplete="on">
+    <div class="field">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required autocomplete="username"
+             inputmode="email" autocapitalize="none" spellcheck="false" placeholder="you@company.com">
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required
+             autocomplete="current-password" placeholder="Your password">
+    </div>
+    <button type="submit" class="btn-primary">Sign in</button>
+  </form>
+
+  <p class="foot"><a href="${forgotUrl}" target="_blank" rel="noopener noreferrer">Forgot password?</a></p>
+  <p class="foot">New to Tako? <a href="${signupUrl}" target="_blank" rel="noopener noreferrer">Create an account</a></p>
+</main>
+
+<!-- Stytch's vanilla JS SDK, used for the Google redirect only. Loaded over
+     their CDN without Subresource Integrity because Stytch publishes a rolling
+     URL and breaks SRI pins on every revision. Trade-off: a compromise of
+     js.stytch.com would let an attacker run JS on this page. That is a
+     narrower exposure than it looks for Google (a redirect start, no secrets
+     here) but NOT for the password field, which is why the password path is a
+     plain server-side form POST that never touches the SDK. -->
 <script src="https://js.stytch.com/stytch.js"></script>
 <script>
   (function() {
@@ -1253,7 +1522,7 @@ function loginPage(stytchPublicToken: string, callbackUrl: string): string {
     try {
       client = Stytch(publicToken);
     } catch (e) {
-      showError("Could not initialize Stytch: " + (e && e.message ? e.message : e));
+      showError("Google sign-in is unavailable. Use your email and password below.");
       return;
     }
 
@@ -1265,23 +1534,8 @@ function loginPage(stytchPublicToken: string, callbackUrl: string): string {
           signup_redirect_url: callbackUrl
         });
       } catch (e) {
-        showError("Google sign-in failed to start: " + (e && e.message ? e.message : e));
+        showError("Google sign-in failed to start. Use your email and password below.");
       }
-    });
-
-    document.getElementById("magic").addEventListener("submit", function(ev) {
-      ev.preventDefault();
-      showError("");
-      var email = ev.target.email.value.trim();
-      if (!email) { showError("Enter an email address."); return; }
-      client.magicLinks.email.loginOrCreate(email, {
-        login_magic_link_url: callbackUrl,
-        signup_magic_link_url: callbackUrl
-      }).then(function() {
-        ev.target.innerHTML = "<p>Check your email for a sign-in link.</p>";
-      }).catch(function(e) {
-        showError("Could not send magic link: " + (e && e.message ? e.message : e));
-      });
     });
   })();
 </script>
@@ -1333,6 +1587,25 @@ export async function handleStytchCallback(
     throw err;
   }
 
+  return completeStytchLogin(req, url, cfg, stytchResult);
+}
+
+/**
+ * Turn an authenticated Stytch result into our session cookie and resume the
+ * OAuth dance at `/authorize`.
+ *
+ * Shared by the redirect callback (Google) and `POST /login/password`, because
+ * "how a user becomes logged in" must have exactly one implementation. A
+ * second copy would be a second place for the session-cookie claims, the TTL,
+ * or the state-cookie handling to drift — on the code path that authorizes
+ * access to someone's Tako account.
+ */
+async function completeStytchLogin(
+  req: Request,
+  url: URL,
+  cfg: OAuthConfig,
+  stytchResult: StytchAuthenticateResult,
+): Promise<Response> {
   // Step 2 — encrypt the Stytch session JWT and stash it in our own
   // session cookie. We deliberately do NOT fetch the Tako API token
   // here. Caching the Tako token in the session cookie would mean
