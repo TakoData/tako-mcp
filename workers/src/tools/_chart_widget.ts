@@ -650,23 +650,55 @@ const WIDGET_HTML = `<!doctype html>
   // surface. Hosts that expose their theme are believed over the OS; the rest
   // keep \`auto\`, which is still the best available guess.
   //
-  // Scope, stated plainly: \`window.openai.theme\` is the ONLY source, so this
-  // reads null on claude.ai. The MCP Apps path has no theme to read — the
-  // \`ui/initialize\` response carries none, and the spec defines none — so the
-  // native card there stays on \`dark_mode=auto\`, i.e. the OS-derived value.
-  // The proxy's \`dark_mode\` allow-list is deliberately forward-looking: it is
-  // exercised by ChatGPT's committed-iframe url today, and is ready for the
-  // MCP Apps path the day a host declares a theme.
+  // Two sources, because the two host families expose the theme differently:
+  //
+  //   - ChatGPT: \`window.openai.theme\`, readable synchronously at any time.
+  //   - MCP Apps (claude.ai): \`hostContext.theme\` on the \`ui/initialize\`
+  //     RESPONSE, with \`ui/notifications/host-context-changed\` for updates
+  //     (spec 2026-01-26). Asynchronous — it arrives with the handshake.
+  //
+  // ChatGPT's runtime wins when both are present: it is the authority on its
+  // own host, and a stale \`hostContext\` must not override it.
+  //
+  // An earlier revision of this comment asserted the spec defined no theme and
+  // left claude.ai on \`dark_mode=auto\` — i.e. on the OS. That was wrong, and
+  // the bug it caused was exactly the one you would predict: a light Claude on
+  // a dark machine rendering a dark card on a light surface (TAKO-3781).
+  //
+  // Ordering is what makes reading it asynchronously safe. A spec-compliant
+  // host MUST NOT send notifications before our \`initialized\`, which we only
+  // send once the \`ui/initialize\` response lands — so \`hostContext\` is
+  // already known by the time any \`tool-result\` arrives. Hosts that never
+  // answer the handshake fall through to \`auto\` via the 200 ms fallback,
+  // which is the same OS-derived guess as before.
+  var mcpHostTheme = null;
+
+  // Spec: "Views merge received fields with their current context state rather
+  // than replacing it entirely." So a partial update that omits \`theme\` must
+  // leave the known theme alone rather than clearing it.
+  function mergeHostContext(hostContext) {
+    if (!hostContext || typeof hostContext !== "object") return;
+    var t = normalizeTheme(hostContext.theme);
+    if (t !== null) mcpHostTheme = t;
+  }
+
+  // Substring, not equality: hosts have shipped values like
+  // \`dark-high-contrast\`. Anything unrecognised reads as "host said nothing",
+  // which leaves \`auto\` in place rather than guessing.
+  function normalizeTheme(value) {
+    if (typeof value !== "string" || !value) return null;
+    var v = value.toLowerCase();
+    if (v.indexOf("dark") !== -1) return "dark";
+    if (v.indexOf("light") !== -1) return "light";
+    return null;
+  }
+
   function hostTheme() {
     try {
-      var t = window.openai && window.openai.theme;
-      if (typeof t === "string" && t) {
-        var v = t.toLowerCase();
-        if (v.indexOf("dark") !== -1) return "dark";
-        if (v.indexOf("light") !== -1) return "light";
-      }
+      var t = normalizeTheme(window.openai && window.openai.theme);
+      if (t !== null) return t;
     } catch (e) { /* no host runtime */ }
-    return null;
+    return mcpHostTheme;
   }
 
   // Rewrite \`dark_mode\` on a chart url to match the host. Leaves the url alone
@@ -1560,17 +1592,42 @@ const WIDGET_HTML = `<!doctype html>
     if (!fromHost && msg.jsonrpc === "2.0") {
       console.warn("[tako-widget] dropped JSON-RPC message from untrusted source", msg.method || msg.id);
     }
-    // Init response → send the \`initialized\` notification so the host
-    // starts piping tool-result messages. Don't gate on response
-    // contents — any matching id (success or error) is sufficient
-    // signal that the host saw our \`ui/initialize\`.
+    // Init response → record the host's declared context, then send the
+    // \`initialized\` notification so the host starts piping tool-result
+    // messages. Don't gate on response contents — any matching id (success
+    // or error) is sufficient signal that the host saw our
+    // \`ui/initialize\`. \`hostContext\` is read opportunistically: an error
+    // response carries none, and a host that declares no theme leaves
+    // \`dark_mode=auto\` in place.
     if (
       fromHost &&
       msg.jsonrpc === "2.0" &&
       msg.id === INIT_REQUEST_ID &&
       (msg.result !== undefined || msg.error !== undefined)
     ) {
+      if (msg.result && typeof msg.result === "object") {
+        mergeHostContext(msg.result.hostContext);
+        log("host context at initialize", { theme: mcpHostTheme });
+      }
       sendInitializedNotification();
+      return;
+    }
+    // Theme (or display mode) changed after initialize. Merging keeps the
+    // next chart correct.
+    //
+    // What this does NOT do: re-theme a chart already on screen. The native
+    // upgrade replaces this document via \`document.open()\`, which discards
+    // this script and its listeners, and the baked PNG is a single
+    // pre-rendered \`data:\` URI with no light twin to swap to. So a mid-
+    // conversation toggle re-themes from the next tool call onward, and
+    // already-rendered cards keep the theme they were drawn with.
+    if (
+      fromHost &&
+      msg.jsonrpc === "2.0" &&
+      msg.method === "ui/notifications/host-context-changed"
+    ) {
+      mergeHostContext((msg.params || {}).hostContext);
+      log("host context changed", { theme: mcpHostTheme });
       return;
     }
     if (fromHost && msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
