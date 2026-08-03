@@ -1298,6 +1298,72 @@ describe("mcp apps host theme (executed)", () => {
     ).toContain("dark_mode=false");
   });
 
+  it("paints the host's own surface colour when the host sends one", () => {
+    // The exact fix for the exposed corners: an opaque canvas in the host's own
+    // colour is invisible against the host's page AND gives the corners the
+    // right backdrop. `color-scheme` can only approximate it.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      initResponse({
+        theme: "dark",
+        styles: { variables: { "--color-background-primary": "#191817" } },
+      }),
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    const root = m.widgetWin.document.documentElement;
+    // The DOM normalizes hex to rgb() on the way in.
+    expect(root.style.background).toBe("rgb(25, 24, 23)");
+    expect(root.style.colorScheme).toBe("dark");
+  });
+
+  it("refuses a host surface colour that is not a colour", () => {
+    // Arrives over postMessage and is interpolated into an injected <style>,
+    // so it is an injection sink. Allow-list a grammar, do not escape.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      initResponse({
+        theme: "dark",
+        styles: {
+          variables: {
+            "--color-background-primary": "red;} body{display:none} :root{x:",
+          },
+        },
+      }),
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    const root = m.widgetWin.document.documentElement;
+    expect(root.style.background).not.toContain("display:none");
+    // Falls back to the approximate tier rather than trusting the value.
+    expect(root.style.colorScheme).toBe("dark");
+  });
+
+  it("leaves the canvas alone entirely when the host says nothing", () => {
+    // A same-origin frame composites transparently over the parent, so the
+    // corners are already correct there. Painting anything would introduce the
+    // opaque square the transparent surface exists to avoid.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    const root = m.widgetWin.document.documentElement;
+    expect(root.style.colorScheme).toBe("");
+    expect(root.style.background).toBe("");
+  });
+
   it("declares color-scheme so the card's corners are not white", () => {
     // The card is a rounded rectangle over a transparent html/body, so its
     // corners fall through to the UA base background — WHITE unless the
@@ -1376,11 +1442,154 @@ describe("mcp apps host theme (executed)", () => {
     );
     fireImageLoad(m);
     await new Promise((r) => setTimeout(r, 30));
+    // Theme only, no surface colour sent -> the approximate tier, and NO
+    // background is painted (transparency is left intact).
     expect(written).toContain("color-scheme:dark");
-    expect(written).toContain("background:transparent");
+    expect(written).not.toContain("background:");
     // Injected before </body> so it wins over the page's own rules.
     expect(written.indexOf("color-scheme:dark")).toBeLessThan(
       written.indexOf("</body>"),
+    );
+  });
+
+  it("paints the native card document in the host's surface colour", async () => {
+    // The native path replaces this document, so the colour has to ride in the
+    // markup — and this is the tier that makes the corners exact rather than
+    // approximate.
+    const m = mountWidget(staticWidgetHtml());
+    let written = "";
+    (m.widgetWin as unknown as { fetch: unknown }).fetch = () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve("<!doctype html><html><body>c</body></html>"),
+      });
+    const doc = m.widgetWin.document as unknown as {
+      open(): void;
+      write(s: string): void;
+      close(): void;
+    };
+    doc.open = () => {};
+    doc.write = (t: string) => {
+      written += t;
+    };
+    doc.close = () => {};
+    deliver(
+      m,
+      initResponse({
+        theme: "dark",
+        styles: { variables: { "--color-background-primary": "rgb(25, 24, 23)" } },
+      }),
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
+        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(written).toContain("background:rgb(25, 24, 23)");
+    expect(written).toContain("color-scheme:dark");
+  });
+
+  it("does not inject a hostile surface colour into the native document", async () => {
+    const m = mountWidget(staticWidgetHtml());
+    let written = "";
+    (m.widgetWin as unknown as { fetch: unknown }).fetch = () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve("<!doctype html><html><body>c</body></html>"),
+      });
+    const doc = m.widgetWin.document as unknown as {
+      open(): void;
+      write(s: string): void;
+      close(): void;
+    };
+    doc.open = () => {};
+    doc.write = (t: string) => {
+      written += t;
+    };
+    doc.close = () => {};
+    deliver(
+      m,
+      initResponse({
+        theme: "dark",
+        styles: {
+          variables: {
+            "--color-background-primary": "#fff}</style><script>x=1</script><style>",
+          },
+        },
+      }),
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
+        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 30));
+    // The payload never lands, and no background is painted — it falls back
+    // to the approximate tier instead of trusting the value.
+    expect(written).not.toContain("x=1");
+    expect(written).not.toContain("background:");
+    expect(written).toContain("color-scheme:dark");
+  });
+
+  it("leaves ChatGPT's canvas transparent — no box where none existed", () => {
+    // The gate that matters for cross-platform safety. ChatGPT exposes a theme,
+    // but bare `color-scheme` paints Chrome's #121212, which reads as a visible
+    // square on any host whose frame already composites transparently. Measured
+    // against a #191817 surface, that square is obvious. claude.ai's frame is
+    // WHITE (the bug), so the trade is worth it there and only there — and on
+    // ChatGPT the chart is a NESTED cross-origin iframe we could not style
+    // anyway. So: no paint, no color-scheme, nothing.
+    const m = mountWidget(staticWidgetHtml());
+    (m.widgetWin as unknown as { openai: Record<string, unknown> }).openai = {
+      theme: "dark",
+    };
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+      m.wrapperWin,
+    );
+    const root = m.widgetWin.document.documentElement;
+    expect(root.style.colorScheme).toBe("");
+    expect(root.style.background).toBe("");
+    // ChatGPT is still themed — via the dark_mode rewrite on the iframe url,
+    // which is what actually colours its card.
+    expect(widgetFrame(m).getAttribute("src")).toContain("dark_mode=true");
+  });
+
+  it("still paints ChatGPT's canvas when a surface colour IS supplied", () => {
+    // Tier 1 is exact, so it is safe on every host — the gate is only on the
+    // approximate tier.
+    const m = mountWidget(staticWidgetHtml());
+    (m.widgetWin as unknown as { openai: Record<string, unknown> }).openai = {
+      theme: "dark",
+    };
+    deliver(
+      m,
+      initResponse({
+        styles: { variables: { "--color-background-primary": "#191817" } },
+      }),
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+      m.wrapperWin,
+    );
+    expect(m.widgetWin.document.documentElement.style.background).toBe(
+      "rgb(25, 24, 23)",
     );
   });
 

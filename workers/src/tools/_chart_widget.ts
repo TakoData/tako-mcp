@@ -680,6 +680,41 @@ const WIDGET_HTML = `<!doctype html>
     if (!hostContext || typeof hostContext !== "object") return;
     var t = normalizeTheme(hostContext.theme);
     if (t !== null) mcpHostTheme = t;
+    var surface = readHostSurface(hostContext);
+    if (surface !== null) mcpHostSurface = surface;
+  }
+
+  // The host's own page background, when it sends one. This is the EXACT fix
+  // for the card's exposed corners: painting the widget canvas in the host's
+  // surface colour makes the square canvas invisible AND gives the corners the
+  // right backdrop, where \`color-scheme\` can only get close.
+  var mcpHostSurface = null;
+
+  // Per the MCP Apps spec, \`hostContext.styles.variables\` carries standardized
+  // CSS custom properties. Take the primary background; fall back to the
+  // surface variant if a host ships only that one.
+  function readHostSurface(hostContext) {
+    var styles = hostContext.styles;
+    if (!styles || typeof styles !== "object") return null;
+    var vars = styles.variables;
+    if (!vars || typeof vars !== "object") return null;
+    var candidates = ["--color-background-primary", "--color-background-secondary"];
+    for (var i = 0; i < candidates.length; i++) {
+      var v = vars[candidates[i]];
+      if (safeCssColor(v)) return v;
+    }
+    return null;
+  }
+
+  // This value arrives over postMessage and is interpolated into a \`<style>\`
+  // block injected into the native card document, so it is an injection sink.
+  // Allow-list a colour grammar instead of trying to escape one: hex, and the
+  // functional notations, with no semicolons, braces, quotes, or \`url(\`.
+  // Anything else is dropped and we fall back to \`color-scheme\`.
+  function safeCssColor(v) {
+    if (typeof v !== "string" || v.length === 0 || v.length > 64) return false;
+    if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return true;
+    return /^(rgb|rgba|hsl|hsla|oklch|oklab|lab|lch)\\(\\s*[0-9a-zA-Z.,%\\/\\s+-]*\\)$/.test(v);
   }
 
   // Substring, not equality: hosts have shipped values like
@@ -701,24 +736,60 @@ const WIDGET_HTML = `<!doctype html>
     return mcpHostTheme;
   }
 
-  // Match the UA base background to the host's theme.
+  // Give the card's exposed corners the right backdrop.
   //
-  // Both chart surfaces (the baked PNG and the native card) are rounded
-  // rectangles over a TRANSPARENT html/body, so their corners fall through to
-  // the document's backdrop. An iframe that declares no \`color-scheme\` gets a
-  // WHITE UA base background, which on a dark host shows as white triangles at
-  // each corner of the card.
+  // Both chart surfaces (baked PNG and native card) are rounded rectangles over
+  // a TRANSPARENT html/body, so their corners fall through to the document's
+  // backdrop. Measured behaviour, in Chrome:
   //
-  // Setting \`color-scheme\` — not a background colour — is what keeps the
-  // surface transparent: an opaque colour here would restore the square block
-  // over the host's rounded container that the transparent surface removed.
-  // No-op when the host is silent: guessing dark would put black corners on a
-  // light host, which is the same bug mirrored.
-  function applyHostColorScheme() {
-    var theme = hostTheme();
-    if (!theme) return;
+  //   - same-origin frame, no \`color-scheme\`  -> canvas composites over the
+  //     parent, corners correct, nothing to fix.
+  //   - cross-origin / out-of-process frame    -> opaque WHITE base background.
+  //     This is the claude.ai case, and the white triangles people saw.
+  //   - document declares \`color-scheme: dark\` -> opaque base at CHROME's dark
+  //     value (~#121212), not transparent. Better than white on a dark host,
+  //     but a visible square against a host surface of any other shade.
+  //
+  // So there are two tiers, best first:
+  //
+  //   1. The host's own surface colour, when it sends one. Exact: the canvas
+  //      becomes indistinguishable from the host's page, so the square is
+  //      invisible and the corners are right.
+  //   2. \`color-scheme\` from the declared theme. Approximate, and only worth
+  //      it because the alternative on those hosts is WHITE.
+  //
+  // Both are no-ops when the host says nothing at all — that is the case where
+  // transparency already works (same-origin), and painting anything would
+  // introduce the opaque square the transparent surface exists to avoid.
+  function applyHostSurface() {
     try {
-      document.documentElement.style.colorScheme = theme;
+      var root = document.documentElement;
+      // Tier 1 — exact, and safe to apply on ANY host: the canvas becomes the
+      // host's own colour, so it cannot look like a box.
+      if (mcpHostSurface !== null) {
+        root.style.background = mcpHostSurface;
+        if (document.body) document.body.style.background = mcpHostSurface;
+        var t1 = hostTheme();
+        if (t1) root.style.colorScheme = t1;
+        return;
+      }
+      // Tier 2 — approximate, and deliberately gated to the MCP Apps path
+      // (\`mcpHostTheme\`, not \`hostTheme()\`), i.e. NOT ChatGPT.
+      //
+      // Measured against a claude.ai-like #191817 surface: \`color-scheme\`
+      // alone paints Chrome's #121212, which reads as a visible darker square.
+      // That is a clear win over WHITE — which is what claude.ai's
+      // cross-origin frame actually shows, per the bug this fixes — and a clear
+      // LOSS on any host where the frame already composites transparently.
+      //
+      // ChatGPT exposes a theme via \`window.openai.theme\`, but its frame's
+      // base background is not something we have measured, and on that host the
+      // chart is a NESTED cross-origin iframe whose document we cannot style
+      // anyway. So there is no upside to gamble for: leave it transparent,
+      // exactly as it renders today. ChatGPT still gets themed — via the
+      // \`dark_mode\` rewrite on the iframe url, which is what actually colours
+      // its card.
+      if (mcpHostTheme !== null) root.style.colorScheme = mcpHostTheme;
     } catch (e) { /* pre-body or hostile host — cosmetic, never fatal */ }
   }
 
@@ -1026,33 +1097,41 @@ const WIDGET_HTML = `<!doctype html>
           "__FALLBACK_HEIGHT__",
           String(fallbackHeight || 0),
         );
-        // The card paints its own surface with an 8px radius over a
-        // TRANSPARENT html/body, so its four corners fall through to whatever
-        // is behind the document — and for an iframe with no declared
-        // \`color-scheme\`, the UA base background is WHITE. On a dark host that
-        // rendered as four white triangles poking out from under the card's
-        // rounded corners.
+        // The card paints its own surface with an 8px radius over a TRANSPARENT
+        // html/body, so its corners fall through to the document's backdrop —
+        // which on claude.ai's cross-origin frame is opaque WHITE. Those were
+        // the white triangles under the card's corners.
         //
-        // \`color-scheme\` is the fix rather than a background colour: it moves
-        // the UA base background to a dark value, so the corners composite
-        // against something near the host's own surface, while html/body stay
-        // transparent (a colour here would put an opaque square back over the
-        // host's rounded container — the thing the transparent surface was
-        // introduced to remove). Injected LAST so it wins over the page's own
-        // rules, and only when the host actually told us its theme; with no
-        // theme we leave the UA default alone rather than guess dark and put
-        // black corners on a light host.
-        var scheme = hostTheme();
-        var schemeStyle = scheme
-          ? '<style id="tako-host-scheme">:root{color-scheme:' + scheme +
-            ';background:transparent}body{background:transparent}</style>'
-          : "";
+        // Same two tiers as \`applyHostSurface\`, and the same gate: the host's
+        // exact surface colour is safe anywhere, while bare \`color-scheme\`
+        // (Chrome's own #121212) only beats WHITE and would read as a visible
+        // square on a host that composites transparently — so it is limited to
+        // the MCP Apps path, where the white base is the measured behaviour.
+        //
+        // In practice this path is MCP-only anyway: ChatGPT commits to the
+        // nested iframe and never reaches the native upgrade. The gate is
+        // written explicitly so it stays correct if that changes. Injected LAST
+        // so it wins over the page's own rules.
+        var scheme = mcpHostSurface !== null ? hostTheme() : mcpHostTheme;
+        var surface = mcpHostSurface;
+        var schemeStyle = "";
+        if (surface !== null) {
+          // Exact host surface — the square canvas becomes invisible.
+          schemeStyle =
+            '<style id="tako-host-scheme">:root,body{background:' + surface + '}' +
+            (scheme ? ':root{color-scheme:' + scheme + '}' : "") + '</style>';
+        } else if (scheme) {
+          // Approximate: Chrome's base for the declared scheme. Worth it only
+          // because the alternative on a cross-origin frame is WHITE.
+          schemeStyle =
+            '<style id="tako-host-scheme">:root{color-scheme:' + scheme + '}</style>';
+        }
         var injected = schemeStyle + reporter;
         var patched =
           html.indexOf("</body>") !== -1
             ? html.replace("</body>", injected + "</body>")
             : html + injected;
-        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)" });
+        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)", surface: surface || "(none)" });
         document.open();
         document.write(patched);
         document.close();
@@ -1282,7 +1361,7 @@ const WIDGET_HTML = `<!doctype html>
     if (!structuredContent || typeof structuredContent !== "object") return false;
     // Also here, not just on the MCP handshake: ChatGPT never sends
     // \`hostContext\`, so \`window.openai.theme\` is only readable on this path.
-    applyHostColorScheme();
+    applyHostSurface();
     // No-chart short-circuit: structured content arrived but contains
     // no chart fields at all. \`tako_search\` produces this shape when it
     // returns zero cards (a clean empty result) or when the top card has
@@ -1653,7 +1732,7 @@ const WIDGET_HTML = `<!doctype html>
     ) {
       if (msg.result && typeof msg.result === "object") {
         mergeHostContext(msg.result.hostContext);
-        applyHostColorScheme();
+        applyHostSurface();
         log("host context at initialize", { theme: mcpHostTheme });
       }
       sendInitializedNotification();
@@ -1676,7 +1755,7 @@ const WIDGET_HTML = `<!doctype html>
       mergeHostContext((msg.params || {}).hostContext);
       // Re-apply: a theme toggle mid-conversation cannot re-theme the chart
       // itself, but the corners must not stay wrong.
-      applyHostColorScheme();
+      applyHostSurface();
       log("host context changed", { theme: mcpHostTheme });
       return;
     }
