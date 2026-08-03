@@ -48,6 +48,11 @@ const ENV_NO_OAUTH: Env = {
   DJANGO_BASE_URL: "https://example.test",
 };
 
+/** An always-admitting limiter binding. */
+function fakeLimiter(): { limit: (o: { key: string }) => Promise<{ success: boolean }> } {
+  return { limit: async () => ({ success: true }) };
+}
+
 const enc = new TextEncoder();
 
 function b64url(buf: ArrayBuffer | Uint8Array): string {
@@ -999,8 +1004,12 @@ describe("/login", () => {
 
   it("offers email + password directly, and no magic link", async () => {
     // Plugin review requires a password field on the page itself. The magic
-    // link is gone deliberately, so its copy must not linger.
-    const res = handleLogin(new Request("https://mcp.example.com/login"), envWith());
+    // link is gone deliberately, so its copy must not linger. Limiters bound,
+    // because the form is only rendered when the endpoint behind it can run.
+    const res = handleLogin(
+      new Request("https://mcp.example.com/login"),
+      envWith({ LOGIN_RATE_LIMITER: fakeLimiter(), LOGIN_EMAIL_RATE_LIMITER: fakeLimiter() }),
+    );
     const html = await res.text();
     expect(html).toContain('type="password"');
     expect(html).toContain('action="/login/password"');
@@ -1061,7 +1070,66 @@ describe("/login", () => {
       new Request("https://mcp.example.com/login?error=no_user_password"),
       envWith(),
     );
-    expect(await res.text()).toContain("Continue with Google");
+    const html = await res.text();
+    // Assert the DISTINGUISHING half of the copy, inside the error slot.
+    // Asserting "Continue with Google" would pass with `LOGIN_ERROR_COPY`
+    // emptied entirely, because that is the Google button's own label and the
+    // page renders it on every request.
+    expect(html).toMatch(
+      /id="err"[^>]*>[^<]*This account signs in with Google/,
+    );
+  });
+
+  it("hides the password form when the limiter binding is absent", async () => {
+    // `handleLoginPassword` fails closed without the binding, so a page that
+    // still renders the form is offering an input whose every submit 503s —
+    // and the SDK's own fallback copy points at that form.
+    const res = handleLogin(
+      new Request("https://mcp.example.com/login"),
+      envWith(),
+    );
+    const html = await res.text();
+    expect(html).not.toContain('action="/login/password"');
+    expect(html).not.toContain('type="password"');
+    // Google must survive: it is the path the fail-closed design protects.
+    expect(html).toContain("Continue with Google");
+  });
+
+  it("renders the password form when the limiter IS bound", async () => {
+    const res = handleLogin(
+      new Request("https://mcp.example.com/login"),
+      envWith({ LOGIN_RATE_LIMITER: fakeLimiter(), LOGIN_EMAIL_RATE_LIMITER: fakeLimiter() }),
+    );
+    const html = await res.text();
+    expect(html).toContain('action="/login/password"');
+    expect(html).toContain('type="password"');
+  });
+
+  it("survives an unusable public base instead of 500ing the whole page", async () => {
+    // `resolvePublicBase` throws on a trailing slash. It feeds only two footer
+    // links, so a bad value must cost those links — not the page, and above all
+    // not Google sign-in, the one path the limiter's fail-closed design keeps.
+    const res = handleLogin(
+      new Request("https://mcp.example.com/login"),
+      envWith({ PUBLIC_BASE_URL: "https://tako.com/" }),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Continue with Google");
+    expect(html).not.toContain("Forgot password?");
+  });
+
+  it("points an MFA account at Tako's own second-factor page, not at Google", async () => {
+    // Google resolves through the SAME `parseAuthenticateResponse`, so if
+    // Stytch reports the second factor on that path too, "use Google" is a
+    // loop. Tako's `/login/mfa` is the only place that can actually complete it.
+    const res = handleLogin(
+      new Request("https://mcp.example.com/login?error=mfa_required"),
+      envWith({ PUBLIC_BASE_URL: "https://tako.com" }),
+    );
+    const html = await res.text();
+    expect(html).toContain("https://tako.com/login/mfa");
+    expect(html).not.toMatch(/id="err"[^>]*>[^<]*[^>]*Continue with Google/);
   });
 });
 
@@ -1070,7 +1138,8 @@ describe("/login", () => {
 describe("POST /login/password", () => {
   function limiterEnv(overrides: Partial<Env> = {}): Env {
     return envWith({
-      LOGIN_RATE_LIMITER: { limit: async () => ({ success: true }) },
+      LOGIN_RATE_LIMITER: fakeLimiter(),
+      LOGIN_EMAIL_RATE_LIMITER: fakeLimiter(),
       ...overrides,
     });
   }
@@ -1127,6 +1196,22 @@ describe("POST /login/password", () => {
     const spy = vi.spyOn(globalThis, "fetch");
     const res = await handleLoginPassword(form("e@t.com", "pw"), envWith());
     expect(res.status).toBe(503);
+    // Assert the BODY, not just the status: `oauthDisabledResponse()` is also a
+    // 503 that never calls fetch, so a regression in `readConfig` would satisfy
+    // a status-only assertion while the limiter check went unexercised.
+    expect(await res.text()).toContain(
+      "Password sign-in is unavailable on this deployment",
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when only the EMAIL limiter binding is missing", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    const res = await handleLoginPassword(
+      form("e@t.com", "pw"),
+      envWith({ LOGIN_RATE_LIMITER: fakeLimiter() }),
+    );
+    expect(res.status).toBe(503);
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -1135,7 +1220,7 @@ describe("POST /login/password", () => {
     // other error uses — the message renders on the page instead of a bare
     // 429 body. The property that matters is that Stytch is never reached.
     const spy = vi.spyOn(globalThis, "fetch");
-    const env = envWith({
+    const env = limiterEnv({
       LOGIN_RATE_LIMITER: { limit: async () => ({ success: false }) },
     });
     const res = await handleLoginPassword(form("e@t.com", "pw"), env);
@@ -1146,7 +1231,7 @@ describe("POST /login/password", () => {
 
   it("blocks when the limiter itself throws (never fails open)", async () => {
     const spy = vi.spyOn(globalThis, "fetch");
-    const env = envWith({
+    const env = limiterEnv({
       LOGIN_RATE_LIMITER: {
         limit: async () => {
           throw new Error("limiter exploded");
@@ -1154,11 +1239,14 @@ describe("POST /login/password", () => {
       },
     });
     const res = await handleLoginPassword(form("e@t.com", "pw"), env);
+    // Assert the status too: a response carrying a `location` header with a 200
+    // is not a redirect at all, so the header alone does not pin the behaviour.
+    expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("error=rate_limited");
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("tells an MFA account to use Google rather than implying a bad password", async () => {
+  it("tells an MFA account where the second factor lives, not that the password was wrong", async () => {
     // Stytch answers 200 with an intermediate token and no session_jwt. This
     // Worker has no second-factor UI, and Tako has /login/mfa routes, so real
     // accounts hit this.
@@ -1175,14 +1263,23 @@ describe("POST /login/password", () => {
     expect(res.headers.get("location")).toContain("error=mfa_required");
   });
 
-  it("meters on both the client IP and the email", async () => {
-    // Per-IP alone misses a slow spray from a botnet at one account; per-email
-    // alone misses one host trying many accounts.
-    const keys: string[] = [];
+  /** Run one attempt, returning the keys each limiter axis was metered on. */
+  async function meteredKeys(
+    email: string,
+    ip: string,
+  ): Promise<{ ipKeys: string[]; emailKeys: string[] }> {
+    const ipKeys: string[] = [];
+    const emailKeys: string[] = [];
     const env = envWith({
       LOGIN_RATE_LIMITER: {
-        limit: async (opts: { key: string }) => {
-          keys.push(opts.key);
+        limit: async (o: { key: string }) => {
+          ipKeys.push(o.key);
+          return { success: true };
+        },
+      },
+      LOGIN_EMAIL_RATE_LIMITER: {
+        limit: async (o: { key: string }) => {
+          emailKeys.push(o.key);
           return { success: true };
         },
       },
@@ -1192,13 +1289,64 @@ describe("POST /login/password", () => {
         status: 401,
       }),
     );
-    const req = form("eric@trytako.com", "pw");
-    req.headers.set("cf-connecting-ip", "203.0.113.7");
+    const req = form(email, "pw");
+    req.headers.set("cf-connecting-ip", ip);
     await handleLoginPassword(req, env);
-    expect(keys.some((k) => k.includes("203.0.113.7"))).toBe(true);
-    expect(keys.length).toBe(2);
-    // The email is hashed, never keyed in the clear.
-    expect(keys.some((k) => k.includes("eric@trytako.com"))).toBe(false);
+    return { ipKeys, emailKeys };
+  }
+
+  it("meters each email under its own key, not one shared bucket", async () => {
+    // A constant email key would satisfy "two keys, one has the IP, none has
+    // the plaintext address" while being a single global bucket — i.e. one
+    // attacker could lock every account out of password sign-in. The property
+    // that matters is that distinct emails map to DISTINCT keys.
+    const a = await meteredKeys("alice@trytako.com", "203.0.113.7");
+    const b = await meteredKeys("bob@trytako.com", "203.0.113.7");
+    expect(a.emailKeys).toHaveLength(1);
+    expect(b.emailKeys).toHaveLength(1);
+    expect(a.emailKeys[0]).not.toBe(b.emailKeys[0]);
+    // …and the same address is stable, or the bucket never accumulates.
+    const again = await meteredKeys("alice@trytako.com", "198.51.100.4");
+    expect(again.emailKeys[0]).toBe(a.emailKeys[0]);
+  });
+
+  it("meters the client IP, and keys the email as a hash", async () => {
+    const { ipKeys, emailKeys } = await meteredKeys(
+      "eric@trytako.com",
+      "203.0.113.7",
+    );
+    expect(ipKeys.some((k) => k.includes("203.0.113.7"))).toBe(true);
+    // Key hygiene: the rate-limit key space never holds the address itself.
+    expect(emailKeys.some((k) => k.includes("eric@trytako.com"))).toBe(false);
+  });
+
+  it("does not charge the victim's email bucket for a fieldless POST", async () => {
+    // The cheapest attack on a per-email bucket is junk POSTs against a known
+    // address: no password guess needed, and the victim is held in the
+    // `rate_limited` redirect. Field validation must run BEFORE the email axis
+    // is metered, so only attempts that reach a credential check can consume
+    // someone else's bucket. The IP axis is still charged, so the spam is not
+    // free to the sender.
+    const ipKeys: string[] = [];
+    const emailKeys: string[] = [];
+    const env = envWith({
+      LOGIN_RATE_LIMITER: {
+        limit: async (o: { key: string }) => {
+          ipKeys.push(o.key);
+          return { success: true };
+        },
+      },
+      LOGIN_EMAIL_RATE_LIMITER: {
+        limit: async (o: { key: string }) => {
+          emailKeys.push(o.key);
+          return { success: true };
+        },
+      },
+    });
+    const res = await handleLoginPassword(form("victim@trytako.com", ""), env);
+    expect(res.headers.get("location")).toContain("error=missing_fields");
+    expect(emailKeys).toHaveLength(0);
+    expect(ipKeys).toHaveLength(1);
   });
 
   it("redirects back to /login with a generic code on bad credentials", async () => {
@@ -1256,6 +1404,99 @@ describe("POST /login/password", () => {
       limiterEnv(),
     );
     expect(res.headers.get("location")).toContain("error=reset_password");
+  });
+
+  it("classifies every mapped Stytch error_type, and both default branches", async () => {
+    // Table-driven so no branch of `loginErrorCode` is reachable-but-unpinned.
+    // The 5xx row matters most: during a Stytch outage the page must not tell
+    // every user their password is wrong.
+    const cases: Array<{ errorType: string | undefined; status: number; code: string }> = [
+      { errorType: "invalid_credentials", status: 401, code: "invalid_credentials" },
+      { errorType: "email_not_found", status: 404, code: "invalid_credentials" },
+      { errorType: "user_not_found", status: 404, code: "invalid_credentials" },
+      { errorType: "password_does_not_match", status: 401, code: "invalid_credentials" },
+      { errorType: "no_user_password", status: 401, code: "no_user_password" },
+      { errorType: "reset_password", status: 401, code: "reset_password" },
+      { errorType: "password_reset_required", status: 401, code: "reset_password" },
+      // `default:` — unmapped type, credential-ish status.
+      { errorType: "something_new_from_stytch", status: 401, code: "invalid_credentials" },
+      { errorType: "also_unmapped", status: 404, code: "invalid_credentials" },
+      // `default:` — the outage side. Ours, not theirs.
+      { errorType: "internal_server_error", status: 500, code: "server_error" },
+      { errorType: undefined, status: 503, code: "server_error" },
+    ];
+    for (const c of cases) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify(c.errorType === undefined ? {} : { error_type: c.errorType }),
+          { status: c.status },
+        ),
+      );
+      const res = await handleLoginPassword(
+        form("eric@trytako.com", "pw"),
+        limiterEnv(),
+      );
+      expect(res.status, `${c.errorType}/${c.status}`).toBe(302);
+      expect(res.headers.get("location"), `${c.errorType}/${c.status}`).toContain(
+        `error=${c.code}`,
+      );
+    }
+  });
+
+  it("allows a header-less POST but never lets it mint a session", async () => {
+    // `sec-fetch-site` absent (curl, an older browser) is deliberately allowed
+    // through. The limiter does NOT make that safe — it bounds volume, and a
+    // forced login needs one request. What actually saves it is that
+    // `tako_oauth_state` is SameSite=Lax, so a cross-site POST arrives without
+    // it and `completeStytchLogin` bails BEFORE appending the session cookie.
+    // That ordering is load-bearing; this pins it.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          session_jwt: "stub.session.jwt",
+          user: { emails: [{ email: "eric@trytako.com" }] },
+        }),
+        { status: 200 },
+      ),
+    );
+    const req = new Request("https://mcp.example.com/login/password", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        email: "eric@trytako.com",
+        password: "correct",
+      }).toString(),
+    });
+    expect(req.headers.get("sec-fetch-site")).toBeNull();
+    const res = await handleLoginPassword(req, limiterEnv());
+    // No state cookie was sent, so no session cookie may come back.
+    expect(res.headers.get("set-cookie") ?? "").not.toContain(SESSION_COOKIE);
+  });
+
+  it("treats a non-form body as missing fields rather than throwing", async () => {
+    // `req.formData().catch(() => null)` swallows the parse failure; without a
+    // test, a refactor could turn a malformed body into an unhandled rejection.
+    const req = new Request("https://mcp.example.com/login/password", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "sec-fetch-site": "same-origin",
+      },
+      body: '{"email":"e@t.com","password":"pw"}',
+    });
+    const spy = vi.spyOn(globalThis, "fetch");
+    const res = await handleLoginPassword(req, limiterEnv());
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("error=missing_fields");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a GET", async () => {
+    const res = await handleLoginPassword(
+      new Request("https://mcp.example.com/login/password"),
+      limiterEnv(),
+    );
+    expect(res.status).toBe(405);
   });
 
   it("never puts the password or email in the redirect", async () => {
@@ -1347,7 +1588,16 @@ describe("POST /login/password", () => {
       limiterEnv(),
     );
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain("authorization request was lost");
+    const body = await res.text();
+    // The state cookie can now expire INSIDE a retry loop that password
+    // sign-in introduced, so this page is reachable after a SUCCESSFUL login.
+    // It must say the sign-in worked, name the 10-minute window, and give a way
+    // forward — not just report that a request was lost.
+    expect(body).toContain("signed in successfully");
+    expect(body).toContain("10 minutes");
+    expect(body).toContain("start the connection again");
+    // And it must not imply the account is at fault.
+    expect(body).not.toContain("authorization request was lost");
   });
 });
 

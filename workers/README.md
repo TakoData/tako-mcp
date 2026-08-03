@@ -29,7 +29,7 @@ requests 401 exactly as before):
 | `FREE_TIER_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-IP fairness bucket: 10 free-tool `tools/call`s / 60 s |
 | `FREE_TIER_GLOBAL_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-colo burst shaping: 120 anonymous requests / 60 s / colo, all callers |
 
-Declare both under the first-class `ratelimits` key. **Never under
+Declare every limiter under the first-class `ratelimits` key. **Never under
 `unsafe.bindings`** — that path is a raw passthrough: the API accepts it,
 `wrangler versions view` renders the limits correctly, and `limit()`
 resolves without throwing, but it never counts, so every call returns
@@ -247,6 +247,42 @@ key until it is revoked/regenerated on the Tako account itself — do both.
 The three-tool restriction is Worker-side filtering, not an authorization
 boundary on the key, so treat the key's blast radius as the whole
 account.
+
+## Password sign-in (`POST /login/password`)
+
+The OAuth sign-in page offers Google **and** email + password. The password
+path is a plain server-side form POST, so the password never passes through
+the CDN-delivered Stytch SDK. Two more `ratelimits` bindings gate it, and
+unlike the free-tier ones these are **fail-closed**:
+
+| Binding | Kind | Purpose |
+|---|---|---|
+| `LOGIN_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per client IP: 8 / 60 s. Charged for **every** attempt, including ones with missing fields |
+| `LOGIN_EMAIL_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per hashed email: 30 / 60 s. Deliberately looser, and charged only once the fields are present |
+
+Two axes because neither covers the other: per-IP misses one account sprayed
+from many hosts, per-email misses one host walking a list. Separate *bindings*
+because a `ratelimits` limit is per-binding. The email axis is the one an
+attacker can aim at a victim, so it is both looser and unreachable without a
+real credential attempt — otherwise 8 empty POSTs a minute would lock a known
+address out of password sign-in for free.
+
+**Neither is a hard bound**, and the fail-closed decision does not pretend
+otherwise. Per "Measured behaviour" above, the binding counts per colo and a
+cold burst admits ~115 requests regardless of the configured limit. What these
+buy is a dampener plus a `wrangler tail` signal (`[login] password sign-in
+rate-limited`). **The real bound on guessing one password is Stytch's own
+per-user lockout**, configured in the Stytch dashboard, not here — if you
+change these numbers, check that policy too, because it is what actually stops
+a determined attacker.
+
+**Disabling password sign-in.** There is no no-redeploy kill switch (unlike
+`FREE_TIER_API_KEY`). Remove both `ratelimits` entries and deploy:
+`handleLoginPassword` then 503s and `/login` stops rendering the form
+altogether (`hasLoginLimiters`), leaving Google as the only option. Removing
+just one of the two is enough to trip it, and removing them without a deploy
+does nothing. Google sign-in is unaffected either way — that separation is why
+the limiter check lives in the password handler rather than in `readConfig`.
 
 **Runbook — detecting fail-open:** the only signal that a limiter outage
 has the tier failing open is the Worker error log line. Check for it

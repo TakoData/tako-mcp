@@ -67,18 +67,30 @@
       "simple": { "limit": 120, "period": 60 }
     },
     {
-      // Throttles `POST /login/password`, keyed per client IP AND per hashed
-      // email (two `limit()` calls, same namespace, different keys). Unlike
-      // the free-tier buckets above, this one is load-bearing: the endpoint
-      // checks a password on a public unauthenticated URL, so `handlers.ts`
-      // FAILS CLOSED and serves Google-only when the binding is absent.
-      // Declared in the top-level block too, so `wrangler dev` is not
-      // silently reduced to Google-only. 8/60s is per-key, and per the
-      // "Measured behaviour" note above the binding counts PER COLO — this
-      // dampens credential stuffing, Stytch's own lockout is the real bound.
+      // Throttles `POST /login/password` per CLIENT IP — the sender's own axis,
+      // charged for every attempt including fieldless ones. Unlike the
+      // free-tier buckets above, the login buckets are fail-CLOSED: the
+      // endpoint checks a password on a public unauthenticated URL, so
+      // `handlers.ts` 503s and `/login` hides the form when either is absent.
+      // Declared in the top-level block too, so `wrangler dev` is not silently
+      // reduced to Google-only. Per the "Measured behaviour" note above the
+      // binding counts PER COLO and leaks ~115 on a cold burst regardless of
+      // the limit — these dampen stuffing and make it visible in `wrangler
+      // tail`; Stytch's own per-user lockout is the real bound.
       "name": "LOGIN_RATE_LIMITER",
       "namespace_id": "1020",
       "simple": { "limit": 8, "period": 60 }
+    },
+    {
+      // Throttles `POST /login/password` per HASHED EMAIL, and deliberately
+      // LOOSER than the per-IP bucket above: this is the axis an attacker can
+      // aim at a victim, so a tight limit here is a cheap way to lock a known
+      // address out of password sign-in. A separate binding because a
+      // `ratelimits` limit is per-binding, so one binding cannot hold two
+      // limits. Only charged once the fields are present.
+      "name": "LOGIN_EMAIL_RATE_LIMITER",
+      "namespace_id": "1030",
+      "simple": { "limit": 30, "period": 60 }
     }
   ],
   "env": {
@@ -139,11 +151,17 @@
           "simple": { "limit": 120, "period": 60 }
         },
         {
-          // Throttles `POST /login/password` — load-bearing and fail-closed,
-          // see the top-level declaration of this binding for why.
+          // Per-IP login bucket — fail-closed, see the top-level declaration.
           "name": "LOGIN_RATE_LIMITER",
           "namespace_id": "1021",
           "simple": { "limit": 8, "period": 60 }
+        },
+        {
+          // Per-email login bucket, looser on purpose — see the top-level
+          // declaration for why it is a separate binding.
+          "name": "LOGIN_EMAIL_RATE_LIMITER",
+          "namespace_id": "1031",
+          "simple": { "limit": 30, "period": 60 }
         }
       ],
       // `custom_domain: true` provisions a Cloudflare Custom Domain (TLS
@@ -191,11 +209,17 @@
           "simple": { "limit": 120, "period": 60 }
         },
         {
-          // Throttles `POST /login/password` — load-bearing and fail-closed,
-          // see the top-level declaration of this binding for why.
+          // Per-IP login bucket — fail-closed, see the top-level declaration.
           "name": "LOGIN_RATE_LIMITER",
           "namespace_id": "1022",
           "simple": { "limit": 8, "period": 60 }
+        },
+        {
+          // Per-email login bucket, looser on purpose — see the top-level
+          // declaration for why it is a separate binding.
+          "name": "LOGIN_EMAIL_RATE_LIMITER",
+          "namespace_id": "1032",
+          "simple": { "limit": 30, "period": 60 }
         }
       ],
       "routes": [

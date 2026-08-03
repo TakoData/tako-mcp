@@ -12,10 +12,14 @@
  *   GET /authorize ──no session?──▶ set state cookie, 302 to /login
  *      │
  *      ▼
- *   GET /login ──renders Stytch UI──▶ user picks Google / magic-link
- *      │
- *      ▼
- *   Stytch (Google / email) ──redirect──▶ GET /oauth/stytch_callback
+ *   GET /login ──renders sign-in UI──▶ user picks Google, or posts a password
+ *      │                                          │
+ *      │                            POST /login/password ──▶ Stytch passwords
+ *      │                                          │            authenticate
+ *      ▼                                          │
+ *   Stytch (Google) ──redirect──▶ GET /oauth/stytch_callback
+ *      │                                          │
+ *      └──────────────▶ completeStytchLogin ◀──────┘
  *      │
  *      ▼
  *   /oauth/stytch_callback:
@@ -1161,15 +1165,20 @@ async function issueTokens(
 /* --------------------------- Login --------------------------- */
 
 /**
- * Render the login page. The page is a static HTML document that
- * embeds Stytch's vanilla-js SDK over CDN, configures it with the
- * `STYTCH_PUBLIC_TOKEN`, and offers Sign-in-with-Google + email
- * magic-link entry points.
+ * Render the login page. Two entry points:
  *
- * On successful authentication Stytch will redirect the user to the
- * URL we pass as `login_redirect_url`, with a `?token=...` query and
- * a `&stytch_token_type=oauth|magic_links` discriminator. We point
- * that at our `/oauth/stytch_callback` endpoint.
+ *  - **Google**, driven by Stytch's vanilla-js SDK over their CDN, configured
+ *    with `STYTCH_PUBLIC_TOKEN`. On success Stytch redirects to the URL passed
+ *    as `login_redirect_url` with `?token=...` and a
+ *    `&stytch_token_type=oauth|magic_links` discriminator, which we point at
+ *    `/oauth/stytch_callback`.
+ *  - **Email + password**, a plain server-side form POST to `/login/password`
+ *    that never touches the SDK, so the password cannot pass through
+ *    CDN-delivered script. Rendered only when the limiter bindings that endpoint
+ *    fails closed on are present — see `hasLoginLimiters`.
+ *
+ * The magic link is deliberately gone: it sends the user out of the browser
+ * mid-OAuth-dance, and the state cookie it has to outlive is 10 minutes.
  */
 export function handleLogin(req: Request, env: Env): Response {
   const cfg = readConfig(env);
@@ -1179,44 +1188,127 @@ export function handleLogin(req: Request, env: Env): Response {
   }
   const url = new URL(req.url);
   const callbackUrl = `${url.origin}/oauth/stytch_callback`;
-  // Closed-set lookup, not free text — see `LOGIN_ERROR_COPY`.
+  const webBase = safePublicBase(env);
+  // Closed-set lookup, not free text — see `loginErrorFor`.
   const errorCode = url.searchParams.get("error");
-  const errorMessage =
-    errorCode !== null ? (LOGIN_ERROR_COPY[errorCode] ?? "") : "";
   return htmlResponse(
-    loginPage(cfg.stytch.publicToken, callbackUrl, errorMessage, env),
+    loginPage({
+      stytchPublicToken: cfg.stytch.publicToken,
+      callbackUrl,
+      error: errorCode === null ? null : loginErrorFor(errorCode, webBase),
+      webBase,
+      // The form is only honest when the endpoint behind it can actually run —
+      // see `hasLoginLimiters`.
+      passwordEnabled: hasLoginLimiters(env),
+    }),
   );
 }
 
 /**
- * Error codes `/login/password` may hand back to `/login` via `?error=`.
+ * The public web origin, or `null` when it cannot be resolved.
  *
- * A CLOSED set, mapped to copy server-side. The redirect param is
+ * `resolvePublicBase` THROWS — on an absent value, a trailing slash, an
+ * unparseable URL, a non-http scheme. It feeds only the optional deep links on
+ * this page, so a bad value must cost those links and nothing else. Letting it
+ * propagate would take the entire sign-in page to a bare 500, **including
+ * Google sign-in** — the one path the limiter's fail-closed design goes out of
+ * its way to preserve. A misconfigured origin is exactly the kind of edit
+ * (`PUBLIC_BASE_URL: "https://tako.com/"`) that reaches production unnoticed.
+ */
+function safePublicBase(env: Env): string | null {
+  try {
+    return resolvePublicBase(env);
+  } catch (err) {
+    console.error(
+      "[login] public base URL unusable, omitting the footer links:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
+/**
+ * Whether password sign-in can be served at all.
+ *
+ * `handleLoginPassword` fails closed without BOTH limiter bindings, so this is
+ * the same predicate it uses. `handleLogin` gates the form on it: rendering
+ * email/password inputs whose every submit 503s is worse than not offering
+ * them, and the SDK's own fallback copy points the user at that form.
+ */
+function hasLoginLimiters(env: Env): boolean {
+  return (
+    typeof env.LOGIN_RATE_LIMITER?.limit === "function" &&
+    typeof env.LOGIN_EMAIL_RATE_LIMITER?.limit === "function"
+  );
+}
+
+/** A rendered error message, plus an optional recovery link. */
+interface LoginErrorCopy {
+  text: string;
+  link?: { href: string; label: string };
+}
+
+/**
+ * Copy for the error codes `/login/password` and `/oauth/stytch_callback` hand
+ * back to `/login` via `?error=`.
+ *
+ * A CLOSED set, mapped server-side. The redirect param is
  * attacker-controllable, so rendering arbitrary text from it would turn the
  * sign-in page into a phishing surface ("your session expired, call this
- * number"). Unknown codes render nothing at all.
+ * number"). Unknown codes return `null` and render nothing at all.
  *
  * The split mirrors Tako's own `PasswordSignInPage.tsx`:
- * `invalid_credentials` deliberately absorbs unknown-email AND wrong-password
- * so the page cannot be used to enumerate accounts, while `no_user_password`
- * and `reset_password` stay distinct because they are the two cases where the
- * user needs to be told to do something different.
+ * `invalid_credentials` deliberately absorbs unknown-email AND wrong-password.
+ * `no_user_password` and `reset_password` stay distinct, which DOES let one
+ * junk-password POST learn that an address exists — accepted deliberately: with
+ * the magic link gone, a passwordless account that is told "incorrect email or
+ * password" has no way to discover that Google is its way in. Tako's own
+ * sign-in page has the same property, so this leaks nothing that is not already
+ * public, and both cases are recoverable from the page as it stands.
  */
-const LOGIN_ERROR_COPY: Record<string, string> = {
-  invalid_credentials: "Incorrect email or password.",
-  missing_fields: "Enter both your email and password.",
-  no_user_password:
-    "This account signs in with Google. Use “Continue with Google” above.",
-  reset_password:
-    "Your password needs to be reset. Use “Forgot password?” below to get a reset link.",
-  rate_limited: "Too many sign-in attempts. Wait a minute and try again.",
-  server_error: "Something went wrong signing you in. Please try again.",
-  // This Worker has no second-factor UI. Google carries the factor itself, so
-  // it is the way through for an MFA account — say so rather than implying the
-  // password was wrong.
-  mfa_required:
-    "This account uses two-factor authentication, which isn’t supported here yet. Use “Continue with Google” above.",
-};
+function loginErrorFor(code: string, webBase: string | null): LoginErrorCopy | null {
+  switch (code) {
+    case "invalid_credentials":
+      return { text: "Incorrect email or password." };
+    case "missing_fields":
+      return { text: "Enter both your email and password." };
+    case "no_user_password":
+      return {
+        text: "This account signs in with Google. Use “Continue with Google” above.",
+      };
+    case "reset_password":
+      return {
+        text: "Your password needs to be reset.",
+        ...(webBase === null
+          ? {}
+          : {
+              link: {
+                href: `${webBase}/login/forgot-password`,
+                label: "Get a reset link",
+              },
+            }),
+      };
+    case "rate_limited":
+      return { text: "Too many sign-in attempts. Wait a minute and try again." };
+    case "server_error":
+      return { text: "Something went wrong signing you in. Please try again." };
+    // This Worker has no second-factor UI. Do NOT send these users to Google:
+    // the Google callback resolves through the SAME `parseAuthenticateResponse`
+    // (MFA in Stytch is a policy on the user, not on the primary factor), so if
+    // Stytch reports the second factor there too, "use Google" is the exact
+    // loop this copy exists to prevent. Tako's own `/login/mfa` is the only
+    // place that can complete the factor.
+    case "mfa_required":
+      return {
+        text: "This account uses two-factor authentication, which isn’t supported here.",
+        ...(webBase === null
+          ? {}
+          : { link: { href: `${webBase}/login/mfa`, label: "Finish signing in on Tako" } }),
+      };
+    default:
+      return null;
+  }
+}
 
 /**
  * Map a Stytch failure to one of `LOGIN_ERROR_COPY`'s codes.
@@ -1253,9 +1345,10 @@ function loginErrorCode(err: StytchError): string {
  * `POST /login/password` — authenticate an email + password against Stytch and
  * resume the OAuth dance, landing in exactly the same place Google does.
  *
- * Ordering is deliberate: method → config → same-site → limiter → field
- * presence → Stytch. Every gate that can reject without touching a password
- * check runs first, so the expensive, attackable call is last.
+ * Ordering is deliberate: method → config → same-site → per-IP meter → field
+ * presence → per-email meter → Stytch. Every gate that can reject without
+ * touching a password check runs first, so the expensive, attackable call is
+ * last. The per-email meter sits AFTER field validation on purpose; see below.
  */
 export async function handleLoginPassword(
   req: Request,
@@ -1268,21 +1361,31 @@ export async function handleLoginPassword(
   if (cfg === null) return oauthDisabledResponse();
   const url = new URL(req.url);
 
-  // CSRF: the form is same-origin, so a cross-site POST is either a forged
-  // login or a scanner. `Sec-Fetch-Site` is set by the browser and cannot be
-  // spoofed from page JS; a missing header (older browser, curl) is allowed
-  // through because the limiter below still bounds it.
+  // CSRF. A cross-site POST is rejected outright on `Sec-Fetch-Site`, which the
+  // browser sets and page JS cannot spoof. `same-site` is rejected too, so a
+  // `*.tako.com` subdomain is not trusted either.
+  //
+  // A MISSING header (curl, an older browser) is allowed through, and what makes
+  // that safe is NOT the limiter below — a limiter bounds volume, and a forced
+  // login needs exactly one request. The real control is that `tako_oauth_state`
+  // is `SameSite=Lax` (`cookies.ts`), so a cross-site POST arrives without it
+  // and `completeStytchLogin` bails at its missing-state branch BEFORE it
+  // appends the session `Set-Cookie`. That ordering is load-bearing: building
+  // the response headers before the state check would silently reintroduce
+  // forced login for header-less clients. `handlers.test.ts` pins it.
   const fetchSite = req.headers.get("sec-fetch-site");
   if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") {
     return new Response("cross-site form post rejected", { status: 403 });
   }
 
-  // Fail-closed on the limiter — see `Env.LOGIN_RATE_LIMITER`.
-  const limiter = env.LOGIN_RATE_LIMITER;
-  if (typeof limiter?.limit !== "function") {
+  // Fail-closed on BOTH limiters — see `Env.LOGIN_RATE_LIMITER`.
+  const ipLimiter = env.LOGIN_RATE_LIMITER;
+  const emailLimiter = env.LOGIN_EMAIL_RATE_LIMITER;
+  if (!hasLoginLimiters(env) || ipLimiter === undefined || emailLimiter === undefined) {
     console.error(
-      "[login] LOGIN_RATE_LIMITER is unbound — refusing password sign-in " +
-        "(Google sign-in unaffected). Declare it under `ratelimits`.",
+      "[login] a login rate-limit binding is unbound — refusing password " +
+        "sign-in (Google sign-in unaffected). Declare LOGIN_RATE_LIMITER and " +
+        "LOGIN_EMAIL_RATE_LIMITER under `ratelimits`.",
     );
     return errorPage(
       503,
@@ -1291,35 +1394,44 @@ export async function handleLoginPassword(
     );
   }
 
+  const ip = req.headers.get("cf-connecting-ip") ?? "unknown";
+  // The sender's own axis is charged for every attempt, valid or not, so
+  // fieldless spam is never free to whoever sends it.
+  if (!(await meterOrNull(ipLimiter, `login:ip:${ip}`))) {
+    return rateLimited(url, ip);
+  }
+
   const body = await req.formData().catch(() => null);
   const email = String(body?.get("email") ?? "").trim();
   const password = String(body?.get("password") ?? "");
 
-  // Meter BEFORE validating fields, on both axes. Per-IP alone misses a slow
-  // distributed spray at one account; per-email alone misses one host walking
-  // a list. The email is hashed so the rate-limit key space never holds
-  // plaintext addresses.
-  const ip = req.headers.get("cf-connecting-ip") ?? "unknown";
-  const emailKey = email === "" ? "empty" : await sha256B64Url(email.toLowerCase());
-  const verdicts = await Promise.all([
-    limiter.limit({ key: `login:ip:${ip}` }),
-    limiter.limit({ key: `login:email:${emailKey}` }),
-  ]).catch(() => null);
-  // A limiter that throws must not fail OPEN on this endpoint.
-  if (verdicts === null || verdicts.some((v) => !v.success)) {
-    // The response is a 302 (this is a browser form post, so the message
-    // belongs on the page) which means the status code carries no signal for
-    // abuse monitoring — log it so a stuffing run is visible in `wrangler
-    // tail`. IP only; the email is the thing being guessed at.
-    console.warn(
-      "[login] password sign-in rate-limited",
-      verdicts === null ? "(limiter threw)" : `ip=${ip}`,
-    );
-    return redirectToLogin(url, "rate_limited");
-  }
-
+  // Validate fields BEFORE metering the email axis. Metering first meant 8 junk
+  // POSTs a minute against a known address — no password guess needed — held
+  // that address in the `rate_limited` redirect from arbitrary IPs, with copy
+  // that blamed the victim. Only attempts that reach a real credential check may
+  // consume someone else's bucket.
   if (email === "" || password === "") {
     return redirectToLogin(url, "missing_fields");
+  }
+
+  // Two axes, because neither covers the other: per-IP misses one account
+  // sprayed from many hosts, per-email misses one host walking a list. Separate
+  // BINDINGS because a Cloudflare `ratelimits` limit is per-binding, and the
+  // email bucket is deliberately looser than the IP bucket — it is the axis an
+  // attacker can aim at a victim.
+  //
+  // Neither axis is a hard bound, and the fail-closed decision above does not
+  // pretend otherwise: `ratelimits` counts PER COLO, and this repo's own
+  // measurements (`workers/README.md`, "Measured behaviour") show a cold burst
+  // admitting ~115 requests regardless of the configured limit. So these buckets
+  // dampen stuffing and make it visible in `wrangler tail`; the real bound on
+  // guessing a single password is Stytch's own per-user lockout. The endpoint
+  // still refuses to serve without them, because "dampened and logged" and
+  // "wide open and silent" are not the same posture on an unauthenticated
+  // password check.
+  const emailKey = await sha256B64Url(email.toLowerCase());
+  if (!(await meterOrNull(emailLimiter, `login:email:${emailKey}`))) {
+    return rateLimited(url, ip);
   }
 
   let stytchResult: StytchAuthenticateResult;
@@ -1340,6 +1452,37 @@ export async function handleLoginPassword(
     throw err;
   }
   return completeStytchLogin(req, url, cfg, stytchResult);
+}
+
+/**
+ * Charge one hit against `key`, reporting whether the caller may proceed.
+ *
+ * Returns `false` both when the bucket is empty and when the binding THROWS. A
+ * limiter that errors must not fail open on an unauthenticated password check —
+ * that is the failure mode the whole fail-closed posture exists for.
+ */
+async function meterOrNull(limiter: RateLimit, key: string): Promise<boolean> {
+  try {
+    const { success } = await limiter.limit({ key });
+    return success;
+  } catch (err) {
+    console.error(
+      "[login] rate-limit binding threw; treating as limited:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return false;
+  }
+}
+
+/**
+ * The rate-limited response. A 302 rather than a 429 because this is a browser
+ * form post and the message belongs on the page — which means the status code
+ * carries no signal for abuse monitoring, so log it here instead. IP only: the
+ * email is the thing being guessed at.
+ */
+function rateLimited(url: URL, ip: string): Response {
+  console.warn("[login] password sign-in rate-limited", `ip=${ip}`);
+  return redirectToLogin(url, "rate_limited");
 }
 
 /**
@@ -1369,25 +1512,63 @@ function jsStringLiteral(s: string): string {
   return JSON.stringify(s).replace(/</g, "\\u003c");
 }
 
-function loginPage(
-  stytchPublicToken: string,
-  callbackUrl: string,
-  errorMessage: string,
-  env: Env,
-): string {
+interface LoginPageOptions {
+  stytchPublicToken: string;
+  callbackUrl: string;
+  /** Closed-set copy for `?error=`, or `null` to render an empty error slot. */
+  error: LoginErrorCopy | null;
+  /** Public web origin, or `null` when unresolvable — see `safePublicBase`. */
+  webBase: string | null;
+  /** Whether to render the email/password form at all — see `hasLoginLimiters`. */
+  passwordEnabled: boolean;
+}
+
+function loginPage(opts: LoginPageOptions): string {
+  const { stytchPublicToken, callbackUrl, error, webBase, passwordEnabled } = opts;
   // `publicToken` and `callbackUrl` are embedded as JS string literals via
   // `jsStringLiteral`, not HTML-escaped — they live inside <script>, not in
-  // HTML attributes or text. `errorMessage` is the reverse: it lands in HTML
+  // HTML attributes or text. The error copy is the reverse: it lands in HTML
   // text, so it goes through `escapeHtml`. It is already a value from the
-  // closed `LOGIN_ERROR_COPY` set, so this is belt-and-suspenders.
-  const safeError = escapeHtml(errorMessage);
+  // closed `loginErrorFor` set, so this is belt-and-suspenders.
+  const errorLink =
+    error?.link === undefined
+      ? ""
+      : ` <a href="${escapeHtml(error.link.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(error.link.label)}</a>`;
+  const safeError = error === null ? "" : `${escapeHtml(error.text)}${errorLink}`;
   // Deep links into Tako's real web app, which owns account creation, password
   // reset, and MFA. Routes verified against `routeTree.gen.ts`
   // (`/login/forgot-password`, `/signup`) — a dead link here is precisely the
-  // kind of thing a plugin reviewer clicks first.
-  const webBase = resolvePublicBase(env);
-  const forgotUrl = escapeHtml(`${webBase}/login/forgot-password`);
-  const signupUrl = escapeHtml(`${webBase}/signup`);
+  // kind of thing a plugin reviewer clicks first. Omitted entirely when the
+  // origin is unusable, rather than taking the page down with them.
+  const footer =
+    webBase === null
+      ? ""
+      : `
+  <p class="foot"><a href="${escapeHtml(`${webBase}/login/forgot-password`)}" target="_blank" rel="noopener noreferrer">Forgot password?</a></p>
+  <p class="foot">New to Tako? <a href="${escapeHtml(`${webBase}/signup`)}" target="_blank" rel="noopener noreferrer">Create an account</a></p>`;
+  // The divider only makes sense between two alternatives.
+  const passwordBlock = !passwordEnabled
+    ? ""
+    : `
+  <div class="divider">or</div>
+
+  <form method="POST" action="/login/password" autocomplete="on">
+    <div class="field">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required autocomplete="username"
+             inputmode="email" autocapitalize="none" spellcheck="false" placeholder="you@company.com">
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required
+             autocomplete="current-password" placeholder="Your password">
+    </div>
+    <button type="submit" class="btn-primary">Sign in</button>
+  </form>`;
+  // The SDK's own failure copy may only point at the form when there IS one.
+  const sdkFallback = passwordEnabled
+    ? "Google sign-in is unavailable. Use your email and password below."
+    : "Google sign-in is unavailable. Please try again in a moment.";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1495,24 +1676,8 @@ function loginPage(
     Continue with Google
   </button>
 
-  <div class="divider">or</div>
-
-  <form method="POST" action="/login/password" autocomplete="on">
-    <div class="field">
-      <label for="email">Email</label>
-      <input type="email" id="email" name="email" required autocomplete="username"
-             inputmode="email" autocapitalize="none" spellcheck="false" placeholder="you@company.com">
-    </div>
-    <div class="field">
-      <label for="password">Password</label>
-      <input type="password" id="password" name="password" required
-             autocomplete="current-password" placeholder="Your password">
-    </div>
-    <button type="submit" class="btn-primary">Sign in</button>
-  </form>
-
-  <p class="foot"><a href="${forgotUrl}" target="_blank" rel="noopener noreferrer">Forgot password?</a></p>
-  <p class="foot">New to Tako? <a href="${signupUrl}" target="_blank" rel="noopener noreferrer">Create an account</a></p>
+${passwordBlock}
+${footer}
 </main>
 
 <!-- Stytch's vanilla JS SDK, used for the Google redirect only. Loaded over
@@ -1528,13 +1693,17 @@ function loginPage(
     var publicToken = ${jsStringLiteral(stytchPublicToken)};
     var callbackUrl = ${jsStringLiteral(callbackUrl)};
     var errEl = document.getElementById("err");
+    // textContent, never innerHTML — this sink must stay inert even though
+    // every message it receives is a server-side literal.
     function showError(msg) { errEl.textContent = msg || ""; }
+    // Server-rendered so it cannot promise a form that is not on the page.
+    var sdkFallback = ${jsStringLiteral(sdkFallback)};
 
     var client;
     try {
       client = Stytch(publicToken);
     } catch (e) {
-      showError("Google sign-in is unavailable. Use your email and password below.");
+      showError(sdkFallback);
       return;
     }
 
@@ -1546,7 +1715,7 @@ function loginPage(
           signup_redirect_url: callbackUrl
         });
       } catch (e) {
-        showError("Google sign-in failed to start. Use your email and password below.");
+        showError(sdkFallback);
       }
     });
   })();
@@ -1590,11 +1759,13 @@ export async function handleStytchCallback(
   } catch (err) {
     if (err instanceof StytchError) {
       console.error("Stytch authenticate failed:", err.message, err.errorType);
-      return errorPage(
-        502,
-        `Stytch authentication failed (${err.errorType ?? err.status}). ` +
-          "Please try signing in again.",
-      );
+      // Route through the SAME closed-set copy the password path uses, rather
+      // than interpolating `error_type` into a 502. Two reasons: users must
+      // never see an internal Stytch code (this branch used to render "Stytch
+      // authentication failed (mfa_required)"), and the same condition must not
+      // produce two different messages depending on which factor the user
+      // picked. `loginErrorFor` decides what each code says in one place.
+      return redirectToLogin(url, loginErrorCode(err));
     }
     throw err;
   }
@@ -1644,11 +1815,19 @@ async function completeStytchLogin(
   // we have no idea where to send the user; surface a friendly error.
   const stateRaw = readCookie(req, STATE_COOKIE);
   if (stateRaw === null) {
+    // Reachable on a SUCCESSFUL sign-in, and more easily since password login
+    // arrived: `tako_oauth_state` lives 10 minutes from `/authorize`, and a
+    // mistype → `invalid_credentials` → retry → `rate_limited` ("wait a minute")
+    // loop can now spend that window inside this page. The TTL is deliberately
+    // NOT extended on retry — re-signing it would let one authorization request
+    // live indefinitely — so the fix is copy that says what happened and what
+    // to do, instead of a bare "request was lost".
     return errorPage(
       400,
-      "Login completed, but the original authorization request was lost " +
-        "(missing state cookie). Please restart the connect flow from " +
-        "your client.",
+      "You signed in successfully, but this connection request expired " +
+        "(it stays valid for 10 minutes). Nothing is wrong with your account — " +
+        "start the connection again from the app you were connecting, and " +
+        "you will not need to sign in twice.",
     );
   }
   const stateClaims = await verifyJwt<StateCookieClaims>(stateRaw, cfg.signKey);

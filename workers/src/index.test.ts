@@ -23,6 +23,33 @@ describe("worker routing", () => {
     expect(res.status).toBe(404);
   });
 
+  // `/login/password` is wired in `index.ts` but every other test calls
+  // `handleLoginPassword` directly, so dropping the dispatch line would leave
+  // the whole suite green while password sign-in 404'd in production. The
+  // router is exact-match, so what proves wiring is simply that this path does
+  // NOT fall through to the catch-all 404.
+  describe("POST /login/password is wired into the router", () => {
+    it("does not fall through to the catch-all 404", async () => {
+      // No OAUTH_*/STYTCH_* secrets in the test env, so the handler's own
+      // config gate answers 503 `temporarily_unavailable`. Any non-404 proves
+      // dispatch reached the handler.
+      const res = await SELF.fetch("https://example.com/login/password", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "email=e%40t.com&password=pw",
+      });
+      expect(res.status).not.toBe(404);
+      expect(res.status).toBe(503);
+    });
+
+    it("answers 405 on a GET, before any config gate", async () => {
+      // The method check runs first, so this distinguishes "route exists" from
+      // "route missing" without depending on secrets at all.
+      const res = await SELF.fetch("https://example.com/login/password");
+      expect(res.status).toBe(405);
+    });
+  });
+
   // The native-card proxy routes, end to end through the router.
   //
   // All other coverage of these two is handler-level in `embed_proxy.test.ts`,

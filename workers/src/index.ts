@@ -162,7 +162,11 @@ export default {
     // Email + password sign-in. A server-side form POST rather than a
     // browser-SDK call, so the password never passes through the CDN-loaded
     // Stytch script and the session lands via the same cookie Google's
-    // redirect uses. Must be matched BEFORE any `/login` prefix handling.
+    // redirect uses.
+    //
+    // Every OAuth route here is an EXACT `pathname ===` compare, so this needs
+    // no particular position relative to `/login` above. Any future
+    // `startsWith("/login")` handler would have to go below this line.
     if (url.pathname === "/login/password") {
       return handleLoginPassword(request, env);
     }

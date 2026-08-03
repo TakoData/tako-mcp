@@ -241,7 +241,7 @@ The consumer chat hosts don't accept Bearer tokens. `claude_desktop_config.json`
 
 ![ChatGPT connector connected](docs/images/chatgpt-tako-connected.png)
 
-**During connect** you'll see three Tako-hosted screens regardless of host: a sign-in page (Google or email magic-link), a consent page (*"Connect [host] to Tako — Allow / Cancel"*), then a bounce back to the host. The host may show its own consent prompt too — that's normal.
+**During connect** you'll see three Tako-hosted screens regardless of host: a sign-in page (Google, or your Tako email and password), a consent page (*"Connect [host] to Tako — Allow / Cancel"*), then a bounce back to the host. The host may show its own consent prompt too — that's normal.
 
 ![mcp.tako.com sign-in](docs/images/mcp-tako-signin.png)
 ![mcp.tako.com consent](docs/images/mcp-tako-consent.png)
