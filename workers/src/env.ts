@@ -190,6 +190,19 @@ export interface Env {
    * be present for the free tier to activate.
    */
   FREE_TIER_GLOBAL_RATE_LIMITER?: RateLimit;
+  /**
+   * Cloudflare rate-limit binding throttling `POST /login/password`, keyed
+   * BOTH per client IP and per (hashed) email — see `handleLoginPassword`.
+   *
+   * Fail-CLOSED and load-bearing, unlike the free-tier limiters whose absence
+   * merely reverts to a 401: `/login/password` is an unauthenticated endpoint
+   * that checks a password on a public host, so without a limiter it is a
+   * credential-stuffing oracle. When this is unbound the endpoint 503s and
+   * only Google sign-in works. Declared under `ratelimits` in
+   * `wrangler.jsonc` for every env INCLUDING the top-level `wrangler dev`
+   * block, so local dev is not silently reduced to Google-only.
+   */
+  LOGIN_RATE_LIMITER?: RateLimit;
 }
 
 /**

@@ -81,10 +81,70 @@ export async function authenticateStytchToken(
       // dance (consent → /token call). The session is later wrapped
       // into our own session cookie and the Stytch JWT is discarded
       // immediately after we use it to fetch the Tako token.
-      session_duration_minutes: 60,
+      session_duration_minutes: SESSION_DURATION_MINUTES,
     }),
   });
 
+  return parseAuthenticateResponse(response, path);
+}
+
+/**
+ * Session lifetime we ask Stytch for. Long enough to finish the OAuth dance
+ * (consent → `/token`); the JWT is wrapped into our own session cookie and
+ * discarded right after it mints the Tako key.
+ */
+const SESSION_DURATION_MINUTES = 60;
+
+/**
+ * Authenticate an email + password directly against Stytch.
+ *
+ * Server-side rather than through the browser SDK, unlike Tako's own
+ * `PasswordSignInPage`: this Worker already exchanges OAuth and magic-link
+ * tokens the same way, and keeping the session JWT server-side means the
+ * password flow reuses the existing session-cookie minting untouched instead
+ * of introducing a second way to become logged in.
+ *
+ * `error_type` is preserved on the thrown `StytchError` because the caller
+ * MUST distinguish the failures — notably `no_user_password`, which means the
+ * account exists but signed up via Google. Collapsing that into "incorrect
+ * email or password" would strand a Google user on a page that no longer
+ * offers a magic link.
+ *
+ * The password is never interpolated into a message or a URL — `StytchError`
+ * messages reach `console.error`.
+ */
+export async function authenticateStytchPassword(
+  cfg: StytchConfig,
+  email: string,
+  password: string,
+): Promise<StytchAuthenticateResult> {
+  const path = "/v1/passwords/authenticate";
+  const response = await fetch(`${cfg.baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: authHeader(cfg),
+    },
+    body: JSON.stringify({
+      email,
+      password,
+      session_duration_minutes: SESSION_DURATION_MINUTES,
+    }),
+  });
+
+  return parseAuthenticateResponse(response, path);
+}
+
+/**
+ * Shared response contract for every Stytch authenticate endpoint. One parser
+ * so the token and password paths cannot disagree about what a valid session
+ * looks like — they feed the same session-cookie minting downstream, so a
+ * shape one accepts and the other rejects would be a latent auth bug.
+ */
+async function parseAuthenticateResponse(
+  response: Response,
+  path: string,
+): Promise<StytchAuthenticateResult> {
   let payload: unknown;
   try {
     payload = await response.json();
@@ -112,6 +172,25 @@ export async function authenticateStytchToken(
   const obj = payload as Record<string, unknown>;
   const session_jwt = obj["session_jwt"];
   const user = obj["user"];
+  // MFA: Tako has `/login/mfa` and `/login/mfa-setup` routes, so accounts with
+  // a second factor exist. For those, Stytch answers 200 with an
+  // `intermediate_session_token` and NO usable `session_jwt` — the caller must
+  // complete the second factor before a session exists. This Worker
+  // implements no second-factor UI, so name the case instead of letting it
+  // fall into the generic "missing session_jwt" bucket, which would surface as
+  // "something went wrong" and send the user in circles.
+  const intermediate = obj["intermediate_session_token"];
+  if (
+    (typeof session_jwt !== "string" || session_jwt.length === 0) &&
+    typeof intermediate === "string" &&
+    intermediate.length > 0
+  ) {
+    throw new StytchError(
+      `Stytch ${path} requires a second factor`,
+      response.status,
+      "mfa_required",
+    );
+  }
   if (typeof session_jwt !== "string" || session_jwt.length === 0) {
     throw new StytchError(
       `Stytch ${path} response missing session_jwt`,

@@ -7,6 +7,7 @@ import {
   handleAuthorize,
   handleAuthServerMetadata,
   handleLogin,
+  handleLoginPassword,
   handleProtectedResourceMetadata,
   handleRegister,
   handleRevoke,
@@ -157,6 +158,13 @@ export default {
     }
     if (url.pathname === "/login") {
       return handleLogin(request, env);
+    }
+    // Email + password sign-in. A server-side form POST rather than a
+    // browser-SDK call, so the password never passes through the CDN-loaded
+    // Stytch script and the session lands via the same cookie Google's
+    // redirect uses. Must be matched BEFORE any `/login` prefix handling.
+    if (url.pathname === "/login/password") {
+      return handleLoginPassword(request, env);
     }
     if (url.pathname === "/oauth/stytch_callback") {
       return handleStytchCallback(request, env);
