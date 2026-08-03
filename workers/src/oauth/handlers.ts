@@ -692,6 +692,17 @@ export async function handleAuthorize(
       if (err.kind === "unauthorized") {
         // Stytch session was revoked or expired — force re-login by
         // clearing the now-useless session cookie.
+        //
+        // Log it: a 401/403 here is ALSO what a Worker↔Django misconfiguration
+        // looks like (TAKO-3754 — the Worker sent the wrong session-cookie
+        // NAME to staging, so Django saw no cookie and 403'd). Without this
+        // line the two are indistinguishable and a config break masquerades
+        // as a user's expired sign-in with nothing in `wrangler tail`.
+        console.error(
+          "Tako rejected the Stytch session at /authorize POST:",
+          err.status,
+          err.message,
+        );
         return htmlResponse(
           sessionExpiredPage(
             "Your Tako sign-in expired. Please sign in again.",
