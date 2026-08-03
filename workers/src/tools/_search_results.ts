@@ -632,6 +632,23 @@ export const autoChainShape = {
 // tako_search output: v3 cards + web_results + request_id + the widget
 // fields for the top card. Mirrors tako_answer's {cards, web_results,
 // request_id} plus the inline-render plumbing.
+/**
+ * The six widget fields, all present or the value is `undefined`.
+ *
+ * Whole-or-nothing rather than `Partial<>` because of the spread site: under
+ * `exactOptionalPropertyTypes` spreading an optional property widens it to
+ * `| undefined`, which `SearchOutput` then rejects. Returning the complete set
+ * keeps the literal inside this function checked key-by-key — which is the
+ * whole point of typing it at all — and callers spread `?? {}`.
+ */
+type AutoChainFields = z.infer<z.ZodObject<typeof autoChainShape>>;
+export type TopCardChartFields = {
+  // `-?` drops the optionality and `NonNullable` drops the `| undefined` that
+  // `.optional()` leaves in the VALUE. `Required<>` alone keeps the latter,
+  // which is still the widening `exactOptionalPropertyTypes` rejects.
+  [K in keyof AutoChainFields]-?: NonNullable<AutoChainFields[K]>;
+};
+
 export const searchOutputShape = {
   cards: z.array(takoCardSchema),
   web_results: z.array(webResultSchema),
@@ -1015,7 +1032,11 @@ export function buildSearchOutput(
         }
       : {}),
   };
-  return { ...base, ...topCardChartFields(cards, env) };
+  // Branch rather than `...(x ?? {})`: spreading a union of the full field set
+  // and `{}` makes every key optional again, which is exactly the widening
+  // `exactOptionalPropertyTypes` rejects against `SearchOutput`.
+  const chart = topCardChartFields(cards, env);
+  return chart === undefined ? base : { ...base, ...chart };
 }
 
 /**
@@ -1035,9 +1056,19 @@ export function topCardChartFields(
   // one place that decides what counts as renderable.
   cards: readonly { card_id?: string | null | undefined }[],
   env: Env,
-): Record<string, unknown> {
+  // Typed from `autoChainShape`, NOT `Record<string, unknown>`. These six
+  // fields used to be an inline literal inside `buildSearchOutput`, checked
+  // against its `SearchOutput` return type — so a renamed or mistyped key was a
+  // compile error. Widening to an index signature erased exactly the check that
+  // makes "the two tools cannot drift" true: `{...base, ...topCardChartFields()}`
+  // would still satisfy `SearchOutput` while emitting `pub_idd`, or a string
+  // `height`, and the host would just see a silently missing field on BOTH
+  // tools at once. Tying the return to the same shape both advertised schemas
+  // are built from restores it, and lets `tako_answer`'s hooks read
+  // `output.image_url` off a typed value instead of casting.
+): TopCardChartFields | undefined {
   const topCardId = cards[0]?.card_id;
-  if (typeof topCardId !== "string" || topCardId === "") return {};
+  if (typeof topCardId !== "string" || topCardId === "") return undefined;
   const { embed_url, image_url } = buildChartUrls(
     env,
     topCardId,

@@ -14,6 +14,7 @@ Tako MCP gives your agent industry-leading live web search plus licensed data th
 Tako MCP lets an agent:
 
 - **Search** Tako's knowledge graph and the live web — top result renders inline as a chart
+- **Answer** one specific data question with citations — the top cited card renders inline as a chart too
 - **Answer** a specific data question with grounded, citation-backed prose
 - **Discover** exactly what proprietary data exists for an entity or metric — free and fast
 - **Fetch** the underlying rows (CSV) or a page's text behind any result URL
@@ -264,7 +265,7 @@ Tools are discovered automatically via the MCP `tools/list` handshake, so your c
 | Tool | Description |
 | ---- | ----------- |
 | `tako_search` | **Pull the data to work with.** Fast search over Tako's curated graph and the live web; each card inlines its most-recent rows free (the 20-row inline allowance; `preview_rows` caps it down, `tako_contents` exports more, priced). Top result renders inline as a chart (an interactive MCP Apps widget on ChatGPT, a chart image elsewhere) with an **Open in Tako** link. Choose `sources` (`data`, `web`, or both) and `effort` (`fast` / `instant`). Parallelize broad questions into narrow single entity+metric searches for far better retrieval. |
-| `tako_answer` | **Ask one specific data question, get the answer.** A single grounded, citation-backed prose answer, already written for you — relay it directly. Cited data cards carry a rows-count pointer alongside the prose, with the rows themselves in `structuredContent` (`cards[].content`); when zero data cards ground the answer, a `guidance` field says so deterministically (pivot, don't rephrase-retry). Ground in `data`, `web`, or both. |
+| `tako_answer` | **Ask one specific data question, get the answer.** A single grounded, citation-backed prose answer, already written for you — relay it directly. Cited data cards carry a rows-count pointer alongside the prose, with the rows themselves in `structuredContent` (`cards[].content`); when zero data cards ground the answer, a `guidance` field says so deterministically (pivot, don't rephrase-retry). The top cited card renders inline as a chart, the same as `tako_search`. Ground in `data`, `web`, or both. |
 | `tako_contents` | Fetch the content behind result URLs (1-10 per call, batched): a Tako card returns a CSV, any other URL returns the page's extracted text — pass `query` to get just the matching passages of a long page. Cards must be marked `exportable: true` (web URLs are exempt). |
 | `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search/answer. Returns the coverage names, a `node_id` to pin, and — when the target is unambiguous — a ready-to-run `next_call` (search query + pinned nodes) to fetch the confirmed series. Free and fast. |
 

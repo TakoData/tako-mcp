@@ -18,6 +18,7 @@ import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import takoAnswer, { buildAnswerBody } from "./tako_answer.js";
 import takoSearch from "./tako_search.js";
+import { APP_UI_RESOURCE_URI } from "./_chart_widget.js";
 import { SearchRequest } from "../generated/schemas.js";
 import {
   bodyOf,
@@ -28,6 +29,13 @@ import {
 } from "./__test_helpers.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+// The widget's CSP declarations are gated on PUBLIC_CDN_URL; without it
+// `connectDomains` is [] and `nativeCardUrl` bails, so an env that omits it
+// cannot exercise anything origin-dependent.
+const WIDGET_ENV: Env = {
+  DJANGO_BASE_URL: "https://staging.trytako.com",
+  PUBLIC_CDN_URL: "https://d1iyjvzoctsna.cloudfront.net",
+};
 const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
@@ -226,20 +234,73 @@ describe("tako_answer renders a chart, exactly like tako_search", () => {
     expect(takoAnswer.appUiResource).toBeDefined();
     expect(takoSearch.appUiResource).toBeDefined();
     const ORIGIN = "https://mcp.example.test";
-    const a = takoAnswer.appUiResource!(ENV, ORIGIN);
-    const s = takoSearch.appUiResource!(ENV, ORIGIN);
+    const a = takoAnswer.appUiResource!(WIDGET_ENV, ORIGIN);
+    const s = takoSearch.appUiResource!(WIDGET_ENV, ORIGIN);
+    // Absolute, not just equal to search's — an identical regression inside the
+    // shared builder would satisfy a purely relational assertion on both sides.
+    expect(a.uri).toBe(APP_UI_RESOURCE_URI);
     expect(a.uri).toBe(s.uri);
     expect(a.html).toBe(s.html);
-    // requestOrigin must reach the resource: it is what the native-card URL
-    // and the connectDomains declaration are derived from.
     expect(a.frameDomains).toEqual(s.frameDomains);
     expect(a.resourceDomains).toEqual(s.resourceDomains);
     expect(a.connectDomains).toEqual(s.connectDomains);
   });
 
+  it("forwards requestOrigin into the CSP declaration", () => {
+    // The previous version of this test could not fail: with PUBLIC_CDN_URL
+    // unset, `connectDomains` short-circuits to [] and `nativeCardUrl` bails
+    // before reading the origin, so dropping the argument changed nothing.
+    // WIDGET_ENV sets it, which is what makes the origin observable.
+    const withOrigin = takoAnswer.appUiResource!(
+      WIDGET_ENV,
+      "https://mcp.example.test",
+    );
+    const without = takoAnswer.appUiResource!(WIDGET_ENV, undefined);
+    expect(withOrigin.connectDomains).toEqual(["https://mcp.example.test"]);
+    expect(without.connectDomains).toEqual([]);
+    expect(withOrigin.resourceDomains).toContain("https://mcp.example.test");
+  });
+
   it("carries the widget hooks search carries", () => {
     expect(typeof takoAnswer.extraMeta).toBe("function");
     expect(typeof takoAnswer.extraContentBlocks).toBe("function");
+  });
+
+  it("sends ChatGPT dimensions only, never the whole PNG", async () => {
+    // `bakeImage: ctx.client !== "chatgpt"` is justified as "a 64-byte ranged
+    // read instead of a ~170 KB render". Inverted, every ChatGPT answer call
+    // pays the full PNG_FETCH_TIMEOUT_MS budget for a payload that host
+    // discards — and nothing caught that, here or in search.
+    const seen: { url: string; range: string | null }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const req = new Request(input as RequestInfo, init);
+      seen.push({ url: req.url, range: req.headers.get("range") });
+      // 8 bytes of PNG signature + IHDR length so the dimension parser has
+      // something to chew on; the assertion is about the REQUEST.
+      return new Response(new Uint8Array(64), {
+        status: 206,
+        headers: { "content-type": "image/png" },
+      });
+    }) as typeof fetch);
+
+    await takoAnswer.extraMeta!(
+      { image_url: "https://x.test/api/v1/image/abc/", pub_id: "abc" } as never,
+      { ...CTX, client: "chatgpt" } as never,
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.range).not.toBeNull();
+  });
+
+  it("returns no content block when there is no chart", async () => {
+    // `fetchPngContentBlock(undefined)` would fetch the string "undefined".
+    const spy = vi.spyOn(globalThis, "fetch");
+    await expect(
+      takoAnswer.extraContentBlocks!({} as never, CTX),
+    ).resolves.toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it("advertises the widget fields, or the SDK strips them", () => {

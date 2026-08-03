@@ -1,5 +1,5 @@
 import { JSDOM, VirtualConsole } from "jsdom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../../src/env.js";
 import {
@@ -1189,6 +1189,111 @@ describe("host theme (executed)", () => {
 });
 
 /**
+ * The handshake-ordering race robertabbott flagged.
+ *
+ * `initialized` goes out on a 200 ms timer whether or not the init RESPONSE
+ * landed, so a host answering in ~350 ms legitimately delivers a tool-result
+ * BEFORE we know its theme. Rendering then latches an OS-themed card that
+ * neither the late response nor a retry can fix.
+ */
+describe("first-render hold (executed)", () => {
+  const NATIVE_URL = "https://mcp.example.test/embed-html/abc123?dark_mode=auto";
+
+  /** Simulate the 200 ms timer having fired without an init response. */
+  function forceInitializedSent(m: Mounted): void {
+    vi.advanceTimersByTime(250);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function chart(): unknown {
+    return toolResult(
+      { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
+      { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
+    );
+  }
+
+  it("holds a tool-result that arrives after `initialized` but before the response", () => {
+    const m = mountWidget(staticWidgetHtml());
+    forceInitializedSent(m);
+    deliver(m, chart(), m.wrapperWin);
+    // Nothing painted yet — the theme is still unknown.
+    expect(widgetImg(m).getAttribute("src")).toBeNull();
+  });
+
+  it("renders with the theme once the late response lands", () => {
+    const m = mountWidget(staticWidgetHtml());
+    const calls: string[] = [];
+    (m.widgetWin as unknown as { fetch: unknown }).fetch = (url: string) => {
+      calls.push(String(url));
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve("<!doctype html><html><body>c</body></html>"),
+      });
+    };
+    forceInitializedSent(m);
+    deliver(m, chart(), m.wrapperWin);
+    // Response arrives at ~350 ms, after the tool-result.
+    deliver(
+      m,
+      { jsonrpc: "2.0", id: "tako-ui-init", result: { hostContext: { theme: "light" } } },
+      m.wrapperWin,
+    );
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+    fireImageLoad(m);
+    // The card is themed from the HOST, which is the whole point — before the
+    // hold this url carried `dark_mode=auto` and resolved off the OS.
+    expect(calls[0]).toContain("dark_mode=false");
+  });
+
+  it("releases the hold when the grace window expires", () => {
+    // A host that answers `initialized` but never `ui/initialize` must not
+    // strand the chart forever.
+    const m = mountWidget(staticWidgetHtml());
+    forceInitializedSent(m);
+    deliver(m, chart(), m.wrapperWin);
+    expect(widgetImg(m).getAttribute("src")).toBeNull();
+    vi.advanceTimersByTime(500);
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+  });
+
+  it("renders only once when the response and the grace both fire", () => {
+    const m = mountWidget(staticWidgetHtml());
+    forceInitializedSent(m);
+    deliver(m, chart(), m.wrapperWin);
+    deliver(
+      m,
+      { jsonrpc: "2.0", id: "tako-ui-init", result: { hostContext: { theme: "dark" } } },
+      m.wrapperWin,
+    );
+    const first = widgetImg(m).getAttribute("src");
+    vi.advanceTimersByTime(500);
+    expect(widgetImg(m).getAttribute("src")).toBe(first);
+    // `rendered` latches, so a replay could not double-render anyway — but the
+    // held payload is cleared before rendering so it cannot be replayed at all.
+    expect(
+      methodsSent(m).filter((x) => x === "ui/notifications/size-changed").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("does NOT hold a tool-result that precedes `initialized`", () => {
+    // Such a host is not following the handshake, so there is no response to
+    // wait for — holding would only delay the chart. This is also the shape
+    // every other test in this file uses, which is why they still pass.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, chart(), m.wrapperWin);
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+  });
+});
+
+/**
  * The MCP Apps theme source. `window.openai.theme` is ChatGPT-only, so on
  * claude.ai the theme used to resolve to null and both chart urls stayed on
  * `dark_mode=auto` — i.e. the OS. A light Claude on a dark machine therefore
@@ -1613,6 +1718,132 @@ describe("mcp apps host theme (executed)", () => {
     expect(m.widgetWin.document.documentElement.style.background).toBe(
       "rgb(25, 24, 23)",
     );
+  });
+
+  it("drops a stale surface when the host flips theme without sending one", () => {
+    // noahjax's confirmed bug. A spec-legal `{theme:"light"}` with no `styles`
+    // must not leave the DARK colour in `mcpHostSurface` — it stays truthy, so
+    // tier 1 returns early and paints it under a light card. This PR's own bug,
+    // mirrored, and confidently wrong rather than merely stale.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      initResponse({
+        theme: "dark",
+        styles: { variables: { "--color-background-primary": "#191817" } },
+      }),
+      m.wrapperWin,
+    );
+    deliver(m, contextChanged({ theme: "light" }), m.wrapperWin);
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    const root = m.widgetWin.document.documentElement;
+    // Tier 1 dropped, tier 2 ran with the NEW theme.
+    expect(root.style.background).toBe("");
+    expect(root.style.colorScheme).toBe("light");
+  });
+
+  it("keeps the surface when a partial update repeats the same theme", () => {
+    // The complement: dropping on every update would throw away a good colour.
+    // Only a CHANGE of theme with no replacement surface invalidates it.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      initResponse({
+        theme: "dark",
+        styles: { variables: { "--color-background-primary": "#191817" } },
+      }),
+      m.wrapperWin,
+    );
+    deliver(m, contextChanged({ theme: "dark" }), m.wrapperWin);
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    expect(m.widgetWin.document.documentElement.style.background).toBe(
+      "rgb(25, 24, 23)",
+    );
+  });
+
+  it("keeps a surface that arrives WITH the theme flip", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      initResponse({
+        theme: "dark",
+        styles: { variables: { "--color-background-primary": "#191817" } },
+      }),
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      contextChanged({
+        theme: "light",
+        styles: { variables: { "--color-background-primary": "#ffffff" } },
+      }),
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    expect(m.widgetWin.document.documentElement.style.background).toBe(
+      "rgb(255, 255, 255)",
+    );
+  });
+
+  it("rejects shape-valid values that are not colours", () => {
+    // The enumeration kept leaking: rgb() was closed, then rgb( ) got back
+    // through, and #12345 / #1234567 / rgb(url) never were. Each passed, painted
+    // nothing, and left tier 1 claiming success — so the parser decides now.
+    for (const bogus of ["rgb( )", "rgb(url)", "lab(image-set)", "#12345", "#1234567"]) {
+      const m = mountWidget(staticWidgetHtml());
+      deliver(
+        m,
+        initResponse({
+          theme: "dark",
+          styles: { variables: { "--color-background-primary": bogus } },
+        }),
+        m.wrapperWin,
+      );
+      deliver(
+        m,
+        toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+        m.wrapperWin,
+      );
+      const root = m.widgetWin.document.documentElement;
+      expect(root.style.background, `${bogus} must not paint`).toBe("");
+      // And the fallback tier still runs, which the early return had suppressed.
+      expect(root.style.colorScheme, `${bogus} must fall through`).toBe("dark");
+    }
+  });
+
+  it("still accepts the spellings CSS does accept", () => {
+    for (const good of ["#fff", "#ffff", "#191817", "#191817ff", "rgb(25, 24, 23)"]) {
+      const m = mountWidget(staticWidgetHtml());
+      deliver(
+        m,
+        initResponse({
+          theme: "dark",
+          styles: { variables: { "--color-background-primary": good } },
+        }),
+        m.wrapperWin,
+      );
+      deliver(
+        m,
+        toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+        m.wrapperWin,
+      );
+      expect(
+        m.widgetWin.document.documentElement.style.background,
+        `${good} must paint`,
+      ).not.toBe("");
+    }
   });
 
   it("prefers window.openai.theme when both sources are present", () => {

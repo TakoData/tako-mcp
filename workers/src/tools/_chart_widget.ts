@@ -148,6 +148,24 @@ export const APP_UI_RESOURCE_NAME = "open_chart_ui_widget";
  * interactive.
  */
 export const APP_UI_TEMPLATE_URI_PATTERN = "ui://tako/embed/chart/{pub_id}";
+
+/**
+ * The per-pub_id template, suffixed by the same dev lever as the static uri.
+ *
+ * The template self-busts across DIFFERENT charts because `{pub_id}` varies —
+ * but not when you re-test the same chart, which is precisely the loop
+ * `WIDGET_URI_SUFFIX` exists for. It also serves a different builder
+ * (`buildBakedWidgetHtml`) and is the uri written into the per-call
+ * `_meta.ui.resourceUri`, so a host that DOES honour that override would
+ * otherwise be pinned to a cached bundle with no way out.
+ *
+ * Registration and resolution both go through here, so the two can never
+ * disagree about the string.
+ */
+export function appUiTemplateUriPattern(env: Env): string {
+  const uri = appUiResourceUri(env);
+  return `${uri}/{pub_id}`;
+}
 export const APP_UI_TEMPLATE_NAME = "open_chart_ui_widget_baked";
 
 // Defaults used when a caller doesn't supply chart-options — applied when
@@ -710,8 +728,20 @@ const WIDGET_HTML = `<!doctype html>
   function mergeHostContext(hostContext) {
     if (!hostContext || typeof hostContext !== "object") return;
     var t = normalizeTheme(hostContext.theme);
-    if (t !== null) mcpHostTheme = t;
     var surface = readHostSurface(hostContext);
+    // Merge semantics differ between these two fields, and the spec's "merge,
+    // don't replace" rule is why. A theme value is self-describing, so keeping
+    // a known one across an update that omits it is right. A SURFACE COLOUR is
+    // theme-DEPENDENT: a host that flips dark to light and sends the
+    // spec-legal \`{theme:"light"}\` with no \`styles\` would otherwise leave the
+    // dark colour in place, and because it stays truthy tier 1 returns early
+    // and paints it under a light card — this PR's own bug, mirrored, and
+    // confidently wrong rather than merely stale. So a theme CHANGE that
+    // carries no replacement surface drops the stale one and lets tier 2 run.
+    if (t !== null && t !== mcpHostTheme && surface === null) {
+      mcpHostSurface = null;
+    }
+    if (t !== null) mcpHostTheme = t;
     if (surface !== null) mcpHostSurface = surface;
   }
 
@@ -737,9 +767,43 @@ const WIDGET_HTML = `<!doctype html>
   // functional notations, with no semicolons, braces, quotes, or \`url(\`.
   // Anything else is dropped and we fall back to \`color-scheme\`.
   function safeCssColor(v) {
+    return allowListedColorShape(v) && paintsAsColor(v);
+  }
+
+  // Gate 1 — the INJECTION guard, and the only reason a grammar is enumerated
+  // here at all: this value is interpolated into a \`<style>\` block written into
+  // the native card document. No braces, semicolons, quotes, angle brackets or
+  // parens inside the body, so nothing can close the block or smuggle
+  // \`url(\`/\`expression(\`. Length-capped. Hex spellings are the four CSS
+  // actually defines (3/4/6/8) — \`{3,8}\` also matched 5 and 7, which are not
+  // colours.
+  function allowListedColorShape(v) {
     if (typeof v !== "string" || v.length === 0 || v.length > 64) return false;
-    if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return true;
+    if (/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(v)) return true;
     return /^(rgb|rgba|hsl|hsla|oklch|oklab|lab|lch)\\(\\s*[0-9a-zA-Z.,%\\/\\s+-]+\\)$/.test(v);
+  }
+
+  // Gate 2 — does it actually PAINT? The shape check enumerates spellings, and
+  // the enumeration kept leaking: \`rgb()\`, then \`rgb( )\`, \`rgb(url)\`,
+  // \`lab(image-set)\`, \`#12345\`. Each passed, assigned as nothing, left
+  // \`mcpHostSurface\` truthy so tier 1 returned early, and made the log report
+  // a surface that never rendered. Asking the CSS parser closes the whole class
+  // instead of the next spelling. Runs SECOND so the injection gate is never
+  // skipped, and the parser only ever sees an already-allow-listed string.
+  function paintsAsColor(v) {
+    try {
+      if (window.CSS && window.CSS.supports &&
+          window.CSS.supports("background-color", v)) {
+        return true;
+      }
+    } catch (e) { /* fall through to the round-trip */ }
+    try {
+      var probe = document.createElement("span");
+      probe.style.backgroundColor = v;
+      return probe.style.backgroundColor !== "";
+    } catch (e) {
+      return false;
+    }
   }
 
   // Substring, not equality: hosts have shipped values like
@@ -814,6 +878,12 @@ const WIDGET_HTML = `<!doctype html>
       // exactly as it renders today. ChatGPT still gets themed — via the
       // \`dark_mode\` rewrite on the iframe url, which is what actually colours
       // its card.
+      // Falling BACK to tier 2 has to undo tier 1, not just stop repeating it.
+      // Clearing \`mcpHostSurface\` on a theme flip is half the fix; if the
+      // earlier exact colour is left on the element, the canvas keeps painting
+      // the old theme's surface no matter what this tier decides.
+      root.style.background = "";
+      if (document.body) document.body.style.background = "";
       if (mcpHostTheme !== null) root.style.colorScheme = mcpHostTheme;
     } catch (e) { /* pre-body or hostile host — cosmetic, never fatal */ }
   }
@@ -1096,6 +1166,15 @@ const WIDGET_HTML = `<!doctype html>
   function upgradeToNativeCard(nativeUrl, fallbackHeight) {
     if (nativeStarted || typeof nativeUrl !== "string" || nativeUrl === "") return;
     nativeStarted = true;
+    // Snapshot the theme HERE, next to the url whose \`dark_mode\` was already
+    // fixed from it by the caller's \`withHostTheme\`. Reading it again inside
+    // the \`.then()\` — up to 7 s later — let a \`host-context-changed\` arriving
+    // mid-fetch write a document whose CARD was rendered for the old theme
+    // wrapped in a \`:root{background;color-scheme}\` block for the new one. And
+    // \`nativeStarted\` means there is no second fetch to reconcile it, so the
+    // inconsistency would be permanent for that card.
+    var snapSurface = mcpHostSurface;
+    var snapScheme = snapSurface ? hostTheme() : mcpHostTheme;
     var settled = false;
     var timer = setTimeout(function () {
       if (settled) return;
@@ -1137,8 +1216,8 @@ const WIDGET_HTML = `<!doctype html>
         // nested iframe and never reaches the native upgrade. The gate is
         // written explicitly so it stays correct if that changes. Injected LAST
         // so it wins over the page's own rules.
-        var scheme = mcpHostSurface ? hostTheme() : mcpHostTheme;
-        var surface = mcpHostSurface;
+        var scheme = snapScheme;
+        var surface = snapSurface;
         var schemeStyle = "";
         if (surface) {
           // Exact host surface — the square canvas becomes invisible.
@@ -1678,6 +1757,50 @@ const WIDGET_HTML = `<!doctype html>
   var initRequestSent = false;
   var initializedSent = false;
 
+  // ---- First-render hold: the handshake-ordering race ----
+  //
+  // \`initialized\` goes out on a 200 ms timer whether or not the init RESPONSE
+  // landed, so "the host is spec-compliant" never guaranteed the theme was
+  // known by the first \`tool-result\` — only "the host answered within 200 ms"
+  // did. A host answering in ~350 ms is legitimate and loses: we post
+  // \`initialized\` at 200, it posts \`tool-result\` at 210, its response arrives
+  // at 350. postMessage preserves per-source order, so the tool-result is
+  // dispatched first and \`render()\` latches with \`mcpHostTheme === null\` — the
+  // card themed from the OS, unrecoverably (\`rendered\` latches, and
+  // \`nativeStarted\` blocks the retry). That is the bug this file exists to fix,
+  // reappearing on exactly the first-mount timing the 200 ms window was chosen
+  // for.
+  //
+  // Note the 200 ms timer is NOT the deadline to hold against — it fires BEFORE
+  // the tool-result in that scenario. So the hold gets its own, later grace
+  // window: keep the first tool-result until the init response arrives or this
+  // expires, whichever is first.
+  //
+  // Cost of holding is bounded and small: only the MCP wire reaches this branch
+  // (ChatGPT drives \`render()\` through \`window.openai\`), so the worst case is
+  // an MCP host that sends a tool-result and never answers \`ui/initialize\` —
+  // which pays this once, not per call.
+  var RENDER_HOLD_MS = 400;
+  var initResponseSeen = false;
+  var renderHoldExpired = false;
+  var heldToolResult = null;
+  var renderHoldTimer = null;
+
+  function releaseRenderHold(why) {
+    renderHoldExpired = true;
+    if (renderHoldTimer !== null) {
+      clearTimeout(renderHoldTimer);
+      renderHoldTimer = null;
+    }
+    if (heldToolResult === null) return;
+    var held = heldToolResult;
+    // Cleared BEFORE rendering: \`render()\` is one-shot and re-entrant-guarded,
+    // but a second release must not be able to replay the same payload.
+    heldToolResult = null;
+    log("released held tool-result", { why: why, theme: mcpHostTheme });
+    render(held.structuredContent, held._meta);
+  }
+
   function sendInitRequest() {
     if (initRequestSent) return;
     initRequestSent = true;
@@ -1758,9 +1881,27 @@ const WIDGET_HTML = `<!doctype html>
       if (msg.result && typeof msg.result === "object") {
         mergeHostContext(msg.result.hostContext);
         applyHostSurface();
-        log("host context at initialize", { theme: mcpHostTheme });
+        // Log the SURFACE too, not just the theme. Whether any host ships
+        // \`styles.variables\` is the open question gating tier 1, and the theme
+        // half was already known — so this line is what turns that question
+        // into something one session answers.
+        var styles = msg.result.hostContext && msg.result.hostContext.styles;
+        var varNames = [];
+        try {
+          if (styles && styles.variables) varNames = Object.keys(styles.variables);
+        } catch (e) { /* hostile shape — the count is diagnostic only */ }
+        log("host context at initialize", {
+          theme: mcpHostTheme,
+          surface: mcpHostSurface || "(none)",
+          styleVarCount: varNames.length,
+          hasPrimary: varNames.indexOf("--color-background-primary") !== -1,
+          hasSecondary: varNames.indexOf("--color-background-secondary") !== -1,
+        });
       }
       sendInitializedNotification();
+      // The theme is now known — release anything held for it.
+      initResponseSeen = true;
+      releaseRenderHold("init response");
       return;
     }
     // Theme (or display mode) changed after initialize. Merging keeps the
@@ -1786,6 +1927,29 @@ const WIDGET_HTML = `<!doctype html>
     }
     if (fromHost && msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
       var params = msg.params || {};
+      // Hold the FIRST tool-result until the host's context is known — see the
+      // race note on RENDER_HOLD_MS. Later tool-results are never held: by then
+      // either the response landed or the grace expired.
+      //
+      // \`initializedSent\` is part of the gate on purpose. The spec says a host
+      // MUST NOT send notifications before our \`initialized\`, so a tool-result
+      // that arrives first comes from a host not following the handshake —
+      // holding it to wait for a response that may never come would only delay
+      // a chart for no theme. The race being closed is the other order: we sent
+      // \`initialized\` on the 200 ms timer, the host replied to THAT before
+      // replying to \`ui/initialize\`.
+      if (initializedSent && !initResponseSeen && !renderHoldExpired) {
+        heldToolResult = params;
+        if (renderHoldTimer === null) {
+          renderHoldTimer = setTimeout(function () {
+            releaseRenderHold("hold expired");
+          }, RENDER_HOLD_MS);
+        }
+        log("holding first tool-result for the init response", {
+          graceMs: RENDER_HOLD_MS,
+        });
+        return;
+      }
       // Forward both \`structuredContent\` (LLM-visible payload) and
       // \`_meta\` (metadata-only payload, where \`image_data_url\` lives).
       // Per the MCP Apps spec §"Wire protocol — Host → View
@@ -2186,7 +2350,7 @@ export function buildChartAppUiResource(
     // dimensions baked in at fetch time. See `AppUiResource.dynamic`
     // and `buildBakedWidgetHtml` for the why.
     dynamic: {
-      uriPattern: APP_UI_TEMPLATE_URI_PATTERN,
+      uriPattern: appUiTemplateUriPattern(env),
       templateName: APP_UI_TEMPLATE_NAME,
       async renderHtml(variables, ctx) {
         // `variables.pub_id` is the URI-template substitution; for
@@ -2243,7 +2407,10 @@ export function buildChartAppUiResourceFromOutputPubId(
         ? (output as { pub_id: string }).pub_id
         : "";
     if (pubId === "") return appUiResourceUri(env);
-    return APP_UI_TEMPLATE_URI_PATTERN.replace("{pub_id}", encodeURIComponent(pubId));
+    return appUiTemplateUriPattern(env).replace(
+      "{pub_id}",
+      encodeURIComponent(pubId),
+    );
   });
 }
 
