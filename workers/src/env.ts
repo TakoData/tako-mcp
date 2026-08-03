@@ -190,6 +190,18 @@ export interface Env {
    * be present for the free tier to activate.
    */
   FREE_TIER_GLOBAL_RATE_LIMITER?: RateLimit;
+  /**
+   * DEV ONLY. Suffix appended to the widget's resource URI (see
+   * `appUiResourceUri`). Hosts cache the widget BY URI and claude.ai's cache
+   * outlives removing and re-adding the connector, so during local development
+   * every widget change is otherwise invisible — you end up debugging a bundle
+   * that is not running. Set it to a timestamp to force a re-read.
+   *
+   * MUST stay unset in staging and production: the shipped URI is effectively
+   * permanent (Claude desktop caches it beyond connector lifecycle, so renaming
+   * it 404s previously-installed sessions).
+   */
+  WIDGET_URI_SUFFIX?: string;
 }
 
 /**
