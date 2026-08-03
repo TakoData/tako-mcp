@@ -1298,6 +1298,92 @@ describe("mcp apps host theme (executed)", () => {
     ).toContain("dark_mode=false");
   });
 
+  it("declares color-scheme so the card's corners are not white", () => {
+    // The card is a rounded rectangle over a transparent html/body, so its
+    // corners fall through to the UA base background — WHITE unless the
+    // document declares a scheme. On a dark host that showed as four white
+    // triangles. `color-scheme` and not a background colour, because an opaque
+    // colour would put a square block back over the host's rounded container.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, initResponse({ theme: "dark" }), m.wrapperWin);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
+        { image_data_url: DATA_URL },
+      ),
+      m.wrapperWin,
+    );
+    expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("dark");
+    // Still transparent — the fix must not reintroduce an opaque surface.
+    const bg = m.widgetWin.document.documentElement.style.background;
+    expect(bg === "" || bg.includes("transparent")).toBe(true);
+  });
+
+  it("follows a light host too", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, initResponse({ theme: "light" }), m.wrapperWin);
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("light");
+  });
+
+  it("leaves the UA default alone when the host declares no theme", () => {
+    // Guessing dark here would put BLACK corners on a light host — the same
+    // bug mirrored.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("");
+  });
+
+  it("injects the scheme into the native card document too", async () => {
+    // The native path replaces this document wholesale, so the widget's own
+    // <html> style does not survive — the scheme has to ride in the markup.
+    const m = mountWidget(staticWidgetHtml());
+    let written = "";
+    (m.widgetWin as unknown as { fetch: unknown }).fetch = () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () =>
+          Promise.resolve("<!doctype html><html><body><div>card</div></body></html>"),
+      });
+    const doc = m.widgetWin.document as unknown as {
+      open(): void;
+      write(s: string): void;
+      close(): void;
+    };
+    doc.open = () => {};
+    doc.write = (s: string) => {
+      written += s;
+    };
+    doc.close = () => {};
+    deliver(m, initResponse({ theme: "dark" }), m.wrapperWin);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
+        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(written).toContain("color-scheme:dark");
+    expect(written).toContain("background:transparent");
+    // Injected before </body> so it wins over the page's own rules.
+    expect(written.indexOf("color-scheme:dark")).toBeLessThan(
+      written.indexOf("</body>"),
+    );
+  });
+
   it("prefers window.openai.theme when both sources are present", () => {
     // ChatGPT's own runtime is the authority on ChatGPT; a stale or spoofed
     // hostContext must not override the host API that host actually drives.
