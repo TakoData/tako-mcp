@@ -701,6 +701,27 @@ const WIDGET_HTML = `<!doctype html>
     return mcpHostTheme;
   }
 
+  // Match the UA base background to the host's theme.
+  //
+  // Both chart surfaces (the baked PNG and the native card) are rounded
+  // rectangles over a TRANSPARENT html/body, so their corners fall through to
+  // the document's backdrop. An iframe that declares no \`color-scheme\` gets a
+  // WHITE UA base background, which on a dark host shows as white triangles at
+  // each corner of the card.
+  //
+  // Setting \`color-scheme\` — not a background colour — is what keeps the
+  // surface transparent: an opaque colour here would restore the square block
+  // over the host's rounded container that the transparent surface removed.
+  // No-op when the host is silent: guessing dark would put black corners on a
+  // light host, which is the same bug mirrored.
+  function applyHostColorScheme() {
+    var theme = hostTheme();
+    if (!theme) return;
+    try {
+      document.documentElement.style.colorScheme = theme;
+    } catch (e) { /* pre-body or hostile host — cosmetic, never fatal */ }
+  }
+
   // Rewrite \`dark_mode\` on a chart url to match the host. Leaves the url alone
   // when the host is silent, so \`auto\` survives rather than being guessed at.
   //
@@ -1005,11 +1026,33 @@ const WIDGET_HTML = `<!doctype html>
           "__FALLBACK_HEIGHT__",
           String(fallbackHeight || 0),
         );
+        // The card paints its own surface with an 8px radius over a
+        // TRANSPARENT html/body, so its four corners fall through to whatever
+        // is behind the document — and for an iframe with no declared
+        // \`color-scheme\`, the UA base background is WHITE. On a dark host that
+        // rendered as four white triangles poking out from under the card's
+        // rounded corners.
+        //
+        // \`color-scheme\` is the fix rather than a background colour: it moves
+        // the UA base background to a dark value, so the corners composite
+        // against something near the host's own surface, while html/body stay
+        // transparent (a colour here would put an opaque square back over the
+        // host's rounded container — the thing the transparent surface was
+        // introduced to remove). Injected LAST so it wins over the page's own
+        // rules, and only when the host actually told us its theme; with no
+        // theme we leave the UA default alone rather than guess dark and put
+        // black corners on a light host.
+        var scheme = hostTheme();
+        var schemeStyle = scheme
+          ? '<style id="tako-host-scheme">:root{color-scheme:' + scheme +
+            ';background:transparent}body{background:transparent}</style>'
+          : "";
+        var injected = schemeStyle + reporter;
         var patched =
           html.indexOf("</body>") !== -1
-            ? html.replace("</body>", reporter + "</body>")
-            : html + reporter;
-        log("native card upgrading", { bytes: patched.length });
+            ? html.replace("</body>", injected + "</body>")
+            : html + injected;
+        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)" });
         document.open();
         document.write(patched);
         document.close();
@@ -1237,6 +1280,9 @@ const WIDGET_HTML = `<!doctype html>
   function render(structuredContent, meta) {
     if (rendered) return true;
     if (!structuredContent || typeof structuredContent !== "object") return false;
+    // Also here, not just on the MCP handshake: ChatGPT never sends
+    // \`hostContext\`, so \`window.openai.theme\` is only readable on this path.
+    applyHostColorScheme();
     // No-chart short-circuit: structured content arrived but contains
     // no chart fields at all. \`tako_search\` produces this shape when it
     // returns zero cards (a clean empty result) or when the top card has
@@ -1607,6 +1653,7 @@ const WIDGET_HTML = `<!doctype html>
     ) {
       if (msg.result && typeof msg.result === "object") {
         mergeHostContext(msg.result.hostContext);
+        applyHostColorScheme();
         log("host context at initialize", { theme: mcpHostTheme });
       }
       sendInitializedNotification();
@@ -1627,6 +1674,9 @@ const WIDGET_HTML = `<!doctype html>
       msg.method === "ui/notifications/host-context-changed"
     ) {
       mergeHostContext((msg.params || {}).hostContext);
+      // Re-apply: a theme toggle mid-conversation cannot re-theme the chart
+      // itself, but the corners must not stay wrong.
+      applyHostColorScheme();
       log("host context changed", { theme: mcpHostTheme });
       return;
     }
