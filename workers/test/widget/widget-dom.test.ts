@@ -1187,3 +1187,138 @@ describe("host theme (executed)", () => {
     expect(themedFrameSrc("solarized")).toContain("dark_mode=auto");
   });
 });
+
+/**
+ * The MCP Apps theme source. `window.openai.theme` is ChatGPT-only, so on
+ * claude.ai the theme used to resolve to null and both chart urls stayed on
+ * `dark_mode=auto` — i.e. the OS. A light Claude on a dark machine therefore
+ * rendered a dark card on a light surface.
+ *
+ * The spec DOES carry a theme: the `ui/initialize` RESPONSE includes
+ * `result.hostContext.theme`, and hosts send `ui/notifications/host-context-changed`
+ * when it changes. Both are read here.
+ *
+ * Asserted on the native-card url because that is the Claude path — no
+ * `window.openai`, so `render()` takes the image branch and then upgrades.
+ */
+describe("mcp apps host theme (executed)", () => {
+  const NATIVE_URL = "https://mcp.example.test/embed-html/abc123?dark_mode=auto";
+
+  /**
+   * Mount, feed the widget a sequence of host messages, deliver a chart with
+   * the native url armed, and return the url the native upgrade fetched.
+   * The upgrade runs from the image `load` handler, so that has to be fired.
+   */
+  function nativeUrlAfter(hostMessages: unknown[]): string | undefined {
+    const m = mountWidget(staticWidgetHtml());
+    const calls: string[] = [];
+    (m.widgetWin as unknown as { fetch: unknown }).fetch = (url: string) => {
+      calls.push(String(url));
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve("<!doctype html><html><body></body></html>"),
+      });
+    };
+    for (const msg of hostMessages) deliver(m, msg, m.wrapperWin);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
+        { image_data_url: DATA_URL, native_card_url: NATIVE_URL },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    return calls[0];
+  }
+
+  function initResponse(hostContext: unknown): unknown {
+    return { jsonrpc: "2.0", id: "tako-ui-init", result: { hostContext } };
+  }
+
+  function contextChanged(hostContext: unknown): unknown {
+    return {
+      jsonrpc: "2.0",
+      method: "ui/notifications/host-context-changed",
+      params: { hostContext },
+    };
+  }
+
+  function nativeUrlWithHostContext(hostContext: unknown): string | undefined {
+    return nativeUrlAfter(
+      hostContext === undefined ? [] : [initResponse(hostContext)],
+    );
+  }
+
+  it("asks for a light card when the host declares a light theme", () => {
+    expect(nativeUrlWithHostContext({ theme: "light" })).toContain(
+      "dark_mode=false",
+    );
+  });
+
+  it("asks for a dark card when the host declares a dark theme", () => {
+    expect(nativeUrlWithHostContext({ theme: "dark" })).toContain(
+      "dark_mode=true",
+    );
+  });
+
+  it("stays on auto when the host declares no theme", () => {
+    // Still the best available guess — following the OS beats a coin flip.
+    expect(nativeUrlWithHostContext({})).toContain("dark_mode=auto");
+  });
+
+  it("stays on auto when the host never answers the handshake", () => {
+    expect(nativeUrlWithHostContext(undefined)).toContain("dark_mode=auto");
+  });
+
+  it("ignores an unrecognised hostContext theme", () => {
+    expect(nativeUrlWithHostContext({ theme: "solarized" })).toContain(
+      "dark_mode=auto",
+    );
+  });
+
+  it("honours a theme that only arrives via host-context-changed", () => {
+    // Hosts MAY omit `theme` at initialize and send it later; a toggle before
+    // the first tool call must still be reflected.
+    expect(
+      nativeUrlAfter([initResponse({}), contextChanged({ theme: "light" })]),
+    ).toContain("dark_mode=false");
+  });
+
+  it("merges a partial host-context-changed instead of replacing context", () => {
+    // Spec: "Views merge received fields with their current context state
+    // rather than replacing it entirely." A displayMode-only update must not
+    // wipe the theme learned at initialize.
+    expect(
+      nativeUrlAfter([
+        initResponse({ theme: "light" }),
+        contextChanged({ displayMode: "fullscreen" }),
+      ]),
+    ).toContain("dark_mode=false");
+  });
+
+  it("prefers window.openai.theme when both sources are present", () => {
+    // ChatGPT's own runtime is the authority on ChatGPT; a stale or spoofed
+    // hostContext must not override the host API that host actually drives.
+    const m = mountWidget(staticWidgetHtml());
+    (m.widgetWin as unknown as { openai: Record<string, unknown> }).openai = {
+      theme: "dark",
+    };
+    deliver(
+      m,
+      {
+        jsonrpc: "2.0",
+        id: "tako-ui-init",
+        result: { hostContext: { theme: "light" } },
+      },
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+      m.wrapperWin,
+    );
+    expect(widgetFrame(m).getAttribute("src")).toContain("dark_mode=true");
+  });
+});
