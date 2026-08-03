@@ -106,6 +106,31 @@ export const PNG_HEAD_FETCH_TIMEOUT_MS = 3_000;
  * old one rather than replacing it.
  */
 export const APP_UI_RESOURCE_URI = "ui://tako/embed/chart";
+
+/**
+ * Widget URI for this deployment, optionally suffixed by `WIDGET_URI_SUFFIX`.
+ *
+ * Exists because hosts cache the widget resource BY URI, and claude.ai's cache
+ * outlives removing and re-adding the connector (see the note above). During
+ * local development that means every widget change is invisible: the host keeps
+ * serving the bundle it first read, and you debug code that is not running.
+ * This was not a hypothetical — three rounds of a rendering fix were tested
+ * against a stale bundle before the console log gave it away.
+ *
+ * Set the var to anything (a timestamp works) to mint a fresh URI and force a
+ * re-read. UNSET in staging and production, where the URI must stay stable
+ * forever — so this is a dev-only escape hatch, not a versioning scheme. If the
+ * SHIPPED bundle ever needs cache-busting, register a new URI ALONGSIDE the old
+ * one, per the note above.
+ */
+export function appUiResourceUri(env: Env): string {
+  const suffix = env.WIDGET_URI_SUFFIX;
+  if (typeof suffix !== "string" || suffix === "") return APP_UI_RESOURCE_URI;
+  // Constrain the value: it becomes a URI the host stores and reads back, and
+  // a stray `/` or space would make a URI that never resolves.
+  const safe = suffix.replace(/[^A-Za-z0-9._-]/g, "");
+  return safe === "" ? APP_UI_RESOURCE_URI : `${APP_UI_RESOURCE_URI}-${safe}`;
+}
 export const APP_UI_RESOURCE_NAME = "open_chart_ui_widget";
 
 /**
@@ -2104,7 +2129,7 @@ export function buildChartAppUiResource(
     // the widget URI from `_meta["openai/outputTemplate"]`) for its
     // interactive iframe path. Also serves any host that doesn't honor
     // per-call URI overrides.
-    uri: APP_UI_RESOURCE_URI,
+    uri: appUiResourceUri(env),
     name: APP_UI_RESOURCE_NAME,
     html: WIDGET_HTML,
     // `frameDomains` is the host CSP's allow-list for nested iframes —
@@ -2217,7 +2242,7 @@ export function buildChartAppUiResourceFromOutputPubId(
       typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
         ? (output as { pub_id: string }).pub_id
         : "";
-    if (pubId === "") return APP_UI_RESOURCE_URI;
+    if (pubId === "") return appUiResourceUri(env);
     return APP_UI_TEMPLATE_URI_PATTERN.replace("{pub_id}", encodeURIComponent(pubId));
   });
 }
