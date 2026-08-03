@@ -1394,6 +1394,12 @@ function loginPage(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in to Tako</title>
+<!-- favicon.svg is the LIGHT-theme asset (dark ink); favicon-light.svg is the
+     DARK-theme one. The names read backwards, so the icons array in mcp.ts is
+     the reference. Media-scoped rel=icon is honoured by Chromium and ignored
+     elsewhere, which is why the unconditional light link stays last as the
+     fallback rather than being replaced. -->
+<link rel="icon" href="/icons/favicon-light.svg" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/icons/favicon.svg">
 <style>
   :root {
@@ -1467,7 +1473,13 @@ function loginPage(
 </head>
 <body>
 <main class="card">
-  <img class="mark" src="/icons/favicon.svg" alt="Tako" width="34" height="34">
+  <!-- A picture element rather than one img: the mark is a dark-ink glyph, so
+       on a dark host it renders dark-on-dark and all but disappears. The img
+       stays the light-theme fallback for a host that states no preference. -->
+  <picture>
+    <source srcset="/icons/favicon-light.svg" media="(prefers-color-scheme: dark)">
+    <img class="mark" src="/icons/favicon.svg" alt="Tako" width="34" height="34">
+  </picture>
   <h1>Sign in to Tako</h1>
   <p class="sub">Authorize this connection with your Tako account.</p>
 
