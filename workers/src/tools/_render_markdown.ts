@@ -93,6 +93,12 @@ export const answerSlimOutputShape = z.looseObject({
     .describe(
       "Present only when the data source grounded zero cards: the deterministic coverage verdict.",
     ),
+  // Same widget fields search advertises. Without them the chart for an
+  // answer's top cited card never renders: the widget reads `embed_url` /
+  // `image_url` / `height` off `structuredContent`, and the SDK rebuilds the
+  // advertised schema strictly at the top level, so fields absent here are
+  // dropped before the host ever sees them.
+  ...autoChainShape,
 });
 
 /** tako_answer's full handler output (internal; the advertised schema is

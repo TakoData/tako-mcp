@@ -10,6 +10,12 @@ import {
   type AnswerFullOutput,
 } from "./_render_markdown.js";
 import {
+  buildChartAppUiResourceFromOutputPubId,
+  buildChartExtraMeta,
+  fetchPngContentBlock,
+} from "./_chart_widget.js";
+import {
+  autoChainShape,
   hoistSourceGlossary,
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
@@ -34,10 +40,11 @@ import {
   slimCard,
   slimWebResult,
   takoCardSchema,
+  topCardChartFields,
   usageSchema,
   webResultSchema,
 } from "./_search_results.js";
-import type { ToolModule } from "./types.js";
+import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
   "START HERE for any question that wants a value, figure, or finding: ask one specific data question, get one synthesized answer grounded in the data or web tako cites.",
@@ -137,6 +144,10 @@ const fullOutputSchema = z.object({
     .describe(
       "Source/methodology descriptions shared by the cards, keyed by name — hoisted here so each rides once instead of once per card.",
     ),
+  // Widget fields for the top cited card, same as tako_search. An answer's
+  // citations ARE cards, so a chart belongs here for the same reason it
+  // belongs there; before this they were dropped and only search rendered one.
+  ...autoChainShape,
 });
 
 // Advertised (slim) schema — see the fullOutputSchema comment above.
@@ -325,6 +336,10 @@ const takoAnswer = {
             ),
           }
         : {}),
+      // Chart for the top cited card — shared with tako_search via
+      // `topCardChartFields` so the two cannot render differently. Yields `{}`
+      // when nothing is citable, which is also the zero-card case.
+      ...topCardChartFields(cards, ctx.env),
       // Glossary spreads on LAST so it serializes after the data — truncating
       // clients then drop boilerplate first.
       ...(glossary === undefined ? {} : { sources_glossary: glossary }),
@@ -336,6 +351,33 @@ const takoAnswer = {
   },
   slimStructured(output) {
     return slimAnswerStructured(output as unknown as AnswerFullOutput);
+  },
+  // Widget plumbing, identical to tako_search's. Rationale for each gate lives
+  // there; the only reason it is duplicated rather than shared is that the
+  // hooks are per-tool fields on `ToolModule`.
+  async extraMeta(output, ctx) {
+    // ChatGPT renders `embed_url` in an iframe and never reads the baked PNG,
+    // but still needs the aspect ratio to size that iframe — dimensions only
+    // there (a 64-byte ranged read instead of a ~170 KB render).
+    return buildChartExtraMeta((output as { image_url?: string }).image_url, {
+      bakeImage: ctx.client !== "chatgpt",
+      env: ctx.env,
+      origin: ctx.origin,
+      pubId: (output as { pub_id?: string }).pub_id,
+    });
+  },
+  async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
+    void _ctx;
+    const imageUrl = (output as { image_url?: string }).image_url;
+    if (imageUrl === undefined) return [];
+    return fetchPngContentBlock(imageUrl);
+  },
+  appUiResource(env, requestOrigin): AppUiResource {
+    // `requestOrigin` must be forwarded: it is what `nativeCardUrl` and the
+    // `connectDomains` CSP declaration are both derived from. Dropping it
+    // yields a widget that declares no origin and fetches nothing, i.e. no
+    // native card at all — a silent downgrade to the PNG.
+    return buildChartAppUiResourceFromOutputPubId(env, requestOrigin);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

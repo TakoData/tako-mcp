@@ -17,6 +17,7 @@ import { z } from "zod";
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import takoAnswer, { buildAnswerBody } from "./tako_answer.js";
+import takoSearch from "./tako_search.js";
 import { SearchRequest } from "../generated/schemas.js";
 import {
   bodyOf,
@@ -195,6 +196,81 @@ describe("tako_answer handler", () => {
     await expect(
       takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false }, CTX),
     ).rejects.toThrow(/unexpected wire shape/);
+  });
+});
+
+describe("tako_answer renders a chart, exactly like tako_search", () => {
+  // The gap this closes: an answer's citations ARE cards, but only search
+  // lifted the widget fields, so an answer came back as text with no chart
+  // even though the card ids were right there in the output.
+
+  it("lifts the top cited card's widget fields", async () => {
+    mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
+    const out = await takoAnswer.handler(
+      {
+        query: "What was US GDP in 2024?",
+        sources: ["data", "web"], include_contents: false, preview_rows: 50,
+        country_code: "US", locale: "en-US", strict: false,
+      },
+      CTX,
+    );
+    const o = out as unknown as Record<string, unknown>;
+    expect(o.pub_id).toBe("abc123");
+    expect(String(o.embed_url)).toContain("/embed/abc123/");
+    expect(String(o.image_url)).toContain("/api/v1/image/abc123/");
+    expect(typeof o.height).toBe("number");
+  });
+
+  it("declares the same widget resource search does", () => {
+    // Without this the host has no widget to render the fields into.
+    expect(takoAnswer.appUiResource).toBeDefined();
+    expect(takoSearch.appUiResource).toBeDefined();
+    const ORIGIN = "https://mcp.example.test";
+    const a = takoAnswer.appUiResource!(ENV, ORIGIN);
+    const s = takoSearch.appUiResource!(ENV, ORIGIN);
+    expect(a.uri).toBe(s.uri);
+    expect(a.html).toBe(s.html);
+    // requestOrigin must reach the resource: it is what the native-card URL
+    // and the connectDomains declaration are derived from.
+    expect(a.frameDomains).toEqual(s.frameDomains);
+    expect(a.resourceDomains).toEqual(s.resourceDomains);
+    expect(a.connectDomains).toEqual(s.connectDomains);
+  });
+
+  it("carries the widget hooks search carries", () => {
+    expect(typeof takoAnswer.extraMeta).toBe("function");
+    expect(typeof takoAnswer.extraContentBlocks).toBe("function");
+  });
+
+  it("advertises the widget fields, or the SDK strips them", () => {
+    // The advertised schema is rebuilt strict at the top level, so a field
+    // that is not declared never reaches the host.
+    const shape = Object.keys(
+      (takoAnswer.outputSchema as unknown as { shape: Record<string, unknown> }).shape,
+    );
+    for (const key of ["pub_id", "embed_url", "image_url", "height"]) {
+      expect(shape).toContain(key);
+    }
+  });
+
+  it("emits no widget fields when nothing is citable", async () => {
+    // Zero cards must not produce a chart pointing at nothing; the widget
+    // collapses on this shape.
+    mockFetchSequence([
+      jsonResponse(200, { ...FULL_RESPONSE, cards: [], request_id: "req-empty" }),
+    ]);
+    const out = await takoAnswer.handler(
+      {
+        query: "something with no data",
+        sources: ["data", "web"], include_contents: false, preview_rows: 50,
+        country_code: "US", locale: "en-US", strict: false,
+      },
+      CTX,
+    );
+    const o = out as unknown as Record<string, unknown>;
+    expect(o.pub_id).toBeUndefined();
+    expect(o.embed_url).toBeUndefined();
+    expect(o.image_url).toBeUndefined();
   });
 });
 

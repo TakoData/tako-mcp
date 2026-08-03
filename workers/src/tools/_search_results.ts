@@ -1015,22 +1015,40 @@ export function buildSearchOutput(
         }
       : {}),
   };
+  return { ...base, ...topCardChartFields(cards, env) };
+}
+
+/**
+ * Widget fields for the top card, or `{}` when there is no renderable card.
+ *
+ * Shared by `tako_search` and `tako_answer` so a chart renders identically
+ * whichever tool produced it. They diverged before this existed: search lifted
+ * these fields and answer did not, so an answer's cited card came back as text
+ * with no chart even though the card ids were right there in the output.
+ *
+ * Only the TOP card gets a chart — the widget renders one, and `pub_id` is
+ * singular in the output schema.
+ */
+export function topCardChartFields(
+  // `card_id` is nullable on the wire (`takoCardSchema`), so accept null here
+  // rather than making each caller narrow it — the `typeof` check below is the
+  // one place that decides what counts as renderable.
+  cards: readonly { card_id?: string | null | undefined }[],
+  env: Env,
+): Record<string, unknown> {
   const topCardId = cards[0]?.card_id;
-  if (typeof topCardId === "string" && topCardId !== "") {
-    const { embed_url, image_url } = buildChartUrls(
-      env,
-      topCardId,
-      DEFAULT_DARK_MODE,
-    );
-    return {
-      ...base,
-      pub_id: topCardId,
-      embed_url,
-      image_url,
-      dark_mode: DEFAULT_DARK_MODE,
-      width: DEFAULT_WIDTH,
-      height: DEFAULT_HEIGHT,
-    };
-  }
-  return base;
+  if (typeof topCardId !== "string" || topCardId === "") return {};
+  const { embed_url, image_url } = buildChartUrls(
+    env,
+    topCardId,
+    DEFAULT_DARK_MODE,
+  );
+  return {
+    pub_id: topCardId,
+    embed_url,
+    image_url,
+    dark_mode: DEFAULT_DARK_MODE,
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+  };
 }
