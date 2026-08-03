@@ -1349,10 +1349,12 @@ describe("mcp apps host theme (executed)", () => {
     expect(root.style.colorScheme).toBe("dark");
   });
 
-  it("leaves the canvas alone entirely when the host says nothing", () => {
-    // A same-origin frame composites transparently over the parent, so the
-    // corners are already correct there. Painting anything would introduce the
-    // opaque square the transparent surface exists to avoid.
+  it("falls back to the OS when an MCP host declares nothing", () => {
+    // claude.ai's frame is white whether or not it sends a hostContext, and
+    // white corners were observed there twice — so a silent MCP host still gets
+    // painted. The signal is `prefers-color-scheme`, deliberately the same one
+    // `dark_mode=auto` resolves against inside the embed page, so the canvas and
+    // the card derive from one input and cannot disagree.
     const m = mountWidget(staticWidgetHtml());
     deliver(
       m,
@@ -1360,7 +1362,10 @@ describe("mcp apps host theme (executed)", () => {
       m.wrapperWin,
     );
     const root = m.widgetWin.document.documentElement;
-    expect(root.style.colorScheme).toBe("");
+    // jsdom reports light; the assertion is that SOMETHING was applied, from
+    // the OS rather than a guess.
+    expect(["light", "dark"]).toContain(root.style.colorScheme);
+    // No background painted — only tier 1 (an exact host colour) does that.
     expect(root.style.background).toBe("");
   });
 
@@ -1397,16 +1402,13 @@ describe("mcp apps host theme (executed)", () => {
     expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("light");
   });
 
-  it("leaves the UA default alone when the host declares no theme", () => {
-    // Guessing dark here would put BLACK corners on a light host — the same
-    // bug mirrored.
+  it("never paints a canvas before an MCP host has spoken", () => {
+    // The tier-3 gate. Without a message over the MCP wire we have no evidence
+    // this is a white-based frame, so nothing is applied — that is what keeps
+    // the approximate tiers off hosts we have not measured.
     const m = mountWidget(staticWidgetHtml());
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
-      m.wrapperWin,
-    );
     expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("");
+    expect(m.widgetWin.document.documentElement.style.background).toBe("");
   });
 
   it("injects the scheme into the native card document too", async () => {

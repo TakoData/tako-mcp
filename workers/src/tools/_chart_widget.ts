@@ -690,6 +690,14 @@ const WIDGET_HTML = `<!doctype html>
   // right backdrop, where \`color-scheme\` can only get close.
   var mcpHostSurface = null;
 
+  // Proof we are talking to an MCP Apps host: set only when a message arrives
+  // over that wire (the \`ui/initialize\` RESPONSE, or a \`tool-result\`
+  // notification). ChatGPT drives the widget through \`window.openai\` and sends
+  // neither, so this stays false there — which is what keeps the approximate
+  // canvas tiers off that host. Distinct from \`initializedSent\`, which fires on
+  // a timeout even when no host ever answered.
+  var mcpHostSeen = false;
+
   // Per the MCP Apps spec, \`hostContext.styles.variables\` carries standardized
   // CSS custom properties. Take the primary background; fall back to the
   // surface variant if a host ships only that one.
@@ -789,7 +797,31 @@ const WIDGET_HTML = `<!doctype html>
       // exactly as it renders today. ChatGPT still gets themed — via the
       // \`dark_mode\` rewrite on the iframe url, which is what actually colours
       // its card.
-      if (mcpHostTheme !== null) root.style.colorScheme = mcpHostTheme;
+      if (mcpHostTheme !== null) {
+        root.style.colorScheme = mcpHostTheme;
+        return;
+      }
+      // Tier 3 — MCP Apps host that declares NOTHING. Still worth painting,
+      // because claude.ai's frame is white whether or not it sends a
+      // \`hostContext\`, and white corners were observed there twice.
+      //
+      // The signal is the OS (\`prefers-color-scheme\`), which is deliberately
+      // the SAME one \`dark_mode=auto\` resolves against inside the embed page.
+      // So the canvas and the card derive from one input and cannot disagree:
+      // an auto card that renders dark gets a dark canvas, a light one gets
+      // light. Guessing a fixed value is what would put black corners on a
+      // light host.
+      //
+      // Still gated to the MCP Apps path — \`hasOpenAiRuntime()\` hosts keep
+      // today's transparency, per the tier-2 reasoning.
+      if (!hasOpenAiRuntime() && mcpHostSeen) {
+        var osDark = false;
+        try {
+          osDark = !!(window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        } catch (e) { /* no matchMedia — leave it alone */ }
+        root.style.colorScheme = osDark ? "dark" : "light";
+      }
     } catch (e) { /* pre-body or hostile host — cosmetic, never fatal */ }
   }
 
@@ -1730,6 +1762,7 @@ const WIDGET_HTML = `<!doctype html>
       msg.id === INIT_REQUEST_ID &&
       (msg.result !== undefined || msg.error !== undefined)
     ) {
+      mcpHostSeen = true;
       if (msg.result && typeof msg.result === "object") {
         mergeHostContext(msg.result.hostContext);
         applyHostSurface();
@@ -1760,6 +1793,7 @@ const WIDGET_HTML = `<!doctype html>
       return;
     }
     if (fromHost && msg.jsonrpc === "2.0" && msg.method === "ui/notifications/tool-result") {
+      mcpHostSeen = true;
       var params = msg.params || {};
       // Forward both \`structuredContent\` (LLM-visible payload) and
       // \`_meta\` (metadata-only payload, where \`image_data_url\` lives).
