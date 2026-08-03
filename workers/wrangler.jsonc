@@ -139,16 +139,9 @@
           "simple": { "limit": 120, "period": 60 }
         },
         {
-          // Throttles `POST /login/password`, keyed per client IP AND per hashed
-      // email (two `limit()` calls, same namespace, different keys). Unlike
-      // the free-tier buckets above, this one is load-bearing: the endpoint
-      // checks a password on a public unauthenticated URL, so `handlers.ts`
-      // FAILS CLOSED and serves Google-only when the binding is absent.
-      // Declared in the top-level block too, so `wrangler dev` is not
-      // silently reduced to Google-only. 8/60s is per-key, and per the
-      // "Measured behaviour" note above the binding counts PER COLO — this
-      // dampens credential stuffing, Stytch's own lockout is the real bound.
-      "name": "LOGIN_RATE_LIMITER",
+          // Throttles `POST /login/password` — load-bearing and fail-closed,
+          // see the top-level declaration of this binding for why.
+          "name": "LOGIN_RATE_LIMITER",
           "namespace_id": "1021",
           "simple": { "limit": 8, "period": 60 }
         }
@@ -198,16 +191,9 @@
           "simple": { "limit": 120, "period": 60 }
         },
         {
-          // Throttles `POST /login/password`, keyed per client IP AND per hashed
-      // email (two `limit()` calls, same namespace, different keys). Unlike
-      // the free-tier buckets above, this one is load-bearing: the endpoint
-      // checks a password on a public unauthenticated URL, so `handlers.ts`
-      // FAILS CLOSED and serves Google-only when the binding is absent.
-      // Declared in the top-level block too, so `wrangler dev` is not
-      // silently reduced to Google-only. 8/60s is per-key, and per the
-      // "Measured behaviour" note above the binding counts PER COLO — this
-      // dampens credential stuffing, Stytch's own lockout is the real bound.
-      "name": "LOGIN_RATE_LIMITER",
+          // Throttles `POST /login/password` — load-bearing and fail-closed,
+          // see the top-level declaration of this binding for why.
+          "name": "LOGIN_RATE_LIMITER",
           "namespace_id": "1022",
           "simple": { "limit": 8, "period": 60 }
         }
