@@ -191,18 +191,38 @@ export interface Env {
    */
   FREE_TIER_GLOBAL_RATE_LIMITER?: RateLimit;
   /**
-   * Cloudflare rate-limit binding throttling `POST /login/password`, keyed
-   * BOTH per client IP and per (hashed) email — see `handleLoginPassword`.
+   * Cloudflare rate-limit binding throttling `POST /login/password` per CLIENT
+   * IP — the sender's own axis, charged for every attempt including ones with
+   * missing fields. See `handleLoginPassword`.
    *
-   * Fail-CLOSED and load-bearing, unlike the free-tier limiters whose absence
-   * merely reverts to a 401: `/login/password` is an unauthenticated endpoint
-   * that checks a password on a public host, so without a limiter it is a
-   * credential-stuffing oracle. When this is unbound the endpoint 503s and
-   * only Google sign-in works. Declared under `ratelimits` in
-   * `wrangler.jsonc` for every env INCLUDING the top-level `wrangler dev`
-   * block, so local dev is not silently reduced to Google-only.
+   * Fail-CLOSED, unlike the free-tier limiters whose absence merely reverts to a
+   * 401: `/login/password` is an unauthenticated endpoint that checks a password
+   * on a public host, so with no metering at all it is a silent
+   * credential-stuffing oracle. When either login binding is unbound the
+   * endpoint 503s, `/login` stops rendering the form (`hasLoginLimiters`), and
+   * only Google sign-in is offered. Declared under `ratelimits` in
+   * `wrangler.jsonc` for every env INCLUDING the top-level `wrangler dev` block,
+   * so local dev is not silently reduced to Google-only.
+   *
+   * What this is NOT: a hard bound. `ratelimits` counts per colo, and this
+   * repo's own measurements (`workers/README.md`, "Measured behaviour") show a
+   * cold burst admitting ~115 requests regardless of the configured limit. These
+   * buckets dampen stuffing and make it visible in `wrangler tail`; the real
+   * bound on guessing one password is Stytch's own per-user lockout.
    */
   LOGIN_RATE_LIMITER?: RateLimit;
+  /**
+   * Cloudflare rate-limit binding throttling `POST /login/password` per HASHED
+   * EMAIL. A separate binding from `LOGIN_RATE_LIMITER` because a `ratelimits`
+   * limit is per-binding and this axis is deliberately LOOSER: it is the one an
+   * attacker can aim at a victim, so a tight limit here is a cheap way to lock
+   * a known address out of password sign-in.
+   *
+   * Only charged for attempts that reach a real credential check (fields present
+   * — see `handleLoginPassword`), so fieldless spam cannot drain someone else's
+   * bucket. Fail-closed on the same terms as `LOGIN_RATE_LIMITER`.
+   */
+  LOGIN_EMAIL_RATE_LIMITER?: RateLimit;
   /**
    * DEV ONLY. Suffix appended to the widget's resource URI (see
    * `appUiResourceUri`). Hosts cache the widget BY URI and claude.ai's cache

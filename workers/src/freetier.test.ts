@@ -575,22 +575,37 @@ describe("wrangler.jsonc ↔ message drift", () => {
     return [...wranglerRaw.matchAll(re)].map((m) => Number(m[1]));
   }
 
-  /** Every `simple.period` value in the file, in document order. */
-  function allPeriods(): number[] {
-    // Scoped to the FREE_TIER_* binding blocks, the same way `bindingLimits`
-    // is. An unanchored scan of the whole file would also match a `"period"`
-    // key added later for something unrelated (observability, logpush, an
-    // analytics binding) and fail with a message about admitting more
-    // traffic, which would be nothing to do with the actual edit.
-    const re = /"name":\s*"FREE_TIER_[A-Z_]*"[\s\S]*?"period":\s*(\d+)/g;
-    return [...wranglerRaw.matchAll(re)].map((m) => Number(m[1]));
-  }
-
-  /** Every `namespace_id` value in the file, in document order. */
-  function allNamespaceIds(): string[] {
-    // Scoped to the FREE_TIER_* binding blocks — see `allPeriods`.
-    const re = /"name":\s*"FREE_TIER_[A-Z_]*"[\s\S]*?"namespace_id":\s*"([^"]+)"/g;
-    return [...wranglerRaw.matchAll(re)].map((m) => m[1]!);
+  /**
+   * Every `ratelimits` entry in the file, in document order.
+   *
+   * Deliberately NOT scoped to `FREE_TIER_*`. It was, and the effect was that
+   * the login limiters added later (`LOGIN_RATE_LIMITER`,
+   * `LOGIN_EMAIL_RATE_LIMITER`) were invisible to both the distinct-namespace
+   * and the period-60 guards, and the suite stayed green either way. Every
+   * `ratelimits` bucket has the same two invariants regardless of what it meters,
+   * so the scan covers all of them and the NEXT limiter is covered on arrival.
+   *
+   * The one risk of widening is a false match on a `"period"` or
+   * `"namespace_id"` key belonging to some unrelated future binding — which is
+   * why this matches the whole entry SHAPE (name + namespace_id + simple), and
+   * why `covers every ratelimits entry` below cross-checks the count against
+   * the raw `namespace_id` occurrences so a missed entry fails loudly instead of
+   * silently shrinking coverage.
+   */
+  function ratelimitEntries(): Array<{
+    name: string;
+    namespaceId: string;
+    limit: number;
+    period: number;
+  }> {
+    const re =
+      /"name":\s*"([A-Z_]+)"\s*,\s*"namespace_id":\s*"([^"]+)"\s*,\s*"simple":\s*\{\s*"limit":\s*(\d+)\s*,\s*"period":\s*(\d+)\s*\}/g;
+    return [...wranglerRaw.matchAll(re)].map((m) => ({
+      name: m[1]!,
+      namespaceId: m[2]!,
+      limit: Number(m[3]),
+      period: Number(m[4]),
+    }));
   }
 
   it("per-IP binding limits agree across all 3 envs", () => {
@@ -605,16 +620,51 @@ describe("wrangler.jsonc ↔ message drift", () => {
     expect(new Set(limits).size).toBe(1);
   });
 
-  it("every bucket's period is 60 — a shorter period admits MORE traffic, not less (see README 'Measured behaviour')", () => {
-    const periods = allPeriods();
-    expect(periods).toHaveLength(6); // 3 envs x (per-IP + global)
-    expect(periods.every((p) => p === 60)).toBe(true);
+  it("covers every ratelimits entry — a bucket the scan misses is a bucket with no guards", () => {
+    // The count is DERIVED from the file, not a literal, so adding a limiter
+    // cannot leave it uncovered: `namespace_id` appears exactly once per
+    // `ratelimits` entry, so if the shape-match below ever finds fewer entries
+    // than there are ids, this fails instead of quietly checking less.
+    const entries = ratelimitEntries();
+    const rawIdCount = [...wranglerRaw.matchAll(/"namespace_id":/g)].length;
+    expect(entries).toHaveLength(rawIdCount);
+    // Sanity that the file still declares one block per env.
+    expect([...wranglerRaw.matchAll(/"ratelimits":/g)]).toHaveLength(3);
+    // Each declared binding must appear once per env, or an env is unprotected.
+    const perName = new Map<string, number>();
+    for (const e of entries) perName.set(e.name, (perName.get(e.name) ?? 0) + 1);
+    for (const [name, count] of perName) {
+      expect(count, `${name} is not declared in all 3 envs`).toBe(3);
+    }
   });
 
-  it("all six namespace_id values are distinct — reusing one would merge the per-IP and per-colo counters", () => {
-    const ids = allNamespaceIds();
-    expect(ids).toHaveLength(6); // 3 envs x (per-IP + global)
-    expect(new Set(ids).size).toBe(6);
+  it("every bucket's period is 60 — a shorter period admits MORE traffic, not less (see README 'Measured behaviour')", () => {
+    const entries = ratelimitEntries();
+    expect(entries.length).toBeGreaterThan(0);
+    for (const e of entries) {
+      expect(e.period, `${e.name} (${e.namespaceId})`).toBe(60);
+    }
+  });
+
+  it("every namespace_id is distinct — reusing one merges two counters into one bucket", () => {
+    // This is the assertion that makes "confirm the new namespace ids do not
+    // collide" a CI check rather than a manual release step.
+    const ids = ratelimitEntries().map((e) => e.namespaceId);
+    expect(new Set(ids).size, `duplicate namespace_id in ${ids.join(",")}`).toBe(
+      ids.length,
+    );
+  });
+
+  it("each binding uses the same limit in every env", () => {
+    // A limit that differs per env means staging is not testing production's
+    // behaviour. Derived per name, so it covers the login buckets too.
+    const byName = new Map<string, number[]>();
+    for (const e of ratelimitEntries()) {
+      byName.set(e.name, [...(byName.get(e.name) ?? []), e.limit]);
+    }
+    for (const [name, limits] of byName) {
+      expect(new Set(limits).size, `${name} limits differ: ${limits.join(",")}`).toBe(1);
+    }
   });
 
   it("no freetier error kind names the internal mechanism or the cause", async () => {
