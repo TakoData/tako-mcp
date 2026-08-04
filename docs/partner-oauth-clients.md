@@ -55,6 +55,21 @@ any staging or per-region callbacks, and note that the old `client_id` keeps
 working until `OAUTH_SIGN_KEY` is rotated — there is no way to revoke just
 one.
 
+## Scopes
+
+Give partners `mcp offline_access`.
+
+`mcp` is the only scope that grants anything — it is what `/mcp` enforces.
+`offline_access` grants nothing extra (we always issue refresh tokens) but is
+accepted because Azure AI Foundry's setup guidance tells operators to include
+it, and its troubleshooting guide names a missing `offline_access` as the fix
+for sessions that expire. Rejecting it as "unsupported" broke the flow at
+configuration time, before anyone reached a tool call.
+
+`offline_access` on its own is rejected at `/authorize`: it would mint a token
+that `/mcp` later refuses with `insufficient_scope`, surfacing the mistake at a
+place that cannot explain it.
+
 ## Operational cautions
 
 - **`OAUTH_SIGN_KEY` rotation is the only revocation mechanism**, and it

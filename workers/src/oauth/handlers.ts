@@ -103,7 +103,11 @@ const REGISTRATION_TTL_S = 365 * 24 * 60 * 60;
  *  this list is rejected at /authorize so we don't echo unexpected
  *  values into issued tokens. Keep in sync with the
  *  `scopes_supported` field in `handleAuthServerMetadata`. */
-const SUPPORTED_SCOPES = new Set(["mcp"]);
+const SUPPORTED_SCOPES = new Set(["mcp", "offline_access"]);
+/** The one scope that actually grants anything. `offline_access` is
+ *  accepted for compatibility but confers nothing on its own — see
+ *  `REQUIRED_SCOPE` in `access.ts`, which is what `/mcp` enforces. */
+const GRANTING_SCOPE = "mcp";
 
 /* --------------------------- Config helpers --------------------------- */
 
@@ -567,6 +571,13 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
     const requested = scope.split(/\s+/).filter((s) => s.length > 0);
     if (!requested.every((s) => SUPPORTED_SCOPES.has(s))) {
       return `scope contains unsupported values; supported: ${[...SUPPORTED_SCOPES].join(", ")}`;
+    }
+    // `offline_access` alone would mint a token that `/mcp` then rejects
+    // with insufficient_scope on the first tool call — a failure that
+    // surfaces long after the mistake, at a place that doesn't explain it.
+    // Reject it here, where the message can name the problem.
+    if (!requested.includes(GRANTING_SCOPE)) {
+      return `scope must include '${GRANTING_SCOPE}'`;
     }
   }
   // RFC 8707 resource indicator is carried RAW here; it is canonicalized and
