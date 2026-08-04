@@ -31,6 +31,7 @@
     "@apidevtools/swagger-parser": "^10.1.1",
     "@cloudflare/vitest-pool-workers": "^0.9.11",
     "@cloudflare/workers-types": "^4.20250617.0",
+    "@iarna/toml": "^2.2.5",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.9.0",
     "js-yaml": "^4.1.0",

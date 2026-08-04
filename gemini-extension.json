@@ -1,0 +1,11 @@
+{
+  "name": "tako",
+  "version": "0.17.0",
+  "description": "Live, citation-backed data your agent cannot get from the open web: company financials, macroeconomic indicators, web and app traffic, sports, US government spending, and more. Hosted MCP server, free tier, no API key to start.",
+  "contextFileName": "docs${/}gemini${/}GEMINI.md",
+  "mcpServers": {
+    "tako": {
+      "httpUrl": "https://mcp.tako.com/mcp"
+    }
+  }
+}

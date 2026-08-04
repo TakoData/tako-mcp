@@ -1,0 +1,21 @@
+description = "Answer a data question with live, citation-backed Tako data"
+
+prompt = """
+Answer this data question using Tako: {{args}}
+
+How to do it:
+
+- If the question asks for **one specific figure**, call `tako_answer` and relay its
+  `answer` field directly — it is already synthesized and cited. Do not paraphrase away
+  the citation.
+- If the question is **broad or multi-part**, decompose it into narrow single
+  entity + metric searches and fire `tako_search` for each concurrently, then synthesize
+  the results yourself. One entity, one metric per call.
+- If you are unsure Tako covers the metric, call `tako_available_data` first — it is free
+  and returns the exact metric name to use.
+- If `tako_answer` comes back with a `guidance` field saying no data cards grounded the
+  answer, say so plainly and pivot the question. Do not rephrase and retry the same ask.
+
+Report the figure, the period it covers, and the source. Include the **Open in Tako** link
+for any card you used.
+"""

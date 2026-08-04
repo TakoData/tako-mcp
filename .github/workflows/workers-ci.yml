@@ -11,7 +11,9 @@ on:
   # `assertChatgptSubmissionParity`, `assertLlmsFullCoverage`,
   # `assertPinFormInDocs`); `scripts/skills.test.ts` reads `skills/**`,
   # `.claude-plugin/**`, `version.txt`, and `README.md` again (the SKILL.md
-  # frontmatter must match the README's copy-paste blocks byte for byte).
+  # frontmatter must match the README's copy-paste blocks byte for byte);
+  # `scripts/gemini-extension.test.ts` reads `gemini-extension.json`,
+  # `commands/**`, `docs/gemini/**`, and `version.txt`.
   #
   # `skills/**` and `.claude-plugin/**` were missing here, and that is how a
   # skill with unparseable YAML frontmatter shipped: the edit that broke it
@@ -25,6 +27,9 @@ on:
       - 'registry/**'
       - 'skills/**'
       - '.claude-plugin/**'
+      - 'gemini-extension.json'
+      - 'commands/**'
+      - 'docs/gemini/**'
       - 'chatgpt-app-submission.json'
       - 'llms-full.txt'
       - 'llms.txt'
@@ -36,6 +41,9 @@ on:
       - 'registry/**'
       - 'skills/**'
       - '.claude-plugin/**'
+      - 'gemini-extension.json'
+      - 'commands/**'
+      - 'docs/gemini/**'
       - 'chatgpt-app-submission.json'
       - 'llms-full.txt'
       - 'llms.txt'
