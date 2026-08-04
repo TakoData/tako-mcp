@@ -79,7 +79,7 @@ describe("tako_visualize handler", () => {
     expect(takoVisualize.annotations.openWorldHint).toBe(false);
   });
 
-  it("POSTs components + title to /api/v1/thin_viz/create/ and lifts card_id into widget fields", async () => {
+  it("POSTs components + title to /api/v1/thin_viz/create/ and lifts the card id into widget fields", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, CARD_RESPONSE)]);
 
     const out = await takoVisualize.handler(VALID_INPUT, CTX);
@@ -92,8 +92,13 @@ describe("tako_visualize handler", () => {
     expect((body.components as unknown[]).length).toBe(2);
 
     // card fields surfaced
-    expect(out.card_id).toBe("card_abc123");
     expect(out.webpage_url).toBe("https://staging.trytako.com/charts/card_abc123");
+    // The id reaches the caller ONCE, as `pub_id` — the name the widget
+    // resolves the chart through. `card_id` is deliberately not advertised
+    // (see the outputSchema): it carried the identical string under a second,
+    // internal-sounding name, which is the duplication OpenAI's review asks to
+    // drop.
+    expect("card_id" in out).toBe(false);
     // widget fields lifted for inline render
     expect(out.pub_id).toBe("card_abc123");
     expect(out.embed_url).toMatch(/^https?:\/\//);

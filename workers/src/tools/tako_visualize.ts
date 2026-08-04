@@ -1,5 +1,5 @@
 /**
- * `tako_visualize` — create an embeddable Tako card directly from the
+ * `tako_visualize` — create a PUBLIC, PERSISTENT Tako card directly from the
  * caller's OWN structured data, backed by `POST /api/v1/thin_viz/create/`
  * (the SDK's `client.create_card`). Unlike `tako_search`, this does NOT
  * search Tako's knowledge graph — it renders data the agent already has.
@@ -7,6 +7,15 @@
  * The created card auto-renders inline as a chart: the backend returns a
  * `card_id` (+ embed/image URLs), which the tool lifts into the same widget
  * fields `tako_search` uses, sharing `_chart_widget.ts`.
+ *
+ * This is the one tool on the surface that WRITES, and what it writes is
+ * world-readable: the supplied data is stored by Tako and the resulting
+ * `webpage_url` / `embed_url` are viewable by anyone holding the link, with
+ * no expiry. Three things encode that, and they have to stay in agreement —
+ * the `DESCRIPTION` disclosure the model reads before calling, the
+ * `readOnlyHint: false` / ChatGPT `openWorldHint: true` annotation pair that
+ * makes the call confirmation-worthy, and the matching justifications in
+ * `chatgpt-app-submission.json`.
  */
 import { z } from "zod";
 
@@ -52,8 +61,21 @@ export const COMPONENT_TYPES = [
   "person_card",
 ] as const;
 
+// The first two lines are a DISCLOSURE, not marketing copy, and they lead on
+// purpose. This tool publishes: the supplied data leaves the conversation,
+// lands in Tako's storage, and becomes a page anyone holding the link can
+// open, with no expiry. "Embeddable" alone (the previous wording) described
+// the mechanism and hid the consequence — and a model that does not know the
+// output is public cannot warn the user before pasting their data into it,
+// which is exactly the gap OpenAI's app review flags. The sensitive-data
+// sentence is addressed to the MODEL because the model is what assembles the
+// `components` payload; it is the only party positioned to refuse.
 const DESCRIPTION = [
-  "Create an embeddable Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. Auto-renders inline; returns `webpage_url` / `embed_url`.",
+  "Create a PUBLIC, PERSISTENT Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. The data you supply is sent to and stored by Tako, the card does not expire, and anyone with the returned link can view it without signing in. Confirm the user wants a public chart before calling.",
+  "",
+  "NEVER put sensitive data in `components`: no passwords, API keys or tokens, payment-card or bank details, health information, government identifiers (SSN, passport, driver's licence), precise home addresses, or anyone's personal data they have not agreed to publish. Aggregate or anonymize first, or decline.",
+  "",
+  "Auto-renders inline; returns `webpage_url` / `embed_url`.",
   "",
   "Input: one or more `components`, each `{component_type, config}`. `config` is typed per `component_type` — `header`, `categorical_bar`, `generic_timeseries`, `table`, `financial_boxes`, and `pie` carry their required fields inline; other types accept a documented passthrough config. `component_variant` is optional and rarely needed.",
   "",
@@ -293,8 +315,15 @@ const inputSchema = z.object({
 // buildChartUrls. If we switched to outputSchema = ThinVizCard directly the
 // inline render would break and the existing widget tests would fail.
 // ThinVizCard is therefore used as the wire-guard only.
+//
+// `card_id` is deliberately NOT advertised, even though the handler receives
+// one and the whole tool is built on it. `pub_id` carries the identical
+// string (see the handler) and has a job — the widget resolves the chart
+// through it — so a second copy under an internal-sounding name was pure
+// duplication in front of the model, and OpenAI's review asks for exactly
+// that to go. The three things a caller actually needs are `webpage_url`
+// (share), `embed_url` (embed) and `pub_id` (render).
 const outputSchema = z.object({
-  card_id: z.string(),
   title: z.string().optional(),
   description: z.string().optional(),
   webpage_url: z.string().optional(),
@@ -395,7 +424,6 @@ const tako_visualize = {
     // so inline render works regardless of the URL form the backend returns.
     const { embed_url, image_url } = buildChartUrls(ctx.env, cardId, DEFAULT_DARK_MODE);
     const parsed = outputSchema.safeParse({
-      card_id: cardId,
       title: wire.title ?? undefined,
       description: wire.description ?? undefined,
       webpage_url: wire.webpage_url ?? undefined,

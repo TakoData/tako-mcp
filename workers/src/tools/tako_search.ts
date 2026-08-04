@@ -59,7 +59,7 @@ const DESCRIPTION = [
   "",
   `Non-exportable cards (\`exportable: false\`, usually license-gated) return no rows: read the headline value from the card's \`description\` when it carries one, or get specific figures via \`tako_answer\` — ${PINNED_FROM_CARD} (each such card carries a \`values_hint\` saying exactly this).`,
   "",
-  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (request_id, usage, chart-widget fields).",
+  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
 ].join("\n");
 
 const inputSchema = z.object({

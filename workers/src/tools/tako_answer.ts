@@ -57,7 +57,7 @@ const DESCRIPTION = [
   "",
   "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Cited cards inline their recent rows (see include_contents/preview_rows), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
-  "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (request_id, usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.",
+  "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.",
 ].join("\n");
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).

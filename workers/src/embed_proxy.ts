@@ -42,6 +42,10 @@
  *     produce a CSP violation — and a blocked subresource inside the widget is
  *     what claude.ai reports to the user as "There was a problem displaying
  *     content from tako." Removing it removes a guaranteed false alarm.
+ *     Belt-and-braces as of the `disable_tracking=true` upstream param below,
+ *     which asks the page not to emit the bootstrap in the first place; the
+ *     strip stays because it is the half that does not depend on an upstream
+ *     template continuing to honour a query flag.
  *
  * Gated on `PUBLIC_CDN_URL`: with the experiment off (production default) this
  * route 404s exactly like any unknown path, so the surface is unchanged. A
@@ -418,7 +422,14 @@ export async function handleEmbedProxy(
   const limited = await rateLimited(request, env);
   if (limited !== undefined) return limited;
 
-  const upstream = `${origins.publicBase}/embed/${pubId}/?dark_mode=${darkMode}`;
+  // `disable_tracking=true` asks the embed page not to emit the Google Tag
+  // Manager bootstrap at all, and excludes this fetch from Tako's own
+  // impression counters. Both are wanted here: the markup we return crosses
+  // into a third-party widget sandbox where a tracker has no business (the
+  // sanitizer below still strips GA belt-and-braces, in case an upstream
+  // change stops honouring the flag), and a proxy read is a machine fetch, not
+  // a person viewing a chart, so counting it was always noise.
+  const upstream = `${origins.publicBase}/embed/${pubId}/?dark_mode=${darkMode}&disable_tracking=true`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
   let response: Response;

@@ -121,9 +121,20 @@ function html(): string {
   return buildChartAppUiResourceFromOutputPubId(ENV).html;
 }
 
-/** Did the widget commit to the interactive iframe? */
+/**
+ * Did the widget commit to the interactive iframe?
+ *
+ * The expected src is the embed url with `disable_tracking=true` appended —
+ * `withoutTracking` in `_chart_widget.ts` adds it to every iframe load the
+ * widget performs. THIS path is why it exists: ChatGPT commits to a real
+ * cross-origin iframe of the embed page, and OpenAI's iframe policy singles
+ * out analytics and tracking inside an app's frame. An exact compare (not
+ * `toContain`) so a regression that drops the flag fails here.
+ */
 function renderedIframe(m: Mounted): boolean {
-  return frame(m).getAttribute("src") === EMBED_URL;
+  return (
+    frame(m).getAttribute("src") === `${EMBED_URL}&disable_tracking=true`
+  );
 }
 
 afterEach(() => {

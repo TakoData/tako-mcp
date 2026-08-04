@@ -24,6 +24,20 @@ import {
 import worker from "./index.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
+/**
+ * Every string this module can put in front of a caller — and therefore in
+ * front of a host's MODEL, since four of the five ship as tool-result text.
+ * The two guard tests below hold for all of them together, so a new message
+ * added to `freetier.ts` is covered by adding one line here.
+ */
+const ALL_FREE_TIER_MESSAGES = [
+  FREE_TIER_LIMIT_MESSAGE,
+  FREE_TIER_GLOBAL_LIMIT_MESSAGE,
+  FREE_TIER_BATCH_MESSAGE,
+  FREE_TIER_CREDITS_MESSAGE,
+  FREE_TIER_TOO_LARGE_MESSAGE,
+];
+
 /** A fake limiter that records keys and returns a scripted success value. */
 function fakeLimiter(success: boolean): RateLimit & { keys: string[] } {
   const keys: string[] = [];
@@ -445,7 +459,7 @@ describe("checkFreeTierRateLimit", () => {
 });
 
 describe("freeTierLimitResponse", () => {
-  it("with a request id: HTTP 200 JSON-RPC RESULT carrying the upsell as a tool error", async () => {
+  it("with a request id: HTTP 200 JSON-RPC RESULT carrying the limit message as a tool error", async () => {
     // Deliberately not a 429 — the SDK client throws on non-2xx POSTs at
     // the transport layer, so a 429 body never reaches the model. As a
     // tool result the host feeds the text straight to the model.
@@ -462,7 +476,6 @@ describe("freeTierLimitResponse", () => {
     expect(body.result.content).toEqual([
       { type: "text", text: FREE_TIER_LIMIT_MESSAGE },
     ]);
-    expect(FREE_TIER_LIMIT_MESSAGE).toContain("https://tako.com/account/");
   });
 
   it("without a request id: degrades to the legacy 429 with Retry-After", async () => {
@@ -552,8 +565,7 @@ describe("freeTierBatchResponse", () => {
     expect(body.error.message).toBe(FREE_TIER_BATCH_MESSAGE);
     expect(body.error.message).toBe(
       "Batch requests are not supported for anonymous access. Send one " +
-        "JSON-RPC request per POST, or get an API key at " +
-        "https://tako.com/account/ for full access.",
+        "JSON-RPC request per POST.",
     );
   });
 });
@@ -716,34 +728,38 @@ describe("wrangler.jsonc ↔ message drift", () => {
   it("no user-facing message advertises a rate, says free, or uses the old host", () => {
     // All five user-facing messages, including the 413 body-too-large
     // message: it ships to clients (see `freeTierTooLargeResponse`), so the
-    // same prohibitions apply. It is NOT an upsell, though — no rate is
-    // advertised (the byte cap is exactly enforced, unlike the limiter
-    // buckets, so that number is fine; the regex below only bans a
-    // requests-per-time figure) and it carries no account URL, so it is
-    // deliberately excluded from the upsell-URL list below.
-    const allMessages = [
-      FREE_TIER_LIMIT_MESSAGE,
-      FREE_TIER_GLOBAL_LIMIT_MESSAGE,
-      FREE_TIER_BATCH_MESSAGE,
-      FREE_TIER_CREDITS_MESSAGE,
-      FREE_TIER_TOO_LARGE_MESSAGE,
-    ];
-    for (const message of allMessages) {
+    // same prohibitions apply. No rate may be advertised (the byte cap is
+    // exactly enforced, unlike the limiter buckets, so that number is fine;
+    // the regex below only bans a requests-per-time figure).
+    for (const message of ALL_FREE_TIER_MESSAGES) {
       expect(message).not.toMatch(
         /\d+\s*requests?\s*(\/|per)\s*(min|minute|sec|second)/i,
       );
       expect(message).not.toMatch(/\bfree\b/i);
       expect(message).not.toContain("trytako.com");
     }
+  });
 
-    const upsellMessages = [
-      FREE_TIER_LIMIT_MESSAGE,
-      FREE_TIER_GLOBAL_LIMIT_MESSAGE,
-      FREE_TIER_BATCH_MESSAGE,
-      FREE_TIER_CREDITS_MESSAGE,
-    ];
-    for (const message of upsellMessages) {
-      expect(message).toContain("https://tako.com/account/");
+  it("no user-facing message promotes an account, a purchase, or an upgrade", () => {
+    // These strings reach ChatGPT's MODEL as tool-result text (see
+    // `freeTierLimitResponse` for why they are delivered as results rather
+    // than 429s). OpenAI's commerce policy forbids promoting or selling
+    // digital services, subscriptions, tokens, or credits through an app, so
+    // an over-limit message may state capacity and retry advice and nothing
+    // more. Four of these used to close with "get an API key at
+    // https://tako.com/account/ …"; that is what this test exists to keep
+    // out. Existing paid-account functionality is unaffected — only
+    // advertising it from a tool response is.
+    //
+    // Note for anyone re-adding a link: the current API-key page is
+    // https://tako.com/console/api-keys (the `/account/` path these
+    // messages used was already stale). It belongs in the docs and on
+    // tako.com, not in a tool result.
+    for (const message of ALL_FREE_TIER_MESSAGES) {
+      expect(message).not.toMatch(/https?:\/\//);
+      expect(message).not.toMatch(
+        /api key|account|sign ?up|upgrade|subscri|purchas|\bbuy\b|\bplan\b|pricing|\bcredits?\b|\$/i,
+      );
     }
   });
 });
@@ -936,7 +952,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       post(ANSWER_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
       freeEnv(limiter),
     );
-    // Not a 429: the SDK client throws on non-2xx, so the upsell would
+    // Not a 429: the SDK client throws on non-2xx, so the message would
     // never reach the model. A JSON-RPC result with isError does.
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -1030,7 +1046,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(limiter.keys).toEqual([]);
   });
 
-  it("free-tier credit exhaustion (Django 402) surfaces as the upsell, not a billing error", async () => {
+  it("free-tier credit exhaustion (Django 402) surfaces as the capacity message, not a billing error", async () => {
     const limiter = fakeLimiter(true);
     mockFetchSequence([
       new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
@@ -1066,7 +1082,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.content[0]?.text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
   });
 
-  it("authenticated credit exhaustion keeps the real Django error (no upsell substitution)", async () => {
+  it("authenticated credit exhaustion keeps the real Django error (no capacity substitution)", async () => {
     mockFetchSequence([
       new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
         status: 402,

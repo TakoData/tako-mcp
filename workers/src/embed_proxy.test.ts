@@ -220,10 +220,14 @@ describe("handleEmbedProxy — experiment on", () => {
     expect(body).toContain("timeseries:eav_v3");
     expect(body).not.toContain("SECRET-TOKEN-VALUE");
 
-    // Upstream must be the embed route for exactly this id, on the public base.
+    // Upstream must be the embed route for exactly this id, on the public
+    // base, and it must ask the page to skip analytics: this markup crosses
+    // into a third-party widget sandbox, where a Google Tag Manager beacon has
+    // no business (and would only trip the sandbox CSP). The sanitizer still
+    // strips GA if the flag is ever not honoured — see `sanitizeEmbedHtml`.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      `https://tako.com/embed/${PUB_ID}/?dark_mode=auto`,
+      `https://tako.com/embed/${PUB_ID}/?dark_mode=auto&disable_tracking=true`,
     );
   });
 
