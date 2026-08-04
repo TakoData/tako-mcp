@@ -1879,3 +1879,27 @@ describe("mcp apps host theme (executed)", () => {
     expect(widgetFrame(m).getAttribute("src")).toContain("dark_mode=true");
   });
 });
+
+describe("no-image embed fallback strips tracking too", () => {
+  // The invariant in `docs/chatgpt-app-review.md` §4 is stated absolutely —
+  // "every iframe load the widget performs" — but this branch used to assign
+  // the raw url. Reaching it needs a valid `embed_url` beside an `image_url`
+  // the image path rejects, which prod never emits today; the guard exists so
+  // the invariant holds by construction rather than by that continuing to be
+  // true. No `window.openai`, so the ChatGPT path is not taken and the
+  // else-if chain falls through image → embed.
+  it("appends disable_tracking on the validEmbed-without-image path", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: "ftp://tako.com/x.png" }),
+      m.wrapperWin,
+    );
+    // Exact compare, not toContain: a regression that drops the flag or
+    // double-appends it must fail here.
+    expect(widgetFrame(m).getAttribute("src")).toBe(
+      `${EMBED_URL}&disable_tracking=true`,
+    );
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+  });
+});

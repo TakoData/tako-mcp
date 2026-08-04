@@ -1639,8 +1639,18 @@ const WIDGET_HTML = `<!doctype html>
       // host CSP-blocks it and the user sees the same "blocked" tile
       // they'd otherwise have seen; best case some host without
       // \`window.openai\` actually allows the iframe.
-      if (frame.src !== url) frame.src = url;
-      armEmbedOrigin(url);
+      //
+      // Stripped of tracking like every other iframe load — see
+      // \`withoutTracking\`. This branch needs a non-http(s) \`image_url\`
+      // alongside a valid \`embed_url\`, which the server does not currently
+      // emit, so it is unreachable today. It is cleaned anyway: the invariant
+      // documented in \`docs/chatgpt-app-review.md\` §4 is "every iframe load
+      // the widget performs", and holding that by construction beats holding
+      // it because two fields happen to always ship together. \`withoutTracking\`
+      // is idempotent and allocation-cheap, so there is nothing to trade off.
+      var untrackedUrl = withoutTracking(url);
+      if (frame.src !== untrackedUrl) frame.src = untrackedUrl;
+      armEmbedOrigin(untrackedUrl);
       setFrameHeight(h);
       frame.classList.remove("hidden");
     } else {

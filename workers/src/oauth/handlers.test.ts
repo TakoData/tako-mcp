@@ -2356,3 +2356,34 @@ describe("account switching via prompt=login", () => {
     expect(formAction).not.toContain("prompt");
   });
 });
+
+describe("consent page keeps the two decisions visually distinct", () => {
+  // The regression this exists to catch: making Cancel a real submit (needed
+  // to carry `action=deny`) silently swept it into the pre-existing
+  // `button[type=submit]` accent rule, so BOTH buttons rendered as identical
+  // filled accent buttons. The DOM-ordering test passed throughout — ordering
+  // and appearance are different properties, and only one was asserted.
+  //
+  // String assertions rather than getComputedStyle: this suite runs in the
+  // workers pool, which has no DOM. They are still specific enough to fail on
+  // the exact regression.
+  it("accents only Allow, never every submit", async () => {
+    const { env, url } = await consentFixture();
+    const sessionJwt = await mintSessionCookie(env);
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const html = await res.text();
+    // The accent rule must be keyed on the decision, not on the element type.
+    expect(html).toContain('button[value="allow"] { background: var(--accent)');
+    // A `type=submit` accent rule would hit Cancel as well — that IS the bug.
+    expect(html).not.toMatch(/button\[type=submit\][^}]*var\(--accent\)/);
+    // Both remain real submits: the deny path depends on it, so a "fix" that
+    // reverted Cancel to type="button" would break denial and must fail here.
+    expect(html).toContain('<button type="submit" name="action" value="allow"');
+    expect(html).toContain('<button type="submit" name="action" value="deny"');
+  });
+});
