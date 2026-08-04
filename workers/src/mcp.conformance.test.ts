@@ -145,6 +145,66 @@ function dummyFor(schema: unknown): unknown {
   }
 }
 
+/**
+ * Every property name in a JSON Schema that matches `banned`, at ANY depth,
+ * reported as a dotted path.
+ *
+ * GENERIC on purpose, rather than a list of keywords to descend. That list was
+ * wrong twice. First it was top-level only, which could not see a `request_id`
+ * inside a nested object. Then it was `properties` + `items`, which still could
+ * not see into `anyOf` — and `anyOf` is precisely how a nullable object reaches
+ * the published schema: `usageAdvertisedSchema.nullable()` publishes as
+ * `anyOf: [{properties: {…}}, {type: "null"}]`, a wrapper with no `properties`
+ * and no `items` of its own. Seven such branches were live on the published
+ * surface, including `usage` on both headline tools. Each time, the walk was
+ * shallower than the rule it states and passed for a property of today's
+ * schemas rather than of the check.
+ *
+ * So: walk the whole tree and treat every `properties` map found anywhere as
+ * property names, whatever keyword nests it. That covers `anyOf` / `oneOf` /
+ * `allOf`, `not`, `if` / `then` / `else`, `additionalProperties`,
+ * `$defs`, `dependentSchemas` and anything a future serializer emits, without
+ * this function needing to know their names.
+ *
+ * Two positions are handled specially because their keys are NOT property
+ * names: `enum` / `const` hold data (an object in there may legitimately carry
+ * a `properties` key), and `patternProperties` keys are regexes.
+ */
+function bannedKeysIn(schema: unknown, path: string, banned: RegExp): string[] {
+  if (Array.isArray(schema)) {
+    return schema.flatMap((branch) => bannedKeysIn(branch, path, banned));
+  }
+  if (schema === null || typeof schema !== "object") return [];
+  const found: string[] = [];
+  for (const [keyword, value] of Object.entries(schema as Record<string, unknown>)) {
+    // Instance data, not subschemas — never read as property names.
+    if (keyword === "enum" || keyword === "const") continue;
+    if (keyword === "properties") {
+      for (const [name, child] of Object.entries((value ?? {}) as Record<string, unknown>)) {
+        const childPath = `${path}.${name}`;
+        if (banned.test(name)) found.push(childPath);
+        found.push(...bannedKeysIn(child, childPath, banned));
+      }
+      continue;
+    }
+    if (keyword === "patternProperties") {
+      // Keys are regexes; descend into the subschemas without testing them.
+      for (const child of Object.values((value ?? {}) as Record<string, unknown>)) {
+        found.push(...bannedKeysIn(child, `${path}.*`, banned));
+      }
+      continue;
+    }
+    if (keyword === "items" || keyword === "prefixItems" || keyword === "contains") {
+      found.push(...bannedKeysIn(value, `${path}[]`, banned));
+      continue;
+    }
+    // Every other keyword: descend with the path unchanged, so a union branch
+    // or a `$defs` entry does not invent a path segment.
+    found.push(...bannedKeysIn(value, path, banned));
+  }
+  return found;
+}
+
 describe("published outputSchema conformance", () => {
   // The precondition that makes every other assertion here matter. If the SDK
   // ever stops republishing our loose shapes as strict, this flips and the
@@ -190,6 +250,28 @@ describe("published outputSchema conformance", () => {
     errorSpy.mockRestore();
     expect(offenders).toEqual([]);
     expect(diverted, "synthetic output failed to conform — sweep did not cover the success path").toEqual([]);
+  });
+
+  // Read off the REAL `tools/list`, so this covers every tool on the surface —
+  // including one added later whose author never saw this rule.
+  it("publishes no server-side debug identifier", () => {
+    // OpenAI's app review calls out request ids, trace ids, session ids and
+    // debug identifiers as things a tool response should not carry unless
+    // strictly necessary. `tako_search` and `tako_answer` used to advertise
+    // `request_id` (and echo it in their markdown footer); it is now
+    // server-log-only — `logToolRequestId` in `tools/_log.ts`.
+    //
+    // Deliberately NOT banned: `run_id` and `thread_id` on the agent tools.
+    // Those are strictly necessary — `run_id` is the only way to poll a run to
+    // completion and `thread_id` the only way to continue a conversation, so a
+    // caller cannot use the tool without them. The test is about identifiers
+    // that exist for OUR debugging, not the caller's control flow.
+    const banned = /^(request|trace|correlation|session|debug)_id$/;
+    const offenders: string[] = [];
+    for (const [name, schema] of published) {
+      offenders.push(...bannedKeysIn(schema, name, banned));
+    }
+    expect(offenders).toEqual([]);
   });
 
   // A tool advertising an outputSchema MUST return structuredContent; the
@@ -330,5 +412,98 @@ describe("realistic payloads validate against the published schema", () => {
       request_id: "r",
     });
     expect(structured.usage).toEqual(usage());
+  });
+});
+
+describe("the debug-identifier sweep can actually see nested keys", () => {
+  // Guards the sweep itself, not the schemas. The published schemas nest no
+  // banned key today, so the recursive walk and the old top-level one are
+  // indistinguishable against real input — this asserts the mechanism on a
+  // shape the top-level walk provably missed.
+  const banned = /^(request|trace|correlation|session|debug)_id$/;
+
+  it("finds a request_id buried in a nested object", () => {
+    const schema = {
+      properties: {
+        result: { properties: { request_id: { type: "string" } } },
+      },
+    };
+    expect(bannedKeysIn(schema, "t", banned)).toEqual(["t.result.request_id"]);
+  });
+
+  it("finds one inside array items", () => {
+    const schema = {
+      properties: {
+        cards: { type: "array", items: { properties: { trace_id: { type: "string" } } } },
+      },
+    };
+    expect(bannedKeysIn(schema, "t", banned)).toEqual(["t.cards[].trace_id"]);
+  });
+
+  it("leaves legitimate control-flow identifiers alone at depth", () => {
+    // `run_id` / `thread_id` are the caller's control flow, deliberately not
+    // banned — the recursion must not start flagging them.
+    const schema = {
+      properties: {
+        result: { properties: { run_id: {}, thread_id: {} } },
+      },
+    };
+    expect(bannedKeysIn(schema, "t", banned)).toEqual([]);
+  });
+});
+
+describe("the sweep sees into union branches, not just objects and arrays", () => {
+  // The gap these exist for: `properties` + `items` descent could not enter an
+  // `anyOf`, and `anyOf` is how every nullable object reaches the published
+  // schema. Seven such branches were live when this was found. The earlier
+  // mechanism tests all build plain {properties}/{items} shapes, so none of
+  // them would have caught it — these deliberately wrap the nested object.
+  const banned = /^(request|trace|correlation|session|debug)_id$/;
+
+  it("finds a key inside a nullable object, the real published shape", () => {
+    // Verbatim shape of `tako_search.usage` off a live tools/list, with the
+    // banned key substituted for total_cost_usd.
+    const schema = {
+      properties: {
+        usage: {
+          anyOf: [
+            {
+              type: "object",
+              properties: { request_id: { type: "string" } },
+              required: ["request_id"],
+              additionalProperties: {},
+            },
+            { type: "null" },
+          ],
+          description: "Cost-plus usage for this request (null when not metered).",
+        },
+      },
+    };
+    expect(bannedKeysIn(schema, "t", banned)).toEqual(["t.usage.request_id"]);
+  });
+
+  it("finds keys under oneOf and allOf too", () => {
+    const oneOf = { properties: { a: { oneOf: [{ properties: { trace_id: {} } }] } } };
+    const allOf = { properties: { b: { allOf: [{ properties: { session_id: {} } }] } } };
+    expect(bannedKeysIn(oneOf, "t", banned)).toEqual(["t.a.trace_id"]);
+    expect(bannedKeysIn(allOf, "t", banned)).toEqual(["t.b.session_id"]);
+  });
+
+  it("descends keywords it was never taught, via $defs", () => {
+    // The point of the generic walk: coverage should not depend on this
+    // function having heard of the keyword.
+    const schema = { $defs: { Thing: { properties: { debug_id: {} } } } };
+    expect(bannedKeysIn(schema, "t", banned)).toEqual(["t.debug_id"]);
+  });
+
+  it("does not mistake enum DATA for a schema", () => {
+    // An enum value may legitimately be an object carrying a `properties` key.
+    // Reading it as a subschema would invent an offender that does not exist.
+    const schema = {
+      properties: {
+        mode: { enum: [{ properties: { request_id: "not a schema" } }] },
+      },
+    };
+    expect(bannedKeysIn(schema, "t", banned)).toEqual([]);
   });
 });

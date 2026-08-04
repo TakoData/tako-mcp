@@ -22,6 +22,11 @@ import type {
   SessionCookieClaims,
 } from "./types.js";
 
+/** The consent form's Allow button posts this. `handleAuthorize` requires an
+ *  explicit decision — a POST with no `action` is a 400, never an implicit
+ *  allow — so every consent POST in these tests carries it. */
+const CONSENT_ALLOW = "action=allow";
+
 const SIGN_KEY = "test-sign-key-handlers";
 
 function freshEncKey(): string {
@@ -440,7 +445,11 @@ describe("/authorize", () => {
     url.searchParams.set("code_challenge", challenge);
     url.searchParams.set("code_challenge_method", "S256");
     const res = await handleAuthorize(
-      new Request(url.toString(), { method: "POST" }),
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: CONSENT_ALLOW,
+      }),
       env,
     );
     expect(res.status).toBe(401);
@@ -462,7 +471,11 @@ describe("/authorize", () => {
     const res = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -602,7 +615,11 @@ describe("/token", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -662,7 +679,11 @@ describe("/token", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -721,7 +742,11 @@ describe("/token", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -762,7 +787,11 @@ describe("/token", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -842,7 +871,11 @@ describe("/token", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -1697,7 +1730,11 @@ describe("/authorize hardening", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -1794,7 +1831,11 @@ describe("/authorize POST always re-fetches the Tako token (Option 2)", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -1882,7 +1923,11 @@ describe("/authorize POST always re-fetches the Tako token (Option 2)", () => {
     const res = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -1911,7 +1956,11 @@ describe("/authorize POST always re-fetches the Tako token (Option 2)", () => {
     const res = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -1964,7 +2013,11 @@ describe("OAuth resource indicators (RFC 8707)", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -2046,7 +2099,11 @@ describe("OAuth resource indicators (RFC 8707)", () => {
     const res = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -2072,7 +2129,11 @@ describe("OAuth resource indicators (RFC 8707)", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
@@ -2115,5 +2176,214 @@ describe("OAuth resource indicators (RFC 8707)", () => {
     const setCookie = res.headers.get("set-cookie")!;
     const stateJwt = setCookie.split(`${STATE_COOKIE}=`)[1]!.split(";")[0]!;
     expect(jwtPayload(stateJwt).resource).toBe(RESOURCE);
+  });
+});
+
+/** Shared setup for the consent-decision and account-switch tests: a
+ *  registered client plus a valid PKCE challenge on a fresh env. */
+async function consentFixture(): Promise<{
+  env: Env;
+  url: URL;
+  redirectUri: string;
+}> {
+  const env = envWith();
+  const redirectUri = "https://client.example.com/cb";
+  const clientId = await mintClientId(env, redirectUri);
+  const { challenge } = await pkcePair();
+  const url = new URL("https://mcp.example.com/authorize");
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("code_challenge", challenge);
+  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("state", "client-state");
+  return { env, url, redirectUri };
+}
+
+const FORM_CT = { "content-type": "application/x-www-form-urlencoded" };
+
+describe("consent decision (RFC 6749 §4.1.2.1)", () => {
+  it("delivers a denial to the client as access_denied, preserving state", async () => {
+    const { env, url, redirectUri } = await consentFixture();
+    const sessionJwt = await mintSessionCookie(env);
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}`, ...FORM_CT },
+        body: "action=deny",
+      }),
+      env,
+    );
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.origin + loc.pathname).toBe(redirectUri);
+    expect(loc.searchParams.get("error")).toBe("access_denied");
+    expect(loc.searchParams.get("state")).toBe("client-state");
+    // A denial must never hand back a usable code.
+    expect(loc.searchParams.get("code")).toBeNull();
+  });
+
+  it("still denies without a live session, rather than 401-ing into a dead end", async () => {
+    // The whole point of Cancel is that the CLIENT learns the outcome. An
+    // expired cookie must not convert that into a bare error page, or the
+    // host sits waiting for a callback that never arrives.
+    const { env, url, redirectUri } = await consentFixture();
+    const res = await handleAuthorize(
+      new Request(url.toString(), { method: "POST", headers: FORM_CT, body: "action=deny" }),
+      env,
+    );
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.origin + loc.pathname).toBe(redirectUri);
+    expect(loc.searchParams.get("error")).toBe("access_denied");
+  });
+
+  it("rejects a consent POST with no action instead of implying allow", async () => {
+    const { env, url } = await consentFixture();
+    const sessionJwt = await mintSessionCookie(env);
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}`, ...FORM_CT },
+        body: "",
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    // No redirect, so no code could have been issued.
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("renders both decisions as real submits, with Allow first in DOM order", async () => {
+    const { env, url } = await consentFixture();
+    const sessionJwt = await mintSessionCookie(env);
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const html = await res.text();
+    expect(html).toContain('name="action" value="allow"');
+    expect(html).toContain('name="action" value="deny"');
+    // Cancel must not be a history.back() no-op any more.
+    expect(html).not.toContain("history.back");
+    // Enter activates the FIRST submit in tree order — that must be Allow,
+    // never deny. The visual left/right order is CSS's job (row-reverse).
+    expect(html.indexOf('value="allow"')).toBeLessThan(
+      html.indexOf('value="deny"'),
+    );
+  });
+});
+
+describe("account switching via prompt=login", () => {
+  it("forces re-auth and clears the session even when one is valid", async () => {
+    const { env, url } = await consentFixture();
+    const sessionJwt = await mintSessionCookie(env);
+    url.searchParams.set("prompt", "login");
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/login");
+    // BOTH cookies must survive onto the response: an object literal would
+    // have dropped one of the two Set-Cookie headers.
+    // `getSetCookie` exists on the Workers runtime but is absent from
+    // workers-types, so the shape is asserted locally rather than with `any`.
+    const cookies = (
+      res.headers as unknown as { getSetCookie(): string[] }
+    ).getSetCookie();
+    expect(cookies.some((c: string) => c.startsWith(`${STATE_COOKIE}=`))).toBe(
+      true,
+    );
+    const cleared = cookies.find(
+      (c: string) =>
+        c.startsWith(`${SESSION_COOKIE}=`) && c.includes("Max-Age=0"),
+    );
+    expect(cleared).toBeDefined();
+  });
+
+  it("does not render the consent page when prompt=login", async () => {
+    const { env, url } = await consentFixture();
+    const sessionJwt = await mintSessionCookie(env);
+    url.searchParams.set("prompt", "login");
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(302);
+    expect(await res.text()).toBe("");
+  });
+
+  it("still renders consent with a valid session and no prompt (regression)", async () => {
+    const { env, url } = await consentFixture();
+    const sessionJwt = await mintSessionCookie(env);
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Signed in as");
+  });
+
+  it("offers a switch-account link carrying prompt=login, and keeps it off the POST", async () => {
+    const { env, url } = await consentFixture();
+    const sessionJwt = await mintSessionCookie(env);
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const html = await res.text();
+    const href = html.match(/href="([^"]*prompt=login[^"]*)"/)?.[1];
+    expect(href).toBeDefined();
+    // The link must retain the validated OAuth params, or the resumed flow
+    // loses the client it was authorizing.
+    expect(href).toContain("client_id=");
+    expect(href).toContain("code_challenge=");
+    // `prompt` is GET-only: the form action must not carry it, or Allow would
+    // bounce the user back to /login instead of issuing a code.
+    const formAction = html.match(/<form method="POST" action="([^"]*)"/)?.[1];
+    expect(formAction).toBeDefined();
+    expect(formAction).not.toContain("prompt");
+  });
+});
+
+describe("consent page keeps the two decisions visually distinct", () => {
+  // The regression this exists to catch: making Cancel a real submit (needed
+  // to carry `action=deny`) silently swept it into the pre-existing
+  // `button[type=submit]` accent rule, so BOTH buttons rendered as identical
+  // filled accent buttons. The DOM-ordering test passed throughout — ordering
+  // and appearance are different properties, and only one was asserted.
+  //
+  // String assertions rather than getComputedStyle: this suite runs in the
+  // workers pool, which has no DOM. They are still specific enough to fail on
+  // the exact regression.
+  it("accents only Allow, never every submit", async () => {
+    const { env, url } = await consentFixture();
+    const sessionJwt = await mintSessionCookie(env);
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    const html = await res.text();
+    // The accent rule must be keyed on the decision, not on the element type.
+    expect(html).toContain('button[value="allow"] { background: var(--accent)');
+    // A `type=submit` accent rule would hit Cancel as well — that IS the bug.
+    expect(html).not.toMatch(/button\[type=submit\][^}]*var\(--accent\)/);
+    // Both remain real submits: the deny path depends on it, so a "fix" that
+    // reverted Cancel to type="button" would break denial and must fail here.
+    expect(html).toContain('<button type="submit" name="action" value="allow"');
+    expect(html).toContain('<button type="submit" name="action" value="deny"');
   });
 });

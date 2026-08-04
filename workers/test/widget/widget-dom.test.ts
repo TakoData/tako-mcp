@@ -30,6 +30,15 @@ import {
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
 const EMBED_URL = "https://staging.trytako.com/embed/abc123/?dark_mode=auto";
+// What the widget must actually put in an `iframe.src`: the same embed url with
+// analytics suppressed. `withoutTracking` in `_chart_widget.ts` appends it to
+// every in-widget iframe load — OpenAI's iframe policy singles out tracking
+// inside an app's embedded frame, and Tako's embed route already honours this
+// flag (it gates out Google Tag Manager and skips the impression counter).
+// `EMBED_URL` itself stays plain: the click-through anchor is a link a HUMAN
+// opens in their own browser, which is an ordinary visit that should count —
+// so the href assertions below deliberately still use `EMBED_URL`.
+const EMBED_IFRAME_SRC = `${EMBED_URL}&disable_tracking=true`;
 const IMAGE_URL =
   "https://staging.trytako.com/api/v1/image/abc123/?dark_mode=true";
 const DATA_URL = "data:image/png;base64,AAAA";
@@ -426,7 +435,7 @@ describe("interactive iframe capability probe (executed)", () => {
     expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
     expect(widgetLink(m).classList.contains("hidden")).toBe(false);
     // ...while the probe iframe loads the embed hidden.
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
     expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
   });
 
@@ -455,7 +464,7 @@ describe("interactive iframe capability probe (executed)", () => {
     expect(widgetLink(m).classList.contains("hidden")).toBe(true);
     // Image loads → probe arms and starts loading the embed, hidden.
     fireImageLoad(m);
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
     expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
     expect(widgetLink(m).classList.contains("hidden")).toBe(false);
   });
@@ -511,7 +520,7 @@ describe("interactive iframe capability probe (executed)", () => {
     (m.widgetWin as unknown as { openai: object }).openai = {};
     deliver(m, CHART_RESULT, m.wrapperWin);
     // ChatGPT path: no PNG detour, no probe — straight to the iframe.
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
     expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
     expect(widgetImg(m).getAttribute("src")).toBeNull();
   });
@@ -634,7 +643,7 @@ describe("committed iframe watchdog (executed)", () => {
       m.wrapperWin,
     );
     expect(widgetFrame(m).getAttribute("height")).toBe("640");
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
   });
 
   /** Fire a `resize` on the widget window, as a host column change would. */
@@ -714,10 +723,10 @@ describe("committed iframe watchdog (executed)", () => {
   it("stands down once the committed iframe loads", () => {
     const m = mountChatGpt();
     deliver(m, CHATGPT_RESULT, m.wrapperWin);
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
     fireFrameLoad(m);
     // Still the iframe, and no PNG was painted behind it.
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
     expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
     expect(widgetImg(m).getAttribute("src")).toBeNull();
   });
@@ -725,7 +734,7 @@ describe("committed iframe watchdog (executed)", () => {
   it("falls back to the remote PNG when the host CSP blocks the iframe", () => {
     const m = mountChatGpt();
     deliver(m, CHATGPT_RESULT, m.wrapperWin);
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
     fireFrameSrcViolation(m);
     // Frame unloaded and hidden; the image took over.
     expect(widgetFrame(m).getAttribute("src")).toBe("about:blank");
@@ -771,7 +780,7 @@ describe("committed iframe watchdog (executed)", () => {
     Object.assign(event, { effectiveDirective: "img-src" });
     m.widgetWin.document.dispatchEvent(event);
     // An unrelated CSP report must not tear down a working chart.
-    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_URL);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
     expect(widgetImg(m).getAttribute("src")).toBeNull();
   });
 
@@ -1868,5 +1877,29 @@ describe("mcp apps host theme (executed)", () => {
       m.wrapperWin,
     );
     expect(widgetFrame(m).getAttribute("src")).toContain("dark_mode=true");
+  });
+});
+
+describe("no-image embed fallback strips tracking too", () => {
+  // The invariant in `docs/chatgpt-app-review.md` §4 is stated absolutely —
+  // "every iframe load the widget performs" — but this branch used to assign
+  // the raw url. Reaching it needs a valid `embed_url` beside an `image_url`
+  // the image path rejects, which prod never emits today; the guard exists so
+  // the invariant holds by construction rather than by that continuing to be
+  // true. No `window.openai`, so the ChatGPT path is not taken and the
+  // else-if chain falls through image → embed.
+  it("appends disable_tracking on the validEmbed-without-image path", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: "ftp://tako.com/x.png" }),
+      m.wrapperWin,
+    );
+    // Exact compare, not toContain: a regression that drops the flag or
+    // double-appends it must fail here.
+    expect(widgetFrame(m).getAttribute("src")).toBe(
+      `${EMBED_URL}&disable_tracking=true`,
+    );
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
   });
 });

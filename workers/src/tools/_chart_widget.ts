@@ -888,6 +888,30 @@ const WIDGET_HTML = `<!doctype html>
     } catch (e) { /* pre-body or hostile host — cosmetic, never fatal */ }
   }
 
+  // Suppress the embed page's analytics for any load THIS widget performs.
+  //
+  // \`disable_tracking\` is an existing, supported flag on Tako's embed route:
+  // it gates the Google Tag Manager bootstrap out of the page
+  // (\`templates/embed/Card.html\`) and excludes the load from Tako's own
+  // impression counters (\`embed_impressions.should_track_impression\`).
+  //
+  // Required rather than cosmetic. OpenAI's iframe policy singles out
+  // analytics and tracking inside an app's embedded frame, and the ChatGPT
+  // path commits to a real cross-origin iframe of \`tako.com/embed/…\` — so
+  // without this the reviewed surface loads a third-party beacon. Losing the
+  // impression count for widget renders is the accepted cost; a chart drawn
+  // by an agent was never the same signal as a person opening the page, and
+  // the shareable \`embed_url\` a user actually clicks is unaffected.
+  //
+  // Idempotent, and it never rewrites an existing value — a caller (or a
+  // future \`?disable_tracking=false\`) is left alone rather than silently
+  // overridden.
+  function withoutTracking(url) {
+    if (!url || typeof url !== "string") return url;
+    if (url.indexOf("disable_tracking=") !== -1) return url;
+    return url + (url.indexOf("?") === -1 ? "?" : "&") + "disable_tracking=true";
+  }
+
   // Rewrite \`dark_mode\` on a chart url to match the host. Leaves the url alone
   // when the host is silent, so \`auto\` survives rather than being guessed at.
   //
@@ -971,6 +995,10 @@ const WIDGET_HTML = `<!doctype html>
   function probeInteractiveIframe(url, fallbackHeight) {
     if (probeStarted) return;
     probeStarted = true;
+    // The url we actually navigate to: analytics-free, like every other iframe
+    // load this widget performs (see \`withoutTracking\`). \`url\` itself stays
+    // untouched so the click-through anchor keeps the plain shareable link.
+    var probeUrl = withoutTracking(url);
     var settled = false;
     var timer = null;
     // Flips true the instant we navigate the probe frame to \`url\`, and
@@ -1013,7 +1041,7 @@ const WIDGET_HTML = `<!doctype html>
       setFrameHeight(h);
       // Arm the embed-height handshake only NOW: the embed has become the
       // visible surface, so honoring its resize messages is finally safe.
-      armEmbedOrigin(url);
+      armEmbedOrigin(probeUrl);
       imageLink.classList.add("hidden");
       placeholder.classList.add("hidden");
       frame.classList.remove("hidden");
@@ -1047,10 +1075,10 @@ const WIDGET_HTML = `<!doctype html>
     // still hidden behind the PNG, so honoring its \`tako-embed-height\`
     // messages would resize the widget under a chart the user is looking
     // at. \`succeed()\` arms it after the swap.
-    frame.src = url;
+    frame.src = probeUrl;
     probeNavigated = true;
     timer = setTimeout(function () { fail("timeout"); }, IFRAME_SETTLE_MS);
-    log("iframe probe started", { src: url });
+    log("iframe probe started", { src: probeUrl });
   }
 
   // One watchdog per widget lifetime, same reasoning as \`probeStarted\`.
@@ -1537,7 +1565,11 @@ const WIDGET_HTML = `<!doctype html>
     var useIframe = hasOpenAiRuntime() && validEmbed;
 
     if (useIframe) {
-      var themedUrl = withHostTheme(url);
+      // Tracking-free, then themed. This is the ChatGPT path: a committed
+      // cross-origin iframe of the embed page, and the surface OpenAI's iframe
+      // policy reviews — so it must not load a third-party beacon. See
+      // \`withoutTracking\`.
+      var themedUrl = withHostTheme(withoutTracking(url));
       if (frame.src !== themedUrl) frame.src = themedUrl;
       armEmbedOrigin(themedUrl);
       // Aspect-derived when the server supplied the card's PNG dimensions,
@@ -1607,8 +1639,18 @@ const WIDGET_HTML = `<!doctype html>
       // host CSP-blocks it and the user sees the same "blocked" tile
       // they'd otherwise have seen; best case some host without
       // \`window.openai\` actually allows the iframe.
-      if (frame.src !== url) frame.src = url;
-      armEmbedOrigin(url);
+      //
+      // Stripped of tracking like every other iframe load — see
+      // \`withoutTracking\`. This branch needs a non-http(s) \`image_url\`
+      // alongside a valid \`embed_url\`, which the server does not currently
+      // emit, so it is unreachable today. It is cleaned anyway: the invariant
+      // documented in \`docs/chatgpt-app-review.md\` §4 is "every iframe load
+      // the widget performs", and holding that by construction beats holding
+      // it because two fields happen to always ship together. \`withoutTracking\`
+      // is idempotent and allocation-cheap, so there is nothing to trade off.
+      var untrackedUrl = withoutTracking(url);
+      if (frame.src !== untrackedUrl) frame.src = untrackedUrl;
+      armEmbedOrigin(untrackedUrl);
       setFrameHeight(h);
       frame.classList.remove("hidden");
     } else {

@@ -328,14 +328,19 @@ async function hitPerIpLimiter(
  * Cloudflare rate-limit binding is permissive and eventually consistent, so it
  * cannot enforce a specific rate (measured: 20 of 20 normal-paced requests
  * admitted against a 10-per-60s bucket). A drift test in `freetier.test.ts`
- * fails if a rate figure is reintroduced here. The URL is the upsell: an API
- * key of the caller's own lifts the anonymous limits and unlocks the full
- * toolset. It is hardcoded to production on purpose — signup must reach
- * `tako.com` even when the caller hit staging.
+ * fails if a rate figure is reintroduced here.
+ *
+ * It also carries NO account link, pricing, or "get an API key" copy, and the
+ * guard test in `freetier.test.ts` fails if any returns. This is a
+ * model-visible string: OpenAI's commerce policy forbids promoting or selling
+ * digital services, subscriptions, tokens, or credits through an app, and
+ * every one of these messages reaches ChatGPT's model as tool-result text
+ * (see `freeTierLimitResponse`). Paid-account functionality itself is
+ * allowed — advertising it here is not. A caller who wants their own key
+ * finds it the same way every other Tako API user does, on tako.com.
  */
 export const FREE_TIER_LIMIT_MESSAGE =
-  "Rate limit reached for anonymous access. Try again in a minute, or " +
-  "get an API key at https://tako.com/account/ for higher limits.";
+  "Rate limit reached for anonymous access. Try again in a minute.";
 
 /**
  * Response for an over-limit metered `tools/call`.
@@ -344,9 +349,10 @@ export const FREE_TIER_LIMIT_MESSAGE =
  * JSON-RPC *result* with `isError: true` — the same shape Django tool
  * errors use — NOT a 429. On any non-2xx POST the MCP SDK client throws a
  * transport-level `StreamableHTTPError` and the pending `tools/call`
- * rejects, so an upsell delivered via 429 never reaches the model as
- * readable text. As a tool result, the host feeds the message straight
- * back to the model, which can relay it to the user.
+ * rejects, so a message delivered via 429 never reaches the model as
+ * readable text — the caller just sees a dead transport. As a tool result,
+ * the host feeds the message straight back to the model, which can relay
+ * the retry advice to the user.
  *
  * Without an id (a metered body whose `id` is absent or malformed) a
  * matching result cannot be built, so this degrades to the legacy 429
@@ -396,10 +402,12 @@ export function freeTierLimitResponse(requestId: JsonRpcRequestId): Response {
  * number varies with colo fan-out and any stated figure would be wrong.
  * (The drift test only asserts the three env bindings agree with each
  * other; there is no message number to sync.)
+ *
+ * No account link or upgrade copy either — see `FREE_TIER_LIMIT_MESSAGE`
+ * for why every message in this module is a pure capacity statement.
  */
 export const FREE_TIER_GLOBAL_LIMIT_MESSAGE =
-  "Anonymous access is at capacity right now. Try again shortly, or " +
-  "get an API key at https://tako.com/account/ for dedicated access.";
+  "Anonymous access is at capacity right now. Try again shortly.";
 
 /**
  * Response for a request over the per-colo anonymous ceiling. Same
@@ -490,15 +498,16 @@ export function freeTierTooLargeResponse(): Response {
 }
 
 /**
- * The batch-rejection body's `message`. States the constraint plainly and
- * points at the same upsell as `FREE_TIER_LIMIT_MESSAGE` — an API key
- * also lifts the batch restriction, since it puts the request on the
- * authenticated path where this check never runs.
+ * The batch-rejection body's `message`. States the constraint and the fix —
+ * one request per POST — and nothing else. It used to close with the same
+ * account-link upsell as `FREE_TIER_LIMIT_MESSAGE`; see that constant for
+ * why no message in this module carries one. Nothing is lost operationally:
+ * the actionable half was always "send one request per POST", which is what
+ * a batching client has to do regardless of how it authenticates.
  */
 export const FREE_TIER_BATCH_MESSAGE =
   "Batch requests are not supported for anonymous access. Send one " +
-  "JSON-RPC request per POST, or get an API key at " +
-  "https://tako.com/account/ for full access.";
+  "JSON-RPC request per POST.";
 
 /**
  * HTTP 400 for an anonymous JSON-RPC batch (array body). `id: null` (a
@@ -533,18 +542,24 @@ export function freeTierBatchResponse(): Response {
  * burn-rate dampener rather than a bound. Exhaustion is therefore an expected
  * steady state, and the operator tops the account up. Without this mapping the
  * caller would see Django's raw billing error spliced into the tool result by
- * `djangoErrorToToolResult`, which reads as a bug rather than an upsell.
+ * `djangoErrorToToolResult`, which reads as a bug.
+ *
+ * Phrased as capacity, with no account link — see `FREE_TIER_LIMIT_MESSAGE`.
+ * "temporarily" and "shared" are the load-bearing words: together they tell
+ * the caller the shortage is neither permanent nor their own doing, which is
+ * what stops them hunting a fault in their own setup, without naming SPENT
+ * CREDIT (which would hand a prober a gauge on the account's balance).
  */
 export const FREE_TIER_CREDITS_MESSAGE =
-  "Anonymous access is temporarily out of shared capacity. Get an API " +
-  "key at https://tako.com/account/ to continue with your own account.";
+  "Anonymous access is temporarily out of shared capacity. Try again later.";
 
 /**
  * Tool result substituted for a Django payment/credit error on the free
  * tier. Same envelope `djangoErrorToToolResult` produces (`isError: true`,
  * text content, machine-readable `_meta["tako/error"]`), with the billing
- * detail replaced by upsell copy. Callers (see `registerTool`'s catch in
- * `mcp.ts`) decide *when* this applies — this module only owns the shape.
+ * detail replaced by the neutral capacity message. Callers (see
+ * `registerTool`'s catch in `mcp.ts`) decide *when* this applies — this
+ * module only owns the shape.
  *
  * The `kind` is deliberately vague about the CAUSE. The message above does
  * say the capacity is shared — that is load-bearing, because it tells the

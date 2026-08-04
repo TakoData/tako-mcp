@@ -4,7 +4,7 @@
   "app_info": {
     "display_name": "Tako",
     "subtitle": "Search live data and charts",
-    "description": "Tako helps users find current data and metrics from proprietary datasets and the live web, get citation-backed answers, retrieve underlying result content, check available data coverage, and create charts from structured data.",
+    "description": "Tako helps users find current data and metrics from proprietary datasets and the live web, get citation-backed answers, retrieve underlying result content, check available data coverage, and create shareable public chart links from user-provided structured data.",
     "category": "PRODUCTIVITY"
   },
   "tools": {
@@ -71,11 +71,11 @@
   },
   "test_cases": [
     {
-      "description": "Retrieve a current metric as structured data with a chart.",
-      "user_prompt": "Show me the latest US consumer price index and its recent trend as a chart.",
+      "description": "Retrieve a company metric as structured data with a chart.",
+      "user_prompt": "Show me NVIDIA's quarterly revenue as a chart.",
       "file_attachment_urls": null,
       "tools_triggered": "tako_search",
-      "expected_output": "Returns a relevant CPI data card with recent values, source attribution, and an inline chart when available.",
+      "expected_output": "Returns NVIDIA quarterly revenue data with recent values, source attribution, and an inline chart.",
       "expected_output_url": null
     },
     {
