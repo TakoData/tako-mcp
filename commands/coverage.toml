@@ -1,10 +1,15 @@
-description = "Check what data Tako has on an entity or metric (free, no credits spent)"
+description = "Check what licensed data Tako has on an entity or metric (free, no credits spent)"
 
 prompt = """
 Check Tako's coverage for: {{args}}
 
 Call `tako_available_data`. It is free and fast, so this is the cheap way to find out
 whether a figure exists before spending a priced search or answer.
+
+Scope matters here: this probes the **licensed data graph only**, not Tako's web search. A
+miss means the figure is not available as a typed series with a named provider — it does not
+mean Tako cannot answer the question, because `tako_search` and `tako_answer` search the live
+web in the same call by default.
 
 Report:
 
@@ -14,6 +19,7 @@ Report:
 - The ready-to-run `next_call`, if the tool returned one.
 
 Be honest about a miss: if the coverage names that come back do not actually match what
-was asked for, say the data is not there rather than proposing the nearest lookalike. A
-name that resolves is not the same as a name that retrieves rows.
+was asked for, say the curated data is not there rather than proposing the nearest
+lookalike. A name that resolves is not the same as a name that retrieves rows. Then say
+what to do instead — a `tako_search` that leans on the web half is usually the next move.
 """

@@ -104,6 +104,22 @@ describe("gemini extension manifest", () => {
   it("carries a description for the gallery card", () => {
     const description = manifest().description ?? "";
     expect(description.length).toBeGreaterThan(40);
+    // Gallery descriptions run long in practice (median 88 chars, p90 186,
+    // real entries up to ~290), so there is room to say both halves.
+    expect(description.length).toBeLessThan(400);
+  });
+
+  it("sells both halves of the product, not just the data", () => {
+    // The first draft of this description led with "data your agent cannot get
+    // from the open web", which reads as "this is not a web search tool" —
+    // wrong on the product and inconsistent with `registry/metadata.json`,
+    // which leads with web search. Tako searches licensed data AND the live
+    // web in the same call (`sources` defaults to ["data","web"] in
+    // `tako_search.ts`), and the gallery card is the one line most people read
+    // before deciding, so it has to carry both.
+    const description = (manifest().description ?? "").toLowerCase();
+    expect(description).toContain("web search");
+    expect(description).toMatch(/licensed|proprietary/);
   });
 
   it("points its MCP server at the production endpoint", () => {
