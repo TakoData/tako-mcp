@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.17.0](https://github.com/TakoData/tako-mcp/compare/v0.16.1...v0.17.0) (2026-08-04)
+
+
+### Features
+
+* **answer:** render the chart, the same way tako_search does ([b98f2cf](https://github.com/TakoData/tako-mcp/commit/b98f2cff18ad560f0d8e1044a2522427697a6976))
+* **oauth:** email + password sign-in, and a login page worth showing ([4cefe2c](https://github.com/TakoData/tako-mcp/commit/4cefe2cc994db110b6ef1cacc4dd9cbc03352cf9))
+* **search:** make Exa highlights the default web snippet for search and answer ([64c0a4b](https://github.com/TakoData/tako-mcp/commit/64c0a4bdbc443b6d5aa328aeec323cea843ca8ad))
+* **widget:** a dev-only lever to bust the host's widget cache ([c6c3800](https://github.com/TakoData/tako-mcp/commit/c6c380052f84b479f74378c4fd0c780c60b1a9c4))
+* **widget:** probe whether Claude will run Tako's real chart renderer ([c63bc9c](https://github.com/TakoData/tako-mcp/commit/c63bc9cab61465327f4077500b74dec348b92f47))
+* **widget:** proxy the chart assets, and the native card renders ([f9295e6](https://github.com/TakoData/tako-mcp/commit/f9295e61cc8e165358136d87c31158d6f856a795))
+* **widget:** render Tako's real interactive card on Claude ([106b1bb](https://github.com/TakoData/tako-mcp/commit/106b1bb324fd082066f4fddad3bd92d419ed774e))
+* **widgets:** visualize on Claude, and a way down from a dead iframe ([080b805](https://github.com/TakoData/tako-mcp/commit/080b805c8157e9057c4c13b1d96077d42f558283))
+
+
+### Bug Fixes
+
+* **guards,docs:** guard the copies that drifted, and stop describing a probe that no longer exists ([50b005e](https://github.com/TakoData/tako-mcp/commit/50b005ef1aa75752f1c90e9e2b68390eae3509b7))
+* **oauth:** address review — MFA dead end, victim lockout, and guards that could not fail ([27283f1](https://github.com/TakoData/tako-mcp/commit/27283f12985a794a122decd172b252e65d1e8582))
+* **oauth:** send the session cookie under the name the target zone reads ([80fedb9](https://github.com/TakoData/tako-mcp/commit/80fedb949d0300bbe0146a6e5a5f30c393ca9835))
+* **oauth:** the login mark was dark ink on a dark host ([8daa0d4](https://github.com/TakoData/tako-mcp/commit/8daa0d481fffd984a193092894cd0ef49d5eb4c2))
+* **proxy:** a bad binding must not take OAuth down, and neither route may serve a document ([5750d51](https://github.com/TakoData/tako-mcp/commit/5750d51a353a3ffab666fb38ea6bf794ef17780d))
+* **search:** serve the snippet contract on the ADVERTISED schema, not the wire guard ([95b8bb0](https://github.com/TakoData/tako-mcp/commit/95b8bb0916a0f6db63580850ed1e3ffd3fa87511))
+* **skills:** the web-traffic skill has been loading with no metadata ([a7dc167](https://github.com/TakoData/tako-mcp/commit/a7dc167970d6b86a187da66321adbfd3607b0564))
+* **web_snippet:** the harness defaulted to the smoke run, and claimed a blinding it did not do ([87a9a9c](https://github.com/TakoData/tako-mcp/commit/87a9a9c110bebaf24eafb59f21c6e6bacc2099a3))
+* **web_snippet:** the judge truncated the sweep it was judging ([10255b3](https://github.com/TakoData/tako-mcp/commit/10255b35c955ff00273e8ed73bf00a9bef85fa21))
+* **web_snippet:** time the whole response, and refuse to clobber a sweep ([ea5cab0](https://github.com/TakoData/tako-mcp/commit/ea5cab0b74905a24b323ad0157ebf2346b681a0d))
+* **widget:** address review — handshake race, merge mirror, colour class, docs ([5b71fa9](https://github.com/TakoData/tako-mcp/commit/5b71fa9eb8a7f05997207f4a8a9d89c23e0f3425))
+* **widget:** close three findings from reviewing this branch ([93eff7e](https://github.com/TakoData/tako-mcp/commit/93eff7e56c0f8881911d10e22744294015e5019f))
+* **widget:** keep staticPrefix, and record what the live run disproved ([ccda1e6](https://github.com/TakoData/tako-mcp/commit/ccda1e6daabbb07fc751a1a231cb621e6597a350))
+* **widget:** read the host theme on the MCP Apps path, not just ChatGPT's ([f37fa51](https://github.com/TakoData/tako-mcp/commit/f37fa519349cade7e6a9094addd1547bc55c73ff))
+* **widget:** size the embed iframe to the card, not to a fixed 720 ([d3a7919](https://github.com/TakoData/tako-mcp/commit/d3a79194d5ebea125357feb6a61f255531ee51fc))
+* **widget:** stop telling users the chart failed when it rendered ([2928f01](https://github.com/TakoData/tako-mcp/commit/2928f0163cd15f2236e3782a04a905e8bc9b884c))
+* **widget:** stop the card's rounded corners showing white ([e9a10c9](https://github.com/TakoData/tako-mcp/commit/e9a10c98f6469159abd4275cfdffe4ea23256270))
+* **widget:** the empty-url fetch, the one-shot resize listener, and the native card's height ceiling ([3039696](https://github.com/TakoData/tako-mcp/commit/3039696db27aac7265a45a41c9b744d9f0a5e705))
+* **widget:** transparent surface and host-matched theme ([1687dcd](https://github.com/TakoData/tako-mcp/commit/1687dcdf048cb194b7e25b29d6cc1b1d5f7a4bf8))
+* **widget:** use the host's own surface colour, and don't paint where it works ([c1c8c64](https://github.com/TakoData/tako-mcp/commit/c1c8c64eb1f1c13ded26e26e9cc38f7757352ac5))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([c14361b](https://github.com/TakoData/tako-mcp/commit/c14361b0fe0e67848b36ebd5d7f8c333b1a7d312))
+* sync OpenAPI spec from monorepo ([06d1a3f](https://github.com/TakoData/tako-mcp/commit/06d1a3feb2980882741e126fd7512e1be1b538f3))
+* sync OpenAPI spec from TakoData/tako ([00d795f](https://github.com/TakoData/tako-mcp/commit/00d795fea593339072fd192f0777808570cd9bf8))
+
+
+### Documentation
+
+* **web_snippet:** zero observed joins, and the search latency row nobody read ([f5fd69d](https://github.com/TakoData/tako-mcp/commit/f5fd69d81b6958a67a2c1a875ce8c8911511b19f))
+
+
+### Styles
+
+* **wrangler:** stop repeating the limiter rationale in every env block ([229f5b4](https://github.com/TakoData/tako-mcp/commit/229f5b4740f01f68aa629928026743f73d1fe57b))
+
+
+### Refactors
+
+* **widget:** retire the probe, bound the asset rewrite ([f5587d9](https://github.com/TakoData/tako-mcp/commit/f5587d911150a9c695458919cb39fdfd87a8a4f1))
+
 ## [0.16.1](https://github.com/TakoData/tako-mcp/compare/v0.16.0...v0.16.1) (2026-08-01)
 
 
