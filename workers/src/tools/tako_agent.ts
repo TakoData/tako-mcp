@@ -28,6 +28,7 @@ import {
   AnswerAgentRun as AnswerAgentRunContract,
   AnswerAgentRunRequest,
 } from "../generated/schemas.js";
+import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
   agentRunSlimOutputShape,
@@ -57,13 +58,17 @@ const DESCRIPTION = [
 
 export const inputSchema = z.object({
   query: z.string().min(1).describe("The deep/analytical question for the agent to work through."),
-  sources: z
-    .array(z.enum(["data", "web", "tako"]))
-    .min(1)
-    .default(["data", "web"])
-    .describe(
-      'Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako\'s data graph. ("tako" is a legacy synonym for "data".)',
-    ),
+  // looseArray: hosts that stringify the array they meant to send (observed
+  // from OpenBB Copilot) get it coerced instead of a -32602. See _loose_array.ts.
+  sources: looseArray(
+    z
+      .array(z.enum(["data", "web", "tako"]))
+      .min(1)
+      .default(["data", "web"])
+      .describe(
+        'Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako\'s data graph. ("tako" is a legacy synonym for "data".)',
+      ),
+  ),
   thread_id: z
     .uuid()
     .optional()

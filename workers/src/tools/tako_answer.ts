@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { djangoPost } from "../django.js";
 import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
+import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
   answerSlimOutputShape,
@@ -66,11 +67,15 @@ const inputSchema = z.object({
     .string()
     .min(1)
     .describe('Natural-language question to answer (e.g. "What was US GDP in 2024?"). Website-traffic data is keyed by domain — ask about "openai.com monthly visits", not "OpenAI website visits".'),
-  sources: z
-    .array(z.enum(["data", "web", "tako"]))
-    .min(1)
-    .default(["data", "web"])
-    .describe('Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)'),
+  // looseArray: hosts that stringify the array they meant to send (observed
+  // from OpenBB Copilot) get it coerced instead of a -32602. See _loose_array.ts.
+  sources: looseArray(
+    z
+      .array(z.enum(["data", "web", "tako"]))
+      .min(1)
+      .default(["data", "web"])
+      .describe('Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)'),
+  ),
   // The prose `answer` alone proved an unreliable payload in agent traces: it
   // sometimes carries the series and sometimes only teases it ("latest value
   // 59.2%"), and a teased agent escalates into a costly multi-wave retry
@@ -96,13 +101,15 @@ const inputSchema = z.object({
     .default("US")
     .describe("ISO country code for localized results."),
   locale: z.string().default("en-US").describe("Locale for results."),
-  node_ids: z
-    .array(z.string())
-    .max(20)
-    .optional()
-    .describe(
-      "Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
-    ),
+  node_ids: looseArray(
+    z
+      .array(z.string())
+      .max(20)
+      .optional()
+      .describe(
+        "Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+      ),
+  ),
   strict: z
     .boolean()
     .default(false)

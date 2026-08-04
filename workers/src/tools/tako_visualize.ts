@@ -21,6 +21,7 @@ import {
   buildChartExtraMeta,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
+import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import { autoChainShape } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
@@ -259,10 +260,14 @@ const _componentUnionIsExhaustive: AssertComponentUnionExhaustive = true;
 void _componentUnionIsExhaustive;
 
 const inputSchema = z.object({
-  components: z
-    .array(componentSchema)
-    .min(1)
-    .describe("One or more components making up the card, rendered top to bottom."),
+  // looseArray: a host that sends the components array (or a single
+  // component) as JSON text gets it coerced instead of a -32602.
+  components: looseArray(
+    z
+      .array(componentSchema)
+      .min(1)
+      .describe("One or more components making up the card, rendered top to bottom."),
+  ),
   title: z.string().optional().describe("Card title (falls back to a header component's title)."),
   description: z.string().optional().describe("Card description."),
   source: z.string().optional().describe("Data source attribution, shown in the footer."),
