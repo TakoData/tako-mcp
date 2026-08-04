@@ -894,7 +894,13 @@ function consentPage(args: {
   .switch { margin-top: 0.9rem; font-size: 0.85rem; }
   .switch a { color: var(--muted); }
   button { flex: 1; padding: 0.75rem 1rem; font-size: 1rem; font-weight: 500; border-radius: 0.5rem; border: 1px solid var(--border); background: transparent; color: var(--fg); cursor: pointer; }
-  button[type=submit] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  /* Keyed on the VALUE, not on type=submit. Both buttons are submits now —
+     that is what carries the allow/deny decision — so a type selector fills
+     them identically and the destructive choice ends up looking exactly like
+     the affirmative one. Only Allow gets the accent.
+     NOTE: this block sits inside a JS template literal, so no backticks in
+     these comments; they terminate the string. */
+  button[value="allow"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
   button:hover { opacity: 0.85; }
 </style>
 </head>

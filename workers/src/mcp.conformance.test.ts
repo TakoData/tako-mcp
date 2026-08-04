@@ -145,6 +145,40 @@ function dummyFor(schema: unknown): unknown {
   }
 }
 
+/**
+ * Every property name in a JSON Schema that matches `banned`, at ANY depth,
+ * reported as a dotted path.
+ *
+ * Recursive on purpose. A top-level `Object.keys(schema.properties)` walk was
+ * shallower than the rule it enforces ("no debug identifier on any tool") and
+ * would wave through a `request_id` buried one level down — e.g. a tool that
+ * advertised a nested `result` object. Nothing published nests one today, so a
+ * shallow walk passes for a reason that is a property of the current schemas
+ * rather than of the check. Descends `properties` and `items` (arrays), which
+ * are the two ways the published schemas nest.
+ */
+function bannedKeysIn(
+  schema: unknown,
+  path: string,
+  banned: RegExp,
+): string[] {
+  if (schema === null || typeof schema !== "object") return [];
+  const s = schema as {
+    properties?: Record<string, unknown>;
+    items?: unknown;
+  };
+  const found: string[] = [];
+  for (const [key, child] of Object.entries(s.properties ?? {})) {
+    const childPath = `${path}.${key}`;
+    if (banned.test(key)) found.push(childPath);
+    found.push(...bannedKeysIn(child, childPath, banned));
+  }
+  // `items` may be a single schema or a tuple of them.
+  const items = Array.isArray(s.items) ? s.items : s.items === undefined ? [] : [s.items];
+  for (const item of items) found.push(...bannedKeysIn(item, `${path}[]`, banned));
+  return found;
+}
+
 describe("published outputSchema conformance", () => {
   // The precondition that makes every other assertion here matter. If the SDK
   // ever stops republishing our loose shapes as strict, this flips and the
@@ -209,9 +243,7 @@ describe("published outputSchema conformance", () => {
     const banned = /^(request|trace|correlation|session|debug)_id$/;
     const offenders: string[] = [];
     for (const [name, schema] of published) {
-      for (const key of Object.keys(schema.properties ?? {})) {
-        if (banned.test(key)) offenders.push(`${name}.${key}`);
-      }
+      offenders.push(...bannedKeysIn(schema, name, banned));
     }
     expect(offenders).toEqual([]);
   });
@@ -354,5 +386,42 @@ describe("realistic payloads validate against the published schema", () => {
       request_id: "r",
     });
     expect(structured.usage).toEqual(usage());
+  });
+});
+
+describe("the debug-identifier sweep can actually see nested keys", () => {
+  // Guards the sweep itself, not the schemas. The published schemas nest no
+  // banned key today, so the recursive walk and the old top-level one are
+  // indistinguishable against real input — this asserts the mechanism on a
+  // shape the top-level walk provably missed.
+  const banned = /^(request|trace|correlation|session|debug)_id$/;
+
+  it("finds a request_id buried in a nested object", () => {
+    const schema = {
+      properties: {
+        result: { properties: { request_id: { type: "string" } } },
+      },
+    };
+    expect(bannedKeysIn(schema, "t", banned)).toEqual(["t.result.request_id"]);
+  });
+
+  it("finds one inside array items", () => {
+    const schema = {
+      properties: {
+        cards: { type: "array", items: { properties: { trace_id: { type: "string" } } } },
+      },
+    };
+    expect(bannedKeysIn(schema, "t", banned)).toEqual(["t.cards[].trace_id"]);
+  });
+
+  it("leaves legitimate control-flow identifiers alone at depth", () => {
+    // `run_id` / `thread_id` are the caller's control flow, deliberately not
+    // banned — the recursion must not start flagging them.
+    const schema = {
+      properties: {
+        result: { properties: { run_id: {}, thread_id: {} } },
+      },
+    };
+    expect(bannedKeysIn(schema, "t", banned)).toEqual([]);
   });
 });
