@@ -2074,6 +2074,8 @@ components:
       - Drugs
       - Drug Categories
       - Diseases
+      - Injury Mechanisms
+      - Injury Intents
       - Chemical Elements
       - Chemical Compounds
       - Celestial Bodies
@@ -2085,6 +2087,7 @@ components:
       - LLMs
       - LLM Families
       - LLM Benchmarks
+      - AI Gateway Entity
       - Industries
       - NAICS Industries
       - BLS Industries
