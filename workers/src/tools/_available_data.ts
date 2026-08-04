@@ -474,6 +474,19 @@ export const toRef = (n: { id: string; name: string; type: string }): ResolvedRe
 export function buildPairNextCall(
   metricQuery: string,
   pair: PairResolution,
+  opts?: {
+    /**
+     * Emit the handle WITHOUT the pin. Set on an `unlinked` verdict — the
+     * entity's own metric list holds nothing matching, so the pinned form is
+     * the one we expect to return 0 cards. Measured (staging 2026-07-31, 20
+     * handles × 3 repeats): 11 of 20 retrieved FEWER cards pinned than
+     * unpinned, because `strict` is a hard filter over a graph holding
+     * near-duplicate metric nodes where only one twin carries cards (KE-812).
+     * On `unlinked` we skip straight to the form that works rather than
+     * spending the caller's priced call on the one two signals say will miss.
+     */
+    unpinned?: boolean;
+  },
 ): NextCall | null {
   // No entity → the summary is routing the caller elsewhere (a bare-domain
   // tako_search); a handle here would contradict it.
@@ -482,6 +495,11 @@ export function buildPairNextCall(
   // the graph knows ("Carnival Corporation Ltd." for `q="Carnival"`), which is
   // what makes the query text line up with the pinned metric node.
   const subject = pair.entity.name;
+  // `strict` without a pin steers nothing (measured), so the unpinned form
+  // drops both together rather than leaving a flag that does no work.
+  if (opts?.unpinned === true) {
+    return { tool: "tako_answer", query: `${subject} ${metricQuery}`, node_ids: [], strict: false };
+  }
   return {
     tool: "tako_answer",
     query: `${subject} ${metricQuery}`,
@@ -501,8 +519,17 @@ export function buildPairSummary(input: {
   pair: PairResolution;
   domainShaped: boolean;
   metricConfident?: boolean;
+  /** What the pair-confirmation probe found; undefined when it never ran. */
+  verified?: "pair" | "unlinked" | "resolution" | undefined;
+  /** The pinned metric came off the entity's own list, displacing the search's rank 0. */
+  repinned?: boolean;
+  /** Names of the entity's own metrics that matched the filter (context on `unlinked`). */
+  entityMetricMatches?: string[];
 }): string {
-  const { pair, domainShaped, metricConfident = true } = input;
+  const {
+    pair, domainShaped, metricConfident = true,
+    verified, repinned = false, entityMetricMatches = [],
+  } = input;
   const entityQuery = oneLine(input.entityQuery);
   const metricQuery = oneLine(input.metricQuery);
   if (pair.entity === null) {
@@ -520,7 +547,35 @@ export function buildPairSummary(input: {
     return `Resolved the entity but no metric matching "${metricQuery}". The metrics Tako actually holds for ${oneLine(pair.entity.name)} are listed below — pick one and re-run with it.`;
   }
   if (!metricConfident) {
-    return `Resolved the entity, but NO metric confidently matches "${metricQuery}" — the closest names Tako holds are shown below and are probably NOT what you asked for. Pick one deliberately (pin its node_id with strict:true), or conclude Tako does not track this measure.`;
+    // Two signals agreeing is a firmer basis for stopping than one. When the
+    // entity's OWN list was checked and came up empty, say so — that is the
+    // difference between "we could not vet the name" and "this entity does not
+    // have it", and only the second justifies reporting a gap.
+    const checked =
+      verified === "unlinked"
+        ? ` ${oneLine(pair.entity.name)}'s own metric list was also checked for "${metricQuery}" and holds nothing matching.`
+        : "";
+    return `Resolved the entity, but NO metric confidently matches "${metricQuery}" — the closest names Tako holds are shown below and are probably NOT what you asked for.${checked} Pick one deliberately (pin its node_id with strict:true), or conclude Tako does not track this measure.`;
+  }
+  if (verified === "unlinked") {
+    // The failure this whole probe exists to catch: the NAME fits perfectly and
+    // the entity does not hold it. Measured on staging — Lockheed Martin /
+    // backlog, Shopify / gross merchandise volume and UnitedHealth Group /
+    // change in unearned revenues all resolve cleanly here and return 0 cards.
+    const near =
+      entityMetricMatches.length > 0
+        ? ` The nearest metrics ${oneLine(pair.entity.name)} DOES have: ${entityMetricMatches.map(oneLine).join(", ")}.`
+        : "";
+    return `Resolved "${entityQuery}" + "${metricQuery}", but ${oneLine(pair.metric.name)} is NOT on ${oneLine(pair.entity.name)}'s own metric list — the name fits, the graph holds no edge, so a pinned call will probably return 0 cards.${near} The next_call below therefore drops the pin. If it is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
+  }
+  if (repinned) {
+    // The pin moved off the search's rank 0 onto a node the entity actually
+    // has. Say so explicitly — the displaced candidate is still listed as an
+    // alternate, and a model that disagrees needs to see that a swap happened.
+    return `Resolved "${entityQuery}" + "${metricQuery}". The metric was taken from ${oneLine(pair.entity.name)}'s OWN metric list (${oneLine(pair.metric.name)}), which outranks the general metric search — the runner-up below is what that search returned. Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed.`;
+  }
+  if (verified === "pair") {
+    return `Resolved "${entityQuery}" + "${metricQuery}", and ${oneLine(pair.metric.name)} IS on ${oneLine(pair.entity.name)}'s own metric list — the strongest free confirmation available, though it still does not guarantee a chart exists. Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node.`;
   }
   // The zero-card advice used to read "Tako has no card for this pair — that is
   // the definitive answer, do not rephrase and retry". Measured on staging
