@@ -397,8 +397,9 @@ describe("/register (DCR)", () => {
       client_id_issued_at: number;
       client_id_expires_at: number;
     };
-    // RFC 7591 §3.2.1: omitting the field means "never expires", which
-    // would be a lie for the 1-year public path.
+    // `client_id_expires_at` is a Tako convention, not an RFC 7591 field
+    // (§3.2.1 defines `client_secret_expires_at`, not this). We report it
+    // so the public path's 1-year expiry is visible rather than implied.
     expect(body.client_id_expires_at).toBe(
       body.client_id_issued_at + 365 * 24 * 60 * 60,
     );
@@ -410,7 +411,9 @@ describe("/register (DCR)", () => {
   it("ignores a stray Authorization header on the public path", async () => {
     // Hosts routinely retry /register with a stale access token still
     // attached. That must not be read as a failed partner registration.
-    const env = envWith({ OAUTH_PARTNER_REGISTRATION_TOKEN: "partner-secret" });
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: "partner-secret-0123456789abcdefghij",
+    });
     const res = await handleRegister(
       new Request("https://mcp.example.com/register", {
         method: "POST",
@@ -451,7 +454,9 @@ function partnerRegisterRequest(
 }
 
 describe("/register (partner path)", () => {
-  const PARTNER_TOKEN = "partner-secret-value";
+  // Must clear PARTNER_TOKEN_MIN_LEN (32) — a shorter value is treated as
+  // "not configured" and would make every partner test fail closed.
+  const PARTNER_TOKEN = "partner-secret-value-0123456789abcdef";
 
   it("mints a non-expiring client_id when the partner token matches", async () => {
     const env = envWith({
@@ -466,7 +471,8 @@ describe("/register (partner path)", () => {
       client_id: string;
       client_id_expires_at: number;
     };
-    // RFC 7591 §3.2.1: 0 means the client_id never expires.
+    // Tako convention: 0 means the client_id never expires. This is the
+    // operator's confirmation that the partner gate engaged.
     expect(body.client_id_expires_at).toBe(0);
     const claims = await verifyJwt<ClientIdClaims>(body.client_id, SIGN_KEY);
     expect(claims).not.toBeNull();
@@ -505,27 +511,97 @@ describe("/register (partner path)", () => {
       partnerRegisterRequest("wrong-token"),
       env,
     );
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(400);
+    // RFC 7591 §3.2.2 defines only four registration error codes and
+    // specifies 400; `invalid_client` at 401 would be off-spec and would
+    // owe a WWW-Authenticate challenge we cannot emit.
     expect(((await res.json()) as { error: string }).error).toBe(
-      "invalid_client",
+      "invalid_client_metadata",
     );
   });
 
-  it("rejects a partner token of the wrong length with 401", async () => {
+  it("rejects a partner token of the wrong length with 400", async () => {
     const env = envWith({
       OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
     });
     const res = await handleRegister(partnerRegisterRequest("short"), env);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(400);
   });
 
-  it("rejects the partner header with 401 when no partner token is configured", async () => {
+  it("rejects the partner header with 400 when no partner token is configured", async () => {
     const env = envWith();
     const res = await handleRegister(
       partnerRegisterRequest(PARTNER_TOKEN),
       env,
     );
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects an equal-length wrong token (exercises the XOR compare)", async () => {
+    // The two rejection cases above differ in LENGTH, so both return early
+    // at the `ab.length !== bb.length` guard and never run the comparison
+    // loop. Without this case, replacing that loop's body with `diff |= 0`
+    // keeps the whole partner suite green — i.e. any same-length value
+    // would mint a non-expiring client_id.
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
+    });
+    const sameLengthWrong = "X".repeat(PARTNER_TOKEN.length);
+    expect(sameLengthWrong.length).toBe(PARTNER_TOKEN.length);
+    const res = await handleRegister(
+      partnerRegisterRequest(sameLengthWrong),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("differs from the real token in only its final byte and is rejected", async () => {
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
+    });
+    const offByOne = `${PARTNER_TOKEN.slice(0, -1)}X`;
+    expect(offByOne).not.toBe(PARTNER_TOKEN);
+    expect(offByOne.length).toBe(PARTNER_TOKEN.length);
+    const res = await handleRegister(partnerRegisterRequest(offByOne), env);
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts a secret stored with a trailing newline", async () => {
+    // `wrangler secret put` fed from a pipe stores the trailing newline,
+    // and HTTP strips trailing whitespace from header values — so without
+    // trimming, the stored secret is one byte longer than anything a client
+    // can present and the partner path 400s permanently. Same failure
+    // `resolveFreeTierConfig` trims FREE_TIER_API_KEY to avoid.
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: `${PARTNER_TOKEN}\n`,
+    });
+    const res = await handleRegister(
+      partnerRegisterRequest(PARTNER_TOKEN),
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { client_id_expires_at: number };
+    expect(body.client_id_expires_at).toBe(0);
+  });
+
+  it("treats a too-short configured secret as not configured", async () => {
+    // /register has no app-level rate limit, so a short staging value would
+    // be an open guessing oracle whose prize never expires. Fail closed.
+    const env = envWith({ OAUTH_PARTNER_REGISTRATION_TOKEN: "test" });
+    const res = await handleRegister(partnerRegisterRequest("test"), env);
+    expect(res.status).toBe(400);
+  });
+
+  it("treats an empty configured secret as not configured", async () => {
+    const env = envWith({ OAUTH_PARTNER_REGISTRATION_TOKEN: "" });
+    const res = await handleRegister(partnerRegisterRequest(""), env);
+    expect(res.status).toBe(400);
+  });
+
+  it("treats a whitespace-only configured secret as not configured", async () => {
+    const env = envWith({ OAUTH_PARTNER_REGISTRATION_TOKEN: "   \n  " });
+    const res = await handleRegister(partnerRegisterRequest("   "), env);
+    expect(res.status).toBe(400);
   });
 
   it("still enforces redirect_uri validation on the partner path", async () => {
@@ -1957,6 +2033,67 @@ describe("/authorize hardening", () => {
       env,
     );
     expect(res.status).toBe(200);
+  });
+
+  it("carries `mcp offline_access` through /token into the issued token", async () => {
+    // Asserting 200 on GET /authorize proves only that the scope was not
+    // rejected at the door. What Foundry actually needs is for the value to
+    // survive into the token AND still satisfy the resource server, which
+    // splits on whitespace and checks `includes("mcp")`. Without this,
+    // narrowing that check to `claims.scope !== REQUIRED_SCOPE` keeps the
+    // suite green while returning insufficient_scope on the first tool call
+    // for every token Foundry ever obtains.
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { verifier, challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("scope", "mcp offline_access");
+    const authorizeRes = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(authorizeRes.status).toBe(302);
+    const code = new URL(authorizeRes.headers.get("location")!)
+      .searchParams.get("code")!;
+    const tokenRes = await handleToken(
+      new Request("https://mcp.example.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://client.example.com/cb",
+          code_verifier: verifier,
+          client_id: clientId,
+        }).toString(),
+      }),
+      env,
+    );
+    expect(tokenRes.status).toBe(200);
+    const body = (await tokenRes.json()) as {
+      scope: string;
+      access_token: string;
+      refresh_token: string;
+    };
+    expect(body.scope).toBe("mcp offline_access");
+    // And the scope must be intact inside the access token itself, which is
+    // the value `/mcp` actually inspects.
+    const claims = await verifyJwt<{ scope: string }>(
+      body.access_token,
+      SIGN_KEY,
+    );
+    expect(claims?.scope).toBe("mcp offline_access");
+    // `offline_access` asks for a refresh token; we always issue one.
+    expect(typeof body.refresh_token).toBe("string");
   });
 
   it("rejects `offline_access` alone, which would 401 later at /mcp", async () => {

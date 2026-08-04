@@ -139,12 +139,26 @@ export interface Env {
    * This is a mint-time credential, not a runtime one — nothing in the
    * authorization flow consults it. Rotating it invalidates no already-issued
    * client_id; it only stops new partner clients being minted. To actually
-   * revoke a partner client you must rotate `OAUTH_SIGN_KEY`, which also
-   * nukes every public registration.
+   * revoke a partner client you must rotate `OAUTH_SIGN_KEY` — which signs
+   * every OAuth JWT, so it also signs out every user, voids every live
+   * refresh token, and drops every public registration.
    *
-   * Set per-env via
-   * `openssl rand -base64 32 | wrangler secret put OAUTH_PARTNER_REGISTRATION_TOKEN`.
-   * See `docs/partner-oauth-clients.md` for the minting runbook.
+   * The value is trimmed before comparison (a piped `wrangler secret put`
+   * stores a trailing newline that HTTP header values cannot carry, which
+   * would otherwise fail every partner mint permanently) and must be at
+   * least 32 characters afterwards. Anything shorter is treated as NOT
+   * CONFIGURED rather than as a live credential: `/register` has no
+   * app-level rate limit, so a weak value would be an open guessing oracle
+   * whose prize never expires.
+   *
+   * Set per-env — capture the value first, or the mint command has nothing
+   * to send:
+   * ```
+   * TOKEN=$(openssl rand -base64 32)
+   * printf %s "$TOKEN" | wrangler secret put OAUTH_PARTNER_REGISTRATION_TOKEN
+   * ```
+   * See `docs/partner-oauth-clients.md` for the minting runbook and
+   * `workers/README.md` for the binding table.
    */
   OAUTH_PARTNER_REGISTRATION_TOKEN?: string;
   /**

@@ -331,3 +331,36 @@ so ChatGPT users DO get a link-account affordance on the gated tools —
 claude.ai and similar hosts still land silently on the anonymous tier.
 Consciously accept this onboarding asymmetry before setting
 `FREE_TIER_API_KEY` in production.
+
+## Partner OAuth clients (`OAUTH_PARTNER_REGISTRATION_TOKEN`)
+
+Managed-OAuth catalogs — the Microsoft Foundry Tools Catalog, Azure API
+Center — embed **one** `client_id` that means "this catalog" and use it for
+every customer they onboard. A public DCR registration expires after
+`REGISTRATION_TTL_S` (1 year), which is right for a consumer host that
+re-registers on demand and wrong here: the expiry would break every customer
+the partner onboarded, at once, a year after anyone last touched it.
+
+`/register` therefore has a second, authenticated path that mints client_ids
+with **no expiry**.
+
+| Binding | Kind | Purpose |
+|---|---|---|
+| `OAUTH_PARTNER_REGISTRATION_TOKEN` | secret | Unlocks the partner path on `/register`, presented as the `X-Tako-Partner-Token` header (trimmed, so a piped `wrangler secret put` newline can't break it). Must be ≥ 32 chars after trimming; shorter is treated as *not configured* |
+
+**Unset, the feature is inert** — `/register` serves only ordinary public
+DCR and any request carrying the header is rejected. That is the correct
+state for any environment with no partner onboarding in flight.
+
+Notes for whoever is holding this during an incident:
+
+- It is a **mint-time** credential only. Nothing in the authorization flow
+  consults it, so rotating it revokes no already-issued client_id — it only
+  stops new partner clients being minted.
+- Revoking an issued partner client means rotating `OAUTH_SIGN_KEY`, which
+  signs out every user and voids every refresh token. See the runbook.
+- The partner path logs both outcomes to Workers Logs (never the value):
+  `wrangler tail <worker> --search "[oauth] /register"`.
+
+Full runbook — minting, redirect-URI handling, scopes, rotation:
+[`docs/partner-oauth-clients.md`](../docs/partner-oauth-clients.md).

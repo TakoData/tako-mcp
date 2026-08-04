@@ -148,6 +148,38 @@ describe("tryResolveOAuthAccessToken", () => {
     if (r.kind === "reject") expect(r.error).toBe("insufficient_scope");
   });
 
+  it("accepts a multi-valued scope containing 'mcp' (mcp offline_access)", async () => {
+    // Azure AI Foundry's documented scope. Every other token in this file is
+    // single-valued `mcp`, so narrowing the check to an equality test
+    // (`claims.scope !== REQUIRED_SCOPE`) would keep the suite green while
+    // rejecting every token Foundry obtains.
+    const env = envWith({});
+    const token = await mintAccessToken(env, "x", {
+      scope: "mcp offline_access",
+    });
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
+    expect(r.kind).toBe("ok");
+  });
+
+  it("accepts 'mcp' in any position within a multi-valued scope", async () => {
+    const env = envWith({});
+    const token = await mintAccessToken(env, "x", {
+      scope: "offline_access mcp",
+    });
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
+    expect(r.kind).toBe("ok");
+  });
+
+  it("rejects a scope that merely contains 'mcp' as a substring", async () => {
+    // `mcpx` must not satisfy the requirement — the check splits on
+    // whitespace rather than using a substring match.
+    const env = envWith({});
+    const token = await mintAccessToken(env, "x", { scope: "mcpx" });
+    const r = await tryResolveOAuthAccessToken(token, env, ISSUER);
+    expect(r.kind).toBe("reject");
+    if (r.kind === "reject") expect(r.error).toBe("insufficient_scope");
+  });
+
   it("rejects (fails closed) when ENC_KEY was rotated under a still-valid signing key", async () => {
     const env = envWith({});
     const token = await mintAccessToken(env, "x");

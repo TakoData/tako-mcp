@@ -380,6 +380,46 @@ function constantTimeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/** Floor on `OAUTH_PARTNER_REGISTRATION_TOKEN`. Below this the value is
+ *  treated as NOT CONFIGURED rather than as a live credential.
+ *
+ *  `/register` carries no app-level rate limit by design, so a short value
+ *  set "just for staging" would be a permanently open guessing oracle whose
+ *  prize is a client_id that never expires. Failing closed turns a weak
+ *  secret into an inert one. 32 characters is comfortably under the 44 that
+ *  the runbook's `openssl rand -base64 32` produces, so a correctly minted
+ *  secret is never caught by this. */
+const PARTNER_TOKEN_MIN_LEN = 32;
+
+/**
+ * The configured partner secret, normalized, or `null` when the partner
+ * path is effectively off for this environment.
+ *
+ * `.trim()` is not cosmetic. `wrangler secret put` fed from a pipe stores
+ * the trailing newline, while HTTP strips trailing whitespace from header
+ * values — so the stored secret would be one byte longer than anything a
+ * client can present and the length check in `constantTimeEqual` would
+ * return false forever, indistinguishable from a wrong secret. This worker
+ * already paid for that lesson once: see `resolveFreeTierConfig` in
+ * `freetier.ts`, which trims `FREE_TIER_API_KEY` for the same reason.
+ */
+function partnerSecret(env: Env): string | null {
+  const raw = env.OAUTH_PARTNER_REGISTRATION_TOKEN;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length >= PARTNER_TOKEN_MIN_LEN ? trimmed : null;
+}
+
+function isPartnerRegistrationConfigured(env: Env): boolean {
+  return partnerSecret(env) !== null;
+}
+
+function partnerTokenMatches(presented: string, env: Env): boolean {
+  const expected = partnerSecret(env);
+  if (expected === null) return false;
+  return constantTimeEqual(presented.trim(), expected);
+}
+
 function isValidRedirectUri(s: string): boolean {
   if (s.length === 0 || s.length > REDIRECT_URI_MAX_LEN) return false;
   let parsed: URL;
@@ -419,19 +459,28 @@ export async function handleRegister(
   // non-expiring client, so anything other than an exact match fails loud
   // — including the case where no partner token is configured for this
   // environment, which would otherwise quietly hand back a 1-year client.
+  //
+  // Error shape: RFC 7591 §3.2.2 defines exactly four registration error
+  // codes and specifies HTTP 400, so a 401 / `invalid_client` would be
+  // off-spec on this endpoint — and would additionally owe a
+  // `WWW-Authenticate` challenge under RFC 9110 §15.5.2, which `jsonError`
+  // cannot emit. `invalid_client_metadata` at 400 is the legal shape, and
+  // the description carries the operator-facing detail.
   const partnerHeader = req.headers.get(PARTNER_TOKEN_HEADER);
   const isPartner = partnerHeader !== null;
   if (isPartner) {
-    const expected = env.OAUTH_PARTNER_REGISTRATION_TOKEN;
-    if (
-      typeof expected !== "string" ||
-      expected.length === 0 ||
-      !constantTimeEqual(partnerHeader, expected)
-    ) {
+    if (!partnerTokenMatches(partnerHeader, env)) {
+      // No app-level rate limit guards `/register` (see the note above
+      // `REGISTER_MAX_BODY_BYTES`), so a probe of this header would
+      // otherwise leave no trace at all. Log the branch, never the value.
+      console.error(
+        "[oauth] /register partner token rejected (configured=" +
+          `${isPartnerRegistrationConfigured(env) ? "yes" : "no"})`,
+      );
       return jsonError(
-        "invalid_client",
+        "invalid_client_metadata",
         "invalid partner registration token",
-        401,
+        400,
       );
     }
   }
@@ -507,13 +556,32 @@ export async function handleRegister(
   };
   const client_id = await signJwt(claims, cfg.signKey);
 
+  if (isPartner) {
+    // A partner client is minted once, by hand, and then lives forever in
+    // someone else's configuration. `types.ts` promises the `partner` claim
+    // makes a decoded client_id self-describing "in logs and in an
+    // incident" — this is the line that makes that true. It also separates
+    // "wrong --env" from "mistyped secret" during the one-time mint, which
+    // the deliberately opaque 400 body cannot.
+    console.log(
+      `[oauth] /register minted partner client_id name=${client_name} ` +
+        `redirect_uris=${redirect_uris.join(" ")}`,
+    );
+  }
+
   return Response.json(
     {
       client_id,
       client_id_issued_at: claims.iat,
-      // RFC 7591 §3.2.1: 0 means "never expires". Omitting the field means
-      // the same thing, which would misreport the 1-year public path — so
-      // state it either way rather than leaving clients to guess.
+      // NOT a spec field: RFC 7591 §3.2.1 defines `client_id`,
+      // `client_secret`, `client_id_issued_at` and `client_secret_expires_at`
+      // only, and the "or 0 if it will not expire" wording belongs to
+      // `client_secret_expires_at`. `client_id_expires_at` is a Tako
+      // convention, echoing that field's shape: an absolute expiry, or 0
+      // for never. No client is obliged to read it — it exists so the
+      // operator minting a partner client can confirm from the response
+      // alone that the partner gate engaged rather than silently falling
+      // back to a 1-year public registration.
       client_id_expires_at: claims.exp ?? 0,
       redirect_uris,
       client_name,
