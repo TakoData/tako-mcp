@@ -1,10 +1,10 @@
 # Tako
 
-Tako grounds your agent in two kinds of knowledge at once: proprietary structured data from
-trusted providers, and full web search. One API returns typed values with named sources when
-curated data exists, and agent-ready web results and page text for everything else. That
-combination is the point. A pure data API misses most questions, and a pure web search API
-makes your agent do the reading.
+Tako MCP grounds your agent in two kinds of knowledge at once: proprietary structured data
+from trusted providers, and full web search. One tool call returns typed values with named
+sources when curated data exists, and agent-ready web results and page text for everything
+else. That combination is the point. A pure data API misses most questions, and a pure web
+search API makes your agent do the reading.
 
 The curated side covers company financials, macroeconomic indicators, web and app traffic,
 sports, prediction markets, US government spending, demographics, energy, and real estate.
