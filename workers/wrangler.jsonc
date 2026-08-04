@@ -38,7 +38,7 @@
   // view`, and `limit()` resolves without throwing — but it never counts,
   // so every call comes back `{success: true}`. No unit test can catch
   // that (the suite injects fake limiters), so the only proof is a live
-  // burst against a deployed Worker. Two buckets:
+  // burst against a deployed Worker. Buckets:
   //  - FREE_TIER_RATE_LIMITER: per-IP fairness bucket (10 free-tool
   //    tools/call per 60 s). Do NOT put this number in any user-facing
   //    message — a drift test in `src/freetier.test.ts` fails if a
@@ -53,7 +53,14 @@
   //    "Measured behaviour" section in README.md: this bucket is hit
   //    before the metering decision, so it also gates `initialize` and
   //    `tools/list`, and lowering it rejects legitimate handshakes.
-  // NB: the bindings alone do NOT enable the free tier; the
+  //  - NATIVE_CARD_RATE_LIMITER: per-IP bucket for the two native-card
+  //    proxy routes (200 / 60 s). Its own binding rather than the
+  //    free-tier one because these are browser SUBRESOURCE fetches: one
+  //    card render costs ~10 of them, so the 10-per-60 s bucket sized for
+  //    tools/call made the render 429 its own assets and the chart never
+  //    drew. Measured on staging against the shared bucket: requests 1-10
+  //    served, 11-14 all 429.
+  // NB: the free-tier bindings alone do NOT enable the free tier; the
   // FREE_TIER_API_KEY secret must also be set (fail-closed).
   "ratelimits": [
     {
@@ -65,6 +72,19 @@
       "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
       "namespace_id": "1010",
       "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      // Meters the two native-card proxy routes per client IP. SEPARATE from
+      // the free-tier bucket above because browser subresource fetches and MCP
+      // `tools/call` have unit costs an order of magnitude apart: one card
+      // render is ~10 metered asset requests before Card.js's lazy chunks,
+      // against a free-tier limit of 10. Sharing it made the render throttle
+      // its own assets (measured on staging: 1-10 served, 11-14 all 429) so the
+      // chart never drew. Sized for asset fan-out instead — ~12-20 renders per
+      // minute per IP. Fails open; see `env.ts`.
+      "name": "NATIVE_CARD_RATE_LIMITER",
+      "namespace_id": "1040",
+      "simple": { "limit": 200, "period": 60 }
     },
     {
       // Throttles `POST /login/password` per CLIENT IP — the sender's own axis,
@@ -143,6 +163,13 @@
           "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
           "namespace_id": "1011",
           "simple": { "limit": 120, "period": 60 }
+        },
+        {
+          // Native-card proxy bucket — sized for asset fan-out, not tool calls.
+          // See the top-level declaration for why it is not the free-tier one.
+          "name": "NATIVE_CARD_RATE_LIMITER",
+          "namespace_id": "1041",
+          "simple": { "limit": 200, "period": 60 }
         },
         {
           // Per-IP login bucket — fail-closed, see the top-level declaration.
@@ -226,6 +253,13 @@
           "name": "FREE_TIER_GLOBAL_RATE_LIMITER",
           "namespace_id": "1012",
           "simple": { "limit": 120, "period": 60 }
+        },
+        {
+          // Native-card proxy bucket — sized for asset fan-out, not tool calls.
+          // See the top-level declaration for why it is not the free-tier one.
+          "name": "NATIVE_CARD_RATE_LIMITER",
+          "namespace_id": "1042",
+          "simple": { "limit": 200, "period": 60 }
         },
         {
           // Per-IP login bucket — fail-closed, see the top-level declaration.

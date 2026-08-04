@@ -28,6 +28,7 @@ requests 401 exactly as before):
 | `FREE_TIER_API_KEY` | secret | Tako API key of the dedicated free-tier account, forwarded to Django as `X-API-Key` (trimmed, so a piped `wrangler secret put` newline can't break it) |
 | `FREE_TIER_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-IP fairness bucket: 10 free-tool `tools/call`s / 60 s |
 | `FREE_TIER_GLOBAL_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-colo burst shaping: 120 anonymous requests / 60 s / colo, all callers |
+| `NATIVE_CARD_RATE_LIMITER` | `ratelimits` entry in `wrangler.jsonc` | per-IP bucket for the two native-card proxy routes: 200 / 60 s. Separate from the free-tier bucket because one card render is ~10 browser subresource fetches — sharing it made the render 429 its own assets |
 
 Declare every limiter under the first-class `ratelimits` key. **Never under
 `unsafe.bindings`** — that path is a raw passthrough: the API accepts it,
