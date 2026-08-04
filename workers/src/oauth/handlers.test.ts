@@ -1900,6 +1900,65 @@ describe("/authorize hardening", () => {
     expect(res.status).toBe(200);
   });
 
+  it("accepts `mcp offline_access` (Azure AI Foundry's documented scope)", async () => {
+    // Foundry's docs tell operators to include `offline_access` for auto
+    // token refresh, and its troubleshooting guide names a missing
+    // `offline_access` as the fix for expiring sessions. Rejecting it as
+    // "unsupported" would break the managed-OAuth integration on setup.
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const sessionJwt = await mintSessionCookie(env);
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("scope", "mcp offline_access");
+    const res = await handleAuthorize(
+      new Request(url.toString(), {
+        method: "GET",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects `offline_access` alone, which would 401 later at /mcp", async () => {
+    const env = envWith();
+    const clientId = await mintClientId(env, "https://client.example.com/cb");
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", "https://client.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("scope", "offline_access");
+    const res = await handleAuthorize(
+      new Request(url.toString(), { method: "GET" }),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("advertises offline_access in the discovery document", () => {
+    const res = handleAuthServerMetadata(
+      new Request(
+        "https://mcp.example.com/.well-known/oauth-authorization-server",
+      ),
+      envWith(),
+    );
+    const body = res as Response;
+    return body.json().then((d) => {
+      expect((d as { scopes_supported: string[] }).scopes_supported).toEqual(
+        expect.arrayContaining(["mcp", "offline_access"]),
+      );
+    });
+  });
+
   it("treats empty `?scope=` as the default `mcp` scope", async () => {
     const env = envWith();
     const clientId = await mintClientId(env, "https://client.example.com/cb");
