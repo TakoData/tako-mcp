@@ -159,9 +159,9 @@ That installs the MCP connection, Tako's bundled [research skills](#agent-skills
 
 | Command | What it does |
 | --- | --- |
-| `/data <question>` | The figure, cited — routes to `tako_answer` for one specific value, or parallel `tako_search` for anything broad |
+| `/data <question>` | The answer, cited — across licensed data **and** the live web, since `sources` defaults to both. Routes to `tako_answer` for one specific value, or parallel `tako_search` for anything broad |
 | `/chart <question>` | The series as a chart, with the **Open in Tako** embed link |
-| `/coverage <entity or metric>` | What Tako has, before you spend a call — `tako_available_data` is free |
+| `/coverage <entity or metric>` | What the licensed graph has, before you spend a call — `tako_available_data` is free. A miss here still leaves web search |
 
 To unlock the full toolset and your own account limits, authenticate once: run `/mcp auth tako` inside Gemini CLI. A browser opens to sign you in with your Tako account, and a per-host API key is minted for you automatically (visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)).
 
