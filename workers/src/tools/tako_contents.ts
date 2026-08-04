@@ -101,7 +101,10 @@ export const BATCH_CHAR_BUDGET = 250_000;
 
 const inputSchema = ContentsRequest.pick({ url: true }).extend({
   // looseArray: a host that sends one URL as a bare string, or the array as
-  // JSON text, gets it coerced instead of a -32602. See _loose_array.ts.
+  // JSON text, gets it coerced instead of a -32602. Deliberately NOT
+  // `commaSeparated`: the item schema has no url format check, so splitting
+  // 'https://en.wikipedia.org/wiki/Washington,_D.C.' would pass validation as
+  // two urls and bill two fetches for the wrong pages. See _loose_array.ts.
   urls: looseArray(
     z
       .array(ContentsRequest.shape.url.min(1))
@@ -111,6 +114,7 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
       .describe(
         `The result URLs to fetch, 1-${MAX_CONTENTS_URLS} per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an \`error\` instead of a payload).`,
       ),
+    { field: "tako_contents.urls" },
   ),
   // Legacy single-URL form, kept so an in-flight caller pinned to the old
   // schema keeps working. `urls` is the documented shape. Not enforced as

@@ -1447,13 +1447,32 @@ describe("stringified array arguments survive SDK input validation", () => {
 
   // The contract does not move: a value the array schema rejects is still
   // rejected, coerced or not.
-  it("still rejects an unknown source name", async () => {
+  //
+  // Asserting on the MESSAGE, not just the code: the SDK answers `-32602`
+  // (`InvalidParams`) for an unknown tool name, a disabled tool and output
+  // validation too, and `McpError` prefixes all of them with "MCP error
+  // -32602" — so a code-only assertion would pass on a typo in the tool name
+  // and prove nothing about `sources`.
+  it("still rejects an unknown source name, without reaching the backend", async () => {
+    const fetchMock = mockFetchSequence([]);
+
     const result = await callTool("tako_answer", {
       query: "x",
       sources: "bing",
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("-32602");
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("-32602");
+    expect(text).toContain("tako_answer");
+    // The enum constraint that failed, and where. zod reports the allowed
+    // values rather than the received one, so the option list is the specific
+    // thing to pin; "sources" alone would also match an unrelated path.
+    expect(text).toContain("invalid_value");
+    expect(text).toContain('"sources"');
+    expect(text).toMatch(/"data",\s*"web",\s*"tako"/);
+    // Rejection has to happen at validation. If coercion ever widened the enum,
+    // this call would bill a live upstream request instead of failing.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
