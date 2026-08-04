@@ -1,0 +1,133 @@
+# ChatGPT app review — compliance notes
+
+Companion to [`chatgpt-app-submission.json`](../chatgpt-app-submission.json). That file
+holds the machine-checked metadata (tool list, annotations, justifications — kept honest by
+`assertChatgptSubmissionParity` in `workers/scripts/gen-registry.ts`). This file holds the
+prose a reviewer asks for and the record of what was changed to satisfy each policy, so the
+answers are the same next time somebody is asked.
+
+Everything below was verified against **production**, not assumed. Where a claim has a test
+behind it, the test is named.
+
+---
+
+## 1. No commerce, no upsells in model-visible text
+
+**Policy:** apps may not promote or sell digital services, subscriptions, tokens, or
+credits. Existing paid-account functionality is fine; advertising it is not.
+
+Four anonymous-tier messages used to end with "get an API key at
+`https://tako.com/account/` …". Each is delivered as tool-result *text*, so each reached the
+model and could be relayed to the user. All four are now pure capacity/retry statements
+with no link, no pricing, and no mention of accounts or upgrades
+(`workers/src/freetier.ts`):
+
+| Constant | Now reads |
+| --- | --- |
+| `FREE_TIER_LIMIT_MESSAGE` | Rate limit reached for anonymous access. Try again in a minute. |
+| `FREE_TIER_GLOBAL_LIMIT_MESSAGE` | Anonymous access is at capacity right now. Try again shortly. |
+| `FREE_TIER_BATCH_MESSAGE` | Batch requests are not supported for anonymous access. Send one JSON-RPC request per POST. |
+| `FREE_TIER_CREDITS_MESSAGE` | Anonymous access is temporarily out of shared capacity. Try again later. |
+
+Enforced by `freetier.test.ts` → "no user-facing message promotes an account, a purchase,
+or an upgrade", which bans URLs and account/pricing/upgrade wording across every message
+the module can emit — including any added later.
+
+Paid functionality itself is untouched: an authenticated connection behaves exactly as
+before, and `get_credit_balance` (opt-in only, not on the ChatGPT surface) still answers
+account questions when a user asks one.
+
+## 2. No internal identifiers in tool responses
+
+**Policy:** request ids, trace ids, session ids and debug identifiers should not be
+returned unless strictly necessary.
+
+- `tako_search` / `tako_answer` no longer advertise `request_id` in `outputSchema` and no
+  longer print it in the markdown footer (`workers/src/tools/_render_markdown.ts`).
+  Dropping it from the advertised schema is what actually removes it from
+  `structuredContent`, because `pickDeclared` in `mcp.ts` strips undeclared keys.
+- `tako_visualize` no longer returns `card_id`. It carried the same string as `pub_id`,
+  which the widget needs; the caller now gets the id once, plus `webpage_url` and
+  `embed_url`.
+- The id is **not** lost operationally: `logToolRequestId` (`workers/src/tools/_log.ts`)
+  records it server-side per call, which is where a support question is answered from.
+  Runbook: `wrangler tail <worker> --search "request_id="`.
+- Enforced surface-wide by `mcp.conformance.test.ts` → "publishes no server-side debug
+  identifier", which reads the real `tools/list` output and rejects any
+  `request_id` / `trace_id` / `correlation_id` / `session_id` / `debug_id`.
+
+**Deliberately kept:** `run_id` and `thread_id` on the agent tools (opt-in, not on the
+submitted surface). A caller cannot poll a run to completion without `run_id` or continue a
+conversation without `thread_id` — these are the caller's control flow, not our debugging.
+
+## 3. Public chart creation is stated plainly
+
+`tako_visualize` is the one tool on the surface that writes, and what it writes is
+world-readable. Its description now leads with the consequence rather than the mechanism
+(`workers/src/tools/tako_visualize.ts`):
+
+- the supplied data is sent to and stored by Tako;
+- the card is persistent (it does not expire);
+- anyone with the returned link can view it without signing in;
+- the model is instructed to confirm the user wants a public chart first, and never to put
+  passwords, API keys/tokens, payment-card or bank details, health information, government
+  identifiers, precise home addresses, or third-party personal data into `components`.
+
+This matches the annotations the tool already ships — `readOnlyHint: false` plus
+`openWorldHint: true` for ChatGPT, which makes the call confirmation-worthy — and the
+`tako_visualize` justifications in the submission file.
+
+## 4. Iframe: why it is needed, and what is inside it
+
+**Why an iframe at all.** The deliverable of a data query is an interactive chart, and the
+interaction is the product: hover tooltips carrying the exact value and as-of date per
+point, per-series legend toggling on multi-series comparisons, time-range and interval
+switching, and drill-in on tabbed/table cards. A baked PNG can show the shape of a series
+but cannot answer "what was Q3 2025 exactly?" without another round-trip to the model — and
+the numbers, not the picture, are what Tako is for. The chart is also a live render of the
+card, so it reflects the current vintage of a revised series rather than a snapshot.
+
+**Scope of the frame.** `frameDomains` is exactly one origin — the public Tako web origin
+(`https://tako.com` in production), the same origin the tool writes into `embed_url`, so
+the declaration and the URL cannot drift. No wildcards, no third-party frames, one path
+(`/embed/{pub_id}/`).
+
+**What the framed page contains** (measured on production, `pub_id`
+`VKd7qE8K9Ba16kMFENNQ`, 2026-08-04): the chart, its title, and source attribution. Three
+external origins are referenced — Tako's own asset CDN (`d12w4pyrrczi5e.cloudfront.net`,
+16 refs: `Card.js`, its chunks, fonts, card images), `www.spglobal.com` (4 refs, all inside
+the card's own JSON island as the `source_details.url` for an S&P-sourced series), and —
+before this change — `www.googletagmanager.com`. There are **no advertisements, no checkout,
+no signup, no sign-in, and no upgrade UI**: the served markup contains zero `<a>` elements,
+and no occurrence of "sign up", "log in", "upgrade", "pricing", "subscribe" or "checkout".
+
+**Analytics removed.** Every iframe load the widget performs now carries
+`disable_tracking=true` (`withoutTracking` in `workers/src/tools/_chart_widget.ts`). On
+Tako's embed route that flag suppresses the Google Tag Manager bootstrap and excludes the
+load from Tako's own impression counters. Verified live: the same page fetched with the flag
+references only the Tako CDN and the S&P attribution links, and contains zero
+`googletagmanager` references. Asserted by `test/widget/chatgpt-path.test.ts`
+(`renderedIframe`) and `test/widget/widget-dom.test.ts` (`EMBED_IFRAME_SRC`).
+
+The shareable `embed_url` in `structuredContent` is deliberately left plain — a link a
+person clicks in their own browser is an ordinary tako.com visit. The flag applies only to
+loads the widget itself performs.
+
+**The nested-frame fallback exists.** On hosts whose CSP blocks the frame, the widget
+renders the baked PNG instead (with the embed page as a click-through), so no host is left
+without a chart. That path is the default everywhere except ChatGPT.
+
+## 5. Still open — not code
+
+Two items from review are not addressable in this repository and are tracked elsewhere:
+
+- **Privacy policy.** `tako.com`'s policy (`app/frontend/src/pages/privacy-policy/` in the
+  Tako web repo) does not state retention periods, and does not cover the plugin-specific
+  categories: OAuth account identifiers, search/answer queries, IP and rate-limit data,
+  public chart data and its retention, Stytch and Cloudflare as processors, or how a user
+  deletes a chart and revokes the connection. It also needs to reconcile the site's
+  zero-data-retention claim with `tako_visualize`, which creates persistent public charts
+  on purpose.
+- **Age policy.** OpenAI requires suitability for ages 13–17; Tako's terms require 18+ and
+  the privacy policy states the service is not intended for anyone under 18. Needs counsel
+  before attesting.

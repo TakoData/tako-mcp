@@ -192,6 +192,30 @@ describe("published outputSchema conformance", () => {
     expect(diverted, "synthetic output failed to conform — sweep did not cover the success path").toEqual([]);
   });
 
+  // Read off the REAL `tools/list`, so this covers every tool on the surface —
+  // including one added later whose author never saw this rule.
+  it("publishes no server-side debug identifier", () => {
+    // OpenAI's app review calls out request ids, trace ids, session ids and
+    // debug identifiers as things a tool response should not carry unless
+    // strictly necessary. `tako_search` and `tako_answer` used to advertise
+    // `request_id` (and echo it in their markdown footer); it is now
+    // server-log-only — `logToolRequestId` in `tools/_log.ts`.
+    //
+    // Deliberately NOT banned: `run_id` and `thread_id` on the agent tools.
+    // Those are strictly necessary — `run_id` is the only way to poll a run to
+    // completion and `thread_id` the only way to continue a conversation, so a
+    // caller cannot use the tool without them. The test is about identifiers
+    // that exist for OUR debugging, not the caller's control flow.
+    const banned = /^(request|trace|correlation|session|debug)_id$/;
+    const offenders: string[] = [];
+    for (const [name, schema] of published) {
+      for (const key of Object.keys(schema.properties ?? {})) {
+        if (banned.test(key)) offenders.push(`${name}.${key}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   // A tool advertising an outputSchema MUST return structuredContent; the
   // official TS SDK throws on its absence exactly as it throws on a mismatch.
   it("never returns undefined for a tool that advertises an outputSchema", () => {

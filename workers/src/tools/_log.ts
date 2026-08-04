@@ -29,7 +29,15 @@ interface ZodErrorLike {
 const MAX_ISSUES = 5;
 const MAX_ISSUES_CHARS = 600;
 
-/** Pull the upstream correlation id out of a raw wire payload, if present. */
+/**
+ * Pull the upstream correlation id out of a raw wire payload, if present.
+ *
+ * Read by BOTH loggers below — the failure breadcrumb and
+ * `logToolRequestId`. That second caller matters: the id no longer ships in
+ * either response channel (see the `_render_markdown.ts` docstring — OpenAI
+ * app review treats request/trace ids as not-to-be-returned), so these log
+ * lines are the only remaining route to it.
+ */
 function requestIdOf(raw: unknown): string {
   if (typeof raw === "object" && raw !== null && "request_id" in raw) {
     const id = (raw as { request_id: unknown }).request_id;
@@ -70,4 +78,24 @@ export function logWireGuardFailure(
   console.error(
     `[tako] wire-guard failed tool=${tool} stage=${stage} request_id=${requestIdOf(raw)} issues=${issueSummary(error)}`,
   );
+}
+
+/**
+ * Log a SUCCESSFUL call's upstream `request_id`.
+ *
+ * The counterpart to removing the id from tool responses. A caller who
+ * reports a bad result can no longer quote a request_id, so this line is how
+ * a report gets tied to a backend request — matched on tool + client +
+ * timestamp instead. Silent (no line at all) when the output carries no id:
+ * several tools' payloads have none, and `request_id=(none)` on every one of
+ * them would be noise in the same log the runbook greps.
+ *
+ * Runbook grep: `wrangler tail <worker> --search "request_id="`.
+ */
+export function logToolRequestId(tool: string, client: string, output: unknown): void {
+  const id = requestIdOf(output);
+  if (id === "(none)") return;
+  // JSON.stringify neutralizes control characters — the id is upstream-
+  // controlled, and this is the same log a human reads by eye.
+  console.log(`[tako] tool=${tool} client=${client} request_id=${JSON.stringify(id)}`);
 }
