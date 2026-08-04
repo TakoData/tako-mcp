@@ -12,7 +12,8 @@
         { "type": "json", "path": "registry/server.json", "jsonpath": "$.version" },
         { "type": "yaml", "path": "registry/smithery.yaml", "jsonpath": "$.version" },
         { "type": "json", "path": "registry/lhm.plugin.json", "jsonpath": "$.version" },
-        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "gemini-extension.json", "jsonpath": "$.version" }
       ]
     }
   },

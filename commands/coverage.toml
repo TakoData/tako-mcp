@@ -1,0 +1,19 @@
+description = "Check what data Tako has on an entity or metric (free, no credits spent)"
+
+prompt = """
+Check Tako's coverage for: {{args}}
+
+Call `tako_available_data`. It is free and fast, so this is the cheap way to find out
+whether a figure exists before spending a priced search or answer.
+
+Report:
+
+- Whether Tako has it, and the **exact metric names** it reports as covered — those names
+  are what a follow-up `tako_search` or `tako_answer` should use verbatim.
+- The `node_id` worth pinning, if one came back.
+- The ready-to-run `next_call`, if the tool returned one.
+
+Be honest about a miss: if the coverage names that come back do not actually match what
+was asked for, say the data is not there rather than proposing the nearest lookalike. A
+name that resolves is not the same as a name that retrieves rows.
+"""
