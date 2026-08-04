@@ -48,7 +48,7 @@ Claude Code installs with one command — the plugin brings the MCP connection p
 claude plugin marketplace add TakoData/tako-mcp && claude plugin install tako@tako
 ```
 
-Gemini CLI installs as an extension — same one command, same bundled skills, plus `/data`, `/chart`, and `/coverage` commands:
+Gemini CLI installs as an extension. Same one command, same bundled skills, plus `/data`, `/chart`, and `/coverage` commands:
 
 ```bash
 gemini extensions install https://github.com/TakoData/tako-mcp
@@ -149,7 +149,7 @@ Add to `.vscode/mcp.json` (workspace) or your user `mcp.json`:
 <details>
 <summary><b>Gemini CLI</b></summary>
 
-**Extension (recommended)** — one command, and it works immediately on the free tier with no API key to mint or manage:
+**Extension (recommended)** installs in one command, and works immediately on the free tier with no API key to mint or manage:
 
 ```bash
 gemini extensions install https://github.com/TakoData/tako-mcp
@@ -159,13 +159,13 @@ That installs the MCP connection, Tako's bundled [research skills](#agent-skills
 
 | Command | What it does |
 | --- | --- |
-| `/data <question>` | The answer, cited — across licensed data **and** the live web, since `sources` defaults to both. Routes to `tako_answer` for one specific value, or parallel `tako_search` for anything broad |
+| `/data <question>` | The answer, cited, across proprietary data **and** the full web, since `sources` defaults to both. Routes to `tako_answer` for one specific value, or parallel `tako_search` for anything broad |
 | `/chart <question>` | The series as a chart, with the **Open in Tako** embed link |
-| `/coverage <entity or metric>` | What the licensed graph has, before you spend a call — `tako_available_data` is free. A miss here still leaves web search |
+| `/coverage <entity or metric>` | What the proprietary graph has, before you spend a call. `tako_available_data` is free, and a miss there still leaves web search |
 
 To unlock the full toolset and your own account limits, authenticate once: run `/mcp auth tako` inside Gemini CLI. A browser opens to sign you in with your Tako account, and a per-host API key is minted for you automatically (visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)).
 
-**Manual config** — if you'd rather not install the extension, or you want to pin a [`?tools=` surface](#available-tools) or use a Bearer token instead of OAuth, add to `~/.gemini/settings.json`:
+**Manual config**: if you'd rather not install the extension, or you want to pin a [`?tools=` surface](#available-tools) or use a Bearer token instead of OAuth, add to `~/.gemini/settings.json`:
 
 ```json
 {
@@ -180,7 +180,7 @@ To unlock the full toolset and your own account limits, authenticate once: run `
 }
 ```
 
-Omit the `headers` block entirely to stay on the free tier — Gemini substitutes unset `${VAR}` references literally, and a malformed `Authorization` header is rejected rather than ignored, so a half-filled token breaks the connection where no token at all would have worked.
+Omit the `headers` block entirely to stay on the free tier. Gemini substitutes unset `${VAR}` references literally, and a malformed `Authorization` header is rejected rather than ignored, so a half-filled token breaks the connection where no token at all would have worked.
 </details>
 
 <details>
