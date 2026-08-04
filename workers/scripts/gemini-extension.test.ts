@@ -105,9 +105,11 @@ describe("gemini extension manifest", () => {
     const description = manifest().description ?? "";
     expect(description.length).toBeGreaterThan(40);
     // A sanity ceiling, not a style rule. Gallery descriptions run to a median
-    // of 88 chars with real entries near 290, and ours is a deliberate ~400 to
-    // carry both halves of the product, so this only catches a runaway paste.
-    expect(description.length).toBeLessThan(600);
+    // of 88 chars, with real entries up to 1462, and ours is a deliberate ~540:
+    // both halves of the product plus the sector list. So this only catches a
+    // runaway paste. Card UIs may visually truncate; the tradeoff is accepted
+    // because the sectors are what tell a reader whether Tako covers them.
+    expect(description.length).toBeLessThan(700);
   });
 
   it("sells both halves of the product, not just the data", () => {
