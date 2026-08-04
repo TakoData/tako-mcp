@@ -60,6 +60,28 @@ returned unless strictly necessary.
 submitted surface). A caller cannot poll a run to completion without `run_id` or continue a
 conversation without `thread_id` — these are the caller's control flow, not our debugging.
 
+### This is a breaking wire change
+
+`request_id` was a **required** declared field on the `tako_search` and `tako_answer`
+`outputSchema`s, and `card_id` a declared field on `tako_visualize`. Removing them is
+visible to any programmatic MCP client, and it fails **silently** rather than loudly: the
+responses stay schema-valid, so a client reading `structuredContent.request_id` starts
+seeing `undefined` instead of an error. Nothing warns it.
+
+Released with a `BREAKING CHANGE:` footer so the version and the generated CHANGELOG carry
+the signal. Pre-1.0 with `bump-minor-pre-major`, that is a **minor** bump, not a major one.
+
+Migration for anyone who was reading these fields:
+
+| Was | Now |
+| --- | --- |
+| `structuredContent.request_id` | no client-side equivalent — ids are server-side only, see the runbook above |
+| `tako_visualize` → `card_id` | `pub_id` (it carried the identical string) |
+
+A model-facing consumer needs no migration: neither field was ever referenced in tool
+descriptions or instructions, and the markdown footer that printed `request_id` is gone
+with it.
+
 ## 3. Public chart creation is stated plainly
 
 `tako_visualize` is the one tool on the surface that writes, and what it writes is
