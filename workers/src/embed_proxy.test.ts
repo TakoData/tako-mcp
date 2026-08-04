@@ -5,9 +5,11 @@
  *
  * Three properties carry real weight here, in this order:
  *
- *   1. INVISIBLE IN PRODUCTION. Gated on `PUBLIC_CDN_URL`; unset means the
- *      handler declines and the router 404s, so no new surface exists. A
- *      MALFORMED value declines too — these handlers run ahead of the whole
+ *   1. ABSENT WITHOUT ITS BINDING. Gated on `PUBLIC_CDN_URL`; unset means the
+ *      handler declines and the router 404s, so no new surface exists. Both
+ *      deployed envs now SET it, so in staging and production these routes are
+ *      live and the properties below are load-bearing rather than theoretical.
+ *      A MALFORMED value declines too — these handlers run ahead of the whole
  *      OAuth surface, so a throw here would 500 `/authorize` and `/token`.
  *   2. NOT AN SSRF PRIMITIVE. The pub_id is interpolated into an upstream URL,
  *      so its shape is the security boundary. Neither route follows a redirect,

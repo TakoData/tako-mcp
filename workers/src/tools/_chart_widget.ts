@@ -256,7 +256,9 @@ export async function buildChartExtraMeta(
   },
 ): Promise<Record<string, unknown> | undefined> {
   // Native-card field rides along on whatever else this returns. Empty unless
-  // `PUBLIC_CDN_URL` is set, so production is byte-identical.
+  // `PUBLIC_CDN_URL` is set — which both deployed envs now do, so this field is
+  // present in staging and production alike, and absent only where the binding
+  // is (local dev, and tests that don't supply it).
   const probe: Record<string, unknown> = {};
   const native =
     opts.env !== undefined
@@ -916,8 +918,11 @@ const WIDGET_HTML = `<!doctype html>
   // when the host is silent, so \`auto\` survives rather than being guessed at.
   //
   // The \`!url\` bail is load-bearing, not defensive noise. \`nativeCardUrl\` is
-  // \`""\` whenever \`_meta.native_card_url\` is absent — the production default —
-  // and \`""\` IS a string, so without this it fell past the \`typeof\` check into
+  // \`""\` whenever \`_meta.native_card_url\` is absent. No longer the deployed
+  // default, but still reachable three ways: an env without \`PUBLIC_CDN_URL\`, a
+  // resolve that fails, and any cached tool result from before the field
+  // existed. And \`""\` IS a string, so without this it fell past the
+  // \`typeof\` check into
   // the append branch and returned \`"?dark_mode=true"\`. That cleared
   // \`upgradeToNativeCard\`'s own \`nativeUrl === ""\` guard (it sees the
   // transformed value, not the original) and reached

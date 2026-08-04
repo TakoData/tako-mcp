@@ -47,9 +47,11 @@
  *     strip stays because it is the half that does not depend on an upstream
  *     template continuing to honour a query flag.
  *
- * Gated on `PUBLIC_CDN_URL`: with the experiment off (production default) this
- * route 404s exactly like any unknown path, so the surface is unchanged. A
- * MALFORMED value gates it off too rather than throwing — see
+ * Gated on `PUBLIC_CDN_URL`, which is now set in BOTH staging and production —
+ * so on the deployed envs these routes are LIVE, and this file is the public
+ * surface it describes rather than dormant code. Unset (local dev and the test
+ * env, unless a fixture supplies it) the route 404s exactly like any unknown
+ * path. A MALFORMED value gates it off too rather than throwing — see
  * `resolveProxyOrigins`, and note these handlers run ahead of the whole OAuth
  * subsystem in `index.ts`.
  *
