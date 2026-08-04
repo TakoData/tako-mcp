@@ -702,16 +702,13 @@ describe("tako_available_data — lookup path", () => {
       // `metric`, i.e. the arguments are the right way round.
       jsonResponse(200, { results: [searchHit("ent::q::u", "Quiet Entity")] }),
       jsonResponse(200, { results: [searchHit("mt::m::u", "Quiet Metric", "metric", "METRIC")] }),
-      // The drill is started BEFORE the probe is awaited, so the two round
-      // trips overlap — a rescue then costs one probe instead of a full drill.
       jsonResponse(200, drill("apple-inc", "Apple Inc.", "metrics", ["Revenue", "Net Income"], 2)),
-      // Rescue attempt: nothing on Apple's list matches, so no metric is found
-      // and the drill's list is what the caller gets.
-      jsonResponse(200, pairPage([])),
-      jsonResponse(200, pairPage([])),
 ]);
     const out = await takoAvailableData.handler({ q: "Apple", metric: "quantum flux capacity" }, CTX);
-    expect(fetchMock.mock.calls).toHaveLength(7); // 4 searches + 1 drill + 2 probes
+    // NO pair-confirm probe: with no rank-0 metric there is nothing to check,
+    // and the probe cannot supply one (it never chooses a node). Paying a round
+    // trip here would buy nothing.
+    expect(fetchMock.mock.calls).toHaveLength(5); // 4 searches + 1 drill
     expect(new URL(requestFrom(fetchMock.mock.calls[4]).url).pathname).toBe("/api/beta/graph/related");
     expect(out.metric).toBeNull();
     expect(out.next_call).toBeNull();
@@ -1187,30 +1184,25 @@ describe("tako_available_data — pair confirmation", () => {
     expect(out.summary).toContain("Revenues");
   });
 
-  it("re-pins to the entity's OWN metric when the global search ranked a generic one first", async () => {
-    // The Pfizer repair. Rank 0 (`Operating costs and expenses`) fails the name
-    // test, so the probe runs in rescue mode and Pfizer's own list supplies the
-    // metric the global search buried.
+  it("NEVER re-pins off the entity's list, even on a textbook-looking match", async () => {
+    // The removed branch, guarded end to end. On prod this exact shape re-pinned
+    // Netflix / "paid subscribers" to `Disney Core Paid Subscribers` — creating
+    // a confidently wrong PRICED handle where today there is correctly none.
+    // The entity's metrics relation is not curated enough to CHOOSE from; it can
+    // only answer "is the node you resolved on this list?".
     mockFetchSequence([
-      jsonResponse(200, { results: [searchHit("ent::pfizer::1", "Pfizer Inc.")] }),
-      jsonResponse(200, {
-        results: [searchHit("mt::opex::1", "Operating costs and expenses", "metric", "METRIC")],
-      }),
+      jsonResponse(200, { results: [searchHit("ent::nflx::1", "Netflix, Inc.")] }),
+      jsonResponse(200, { results: [searchHit("mt::top_paid::1", "Top Paid", "metric", "METRIC")] }),
       ...detection(),
-      jsonResponse(200, pairPage([
-        ["mt::rd_amer::3", "Research & development expense (R&D) - Americas"],
-      ])),
+      jsonResponse(200, pairPage([["mt::disney::2", "Disney Core Paid Subscribers"]])),
       jsonResponse(200, pairPage([])),
     ]);
-    const out = await takoAvailableData.handler({ q: "Pfizer", metric: "R&D expense" }, CTX);
-    expect(out.verified).toBe("pair");
-    expect(out.found).toBe(true);
-    expect(out.metric?.node_id).toBe("mt::rd_amer::3");
-    expect(out.next_call?.node_ids).toEqual(["mt::rd_amer::3"]);
-    // The displaced candidate is DEMOTED, not hidden — a model that disagrees
-    // has to be able to see that a swap happened.
-    expect(out.metric_alternates?.map((m) => m.node_id)).toEqual(["mt::opex::1"]);
-    expect(out.summary).toContain("OWN metric list");
+    const out = await takoAvailableData.handler(
+      { q: "Netflix", metric: "paid subscribers" }, CTX,
+    );
+    expect(out.metric?.node_id).toBe("mt::top_paid::1");
+    expect(out.found).toBe(false);
+    expect(out.next_call).toBeNull();
   });
 
   it("linkage NEVER vouches for a node that failed the name test", async () => {

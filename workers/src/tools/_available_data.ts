@@ -521,14 +521,11 @@ export function buildPairSummary(input: {
   metricConfident?: boolean;
   /** What the pair-confirmation probe found; undefined when it never ran. */
   verified?: "pair" | "unlinked" | "resolution" | undefined;
-  /** The pinned metric came off the entity's own list, displacing the search's rank 0. */
-  repinned?: boolean;
   /** Names of the entity's own metrics that matched the filter (context on `unlinked`). */
   entityMetricMatches?: string[];
 }): string {
   const {
-    pair, domainShaped, metricConfident = true,
-    verified, repinned = false, entityMetricMatches = [],
+    pair, domainShaped, metricConfident = true, verified, entityMetricMatches = [],
   } = input;
   const entityQuery = oneLine(input.entityQuery);
   const metricQuery = oneLine(input.metricQuery);
@@ -567,12 +564,6 @@ export function buildPairSummary(input: {
         ? ` The nearest metrics ${oneLine(pair.entity.name)} DOES have: ${entityMetricMatches.map(oneLine).join(", ")}.`
         : "";
     return `Resolved "${entityQuery}" + "${metricQuery}", but ${oneLine(pair.metric.name)} is NOT on ${oneLine(pair.entity.name)}'s own metric list — the name fits, the graph holds no edge, so a pinned call will probably return 0 cards.${near} The next_call below therefore drops the pin. If it is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
-  }
-  if (repinned) {
-    // The pin moved off the search's rank 0 onto a node the entity actually
-    // has. Say so explicitly — the displaced candidate is still listed as an
-    // alternate, and a model that disagrees needs to see that a swap happened.
-    return `Resolved "${entityQuery}" + "${metricQuery}". The metric was taken from ${oneLine(pair.entity.name)}'s OWN metric list (${oneLine(pair.metric.name)}), which outranks the general metric search — the runner-up below is what that search returned. Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed.`;
   }
   if (verified === "pair") {
     return `Resolved "${entityQuery}" + "${metricQuery}", and ${oneLine(pair.metric.name)} IS on ${oneLine(pair.entity.name)}'s own metric list — the strongest free confirmation available, though it still does not guarantee a chart exists. Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node.`;
