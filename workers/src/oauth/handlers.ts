@@ -481,6 +481,12 @@ interface AuthorizeQuery {
   /** RFC 8707 resource, RAW (uncanonicalized) or null. Validated in
    *  `handleAuthorize` after client validation. */
   resourceRaw: string | null;
+  /** OIDC Core §3.1.2.1 `prompt`. Only `login` is acted on: it forces a
+   *  fresh sign-in even when a session cookie is present, which is what
+   *  the consent page's "different account" link uses. Any other value
+   *  (including `none`) is carried but ignored — see the note in
+   *  `handleAuthorize`. */
+  prompt: string | null;
 }
 
 function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
@@ -523,6 +529,8 @@ function readAuthorizeQuery(url: URL): AuthorizeQuery | string {
     state: p.get("state"),
     scope,
     resourceRaw: p.get("resource"),
+    // Normalize `?prompt=` (present but empty) to null, matching `scope`.
+    prompt: p.get("prompt") || null,
   };
 }
 
@@ -585,8 +593,17 @@ export async function handleAuthorize(
       : await verifyJwt<SessionCookieClaims>(sessionRaw, cfg.signKey);
   const sessionValid = session !== null && session.type === "session";
 
+  // `prompt=login` (OIDC Core §3.1.2.1) forces a fresh sign-in even when a
+  // session cookie is present. The consent page's "different account" link
+  // sets it, and any client that sends it gets the standard behavior for
+  // free. `prompt=none` is deliberately NOT honored: doing it properly means
+  // returning `login_required` via the redirect URI rather than rendering
+  // anything, and no host sends it today — treating it as "ignore" keeps the
+  // unauthenticated path the same as before rather than half-implementing it.
+  const forceLogin = parsed.prompt === "login";
+
   if (req.method === "GET") {
-    if (!sessionValid) {
+    if (!sessionValid || forceLogin) {
       // Stash original OAuth params in a state cookie so /oauth/stytch_callback
       // can resume the flow after the Stytch round-trip. Then bounce to /login.
       //
@@ -611,15 +628,26 @@ export async function handleAuthorize(
         exp: Math.floor(Date.now() / 1000) + STATE_COOKIE_MAX_AGE_S,
       };
       const stateJwt = await signJwt(stateClaims, cfg.signKey);
-      return new Response(null, {
-        status: 302,
-        headers: {
-          location: "/login",
-          "set-cookie": buildSetCookie(STATE_COOKIE, stateJwt, {
-            maxAgeSeconds: STATE_COOKIE_MAX_AGE_S,
-          }),
-        },
-      });
+      // A `Headers` instance, not an object literal: `forceLogin` needs TWO
+      // `Set-Cookie` headers, and an object literal can only carry one (the
+      // second silently overwrites the first).
+      const headers = new Headers({ location: "/login" });
+      headers.append(
+        "set-cookie",
+        buildSetCookie(STATE_COOKIE, stateJwt, {
+          maxAgeSeconds: STATE_COOKIE_MAX_AGE_S,
+        }),
+      );
+      if (forceLogin) {
+        // Drop our own session so `/login` is a real re-authentication rather
+        // than a bounce straight back into consent as the same user. This is
+        // host-scoped by construction (`buildSetCookie` sets no `Domain`), so
+        // it signs the user out of this Worker only — not trytako.com and not
+        // Google. On the email path they can enter a different address; the
+        // Stytch Google button may still re-select the same account.
+        headers.append("set-cookie", buildClearCookie(SESSION_COOKIE));
+      }
+      return new Response(null, { status: 302, headers });
     }
     // Already authenticated — render the consent page.
     // Rebuild the form-action URL deterministically from validated
@@ -639,17 +667,56 @@ export async function handleAuthorize(
     if (parsed.state !== null) formActionUrl.searchParams.set("state", parsed.state);
     if (parsed.scope !== null) formActionUrl.searchParams.set("scope", parsed.scope);
     if (resource !== null) formActionUrl.searchParams.set("resource", resource);
+    // Same validated params plus `prompt=login`, so "different account"
+    // re-enters this handler and takes the forceLogin branch above. `prompt`
+    // is deliberately absent from `formActionUrl`: it is a GET-only concern
+    // and the POST must not carry it.
+    const switchAccountUrl = new URL(formActionUrl);
+    switchAccountUrl.searchParams.set("prompt", "login");
     return htmlResponse(
       consentPage({
         clientName: client.client_name,
         userEmail: session!.user_email,
         formAction: formActionUrl.pathname + formActionUrl.search,
+        switchAccountHref:
+          switchAccountUrl.pathname + switchAccountUrl.search,
       }),
     );
   }
 
   if (req.method !== "POST") {
     return new Response("method not allowed", { status: 405 });
+  }
+
+  // Which button was pressed. The POST carries its OAuth params in the query
+  // string, so the body is still unread here and this is its only consumer.
+  let action: string | null = null;
+  const consentCt = req.headers.get("content-type") ?? "";
+  if (consentCt.includes("application/x-www-form-urlencoded")) {
+    try {
+      action = new URLSearchParams(await req.text()).get("action");
+    } catch {
+      return new Response("could not parse consent form body", { status: 400 });
+    }
+  }
+
+  // Refusal is delivered to the client via the redirect URI (RFC 6749
+  // §4.1.2.1), never as a bare page — otherwise the client sits waiting for a
+  // callback that never arrives. Deliberately ABOVE the session check:
+  // `redirect_uri` is already known-registered, so a denial needs no live
+  // session, and an expired cookie must not turn Cancel into a 401 dead end.
+  if (action === "deny") {
+    return redirectAuthError(
+      parsed.redirect_uri,
+      parsed.state,
+      "access_denied",
+      "the user declined the authorization request",
+    );
+  }
+  // Anything other than an explicit `allow` is rejected. A missing field must
+  // never read as consent.
+  if (action !== "allow") {
+    return new Response("missing or unknown consent action", { status: 400 });
   }
 
   // POST = user clicked Allow. Must have a valid session — otherwise
@@ -798,10 +865,12 @@ function consentPage(args: {
   clientName: string;
   userEmail: string;
   formAction: string;
+  switchAccountHref: string;
 }): string {
   const safeName = escapeHtml(args.clientName);
   const safeEmail = escapeHtml(args.userEmail);
   const safeAction = escapeHtml(args.formAction);
+  const safeSwitch = escapeHtml(args.switchAccountHref);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -818,7 +887,12 @@ function consentPage(args: {
   p { color: var(--muted); line-height: 1.55; }
   .who { display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 0.5rem; margin-top: 1.25rem; font-size: 0.9rem; }
   .who-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #2da44e; }
-  form { margin-top: 1.5rem; display: flex; gap: 0.75rem; }
+  /* row-reverse so Cancel READS on the left while Allow stays FIRST in the
+     DOM — with two submit buttons the Enter key activates whichever comes
+     first in tree order, and that default must never be "deny". */
+  form { margin-top: 1.5rem; display: flex; flex-direction: row-reverse; gap: 0.75rem; }
+  .switch { margin-top: 0.9rem; font-size: 0.85rem; }
+  .switch a { color: var(--muted); }
   button { flex: 1; padding: 0.75rem 1rem; font-size: 1rem; font-weight: 500; border-radius: 0.5rem; border: 1px solid var(--border); background: transparent; color: var(--fg); cursor: pointer; }
   button[type=submit] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
   button:hover { opacity: 0.85; }
@@ -829,9 +903,10 @@ function consentPage(args: {
 <p>${safeName} is requesting access to your Tako account. Approving will let it call the Tako MCP server on your behalf.</p>
 <div class="who"><span class="who-dot"></span> Signed in as <strong>${safeEmail}</strong></div>
 <form method="POST" action="${safeAction}">
-  <button type="button" onclick="window.history.back()">Cancel</button>
-  <button type="submit">Allow</button>
+  <button type="submit" name="action" value="allow">Allow</button>
+  <button type="submit" name="action" value="deny">Cancel</button>
 </form>
+<p class="switch"><a href="${safeSwitch}">Not you? Sign in with a different account</a></p>
 </body>
 </html>`;
 }
