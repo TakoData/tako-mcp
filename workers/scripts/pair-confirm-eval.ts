@@ -24,7 +24,7 @@
  * Usage:
  *   TAKO_API_TOKEN=... npx tsx scripts/pair-confirm-eval.ts
  *   TAKO_API_TOKEN=... npx tsx scripts/pair-confirm-eval.ts --priced
- *   ... --base https://staging.trytako.com   (default: https://trytako.com)
+ *   ... --base https://staging.tako.com      (default: https://tako.com)
  *   ... --out /tmp/pair-eval.json
  *
  * The pair list below deliberately mixes three groups so the headline number
@@ -103,7 +103,11 @@ const flag = (name: string): string | undefined => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const BASE = flag("--base") ?? "https://trytako.com";
+// The Django host the WORKER talks to (`DJANGO_BASE_URL` in wrangler.jsonc),
+// NOT the marketing domain: trytako.com sits behind a Cloudflare WAF that 403s
+// direct API probes, which is the "blocked before reaching the graph service"
+// case graphErrorMessage already documents.
+const BASE = flag("--base") ?? "https://tako.com";
 const PRICED = args.includes("--priced");
 const OUT = flag("--out");
 const TOKEN = process.env["TAKO_API_TOKEN"];
@@ -148,19 +152,31 @@ async function scopedMetrics(entityId: string, variants: string[]): Promise<Grap
   });
 }
 
-/** Ground truth: how many cards does this handle actually retrieve? PRICED. */
-async function cardCount(query: string, nodeIds: string[], strict: boolean): Promise<number> {
+/**
+ * Ground truth. PRICED. `sources.data` only — the question is whether Tako's
+ * DATA GRAPH holds this pair, and letting web results in would answer a
+ * different one. Titles come back so a returned card can be judged for
+ * relevance, not just counted: a card is not evidence if it is the wrong metric.
+ */
+async function cards(
+  query: string,
+  nodeIds: string[],
+  strict: boolean,
+): Promise<{ n: number; titles: string[] }> {
+  const data: Record<string, unknown> = { count: 5 };
+  if (nodeIds.length > 0) {
+    data["node_ids"] = nodeIds;
+    data["strict"] = strict;
+  }
   const res = await fetch(new URL("/api/v3/search/", BASE), {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      text: query,
-      ...(nodeIds.length > 0 ? { node_ids: nodeIds, strict } : {}),
-    }),
+    body: JSON.stringify({ query, sources: { data } }),
   });
   if (!res.ok) throw new Error(`search ${res.status}`);
-  const body = (await res.json()) as { outputs?: { knowledge_cards?: unknown[] } };
-  return body.outputs?.knowledge_cards?.length ?? 0;
+  const body = (await res.json()) as { cards?: Array<{ title?: string }> };
+  const list = body.cards ?? [];
+  return { n: list.length, titles: list.map((c) => c.title ?? "(untitled)") };
 }
 
 interface Row {
@@ -168,20 +184,18 @@ interface Row {
   metric: string;
   group: Group;
   entity: string | null;
-  /** What today's code would pin. */
-  oldPin: { id: string; name: string } | null;
-  oldConfident: boolean;
-  /** What the new code pins, and on what evidence. */
-  newPin: { id: string; name: string } | null;
+  pin: { id: string; name: string } | null;
+  /** Today's verdict: `found: true` means "Tako has this data". */
+  oldClaimsData: boolean;
   verified: "pair" | "unlinked" | "resolution";
-  repinned: boolean;
-  /** True when old and new would issue different priced calls. */
-  differs: boolean;
   probeMs: number;
   baseMs: number;
   entityMetricMatches: string[];
-  oldCards?: number;
-  newCards?: number;
+  /** Ground truth — what the emitted handle actually retrieves. */
+  pinnedCards?: number;
+  pinnedTitles?: string[];
+  unpinnedCards?: number;
+  unpinnedTitles?: string[];
 }
 
 async function evaluate(pair: Pair): Promise<Row> {
@@ -192,59 +206,38 @@ async function evaluate(pair: Pair): Promise<Row> {
   ]);
   const baseMs = Date.now() - t0;
 
-  // The entity gate is reproduced in spirit — rank 0 of the typed probe. The
-  // harness deliberately does NOT re-run gateCandidates: the question under
-  // measurement is the METRIC half, and holding the entity fixed keeps the
-  // two arms comparable.
+  // Entity rank 0 of the typed probe. The harness deliberately does not re-run
+  // gateCandidates: the METRIC half is what is under measurement, and holding
+  // the entity fixed keeps the two arms comparable.
   const entity = entityHits[0] ?? null;
   const rank0 = metricHits[0] ?? null;
-  const oldConfident = rank0 !== null && confidentMatch(pair.metric, rank0);
+  const confident = rank0 !== null && confidentMatch(pair.metric, rank0);
 
   let verified: Row["verified"] = "resolution";
-  let newPin = rank0;
-  let repinned = false;
   let entityMetricMatches: GraphNode[] = [];
   let probeMs = 0;
-  if (entity !== null) {
+  if (entity !== null && rank0 !== null) {
     const t1 = Date.now();
     const scoped = await scopedMetrics(
       entity.id,
-      filterVariants({
-        metricQuery: pair.metric,
-        resolvedName: rank0?.name ?? null,
-        confident: oldConfident,
-      }),
+      filterVariants({ metricQuery: pair.metric, resolvedName: rank0.name, confident }),
     );
     probeMs = Date.now() - t1;
     if (scoped !== null) {
       const r = reconcilePair({ metricQuery: pair.metric, globalMetric: rank0, scoped });
       verified = r.verified;
-      newPin = r.metric;
-      repinned = r.repinned;
       entityMetricMatches = r.entityMetricMatches;
     }
   }
-
-  // Today: pin rank 0 with strict when confident, else emit nothing.
-  // New: pin the (possibly re-pinned) node, UNPINNED when unlinked.
-  const oldEmits = oldConfident && entity !== null && rank0 !== null;
-  const newConfident = newPin !== null && confidentMatch(pair.metric, newPin);
-  const newEmits = newConfident && entity !== null;
-  const differs =
-    oldEmits !== newEmits ||
-    (oldEmits && newEmits && (verified === "unlinked" || rank0?.id !== newPin?.id));
 
   return {
     q: pair.q,
     metric: pair.metric,
     group: pair.group,
     entity: entity?.name ?? null,
-    oldPin: rank0 === null ? null : { id: rank0.id, name: rank0.name },
-    oldConfident,
-    newPin: newPin === null ? null : { id: newPin.id, name: newPin.name },
+    pin: rank0 === null ? null : { id: rank0.id, name: rank0.name },
+    oldClaimsData: entity !== null && confident,
     verified,
-    repinned,
-    differs,
     probeMs,
     baseMs,
     entityMetricMatches: entityMetricMatches.map((n) => n.name),
@@ -262,94 +255,81 @@ async function main(): Promise<void> {
     try {
       const row = await evaluate(pair);
       rows.push(row);
-      const mark =
-        row.verified === "pair" ? (row.repinned ? "REPIN" : "pair ") :
-        row.verified === "unlinked" ? "UNLNK" : "resol";
+      const mark = row.verified === "pair" ? "pair " : row.verified === "unlinked" ? "UNLNK" : "resol";
       console.log(
-        `  ${mark}  ${pair.q} / ${pair.metric}\n` +
-        `         entity=${row.entity ?? "—"}  old=${row.oldPin?.name ?? "—"}` +
-        `${row.repinned ? `  new=${row.newPin?.name ?? "—"}` : ""}  (+${row.probeMs}ms)`,
+        `  ${mark}  ${pair.q} / ${pair.metric}  ->  ${row.pin?.name ?? "—"}` +
+        `${row.oldClaimsData ? "  [old: found:true]" : ""}  (+${row.probeMs}ms)`,
       );
     } catch (err) {
       console.error(`  ERROR  ${pair.q} / ${pair.metric}: ${String(err)}`);
     }
   }
 
-  // ---- Phase A summary ----
   const n = rows.length;
   const byVerdict = (v: string) => rows.filter((r) => r.verified === v).length;
-  const inGroup = (g: Group) => rows.filter((r) => r.group === g);
-  console.log(`\n${"=".repeat(64)}\nPHASE A — free graph signal (n=${n})\n`);
-  console.log(`  pair       ${byVerdict("pair")}  (${pct(byVerdict("pair"), n)})`);
-  console.log(`  unlinked   ${byVerdict("unlinked")}  (${pct(byVerdict("unlinked"), n)})`);
-  console.log(`  resolution ${byVerdict("resolution")}  (${pct(byVerdict("resolution"), n)})  <- probe failed`);
-  console.log(`  re-pinned  ${rows.filter((r) => r.repinned).length}`);
-  console.log(`  handles that DIFFER from today: ${rows.filter((r) => r.differs).length}`);
-
-  console.log(`\n  By group — does the verdict track reality?`);
-  for (const g of ["known-zero", "known-retrieves", "untuned"] as Group[]) {
-    const gr = inGroup(g);
-    const flagged = gr.filter((r) => r.verified === "unlinked").length;
-    console.log(`    ${g.padEnd(16)} n=${String(gr.length).padStart(2)}  flagged unlinked: ${flagged} (${pct(flagged, gr.length)})`);
-  }
-  console.log(
-    `\n  Read: on "known-zero" a HIGH flag rate is the probe working; on\n` +
-    `  "known-retrieves" ANY flag is a false positive, and each one costs a\n` +
-    `  working pinned handle. Those two numbers together decide this change.`,
-  );
-
-  const probeTimes = rows.map((r) => r.probeMs).filter((m) => m > 0).sort((a, b) => a - b);
-  if (probeTimes.length > 0) {
-    const med = probeTimes[Math.floor(probeTimes.length / 2)] ?? 0;
-    const p90 = probeTimes[Math.floor(probeTimes.length * 0.9)] ?? 0;
+  console.log(`\n${"=".repeat(70)}\nPHASE A — free graph signal (n=${n})\n`);
+  console.log(`  pair ${byVerdict("pair")}   unlinked ${byVerdict("unlinked")}   resolution ${byVerdict("resolution")}`);
+  const probes = rows.map((r) => r.probeMs).filter((m) => m > 0).sort((a, b) => a - b);
+  if (probes.length > 0) {
+    const med = probes[Math.floor(probes.length / 2)] ?? 0;
     const baseMed = rows.map((r) => r.baseMs).sort((a, b) => a - b)[Math.floor(n / 2)] ?? 0;
-    console.log(`\n  Latency: resolution ~${baseMed}ms median; probe adds ~${med}ms median, ~${p90}ms p90.`);
+    console.log(`  latency: resolution ~${baseMed}ms median, probe adds ~${med}ms median`);
   }
 
-  // ---- Phase B ----
-  const differing = rows.filter((r) => r.differs);
   if (!PRICED) {
     console.log(
-      `\n${"=".repeat(64)}\nPHASE B — skipped (add --priced to run)\n\n` +
-      `  ${differing.length} pairs would need 2 priced searches each = ` +
-      `${differing.length * 2} calls (~$${(differing.length * 2 * 0.007).toFixed(3)}).\n` +
-      `  Without it, Phase A shows only that the signals DISAGREE — not which is right.`,
+      `\n${"=".repeat(70)}\nPHASE B — skipped (add --priced)\n\n` +
+      `  Would run 2 priced searches x ${n} pairs = ${n * 2} calls ` +
+      `(~$${(n * 2 * 0.007).toFixed(2)}).`,
     );
   } else {
-    console.log(`\n${"=".repeat(64)}\nPHASE B — ground truth on ${differing.length} differing pairs\n`);
-    for (const row of differing) {
+    console.log(`\n${"=".repeat(70)}\nPHASE B — ground truth (${n * 2} priced searches)\n`);
+    for (const row of rows) {
+      const query = `${row.entity ?? row.q} ${row.metric}`;
       try {
-        const subject = row.entity ?? row.q;
-        const query = `${subject} ${row.metric}`;
-        row.oldCards = row.oldPin === null || !row.oldConfident
-          ? 0
-          : await cardCount(query, [row.oldPin.id], true);
-        row.newCards =
-          row.verified === "unlinked"
-            ? await cardCount(query, [], false)
-            : row.newPin === null
-              ? 0
-              : await cardCount(query, [row.newPin.id], true);
-        const delta = (row.newCards ?? 0) - (row.oldCards ?? 0);
+        const pinned = row.pin === null
+          ? { n: 0, titles: [] as string[] }
+          : await cards(query, [row.pin.id], true);
+        const unpinned = await cards(query, [], false);
+        row.pinnedCards = pinned.n;
+        row.pinnedTitles = pinned.titles;
+        row.unpinnedCards = unpinned.n;
+        row.unpinnedTitles = unpinned.titles;
         console.log(
-          `  ${delta > 0 ? "BETTER" : delta < 0 ? "WORSE " : "same  "}  ` +
-          `${row.q} / ${row.metric}: old=${row.oldCards} new=${row.newCards}`,
+          `  ${row.verified.padEnd(10)} ${row.q} / ${row.metric}\n` +
+          `             pinned=${pinned.n} ${JSON.stringify(pinned.titles.slice(0, 2))}\n` +
+          `             unpinned=${unpinned.n} ${JSON.stringify(unpinned.titles.slice(0, 2))}`,
         );
       } catch (err) {
         console.error(`  ERROR  ${row.q} / ${row.metric}: ${String(err)}`);
       }
     }
-    const scored = differing.filter((r) => r.oldCards !== undefined);
-    const better = scored.filter((r) => (r.newCards ?? 0) > (r.oldCards ?? 0)).length;
-    const worse = scored.filter((r) => (r.newCards ?? 0) < (r.oldCards ?? 0)).length;
-    console.log(
-      `\n  net: ${better} better, ${worse} worse, ${scored.length - better - worse} unchanged` +
-      ` (of ${scored.length} scored, ${n} total)`,
-    );
-    console.log(
-      `\n  Read: "worse" is the number that should kill this change — it means\n` +
-      `  the probe unpinned or re-pinned a handle that was working.`,
-    );
+
+    // ---- The headline: is `found: true` actually RIGHT? ----
+    const scored = rows.filter((r) => r.pinnedCards !== undefined);
+    const claimed = scored.filter((r) => r.oldClaimsData);
+    const claimedRight = claimed.filter((r) => (r.pinnedCards ?? 0) > 0);
+    const claimedWrong = claimed.filter((r) => (r.pinnedCards ?? 0) === 0);
+
+    console.log(`\n${"-".repeat(70)}\nIS THE TOOL RIGHT WHEN IT SAYS "TAKO HAS THIS"?\n`);
+    console.log(`  Today, found:true on ${claimed.length} of ${scored.length} pairs.`);
+    console.log(`    of those, the emitted PINNED handle retrieved: ${claimedRight.length}  (${pct(claimedRight.length, claimed.length)})`);
+    console.log(`    ...and returned NOTHING:                       ${claimedWrong.length}  (${pct(claimedWrong.length, claimed.length)})  <- the false claims`);
+
+    const wrongFlagged = claimedWrong.filter((r) => r.verified === "unlinked");
+    const rightFlagged = claimedRight.filter((r) => r.verified === "unlinked");
+    console.log(`\n  Does \`verified\` separate them?`);
+    console.log(`    false claims CAUGHT by unlinked:   ${wrongFlagged.length}/${claimedWrong.length}  (${pct(wrongFlagged.length, claimedWrong.length)})  <- recall`);
+    console.log(`    true claims WRONGLY flagged:       ${rightFlagged.length}/${claimedRight.length}  (${pct(rightFlagged.length, claimedRight.length)})  <- false alarms`);
+    const pairPrecision = claimed.filter((r) => r.verified === "pair");
+    const pairRight = pairPrecision.filter((r) => (r.pinnedCards ?? 0) > 0);
+    console.log(`\n  Precision of the surviving unqualified claim (verified=pair):`);
+    console.log(`    ${pairRight.length}/${pairPrecision.length} retrieve (${pct(pairRight.length, pairPrecision.length)}), vs ${claimedRight.length}/${claimed.length} (${pct(claimedRight.length, claimed.length)}) today`);
+
+    // ---- Does dropping the pin actually recover anything? ----
+    const unl = scored.filter((r) => r.verified === "unlinked");
+    const recovered = unl.filter((r) => (r.unpinnedCards ?? 0) > (r.pinnedCards ?? 0));
+    console.log(`\n  Unpinned recovery on unlinked pairs: ${recovered.length}/${unl.length} retrieved MORE without the pin`);
   }
 
   if (OUT !== undefined) {

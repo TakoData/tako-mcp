@@ -625,66 +625,48 @@ const tako_available_data = {
       // UNH/change-in-unearned-revenues all resolve a perfectly-named metric
       // and return ZERO cards. Only the graph knows, and asking it is free.
       const entityRef = entities[0] ?? null;
-      // When no metric resolved globally, the fallback coverage drill is needed
-      // UNLESS the probe rescues one from the entity's own list. Start it now so
-      // the two round trips overlap: a rescue then costs ~1.3s instead of ~3.6s,
-      // and a miss costs what it costs today.
-      const drillPromise =
-        entityRef !== null && rank0 === null
-          ? drillMatches(entityHits.filter((n) => n.id === entityRef.node_id))
-          : null;
-      // `drillMatches` isolates per-node failures and does not reject, but this
-      // promise can be ABANDONED (rescue path) — an attached handler keeps an
-      // unhandled rejection from escaping if that contract ever changes.
-      drillPromise?.catch(() => undefined);
 
+      // Probed only when there is a rank-0 metric to CHECK. With the re-pin
+      // branch gone the probe cannot supply a metric, so running it when the
+      // global search resolved none would buy nothing and cost a round trip —
+      // that case falls straight through to the coverage drill below.
       let verified: PairVerdict = "resolution";
-      let pinned = rank0;
-      let repinned = false;
       let entityMetricMatches: GraphNode[] = [];
-      if (entityRef !== null) {
+      if (entityRef !== null && rank0 !== null) {
         const scoped = await pairProbe(
           entityRef.node_id,
           filterVariants({
             metricQuery,
-            resolvedName: rank0?.name ?? null,
+            resolvedName: rank0.name,
             confident: rank0Confident,
           }),
         );
-        // `null` means the probe never produced evidence — stay on today's
+        // `null` means the probe produced no evidence — stay on today's
         // behaviour rather than inventing a verdict.
         if (scoped !== null) {
           const reconciled = reconcilePair({ metricQuery, globalMetric: rank0, scoped });
           verified = reconciled.verified;
-          pinned = reconciled.metric;
-          repinned = reconciled.repinned;
           entityMetricMatches = reconciled.entityMetricMatches;
         }
       }
 
-      // A `pair` verdict already required the lexical test to pass inside
-      // `reconcilePair`, so this is the single gate for both.
-      const pinnedConfident = pinned !== null && confidentMatch(metricQuery, pinned);
-      const pinnedRef = pinned === null ? null : toRef(pinned);
+      // The pin is always the global search's rank 0 — linkage describes it, it
+      // never replaces it.
+      const pinnedConfident = rank0Confident;
       const pair: PairResolution = {
         entity: entityRef,
-        metric: pinnedRef,
+        metric: metrics[0] ?? null,
         entity_alternates: entities.slice(1, 1 + ALTERNATES_SHOWN),
-        // Everything the global search ranked, minus whatever took the pin — so
-        // a re-pin DEMOTES the node it displaced rather than hiding it, and the
-        // substitution stays visible to a model that disagrees.
-        metric_alternates: metrics
-          .filter((m) => m.node_id !== pinnedRef?.node_id)
-          .slice(0, ALTERNATES_SHOWN),
+        metric_alternates: metrics.slice(1, 1 + ALTERNATES_SHOWN),
       };
 
       // Entity resolved and no metric anywhere — not globally, not on the
       // entity's own list. Fall through to the discovery drill: the caller
       // guessed a name that does not exist, so show what does.
       if (pair.entity !== null && pair.metric === null) {
-        const drilled = await (drillPromise ?? drillMatches(
+        const drilled = await drillMatches(
           entityHits.filter((n) => n.id === pair.entity?.node_id),
-        ));
+        );
         return {
           found: drilled.some(hasLiveCoverage),
           verified: "coverage",
@@ -721,7 +703,6 @@ const tako_available_data = {
           domainShaped: isDomainShaped(input.q),
           metricConfident: pinnedConfident,
           verified: pair.entity === null ? undefined : verified,
-          repinned,
           entityMetricMatches: entityMetricMatches
             .slice(0, ENTITY_MATCHES_SHOWN)
             .map((n) => n.name),

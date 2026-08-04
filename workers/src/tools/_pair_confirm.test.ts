@@ -27,10 +27,11 @@ describe("filterVariants", () => {
   });
 
   it("rescue mode leads with the caller's phrase, then its longest token", () => {
-    // The resolved name is deliberately ABSENT here: in rescue mode rank 0
+    // "Rescue" now means SURFACING near-misses for the caller to choose from,
+    // never auto-pinning one. The resolved name is deliberately absent: rank 0
     // failed the name test, so filtering by it would look for the wrong metric.
-    // "R&D expense" is not a substring of "Research & development expense
-    // (R&D) - Americas" — the bare token is what finds it.
+    // Measured on prod, this is what finds Pfizer's real R&D metrics — "R&D
+    // expense" is not a substring of "R&D Expenses (Normalized)".
     expect(
       filterVariants({
         metricQuery: "R&D expense",
@@ -83,28 +84,23 @@ describe("reconcilePair", () => {
       scoped: [node("mt::other::1", "Revenues"), gm],
     });
     expect(out.verified).toBe("pair");
-    expect(out.metric?.id).toBe("mt::gross_margin::9");
-    expect(out.repinned).toBe(false);
   });
 
-  it("confident + absent from the entity's list → unlinked, pin unchanged", () => {
-    // Lockheed / backlog: the name fits, the graph holds no edge. `found` must
-    // NOT be vetoed by this — near-duplicate metric nodes (KE-812) mean the
-    // twin carrying the edge may not be the twin that resolved.
+  it("confident + absent from the entity's list → unlinked", () => {
+    // Lockheed / backlog: the name fits and the graph holds no edge. Measured
+    // on prod — Lockheed has `12 Month Backlog`, not the generic `Backlog`.
     const out = reconcilePair({
       metricQuery: "backlog",
       globalMetric: node("mt::backlog::1", "Backlog"),
       scoped: [node("mt::revenues::2", "Revenues")],
     });
     expect(out.verified).toBe("unlinked");
-    expect(out.metric?.id).toBe("mt::backlog::1");
-    expect(out.repinned).toBe(false);
   });
 
   it("matches on node NAME as well as id, so an id-space mismatch is not a false 'unlinked'", () => {
     // graph/search and graph/related are assumed to share an id space. If they
     // ever do not, id-only matching would report `unlinked` for EVERY pair — a
-    // systematic false negative. Name equality is the cheap backstop.
+    // systematic false negative that would unpin every handle the tool emits.
     const out = reconcilePair({
       metricQuery: "gross margin",
       globalMetric: node("mt::gross_margin::9", "Gross Margin (%)"),
@@ -113,25 +109,26 @@ describe("reconcilePair", () => {
     expect(out.verified).toBe("pair");
   });
 
-  it("NOT confident + a confident node on the entity's list → re-pin", () => {
-    // The Pfizer repair: the global search ranked `Operating costs and
-    // expenses` first; Pfizer's own metric list holds the real one.
+  it("NEVER pins a node off the entity's list, however well it matches", () => {
+    // THE regression guard for the removed re-pin branch. Measured on prod
+    // (24 pairs, 2026-08-04): Netflix's own metrics relation contains
+    // `Disney Core Paid Subscribers` and Walmart's contains
+    // `5G Telco Edge IoT Revenue Total Revenue`, both passing confidentMatch.
+    // Choosing from a relation that noisy converted "no handle" into a
+    // confidently wrong PRICED call.
     const out = reconcilePair({
-      metricQuery: "R&D expense",
-      globalMetric: node("mt::opex::1", "Operating costs and expenses"),
-      scoped: [
-        node("mt::rd_americas::2", "Research & development expense (R&D) - Americas"),
-      ],
+      metricQuery: "paid subscribers",
+      globalMetric: node("mt::top_paid::1", "Top Paid"),
+      scoped: [node("mt::disney::2", "Disney Core Paid Subscribers")],
     });
-    expect(out.verified).toBe("pair");
-    expect(out.metric?.id).toBe("mt::rd_americas::2");
-    expect(out.repinned).toBe(true);
+    expect(out).not.toHaveProperty("metric");
+    expect(out).not.toHaveProperty("repinned");
+    expect(out.verified).toBe("unlinked");
   });
 
   it("linkage NEVER vouches for a node that failed the name test", () => {
-    // Pfizer really does have `Operating costs and expenses`. Confirming the
-    // edge for a node that does not answer the question would convert a wrong
-    // pin into a CONFIDENT wrong pin — strictly worse than today.
+    // Pfizer really does have `Operating costs and expenses`, so confirming its
+    // edge for an R&D question would be a confident wrong pin.
     const opex = node("mt::opex::1", "Operating costs and expenses");
     const out = reconcilePair({
       metricQuery: "R&D expense",
@@ -139,51 +136,28 @@ describe("reconcilePair", () => {
       scoped: [opex, node("mt::revenues::3", "Revenues")],
     });
     expect(out.verified).toBe("unlinked");
-    expect(out.repinned).toBe(false);
-    expect(out.metric?.id).toBe("mt::opex::1");
   });
 
-  it("rescues when the global metric probe found nothing at all", () => {
+  it("no global metric → unlinked, and nothing is invented", () => {
     const out = reconcilePair({
       metricQuery: "gross margin",
       globalMetric: null,
       scoped: [gm],
     });
-    expect(out.verified).toBe("pair");
-    expect(out.metric?.id).toBe("mt::gross_margin::9");
-    expect(out.repinned).toBe(true);
-  });
-
-  it("no global metric and nothing scoped → still no metric", () => {
-    const out = reconcilePair({
-      metricQuery: "quantum flux capacity",
-      globalMetric: null,
-      scoped: [],
-    });
-    expect(out.metric).toBeNull();
     expect(out.verified).toBe("unlinked");
   });
 
   it("carries the entity's near-miss metrics so the caller can pick deliberately", () => {
+    // The genuinely useful half of an unlinked verdict — naming what the entity
+    // DOES hold, for the caller to pin deliberately.
     const out = reconcilePair({
       metricQuery: "backlog",
       globalMetric: node("mt::backlog::1", "Backlog"),
-      scoped: [node("mt::orders::2", "Order Intake"), node("mt::rev::3", "Revenues")],
+      scoped: [node("mt::b12::2", "12 Month Backlog"), node("mt::rev::3", "Revenues")],
     });
     expect(out.entityMetricMatches.map((n) => n.name)).toEqual([
-      "Order Intake",
+      "12 Month Backlog",
       "Revenues",
     ]);
-  });
-
-  it("an alias-only confident scoped node still rescues", () => {
-    // capex → `Capital Expenditure` is alias-only with no name overlap.
-    const out = reconcilePair({
-      metricQuery: "capex",
-      globalMetric: node("mt::wrong::1", "Capital Structure"),
-      scoped: [node("mt::capex::2", "Capital Expenditure", ["capex"])],
-    });
-    expect(out.verified).toBe("pair");
-    expect(out.metric?.id).toBe("mt::capex::2");
   });
 });

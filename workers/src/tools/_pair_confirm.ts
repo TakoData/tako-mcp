@@ -21,7 +21,23 @@
  * Linkage never vouches for a node that failed the lexical test. Pfizer really
  * does have `Operating costs and expenses`, so confirming its edge for
  * `metric="R&D expense"` would turn a wrong pin into a CONFIDENT wrong pin.
- * Linkage only ever rescues by finding a DIFFERENT node that passes.
+ *
+ * LINKAGE IS EVIDENCE, NEVER A CHOICE. This module deliberately does NOT pick a
+ * node off the entity's list to pin. It did, and the branch was removed after
+ * measuring it against live prod (24 pairs, 2026-08-04): 4 re-pins, 2 of them
+ * catastrophic, because `graph/related` is NOT a curated list of the entity's
+ * own metrics —
+ *
+ *   Netflix / "paid subscribers"  ->  `Disney Core Paid Subscribers`
+ *   Walmart / "total revenue"     ->  `5G Telco Edge IoT Revenue Total Revenue`
+ *
+ * both returned from the QUERIED entity's metrics relation, and both pass
+ * `confidentMatch` (the query's tokens are a subset of those names). The same
+ * pollution puts `Bombshells Same Store Sales` on Starbucks. Every one of those
+ * re-pins fired where rank 0 was unvetted and the tool correctly emits NO
+ * handle today, so the branch converted "no handle" into a confidently wrong
+ * PRICED call. A relation this noisy can support "is the node you resolved on
+ * this list?" and nothing stronger.
  *
  * Direction is deliberate. The symmetric call (pin the metric, drill
  * `relation=entities`, look for the entity) is wrong twice over: a broad metric
@@ -146,12 +162,8 @@ export function filterVariants(input: {
 }
 
 export interface PairReconciliation {
-  /** The metric to pin — rank 0, a re-pinned scoped node, or null. */
-  metric: GraphNode | null;
   /** `"pair"` or `"unlinked"`; the caller substitutes `"resolution"` if the probe never ran. */
   verified: Exclude<PairVerdict, "resolution">;
-  /** True when the pinned node came from the entity's list rather than the global search. */
-  repinned: boolean;
   /** The entity's own metrics that matched the filter — context for an `unlinked` verdict. */
   entityMetricMatches: GraphNode[];
 }
@@ -183,34 +195,16 @@ export function reconcilePair(input: {
   const entityMetricMatches = scoped.slice(0, ENTITY_MATCHES_SHOWN);
 
   // Rank 0 already answers the question lexically — the only open question is
-  // whether the entity holds it. A node that FAILS the name test is never
-  // confirmed here, however solid its edge (see the module header).
+  // whether the entity holds it. NOTE this NEVER changes which node is pinned;
+  // see the module header for the measurement that removed that branch.
   if (globalMetric !== null && confidentMatch(metricQuery, globalMetric)) {
     const linked = scoped.some((n) => sameNode(n, globalMetric));
-    return {
-      metric: globalMetric,
-      verified: linked ? "pair" : "unlinked",
-      repinned: false,
-      entityMetricMatches,
-    };
+    return { verified: linked ? "pair" : "unlinked", entityMetricMatches };
   }
 
-  // Rank 0 is absent or unvetted. A node on the entity's OWN list that passes
-  // the name test is better evidence than either signal alone, so it takes the
-  // pin — this is the case the global search gets wrong by ranking a generic
-  // metric above the entity's specific one.
-  const rescued = scoped.find((n) => confidentMatch(metricQuery, n));
-  if (rescued !== undefined) {
-    return { metric: rescued, verified: "pair", repinned: true, entityMetricMatches };
-  }
-
-  // Nothing vetted anywhere. Keep whatever rank 0 was (the caller still shows
-  // it as an unvetted candidate with its alternates) and report that the
-  // entity's list was checked and came up empty.
-  return {
-    metric: globalMetric,
-    verified: "unlinked",
-    repinned: false,
-    entityMetricMatches,
-  };
+  // Rank 0 is absent or unvetted, and the entity's list holds nothing that
+  // vouches for it either. The caller still sees rank 0 as an unvetted
+  // candidate with its alternates; what this adds is that the entity's OWN
+  // list was checked too, which is firmer ground for reporting a gap.
+  return { verified: "unlinked", entityMetricMatches };
 }
