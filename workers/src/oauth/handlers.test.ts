@@ -10,7 +10,7 @@ import {
   handleRegister,
   handleToken,
 } from "./handlers.js";
-import { decryptAesGcm, encryptAesGcm, signJwt } from "./jwt.js";
+import { decryptAesGcm, encryptAesGcm, signJwt, verifyJwt } from "./jwt.js";
 import {
   buildSetCookie,
   SESSION_COOKIE,
@@ -371,6 +371,224 @@ describe("/register (DCR)", () => {
       env,
     );
     expect(res.status).toBe(413);
+  });
+
+  it("public registrations report a finite client_id_expires_at", async () => {
+    const env = envWith();
+    const res = await handleRegister(
+      new Request("https://mcp.example.com/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "test-host",
+          redirect_uris: ["https://client.example.com/cb"],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      client_id: string;
+      client_id_issued_at: number;
+      client_id_expires_at: number;
+    };
+    // RFC 7591 §3.2.1: omitting the field means "never expires", which
+    // would be a lie for the 1-year public path.
+    expect(body.client_id_expires_at).toBe(
+      body.client_id_issued_at + 365 * 24 * 60 * 60,
+    );
+    const claims = await verifyJwt<ClientIdClaims>(body.client_id, SIGN_KEY);
+    expect(claims?.exp).toBe(body.client_id_expires_at);
+    expect(claims?.partner).toBeUndefined();
+  });
+
+  it("ignores a stray Authorization header on the public path", async () => {
+    // Hosts routinely retry /register with a stale access token still
+    // attached. That must not be read as a failed partner registration.
+    const env = envWith({ OAUTH_PARTNER_REGISTRATION_TOKEN: "partner-secret" });
+    const res = await handleRegister(
+      new Request("https://mcp.example.com/register", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer some-stale-access-token",
+        },
+        body: JSON.stringify({
+          redirect_uris: ["https://client.example.com/cb"],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { client_id_expires_at: number };
+    expect(body.client_id_expires_at).toBeGreaterThan(0);
+  });
+});
+
+/* --------------------------- /register (partner path) --------------------------- */
+
+function partnerRegisterRequest(
+  token: string | null,
+  body: Record<string, unknown> = {
+    client_name: "Microsoft Foundry",
+    redirect_uris: ["https://foundry.example.com/cb"],
+  },
+): Request {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  if (token !== null) headers["x-tako-partner-token"] = token;
+  return new Request("https://mcp.example.com/register", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+}
+
+describe("/register (partner path)", () => {
+  const PARTNER_TOKEN = "partner-secret-value";
+
+  it("mints a non-expiring client_id when the partner token matches", async () => {
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
+    });
+    const res = await handleRegister(
+      partnerRegisterRequest(PARTNER_TOKEN),
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      client_id: string;
+      client_id_expires_at: number;
+    };
+    // RFC 7591 §3.2.1: 0 means the client_id never expires.
+    expect(body.client_id_expires_at).toBe(0);
+    const claims = await verifyJwt<ClientIdClaims>(body.client_id, SIGN_KEY);
+    expect(claims).not.toBeNull();
+    expect(claims?.exp).toBeUndefined();
+    expect(claims?.partner).toBe(true);
+    expect(claims?.redirect_uris).toEqual(["https://foundry.example.com/cb"]);
+  });
+
+  it("a partner client_id still authorizes after the public TTL would have lapsed", async () => {
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
+    });
+    const res = await handleRegister(
+      partnerRegisterRequest(PARTNER_TOKEN),
+      env,
+    );
+    const { client_id } = (await res.json()) as { client_id: string };
+
+    // Jump two years past issuance — well beyond REGISTRATION_TTL_S.
+    const realNow = Date.now;
+    try {
+      const twoYearsMs = 2 * 365 * 24 * 60 * 60 * 1000;
+      Date.now = () => realNow() + twoYearsMs;
+      const claims = await verifyJwt<ClientIdClaims>(client_id, SIGN_KEY);
+      expect(claims).not.toBeNull();
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it("rejects a wrong partner token with 401 rather than silently downgrading", async () => {
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
+    });
+    const res = await handleRegister(
+      partnerRegisterRequest("wrong-token"),
+      env,
+    );
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "invalid_client",
+    );
+  });
+
+  it("rejects a partner token of the wrong length with 401", async () => {
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
+    });
+    const res = await handleRegister(partnerRegisterRequest("short"), env);
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects the partner header with 401 when no partner token is configured", async () => {
+    const env = envWith();
+    const res = await handleRegister(
+      partnerRegisterRequest(PARTNER_TOKEN),
+      env,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("still enforces redirect_uri validation on the partner path", async () => {
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
+    });
+    const res = await handleRegister(
+      partnerRegisterRequest(PARTNER_TOKEN, {
+        client_name: "Microsoft Foundry",
+        redirect_uris: ["javascript:alert(1)"],
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("mints a partner client accepted end-to-end by /authorize", async () => {
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
+    });
+    const res = await handleRegister(
+      partnerRegisterRequest(PARTNER_TOKEN),
+      env,
+    );
+    const { client_id } = (await res.json()) as { client_id: string };
+
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", client_id);
+    url.searchParams.set("redirect_uri", "https://foundry.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("scope", "mcp");
+
+    const authRes = await handleAuthorize(
+      new Request(url.toString(), { method: "GET" }),
+      env,
+    );
+    // No session cookie yet, so the happy path is a redirect to /login —
+    // what matters is that the client_id was NOT rejected as invalid_client.
+    expect(authRes.status).toBe(302);
+    expect(authRes.headers.get("location")).toContain("/login");
+  });
+
+  it("rejects a redirect_uri not registered to the partner client", async () => {
+    const env = envWith({
+      OAUTH_PARTNER_REGISTRATION_TOKEN: PARTNER_TOKEN,
+    });
+    const res = await handleRegister(
+      partnerRegisterRequest(PARTNER_TOKEN),
+      env,
+    );
+    const { client_id } = (await res.json()) as { client_id: string };
+
+    const { challenge } = await pkcePair();
+    const url = new URL("https://mcp.example.com/authorize");
+    url.searchParams.set("client_id", client_id);
+    url.searchParams.set("redirect_uri", "https://attacker.example.com/cb");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+
+    const authRes = await handleAuthorize(
+      new Request(url.toString(), { method: "GET" }),
+      env,
+    );
+    expect(authRes.status).toBe(400);
   });
 });
 

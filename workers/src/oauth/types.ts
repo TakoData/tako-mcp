@@ -43,6 +43,19 @@ export interface ClientIdClaims extends BaseClaims {
   client_name: string;
   redirect_uris: string[];
   iat: number;
+  /**
+   * Set only on client_ids minted through the authenticated partner path
+   * (`X-Tako-Partner-Token` on `/register`). Partner client_ids carry NO
+   * `exp` — they are handed to a catalog operator (Microsoft Foundry, and
+   * anyone else running managed OAuth on our behalf) who bakes the value
+   * into their own configuration, where a silent expiry would break every
+   * downstream customer at once with no signal.
+   *
+   * The claim is informational: `verifyJwt` enforces expiry off the absent
+   * `exp`, not off this flag. It exists so a decoded client_id is
+   * self-describing in logs and in an incident.
+   */
+  partner?: true;
 }
 
 /* --------------------------- Authorization --------------------------- */
