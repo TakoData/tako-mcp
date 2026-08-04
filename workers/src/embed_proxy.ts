@@ -224,22 +224,30 @@ function resolveProxyOrigins(
 }
 
 /**
- * Meter a proxy request against the free-tier per-IP limiter.
+ * Meter a proxy request against the native-card per-IP limiter.
  *
- * These two routes sit above the rate-limited surface: `FREE_TIER_RATE_LIMITER`
- * is otherwise consulted only inside `handleMcpRequest`. Left unmetered,
- * `/cdn-asset/` is an unauthenticated `ACAO: *` mirror of a CloudFront
- * distribution that buffers and string-replaces ~1.5 MB per JavaScript request,
- * and `/embed-html/` lets an anonymous caller drive `/embed/{id}/` renders on
- * Tako's own origin at whatever rate it likes.
+ * Left unmetered, `/cdn-asset/` is an unauthenticated `ACAO: *` mirror of a
+ * CloudFront distribution that buffers and string-replaces ~1.5 MB per
+ * JavaScript request, and `/embed-html/` lets an anonymous caller drive
+ * `/embed/{id}/` renders on Tako's own origin at whatever rate it likes.
  *
- * Fails OPEN, like every other use of this binding: a limiter outage must not
- * take the card down. Returns a 429 rather than a JSON-RPC result because these
- * are browser subresource fetches, not MCP traffic — nothing here has a request
- * id to answer.
+ * Metered on its OWN binding, not the free tier's. These are browser
+ * SUBRESOURCE fetches: one card render costs ~10 of them before `Card.js`'s
+ * lazily imported chunks, against a free-tier bucket of 10 per 60 s sized for
+ * `tools/call`. Sharing it meant the render throttled its own assets — measured
+ * on staging, requests 1-10 served and 11-14 all 429 — so the chart failed to
+ * draw. See `NATIVE_CARD_RATE_LIMITER` in `env.ts`.
+ *
+ * Fails OPEN: a limiter outage must degrade to an unmetered chart, never a
+ * missing one. Returns a 429 rather than a JSON-RPC result because nothing here
+ * has a request id to answer.
+ *
+ * ORDER MATTERS: every caller must await this BEFORE its upstream fetch, or the
+ * meter becomes decorative — the work it exists to bound has already happened.
+ * `embed_proxy.test.ts` pins that ordering.
  */
 async function rateLimited(request: Request, env: Env): Promise<Response | undefined> {
-  const limiter = env.FREE_TIER_RATE_LIMITER;
+  const limiter = env.NATIVE_CARD_RATE_LIMITER;
   if (limiter === undefined) return undefined;
   const key = freeTierRateLimitKey(request.headers.get("CF-Connecting-IP"));
   try {
@@ -660,20 +668,63 @@ export async function handleCdnAssetProxy(
   // outside the one tree the card actually loads from. The origin is fixed
   // above, so the rest only has to keep the PATH from climbing out of it —
   // see `ASSET_PATH_PREFIX` for why confinement is not merely belt-and-braces.
-  if (
-    assetPath === "" ||
-    !assetPath.startsWith(ASSET_PATH_PREFIX) ||
-    assetPath.includes("..") ||
-    assetPath.startsWith("/") ||
-    assetPath.includes("\\")
-  ) {
+  //
+  // Applied to the raw path AND to a percent-decoded copy, because the raw form
+  // alone did not deliver what the note above claims. `%2f` is not a segment
+  // delimiter, so WHATWG parsing leaves `%2e%2e%2f` intact as ONE segment: the
+  // path `archive/x/%2e%2e%2fuser-images/evil.html` starts with `archive/`,
+  // holds no literal `..`, no leading `/` and no `\`, and so passed every guard
+  // and reached the upstream fetch (verified on staging — 502, i.e. issued,
+  // where the unencoded `..%2f` gives 400).
+  //
+  // It was not exploitable: CloudFront/S3 treat the encoded dots as a literal
+  // key. But that means confinement rested on S3 key literalness rather than on
+  // this code, and `ASSET_PATH_PREFIX` names what is on the other side of it —
+  // a presigned-upload `.html` under `user-images/` served as a document on the
+  // OAuth origin. Any normalizing hop added later (a CloudFront Function, a
+  // URI-rewrite behavior, a move off the S3 origin) would arm it silently.
+  //
+  // Decoding rather than rejecting `%` outright, because an encoded slash is
+  // legitimate here — it names an S3 key that literally contains one, and no
+  // real asset path carries a percent-escape today (measured, 9 of 9 clean). A
+  // malformed escape cannot be reasoned about, so it is refused.
+  let decodedAssetPath: string;
+  try {
+    decodedAssetPath = decodeURIComponent(assetPath);
+  } catch {
+    return textResponse("bad asset path", 400);
+  }
+  const confined = (p: string): boolean =>
+    p !== "" &&
+    p.startsWith(ASSET_PATH_PREFIX) &&
+    !p.includes("..") &&
+    !p.startsWith("/") &&
+    !p.includes("\\");
+  if (!confined(assetPath) || !confined(decodedAssetPath)) {
     return textResponse("bad asset path", 400);
   }
 
   const limited = await rateLimited(request, env);
   if (limited !== undefined) return limited;
 
-  const upstream = `${cdnBase}/${assetPath}${url.search}`;
+  // Query string deliberately DROPPED rather than forwarded.
+  //
+  // Forwarding it made this an amplifier. The query reaches CloudFront and lands
+  // in the cache key for the `cacheEverything` subrequest below, so
+  // `Card.js?<nonce>` misses cache on every distinct nonce: a ~200-byte request
+  // buys a ~1.48 MB origin fetch, an `arrayBuffer()`, a `TextDecoder` decode, a
+  // whole-body rewrite copy, and 1.48 MB of `ACAO: *` egress. Measured on
+  // staging: 0.11 s cached vs 0.32-0.44 s per fresh nonce, so the query did
+  // reach upstream and did defeat the cache. These handlers run ahead of the
+  // whole OAuth subsystem (`index.ts`), so that pressure lands on `/authorize`,
+  // `/token` and `/register` too, and the per-IP meter above fails open and
+  // counts per colo.
+  //
+  // Safe to drop: `rewriteCdnUrls` never emits a query, and these are
+  // content-hashed assets under `archive/<sha>/` — the hash IS the cache-buster,
+  // so a query could only ever be someone else's. Measured on a real production
+  // page, 0 of 9 rewritten urls carried one.
+  const upstream = `${cdnBase}/${assetPath}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
   let response: Response;
