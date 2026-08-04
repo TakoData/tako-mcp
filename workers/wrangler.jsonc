@@ -99,10 +99,10 @@
       "vars": {
         "DJANGO_BASE_URL": "https://staging.tako.com",
         "PUBLIC_BASE_URL": "https://staging.tako.com",
-        // STAGING ONLY — arms the NATIVE CARD experiment: Claude rendering
-        // Tako's own `Card.js` instead of a PNG of it. Origin of the CDN
-        // serving Tako's front-end assets (the real chart renderer, its lazily
-        // imported chunks, and the Geist/Inter fonts).
+        // Arms the NATIVE CARD path: Claude rendering Tako's own `Card.js`
+        // instead of a PNG of it. Origin of the CDN serving Tako's front-end
+        // assets (the real chart renderer, its lazily imported chunks, and the
+        // Geist/Inter fonts). Set in BOTH envs — see the production block.
         //
         // Setting it is not a one-line CSP tweak. It brings TWO PUBLIC HTTP
         // ROUTES into existence — `/embed-html/{pub_id}` and `/cdn-asset/{path}`
@@ -114,12 +114,6 @@
         // `resourceDomains`, never the CDN, because the assets are served
         // through `/cdn-asset/` (the CDN answers CORS for tako.com alone, and a
         // module script is always a CORS fetch). See `src/env.ts`.
-        //
-        // Deliberately ABSENT from the production block. Before copying it
-        // there: both routes are unauthenticated and were metered through the
-        // free-tier per-IP limiter for this reason, `/embed-html/` is confined
-        // to inert content types and `/cdn-asset/` to the `archive/` prefix.
-        // Re-read `embed_proxy.ts`'s header before promoting.
         //
         // Staging's asset distribution — NOT production's
         // (`d12w4pyrrczi5e`, see `src/icons.ts`). The embed page references the
@@ -183,6 +177,31 @@
       "vars": {
         "DJANGO_BASE_URL": "https://tako.com",
         "PUBLIC_BASE_URL": "https://tako.com",
+        // PRODUCTION's asset distribution — NOT staging's (`d1iyjvzoctsna`).
+        // Verified against the live prod embed page, which references this host
+        // 16 times; pointing at the wrong distribution fails SILENTLY (zero URLs
+        // rewritten, card mounts, no chart draws), so this value is not
+        // interchangeable with staging's.
+        //
+        // Why it is set here at all, having shipped staging-only first: without
+        // it, prod serves the baked PNG and nothing else. That PNG is rendered
+        // server-side at `dark_mode=true` (`DEFAULT_DARK_MODE`) before the host
+        // theme is knowable, and a raster cannot be re-themed in the widget — so
+        // a light-themed Claude got a dark, unhoverable image of a chart
+        // (TAKO-3781's user-visible half). `withHostTheme` only ever rewrites the
+        // native-card and iframe urls, so the theme fix has nothing to act on
+        // until this var exists. Interactivity and correct theming are the same
+        // switch.
+        //
+        // What it exposes, reviewed before promoting: `/embed-html/{pub_id}` and
+        // `/cdn-asset/{path}` become public and unauthenticated on the OAuth
+        // origin. Mitigations already in `embed_proxy.ts` — both metered through
+        // the free-tier per-IP limiter, `/embed-html/` answers `text/plain` under
+        // `Content-Security-Policy: sandbox`, `/cdn-asset/` is confined to the
+        // `archive/` prefix and reflects only inert content types, and the
+        // proxied page has its `csrfToken` and GA bootstrap stripped. Neither
+        // route serves a document the browser will execute.
+        "PUBLIC_CDN_URL": "https://d12w4pyrrczi5e.cloudfront.net",
         // OpenAI connector-directory domain-verification token issued
         // for `mcp.tako.com`. Served as plain text from
         // `/.well-known/openai-apps-challenge`. If OpenAI rotates the
