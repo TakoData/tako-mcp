@@ -1,17 +1,31 @@
 name: workers-smoke
 
 # Triggers (TAKO-2611):
-#   - `workflow_run`: fire automatically after a successful `workers-deploy`
-#     run that was triggered by a `push` to `main` (which always deploys
-#     staging). We DO NOT auto-smoke after `workflow_dispatch` deploys —
-#     those can target production and we don't have a prod-aware smoke yet,
-#     so silently smoking staging while prod was deployed would produce a
-#     misleading green badge. Manually dispatch this workflow to smoke any
-#     post-promotion prod deploy.
+#   - `workflow_run`: fire automatically after a successful `workers-deploy`,
+#     smoking the env that run actually deployed. The target is derived from the
+#     UPSTREAM EVENT using the same mapping `workers-deploy.yml` uses to pick it:
+#     `push` to main -> staging, `release: published` -> production. Because both
+#     sides read the same signal, the badge cannot claim to have smoked an env
+#     the deploy did not touch.
 #   - `workflow_dispatch`: manual trigger to smoke any base URL.
 #
+# We still DO NOT auto-smoke after a `workflow_dispatch` deploy: that one takes
+# its env from an input this event does not carry, so the target would have to be
+# guessed — and guessing is exactly what produces a misleading green badge.
+# Dispatch this workflow with `base_url` after a manual deploy.
+#
+# Production was previously never smoked at all: prod deploys fire from
+# `release: published`, and this workflow admitted only `push`, so a
+# release-triggered deploy matched no branch here and ran nothing. Every prod
+# verification depended on someone remembering to dispatch by hand.
+#
+# NOTE: the smoke calls `tako_visualize`, which charges one credit and creates a
+# card in the target env. That is now a per-release cost on production, and it is
+# the point — a check that cannot create a card cannot prove the render path.
+#
 # `workflow_run` only fires for upstream runs that completed (any conclusion);
-# the `if:` on the job below filters to successful + push-triggered upstreams.
+# the `if:` on the job below filters to successful push- or release-triggered
+# upstreams.
 on:
   workflow_run:
     workflows: [workers-deploy]
@@ -27,16 +41,21 @@ on:
         # changes, update both the env var AND this default in lockstep.
         default: 'https://mcp.staging.tako.com'
 
-# Single source of truth for the staging URL. Referenced from the smoke step
-# below; the `workflow_dispatch` input default has to repeat the value (see
-# note on the input above).
+# Single source of truth for the two deployed URLs. Referenced from the smoke
+# step below; the `workflow_dispatch` input default has to repeat the staging
+# value (see note on the input above).
 env:
   STAGING_BASE_URL: 'https://mcp.staging.tako.com'
+  PRODUCTION_BASE_URL: 'https://mcp.tako.com'
 
-# Latest staging deploy is what we want to validate; cancel an in-flight
-# smoke if a newer deploy lands while it's running.
+# Latest deploy of a given env is what we want to validate; cancel an in-flight
+# smoke if a newer deploy to the SAME env lands while it's running. Keyed by the
+# resolved env rather than by base_url alone, so a release-triggered prod smoke
+# does not cancel a staging one that is still running.
 concurrency:
-  group: workers-smoke-${{ github.event.inputs.base_url || 'staging' }}
+  group: >-
+    workers-smoke-${{ github.event.inputs.base_url ||
+    (github.event.workflow_run.event == 'release' && 'production' || 'staging') }}
   cancel-in-progress: true
 
 permissions:
@@ -49,15 +68,18 @@ jobs:
     timeout-minutes: 5
     # Run when:
     #   - manually dispatched (any base URL the user picked), OR
-    #   - the upstream `workers-deploy` succeeded AND was triggered by a
-    #     `push` (which always deploys staging — see workers-deploy.yml). We
-    #     skip `workflow_dispatch`-triggered upstream runs because those may
-    #     have targeted production, and our smoke target is hardcoded to
-    #     staging here.
+    #   - the upstream `workers-deploy` succeeded AND was triggered by a `push`
+    #     (staging) or a published `release` (production) — the two events whose
+    #     target env `workers-deploy.yml` derives from the event itself, so this
+    #     workflow can derive the same one without guessing.
+    #
+    # Upstream `workflow_dispatch` runs are still skipped: their env comes from
+    # an input this event does not expose.
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'release'))
     defaults:
       run:
         working-directory: workers
@@ -77,17 +99,27 @@ jobs:
 
       # Smoke target precedence:
       #   1. `workflow_dispatch` input (if set) — lets ops smoke any URL
-      #   2. `STAGING_BASE_URL` env (workflow-level constant)
+      #   2. upstream `release` -> production (mirrors workers-deploy.yml)
+      #   3. otherwise (upstream `push`) -> staging
+      #
+      # Step 2 is what makes production verifiable at all. `workers-deploy.yml`
+      # picks production with the same `event_name == 'release'` test, so the two
+      # workflows cannot disagree about which env was touched.
       #
       # The smoke script (`scripts/smoke.ts`) requires `SMOKE_BASE_URL` to be
       # set explicitly — there is no in-script default — so any source URL
-      # change happens in this YAML, not in TypeScript.
+      # change happens in this YAML, not in TypeScript. It also FAILS rather
+      # than warns when a deployed target is missing the native-card routes, so
+      # a prod deploy that silently lost `PUBLIC_CDN_URL` now reddens here.
       #
       # `TAKO_SMOKE_API_TOKEN` is a GitHub Actions secret, automatically
       # masked in logs; the smoke script also never prints it.
       - name: Smoke
         env:
-          SMOKE_BASE_URL: ${{ inputs.base_url || env.STAGING_BASE_URL }}
+          SMOKE_BASE_URL: >-
+            ${{ inputs.base_url ||
+            (github.event.workflow_run.event == 'release' &&
+             env.PRODUCTION_BASE_URL || env.STAGING_BASE_URL) }}
           TAKO_SMOKE_API_TOKEN: ${{ secrets.TAKO_SMOKE_API_TOKEN }}
         run: npm run smoke
 
@@ -102,9 +134,14 @@ jobs:
       # without anything being broken in this repo. The step surfaces the
       # failure in the run summary without blocking a deploy that smoke already
       # passed — tighten this once the case set has proven stable.
+      # Same target resolution as the Smoke step above — kept in lockstep so the
+      # two steps in one job can never be pointed at different environments.
       - name: Golden queries
         continue-on-error: true
         env:
-          GOLDEN_BASE_URL: ${{ inputs.base_url || env.STAGING_BASE_URL }}
+          GOLDEN_BASE_URL: >-
+            ${{ inputs.base_url ||
+            (github.event.workflow_run.event == 'release' &&
+             env.PRODUCTION_BASE_URL || env.STAGING_BASE_URL) }}
           TAKO_GOLDEN_API_TOKEN: ${{ secrets.TAKO_SMOKE_API_TOKEN }}
         run: npm run golden

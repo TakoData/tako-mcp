@@ -390,20 +390,25 @@ try {
   // Reuses the card `tako_visualize` just created, so there is no hardcoded
   // pub_id fixture to rot.
   //
-  // 404 is NOT a failure, and that distinction is the point. The route is
-  // gated on `PUBLIC_CDN_URL`, so a 404 can mean the native-card path is
-  // switched off in this environment — a legitimate configuration (local dev,
-  // or a deliberate rollback), not a regression. Failing on it would make the
-  // smoke cry wolf about a choice. What DOES fail is 200-but-broken: the route
-  // is live and answering, yet the rewrite it exists to perform did not happen.
+  // A 404 FAILS on a deployed env, and only warns off one.
   //
+  // It was a warning everywhere in the first draft, which got this exactly
+  // backwards: a 404 on `mcp.tako.com` is precisely the outcome that means the
+  // binding never took effect — the whole subject of this check — and warnings
+  // exit 0, so it would have been reported by a green job whose log nobody
+  // opens. Both deployed envs now set `PUBLIC_CDN_URL`, so there is no
+  // legitimate 404 there to cry wolf about. Off a deployed env (a local
+  // `wrangler dev` with no binding) it stays a warning, because there the
+  // absence is the expected configuration rather than a regression.
+  const isDeployedTarget = /^https:\/\/mcp(\.staging)?\.tako\.com$/.test(baseUrl);
   // The two 404s are told apart by body, because conflating them would report
   // "feature off" for a live route: a declined route falls through to the
   // router's generic `not found`, while a live route whose pub_id did not
   // resolve upstream answers `chart not found` (`embed_proxy.ts`, the
-  // `response.status === 404` branch). Both stay warnings — the second is most
-  // likely lag between creating the card and its embed page existing, which is
-  // not something to redden a deploy over.
+  // `response.status === 404` branch). The latter stays a warning even on a
+  // deployed env — it means the route IS serving, and the likeliest cause is lag
+  // between creating a card and its embed page existing, which is not something
+  // to redden a deploy over.
   const nativeRes = await fetch(
     `${baseUrl}/embed-html/${encodeURIComponent(tvStructured.card_id)}`,
   );
@@ -416,11 +421,23 @@ try {
           `between creating it and its embed page existing).`,
       );
     } else {
-      console.warn(
-        `[warn] /embed-html/ → 404 "${nativeBody.trim()}": the native-card ` +
-          `path is OFF here (PUBLIC_CDN_URL unset). Charts on claude.ai ` +
-          `render as a static dark PNG, not an interactive host-themed card.`,
-      );
+      // Deliberately does NOT name a cause. An ABSENT `PUBLIC_CDN_URL` and a
+      // MALFORMED one produce byte-identical responses: `resolveProxyOrigins`
+      // catches the throw from any resolver and declines, so the router answers
+      // the same generic body either way. Since promoting this feature is
+      // exactly "type a new URL into the production block", "set but broken" —
+      // a single trailing slash will do it — is the likelier of the two, and
+      // reporting it as a deliberate configuration choice would send the reader
+      // the wrong way. The worker logs the real cause; the smoke cannot read
+      // worker logs, so it points there instead of guessing.
+      const why =
+        `/embed-html/ → 404 "${nativeBody.trim()}": the native-card path is ` +
+        `not serving here. PUBLIC_CDN_URL is either unset or malformed (both ` +
+        `decline identically) — grep the worker log for "native-card proxy ` +
+        `disabled" to tell which. Charts on claude.ai render as a static dark ` +
+        `PNG, not an interactive host-themed card.`;
+      if (isDeployedTarget) fail(why);
+      console.warn(`[warn] ${why}`);
     }
   } else {
     assert(
@@ -438,14 +455,24 @@ try {
     // The rewrite is what makes the card renderable: Card.js is a
     // `type="module"` script, always a CORS fetch, and the CDN reflects CORS
     // for tako.com alone — so every asset url must be pointed back at
-    // `/cdn-asset/`. Zero occurrences means the distribution in
+    // `/cdn-asset/` on THIS origin. Zero occurrences means the distribution in
     // `PUBLIC_CDN_URL` does not match the one this page references.
+    //
+    // Origin-qualified, not a bare `/cdn-asset/` substring. `rewriteCdnUrls`
+    // writes `${widgetOrigin}${CDN_ASSET_PREFIX}` and `widgetOrigin` prefers the
+    // `PUBLIC_MCP_URL` binding over the request origin — so a prod deploy
+    // carrying a staging value would emit `https://mcp.staging.tako.com/cdn-asset/…`,
+    // satisfy a bare substring check, and serve every asset in the widget from
+    // the wrong worker. That is the same copy-paste class as the bug this PR
+    // fixes, so the check names the origin it expects.
+    const expectedPrefix = `${baseUrl}/cdn-asset/`;
     assert(
-      nativeBody.includes("/cdn-asset/"),
-      `/embed-html/ returned 200 but rewrote no CDN urls — PUBLIC_CDN_URL ` +
-        `does not match the distribution this env's embed page references ` +
-        `(prod: d12w4pyrrczi5e, staging: d1iyjvzoctsna). The card will mount ` +
-        `and no chart will draw. See the worker log for the 0-rewrite warning.`,
+      nativeBody.includes(expectedPrefix),
+      `/embed-html/ returned 200 but rewrote no CDN urls to ${expectedPrefix} — ` +
+        `either PUBLIC_CDN_URL does not match the distribution this env's embed ` +
+        `page references (prod: d12w4pyrrczi5e, staging: d1iyjvzoctsna), or ` +
+        `PUBLIC_MCP_URL names a different worker. The card will mount and no ` +
+        `chart will draw. See the worker log for the 0-rewrite warning.`,
     );
     // Belt-and-braces, stated honestly: the handler already refuses to serve a
     // body whose `csrfToken` it failed to strip (`embed_proxy.ts`, the
@@ -458,6 +485,48 @@ try {
       `/embed-html/ leaked a csrfToken into a body bound for a third-party sandbox`,
     );
     ok(`/embed-html/ → 200 text/plain, CDN urls rewritten, no csrfToken`);
+
+    // Then actually FETCH one, because everything above is still only a claim
+    // about a string. `embed_proxy.ts` calls these two routes "one feature" —
+    // the page is useless without its assets — and until something retrieves an
+    // asset, a syntactically valid, page-matching `PUBLIC_CDN_URL` behind a
+    // distribution that does not serve `archive/` passes every check here and
+    // still draws no chart.
+    //
+    // It also converts the count-flattened-to-a-boolean weakness above into
+    // something with teeth. `ASSET_PATH_PREFIX` confinement is MEASURED, not
+    // structural, so a frontend build that moves the entry bundle out of
+    // `archive/` while leaving the fonts in would keep `rewrites > 0` and a
+    // green check. Fetching the JS specifically — Card.js is the one asset whose
+    // absence means no chart at all — is what notices.
+    const assetUrls = [
+      ...nativeBody.matchAll(
+        new RegExp(`${expectedPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^"'\\s)]+`, "g"),
+      ),
+    ].map((m) => m[0]);
+    assert(assetUrls.length > 0, `no rewritten asset urls to fetch`);
+    // Prefer the JS entry bundle; fall back to the first asset when the naming
+    // changes, so this degrades to "fetched something" rather than to a skip.
+    const probeAsset = assetUrls.find((u) => u.endsWith(".js")) ?? assetUrls[0]!;
+    const assetRes = await fetch(probeAsset);
+    const assetPath = probeAsset.slice(baseUrl.length);
+    assert(
+      assetRes.status === 200,
+      `rewritten asset ${assetPath} → ${assetRes.status}. The page rewrote its ` +
+        `CDN urls, but this origin cannot actually serve them: PUBLIC_CDN_URL ` +
+        `names a distribution that does not serve the "archive/" tree, or the ` +
+        `asset moved out of it. The card mounts and no chart draws.`,
+    );
+    // `ACAO: *` is not cosmetic here: a module script is always a CORS fetch, so
+    // without this header the widget's Card.js load fails even though the bytes
+    // arrived. This is the exact header the proxy exists to add.
+    assert(
+      assetRes.headers.get("access-control-allow-origin") === "*",
+      `rewritten asset ${assetPath} lacks "access-control-allow-origin: *" — a ` +
+        `type="module" script is always a CORS fetch, so the widget cannot load ` +
+        `it. Adding that header is this route's entire reason to exist.`,
+    );
+    ok(`/cdn-asset/ → 200 with ACAO:* for ${assetPath.slice(0, 72)}`);
   }
 } finally {
   await client.close().catch(() => {

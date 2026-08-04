@@ -50,8 +50,10 @@ export default {
     // CORS-readable proxy for Tako's chart embed page, so the MCP Apps widget
     // can render the REAL interactive card rather than a PNG of it. Returns
     // `undefined` — falling through to the 404 below — when the
-    // `PUBLIC_CDN_URL` experiment is off or the pub_id is malformed, so this
-    // route does not exist at all in production. See `embed_proxy.ts`.
+    // `PUBLIC_CDN_URL` binding is absent or the pub_id is malformed. Both
+    // deployed envs set that binding, so this route is LIVE in staging and
+    // production; it ceases to exist only where the binding does. See
+    // `embed_proxy.ts`.
     const embedProxied = await handleEmbedProxy(request, env);
     if (embedProxied !== undefined) return embedProxied;
 
