@@ -71,7 +71,9 @@ const inputSchema = z.object({
       'Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits".',
     ),
   // looseArray: hosts that stringify the array they meant to send (observed
-  // from OpenBB Copilot) get it coerced instead of a -32602. See _loose_array.ts.
+  // from OpenBB Copilot) get it coerced instead of a -32602. `commaSeparated` is
+  // safe here and ONLY here: the item domain is a closed enum, no member of
+  // which contains a comma. See _loose_array.ts.
   sources: looseArray(
     z
       .array(z.enum(["data", "web", "tako"]))
@@ -80,6 +82,7 @@ const inputSchema = z.object({
       .describe(
         'Source(s) to search. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)',
       ),
+    { field: "tako_search.sources", commaSeparated: true },
   ),
   effort: z
     .enum(["fast", "instant"])
@@ -122,6 +125,9 @@ const inputSchema = z.object({
       .describe(
         "Graph node ids (from tako_available_data, or a card's nodes) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
       ),
+    // No `commaSeparated`: a node id is an opaque string, so splitting one that
+    // contains a comma would silently pin two ids that do not exist.
+    { field: "tako_search.node_ids" },
   ),
   strict: z
     .boolean()

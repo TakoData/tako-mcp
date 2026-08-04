@@ -282,13 +282,16 @@ const _componentUnionIsExhaustive: AssertComponentUnionExhaustive = true;
 void _componentUnionIsExhaustive;
 
 const inputSchema = z.object({
-  // looseArray: a host that sends the components array (or a single
-  // component) as JSON text gets it coerced instead of a -32602.
+  // looseArray: a host that sends the components array as JSON text gets it
+  // coerced instead of a -32602. `jsonObjectAsItem` is safe here and ONLY here:
+  // the item domain is objects, so a single component object is an
+  // unambiguous one-item array. See _loose_array.ts.
   components: looseArray(
     z
       .array(componentSchema)
       .min(1)
       .describe("One or more components making up the card, rendered top to bottom."),
+    { field: "tako_visualize.components", jsonObjectAsItem: true },
   ),
   title: z.string().optional().describe("Card title (falls back to a header component's title)."),
   description: z.string().optional().describe("Card description."),
