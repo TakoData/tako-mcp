@@ -1,7 +1,7 @@
 {
   "name": "tako",
   "version": "0.17.0",
-  "description": "Industry-leading live web search plus licensed data the open web does not have: company financials, macroeconomic indicators, web and app traffic, sports, US government spending, and more. One call blends both — typed values with named sources where curated data exists, agent-ready web results and page text everywhere else. Free tier, no API key to start.",
+  "description": "Tako grounds your agent in two kinds of knowledge at once: proprietary structured data from trusted providers, and full web search. One API returns typed values with named sources when curated data exists, and agent-ready web results and page text for everything else. That combination is the point. A pure data API misses most questions, and a pure web search API makes your agent do the reading.",
   "contextFileName": "docs${/}gemini${/}GEMINI.md",
   "mcpServers": {
     "tako": {

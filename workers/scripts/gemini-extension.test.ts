@@ -1,5 +1,5 @@
 /**
- * Guards on the Gemini CLI extension — `gemini-extension.json`, the `commands/`
+ * Guards on the Gemini CLI extension: `gemini-extension.json`, the `commands/`
  * TOML files, and the context file they point at.
  *
  * Why this needs its own guard rather than a careful review: the Gemini CLI
@@ -8,16 +8,16 @@
  * and `services/FileCommandLoader.ts`):
  *
  *   1. A `commands/*.toml` file that fails `@iarna/toml` parsing, or that is
- *      missing the required `prompt` key, is SKIPPED — `parseAndAdaptFile`
+ *      missing the required `prompt` key, is SKIPPED. `parseAndAdaptFile`
  *      returns null and the command simply never appears. Same shape as the
  *      SKILL.md frontmatter bug guarded in `skills.test.ts`: dead on every
  *      install, nothing in CI to say so.
- *   2. `contextFileName` is resolved and then `.filter(existsSync)` — a typo in
+ *   2. `contextFileName` is resolved and then `.filter(existsSync)`, so a typo in
  *      the path drops the extension's entire context with no error.
  *   3. An `mcpServers.*.headers` value is the dangerous one, and the reason
  *      assertion `serves the free tier with no credentials` exists. Extension
  *      configs get `${VAR}` env substitution, and an UNSET variable resolves to
- *      the literal string `${VAR}` (see `utils/envVarResolver.ts` —
+ *      the literal string `${VAR}` (see `utils/envVarResolver.ts`:
  *      "Missing: $UNDEFINED_VAR // Returns $UNDEFINED_VAR"). Sending
  *      `Authorization: Bearer ${TAKO_API_KEY}` at mcp.tako.com was probed live
  *      and returns **401** `Bearer token contains invalid characters
@@ -25,9 +25,9 @@
  *      is empty`. Either one takes the server from "3 free tools, works with
  *      zero setup" to "completely broken until the user finds and sets an env
  *      var". No credentials at all returns 200 with the three free tools. So
- *      the correct config has NO headers block, and the tempting improvement —
+ *      the correct config has NO headers block, and the tempting improvement,
  *      "add an Authorization header wired to a `settings` entry so users can
- *      paste a token" — is the specific regression this test blocks. The token
+ *      paste a token", is the specific regression this test blocks. The token
  *      path is `/mcp auth tako` (OAuth, auto-discovered via the server's
  *      WWW-Authenticate + DCR endpoints) or a hand-added header in the user's
  *      own `~/.gemini/settings.json`.
@@ -36,7 +36,7 @@
  * neither is the repo name. The install directory is
  * `~/.gemini/extensions/<name>` (`new ExtensionStorage(newExtensionName)`), and
  * the gallery id is `@<owner>/<name>`. The scaffolding advice to rename the
- * repo to match is unnecessary — 687 of the 1,398 entries in
+ * repo to match is unnecessary: 687 of the 1,398 entries in
  * geminicli.com/extensions.json have `extensionName !== repo name`.
  *
  * Runs under the `scripts` vitest project (plain node, filesystem access).
@@ -47,7 +47,7 @@ import path from "node:path";
 import toml from "@iarna/toml";
 import { describe, expect, it } from "vitest";
 
-/** Repo root — this file lives at `workers/scripts/`. */
+/** Repo root. This file lives at `workers/scripts/`. */
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const COMMANDS_DIR = path.join(REPO_ROOT, "commands");
 
@@ -104,16 +104,17 @@ describe("gemini extension manifest", () => {
   it("carries a description for the gallery card", () => {
     const description = manifest().description ?? "";
     expect(description.length).toBeGreaterThan(40);
-    // Gallery descriptions run long in practice (median 88 chars, p90 186,
-    // real entries up to ~290), so there is room to say both halves.
-    expect(description.length).toBeLessThan(400);
+    // A sanity ceiling, not a style rule. Gallery descriptions run to a median
+    // of 88 chars with real entries near 290, and ours is a deliberate ~400 to
+    // carry both halves of the product, so this only catches a runaway paste.
+    expect(description.length).toBeLessThan(600);
   });
 
   it("sells both halves of the product, not just the data", () => {
     // The first draft of this description led with "data your agent cannot get
-    // from the open web", which reads as "this is not a web search tool" —
+    // from the open web", which reads as "this is not a web search tool":
     // wrong on the product and inconsistent with `registry/metadata.json`,
-    // which leads with web search. Tako searches licensed data AND the live
+    // which leads with web search. Tako searches proprietary data AND the full
     // web in the same call (`sources` defaults to ["data","web"] in
     // `tako_search.ts`), and the gallery card is the one line most people read
     // before deciding, so it has to carry both.
@@ -200,7 +201,7 @@ describe("gemini extension commands", () => {
 describe("gemini extension skills", () => {
   it("exposes the same bundled skills Claude Code ships", () => {
     // Gemini discovers `SKILL.md` and `*/SKILL.md` under the extension's
-    // `skills/` directory — the very directory the Claude plugin uses, so the
+    // `skills/` directory, which is the very directory the Claude plugin uses, so the
     // three research skills ride along with no duplication. Frontmatter
     // validity is guarded in `skills.test.ts`.
     const discovered = fs

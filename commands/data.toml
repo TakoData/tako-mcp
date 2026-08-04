@@ -1,29 +1,29 @@
-description = "Answer a question from Tako's licensed data and live web search, with citations"
+description = "Answer a question from Tako's proprietary data and full web search, with citations"
 
 prompt = """
 Answer this question using Tako: {{args}}
 
-Tako searches licensed structured data and the live web in the same call (`sources` defaults
-to both) — so this works for a curated metric and for anything only the web has. Leave
-`sources` at its default unless you have a confirmed reason to narrow it.
+Tako searches proprietary structured data and the full web in the same call (`sources`
+defaults to both), so this works for a curated metric and for anything only the web has.
+Leave `sources` at its default unless you have a confirmed reason to narrow it.
 
 How to do it:
 
 - If the question asks for **one specific figure**, call `tako_answer` and relay its
-  `answer` field directly — it is already synthesized and cited. Do not paraphrase away
+  `answer` field directly. It is already synthesized and cited, so do not paraphrase away
   the citation.
 - If the question is **broad or multi-part**, decompose it into narrow single
   entity + metric searches and fire `tako_search` for each concurrently, then synthesize
   the results yourself. One entity, one metric per call.
-- If you are unsure the curated graph covers the metric, call `tako_available_data` first —
-  it is free and returns the exact metric name to use. A miss there is not a dead end: the
+- If you are unsure the curated graph covers the metric, call `tako_available_data` first.
+  It is free and returns the exact metric name to use. A miss there is not a dead end: the
   web half of the same search still applies.
 - If `tako_answer` comes back with a `guidance` field saying no data cards grounded the
   answer, say so plainly and pivot the question. Do not rephrase and retry the same ask.
 - Need the full text behind a web result rather than its excerpt? Call `tako_contents` on
   the url, with `query` set so you get just the matching passages.
 
-Report the answer, the period or date it applies to, and the source — and say which kind of
+Report the answer, the period or date it applies to, and the source. Say which kind of
 source it was, a named data provider or a web page. Include the **Open in Tako** link for
 any data card you used.
 """

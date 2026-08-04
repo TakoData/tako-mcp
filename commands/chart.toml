@@ -3,14 +3,14 @@ description = "Chart a metric or time series from Tako's live data"
 prompt = """
 Chart this using Tako: {{args}}
 
-Call `tako_search` with one entity and one metric — the top result renders as a chart and
+Call `tako_search` with one entity and one metric. The top result renders as a chart and
 carries an **Open in Tako** link. For a comparison, fire one narrow search per series
 concurrently rather than one broad query.
 
 Then report, in this order:
 
 1. What the chart shows, and the period it covers.
-2. The headline numbers — latest value, and the change over the range.
+2. The headline numbers: latest value, and the change over the range.
 3. The source, and the **Open in Tako** link so the chart can be opened or embedded.
 
 If a card is `exportable: true` and you need the full rows to describe the shape of the
