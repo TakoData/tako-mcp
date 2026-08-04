@@ -2057,7 +2057,11 @@ describe("/authorize hardening", () => {
     const authorizeRes = await handleAuthorize(
       new Request(url.toString(), {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${sessionJwt}` },
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionJwt}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: CONSENT_ALLOW,
       }),
       env,
     );
