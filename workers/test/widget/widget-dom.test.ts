@@ -989,8 +989,10 @@ describe("native card upgrade (executed)", () => {
   });
 
   it("never fetches a relative url when the server armed no native card", () => {
-    // `nativeCardUrl` is `""` whenever `_meta.native_card_url` is absent — the
-    // production default — and `""` IS a string, so it slipped past
+    // `nativeCardUrl` is `""` whenever `_meta.native_card_url` is absent — no
+    // longer the deployed default, but still an env without `PUBLIC_CDN_URL`, a
+    // failed resolve, or a cached result from before the field existed — and
+    // `""` IS a string, so it slipped past
     // `withHostTheme`'s `typeof` bail, took the append branch, and came back
     // `"?dark_mode=true"`. That cleared `upgradeToNativeCard`'s own
     // `nativeUrl === ""` guard, which sees the TRANSFORMED value, and reached
