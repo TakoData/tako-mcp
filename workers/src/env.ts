@@ -122,6 +122,32 @@ export interface Env {
    */
   OAUTH_ENC_KEY?: string;
   /**
+   * Shared secret that unlocks the PARTNER path on `/register`, presented
+   * as the `X-Tako-Partner-Token` request header. Optional: when unset,
+   * `/register` serves only ordinary public DCR and any request carrying
+   * the header is rejected 401.
+   *
+   * Exists because a public DCR registration expires after
+   * `REGISTRATION_TTL_S` (1 year), which is correct for a consumer host
+   * that re-registers on demand and wrong for a managed-OAuth catalog
+   * partner. Those partners (Microsoft Foundry, Azure API Center) embed
+   * ONE client_id in their own configuration and use it for every customer
+   * they onboard; an expiry there breaks all of them simultaneously, a year
+   * after anyone last touched it. Partner registrations therefore carry no
+   * `exp` at all.
+   *
+   * This is a mint-time credential, not a runtime one — nothing in the
+   * authorization flow consults it. Rotating it invalidates no already-issued
+   * client_id; it only stops new partner clients being minted. To actually
+   * revoke a partner client you must rotate `OAUTH_SIGN_KEY`, which also
+   * nukes every public registration.
+   *
+   * Set per-env via
+   * `openssl rand -base64 32 | wrangler secret put OAUTH_PARTNER_REGISTRATION_TOKEN`.
+   * See `docs/partner-oauth-clients.md` for the minting runbook.
+   */
+  OAUTH_PARTNER_REGISTRATION_TOKEN?: string;
+  /**
    * Stytch project ID (e.g. `project-test-…` or `project-live-…`).
    * Used as the username half of the HTTP Basic credential when the
    * Worker calls Stytch's authenticate APIs server-to-server. Distinct

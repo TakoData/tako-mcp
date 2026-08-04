@@ -351,6 +351,31 @@ const REDIRECT_URI_MAX_LEN = 2048;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_RE = /[\x00-\x1f\x7f]/;
 
+/** Header carrying the partner registration secret. Deliberately NOT
+ *  `Authorization`: hosts routinely retry `/register` with a stale access
+ *  token still attached, and overloading `Authorization` would force a
+ *  choice between rejecting those (breaking ordinary DCR) and ignoring a
+ *  mistyped partner secret (silently minting an expiring client for a
+ *  partner, which is the exact failure this path exists to prevent).
+ *  A dedicated header makes intent unambiguous: present means "mint a
+ *  partner client", so a bad value is a loud 401. */
+const PARTNER_TOKEN_HEADER = "x-tako-partner-token";
+
+/**
+ * Compare two secrets without leaking their contents through timing.
+ * Length is compared first and therefore leaks — standard for this
+ * construction, and the length of a 32-byte random secret is not sensitive.
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const ab = enc.encode(a);
+  const bb = enc.encode(b);
+  if (ab.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ab.length; i++) diff |= ab[i]! ^ bb[i]!;
+  return diff === 0;
+}
+
 function isValidRedirectUri(s: string): boolean {
   if (s.length === 0 || s.length > REDIRECT_URI_MAX_LEN) return false;
   let parsed: URL;
@@ -385,6 +410,26 @@ export async function handleRegister(
   if (cfg === null) return oauthDisabledResponse();
   if (req.method !== "POST") {
     return jsonError("invalid_request", "POST required", 405);
+  }
+  // Partner path gate. Presence of the header IS the request to mint a
+  // non-expiring client, so anything other than an exact match fails loud
+  // — including the case where no partner token is configured for this
+  // environment, which would otherwise quietly hand back a 1-year client.
+  const partnerHeader = req.headers.get(PARTNER_TOKEN_HEADER);
+  const isPartner = partnerHeader !== null;
+  if (isPartner) {
+    const expected = env.OAUTH_PARTNER_REGISTRATION_TOKEN;
+    if (
+      typeof expected !== "string" ||
+      expected.length === 0 ||
+      !constantTimeEqual(partnerHeader, expected)
+    ) {
+      return jsonError(
+        "invalid_client",
+        "invalid partner registration token",
+        401,
+      );
+    }
   }
   // Read at most REGISTER_MAX_BODY_BYTES of body. Anything larger gets
   // rejected before we try to parse it — a 100 MB JSON blob would
@@ -450,7 +495,11 @@ export async function handleRegister(
     client_name,
     redirect_uris,
     iat: now,
-    exp: now + REGISTRATION_TTL_S,
+    // Partner clients omit `exp` entirely — `isExpired` treats an absent
+    // `exp` as "never expires", so the value keeps working indefinitely.
+    ...(isPartner
+      ? { partner: true as const }
+      : { exp: now + REGISTRATION_TTL_S }),
   };
   const client_id = await signJwt(claims, cfg.signKey);
 
@@ -458,6 +507,10 @@ export async function handleRegister(
     {
       client_id,
       client_id_issued_at: claims.iat,
+      // RFC 7591 §3.2.1: 0 means "never expires". Omitting the field means
+      // the same thing, which would misreport the 1-year public path — so
+      // state it either way rather than leaving clients to guess.
+      client_id_expires_at: claims.exp ?? 0,
       redirect_uris,
       client_name,
       grant_types: ["authorization_code", "refresh_token"],
