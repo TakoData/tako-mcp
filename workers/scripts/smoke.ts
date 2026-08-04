@@ -20,6 +20,13 @@
  *        d. `get_credit_balance`          — `details.credit_balance`
  *                                           must be a number or numeric string (read-only)
  *        e. `tako_visualize`              — creates a card (charges 1 credit)
+ *   6. Native-card proxy (`/embed-html/`) on the card step 5e just created —
+ *      404 soft-warns (path gated off via `PUBLIC_CDN_URL`), 200 hard-asserts
+ *      inert content type, a nonzero CDN rewrite, and no leaked `csrfToken`
+ *
+ * The step-6 rewrite assertion is the one check here that exists to catch a
+ * failure with NO error signal: a `PUBLIC_CDN_URL` naming the wrong CloudFront
+ * distribution answers 200, mounts the card, and draws no chart.
  *
  * Excluded by design:
  *   - `tako_agent` / `tako_agent_start` / `tako_agent_wait` — long-running;
@@ -367,6 +374,91 @@ try {
     `tako_visualize.embed_url is not http(s): ${JSON.stringify(tvStructured?.embed_url)}`,
   );
   ok(`tako_visualize → card_id ${tvStructured.card_id}`);
+
+  // -------------------------------------------------------------------------
+  // 6. Native-card proxy — the interactive/themed chart path on claude.ai
+  // -------------------------------------------------------------------------
+  // Why this is asserted post-deploy rather than left to unit tests: its
+  // defining failure mode is SILENCE. `PUBLIC_CDN_URL` naming the wrong
+  // CloudFront distribution rewrites zero urls, the proxy still answers 200,
+  // the card still mounts, and no chart ever draws — a break with no error
+  // anywhere. Unit tests cannot see it because the value under test is the
+  // deployed binding, and the widget's own failure log lands in a sandboxed
+  // iframe console nobody reads. So the deployed page is the only place the
+  // question can be asked.
+  //
+  // Reuses the card `tako_visualize` just created, so there is no hardcoded
+  // pub_id fixture to rot.
+  //
+  // 404 is NOT a failure, and that distinction is the point. The route is
+  // gated on `PUBLIC_CDN_URL`, so a 404 can mean the native-card path is
+  // switched off in this environment — a legitimate configuration (local dev,
+  // or a deliberate rollback), not a regression. Failing on it would make the
+  // smoke cry wolf about a choice. What DOES fail is 200-but-broken: the route
+  // is live and answering, yet the rewrite it exists to perform did not happen.
+  //
+  // The two 404s are told apart by body, because conflating them would report
+  // "feature off" for a live route: a declined route falls through to the
+  // router's generic `not found`, while a live route whose pub_id did not
+  // resolve upstream answers `chart not found` (`embed_proxy.ts`, the
+  // `response.status === 404` branch). Both stay warnings — the second is most
+  // likely lag between creating the card and its embed page existing, which is
+  // not something to redden a deploy over.
+  const nativeRes = await fetch(
+    `${baseUrl}/embed-html/${encodeURIComponent(tvStructured.card_id)}`,
+  );
+  const nativeBody = await nativeRes.text();
+  if (nativeRes.status === 404) {
+    if (nativeBody.includes("chart not found")) {
+      console.warn(
+        `[warn] /embed-html/ → 404 "chart not found": the route is LIVE, but ` +
+          `card ${tvStructured.card_id} did not resolve upstream (likely lag ` +
+          `between creating it and its embed page existing).`,
+      );
+    } else {
+      console.warn(
+        `[warn] /embed-html/ → 404 "${nativeBody.trim()}": the native-card ` +
+          `path is OFF here (PUBLIC_CDN_URL unset). Charts on claude.ai ` +
+          `render as a static dark PNG, not an interactive host-themed card.`,
+      );
+    }
+  } else {
+    assert(
+      nativeRes.status === 200,
+      `/embed-html/ expected 200 or 404, got ${nativeRes.status} (${nativeBody.trim().slice(0, 120)})`,
+    );
+    // Inert content type is a security invariant, not a nicety: this is the
+    // OAuth origin, so the proxy must never hand the browser a document it
+    // will execute. A drift to text/html here is a real regression.
+    const nativeType = nativeRes.headers.get("content-type") ?? "";
+    assert(
+      nativeType.includes("text/plain"),
+      `/embed-html/ must answer text/plain on the OAuth origin, got ${JSON.stringify(nativeType)}`,
+    );
+    // The rewrite is what makes the card renderable: Card.js is a
+    // `type="module"` script, always a CORS fetch, and the CDN reflects CORS
+    // for tako.com alone — so every asset url must be pointed back at
+    // `/cdn-asset/`. Zero occurrences means the distribution in
+    // `PUBLIC_CDN_URL` does not match the one this page references.
+    assert(
+      nativeBody.includes("/cdn-asset/"),
+      `/embed-html/ returned 200 but rewrote no CDN urls — PUBLIC_CDN_URL ` +
+        `does not match the distribution this env's embed page references ` +
+        `(prod: d12w4pyrrczi5e, staging: d1iyjvzoctsna). The card will mount ` +
+        `and no chart will draw. See the worker log for the 0-rewrite warning.`,
+    );
+    // Belt-and-braces, stated honestly: the handler already refuses to serve a
+    // body whose `csrfToken` it failed to strip (`embed_proxy.ts`, the
+    // `!removedCsrf && html.includes("csrfToken")` 502), so on a correct build
+    // this can never fire. It is here to catch a DEPLOY of a build where that
+    // gate regressed — the one thing a unit test cannot check, since it asserts
+    // against source rather than against what is actually serving traffic.
+    assert(
+      !nativeBody.includes("csrfToken"),
+      `/embed-html/ leaked a csrfToken into a body bound for a third-party sandbox`,
+    );
+    ok(`/embed-html/ → 200 text/plain, CDN urls rewritten, no csrfToken`);
+  }
 } finally {
   await client.close().catch(() => {
     // ignore close errors — we already have the answer we care about
