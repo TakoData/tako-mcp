@@ -24,6 +24,7 @@ import {
   buildChartExtraMeta,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
+import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
   renderSearchMarkdown,
@@ -59,7 +60,7 @@ const DESCRIPTION = [
   "",
   `Non-exportable cards (\`exportable: false\`, usually license-gated) return no rows: read the headline value from the card's \`description\` when it carries one, or get specific figures via \`tako_answer\` — ${PINNED_FROM_CARD} (each such card carries a \`values_hint\` saying exactly this).`,
   "",
-  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (request_id, usage, chart-widget fields).",
+  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -69,13 +70,20 @@ const inputSchema = z.object({
     .describe(
       'Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits".',
     ),
-  sources: z
-    .array(z.enum(["data", "web", "tako"]))
-    .min(1)
-    .default(["data", "web"])
-    .describe(
-      'Source(s) to search. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)',
-    ),
+  // looseArray: hosts that stringify the array they meant to send (observed
+  // from OpenBB Copilot) get it coerced instead of a -32602. `commaSeparated` is
+  // safe here and ONLY here: the item domain is a closed enum, no member of
+  // which contains a comma. See _loose_array.ts.
+  sources: looseArray(
+    z
+      .array(z.enum(["data", "web", "tako"]))
+      .min(1)
+      .default(["data", "web"])
+      .describe(
+        'Source(s) to search. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)',
+      ),
+    { field: "tako_search.sources", commaSeparated: true },
+  ),
   effort: z
     .enum(["fast", "instant"])
     .optional()
@@ -109,13 +117,18 @@ const inputSchema = z.object({
     .default("US")
     .describe("ISO country code for localized results."),
   locale: z.string().default("en-US").describe("Locale for results."),
-  node_ids: z
-    .array(z.string())
-    .max(20)
-    .optional()
-    .describe(
-      "Graph node ids (from tako_available_data, or a card's nodes) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
-    ),
+  node_ids: looseArray(
+    z
+      .array(z.string())
+      .max(20)
+      .optional()
+      .describe(
+        "Graph node ids (from tako_available_data, or a card's nodes) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+      ),
+    // No `commaSeparated`: a node id is an opaque string, so splitting one that
+    // contains a comma would silently pin two ids that do not exist.
+    { field: "tako_search.node_ids" },
+  ),
   strict: z
     .boolean()
     .default(false)

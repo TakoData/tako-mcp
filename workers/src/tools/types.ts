@@ -100,7 +100,7 @@ export interface ToolContext {
    *    gate even if the `createMcpServer` option is omitted (the two
    *    must agree when both are set; disagreement throws).
    * 2. The Django error mapping, which swaps raw billing errors for
-   *    free-tier upsell copy when the SHARED account runs out of
+   *    free-tier capacity copy when the SHARED account runs out of
    *    credits. (Inside a tool call, handlers see the REGISTRATION-time
    *    tier stamped over this field — see `callCtx` in `registerTool`.)
    */

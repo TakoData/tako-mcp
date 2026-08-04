@@ -123,14 +123,21 @@ Behavior when active:
   `initialize` / `tools/list` never burn it. IPv4 clients are keyed by
   address, IPv6 by /64 prefix.
 - An over-limit `tools/call` (either bucket) returns **HTTP 200 with a
-  JSON-RPC tool result** (`isError: true`) carrying an upsell message
-  pointing at https://tako.com/account/ — deliberately not a 429,
-  which MCP SDK clients surface as a transport error the model never
-  reads. Non-`tools/call` requests over the per-colo ceiling get a plain
-  429 (no valid readable shape exists for them).
+  JSON-RPC tool result** (`isError: true`) carrying a neutral
+  capacity/retry message — deliberately not a 429, which MCP SDK clients
+  surface as a transport error the model never reads.
+  Non-`tools/call` requests over the per-colo ceiling get a plain 429 (no
+  valid readable shape exists for them).
 - If the shared account itself runs out of Tako credits (Django 402),
-  the tool result carries the same style of upsell copy instead of the
-  raw billing error.
+  the tool result carries the same style of capacity message instead of
+  the raw billing error.
+- None of these messages links to an account page, quotes a price, or
+  suggests getting an API key, and a guard test in `freetier.test.ts`
+  keeps it that way: they ship as model-visible text, and OpenAI's
+  commerce policy forbids promoting digital services or credits from an
+  app. Callers who want their own key get one at
+  https://tako.com/console/api-keys — documented here and on tako.com,
+  never in a tool response.
 - Each per-IP-metered request logs one line:
   `[free-tier] ip=<key> allowed|limited`.
 - JSON-RPC batch requests (array bodies) are rejected outright with an

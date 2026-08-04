@@ -1347,3 +1347,132 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect(SERVER_INSTRUCTIONS.length).toBeLessThan(1600);
   });
 });
+
+/**
+ * Stringified array arguments, end to end over the real MCP server.
+ *
+ * The `looseArray` coercion lives on the tool schemas (`_loose_array.ts`), but
+ * what actually has to hold is that it survives `registerTool`: the SDK
+ * rebuilds our `.shape` into its own `z.object` and validates `tools/call`
+ * arguments there, BEFORE any handler runs. `_loose_array.test.ts` proves the
+ * coercion and the published schema; this proves the wiring — a host that
+ * sends `sources` as JSON text (observed from OpenBB Copilot) gets a served
+ * call instead of:
+ *
+ *   MCP error -32602: Input validation error: Invalid arguments for tool
+ *   tako_answer: [… "expected":"array" … "received string"]
+ */
+describe("stringified array arguments survive SDK input validation", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function callTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ isError?: boolean; content: Array<{ text?: string }> }> {
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: ENV,
+      sendProgress: noopSendProgress,
+      client: "unknown",
+    };
+    const server = createMcpServer(ctx, { client: "unknown" });
+    const mcpClient = new Client(
+      { name: "loose-array-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      return (await mcpClient.callTool({ name, arguments: args })) as {
+        isError?: boolean;
+        content: Array<{ text?: string }>;
+      };
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  }
+
+  it("tako_answer serves a JSON-text `sources` and forwards both sources upstream", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, {
+        answer: "US GDP was $27.7T in 2023.",
+        cards: [],
+        web_results: [],
+        request_id: "req-1",
+      }),
+    ]);
+
+    const result = await callTool("tako_answer", {
+      query: "What is NVIDIA latest P/E ratio?",
+      sources: '["data","web"]',
+      include_contents: true,
+      preview_rows: 5,
+    });
+
+    expect(result.isError).not.toBe(true);
+    const request = fetchMock.mock.calls[0]?.[0] as Request;
+    const body = (await request.clone().json()) as {
+      sources?: Record<string, unknown>;
+    };
+    expect(Object.keys(body.sources ?? {}).sort()).toEqual(["data", "web"]);
+  });
+
+  it("tako_search serves a bare-string `sources` and a bare-string `node_ids`", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-2" }),
+    ]);
+
+    const result = await callTool("tako_search", {
+      query: "US GDP",
+      sources: "data",
+      node_ids: "node-1",
+    });
+
+    expect(result.isError).not.toBe(true);
+    const request = fetchMock.mock.calls[0]?.[0] as Request;
+    const body = (await request.clone().json()) as {
+      sources?: { data?: { node_ids?: string[] }; web?: unknown };
+    };
+    expect(body.sources?.web).toBeUndefined();
+    expect(body.sources?.data?.node_ids).toEqual(["node-1"]);
+  });
+
+  // The contract does not move: a value the array schema rejects is still
+  // rejected, coerced or not.
+  //
+  // Asserting on the MESSAGE, not just the code: the SDK answers `-32602`
+  // (`InvalidParams`) for an unknown tool name, a disabled tool and output
+  // validation too, and `McpError` prefixes all of them with "MCP error
+  // -32602" — so a code-only assertion would pass on a typo in the tool name
+  // and prove nothing about `sources`.
+  it("still rejects an unknown source name, without reaching the backend", async () => {
+    const fetchMock = mockFetchSequence([]);
+
+    const result = await callTool("tako_answer", {
+      query: "x",
+      sources: "bing",
+    });
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("-32602");
+    expect(text).toContain("tako_answer");
+    // The enum constraint that failed, and where. zod reports the allowed
+    // values rather than the received one, so the option list is the specific
+    // thing to pin; "sources" alone would also match an unrelated path.
+    expect(text).toContain("invalid_value");
+    expect(text).toContain('"sources"');
+    expect(text).toMatch(/"data",\s*"web",\s*"tako"/);
+    // Rejection has to happen at validation. If coercion ever widened the enum,
+    // this call would bill a live upstream request instead of failing.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

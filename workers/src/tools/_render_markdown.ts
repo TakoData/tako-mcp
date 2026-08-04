@@ -12,8 +12,18 @@
  * The channel split (see `mcp.ts`): `renderText` output becomes
  * `content.text` (everything the model reads); `slimStructured` output
  * becomes `structuredContent` (machine essentials only — widget fields,
- * request_id, usage, guidance). Hosts count BOTH toward model context, so
- * the slim side is what keeps markdown from doubling the bill.
+ * usage, guidance). Hosts count BOTH toward model context, so the slim side
+ * is what keeps markdown from doubling the bill.
+ *
+ * `request_id` reaches NEITHER channel, on purpose. It is a server-side
+ * correlation id with no use to a model or an end user, and OpenAI's app
+ * review calls out request/trace/session/debug identifiers as things a tool
+ * response should not carry unless strictly necessary. It still arrives on
+ * the wire and is still recoverable: `registerTool` in `mcp.ts` logs it per
+ * call, which is where a support question should be answered from. Anything
+ * re-adding it to an advertised shape or a footer puts it back in front of
+ * the model — `pickDeclared` strips undeclared keys, so the advertised
+ * shapes below are the actual gate.
  *
  * `_`-prefixed so the registry codegen (`gen-registry.ts`) skips it.
  */
@@ -56,7 +66,6 @@ export const searchSlimOutputShape = z.looseObject({
     .describe(
       "Web results, each with a `snippet`. A snippet is the passages selected against your query, not the page's opening text, so it usually carries the answer-bearing sentence. A ' … ' inside one marks a discontinuity — either passages joined from different parts of the page, or the page's own ellipsis — so read it as a whole and never quote across it as one continuous sentence. `null` means that page had no relevant passage — its url is still fetchable via tako_contents.",
     ),
-  request_id: z.string(),
   usage: usageAdvertisedSchema
     .nullable()
     .describe("Cost-plus usage for this request (null when not metered)."),
@@ -83,7 +92,6 @@ export const answerSlimOutputShape = z.looseObject({
     .describe(
       "Web results cited by the answer, each with a `snippet` of the passages selected against the question rather than the page's opening text. A ' … ' inside one marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one continuous sentence. `null` means no relevant passage was found on that page.",
     ),
-  request_id: z.string(),
   usage: usageAdvertisedSchema
     .nullable()
     .describe("Cost-plus usage for this request (null when not metered)."),
@@ -148,7 +156,7 @@ export function slimAnswerStructured(o: AnswerFullOutput): Record<string, unknow
  * document's own framing. JSON-stringification used to provide this boundary
  * incidentally (upstream text arrived escaped, inside a string); now that web
  * page text and snippets ride verbatim in one markdown document, a page
- * ending in "## Tako Data (1 card)…_request_id: …_" would otherwise render
+ * ending in "## Tako Data (1 card)…_cost: $0_" would otherwise render
  * indistinguishably from our own sections and footer.
  */
 function fenced(text: string, lang = ""): string {
@@ -338,12 +346,17 @@ function renderGlossary(glossary: Record<string, string> | undefined): string | 
   return ["## Source Notes", ...entries.map(([name, text]) => `**${name}**: ${text}`)].join("\n\n");
 }
 
-function renderFooter(requestId: string, usage: Usage | null): string {
-  const parts = [`request_id: ${requestId}`];
-  if (usage !== null && typeof usage.total_cost_usd === "number") {
-    parts.push(`cost: $${usage.total_cost_usd}`);
-  }
-  return `_${parts.join(" · ")}_`;
+/**
+ * The one-line trailer: what this call cost, and nothing else.
+ *
+ * It used to lead with `request_id`. That is now deliberately absent from
+ * both channels (see the module docstring) — which leaves cost as the only
+ * member, so an unmetered call has no footer at all rather than an empty
+ * `__`. Returns `undefined` in that case and the callers skip the block.
+ */
+function renderFooter(usage: Usage | null): string | undefined {
+  if (usage === null || typeof usage.total_cost_usd !== "number") return undefined;
+  return `_cost: $${usage.total_cost_usd}_`;
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +384,8 @@ export function renderSearchMarkdown(o: SearchOutput): string {
   const glossary = renderGlossary(o.sources_glossary);
   if (glossary !== undefined) blocks.push(glossary);
 
-  blocks.push(renderFooter(o.request_id, o.usage));
+  const footer = renderFooter(o.usage);
+  if (footer !== undefined) blocks.push(footer);
   return blocks.join("\n\n");
 }
 
@@ -394,7 +408,8 @@ export function renderAnswerMarkdown(o: AnswerFullOutput): string {
   const glossary = renderGlossary(o.sources_glossary);
   if (glossary !== undefined) blocks.push(glossary);
 
-  blocks.push(renderFooter(o.request_id, o.usage));
+  const footer = renderFooter(o.usage);
+  if (footer !== undefined) blocks.push(footer);
   return blocks.join("\n\n");
 }
 

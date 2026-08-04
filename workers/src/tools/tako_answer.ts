@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { djangoPost } from "../django.js";
 import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
+import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
   answerSlimOutputShape,
@@ -57,7 +58,7 @@ const DESCRIPTION = [
   "",
   "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Cited cards inline their recent rows (see include_contents/preview_rows), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
-  "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (request_id, usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.",
+  "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.",
 ].join("\n");
 
 // Hand-authored, LLM-ergonomic flat input (the curated facade).
@@ -66,11 +67,19 @@ const inputSchema = z.object({
     .string()
     .min(1)
     .describe('Natural-language question to answer (e.g. "What was US GDP in 2024?"). Website-traffic data is keyed by domain — ask about "openai.com monthly visits", not "OpenAI website visits".'),
-  sources: z
-    .array(z.enum(["data", "web", "tako"]))
-    .min(1)
-    .default(["data", "web"])
-    .describe('Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)'),
+  // looseArray: hosts that stringify the array they meant to send (observed
+  // from OpenBB Copilot) get it coerced instead of a -32602. `commaSeparated` is safe
+  // here and ONLY here: the item domain is a closed enum, no member of which
+  // contains a comma. See
+  // _loose_array.ts.
+  sources: looseArray(
+    z
+      .array(z.enum(["data", "web", "tako"]))
+      .min(1)
+      .default(["data", "web"])
+      .describe('Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)'),
+    { field: "tako_answer.sources", commaSeparated: true },
+  ),
   // The prose `answer` alone proved an unreliable payload in agent traces: it
   // sometimes carries the series and sometimes only teases it ("latest value
   // 59.2%"), and a teased agent escalates into a costly multi-wave retry
@@ -96,13 +105,18 @@ const inputSchema = z.object({
     .default("US")
     .describe("ISO country code for localized results."),
   locale: z.string().default("en-US").describe("Locale for results."),
-  node_ids: z
-    .array(z.string())
-    .max(20)
-    .optional()
-    .describe(
-      "Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
-    ),
+  node_ids: looseArray(
+    z
+      .array(z.string())
+      .max(20)
+      .optional()
+      .describe(
+        "Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
+      ),
+    // No `commaSeparated`: a node id is an opaque string, so splitting one that
+    // contains a comma would silently pin two ids that do not exist.
+    { field: "tako_answer.node_ids" },
+  ),
   strict: z
     .boolean()
     .default(false)

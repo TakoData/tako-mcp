@@ -42,6 +42,7 @@ import {
   type Tier,
 } from "./freetier.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
+import { logToolRequestId } from "./tools/_log.js";
 import { parseEnabledOptionalToolNames } from "./tools/_optional.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import {
@@ -1053,12 +1054,13 @@ function registerTool(
           );
           // Free tier: the shared account exhausting its Tako credits is
           // the tier's expected steady-state failure (the Django-side cap
-          // is the fail-open spend backstop). Surface it as upsell copy,
-          // not the raw billing error — which would read as a bug to an
-          // anonymous user who has no account to top up. Status 402 is
-          // the complete signal (Django's PaymentRequiredError always
-          // serves 402); matching on body text would let any 4xx that
-          // echoes caller-supplied input masquerade as credit exhaustion.
+          // is the fail-open spend backstop). Surface it as the neutral
+          // capacity message, not the raw billing error — which would read
+          // as a bug to an anonymous user who has no account to top up.
+          // Status 402 is the complete signal (Django's
+          // PaymentRequiredError always serves 402); matching on body text
+          // would let any 4xx that echoes caller-supplied input masquerade
+          // as credit exhaustion.
           if (
             callCtx.tier === "free" &&
             err instanceof DjangoHttpError &&
@@ -1108,6 +1110,11 @@ function registerTool(
         );
         throw err;
       }
+      // The upstream correlation id, server-side only. It is deliberately
+      // absent from both response channels now (see `_render_markdown.ts`),
+      // so this is the sole record that ties a user's complaint about a
+      // specific answer to a backend request.
+      logToolRequestId(tool.name, options.client ?? "unknown", output);
       // Model-facing text channel: a tool's `renderText` (markdown for
       // prose-heavy results) when declared, else the JSON-stringified
       // output. A throwing renderer degrades to the JSON fallback rather

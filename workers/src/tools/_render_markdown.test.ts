@@ -133,10 +133,23 @@ describe("renderSearchMarkdown", () => {
     expect(md).toContain("No data cards matched.");
   });
 
-  it("footers with request_id and cost", () => {
+  it("footers with the cost, and never with the request_id", () => {
     const md = renderSearchMarkdown(searchOutput());
-    expect(md).toContain("request_id: req-1");
     expect(md).toContain("cost: $0.007");
+    // The correlation id is server-log-only now (OpenAI app review treats
+    // request/trace ids as not-to-be-returned). `searchOutput()` carries
+    // `request_id: "req-1"`, so this asserts the renderer drops an id that IS
+    // present rather than one that happens to be absent.
+    expect(md).not.toContain("req-1");
+    expect(md).not.toContain("request_id");
+  });
+
+  it("omits the footer entirely on an unmetered call", () => {
+    // Cost was the footer's only remaining member, so a null `usage` must not
+    // leave a bare `__` behind.
+    const md = renderSearchMarkdown(searchOutput({ usage: null }));
+    expect(md).not.toContain("__");
+    expect(md.endsWith("_")).toBe(false);
   });
 
   it("points at the rows in structuredContent instead of copying them", () => {
