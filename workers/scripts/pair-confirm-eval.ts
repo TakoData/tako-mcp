@@ -136,7 +136,10 @@ async function graphSearch(q: string, types?: "entity" | "metric"): Promise<Grap
   return ((await res.json()) as { results: GraphNode[] }).results ?? [];
 }
 
-async function scopedMetrics(entityId: string, filter: string | null): Promise<GraphNode[] | null> {
+async function scopedMetrics(
+  entityId: string,
+  filter: string | null,
+): Promise<{ items: GraphNode[]; complete: boolean } | null> {
   if (filter === null) return null;
   const url = new URL("/api/beta/graph/related", BASE);
   url.searchParams.set("node_id", entityId);
@@ -145,8 +148,14 @@ async function scopedMetrics(entityId: string, filter: string | null): Promise<G
   url.searchParams.set("limit", String(PAIR_PROBE_LIMIT));
   const res = await fetch(url, { headers });
   if (!res.ok) return null;
-  const body = (await res.json()) as { relation?: { items?: GraphNode[] } | null };
-  return body.relation?.items ?? [];
+  const body = (await res.json()) as {
+    relation?: { items?: GraphNode[]; next_cursor?: string | null } | null;
+  };
+  const page = body.relation ?? null;
+  if (page === null) return { items: [], complete: true };
+  // Completeness comes from next_cursor, NEVER from `total` — that field
+  // ignores the `q` filter (measured: Lockheed reports 250/capped either way).
+  return { items: page.items ?? [], complete: (page.next_cursor ?? null) === null };
 }
 
 /**
@@ -221,7 +230,10 @@ async function evaluate(pair: Pair): Promise<Row> {
     );
     probeMs = Date.now() - t1;
     if (scoped !== null) {
-      const r = reconcilePair({ metricQuery: pair.metric, globalMetric: rank0, scoped });
+      const r = reconcilePair({
+        metricQuery: pair.metric, globalMetric: rank0,
+        scoped: scoped.items, complete: scoped.complete,
+      });
       verified = r.verified;
       entityMetricMatches = r.entityMetricMatches;
     }

@@ -85,17 +85,29 @@ export type PairVerdict = "pair" | "unlinked" | "resolution";
 export const PAIR_PROBE_TIMEOUT_MS = 2_500;
 
 /**
- * Page size for the probe. The filter is doing the narrowing, so this only
- * needs to be wide enough that a metric matching the filter is not paged out
- * of view — it is not a coverage list and is never rendered.
+ * Page size for the probe — the endpoint's MAXIMUM, deliberately.
+ *
+ * A metric paged out of view is indistinguishable from one that is absent, and
+ * the probe only ever gets one page (no pagination: this is a fast check, not a
+ * coverage drill). At 20 that mattered: measured on prod, `q="Backlog"` scoped
+ * to Lockheed Martin returns a full page and a `next_cursor`, because the filter
+ * is a SUBSTRING match and the entity holds `12 Month Backlog`, `90 Day
+ * Backlog`, `AA&S Backlog` and many more. 100 makes truncation rare; when it
+ * still happens, `reconcilePair` refuses to call it absence.
+ *
+ * The list is never rendered — only searched for one id and sliced to
+ * ENTITY_MATCHES_SHOWN — so the wider page costs bandwidth, not context.
  */
-export const PAIR_PROBE_LIMIT = 20;
+export const PAIR_PROBE_LIMIT = 100;
 
 /**
  * Shortest useful substring filter. `q` is a raw substring match, so a one- or
  * two-character filter matches most of a metric list and answers nothing.
  */
 const MIN_FILTER_CHARS = 3;
+
+/** Shortest token that may match by PREFIX in the display ordering below. */
+const MIN_PREFIX_CHARS = 3;
 
 /** Near-miss metrics shown to the caller when the verdict is `unlinked`. */
 export const ENTITY_MATCHES_SHOWN = 3;
@@ -147,48 +159,121 @@ export function metricFilter(input: {
 
 export interface PairReconciliation {
   /** `"pair"` or `"unlinked"`; the caller substitutes `"resolution"` if the probe never ran. */
-  verified: Exclude<PairVerdict, "resolution">;
-  /** The entity's own metrics that matched the filter — context for an `unlinked` verdict. */
+  verified: PairVerdict;
+  /**
+   * The entity's own metrics that matched the filter, capped. Useful on ANY
+   * verdict that withholds a handle — the caller's next move is to pick one of
+   * these deliberately — so it is populated even when `verified` is
+   * `"resolution"`.
+   */
   entityMetricMatches: GraphNode[];
 }
 
 /**
- * Is this scoped node the same metric the global search resolved?
- *
- * Id equality is the intended test — `graph/search` and `graph/related` return
- * nodes from the same graph. Name equality is a deliberate backstop: if those
- * id spaces ever diverge, an id-only test would report `unlinked` for EVERY
- * pair, which is a systematic false negative that would quietly unpin every
- * handle the tool emits. Two cheap tests beat one silent failure mode.
- */
-const sameNode = (a: GraphNode, b: GraphNode): boolean =>
-  a.id === b.id || a.name.trim().toLowerCase() === b.name.trim().toLowerCase();
-
-/**
  * Decide the pair verdict from the global metric candidate and the entity's own
- * (filtered) metric list. See the module header for why both the lexical and
- * the structural test must pass before this returns `"pair"`.
+ * (filtered) metric list.
+ *
+ * Returns `"pair"` ONLY when both tests pass: the lexical one (`confidentMatch`
+ * — does this node answer the question) and the structural one (is its id on
+ * the entity's list). See the module header for why linkage alone must never
+ * vouch for a node.
+ *
+ * Matching is by ID ONLY. A name-equality arm was carried here as a backstop
+ * against the two id spaces diverging; measured on prod (24 pairs, 2026-08-04)
+ * all 18 `pair` verdicts matched by id and NONE by name alone, so the arm was
+ * empirically dead — while still able to fire on the near-duplicate metric
+ * twins this file cites (KE-812: same name, different id, only one carrying
+ * cards). That would report `"pair"` for a node whose id is not the id
+ * `next_call` pins, which is precisely the confirmation the caller must not be
+ * given. If `graph/search` and `graph/related` ever do diverge, this returns
+ * `"resolution"` rather than a false `"unlinked"` only because of the
+ * completeness rule below — worth re-measuring if verdicts collapse to
+ * `"resolution"` en masse.
  */
+/**
+ * Order the entity's filtered metrics by how much of the QUERY each name
+ * accounts for, most first, ties keeping the backend's order.
+ *
+ * Display-only: it never decides a verdict and never changes the pin (see the
+ * removed re-pin branch in the module header). It exists because the list is
+ * sliced to ENTITY_MATCHES_SHOWN, and in the backend's own order that slice is
+ * frequently the wrong three — measured, `q="expense"` on Pfizer returns
+ * `Operating costs and expenses, Advertising Expense (Normalized), Change in
+ * Accrued Expenses` first, dropping the `R&D Expenses (Normalized)` the caller
+ * asked about. On this path the list is the entire payload, so the three shown
+ * are the whole value of the call.
+ */
+function byQueryOverlap(query: string, nodes: readonly GraphNode[]): GraphNode[] {
+  const q = matchTokens(query);
+  const score = (n: GraphNode): number => {
+    const name = matchTokens(n.name);
+    let hits = 0;
+    for (const t of q) {
+      // PREFIX-aware, unlike `confidentMatch`'s exact token equality. Exact
+      // scoring cannot separate the case this ordering exists for: "R&D
+      // expense" scores 1 against BOTH `Advertising Expense (Normalized)` and
+      // `R&D Expenses (Normalized)` — `expense` is not `expenses` — so the tie
+      // falls back to backend order and buries the right answer. Loosening is
+      // safe HERE and nowhere else in this file: this decides DISPLAY ORDER for
+      // a list of suggestions, never a verdict and never the pin, so a wrong
+      // guess costs a suboptimal ordering rather than a wrong priced call.
+      for (const nt of name) {
+        // Prefix matching needs a floor, or a stray single-letter token scores
+        // as a hit: `Aggregate ... Underwriting Expense R` tokenises to
+        // [..., "r"], and "rd".startsWith("r") ranked that junk ABOVE
+        // `R&D Expenses (Normalized)` for `metric="R&D expense"`. Exact
+        // equality stays unguarded so genuine short tokens ("rd", "eps") match.
+        const prefixable = Math.min(nt.length, t.length) >= MIN_PREFIX_CHARS;
+        if (nt === t || (prefixable && (nt.startsWith(t) || t.startsWith(nt)))) {
+          hits += 1;
+          break;
+        }
+      }
+    }
+    return hits;
+  };
+  // `sort` is stable in every runtime this targets, so equal scores keep the
+  // backend's relative order rather than being reshuffled.
+  return [...nodes].sort((a, b) => score(b) - score(a));
+}
+
 export function reconcilePair(input: {
   metricQuery: string;
   globalMetric: GraphNode | null;
   scoped: readonly GraphNode[];
+  /**
+   * The filtered list was exhausted — `graph/related` returned no
+   * `next_cursor`. NOT derivable from `total`: measured on prod, `relation.
+   * total` IGNORES the `q` filter (Lockheed reports 250/capped both with and
+   * without `q=Backlog`), so a `total > items.length` test would fire on almost
+   * every entity and degrade nearly every verdict.
+   */
+  complete: boolean;
 }): PairReconciliation {
-  const { metricQuery, globalMetric } = input;
+  const { metricQuery, globalMetric, complete } = input;
   const scoped = [...input.scoped];
-  const entityMetricMatches = scoped.slice(0, ENTITY_MATCHES_SHOWN);
+  const entityMetricMatches = byQueryOverlap(metricQuery, scoped).slice(0, ENTITY_MATCHES_SHOWN);
 
-  // Rank 0 already answers the question lexically — the only open question is
-  // whether the entity holds it. NOTE this NEVER changes which node is pinned;
-  // see the module header for the measurement that removed that branch.
-  if (globalMetric !== null && confidentMatch(metricQuery, globalMetric)) {
-    const linked = scoped.some((n) => sameNode(n, globalMetric));
-    return { verified: linked ? "pair" : "unlinked", entityMetricMatches };
+  // Rank 0 is absent or unvetted. NOTHING about linkage is established here —
+  // there is no pinned node to check, and the filter that ran was chosen to
+  // surface near-misses rather than to confirm anything. Reporting `"unlinked"`
+  // would claim "the entity's list holds nothing matching" while
+  // `entityMetricMatches` frequently holds several (measured: Pfizer returns 20
+  // entries for `q="expense"`). The near-misses still ride along — they are the
+  // whole payload on this path.
+  if (globalMetric === null || !confidentMatch(metricQuery, globalMetric)) {
+    return { verified: "resolution", entityMetricMatches };
   }
 
-  // Rank 0 is absent or unvetted, and the entity's list holds nothing that
-  // vouches for it either. The caller still sees rank 0 as an unvetted
-  // candidate with its alternates; what this adds is that the entity's OWN
-  // list was checked too, which is firmer ground for reporting a gap.
-  return { verified: "unlinked", entityMetricMatches };
+  // Found: linkage is proven, and a truncated page cannot un-prove it.
+  if (scoped.some((n) => n.id === globalMetric.id)) {
+    return { verified: "pair", entityMetricMatches };
+  }
+
+  // Not found. That is only ABSENCE if the whole filtered list was seen. On a
+  // truncated page the node may sit on page 2, and `"unlinked"` would drop the
+  // pin and print "the graph holds no edge ... report the gap" on evidence we
+  // do not have — the same absence-of-evidence error the `null`-vs-`[]` rule in
+  // `pairProbe` exists to prevent, one level up.
+  return { verified: complete ? "unlinked" : "resolution", entityMetricMatches };
 }

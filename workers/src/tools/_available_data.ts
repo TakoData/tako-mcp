@@ -544,15 +544,22 @@ export function buildPairSummary(input: {
     return `Resolved the entity but no metric matching "${metricQuery}". The metrics Tako actually holds for ${oneLine(pair.entity.name)} are listed below — pick one and re-run with it.`;
   }
   if (!metricConfident) {
-    // Two signals agreeing is a firmer basis for stopping than one. When the
-    // entity's OWN list was checked and came up empty, say so — that is the
-    // difference between "we could not vet the name" and "this entity does not
-    // have it", and only the second justifies reporting a gap.
-    const checked =
-      verified === "unlinked"
-        ? ` ${oneLine(pair.entity.name)}'s own metric list was also checked for "${metricQuery}" and holds nothing matching.`
+    // No handle is emitted on this path, so the entity's OWN nearest metrics
+    // are the whole payload — they are what the caller picks from. Keyed on
+    // HAVING them rather than on the verdict: this branch runs with
+    // `verified: "resolution"` (nothing about a pin was established, because
+    // there is no pin), and an earlier version gated the text on
+    // `verified === "unlinked"`, which fetched these names, sliced them, and
+    // then dropped every one.
+    //
+    // Deliberately NOT phrased as a gap. The filter that produced them is a
+    // recall-oriented substring match on one token, so it establishes what the
+    // entity HAS near this phrase — never that it lacks the measure.
+    const near =
+      entityMetricMatches.length > 0
+        ? ` The metrics ${oneLine(pair.entity.name)} itself holds nearest to "${metricQuery}": ${entityMetricMatches.map(oneLine).join(", ")}.`
         : "";
-    return `Resolved the entity, but NO metric confidently matches "${metricQuery}" — the closest names Tako holds are shown below and are probably NOT what you asked for.${checked} Pick one deliberately (pin its node_id with strict:true), or conclude Tako does not track this measure.`;
+    return `Resolved the entity, but NO metric confidently matches "${metricQuery}" — the closest names Tako holds are shown below and are probably NOT what you asked for.${near} Pick one deliberately (pin its node_id with strict:true), or conclude Tako does not track this measure.`;
   }
   if (verified === "unlinked") {
     // The failure this whole probe exists to catch: the NAME fits perfectly and
