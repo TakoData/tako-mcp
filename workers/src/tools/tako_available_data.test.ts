@@ -33,6 +33,33 @@ const drill = (
   },
 });
 
+/**
+ * A pair-confirmation probe response: `graph/related` scoped to the entity with
+ * `relation=metrics` and one substring filter. The probe is a SINGLE round
+ * trip, so a test wanting real pair evidence queues exactly one of these.
+ *
+ * A lookup test that queues NO pair pages is not skipping the probe: the probe
+ * runs, its fetches exhaust the mock queue, and it degrades to
+ * `verified: "resolution"` — which is today's behaviour exactly. That is a
+ * useful default (every pre-existing assertion below still pins the unchanged
+ * path) but it is implicit, so anything asserting a pair verdict must queue
+ * pages explicitly.
+ */
+const pairPage = (
+  items: Array<[string, string]>,
+  // A non-null cursor marks the filtered list as CUT OFF. `total` is
+  // deliberately unfiltered here (250/capped) to mirror prod: measured,
+  // `relation.total` ignores `q`, so nothing may key completeness off it.
+  nextCursor: string | null = null,
+) => ({
+  node: { id: "ent::x::1", type: "entity", name: "Entity" },
+  relation: {
+    key: "metrics", kind: "data", label: "metrics",
+    items: items.map(([id, name]) => ({ id, type: "metric", name })),
+    total: 250, total_capped: true, next_cursor: nextCursor,
+  },
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -608,21 +635,33 @@ describe("tako_available_data — lookup path", () => {
       // `metric`, i.e. the arguments are the right way round.
       jsonResponse(200, { results: [searchHit("ent::q::u", "Quiet Entity")] }),
       jsonResponse(200, { results: [searchHit("mt::m::u", "Quiet Metric", "metric", "METRIC")] }),
+      // Pair confirmation: ONE graph/related scoped to the entity, filtered by
+      // the resolved metric's own name. The metric is on the list.
+      jsonResponse(200, pairPage([["mt::gross_margin::9", "Gross Margin (%)"]])),
 ]);
     const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
 
-    // Two probes, no coverage drill at all.
-    expect(fetchMock.mock.calls).toHaveLength(4); // 2 typed probes + 2 detection probes
-    for (const call of fetchMock.mock.calls.slice(0, 2)) {
+    // 4 searches + 1 pair-confirm probe. Still no coverage drill.
+    expect(fetchMock.mock.calls).toHaveLength(5);
+    for (const call of fetchMock.mock.calls.slice(0, 4)) {
       expect(new URL(requestFrom(call).url).pathname).toBe("/api/beta/graph/search");
     }
+    // The confirmation is scoped to the ENTITY and asks for its metrics —
+    // never the reverse direction, whose lists are capped and generic.
+    const probe = new URL(requestFrom(fetchMock.mock.calls[4]).url);
+    expect(probe.pathname).toBe("/api/beta/graph/related");
+    expect(probe.searchParams.get("node_id")).toBe("ent::nvidia::1");
+    expect(probe.searchParams.get("relation")).toBe("metrics");
+    expect(probe.searchParams.get("q")).toBe("Gross Margin (%)");
+    expect(probe.searchParams.get("limit")).toBe("100");
+    expect(out.verified).toBe("pair");
     // Each probe is type-scoped — that split is the accuracy mechanism.
     const types = fetchMock.mock.calls.map((c) => new URL(requestFrom(c).url).searchParams.get("types"));
     // The two typed probes carry a filter; the two detection probes are
     // deliberately UNfiltered — that is what recovers the backend's own view
     // of whether a string is an entity or a metric.
     expect(types.slice(0, 2).sort()).toEqual(["entity", "metric"]);
-    expect(types.slice(2)).toEqual([null, null]);
+    expect(types.slice(2, 4)).toEqual([null, null]);
 
     expect(out.entity).toEqual({ node_id: "ent::nvidia::1", name: "NVIDIA Corporation", type: "entity" });
     expect(out.metric).toEqual({ node_id: "mt::gross_margin::9", name: "Gross Margin (%)", type: "metric" });
@@ -671,7 +710,10 @@ describe("tako_available_data — lookup path", () => {
       jsonResponse(200, drill("apple-inc", "Apple Inc.", "metrics", ["Revenue", "Net Income"], 2)),
 ]);
     const out = await takoAvailableData.handler({ q: "Apple", metric: "quantum flux capacity" }, CTX);
-    expect(fetchMock.mock.calls).toHaveLength(5); // 2 typed + 2 detection + 1 drill
+    // NO pair-confirm probe: with no rank-0 metric there is nothing to check,
+    // and the probe cannot supply one (it never chooses a node). Paying a round
+    // trip here would buy nothing.
+    expect(fetchMock.mock.calls).toHaveLength(5); // 4 searches + 1 drill
     expect(new URL(requestFrom(fetchMock.mock.calls[4]).url).pathname).toBe("/api/beta/graph/related");
     expect(out.metric).toBeNull();
     expect(out.next_call).toBeNull();
@@ -1045,5 +1087,250 @@ describe("tako_available_data — swapped argument detection", () => {
     const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
     expect(out.found).toBe(true);
     expect(out.metric?.name).toBe("Gross Margin (%)");
+  });
+});
+
+// The lookup path used to emit `found: true` and a pinned, priced handle on the
+// strength of two INDEPENDENT searches — nothing ever asked whether the entity
+// held the metric. Measured on staging, three pairs resolve perfectly that way
+// and return ZERO cards: Lockheed Martin / backlog, Shopify / gross merchandise
+// volume, UnitedHealth Group / change in unearned revenues. Every one has a
+// metric whose NAME fits, so no string test can catch them — only the graph can.
+describe("tako_available_data — pair confirmation", () => {
+  // A FACTORY, not a shared array: a Response body can only be consumed once,
+  // so reusing the same objects across tests fails every run after the first.
+  const detection = () => [
+    jsonResponse(200, { results: [searchHit("ent::q::u", "Quiet Entity")] }),
+    jsonResponse(200, { results: [searchHit("mt::m::u", "Quiet Metric", "metric", "METRIC")] }),
+  ];
+
+  it("confident + on the entity's list → verified:pair, handle stays PINNED", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::novo::1", "Novo Nordisk A/S")] }),
+      jsonResponse(200, {
+        results: [
+          {
+            ...searchHit("mt::revenues::1", "Revenues", "metric", "METRIC"),
+            // The live alias list — `revenue` ⊄ `revenues` on tokens, so the
+            // alias is what makes rank 0 confident (see confidentMatch).
+            aliases: ["Revenue"],
+          },
+        ],
+      }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::revenues::1", "Revenues"]])),
+      jsonResponse(200, pairPage([["mt::revenues::1", "Revenues"]])),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Novo Nordisk", metric: "revenue" }, CTX);
+    expect(out.verified).toBe("pair");
+    expect(out.found).toBe(true);
+    expect(out.next_call).toEqual({
+      tool: "tako_answer",
+      query: "Novo Nordisk A/S revenue",
+      node_ids: ["mt::revenues::1"],
+      strict: true,
+    });
+    expect(out.summary).toContain("IS on");
+  });
+
+  it("confident + ABSENT from the entity's list → verified:unlinked, found stays true", async () => {
+    // Lockheed / backlog. `found` must NOT be vetoed: near-duplicate metric
+    // nodes (KE-812) mean the twin holding the edge may not be the twin that
+    // resolved, and the measured unpinned retry recovers exactly that class.
+    // Manufacturing a false gap is worse than today's over-optimism.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::lmt::1", "Lockheed Martin Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::backlog::1", "Backlog", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::rev::9", "Revenues"]])),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
+    expect(out.verified).toBe("unlinked");
+    expect(out.found).toBe(true);
+    expect(out.metric?.node_id).toBe("mt::backlog::1");
+    expect(out.summary).toContain("NOT on");
+  });
+
+  it("unlinked DROPS THE PIN rather than withholding the handle", async () => {
+    // Two signals now say the pinned form will miss, and 11 of 20 measured
+    // handles retrieved more cards unpinned — so spend the caller's one priced
+    // call on the form that works.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::shop::1", "Shopify Inc.")] }),
+      jsonResponse(200, {
+        results: [searchHit("mt::gmv::1", "Gross Merchandise Volume", "metric", "METRIC")],
+      }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::rev::9", "Revenues"]])),
+    ]);
+    const out = await takoAvailableData.handler(
+      { q: "Shopify", metric: "gross merchandise volume" }, CTX,
+    );
+    expect(out.next_call).toEqual({
+      tool: "tako_answer",
+      query: "Shopify Inc. gross merchandise volume",
+      node_ids: [],
+      strict: false,
+    });
+  });
+
+  it("names the entity's nearest real metrics on an unlinked verdict", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::lmt::1", "Lockheed Martin Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::backlog::1", "Backlog", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::oi::1", "Order Intake"], ["mt::rev::2", "Revenues"]])),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
+    expect(out.summary).toContain("Order Intake");
+    expect(out.summary).toContain("Revenues");
+  });
+
+  it("NEVER re-pins off the entity's list, even on a textbook-looking match", async () => {
+    // The removed branch, guarded end to end. On prod this exact shape re-pinned
+    // Netflix / "paid subscribers" to `Disney Core Paid Subscribers` — creating
+    // a confidently wrong PRICED handle where today there is correctly none.
+    // The entity's metrics relation is not curated enough to CHOOSE from; it can
+    // only answer "is the node you resolved on this list?".
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::nflx::1", "Netflix, Inc.")] }),
+      jsonResponse(200, { results: [searchHit("mt::top_paid::1", "Top Paid", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::disney::2", "Disney Core Paid Subscribers"]])),
+    ]);
+    const out = await takoAvailableData.handler(
+      { q: "Netflix", metric: "paid subscribers" }, CTX,
+    );
+    expect(out.metric?.node_id).toBe("mt::top_paid::1");
+    expect(out.found).toBe(false);
+    expect(out.next_call).toBeNull();
+  });
+
+  it("linkage NEVER vouches for a node that failed the name test", async () => {
+    // Pfizer really does have `Operating costs and expenses`. Letting its edge
+    // confirm an "R&D expense" question would convert a wrong pin into a
+    // CONFIDENT wrong pin — strictly worse than withholding the handle.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::pfizer::1", "Pfizer Inc.")] }),
+      jsonResponse(200, {
+        results: [searchHit("mt::opex::1", "Operating costs and expenses", "metric", "METRIC")],
+      }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::opex::1", "Operating costs and expenses"]])),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Pfizer", metric: "R&D expense" }, CTX);
+    expect(out.found).toBe(false);
+    expect(out.next_call).toBeNull();
+    expect(out.summary).toContain("NO metric confidently matches");
+    // NOT `unlinked`: nothing about a pin was established here, because there
+    // is no pin. Claiming the entity's list "holds nothing matching" while its
+    // own entries sit in entityMetricMatches was the contradiction.
+    expect(out.verified).toBe("resolution");
+    expect(out.summary).not.toContain("holds nothing matching");
+    // The near-misses ARE the payload on this path and must reach the model.
+    expect(out.summary).toContain("Operating costs and expenses");
+  });
+
+  it("a TRUNCATED page never asserts absence — verdict degrades to resolution", async () => {
+    // Measured on prod: `q="Backlog"` scoped to Lockheed Martin fills the page
+    // and returns a next_cursor, because the filter is a SUBSTRING match and
+    // the entity holds `12 Month Backlog`, `90 Day Backlog`, `AA&S Backlog`...
+    // Calling that absence drops the pin and prints "the graph holds no edge …
+    // report the gap" on evidence we never had.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::lmt::1", "Lockheed Martin Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::backlog::1", "Backlog", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::b12::2", "12 Month Backlog"]], "100")),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
+    expect(out.verified).toBe("resolution");
+    // Today's behaviour exactly: the pin stays.
+    expect(out.next_call?.node_ids).toEqual(["mt::backlog::1"]);
+    expect(out.summary).not.toContain("NOT on");
+  });
+
+  it("a FOUND node is `pair` even when the page was truncated", async () => {
+    // Truncation cannot un-prove a positive.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::nvidia::1", "NVIDIA Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::gm::9", "Gross Margin (%)", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::gm::9", "Gross Margin (%)"]], "100")),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
+    expect(out.verified).toBe("pair");
+  });
+
+  it("a same-named TWIN with a different id is not confirmation", async () => {
+    // KE-812: same name, different id, only one twin carrying cards. The id on
+    // the entity's list is not the id next_call pins, so this must not read as
+    // "the strongest free confirmation available".
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::nvidia::1", "NVIDIA Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::gm::9", "Gross Margin (%)", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::gm_TWIN::4", "Gross Margin (%)"]])),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
+    expect(out.verified).toBe("unlinked");
+  });
+
+  it("a failed probe degrades to verified:resolution — today's behaviour exactly", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::nvidia::1", "NVIDIA Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::gm::9", "Gross Margin (%)", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(503, { detail: "graph store down" }),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
+    expect(out.verified).toBe("resolution");
+    expect(out.found).toBe(true);
+    expect(out.next_call).toEqual({
+      tool: "tako_answer",
+      query: "NVIDIA Corporation gross margin",
+      node_ids: ["mt::gm::9"],
+      strict: true,
+    });
+  });
+
+  it("the probe is ONE round trip, not a fan-out", async () => {
+    // A second filter variant was implemented and measured against prod: it
+    // changed the verdict on 0 of 24 pairs while doubling graph/related load on
+    // every probed call. One call, one filter.
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::nvidia::1", "NVIDIA Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::gm::9", "Gross Margin (%)", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::gm::9", "Gross Margin (%)"]])),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
+    const related = fetchMock.mock.calls.filter(
+      (c) => new URL(requestFrom(c).url).pathname === "/api/beta/graph/related",
+    );
+    expect(related).toHaveLength(1);
+    expect(out.verified).toBe("pair");
+  });
+
+  it("no probe at all when the entity did not resolve", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [] }),
+      jsonResponse(200, { results: [searchHit("mt::visits::1", "Visits", "metric", "METRIC")] }),
+      ...detection(),
+    ]);
+    const out = await takoAvailableData.handler(
+      { q: "openai.com", metric: "monthly visits" }, CTX,
+    );
+    expect(fetchMock.mock.calls).toHaveLength(4); // searches only
+    expect(out.verified).toBeUndefined();
+  });
+
+  it("the discovery path reports verified:coverage", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::tesla::1", "Tesla, Inc.")] }),
+      jsonResponse(200, drill("ent::tesla::1", "Tesla, Inc.", "metrics", ["Revenue"], 1)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Tesla" }, CTX);
+    expect(out.verified).toBe("coverage");
   });
 });

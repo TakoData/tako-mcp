@@ -58,10 +58,13 @@ describe("worker routing", () => {
   // catch-all 404. `index.ts` now awaits both on every request that gets past
   // the icon route, so the wiring is worth one assertion of its own.
   //
-  // The test environment has no `PUBLIC_CDN_URL` (it was added only under the
-  // `staging` env block in `wrangler.jsonc`), which makes this the production
-  // configuration — and "invisible in production" is property #1 of the whole
-  // feature.
+  // The test environment has no `PUBLIC_CDN_URL`, so this pins the BINDING-ABSENT
+  // configuration: local dev, and any env where the switch has been pulled. It is
+  // no longer the production configuration — both deployed envs set the binding
+  // (`wrangler.jsonc`) — so what this asserts is that the routes are gated on
+  // that binding and vanish cleanly without it, not that they are invisible in
+  // prod. The live-route properties are covered in `embed_proxy.test.ts` and
+  // post-deploy by smoke step 6.
   describe("the native-card proxy routes do not exist without PUBLIC_CDN_URL", () => {
     it("404s /embed-html/{pub_id}", async () => {
       const res = await SELF.fetch(

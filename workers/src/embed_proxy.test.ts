@@ -5,9 +5,11 @@
  *
  * Three properties carry real weight here, in this order:
  *
- *   1. INVISIBLE IN PRODUCTION. Gated on `PUBLIC_CDN_URL`; unset means the
- *      handler declines and the router 404s, so no new surface exists. A
- *      MALFORMED value declines too — these handlers run ahead of the whole
+ *   1. ABSENT WITHOUT ITS BINDING. Gated on `PUBLIC_CDN_URL`; unset means the
+ *      handler declines and the router 404s, so no new surface exists. Both
+ *      deployed envs now SET it, so in staging and production these routes are
+ *      live and the properties below are load-bearing rather than theoretical.
+ *      A MALFORMED value declines too — these handlers run ahead of the whole
  *      OAuth surface, so a throw here would 500 `/authorize` and `/token`.
  *   2. NOT AN SSRF PRIMITIVE. The pub_id is interpolated into an upstream URL,
  *      so its shape is the security boundary. Neither route follows a redirect,
@@ -777,5 +779,214 @@ describe("the asset route reflects only inert content types", () => {
     ]) {
       expect(await serve(ct), ct).toBe("application/octet-stream");
     }
+  });
+});
+
+describe("the rewrite is wired into handleEmbedProxy, not just exported", () => {
+  // `rewriteCdnUrls` has direct tests above, and the JS path is covered through
+  // `handleCdnAssetProxy` — but nothing asserted that the HANDLER actually calls
+  // it on the page body. That wiring is the whole feature: an unrewritten page
+  // sends Card.js straight to the CDN, which reflects CORS for tako.com alone,
+  // so a `type="module"` load fails and no chart draws. Until this test existed
+  // the property was verified only post-deploy, by smoke step 6.
+  it("rewrites the page's CDN urls to this origin", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(UPSTREAM_HTML, {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      ),
+    );
+    const res = await handleEmbedProxy(req(`/embed-html/${PUB_ID}`), ON);
+    const body = await res!.text();
+    // Origin-qualified: `widgetOrigin` prefers `PUBLIC_MCP_URL` over the request
+    // origin, so a bare `/cdn-asset/` substring would pass while every asset
+    // pointed at a different worker.
+    expect(body).toContain("https://mcp.tako.com/cdn-asset/archive/abc/");
+    // And the CDN origin is gone from the markup the widget receives.
+    expect(body).not.toContain("d12w4pyrrczi5e.cloudfront.net");
+  });
+});
+
+describe("NATIVE_CARD_RATE_LIMITER", () => {
+  // A binding of its own rather than the free tier's, because one card render is
+  // ~10 metered subresource fetches against a bucket of 10 sized for tool calls
+  // — measured on staging as requests 1-10 served and 11-14 all 429, i.e. the
+  // feature throttling its own assets.
+  const limiter = (success: boolean) => ({ limit: vi.fn().mockResolvedValue({ success }) });
+
+  it("429s both routes when the bucket is empty", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const env = { ...ON, NATIVE_CARD_RATE_LIMITER: limiter(false) } as unknown as Env;
+
+    const page = await handleEmbedProxy(req(`/embed-html/${PUB_ID}`), env);
+    expect(page?.status).toBe(429);
+    const asset = await handleCdnAssetProxy(req(ASSET_PATH), env);
+    expect(asset?.status).toBe(429);
+    // The point of metering: the upstream work never happened.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("meters BEFORE the upstream fetch, on both routes", async () => {
+    // Ordering is the property with teeth. A refactor that moves either
+    // `rateLimited` call below its fetch leaves a meter that reports honestly
+    // and bounds nothing — the ~1.5 MB buffer-and-rewrite it exists to prevent
+    // has already run. Nothing else in this file would go red.
+    const order: string[] = [];
+    // One implementation for both phases, swapping only the body it returns.
+    // Reassigning via `mockResolvedValue` would REPLACE this implementation and
+    // stop recording `fetch` — which is how the first draft of this test
+    // "passed" the asset route and then reported `['limit']` for the page route.
+    let upstream = () =>
+      new Response("export const x=1", {
+        status: 200,
+        headers: { "content-type": "application/javascript" },
+      });
+    const fetchMock = vi.fn().mockImplementation(() => {
+      order.push("fetch");
+      return Promise.resolve(upstream());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const env = {
+      ...ON,
+      NATIVE_CARD_RATE_LIMITER: {
+        limit: vi.fn().mockImplementation(() => {
+          order.push("limit");
+          return Promise.resolve({ success: true });
+        }),
+      },
+    } as unknown as Env;
+
+    await handleCdnAssetProxy(req(ASSET_PATH), env);
+    expect(order).toEqual(["limit", "fetch"]);
+
+    order.length = 0;
+    upstream = () =>
+      new Response(UPSTREAM_HTML, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    await handleEmbedProxy(req(`/embed-html/${PUB_ID}`), env);
+    expect(order).toEqual(["limit", "fetch"]);
+  });
+
+  it("fails OPEN when the limiter throws", async () => {
+    // Unlike the login buckets, which fail closed. A limiter outage here must
+    // degrade to an unmetered chart, never a missing one.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("export const x=1", {
+          status: 200,
+          headers: { "content-type": "application/javascript" },
+        }),
+      ),
+    );
+    const env = {
+      ...ON,
+      NATIVE_CARD_RATE_LIMITER: {
+        limit: vi.fn().mockRejectedValue(new Error("limiter down")),
+      },
+    } as unknown as Env;
+    const res = await handleCdnAssetProxy(req(ASSET_PATH), env);
+    expect(res?.status).toBe(200);
+  });
+
+  it("serves unmetered when the binding is absent", async () => {
+    // `ON` carries no limiter, which is the local-dev shape.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("export const x=1", {
+          status: 200,
+          headers: { "content-type": "application/javascript" },
+        }),
+      ),
+    );
+    const res = await handleCdnAssetProxy(req(ASSET_PATH), ON);
+    expect(res?.status).toBe(200);
+  });
+});
+
+describe("the asset route is not a cache-busting amplifier", () => {
+  it("drops the query string instead of forwarding it upstream", async () => {
+    // Forwarded, the query landed in CloudFront's cache key for the
+    // `cacheEverything` subrequest, so `Card.js?<nonce>` missed cache on every
+    // distinct nonce: a ~200-byte request bought a ~1.48 MB origin fetch, a
+    // decode, a whole-body rewrite copy and 1.48 MB of `ACAO: *` egress.
+    // Measured on staging at 0.11 s cached vs 0.32-0.44 s per fresh nonce.
+    // Content-hashed assets under `archive/<sha>/` carry their own buster, and
+    // `rewriteCdnUrls` never emits a query, so there is nothing legitimate to
+    // forward.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("export const x=1", {
+        status: 200,
+        headers: { "content-type": "application/javascript" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleCdnAssetProxy(req(`${ASSET_PATH}?nonce=abc123`), ON);
+    expect(res?.status).toBe(200);
+    const called = String(fetchMock.mock.calls[0]?.[0]);
+    expect(called).toBe(`${ON.PUBLIC_CDN_URL}/archive/abc/vite_dist/assets/Card.js`);
+    expect(called).not.toContain("nonce");
+    expect(called).not.toContain("?");
+  });
+});
+
+describe("path confinement survives percent-encoding", () => {
+  it("400s an encoded traversal that the raw guards let through", async () => {
+    // `%2f` is not a segment delimiter, so WHATWG parsing leaves `%2e%2e%2f`
+    // intact as ONE segment: the path still starts with `archive/`, holds no
+    // literal `..`, no leading `/` and no `\`, and so passed every guard and
+    // reached the upstream fetch. Verified on staging before the fix — 502 (the
+    // fetch was issued) where the unencoded `..%2f` gives 400.
+    //
+    // It was not exploitable, because CloudFront/S3 treat the encoded dots as a
+    // literal key. That is the problem: confinement rested on S3 key literalness
+    // rather than on this code, and any normalizing hop added later (a
+    // CloudFront Function, a URI-rewrite behavior, a move off the S3 origin)
+    // would have armed it with nothing going red.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const bad of [
+      "/cdn-asset/archive/x/%2e%2e%2fuser-images/evil.html",
+      "/cdn-asset/archive/x/%2E%2E%2fcontent-style/evil.html",
+      "/cdn-asset/archive/x/%2e%2e%2F%2e%2e%2Fstatic/x.js",
+    ]) {
+      const res = await handleCdnAssetProxy(req(bad), ON);
+      expect(res?.status, bad).toBe(400);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("400s a malformed escape rather than guessing at it", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleCdnAssetProxy(req("/cdn-asset/archive/x/%zz.js"), ON);
+    expect(res?.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still serves an encoded slash, which names a real S3 key", async () => {
+    // Not traversal — an S3 key can literally contain a slash, so decoding must
+    // not become a reason to reject one.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("body", {
+          status: 200,
+          headers: { "content-type": "application/javascript" },
+        }),
+      ),
+    );
+    const res = await handleCdnAssetProxy(
+      req("/cdn-asset/archive/abc/b%2Fc.js"),
+      ON,
+    );
+    expect(res?.status).toBe(200);
   });
 });

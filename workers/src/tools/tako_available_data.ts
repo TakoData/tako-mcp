@@ -45,6 +45,13 @@ import {
 import type { CoverageMatch, OtherMatch, PairResolution } from "./_available_data.js";
 import { confidentMatch, gateCandidates, sameTokens } from "./_match_gate.js";
 import {
+  PAIR_PROBE_LIMIT,
+  PAIR_PROBE_TIMEOUT_MS,
+  metricFilter,
+  reconcilePair,
+} from "./_pair_confirm.js";
+import type { PairVerdict } from "./_pair_confirm.js";
+import {
   graphErrorMessage,
   graphRelatedOutputShape,
   graphSearchOutputShape,
@@ -155,8 +162,14 @@ const coverageMatchSchema = z.object({
 // don't pay for the full name lists twice.
 const fullOutputSchema = z.object({
   found: z.boolean().describe(
-    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): both halves RESOLVED to confident graph nodes, and no coverage check was performed — a chart may still not exist behind them. Either way, running `next_call` is what confirms retrievable data exists — and 0 cards from it is NOT conclusive on its own: retry without `node_ids` first, since the pin is a hard filter over a graph that holds near-duplicate metric nodes.",
+    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): both halves RESOLVED to confident graph nodes — read `verified` for what was actually checked. Either way, running `next_call` is what confirms retrievable data exists — and 0 cards from it is NOT conclusive on its own: retry without `node_ids` first, since the pin is a hard filter over a graph that holds near-duplicate metric nodes.",
   ),
+  verified: z
+    .enum(["coverage", "pair", "unlinked", "resolution"])
+    .optional()
+    .describe(
+      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled (discovery path). `pair`: the metric is on the entity's own metric list — the strongest free evidence available. `unlinked`: the entity's list was checked and holds nothing matching, so a PINNED call will probably return 0 cards; the emitted next_call drops the pin. `resolution`: no pair evidence — the check was skipped or failed, so treat it exactly as before. None of these means a chart exists.",
+    ),
   query: z.string(),
   summary: z.string(),
   matches: z.array(coverageMatchSchema),
@@ -377,6 +390,66 @@ const tako_available_data = {
       }
     };
 
+    // The PAIR-CONFIRMATION probe: does this entity actually hold this metric?
+    //
+    // ONE `graph/related` call, scoped to the entity, narrowed by ONE substring
+    // filter (see `metricFilter` — a second variant was measured to change no
+    // verdicts and was removed). Returns `null` — NOT an empty list — when the
+    // probe could not run or failed, because the two mean opposite things: an
+    // empty list is evidence ("the entity's list holds nothing matching"),
+    // `null` is the absence of evidence, and collapsing them would let an
+    // outage manufacture `unlinked` verdicts that unpin every handle the tool
+    // emits.
+    //
+    // `complete` carries the same distinction one level down: a FULL page means
+    // the filtered list was cut off, so "not on this page" is not "absent".
+    // It comes from `next_cursor`, never from `total` — measured on prod,
+    // `relation.total` ignores the `q` filter entirely (Lockheed reports
+    // 250/capped with and without `q=Backlog`).
+    //
+    // Never throws. Auth and connectivity are already proven by the entity
+    // search that ran before it, so the only failures reachable here are
+    // transient — and today's behaviour (no pair evidence at all) is a
+    // perfectly good landing for them.
+    const pairProbe = async (
+      entityNodeId: string,
+      filter: string | null,
+    ): Promise<{ items: GraphNode[]; complete: boolean } | null> => {
+      if (filter === null) return null;
+      try {
+        const raw = await djangoGet<unknown>(
+          ctx.env, ctx.token, "/api/beta/graph/related",
+          {
+            query: {
+              node_id: entityNodeId, relation: "metrics",
+              q: filter, limit: PAIR_PROBE_LIMIT,
+            },
+            timeoutMs: PAIR_PROBE_TIMEOUT_MS,
+          },
+        );
+        const parsed = relatedShape.safeParse(raw);
+        if (!parsed.success) {
+          // Same rule as the drill: a wire-guard failure degrades the caller's
+          // answer, so it is ALWAYS logged rather than silently suppressing the
+          // pair evidence.
+          logWireGuardFailure("tako_available_data", "pair-confirm", parsed.error, raw);
+          return null;
+        }
+        const page = parsed.data.relation ?? null;
+        // A spec-legal 200 with `relation: null` means the node has no metrics
+        // group at all — a real, COMPLETE "nothing here", not an outage. Same
+        // reading the coverage drill gives it.
+        if (page === null) return { items: [], complete: true };
+        return { items: page.items, complete: (page.next_cursor ?? null) === null };
+      } catch (err) {
+        console.warn(
+          `[tako] pair confirm failed tool=tako_available_data node=${entityNodeId} q=${filter} (degraded to no pair evidence):`,
+          err,
+        );
+        return null;
+      }
+    };
+
     // ---- LOOKUP path: the caller named the metric ------------------------
     //
     // Two parallel free probes instead of a paginated coverage drill. Measured
@@ -466,6 +539,16 @@ const tako_available_data = {
       // only rides in the query text, and the alternates already name the
       // covered variant so the model can switch for free. Re-measure before
       // reinstating.
+      //
+      // NB the pair-confirmation probe below IS a `graph/related` round trip on
+      // this same path, and that is not a contradiction — the two buy different
+      // things. This one bought a nicer ENTITY NAME in the echo, while the pin
+      // (and therefore what the priced call retrieves) was unchanged: cosmetic,
+      // so any latency beats it. The pair probe changes whether the emitted
+      // handle is PINNED at all, and pinning a metric the entity does not hold
+      // is what returns 0 cards. Measured end to end on prod (24 pairs,
+      // 2026-08-04): 15/22 handles land today, 17/22 with the probe. Correctness
+      // of a priced call clears a bar that cosmetics do not.
       const entities = entityGate.gated ? entityGate.kept.map(toRef) : [];
       // The METRIC half keeps the backend's ORDER — the gate only decides
       // confidence here, it must not filter or reorder.
@@ -538,24 +621,65 @@ const tako_available_data = {
       //
       // Retire in favour of the real fix once `graph/search` carries a
       // relevance score (KE-805): score the candidates, pin the best. TAKO-3754.
-      const metricConfident =
-        orderedHits[0] !== undefined && confidentMatch(metricQuery, orderedHits[0]);
+      const rank0 = orderedHits[0] ?? null;
+      const rank0Confident = rank0 !== null && confidentMatch(metricQuery, rank0);
+
+      // ---- Pair confirmation ------------------------------------------------
+      //
+      // The lexical verdict above answers "does this node answer the question".
+      // It cannot answer "does this entity hold it", and that is the failure
+      // that reaches production: Lockheed/backlog, Shopify/GMV and
+      // UNH/change-in-unearned-revenues all resolve a perfectly-named metric
+      // and return ZERO cards. Only the graph knows, and asking it is free.
+      const entityRef = entities[0] ?? null;
+
+      // Probed only when there is a rank-0 metric to CHECK. With the re-pin
+      // branch gone the probe cannot supply a metric, so running it when the
+      // global search resolved none would buy nothing and cost a round trip —
+      // that case falls straight through to the coverage drill below.
+      let verified: PairVerdict = "resolution";
+      let entityMetricMatches: GraphNode[] = [];
+      if (entityRef !== null && rank0 !== null) {
+        const scoped = await pairProbe(
+          entityRef.node_id,
+          metricFilter({
+            metricQuery,
+            resolvedName: rank0.name,
+            confident: rank0Confident,
+          }),
+        );
+        // `null` means the probe produced no evidence — stay on today's
+        // behaviour rather than inventing a verdict.
+        if (scoped !== null) {
+          const reconciled = reconcilePair({
+            metricQuery, globalMetric: rank0,
+            scoped: scoped.items, complete: scoped.complete,
+          });
+          verified = reconciled.verified;
+          entityMetricMatches = reconciled.entityMetricMatches;
+        }
+      }
+
+      // The pin is always the global search's rank 0 — linkage describes it, it
+      // never replaces it.
+      const pinnedConfident = rank0Confident;
       const pair: PairResolution = {
-        entity: entities[0] ?? null,
+        entity: entityRef,
         metric: metrics[0] ?? null,
         entity_alternates: entities.slice(1, 1 + ALTERNATES_SHOWN),
         metric_alternates: metrics.slice(1, 1 + ALTERNATES_SHOWN),
       };
 
-      // Entity resolved but the metric did not: fall through to the discovery
-      // drill on that entity. This is exactly when the caller needs the list —
-      // they guessed a name that does not exist, so show what does.
+      // Entity resolved and no metric anywhere — not globally, not on the
+      // entity's own list. Fall through to the discovery drill: the caller
+      // guessed a name that does not exist, so show what does.
       if (pair.entity !== null && pair.metric === null) {
         const drilled = await drillMatches(
           entityHits.filter((n) => n.id === pair.entity?.node_id),
         );
         return {
           found: drilled.some(hasLiveCoverage),
+          verified: "coverage",
           query: input.q,
           metric_query: metricQuery,
           summary: buildPairSummary({
@@ -575,12 +699,11 @@ const tako_available_data = {
       }
 
       return {
-        // `found` here reports RESOLUTION, not card availability — no free
-        // signal for the latter exists (see the description). The next_call
-        // is what confirms it.
-        // Both halves required: a resolved metric with no entity is not a
-        // usable pair, and the summary is routing the caller elsewhere.
-        found: pair.entity !== null && pair.metric !== null && metricConfident,
+        // Still RESOLUTION, not card availability — `verified` is where the
+        // strength of the evidence lives. A `pair` verdict is the strongest
+        // free signal there is, and it still does not mean a chart exists.
+        found: pair.entity !== null && pair.metric !== null && pinnedConfident,
+        ...(pair.entity === null ? {} : { verified }),
         query: input.q,
         metric_query: metricQuery,
         summary: buildPairSummary({
@@ -588,11 +711,20 @@ const tako_available_data = {
           metricQuery,
           pair,
           domainShaped: isDomainShaped(input.q),
-          metricConfident,
+          metricConfident: pinnedConfident,
+          verified: pair.entity === null ? undefined : verified,
+          entityMetricMatches: entityMetricMatches.map((n) => n.name),
         }),
         matches: [],
         other_matches: [],
-        next_call: metricConfident ? buildPairNextCall(metricQuery, pair) : null,
+        // UNLINKED DROPS THE PIN, it does not withhold the handle. Two
+        // independent signals now say a pinned call will miss, and the measured
+        // pinned-vs-unpinned table (see buildPairSummary) says the unpinned form
+        // frequently lands — so spend the caller's one priced call on the form
+        // that works instead of on the one we expect to fail.
+        next_call: pinnedConfident
+          ? buildPairNextCall(metricQuery, pair, { unpinned: verified === "unlinked" })
+          : null,
         entity: pair.entity,
         metric: pair.metric,
         entity_alternates: pair.entity_alternates,
@@ -637,6 +769,9 @@ const tako_available_data = {
         .map((n) => ({ name: n.name, type: n.type }));
       return {
         found: false,
+        // Nothing was drilled here — these nodes are resolutions the summary is
+        // about to disclaim, so claiming a coverage check would overstate it.
+        verified: "resolution",
         confident: false,
         query: input.q,
         summary: buildSummary({
@@ -773,6 +908,10 @@ const tako_available_data = {
       // this to narrow `sources` to ["data"]. The un-gated case returned above,
       // so reaching here already means the gate found something plausible.
       found: matches.some(hasLiveCoverage),
+      // Describes the METHOD (a coverage list was drilled), not the outcome —
+      // `found` carries the outcome. True for a drilled node with zero coverage
+      // too: that is a real, checked answer.
+      verified: "coverage",
       confident: true,
       query: input.q,
       summary: buildSummary({

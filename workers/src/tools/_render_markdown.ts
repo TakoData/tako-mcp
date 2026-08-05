@@ -446,7 +446,13 @@ export const availableDataSlimOutputShape = z.looseObject({
   found: z
     .boolean()
     .describe(
-      "True when at least one match has live data coverage — not mere node resolution.",
+      "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): both halves resolved and the pinned metric passed the name test — read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that.",
+    ),
+  verified: z
+    .enum(["coverage", "pair", "unlinked", "resolution"])
+    .optional()
+    .describe(
+      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and holds nothing matching, so a pinned call will probably return 0 cards; the emitted next_call therefore drops the pin. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
     ),
   query: z.string(),
   matches: z
@@ -530,6 +536,8 @@ export interface ResolvedRefLike {
 
 export interface AvailableDataFullOutput {
   found: boolean;
+  /** What evidence stands behind the verdict — see PairVerdict in _pair_confirm.ts. */
+  verified?: "coverage" | "pair" | "unlinked" | "resolution" | undefined;
   query: string;
   summary: string;
   matches: CoverageMatchLike[];
@@ -550,6 +558,10 @@ export function slimAvailableDataStructured(
 ): Record<string, unknown> {
   return {
     found: o.found,
+    // Omitted rather than emitted as null when no check applies (swapped args,
+    // no entity) — an absent field reads as "not applicable", where a null
+    // would read as a checked-and-empty result.
+    ...(o.verified === undefined ? {} : { verified: o.verified }),
     query: o.query,
     // The node ids the whole discovery→fetch handoff depends on. They were
     // previously text-only (as prose inside `**Name** (`id`)`), so an agent
@@ -581,10 +593,18 @@ export function slimAvailableDataStructured(
 /** The coverage report: the deterministic summary, then each match's full
  *  coverage-name list (the primary payload — these are the exact terms to
  *  reuse in tako_search), then the runnable next_call. */
-function renderRef(label: string, ref: ResolvedRefLike, alternates: ResolvedRefLike[]): string {
+function renderRef(
+  label: string,
+  ref: ResolvedRefLike,
+  alternates: ResolvedRefLike[],
+  // Goes on the FIRST line. Taken as a parameter rather than concatenated by
+  // the caller because this function returns MULTIPLE lines when alternates
+  // exist, so an appended suffix would land on the alternates line instead.
+  suffix = "",
+): string {
   // Names are upstream content in a single-line slot — flattened so an
   // embedded newline cannot start a line that mimics this very format.
-  const lines = [`${label}  ${oneLine(ref.name)}  \`${oneLine(ref.node_id)}\``];
+  const lines = [`${label}  ${oneLine(ref.name)}  \`${oneLine(ref.node_id)}\`${suffix}`];
   if (alternates.length > 0) {
     lines.push(
       `${" ".repeat(label.length)}  alternates: ${alternates
@@ -612,7 +632,15 @@ export function renderAvailableDataPairMarkdown(o: AvailableDataFullOutput): str
     rows.push(renderRef("entity", o.entity, o.entity_alternates ?? []));
   }
   if (o.metric != null) {
-    rows.push(renderRef("metric", o.metric, o.metric_alternates ?? []));
+    // The verdict rides on the metric row because the metric is what gets
+    // pinned — it is the row a model reads before deciding to trust the handle.
+    const mark =
+      o.verified === "pair"
+        ? "  (on the entity's metric list)"
+        : o.verified === "unlinked"
+          ? "  (NOT on the entity's metric list)"
+          : "";
+    rows.push(renderRef("metric", o.metric, o.metric_alternates ?? [], mark));
   }
   if (rows.length > 0) blocks.push(rows.join("\n"));
 
