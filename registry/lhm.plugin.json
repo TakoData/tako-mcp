@@ -183,7 +183,8 @@
             "enum": [
               "csv",
               "json_records",
-              "json_compact"
+              "json_compact",
+              "card_json"
             ]
           },
           "max_rows": {
