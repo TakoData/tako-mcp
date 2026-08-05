@@ -35,9 +35,8 @@ const drill = (
 
 /**
  * A pair-confirmation probe response: `graph/related` scoped to the entity with
- * `relation=metrics` and a substring filter. ONE PER FILTER VARIANT — the
- * lookup path sends up to MAX_FILTER_VARIANTS of them in parallel, so a test
- * wanting real pair evidence queues one page per variant.
+ * `relation=metrics` and one substring filter. The probe is a SINGLE round
+ * trip, so a test wanting real pair evidence queues exactly one of these.
  *
  * A lookup test that queues NO pair pages is not skipping the probe: the probe
  * runs, its fetches exhaust the mock queue, and it degrades to
@@ -630,15 +629,14 @@ describe("tako_available_data — lookup path", () => {
       // `metric`, i.e. the arguments are the right way round.
       jsonResponse(200, { results: [searchHit("ent::q::u", "Quiet Entity")] }),
       jsonResponse(200, { results: [searchHit("mt::m::u", "Quiet Metric", "metric", "METRIC")] }),
-      // Pair confirmation: the entity's own metric list, one page per filter
-      // variant ("Gross Margin (%)" then "gross margin"). The metric is on it.
-      jsonResponse(200, pairPage([["mt::gross_margin::9", "Gross Margin (%)"]])),
+      // Pair confirmation: ONE graph/related scoped to the entity, filtered by
+      // the resolved metric's own name. The metric is on the list.
       jsonResponse(200, pairPage([["mt::gross_margin::9", "Gross Margin (%)"]])),
 ]);
     const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
 
-    // 4 searches + 2 pair-confirm probes. Still no coverage drill.
-    expect(fetchMock.mock.calls).toHaveLength(6);
+    // 4 searches + 1 pair-confirm probe. Still no coverage drill.
+    expect(fetchMock.mock.calls).toHaveLength(5);
     for (const call of fetchMock.mock.calls.slice(0, 4)) {
       expect(new URL(requestFrom(call).url).pathname).toBe("/api/beta/graph/search");
     }
@@ -649,6 +647,7 @@ describe("tako_available_data — lookup path", () => {
     expect(probe.searchParams.get("node_id")).toBe("ent::nvidia::1");
     expect(probe.searchParams.get("relation")).toBe("metrics");
     expect(probe.searchParams.get("q")).toBe("Gross Margin (%)");
+    expect(probe.searchParams.get("limit")).toBe("20");
     expect(out.verified).toBe("pair");
     // Each probe is type-scoped — that split is the accuracy mechanism.
     const types = fetchMock.mock.calls.map((c) => new URL(requestFrom(c).url).searchParams.get("types"));
@@ -1138,7 +1137,6 @@ describe("tako_available_data — pair confirmation", () => {
       jsonResponse(200, { results: [searchHit("mt::backlog::1", "Backlog", "metric", "METRIC")] }),
       ...detection(),
       jsonResponse(200, pairPage([["mt::rev::9", "Revenues"]])),
-      jsonResponse(200, pairPage([["mt::rev::9", "Revenues"]])),
     ]);
     const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
     expect(out.verified).toBe("unlinked");
@@ -1158,7 +1156,6 @@ describe("tako_available_data — pair confirmation", () => {
       }),
       ...detection(),
       jsonResponse(200, pairPage([["mt::rev::9", "Revenues"]])),
-      jsonResponse(200, pairPage([["mt::rev::9", "Revenues"]])),
     ]);
     const out = await takoAvailableData.handler(
       { q: "Shopify", metric: "gross merchandise volume" }, CTX,
@@ -1177,7 +1174,6 @@ describe("tako_available_data — pair confirmation", () => {
       jsonResponse(200, { results: [searchHit("mt::backlog::1", "Backlog", "metric", "METRIC")] }),
       ...detection(),
       jsonResponse(200, pairPage([["mt::oi::1", "Order Intake"], ["mt::rev::2", "Revenues"]])),
-      jsonResponse(200, pairPage([])),
     ]);
     const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
     expect(out.summary).toContain("Order Intake");
@@ -1195,7 +1191,6 @@ describe("tako_available_data — pair confirmation", () => {
       jsonResponse(200, { results: [searchHit("mt::top_paid::1", "Top Paid", "metric", "METRIC")] }),
       ...detection(),
       jsonResponse(200, pairPage([["mt::disney::2", "Disney Core Paid Subscribers"]])),
-      jsonResponse(200, pairPage([])),
     ]);
     const out = await takoAvailableData.handler(
       { q: "Netflix", metric: "paid subscribers" }, CTX,
@@ -1216,7 +1211,6 @@ describe("tako_available_data — pair confirmation", () => {
       }),
       ...detection(),
       jsonResponse(200, pairPage([["mt::opex::1", "Operating costs and expenses"]])),
-      jsonResponse(200, pairPage([])),
     ]);
     const out = await takoAvailableData.handler({ q: "Pfizer", metric: "R&D expense" }, CTX);
     expect(out.found).toBe(false);
@@ -1233,7 +1227,6 @@ describe("tako_available_data — pair confirmation", () => {
       jsonResponse(200, { results: [searchHit("mt::gm::9", "Gross Margin (%)", "metric", "METRIC")] }),
       ...detection(),
       jsonResponse(503, { detail: "graph store down" }),
-      jsonResponse(503, { detail: "graph store down" }),
     ]);
     const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
     expect(out.verified).toBe("resolution");
@@ -1246,19 +1239,22 @@ describe("tako_available_data — pair confirmation", () => {
     });
   });
 
-  it("ONE failing variant sinks the verdict to resolution, never to a false unlinked", async () => {
-    // A partial result would let a single dead round trip unpin a working
-    // handle — the one new error this change must not introduce.
-    mockFetchSequence([
+  it("the probe is ONE round trip, not a fan-out", async () => {
+    // A second filter variant was implemented and measured against prod: it
+    // changed the verdict on 0 of 24 pairs while doubling graph/related load on
+    // every probed call. One call, one filter.
+    const fetchMock = mockFetchSequence([
       jsonResponse(200, { results: [searchHit("ent::nvidia::1", "NVIDIA Corporation")] }),
       jsonResponse(200, { results: [searchHit("mt::gm::9", "Gross Margin (%)", "metric", "METRIC")] }),
       ...detection(),
-      jsonResponse(200, pairPage([["mt::other::1", "Revenues"]])),
-      jsonResponse(503, { detail: "down" }),
+      jsonResponse(200, pairPage([["mt::gm::9", "Gross Margin (%)"]])),
     ]);
     const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
-    expect(out.verified).toBe("resolution");
-    expect(out.next_call?.strict).toBe(true);
+    const related = fetchMock.mock.calls.filter(
+      (c) => new URL(requestFrom(c).url).pathname === "/api/beta/graph/related",
+    );
+    expect(related).toHaveLength(1);
+    expect(out.verified).toBe("pair");
   });
 
   it("no probe at all when the entity did not resolve", async () => {

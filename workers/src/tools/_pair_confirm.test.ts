@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  MAX_FILTER_VARIANTS,
-  filterVariants,
-  reconcilePair,
-} from "./_pair_confirm.js";
+import { metricFilter, reconcilePair } from "./_pair_confirm.js";
 
 const node = (id: string, name: string, aliases?: string[]) => ({
   id,
@@ -13,64 +9,63 @@ const node = (id: string, name: string, aliases?: string[]) => ({
   ...(aliases === undefined ? {} : { aliases }),
 });
 
-describe("filterVariants", () => {
-  it("confirm mode leads with the resolved node's own name", () => {
-    // graph/related's `q` is a SUBSTRING filter, so the exact resolved name is
-    // the one string guaranteed to match the node we are trying to confirm.
+describe("metricFilter", () => {
+  it("confirm mode filters by the resolved node's OWN name", () => {
+    // The only string guaranteed to substring-match the node being confirmed.
     expect(
-      filterVariants({
+      metricFilter({
         metricQuery: "gross margin",
         resolvedName: "Gross Margin (%)",
         confident: true,
       }),
-    ).toEqual(["Gross Margin (%)", "gross margin"]);
+    ).toBe("Gross Margin (%)");
   });
 
-  it("rescue mode leads with the caller's phrase, then its longest token", () => {
-    // "Rescue" now means SURFACING near-misses for the caller to choose from,
-    // never auto-pinning one. The resolved name is deliberately absent: rank 0
-    // failed the name test, so filtering by it would look for the wrong metric.
-    // Measured on prod, this is what finds Pfizer's real R&D metrics — "R&D
-    // expense" is not a substring of "R&D Expenses (Normalized)".
+  it("confirm mode does NOT fall back to the caller's phrase", () => {
+    // Measured: "aircraft deliveries" is not a substring of Boeing's
+    // "Deliveries - Aircraft", so filtering by the phrase would report a false
+    // `unlinked` and unpin a handle that retrieves.
     expect(
-      filterVariants({
+      metricFilter({
+        metricQuery: "aircraft deliveries",
+        resolvedName: "Deliveries - Aircraft",
+        confident: true,
+      }),
+    ).toBe("Deliveries - Aircraft");
+  });
+
+  it("diagnose mode filters by the query's longest token, not the wrong node", () => {
+    // Rank 0 is the WRONG metric here, so filtering by its name would check
+    // something nobody asked about. Measured: "R&D expense" matches nothing on
+    // Pfizer; "expense" surfaces its real R&D metrics.
+    expect(
+      metricFilter({
         metricQuery: "R&D expense",
         resolvedName: "Operating costs and expenses",
         confident: false,
       }),
-    ).toEqual(["R&D expense", "expense"]);
+    ).toBe("expense");
   });
 
-  it("never exceeds MAX_FILTER_VARIANTS", () => {
-    const out = filterVariants({
+  it("returns exactly one filter — the probe is one round trip", () => {
+    const out = metricFilter({
       metricQuery: "passenger cruise days",
       resolvedName: "Passenger Cruise Days",
       confident: true,
     });
-    expect(out.length).toBeLessThanOrEqual(MAX_FILTER_VARIANTS);
+    expect(typeof out).toBe("string");
   });
 
-  it("dedupes case-insensitively rather than spending a round trip twice", () => {
-    expect(
-      filterVariants({
-        metricQuery: "Revenues",
-        resolvedName: "revenues",
-        confident: true,
-      }),
-    ).toEqual(["revenues"]);
+  it("drops a filter too short to be a meaningful substring match", () => {
+    // A 1-2 char filter matches most of the list and tells us nothing; null
+    // means the probe is skipped rather than run uselessly.
+    expect(metricFilter({ metricQuery: "PE", resolvedName: "PE", confident: true })).toBeNull();
   });
 
-  it("drops variants too short to be a meaningful substring filter", () => {
-    // A 1-2 char filter matches most of the list and tells us nothing.
+  it("returns null for an empty query rather than an unfiltered drill", () => {
     expect(
-      filterVariants({ metricQuery: "PE", resolvedName: null, confident: false }),
-    ).toEqual([]);
-  });
-
-  it("returns no variants for an empty query rather than an unfiltered drill", () => {
-    expect(
-      filterVariants({ metricQuery: "   ", resolvedName: null, confident: false }),
-    ).toEqual([]);
+      metricFilter({ metricQuery: "   ", resolvedName: null, confident: false }),
+    ).toBeNull();
   });
 });
 
