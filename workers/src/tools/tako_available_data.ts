@@ -392,12 +392,20 @@ const tako_available_data = {
 
     // The PAIR-CONFIRMATION probe: does this entity actually hold this metric?
     //
-    // `graph/related` scoped to the entity with a substring filter, one call
-    // per filter variant, in parallel. Returns `null` — NOT `[]` — when the
-    // probe could not run or failed, because the two mean opposite things:
-    // `[]` is evidence ("the entity's list holds nothing matching"), `null` is
-    // the absence of evidence, and collapsing them would let an outage
-    // manufacture `unlinked` verdicts that unpin every handle the tool emits.
+    // ONE `graph/related` call, scoped to the entity, narrowed by ONE substring
+    // filter (see `metricFilter` — a second variant was measured to change no
+    // verdicts and was removed). Returns `null` — NOT an empty list — when the
+    // probe could not run or failed, because the two mean opposite things: an
+    // empty list is evidence ("the entity's list holds nothing matching"),
+    // `null` is the absence of evidence, and collapsing them would let an
+    // outage manufacture `unlinked` verdicts that unpin every handle the tool
+    // emits.
+    //
+    // `complete` carries the same distinction one level down: a FULL page means
+    // the filtered list was cut off, so "not on this page" is not "absent".
+    // It comes from `next_cursor`, never from `total` — measured on prod,
+    // `relation.total` ignores the `q` filter entirely (Lockheed reports
+    // 250/capped with and without `q=Backlog`).
     //
     // Never throws. Auth and connectivity are already proven by the entity
     // search that ran before it, so the only failures reachable here are
@@ -406,7 +414,7 @@ const tako_available_data = {
     const pairProbe = async (
       entityNodeId: string,
       filter: string | null,
-    ): Promise<GraphNode[] | null> => {
+    ): Promise<{ items: GraphNode[]; complete: boolean } | null> => {
       if (filter === null) return null;
       try {
         const raw = await djangoGet<unknown>(
@@ -427,7 +435,12 @@ const tako_available_data = {
           logWireGuardFailure("tako_available_data", "pair-confirm", parsed.error, raw);
           return null;
         }
-        return parsed.data.relation?.items ?? [];
+        const page = parsed.data.relation ?? null;
+        // A spec-legal 200 with `relation: null` means the node has no metrics
+        // group at all — a real, COMPLETE "nothing here", not an outage. Same
+        // reading the coverage drill gives it.
+        if (page === null) return { items: [], complete: true };
+        return { items: page.items, complete: (page.next_cursor ?? null) === null };
       } catch (err) {
         console.warn(
           `[tako] pair confirm failed tool=tako_available_data node=${entityNodeId} q=${filter} (degraded to no pair evidence):`,
@@ -526,6 +539,16 @@ const tako_available_data = {
       // only rides in the query text, and the alternates already name the
       // covered variant so the model can switch for free. Re-measure before
       // reinstating.
+      //
+      // NB the pair-confirmation probe below IS a `graph/related` round trip on
+      // this same path, and that is not a contradiction — the two buy different
+      // things. This one bought a nicer ENTITY NAME in the echo, while the pin
+      // (and therefore what the priced call retrieves) was unchanged: cosmetic,
+      // so any latency beats it. The pair probe changes whether the emitted
+      // handle is PINNED at all, and pinning a metric the entity does not hold
+      // is what returns 0 cards. Measured end to end on prod (24 pairs,
+      // 2026-08-04): 15/22 handles land today, 17/22 with the probe. Correctness
+      // of a priced call clears a bar that cosmetics do not.
       const entities = entityGate.gated ? entityGate.kept.map(toRef) : [];
       // The METRIC half keeps the backend's ORDER — the gate only decides
       // confidence here, it must not filter or reorder.
@@ -628,7 +651,10 @@ const tako_available_data = {
         // `null` means the probe produced no evidence — stay on today's
         // behaviour rather than inventing a verdict.
         if (scoped !== null) {
-          const reconciled = reconcilePair({ metricQuery, globalMetric: rank0, scoped });
+          const reconciled = reconcilePair({
+            metricQuery, globalMetric: rank0,
+            scoped: scoped.items, complete: scoped.complete,
+          });
           verified = reconciled.verified;
           entityMetricMatches = reconciled.entityMetricMatches;
         }

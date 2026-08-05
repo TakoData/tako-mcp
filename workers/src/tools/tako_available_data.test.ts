@@ -45,12 +45,18 @@ const drill = (
  * path) but it is implicit, so anything asserting a pair verdict must queue
  * pages explicitly.
  */
-const pairPage = (items: Array<[string, string]>) => ({
+const pairPage = (
+  items: Array<[string, string]>,
+  // A non-null cursor marks the filtered list as CUT OFF. `total` is
+  // deliberately unfiltered here (250/capped) to mirror prod: measured,
+  // `relation.total` ignores `q`, so nothing may key completeness off it.
+  nextCursor: string | null = null,
+) => ({
   node: { id: "ent::x::1", type: "entity", name: "Entity" },
   relation: {
     key: "metrics", kind: "data", label: "metrics",
     items: items.map(([id, name]) => ({ id, type: "metric", name })),
-    total: items.length, total_capped: false, next_cursor: null,
+    total: 250, total_capped: true, next_cursor: nextCursor,
   },
 });
 
@@ -647,7 +653,7 @@ describe("tako_available_data — lookup path", () => {
     expect(probe.searchParams.get("node_id")).toBe("ent::nvidia::1");
     expect(probe.searchParams.get("relation")).toBe("metrics");
     expect(probe.searchParams.get("q")).toBe("Gross Margin (%)");
-    expect(probe.searchParams.get("limit")).toBe("20");
+    expect(probe.searchParams.get("limit")).toBe("100");
     expect(out.verified).toBe("pair");
     // Each probe is type-scoped — that split is the accuracy mechanism.
     const types = fetchMock.mock.calls.map((c) => new URL(requestFrom(c).url).searchParams.get("types"));
@@ -1216,9 +1222,58 @@ describe("tako_available_data — pair confirmation", () => {
     expect(out.found).toBe(false);
     expect(out.next_call).toBeNull();
     expect(out.summary).toContain("NO metric confidently matches");
-    // Having CHECKED the entity's list is firmer ground for reporting a gap
-    // than merely failing to vet a name.
-    expect(out.summary).toContain("own metric list was also checked");
+    // NOT `unlinked`: nothing about a pin was established here, because there
+    // is no pin. Claiming the entity's list "holds nothing matching" while its
+    // own entries sit in entityMetricMatches was the contradiction.
+    expect(out.verified).toBe("resolution");
+    expect(out.summary).not.toContain("holds nothing matching");
+    // The near-misses ARE the payload on this path and must reach the model.
+    expect(out.summary).toContain("Operating costs and expenses");
+  });
+
+  it("a TRUNCATED page never asserts absence — verdict degrades to resolution", async () => {
+    // Measured on prod: `q="Backlog"` scoped to Lockheed Martin fills the page
+    // and returns a next_cursor, because the filter is a SUBSTRING match and
+    // the entity holds `12 Month Backlog`, `90 Day Backlog`, `AA&S Backlog`...
+    // Calling that absence drops the pin and prints "the graph holds no edge …
+    // report the gap" on evidence we never had.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::lmt::1", "Lockheed Martin Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::backlog::1", "Backlog", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::b12::2", "12 Month Backlog"]], "100")),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
+    expect(out.verified).toBe("resolution");
+    // Today's behaviour exactly: the pin stays.
+    expect(out.next_call?.node_ids).toEqual(["mt::backlog::1"]);
+    expect(out.summary).not.toContain("NOT on");
+  });
+
+  it("a FOUND node is `pair` even when the page was truncated", async () => {
+    // Truncation cannot un-prove a positive.
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::nvidia::1", "NVIDIA Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::gm::9", "Gross Margin (%)", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::gm::9", "Gross Margin (%)"]], "100")),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
+    expect(out.verified).toBe("pair");
+  });
+
+  it("a same-named TWIN with a different id is not confirmation", async () => {
+    // KE-812: same name, different id, only one twin carrying cards. The id on
+    // the entity's list is not the id next_call pins, so this must not read as
+    // "the strongest free confirmation available".
+    mockFetchSequence([
+      jsonResponse(200, { results: [searchHit("ent::nvidia::1", "NVIDIA Corporation")] }),
+      jsonResponse(200, { results: [searchHit("mt::gm::9", "Gross Margin (%)", "metric", "METRIC")] }),
+      ...detection(),
+      jsonResponse(200, pairPage([["mt::gm_TWIN::4", "Gross Margin (%)"]])),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
+    expect(out.verified).toBe("unlinked");
   });
 
   it("a failed probe degrades to verified:resolution — today's behaviour exactly", async () => {

@@ -72,87 +72,137 @@ describe("metricFilter", () => {
 describe("reconcilePair", () => {
   const gm = node("mt::gross_margin::9", "Gross Margin (%)");
 
-  it("confident + present on the entity's list → pair", () => {
+  it("confident + id on the entity's complete list → pair", () => {
     const out = reconcilePair({
       metricQuery: "gross margin",
       globalMetric: gm,
       scoped: [node("mt::other::1", "Revenues"), gm],
+      complete: true,
     });
     expect(out.verified).toBe("pair");
   });
 
-  it("confident + absent from the entity's list → unlinked", () => {
-    // Lockheed / backlog: the name fits and the graph holds no edge. Measured
-    // on prod — Lockheed has `12 Month Backlog`, not the generic `Backlog`.
+  it("a FOUND node is pair even when the page was truncated", () => {
+    // Truncation cannot un-prove a positive: the id is on the list either way.
+    const out = reconcilePair({
+      metricQuery: "gross margin",
+      globalMetric: gm,
+      scoped: [gm],
+      complete: false,
+    });
+    expect(out.verified).toBe("pair");
+  });
+
+  it("confident + absent from a COMPLETE list → unlinked", () => {
     const out = reconcilePair({
       metricQuery: "backlog",
       globalMetric: node("mt::backlog::1", "Backlog"),
       scoped: [node("mt::revenues::2", "Revenues")],
+      complete: true,
     });
     expect(out.verified).toBe("unlinked");
   });
 
-  it("matches on node NAME as well as id, so an id-space mismatch is not a false 'unlinked'", () => {
-    // graph/search and graph/related are assumed to share an id space. If they
-    // ever do not, id-only matching would report `unlinked` for EVERY pair — a
-    // systematic false negative that would unpin every handle the tool emits.
+  it("confident + absent from a TRUNCATED list → resolution, never a false unlinked", () => {
+    // Measured on prod: `q="Backlog"` scoped to Lockheed fills the page and
+    // returns a next_cursor, because the filter is a substring match and the
+    // entity holds `12 Month Backlog`, `90 Day Backlog`, `AA&S Backlog`, ...
+    // The node may sit on page 2, so `unlinked` would drop the pin and print
+    // "the graph holds no edge ... report the gap" on evidence we do not have.
+    const out = reconcilePair({
+      metricQuery: "backlog",
+      globalMetric: node("mt::backlog::1", "Backlog"),
+      scoped: [node("mt::b12::2", "12 Month Backlog")],
+      complete: false,
+    });
+    expect(out.verified).toBe("resolution");
+  });
+
+  it("matches by ID ONLY — a same-named twin is not confirmation", () => {
+    // The name-equality arm was measured dead (0 of 18 pair verdicts) while
+    // still able to fire on KE-812 twins: same name, different id, only one
+    // carrying cards. That would report `pair` for a node whose id is NOT the
+    // id next_call pins.
     const out = reconcilePair({
       metricQuery: "gross margin",
       globalMetric: node("mt::gross_margin::9", "Gross Margin (%)"),
-      scoped: [node("relation-item-7", "Gross Margin (%)")],
+      scoped: [node("mt::gross_margin_TWIN::4", "Gross Margin (%)")],
+      complete: true,
     });
-    expect(out.verified).toBe("pair");
-  });
-
-  it("NEVER pins a node off the entity's list, however well it matches", () => {
-    // THE regression guard for the removed re-pin branch. Measured on prod
-    // (24 pairs, 2026-08-04): Netflix's own metrics relation contains
-    // `Disney Core Paid Subscribers` and Walmart's contains
-    // `5G Telco Edge IoT Revenue Total Revenue`, both passing confidentMatch.
-    // Choosing from a relation that noisy converted "no handle" into a
-    // confidently wrong PRICED call.
-    const out = reconcilePair({
-      metricQuery: "paid subscribers",
-      globalMetric: node("mt::top_paid::1", "Top Paid"),
-      scoped: [node("mt::disney::2", "Disney Core Paid Subscribers")],
-    });
-    expect(out).not.toHaveProperty("metric");
-    expect(out).not.toHaveProperty("repinned");
     expect(out.verified).toBe("unlinked");
   });
 
-  it("linkage NEVER vouches for a node that failed the name test", () => {
-    // Pfizer really does have `Operating costs and expenses`, so confirming its
-    // edge for an R&D question would be a confident wrong pin.
+  it("unvetted rank 0 → resolution, NOT unlinked, even with scoped matches", () => {
+    // Nothing about linkage is established on this path: there is no pinned
+    // node, and the filter was chosen for near-miss recall. Claiming the
+    // entity's list "holds nothing matching" while several entries sit in
+    // entityMetricMatches is the contradiction this fixes.
     const opex = node("mt::opex::1", "Operating costs and expenses");
     const out = reconcilePair({
       metricQuery: "R&D expense",
       globalMetric: opex,
-      scoped: [opex, node("mt::revenues::3", "Revenues")],
+      scoped: [opex, node("mt::rd::3", "R&D Expenses (Normalized)")],
+      complete: true,
     });
-    expect(out.verified).toBe("unlinked");
+    expect(out.verified).toBe("resolution");
   });
 
-  it("no global metric → unlinked, and nothing is invented", () => {
+  it("NEVER pins a node off the entity's list, however well it matches", () => {
+    // Regression guard for the removed re-pin branch: Netflix's own metrics
+    // relation contains `Disney Core Paid Subscribers`, which passes
+    // confidentMatch.
+    const out = reconcilePair({
+      metricQuery: "paid subscribers",
+      globalMetric: node("mt::top_paid::1", "Top Paid"),
+      scoped: [node("mt::disney::2", "Disney Core Paid Subscribers")],
+      complete: true,
+    });
+    expect(out).not.toHaveProperty("metric");
+    expect(out).not.toHaveProperty("repinned");
+    expect(out.verified).toBe("resolution");
+  });
+
+  it("no global metric → resolution", () => {
     const out = reconcilePair({
       metricQuery: "gross margin",
       globalMetric: null,
       scoped: [gm],
+      complete: true,
     });
-    expect(out.verified).toBe("unlinked");
+    expect(out.verified).toBe("resolution");
   });
 
-  it("carries the entity's near-miss metrics so the caller can pick deliberately", () => {
-    // The genuinely useful half of an unlinked verdict — naming what the entity
-    // DOES hold, for the caller to pin deliberately.
+  it("carries near-miss metrics on ANY handle-withholding verdict", () => {
+    // They are the whole payload when no handle is emitted, so they must
+    // survive the `resolution` verdict too.
     const out = reconcilePair({
-      metricQuery: "backlog",
-      globalMetric: node("mt::backlog::1", "Backlog"),
-      scoped: [node("mt::b12::2", "12 Month Backlog"), node("mt::rev::3", "Revenues")],
+      metricQuery: "R&D expense",
+      globalMetric: node("mt::opex::1", "Operating costs and expenses"),
+      scoped: [node("mt::rd::2", "R&D Expenses (Normalized)"), node("mt::rev::3", "Revenues")],
+      complete: true,
     });
+    expect(out.verified).toBe("resolution");
     expect(out.entityMetricMatches.map((n) => n.name)).toEqual([
-      "12 Month Backlog",
+      "R&D Expenses (Normalized)",
       "Revenues",
     ]);
+  });
+
+  it("orders near-misses by query overlap, not backend order", () => {
+    // The list is sliced to 3 and is the whole payload on this path. Measured,
+    // `q="expense"` on Pfizer returns the generic expense metrics first and
+    // buries the R&D one the caller asked about.
+    const out = reconcilePair({
+      metricQuery: "R&D expense",
+      globalMetric: node("mt::opex::1", "Operating costs and expenses"),
+      scoped: [
+        node("mt::adv::1", "Advertising Expense (Normalized)"),
+        node("mt::accr::2", "Change in Accrued Expenses"),
+        node("mt::opex::3", "Operating costs and expenses"),
+        node("mt::rd::4", "R&D Expenses (Normalized)"),
+      ],
+      complete: true,
+    });
+    expect(out.entityMetricMatches[0]?.name).toBe("R&D Expenses (Normalized)");
   });
 });
