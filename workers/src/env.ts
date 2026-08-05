@@ -49,9 +49,11 @@ export interface Env {
    * e.g. `https://d12w4pyrrczi5e.cloudfront.net`. Must NOT include a
    * trailing slash.
    *
-   * EXPERIMENT SWITCH, and unset everywhere by default. Setting it turns on the
-   * NATIVE CARD path — Claude rendering Tako's own `Card.js` instead of a PNG
-   * of it — which is materially more than a declared CSP entry. Specifically:
+   * FEATURE SWITCH, set in BOTH deployed envs and unset only where no one is
+   * serving traffic (local dev, and tests that do not supply it). Setting it
+   * turns on the NATIVE CARD path — Claude rendering Tako's own `Card.js`
+   * instead of a PNG of it — which is materially more than a declared CSP
+   * entry. Specifically:
    *
    *   1. Two public HTTP routes come into existence, `/embed-html/{pub_id}` and
    *      `/cdn-asset/{path}` (`embed_proxy.ts`). Unset, both decline and the
@@ -79,7 +81,12 @@ export interface Env {
    * `embed_proxy.ts`, and note those handlers run ahead of the whole OAuth
    * surface.
    *
-   * Leave unset in production. Set it on staging to run the experiment.
+   * Set in staging AND production. It shipped staging-only, and that gap was
+   * itself the bug: prod ran the native-card code with the switch off, served
+   * the baked PNG, and — because that PNG is rendered server-side at
+   * `dark_mode=true` before any host theme is knowable, and a raster cannot be
+   * re-themed — gave a light-themed Claude a dark, unhoverable chart. Leaving
+   * it unset in an env that serves users is a regression, not a safe default.
    */
   PUBLIC_CDN_URL?: string;
   /**
@@ -230,6 +237,33 @@ export interface Env {
    * be present for the free tier to activate.
    */
   FREE_TIER_GLOBAL_RATE_LIMITER?: RateLimit;
+  /**
+   * Cloudflare rate-limit binding metering the two native-card proxy routes
+   * (`/embed-html/`, `/cdn-asset/`) per CLIENT IP.
+   *
+   * A SEPARATE binding from `FREE_TIER_RATE_LIMITER`, and the separation is a
+   * bug fix rather than tidiness. Both routes originally shared that binding —
+   * same key function, same namespace — which put browser SUBRESOURCE fetches
+   * in the same 10-per-60 s bucket as MCP `tools/call`. The two have unit costs
+   * that differ by an order of magnitude: one card render issues ~10 metered
+   * requests before `Card.js`'s lazily imported chunks (9 rewritten asset URLs
+   * on a measured production page, plus `/embed-html/` itself). Measured on
+   * staging against the shared bucket: requests 1-10 served, 11-14 all 429. So
+   * the feature throttled its OWN assets, and the chart failed to draw — the
+   * precise symptom the native-card path exists to fix.
+   *
+   * Sized for asset fan-out (200 / 60 s / colo ≈ 12-20 renders per minute per
+   * IP) rather than for tool calls. Note the per-colo caveat that applies to
+   * every binding here: the enforced number is `limit × colos reached`, so this
+   * shapes bursts and makes abuse visible in `wrangler tail` — it is not a hard
+   * ceiling.
+   *
+   * Fails OPEN, like the free-tier buckets and unlike the login ones: a limiter
+   * outage must degrade to an unmetered chart, never to a missing one. Absent
+   * entirely, the routes serve unmetered — which is why it is declared in the
+   * top-level block as well as both env blocks.
+   */
+  NATIVE_CARD_RATE_LIMITER?: RateLimit;
   /**
    * Cloudflare rate-limit binding throttling `POST /login/password` per CLIENT
    * IP — the sender's own axis, charged for every attempt including ones with
