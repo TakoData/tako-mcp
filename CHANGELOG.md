@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.18.0](https://github.com/TakoData/tako-mcp/compare/v0.17.0...v0.18.0) (2026-08-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** `request_id` is no longer returned in `structuredContent` for `tako_search` or `tako_answer`, and `tako_visualize` no longer returns `card_id`. Read `pub_id` in place of `card_id`; request ids are recorded server-side only.
+
+### Features
+
+* **oauth:** non-expiring partner client_ids for managed OAuth catalogs ([2503828](https://github.com/TakoData/tako-mcp/commit/2503828ae7523a9f4cad8776b9efdf326e620407))
+
+
+### Bug Fixes
+
+* **mcp:** strip upsells, request ids, and iframe analytics for app review ([2f83f24](https://github.com/TakoData/tako-mcp/commit/2f83f242e135283253e5592a8507e855eac76c1f))
+* **oauth:** accept `offline_access` so Foundry's documented scope works ([8a54dd4](https://github.com/TakoData/tako-mcp/commit/8a54dd456e6c3cdc0ade60b225a90cb8a527339c))
+* **oauth:** address review — trim partner secret, close two test gaps ([ec5bb37](https://github.com/TakoData/tako-mcp/commit/ec5bb3784bc2a4e913ea15e506570027d3ea2f0c))
+* **oauth:** deny per RFC 6749, and let users switch accounts at consent ([bf30cb3](https://github.com/TakoData/tako-mcp/commit/bf30cb3dce7857d6094419d400d53e8095c92a2d))
+* **review:** distinguish Cancel, clean the fallback iframe, deepen the sweep ([e8062e5](https://github.com/TakoData/tako-mcp/commit/e8062e5798ce784c0a2a607268bba717c4a9b708))
+* **tools:** accept a stringified array where hosts serialize one ([aab633d](https://github.com/TakoData/tako-mcp/commit/aab633df449547e2eb647436d7b91621a255c18d))
+* **tools:** make the array coercion opt-in per item domain ([c9a53e9](https://github.com/TakoData/tako-mcp/commit/c9a53e9625244ee13ee74565cd47c955c26632ac))
+
+
+### Chores
+
+* regenerate lhm.plugin.json from synced spec ([a786986](https://github.com/TakoData/tako-mcp/commit/a786986002af1d44e8288517cdec57f20586cb62))
+* regenerate schemas + registry from synced spec ([49986d4](https://github.com/TakoData/tako-mcp/commit/49986d42790d7f460a6c2f5e02bc4d7b032bad22))
+* sync OpenAPI spec from monorepo ([2e03b04](https://github.com/TakoData/tako-mcp/commit/2e03b043d686868f311ca2451988ed760e234085))
+* sync OpenAPI spec from TakoData/tako ([d6d1b85](https://github.com/TakoData/tako-mcp/commit/d6d1b85803636f0dc280400fde6750e96c08970a))
+
+
+### Documentation
+
+* **mcp:** record the removed structuredContent fields as breaking ([5fc69bd](https://github.com/TakoData/tako-mcp/commit/5fc69bdfb346679da0dea761858115a450a11fc1))
+
 ## [0.17.0](https://github.com/TakoData/tako-mcp/compare/v0.16.1...v0.17.0) (2026-08-04)
 
 
