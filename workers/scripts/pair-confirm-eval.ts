@@ -2,6 +2,13 @@
 /**
  * Measurement harness for `tako_available_data`'s pair-confirmation probe.
  *
+ * SUPERSEDED for any accuracy claim by `available-data-truth.ts`, which drives
+ * the real handler. This one REIMPLEMENTS the resolution logic to sweep in
+ * bulk, and a reimplementation drifts: an earlier version omitted the tool's
+ * exact-name promotion (`sameTokens`) and understated accuracy by 19 points.
+ * Use it for verdict-distribution and latency sweeps, not for "is the tool
+ * right".
+ *
  * Answers the only question that decides whether the probe is worth its ~0.7s:
  * how often does the entity's own metric list DISAGREE with what two
  * independent `graph/search` calls resolved, and when it disagrees, is the
@@ -10,7 +17,7 @@
  * Two phases, because only one of them is free:
  *
  *   PHASE A (free, always runs) — graph endpoints only. Replays the real
- *   decision functions (`confidentMatch`, `filterVariants`, `reconcilePair`)
+ *   decision functions (`confidentMatch`, `metricFilter`, `reconcilePair`)
  *   against live graph data and reports the verdict split, the re-pin rate,
  *   and the added latency. Costs nothing and needs no credits.
  *
@@ -34,7 +41,7 @@
 import { writeFileSync } from "node:fs";
 
 import { confidentMatch } from "../src/tools/_match_gate.js";
-import { filterVariants, reconcilePair } from "../src/tools/_pair_confirm.js";
+import { metricFilter, reconcilePair } from "../src/tools/_pair_confirm.js";
 import { PAIR_PROBE_LIMIT } from "../src/tools/_pair_confirm.js";
 
 // Mirrors the loose `graphNodeSchema` facade rather than importing it, so the
@@ -129,27 +136,17 @@ async function graphSearch(q: string, types?: "entity" | "metric"): Promise<Grap
   return ((await res.json()) as { results: GraphNode[] }).results ?? [];
 }
 
-async function scopedMetrics(entityId: string, variants: string[]): Promise<GraphNode[] | null> {
-  const pages = await Promise.all(
-    variants.map(async (variant) => {
-      const url = new URL("/api/beta/graph/related", BASE);
-      url.searchParams.set("node_id", entityId);
-      url.searchParams.set("relation", "metrics");
-      url.searchParams.set("q", variant);
-      url.searchParams.set("limit", String(PAIR_PROBE_LIMIT));
-      const res = await fetch(url, { headers });
-      if (!res.ok) return null;
-      const body = (await res.json()) as { relation?: { items?: GraphNode[] } | null };
-      return body.relation?.items ?? [];
-    }),
-  );
-  if (pages.some((p) => p === null)) return null;
-  const seen = new Set<string>();
-  return pages.flat().filter((n): n is GraphNode => {
-    if (n === null || seen.has(n.id)) return false;
-    seen.add(n.id);
-    return true;
-  });
+async function scopedMetrics(entityId: string, filter: string | null): Promise<GraphNode[] | null> {
+  if (filter === null) return null;
+  const url = new URL("/api/beta/graph/related", BASE);
+  url.searchParams.set("node_id", entityId);
+  url.searchParams.set("relation", "metrics");
+  url.searchParams.set("q", filter);
+  url.searchParams.set("limit", String(PAIR_PROBE_LIMIT));
+  const res = await fetch(url, { headers });
+  if (!res.ok) return null;
+  const body = (await res.json()) as { relation?: { items?: GraphNode[] } | null };
+  return body.relation?.items ?? [];
 }
 
 /**
@@ -220,7 +217,7 @@ async function evaluate(pair: Pair): Promise<Row> {
     const t1 = Date.now();
     const scoped = await scopedMetrics(
       entity.id,
-      filterVariants({ metricQuery: pair.metric, resolvedName: rank0.name, confident }),
+      metricFilter({ metricQuery: pair.metric, resolvedName: rank0.name, confident }),
     );
     probeMs = Date.now() - t1;
     if (scoped !== null) {

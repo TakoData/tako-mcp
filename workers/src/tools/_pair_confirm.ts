@@ -92,73 +92,57 @@ export const PAIR_PROBE_TIMEOUT_MS = 2_500;
 export const PAIR_PROBE_LIMIT = 20;
 
 /**
- * How many substring filters to try. Each is a separate `graph/related` call;
- * they run in parallel so the wall-clock cost is one round trip either way, but
- * every variant is real load against a ~180 req/min budget.
- */
-export const MAX_FILTER_VARIANTS = 2;
-
-/**
  * Shortest useful substring filter. `q` is a raw substring match, so a one- or
  * two-character filter matches most of a metric list and answers nothing.
  */
-const MIN_VARIANT_CHARS = 3;
+const MIN_FILTER_CHARS = 3;
 
 /** Near-miss metrics shown to the caller when the verdict is `unlinked`. */
 export const ENTITY_MATCHES_SHOWN = 3;
 
 /**
- * The substring filters to send as `graph/related`'s `q`.
+ * THE substring filter to send as `graph/related`'s `q` — exactly one, so the
+ * probe is one round trip.
  *
  * `q` is a case-insensitive SUBSTRING filter on name+aliases — a stricter,
  * different test from the token containment used everywhere else in this tool.
- * `"R&D expense"` is not a substring of
- * `"Research & development expense (R&D) - Americas"`, so the caller's phrase
- * alone is not enough to find what the entity actually has.
+ * That is what makes the choice matter:
  *
- * The variants differ by what we are trying to learn, which is why `confident`
- * is an input rather than something inferred here:
+ *   confirm (rank 0 passed the name test) — the resolved node's OWN name. It is
+ *   the only string guaranteed to substring-match the node being confirmed, and
+ *   the caller's phrase is NOT a safe substitute: measured, `"aircraft
+ *   deliveries"` is not a substring of Boeing's `"Deliveries - Aircraft"`, so
+ *   filtering by the phrase would report a false `unlinked` and unpin a handle
+ *   that retrieves.
  *
- *   confirm (rank 0 passed the name test) — lead with the resolved node's OWN
- *   name, the one string guaranteed to substring-match the node we are
- *   confirming. The caller's phrase rides second to surface near-duplicate
- *   siblings (KE-812), which is exactly the context an `unlinked` verdict needs.
+ *   diagnose (rank 0 failed) — the resolved name is the WRONG metric, so
+ *   filtering by it would check the wrong thing and then report "the entity's
+ *   list holds nothing matching" about a metric nobody asked for. Use the
+ *   query's longest token instead: no handle is emitted on this path, so the
+ *   only payload is the near-miss list, and recall is what matters. Measured,
+ *   `"R&D expense"` matches nothing on Pfizer while `"expense"` surfaces its
+ *   real R&D metrics.
  *
- *   rescue (rank 0 failed) — the resolved name is the WRONG metric, so
- *   filtering by it would confirm the wrong thing. Lead with the caller's
- *   phrase, fall back to its longest token, which is what survives the
- *   substring filter on real metric names.
+ * A SECOND variant was implemented and measured (24 pairs, prod, 2026-08-04):
+ * it changed the verdict on 0 of them, adding only extra near-miss entries, at
+ * the cost of a second `graph/related` on every probed call. Removed.
  */
-export function filterVariants(input: {
+export function metricFilter(input: {
   metricQuery: string;
   resolvedName?: string | null;
   confident: boolean;
-}): string[] {
-  const out: string[] = [];
-  const push = (value: string | null | undefined): void => {
-    if (typeof value !== "string") return;
+}): string | null {
+  const clean = (value: string | null | undefined): string | null => {
+    if (typeof value !== "string") return null;
     const trimmed = value.trim();
-    if (trimmed.length < MIN_VARIANT_CHARS) return;
-    if (out.length >= MAX_FILTER_VARIANTS) return;
-    // Case-insensitive: `q` is case-insensitive server-side, so two variants
-    // differing only in case would spend a second round trip on the same query.
-    if (out.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) return;
-    out.push(trimmed);
+    return trimmed.length < MIN_FILTER_CHARS ? null : trimmed;
   };
-
-  if (input.confident) {
-    push(input.resolvedName);
-    push(input.metricQuery);
-    return out;
-  }
-
-  push(input.metricQuery);
-  // Longest token first: the distinctive half of a phrase is almost always the
-  // longer word ("expense" over "R&D", "merchandise" over "gross"). Noise
-  // tokens are already stripped by `matchTokens`.
+  if (input.confident) return clean(input.resolvedName);
+  // Longest token: the distinctive half of a phrase is almost always the longer
+  // word ("expense" over "R&D", "merchandise" over "gross"). Noise tokens are
+  // already stripped by `matchTokens`.
   const longest = [...matchTokens(input.metricQuery)].sort((a, b) => b.length - a.length)[0];
-  push(longest);
-  return out;
+  return clean(longest) ?? clean(input.metricQuery);
 }
 
 export interface PairReconciliation {

@@ -45,10 +45,9 @@ import {
 import type { CoverageMatch, OtherMatch, PairResolution } from "./_available_data.js";
 import { confidentMatch, gateCandidates, sameTokens } from "./_match_gate.js";
 import {
-  ENTITY_MATCHES_SHOWN,
   PAIR_PROBE_LIMIT,
   PAIR_PROBE_TIMEOUT_MS,
-  filterVariants,
+  metricFilter,
   reconcilePair,
 } from "./_pair_confirm.js";
 import type { PairVerdict } from "./_pair_confirm.js";
@@ -406,51 +405,36 @@ const tako_available_data = {
     // perfectly good landing for them.
     const pairProbe = async (
       entityNodeId: string,
-      variants: string[],
+      filter: string | null,
     ): Promise<GraphNode[] | null> => {
-      if (variants.length === 0) return null;
-      const pages = await Promise.all(
-        variants.map(async (variant) => {
-          try {
-            const raw = await djangoGet<unknown>(
-              ctx.env, ctx.token, "/api/beta/graph/related",
-              {
-                query: {
-                  node_id: entityNodeId, relation: "metrics",
-                  q: variant, limit: PAIR_PROBE_LIMIT,
-                },
-                timeoutMs: PAIR_PROBE_TIMEOUT_MS,
-              },
-            );
-            const parsed = relatedShape.safeParse(raw);
-            if (!parsed.success) {
-              // Same rule as the drill: a wire-guard failure degrades the
-              // caller's answer, so it is ALWAYS logged rather than silently
-              // suppressing the pair evidence.
-              logWireGuardFailure("tako_available_data", "pair-confirm", parsed.error, raw);
-              return null;
-            }
-            return parsed.data.relation?.items ?? [];
-          } catch (err) {
-            console.warn(
-              `[tako] pair confirm failed tool=tako_available_data node=${entityNodeId} q=${variant} (degraded to no pair evidence):`,
-              err,
-            );
-            return null;
-          }
-        }),
-      );
-      // Any variant failing sinks the verdict to "no evidence". A partial
-      // result would let one dead round trip turn a real `pair` into a false
-      // `unlinked`, which is the one error this whole change exists to avoid
-      // creating.
-      if (pages.some((p) => p === null)) return null;
-      const seen = new Set<string>();
-      return pages.flat().filter((n): n is GraphNode => {
-        if (n === null || seen.has(n.id)) return false;
-        seen.add(n.id);
-        return true;
-      });
+      if (filter === null) return null;
+      try {
+        const raw = await djangoGet<unknown>(
+          ctx.env, ctx.token, "/api/beta/graph/related",
+          {
+            query: {
+              node_id: entityNodeId, relation: "metrics",
+              q: filter, limit: PAIR_PROBE_LIMIT,
+            },
+            timeoutMs: PAIR_PROBE_TIMEOUT_MS,
+          },
+        );
+        const parsed = relatedShape.safeParse(raw);
+        if (!parsed.success) {
+          // Same rule as the drill: a wire-guard failure degrades the caller's
+          // answer, so it is ALWAYS logged rather than silently suppressing the
+          // pair evidence.
+          logWireGuardFailure("tako_available_data", "pair-confirm", parsed.error, raw);
+          return null;
+        }
+        return parsed.data.relation?.items ?? [];
+      } catch (err) {
+        console.warn(
+          `[tako] pair confirm failed tool=tako_available_data node=${entityNodeId} q=${filter} (degraded to no pair evidence):`,
+          err,
+        );
+        return null;
+      }
     };
 
     // ---- LOOKUP path: the caller named the metric ------------------------
@@ -635,7 +619,7 @@ const tako_available_data = {
       if (entityRef !== null && rank0 !== null) {
         const scoped = await pairProbe(
           entityRef.node_id,
-          filterVariants({
+          metricFilter({
             metricQuery,
             resolvedName: rank0.name,
             confident: rank0Confident,
@@ -703,9 +687,7 @@ const tako_available_data = {
           domainShaped: isDomainShaped(input.q),
           metricConfident: pinnedConfident,
           verified: pair.entity === null ? undefined : verified,
-          entityMetricMatches: entityMetricMatches
-            .slice(0, ENTITY_MATCHES_SHOWN)
-            .map((n) => n.name),
+          entityMetricMatches: entityMetricMatches.map((n) => n.name),
         }),
         matches: [],
         other_matches: [],
