@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.19.0](https://github.com/TakoData/tako-mcp/compare/v0.18.0...v0.19.0) (2026-08-06)
+
+
+### Features
+
+* **available_data:** ask the graph whether the entity actually has the metric ([a1f78e1](https://github.com/TakoData/tako-mcp/commit/a1f78e1d5129df3b709e3d9500c58cf455e2840b))
+* **gemini:** ship a Gemini CLI extension, and don't hide the free tier ([c2800d7](https://github.com/TakoData/tako-mcp/commit/c2800d76d4e3c95760ec6091517396ac1e2f4bf1))
+
+
+### Bug Fixes
+
+* **available_data:** address review — absence must be established, not assumed ([c287554](https://github.com/TakoData/tako-mcp/commit/c287554867275f064f603d03545092efa317212b))
+* **available_data:** linkage is evidence, never a choice — cut the re-pin ([f097e64](https://github.com/TakoData/tako-mcp/commit/f097e64ce91ea1c310132dc059669669b7ebc718))
+* **gemini:** the description sold half the product ([db21e74](https://github.com/TakoData/tako-mcp/commit/db21e74a9ab0b3378cfba78189817834e5e7d259))
+* **gemini:** the release that bumped everything else could not reach this file ([6e370ba](https://github.com/TakoData/tako-mcp/commit/6e370ba8b757a8e8880ccba39f221c2ded6a3c0b))
+* **proxy:** the render throttled itself, and two guards that promised more ([717fea9](https://github.com/TakoData/tako-mcp/commit/717fea972ed846821fa03a780bace566714edfcc))
+* **widget:** production never had the switch the theme fix needs ([246c102](https://github.com/TakoData/tako-mcp/commit/246c102d6185f4f1325102fd573f35156d38d97d))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([5de5a8f](https://github.com/TakoData/tako-mcp/commit/5de5a8f52538fec34f0ca76a13ef36668213354c))
+* sync OpenAPI spec from monorepo ([51b4177](https://github.com/TakoData/tako-mcp/commit/51b4177c86e06e65eb0aed85d0cbb497cca88b46))
+* sync OpenAPI spec from TakoData/tako ([95368a6](https://github.com/TakoData/tako-mcp/commit/95368a693359927a00e322c92ade155afa59a2bc))
+
+
+### Documentation
+
+* **gemini:** MCP-ify the description and put the sectors back ([0b675b5](https://github.com/TakoData/tako-mcp/commit/0b675b561b02e5a0e63fdfad9b76506bca4e883a))
+* **gemini:** use the canonical positioning text, and drop the em dashes ([a041634](https://github.com/TakoData/tako-mcp/commit/a041634a07104370b979315d6926dcba56737487))
+
+
+### Refactors
+
+* **available_data:** one probe call, not two — the second changed nothing ([5646d40](https://github.com/TakoData/tako-mcp/commit/5646d404598cc423f9282a15c9a9ef89c6ade857))
+
 ## [0.18.0](https://github.com/TakoData/tako-mcp/compare/v0.17.0...v0.18.0) (2026-08-05)
 
 
