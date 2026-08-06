@@ -1500,25 +1500,35 @@ components:
           - type: string
           - type: 'null'
           title: Name
+          description: The column header as exported. This is the CSV header, the
+            json_records key, and the dataset column label for this column.
         metric:
           anyOf:
           - type: string
           - type: 'null'
           title: Metric
+          description: What the column measures, for example 'Median Sales Price'.
         entity:
           anyOf:
           - type: string
           - type: 'null'
           title: Entity
+          description: 'What the column is measured FOR: the resolved values of every
+            dimension the series is filtered to, joined with an em dash — for example
+            ''Austin, TX — Condo''. A card filtered on one dimension reports that
+            one value. This field reports resolved display values only and never an
+            internal identifier.'
         unit:
           anyOf:
           - type: string
           - type: 'null'
           title: Unit
+          description: The unit of every value in the column, for example 'USD'.
         dtype:
           anyOf:
           - $ref: '#/components/schemas/TakoDatasetColumnType'
           - type: 'null'
+          description: The data type of the column, inferred from the exported values.
       type: object
       title: ColumnDescriptor
       description: 'Structured description of one exported value column.
