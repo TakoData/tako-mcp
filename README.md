@@ -1,5 +1,7 @@
 # Tako MCP Server
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.TakoData%2Ftako-mcp.svg)](https://mcptoplist.com/server/io.github.TakoData%2Ftako-mcp)
+
 [![Full Documentation](https://img.shields.io/badge/Docs-docs.tako.com-6E56CF?style=flat-square)](https://docs.tako.com/documentation/integrations/mcp-server)
 [![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.TakoData%2Ftako--mcp-000000?style=flat-square)](https://registry.modelcontextprotocol.io)
 [![Smithery](https://img.shields.io/badge/Smithery-tako%2Ftako-4B8BF5?style=flat-square)](https://smithery.ai/servers/tako/tako)
