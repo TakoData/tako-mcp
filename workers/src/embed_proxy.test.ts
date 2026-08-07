@@ -32,6 +32,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "./env.js";
 import {
   dataProxyShim,
+  findUpstreamWrite,
   handleCdnAssetProxy,
   handleEmbedDataProxy,
   handleEmbedProxy,
@@ -356,6 +357,41 @@ describe("handleEmbedProxy — experiment on", () => {
     const res = await handleEmbedProxy(req(`/embed-html/${PUB_ID}`), ON);
     expect(res?.status).toBe(502);
     expect(await res!.text()).not.toContain("SECRET-TOKEN-VALUE");
+  });
+
+  it("refuses a SECOND occurrence the strip did not match, even after it succeeded", async () => {
+    // The guard used to read `!stripped && html.includes(token)`, which skipped
+    // the scan entirely once a strip reported success — the same shape as the
+    // miss this PR is fixing. `sanitizeEmbedHtml`'s island replacer returns the
+    // script untouched for anything it cannot `JSON.parse`, so a page carrying
+    // the real island PLUS an unparseable script that mentions the token sets
+    // `removedCsrf = true` and forwarded the second one.
+    //
+    // The unconditional scan cannot false-positive, because neither replacement
+    // re-emits the token string: one leaves `data-tako-stripped="csrf"` over a
+    // token-free dict, the other an HTML comment. Every other test in this file
+    // that expects a 200 is the proof of that.
+    const twice = `<!doctype html><html><body>
+<script type="application/json">{"staticPrefix":"https://cdn/","csrfToken":"SECRET-TOKEN-VALUE"}</script>
+<script>var leftover = {csrfToken: "SECOND-COPY"};</script>
+</body></html>`;
+    const sanitized = sanitizeEmbedHtml(twice);
+    // The first island WAS stripped — this is not a "the strip broke" case.
+    expect(sanitized.removedCsrf).toBe(true);
+    expect(sanitized.html).not.toContain("SECRET-TOKEN-VALUE");
+    // ...and the second copy survived the sanitizer, which is why the route has
+    // to be the one that refuses.
+    expect(sanitized.html).toContain("SECOND-COPY");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(twice, { status: 200, headers: { "content-type": "text/html" } }),
+      ),
+    );
+    const res = await handleEmbedProxy(req(`/embed-html/${PUB_ID}`), ON);
+    expect(res?.status).toBe(502);
+    expect(await res!.text()).not.toContain("SECOND-COPY");
   });
 
   it("refuses to forward a csrfmiddlewaretoken it could not strip", async () => {
@@ -1156,7 +1192,9 @@ describe("the shim is wired into handleEmbedProxy, not just exported", () => {
     );
     const res = await handleEmbedProxy(req(`/embed-html/${PUB_ID}`), ON);
     const body = await res!.text();
-    expect(body).toContain("https://mcp.tako.com/embed-data/");
+    // Including the pub_id: that is what lets the data route's failures name the
+    // card, since its request body is opaque JSON and carries no id of its own.
+    expect(body).toContain(`https://mcp.tako.com/embed-data/${PUB_ID}`);
     expect(body).toContain("/knowledge/get_data/");
     // And the page it was injected into is still the page.
     expect(body).toContain("timeseries:eav_v3");
@@ -1180,15 +1218,60 @@ describe("the shim is wired into handleEmbedProxy, not just exported", () => {
   });
 });
 
+
+describe("findUpstreamWrite", () => {
+  // The upstream endpoint is not read-only. `GetData.post` (tako repo,
+  // `app/backend/knowledge/views.py`) is `csrf_exempt` and unauthenticated, and
+  // for a non-empty `pub_id` it overwrites that card's `viz_config` and `data`
+  // with no ownership check — `frozen_after_sharing` is `BooleanField(null=True)`
+  // so the default branch is writable. Django's closed `CORS_ALLOWED_ORIGINS` is
+  // what keeps a drive-by page off it, and this route's `ACAO: *` removes exactly
+  // that. So this gate is the replacement barrier.
+  const enc = (v: unknown): ArrayBuffer =>
+    new TextEncoder().encode(JSON.stringify(v)).buffer as ArrayBuffer;
+
+  it("passes the shape the card actually sends", () => {
+    // Measured on all eleven data requests of a full twelve-tab walk: `pub_id`
+    // is `""` every time, because `window.frameElement` is null in any
+    // cross-origin embed. Absent and null are the same read-only shape.
+    expect(findUpstreamWrite(enc({ config_type: "x", pub_id: "" }))).toBeUndefined();
+    expect(findUpstreamWrite(enc({ config_type: "x" }))).toBeUndefined();
+    expect(findUpstreamWrite(enc({ config_type: "x", pub_id: null }))).toBeUndefined();
+  });
+
+  it("refuses any non-empty pub_id, including a non-string one", () => {
+    // Django's `if pub_id:` is a truthiness test, so anything truthy reaches the
+    // write — a number and a list included.
+    expect(findUpstreamWrite(enc({ pub_id: "VKd7qE8K9Ba16kMFENNQ" }))).toBe("writes");
+    expect(findUpstreamWrite(enc({ pub_id: 1 }))).toBe("writes");
+    expect(findUpstreamWrite(enc({ pub_id: ["a"] }))).toBe("writes");
+    expect(findUpstreamWrite(enc({ pub_id: { toString: 1 } }))).toBe("writes");
+  });
+
+  it("refuses a body that is not a JSON object", () => {
+    // Free with the parse, and the route was forwarding these blind before.
+    expect(findUpstreamWrite(enc([1, 2]))).toBe("not-an-object");
+    expect(findUpstreamWrite(enc("a string"))).toBe("not-an-object");
+    expect(findUpstreamWrite(enc(null))).toBe("not-an-object");
+    expect(
+      findUpstreamWrite(new TextEncoder().encode("{oops,").buffer as ArrayBuffer),
+    ).toBe("not-json");
+  });
+});
+
 describe("handleEmbedDataProxy", () => {
-  const dataReq = (method = "POST"): Request =>
+  // The pub_id in the path is a LOG CORRELATOR. It never reaches the upstream url
+  // and never reaches the body.
+  const DATA_PATH = `/embed-data/${PUB_ID}`;
+
+  const dataReq = (method = "POST", body = '{"config_type":"x"}'): Request =>
     method === "POST"
-      ? new Request("https://mcp.tako.com/embed-data/", {
+      ? new Request(`https://mcp.tako.com${DATA_PATH}`, {
           method,
           headers: { "content-type": "application/json" },
-          body: '{"config_type":"x"}',
+          body,
         })
-      : new Request("https://mcp.tako.com/embed-data/", {
+      : new Request(`https://mcp.tako.com${DATA_PATH}`, {
           method,
           headers: { "content-type": "application/json" },
         });
@@ -1205,13 +1288,28 @@ describe("handleEmbedDataProxy", () => {
     await expect(handleEmbedDataProxy(dataReq(), OFF)).resolves.toBeUndefined();
   });
 
-  it("declines any other path", async () => {
-    await expect(
-      handleEmbedDataProxy(
-        new Request("https://mcp.tako.com/embed-data/extra", { method: "POST" }),
-        ON,
-      ),
-    ).resolves.toBeUndefined();
+  it("declines a path with no pub_id, or a malformed one", async () => {
+    // Same shape as `/embed-html/`: declining keeps the route invisible rather
+    // than answering an error from a path we do not serve.
+    for (const path of [
+      "/embed-data/",
+      "/embed-data",
+      "/embed-data/a/b",
+      "/embed-data/../secrets",
+      `/embed-data/${"a".repeat(65)}`,
+    ]) {
+      await expect(
+        handleEmbedDataProxy(
+          new Request(`https://mcp.tako.com${path}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{}",
+          }),
+          ON,
+        ),
+        path,
+      ).resolves.toBeUndefined();
+    }
   });
 
   it("forwards the body to the CONFIGURED origin and constant path", async () => {
@@ -1225,12 +1323,12 @@ describe("handleEmbedDataProxy", () => {
     expect(res?.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await res!.json()).toEqual({ component_data: [] });
 
-    // Neither the origin nor the path may come from the caller. That is the whole
-    // reason this is a single-endpoint passthrough and not a POST proxy for
-    // Tako's origin.
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      "https://tako.com/knowledge/get_data/",
-    );
+    // Neither the origin nor the path may come from the caller — and the pub_id
+    // segment in particular must NOT appear upstream, or the correlator would
+    // have become an injection point.
+    const called = String(fetchMock.mock.calls[0]?.[0]);
+    expect(called).toBe("https://tako.com/knowledge/get_data/");
+    expect(called).not.toContain(PUB_ID);
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(init.method).toBe("POST");
     expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe(
@@ -1238,11 +1336,36 @@ describe("handleEmbedDataProxy", () => {
     );
   });
 
+  it("refuses a body that would make the upstream WRITE", async () => {
+    // The security property this route rests on. `findUpstreamWrite` has the full
+    // reasoning; this pins that the handler actually consults it, and that the
+    // refusal happens BEFORE the request is issued.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleEmbedDataProxy(
+      dataReq("POST", JSON.stringify({ config_type: "x", pub_id: PUB_ID })),
+      ON,
+    );
+    expect(res?.status).toBe(400);
+    expect(await res!.text()).toContain("pub_id must be empty");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body that is not a JSON object, without forwarding it", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const bad of ["[1,2]", '"a string"', "{oops,"]) {
+      const res = await handleEmbedDataProxy(dataReq("POST", bad), ON);
+      expect(res?.status, bad).toBe(400);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("forwards no credentials, invents none, and does not follow a redirect", async () => {
     const fetchMock = jsonUpstream();
     vi.stubGlobal("fetch", fetchMock);
     await handleEmbedDataProxy(
-      new Request("https://mcp.tako.com/embed-data/", {
+      new Request(`https://mcp.tako.com${DATA_PATH}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1260,9 +1383,6 @@ describe("handleEmbedDataProxy", () => {
     expect(headerKeys).not.toContain("cookie");
     expect(headerKeys).not.toContain("authorization");
     expect(headerKeys).not.toContain("x-csrftoken");
-    // A 3xx is an upstream error, not an instruction — else the content-type
-    // check and the body we serve under `ACAO: *` would be judging a response
-    // from a host the configuration never named.
     expect(init.redirect).toBe("manual");
   });
 
@@ -1282,7 +1402,7 @@ describe("handleEmbedDataProxy", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     expect((await handleEmbedDataProxy(dataReq("GET"), ON))?.status).toBe(405);
-    const wrongType = new Request("https://mcp.tako.com/embed-data/", {
+    const wrongType = new Request(`https://mcp.tako.com${DATA_PATH}`, {
       method: "POST",
       headers: { "content-type": "text/html" },
       body: "<html>",
@@ -1294,22 +1414,22 @@ describe("handleEmbedDataProxy", () => {
   it("refuses an empty body and an over-cap body", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const empty = new Request("https://mcp.tako.com/embed-data/", {
+    const empty = new Request(`https://mcp.tako.com${DATA_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "",
     });
     expect((await handleEmbedDataProxy(empty, ON))?.status).toBe(400);
 
-    // The real body is the card's accumulated viz config, and it GROWS: 118 KB
-    // on the first request and 1.29 MB after walking all twelve of the Nvidia
-    // card's tabs, because each response is merged in and re-posted. The cap is
-    // sized off that measurement — a first cut at 1 MB 413'd on the sixth tab —
-    // and exists to bound what an anonymous caller can hand Django to parse.
-    const huge = new Request("https://mcp.tako.com/embed-data/", {
+    // The cap is 3 MB, sized UNDER Django's `DATA_UPLOAD_MAX_MEMORY_SIZE` of
+    // 3.5 MB so that everything this route accepts is something Django will also
+    // accept. A cap above that could only trade a clear 413 for an `upstream
+    // HTTP 400` that says nothing about size. Real bodies reach 1.29 MB after
+    // twelve tabs.
+    const huge = new Request(`https://mcp.tako.com${DATA_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: `{"pad":"${"x".repeat(8 * 1024 * 1024 + 16)}"}`,
+      body: `{"pad":"${"x".repeat(3 * 1024 * 1024 + 16)}"}`,
     });
     expect((await handleEmbedDataProxy(huge, ON))?.status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -1330,19 +1450,16 @@ describe("handleEmbedDataProxy", () => {
       pull(controller) {
         pulled += CHUNK;
         controller.enqueue(new Uint8Array(CHUNK));
-        // Way past the cap. If the handler read to completion this would be
-        // 64 MB pulled; the assertion below is that it stops near the cap.
         if (pulled >= 64 * 1024 * 1024) controller.close();
       },
     });
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const res = await handleEmbedDataProxy(
-      new Request("https://mcp.tako.com/embed-data/", {
+      new Request(`https://mcp.tako.com${DATA_PATH}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: stream,
-        // Required for a stream body; harmless on a buffered one.
         duplex: "half",
       } as RequestInit),
       ON,
@@ -1350,7 +1467,7 @@ describe("handleEmbedDataProxy", () => {
     expect(res?.status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
     // One chunk of slop past the cap is the most a chunked read can avoid.
-    expect(pulled).toBeLessThanOrEqual(8 * 1024 * 1024 + CHUNK);
+    expect(pulled).toBeLessThanOrEqual(3 * 1024 * 1024 + CHUNK);
   });
 
   it("maps upstream failures without leaking them as success", async () => {
@@ -1379,6 +1496,33 @@ describe("handleEmbedDataProxy", () => {
     expect((await handleEmbedDataProxy(dataReq(), ON))?.status).toBe(502);
   });
 
+  it("names the card in every failure log, since the body cannot", async () => {
+    // Before this, a 502 here could not be tied back to a chart: the request body
+    // is opaque JSON and none of the three failure lines carried a correlator,
+    // while `/embed-html/` logs `... for ${pubId}` throughout.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const upstream of [
+        () => Promise.resolve(new Response("boom", { status: 500 })),
+        () => Promise.reject(new Error("network down")),
+        () =>
+          Promise.resolve(
+            new Response("<html>", {
+              status: 200,
+              headers: { "content-type": "text/html" },
+            }),
+          ),
+      ]) {
+        warn.mockClear();
+        vi.stubGlobal("fetch", vi.fn().mockImplementation(upstream));
+        await handleEmbedDataProxy(dataReq(), ON);
+        expect(warn.mock.calls.flat().map(String).join(" ")).toContain(PUB_ID);
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("refuses a non-JSON upstream body", async () => {
     // This origin is the OAuth origin. Whatever MIME upstream declares would
     // otherwise become the MIME we serve here, and `Card.js` calls `.json()` on
@@ -1395,6 +1539,44 @@ describe("handleEmbedDataProxy", () => {
     const res = await handleEmbedDataProxy(dataReq(), ON);
     expect(res?.status).toBe(502);
     expect(res?.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+  });
+
+  it("logs a response stream that dies mid-flight, and does not pretend it was whole", async () => {
+    // The failure the streaming path used to swallow. Headers are long gone by
+    // the time a body errors, so the client gets truncated JSON and `Card.js`
+    // renders its own error — buffering would only change that to a 502, which
+    // `Card.js` renders identically, at the cost of a second ~1.6 MB buffer.
+    // What was actually missing was the log line.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"component_data":'));
+          controller.error(new Error("upstream reset"));
+        },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(body, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      );
+      const res = await handleEmbedDataProxy(dataReq(), ON);
+      expect(res?.status).toBe(200);
+      // The consumer sees a failed read, not a silently short document.
+      await expect(res!.text()).rejects.toThrow();
+      const logged = warn.mock.calls.flat().map(String).join(" ");
+      expect(logged).toContain("response stream failed");
+      expect(logged).toContain(PUB_ID);
+      // And it says how far it got, which is what distinguishes "died at once"
+      // from "died near the end".
+      expect(logged).toMatch(/after \d+B/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("is metered, and metered BEFORE the upstream fetch", async () => {

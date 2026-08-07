@@ -220,14 +220,26 @@
         // until this var exists. Interactivity and correct theming are the same
         // switch.
         //
-        // What it exposes, reviewed before promoting: `/embed-html/{pub_id}` and
-        // `/cdn-asset/{path}` become public and unauthenticated on the OAuth
-        // origin. Mitigations already in `embed_proxy.ts` — both metered through
-        // the free-tier per-IP limiter, `/embed-html/` answers `text/plain` under
-        // `Content-Security-Policy: sandbox`, `/cdn-asset/` is confined to the
-        // `archive/` prefix and reflects only inert content types, and the
-        // proxied page has its `csrfToken` and GA bootstrap stripped. Neither
-        // route serves a document the browser will execute.
+        // What it exposes, reviewed before promoting: THREE routes become public
+        // and unauthenticated on the OAuth origin — `/embed-html/{pub_id}`,
+        // `/cdn-asset/{path}` and `/embed-data/{pub_id}`. Mitigations all live in
+        // `embed_proxy.ts`: every one is metered through NATIVE_CARD_RATE_LIMITER,
+        // `/embed-html/` answers `text/plain` under
+        // `Content-Security-Policy: sandbox` with the `csrfToken`,
+        // `csrfmiddlewaretoken` and GA bootstrap stripped, `/cdn-asset/` is
+        // confined to the `archive/` prefix and reflects only inert content
+        // types, and `/embed-data/` answers a pinned `application/json`. None of
+        // the three serves a document the browser will execute.
+        //
+        // The one to re-read if any of this changes is `/embed-data/`. It is the
+        // only route that POSTs, and its upstream — `/knowledge/get_data/` — is
+        // not read-only: for a non-empty `pub_id` in the body it overwrites that
+        // card's stored config with no ownership check, and it is `csrf_exempt`
+        // and unauthenticated. Django's closed CORS allowlist is what keeps a
+        // drive-by page off it, and `ACAO: *` here removes that. `findUpstreamWrite`
+        // is the replacement barrier: a non-empty `pub_id` is a 400, which leaves
+        // the write branch unreachable. Do not relax it without reading that
+        // function's docstring.
         "PUBLIC_CDN_URL": "https://d12w4pyrrczi5e.cloudfront.net",
         // OpenAI connector-directory domain-verification token issued
         // for `mcp.tako.com`. Served as plain text from
