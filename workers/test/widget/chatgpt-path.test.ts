@@ -193,6 +193,7 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     const heights: number[] = [];
     const m = mountWidget(html(), {
       toolOutput: { cards: [], web_results: [], usage: {} },
+      theme: "light",
       notifyIntrinsicHeight: (h: number) => heights.push(h),
     });
     const empty = m.widgetWin.document.getElementById(
@@ -205,6 +206,34 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     // thing it hears must be zero: labelling a box the host kept is not a
     // request for one. [1, 0] — the mount-time floor, then the collapse.
     expect(heights).toEqual([1, 0]);
+  });
+
+  it("EMPTY: reads the label colour from window.openai.theme, both ways", () => {
+    // `window.openai.theme` is the ONLY theme source on ChatGPT — it never
+    // sends `hostContext`, so the MCP Apps coverage in widget-dom.test.ts says
+    // nothing about this read. Without this, a regression in it would surface
+    // as an unreadable label in a chat window rather than in CI.
+    const emptyOf = (m: Mounted) =>
+      (m.widgetWin.document.getElementById("tako-empty") as HTMLElement).style
+        .color;
+
+    const light = mountWidget(html(), {
+      toolOutput: { cards: [] },
+      theme: "light",
+    });
+    expect(emptyOf(light)).toBe("rgb(107, 114, 128)");
+
+    const dark = mountWidget(html(), {
+      toolOutput: { cards: [] },
+      theme: "dark",
+    });
+    expect(emptyOf(dark)).toBe("rgb(180, 184, 189)");
+
+    // No theme declared → no inline override at all, so the stylesheet's
+    // `prefers-color-scheme` pair decides. Asserting the ABSENCE is what keeps
+    // a compromise grey from creeping back into the JS.
+    const silent = mountWidget(html(), { toolOutput: { cards: [] } });
+    expect(emptyOf(silent)).toBe("");
   });
 
   it("NO PNG FALLBACK: with openai present the widget never paints an image", () => {

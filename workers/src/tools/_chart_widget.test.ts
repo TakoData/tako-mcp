@@ -87,19 +87,34 @@ describe("chart widget HTML", () => {
   });
 
   it("positions the empty state out of flow so it cannot grow the box", () => {
-    // Three properties carry the whole design and none is cosmetic:
-    // `position: fixed` fills the host's reserved viewport without
-    // contributing to `scrollHeight` (a host that sizes from content must not
-    // see the label as a reason to make room); `height: 100vh` makes that hold
-    // even on an engine that resolves fixed-in-iframe against the document
-    // rather than the viewport, where `top/bottom: 0` alone would collapse the
-    // label on a zero-height document; and the individual offsets rather than
-    // the `inset` shorthand keep it parseable by older engines.
+    // Two properties carry the design and neither is cosmetic: `position:
+    // fixed` fills the host's reserved viewport without contributing to
+    // `scrollHeight` (a host that sizes from content must not see the label as
+    // a reason to make room), and `height: 100vh` makes that hold even on an
+    // engine that resolves fixed-in-iframe against the document rather than
+    // the viewport, where `top/bottom: 0` alone would collapse the label on a
+    // zero-height document.
+    //
+    // Long-hand offsets vs the `inset` shorthand is NOT asserted: both have
+    // shipped everywhere since 2021, so pinning the spelling would only fail a
+    // future cleanup.
     const ui = buildChartAppUiResourceFromOutputPubId(ENV);
     expect(ui.html).toContain("#tako-empty");
     expect(ui.html).toMatch(/#tako-empty\s*\{[^}]*position:\s*fixed/);
     expect(ui.html).toMatch(/#tako-empty\s*\{[^}]*height:\s*100vh/);
-    expect(ui.html).not.toMatch(/#tako-empty\s*\{[^}]*inset:/);
+  });
+
+  it("ships a readable empty-label colour for a host that declares no theme", () => {
+    // The silent-host fallback lives in CSS, not in `collapse()`: base is the
+    // light value (an unstyled frame composites to an opaque white base) with a
+    // `prefers-color-scheme` dark override. A single compromise grey was worse
+    // in BOTH directions — 3.25:1 against 4.83:1 on white — and 13px normal
+    // text needs 4.5:1, not the 3:1 large-text threshold.
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    expect(ui.html).toMatch(/#tako-empty\s*\{[^}]*color:\s*#6b7280/);
+    expect(ui.html).toMatch(
+      /@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*#tako-empty\s*\{\s*color:\s*#b4b8bd/,
+    );
   });
 
   it("declares resourceDomains so the remote image fallback loads on claude.ai", () => {
