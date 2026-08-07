@@ -243,3 +243,105 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     expect(img(m).getAttribute("src")).toBeNull();
   });
 });
+
+// The reported bug: a chart that renders fine, then comes back as an empty box
+// after the conversation is reloaded. ChatGPT rehydrates with a STRIPPED
+// `toolOutput` — observed as `{"width":900,"height":720}`, the two
+// `topCardChartFields` defaults with no `embed_url` and no `image_url` — which
+// render()'s no-chart guard correctly reads as "no card" and collapses.
+//
+// The server is not the fault: a repeat call returns all ten declared keys
+// (verified against prod), and `topCardChartFields` emits its six widget fields
+// all-or-nothing, so nothing server-side emits that pair alone. The widget has
+// to survive the loss, which is what `setWidgetState` is for.
+describe("ChatGPT reload rehydration", () => {
+  /** Exactly what ChatGPT handed the widget after a reload. */
+  const STRIPPED_TOOL_OUTPUT = { width: 900, height: 720 };
+
+  it("mirrors the rendered card into widget state", () => {
+    const writes: unknown[] = [];
+    const m = mountWidget(html(), {
+      toolOutput: PROD_STRUCTURED_CONTENT,
+      setWidgetState: (s: unknown) => writes.push(s),
+    });
+    expect(renderedIframe(m)).toBe(true);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      pub_id: PUB_ID,
+      embed_url: EMBED_URL,
+      image_url: IMAGE_URL,
+    });
+  });
+
+  it("repaints from widget state when the reloaded toolOutput is stripped", () => {
+    const m = mountWidget(html(), {
+      toolOutput: STRIPPED_TOOL_OUTPUT,
+      widgetState: PROD_STRUCTURED_CONTENT,
+    });
+    // Without the fallback this collapses to the labelled empty state.
+    expect(renderedIframe(m)).toBe(true);
+    expect(frame(m).classList.contains("hidden")).toBe(false);
+  });
+
+  it("a live toolOutput still wins over a stale mirror", () => {
+    // Ordering matters: widget state is a mirror of the LAST render, so a
+    // fresh result must never be overridden by it.
+    const m = mountWidget(html(), {
+      toolOutput: PROD_STRUCTURED_CONTENT,
+      widgetState: {
+        ...PROD_STRUCTURED_CONTENT,
+        embed_url: "https://tako.com/embed/STALE/",
+      },
+    });
+    expect(renderedIframe(m)).toBe(true);
+  });
+
+  it("a chart-less widget state does not satisfy the payload search", () => {
+    // A stripped mirror must not short-circuit the poll still waiting on the
+    // real payload, so it has to fail the same URL guard render() applies.
+    const heights: number[] = [];
+    const m = mountWidget(html(), {
+      toolOutput: STRIPPED_TOOL_OUTPUT,
+      widgetState: STRIPPED_TOOL_OUTPUT,
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    expect(renderedIframe(m)).toBe(false);
+    expect(heights).toEqual([1, 0]);
+  });
+
+  it("does not rewrite state for the same card", () => {
+    // `setWidgetState` re-renders on some hosts and render() is reachable from
+    // a 250 ms poll, so an unguarded write is a loop.
+    const writes: unknown[] = [];
+    const openai: Record<string, unknown> = {
+      setWidgetState: (s: unknown) => writes.push(s),
+    };
+    const m = mountWidget(html(), openai);
+    fireSetGlobals(m, { toolOutput: PROD_STRUCTURED_CONTENT }, "openai:set_globals");
+    fireSetGlobals(m, { toolOutput: PROD_STRUCTURED_CONTENT }, "openai:set_globals");
+    expect(renderedIframe(m)).toBe(true);
+    expect(writes).toHaveLength(1);
+  });
+
+  it("a zero-card result is NOT overpainted by a stale mirror", () => {
+    // The regression the `looksComplete` guard exists for. A search that
+    // genuinely found nothing is a COMPLETE result that happens to have no
+    // chart, and it must still collapse. Restoring here would show a chart
+    // for a question that returned nothing, which is worse than an empty box.
+    const heights: number[] = [];
+    const m = mountWidget(html(), {
+      toolOutput: { cards: [], web_results: [], usage: {} },
+      widgetState: PROD_STRUCTURED_CONTENT,
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    expect(renderedIframe(m)).toBe(false);
+    expect(heights).toEqual([1, 0]);
+  });
+
+  it("survives a host with no setWidgetState at all", () => {
+    // Every host that is not ChatGPT. The persist is best-effort and must
+    // never take down a render already in progress.
+    const m = mountWidget(html(), { toolOutput: PROD_STRUCTURED_CONTENT });
+    expect(renderedIframe(m)).toBe(true);
+  });
+});
