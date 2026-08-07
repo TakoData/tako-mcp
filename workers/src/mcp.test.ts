@@ -654,6 +654,61 @@ describe("chart render gates per client", () => {
     expect(meta?.ui?.resourceUri).toBe("ui://tako/embed/chart/c1");
     expect(meta?.["ui/resourceUri"]).toBe("ui://tako/embed/chart/c1");
   });
+
+  /**
+   * The full client × has-chart matrix for the resource reference, because the
+   * fix is per-RESULT and the surfaces it touches are per-CLIENT. Every cell is
+   * asserted, so a change that helps one client at another's expense fails
+   * here rather than in someone's chat window.
+   *
+   *                 chart          no chart
+   *   claude        per-pub_id     absent
+   *   chatgpt       per-pub_id     absent
+   *   unknown       absent         absent   ← never had a widget; PNG block instead
+   *
+   * The `unknown` row is the load-bearing one for "nothing else regressed":
+   * those clients never reach the resolver at all (`widgetSuppressed` leaves
+   * `ui` undefined in `registerTool`), so the branch cannot touch the long tail
+   * of MCP hosts even in principle.
+   */
+  it("references a widget per client and per result, and never for unknown clients", async () => {
+    const uiOf = (result: { _meta?: Record<string, unknown> }) =>
+      (result._meta as { ui?: { resourceUri?: string } } | undefined)?.ui
+        ?.resourceUri;
+
+    // chatgpt, chart present: keeps its reference. (One fetch only — ChatGPT
+    // skips the PNG bake, and a second would throw.)
+    mockFetchSequence([searchResponse()]);
+    expect(uiOf(await callSearch("chatgpt"))).toBe("ui://tako/embed/chart/c1");
+
+    // chatgpt, no chart: no reference. The registration `_meta` still carries
+    // `openai/outputTemplate`, so ChatGPT mounts anyway and the bundle's empty
+    // state is what covers it — see chatgpt-path.test.ts.
+    mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-4" }),
+    ]);
+    expect(uiOf(await callSearch("chatgpt"))).toBeUndefined();
+
+    // unknown, chart present: no widget reference ever, and the PNG content
+    // block instead — the portable path, untouched by this branch.
+    mockFetchSequence([searchResponse(), pngResponse()]);
+    const unknownWithChart = await callSearch("unknown");
+    expect(uiOf(unknownWithChart)).toBeUndefined();
+    expect(
+      unknownWithChart.content.filter((b) => b.type === "image"),
+    ).toHaveLength(1);
+
+    // unknown, no chart: no reference, no image block, and no second fetch
+    // (no image_url to fetch) — nothing to render and nothing attempted.
+    mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-5" }),
+    ]);
+    const unknownEmpty = await callSearch("unknown");
+    expect(uiOf(unknownEmpty)).toBeUndefined();
+    expect(unknownEmpty.content.filter((b) => b.type === "image")).toHaveLength(
+      0,
+    );
+  });
 });
 
 describe("detectMcpClient", () => {
