@@ -1145,33 +1145,46 @@ describe("native card upgrade (executed)", () => {
    * page's own CSS is `:root{overflow-y:hidden}` — so growth past the last
    * reported height is not scrolled and not scaled, it is gone.
    *
-   * jsdom performs no layout, so both readings are stubbed here: `offsetHeight`
-   * is what the reporter measures and reports, `scrollHeight` is the change
-   * detector that decides whether a pass runs at all.
+   * jsdom performs no layout, so the readings are stubbed. The important part is
+   * that they are stubbed HONESTLY: `scrollHeight` is a function of the width the
+   * reporter has applied to the root, because the reflow that widening causes is
+   * the whole reason the loop guard is written the way it is. A stub that ignored
+   * the applied style would pass whether or not the guard worked.
    */
   function stubLayout(
     m: Mounted,
-    read: { offsetHeight: () => number; scrollHeight: () => number },
-  ): { fireObserver: () => void; observed: string[] } {
+    read: { offsetHeight: () => number },
+  ): { fireObserver: () => void; observed: string[]; scrollReads: () => number } {
     const w = m.widgetWin as unknown as {
       HTMLElement: { prototype: object };
       ResizeObserver?: unknown;
     };
-    for (const [prop, get] of [
-      ["offsetHeight", read.offsetHeight],
-      ["scrollHeight", read.scrollHeight],
-    ] as const) {
-      Object.defineProperty(w.HTMLElement.prototype, prop, {
-        configurable: true,
-        get,
-      });
-    }
+    let scrollReads = 0;
+    Object.defineProperty(w.HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get: read.offsetHeight,
+    });
+    // Body's content height AT THE CURRENT ROOT WIDTH. The reporter's fit sets
+    // `documentElement.style.width = (100/s)%`, which in a real browser reflows
+    // the body shorter — so the value the guard records after the fit differs
+    // from the natural one, and a second pass reading the same value is how the
+    // sequence terminates. Modelled as an inverse relationship, which is the
+    // direction that matters, not the exact number.
+    Object.defineProperty(w.HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get(): number {
+        scrollReads += 1;
+        const natural = read.offsetHeight();
+        const raw = m.widgetWin.document.documentElement.style.width;
+        const pct = raw.endsWith("%") ? Number.parseFloat(raw) : 100;
+        if (!Number.isFinite(pct) || pct <= 0) return natural;
+        return Math.round(natural * (100 / pct));
+      },
+    });
     const callbacks: Array<() => void> = [];
     const observed: string[] = [];
     w.ResizeObserver = class {
-      private readonly cb: () => void;
       constructor(cb: () => void) {
-        this.cb = cb;
         callbacks.push(cb);
       }
       observe(target: { tagName?: string }): void {
@@ -1184,6 +1197,7 @@ describe("native card upgrade (executed)", () => {
         for (const cb of callbacks) cb();
       },
       observed,
+      scrollReads: () => scrollReads,
     };
   }
 
@@ -1191,12 +1205,7 @@ describe("native card upgrade (executed)", () => {
     const m = mountWidget(staticWidgetHtml());
     stubFetch(m, () => htmlResponse(NATIVE_HTML));
     let natural = 400;
-    const layout = stubLayout(m, {
-      offsetHeight: () => natural,
-      // Body's own content height. Kept distinct from `offsetHeight` so the two
-      // roles stay visible: one is reported, one only decides whether to look.
-      scrollHeight: () => natural,
-    });
+    const layout = stubLayout(m, { offsetHeight: () => natural });
     deliverNative(m);
     fireImageLoad(m);
     await new Promise((r) => setTimeout(r, 10));
@@ -1209,37 +1218,112 @@ describe("native card upgrade (executed)", () => {
             "ui/notifications/size-changed",
         )
         .map((msg) => (msg as { params: { height: number } }).params.height);
+    const root = m.widgetWin.document.documentElement;
 
     // It watches the BODY. Observing `documentElement` would mean every fit it
     // applies observes itself.
     expect(layout.observed).toEqual(["body"]);
     expect(heights().at(-1)).toBe(400);
+    expect(root.style.transform).toBe("");
     const settled = heights().length;
 
     // A callback with nothing changed must not re-report and must not touch a
     // style — that is what stops the correction from feeding itself every frame.
+    //
+    // Asserted through the READ COUNT, which is the only signal here that is both
+    // synchronous and exact. An early return reads body's scrollHeight once, in
+    // the guard; a pass that does work reads it a second time to record `last`.
+    // Counting reports alone cannot distinguish "returned early" from "ran and
+    // re-reported the same number", and counting style mutations cannot either,
+    // since a full pass clears and re-applies to the same values.
+    let reads = layout.scrollReads();
     layout.fireObserver();
     expect(heights().length).toBe(settled);
+    expect(layout.scrollReads()).toBe(reads + 1);
 
     // `Show more`: the document grows past the host's inline ceiling. Now it has
     // to both re-report and scale, or the user loses the rows they just asked
-    // for.
+    // for. Two reads, because this pass does the work.
     natural = 640;
+    reads = layout.scrollReads();
     layout.fireObserver();
     expect(heights().length).toBe(settled + 1);
     expect(heights().at(-1)).toBe(500);
-    expect(m.widgetWin.document.documentElement.style.transform).toBe(
-      `scale(${500 / 640})`,
-    );
+    expect(root.style.transform).toBe(`scale(${500 / 640})`);
+    expect(layout.scrollReads()).toBe(reads + 2);
+
+    // THE TERMINATION PROPERTY, which is the half a width-independent stub could
+    // not reach. Applying that fit widened the root to 128%, so body's
+    // scrollHeight has genuinely changed since the guard last looked — a real
+    // browser fires the observer again right here. The guard has to recognise the
+    // post-fit value as its own work and stop, or every correction re-corrects
+    // forever.
+    expect(root.style.width).toBe("128%");
+    for (const _ of [0, 1]) {
+      reads = layout.scrollReads();
+      layout.fireObserver();
+      // One read, no report, styles untouched: correction, confirming callback,
+      // quiet.
+      expect(layout.scrollReads()).toBe(reads + 1);
+      expect(heights().length).toBe(settled + 1);
+      expect(root.style.transform).toBe(`scale(${500 / 640})`);
+      expect(root.style.width).toBe("128%");
+    }
   });
 
-  it("survives a host with no ResizeObserver", async () => {
-    // The observer is feature-detected: losing it has to leave the ladder's
-    // behaviour intact, not throw and take that down too.
+  it("swallows a ResizeObserver constructor that throws", async () => {
+    // Not `delete window.ResizeObserver`: jsdom never defines it, so deleting it
+    // asserted nothing the pre-PR code did not already satisfy, and it could not
+    // tell the `typeof` guard apart from the surrounding `try/catch` — either
+    // alone would pass. A constructor that THROWS is what reaches the catch,
+    // because the global exists and the `typeof` check cannot help.
+    //
+    // What the catch is worth, stated precisely rather than generously: the
+    // observer is wired LAST, after the first report, the listeners and the
+    // ladder, so an escaping throw would not cost any of them. What it would cost
+    // is an uncaught error inside a widget document that hosts report to the user
+    // as a broken app. So that — not the ladder — is what this asserts.
     const m = mountWidget(staticWidgetHtml());
     stubFetch(m, () => htmlResponse(NATIVE_HTML));
-    delete (m.widgetWin as unknown as { ResizeObserver?: unknown })
-      .ResizeObserver;
+    const uncaught: string[] = [];
+    m.widgetWin.addEventListener("error", (e) => {
+      uncaught.push(String((e as ErrorEvent).message ?? e.type));
+    });
+    let constructed = 0;
+    (m.widgetWin as unknown as { ResizeObserver: unknown }).ResizeObserver =
+      class {
+        constructor() {
+          constructed += 1;
+          throw new Error("ResizeObserver unavailable in this host");
+        }
+      };
+    deliverNative(m);
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+
+    // It really did try, so the catch is on the live path...
+    expect(constructed).toBe(1);
+    // ...nothing escaped...
+    expect(uncaught).toEqual([]);
+    // ...and everything wired before it is intact.
+    expect(m.widgetWin.document.body.innerHTML).toContain("REAL CARD");
+    expect(
+      m.toParent.filter(
+        (msg) =>
+          (msg as { method?: string }).method === "ui/notifications/size-changed",
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("keeps the ladder on a host with no ResizeObserver at all", async () => {
+    // The other half of the guard: `typeof ResizeObserver !== 'undefined'`. jsdom
+    // gives this for free by never defining it, which is exactly why the test
+    // above has to supply a throwing one to be worth anything.
+    const m = mountWidget(staticWidgetHtml());
+    expect(
+      (m.widgetWin as unknown as { ResizeObserver?: unknown }).ResizeObserver,
+    ).toBeUndefined();
+    stubFetch(m, () => htmlResponse(NATIVE_HTML));
     deliverNative(m);
     fireImageLoad(m);
     await new Promise((r) => setTimeout(r, 10));
