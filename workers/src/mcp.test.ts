@@ -618,6 +618,42 @@ describe("chart render gates per client", () => {
       (result.structuredContent as { guidance?: string }).guidance,
     ).toMatch(/tako_available_data/);
   });
+
+  it("a chart-less result references no ui resource at all", async () => {
+    // The result-side half of the empty-widget fix. A zero-card call has
+    // nothing to render, so it must not point at a widget: a host that decides
+    // per RESULT then mounts nothing, and no empty card appears.
+    //
+    // This does NOT reach ChatGPT or claude.ai — both read the widget URI from
+    // `tools/list` registration `_meta`, which is static per tool and stays
+    // declared (asserted in index.test.ts). Their empty card is handled inside
+    // the bundle, by the labelled empty state. This is for spec-compliant hosts
+    // that honour the per-call reference, and it is the only lever that removes
+    // the box rather than dressing it.
+    mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-3" }),
+    ]);
+
+    const result = await callSearch("claude");
+
+    const meta = result._meta as Record<string, unknown> | undefined;
+    expect(meta?.ui).toBeUndefined();
+    expect(meta?.["ui/resourceUri"]).toBeUndefined();
+  });
+
+  it("a chart-bearing result still points at its baked per-chart widget", async () => {
+    // The other side of the same branch: declining to reference a resource on
+    // an empty result must not cost the populated one its per-pub_id URI.
+    mockFetchSequence([searchResponse(), realPngResponse()]);
+
+    const result = await callSearch("claude");
+
+    const meta = result._meta as
+      | { ui?: { resourceUri?: string }; "ui/resourceUri"?: string }
+      | undefined;
+    expect(meta?.ui?.resourceUri).toBe("ui://tako/embed/chart/c1");
+    expect(meta?.["ui/resourceUri"]).toBe("ui://tako/embed/chart/c1");
+  });
 });
 
 describe("detectMcpClient", () => {

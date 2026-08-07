@@ -584,6 +584,24 @@ const WIDGET_HTML = `<!doctype html>
     display: flex; align-items: center; justify-content: center;
     width: 100%; min-height: 240px;
   }
+  /* The empty state — see \`collapse()\`. Two declarations here are load-bearing,
+     not cosmetic:
+       - \`position: fixed\` + explicit offsets: fills the host's reserved
+         viewport (whatever it kept after we asked for zero) while staying OUT
+         of flow, so a host that sizes the frame from content still measures a
+         zero-height document. The \`inset\` shorthand would read better and is
+         deliberately not used — the offsets parse in every engine that has
+         ever run this bundle.
+       - transparent background: \`applyHostSurface\` paints the canvas in the
+         host's own colour, and a second surface here would put a visible
+         rectangle inside the very box this label exists to explain. */
+  #tako-empty {
+    position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 16px; box-sizing: border-box;
+    font-size: 13px; text-align: center;
+    pointer-events: none; background: transparent;
+  }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -602,6 +620,11 @@ const WIDGET_HTML = `<!doctype html>
      un-hide the relevant element AND notifyHeight(actual height) in
      lockstep, so the widget grows naturally on success. -->
 <div id="tako-placeholder" class="hidden">Loading chart…</div>
+<!-- Shown only by \`collapse()\`, i.e. only once we know there is no chart to
+     draw. Never a loading state: on a host that honours the shrink this sits
+     inside a zero-height viewport and is invisible, which is the outcome we
+     prefer and must not spoil with a flash of text. -->
+<div id="tako-empty" class="hidden">No chart for this result</div>
 <iframe
   id="tako-embed"
   class="hidden"
@@ -624,6 +647,7 @@ const WIDGET_HTML = `<!doctype html>
   var image = document.getElementById("tako-embed-img");
   var imageLink = document.getElementById("tako-embed-link");
   var placeholder = document.getElementById("tako-placeholder");
+  var empty = document.getElementById("tako-empty");
   var rendered = false;
   // Origin of the iframe we loaded — used to gate the height handshake
   // listener below so we only honor resize messages from the actual
@@ -1483,10 +1507,41 @@ const WIDGET_HTML = `<!doctype html>
       return true;
   }
 
-  // Take the widget to zero height and mark it done. Used by the no-chart
-  // guard in render() and by the no-data watchdog at the bottom of the file.
+  // Take the widget to zero height, label whatever the host refuses to give
+  // back, and mark it done. Used by the no-chart guard in render() and by the
+  // no-data watchdog at the bottom of the file.
+  //
+  // Asking for zero is not enough, and that is the whole reason the label
+  // exists. The host mounts this widget from STATIC tool-registration metadata
+  // (\`openai/outputTemplate\` / \`ui.resourceUri\` in \`tools/list\`), which cannot
+  // know whether a given call produced a chart — so every chart-less call gets
+  // a mounted widget, and a host with a minimum card height (ChatGPT, reported
+  // 2026-08 on a zero-card search) keeps that card visible after the shrink to
+  // zero. What the user then sees is an unexplained grey void next to an answer
+  // that worked.
+  //
+  // So: paint a quiet line into the space instead. Painting is free in the good
+  // case — a host that honoured the zero is showing a zero-height viewport, and
+  // \`#tako-empty\` is \`position: fixed\`, so it neither renders nor adds to the
+  // document's measurable height there. And no height is notified after the
+  // zero: the label dresses a box the host chose to keep, and must never be a
+  // reason to reserve one that was already given up.
   function collapse() {
     placeholder.classList.add("hidden");
+    if (empty) {
+      // Contrast, not decoration. The label sits on the host's own surface
+      // (\`applyHostSurface\` paints the canvas to match), so the body's
+      // placeholder grey lands around 2:1 against a light host — legible to
+      // whoever wrote it and to nobody else. Pick per resolved theme instead:
+      // ~4.7:1 on light, ~5:1 on dark. \`hostTheme()\` is known by now on every
+      // path that has a theme at all (the no-chart guard runs after
+      // \`applyHostSurface\`); the fallback is the one grey that clears 3:1 in
+      // both directions, for the watchdog case where no host ever answered.
+      var t = hostTheme();
+      empty.style.color =
+        t === "light" ? "#6b7280" : t === "dark" ? "#b4b8bd" : "#8b8f95";
+      empty.classList.remove("hidden");
+    }
     document.documentElement.style.height = "0px";
     document.body.style.height = "0px";
     notifyHeight(0);
@@ -2326,13 +2381,15 @@ export async function fetchPngContentBlock(
  * static URI + baked `_meta.image_data_url` from `extraMeta`.
  *
  * `resolveUriFromInput` reads the top card's `pub_id` from the tool
- * output (the search input is a query, not a pub_id) and falls back to
- * the static URI when there's no renderable top card.
+ * output (the search input is a query, not a pub_id) and returns
+ * `undefined` when there's no renderable top card — see
+ * `buildChartAppUiResourceFromOutputPubId` for why declining beats
+ * naming the static bundle there.
  */
 export function buildChartAppUiResource(
   env: Env,
   requestOrigin: string | undefined,
-  resolveUriFromInput: (input: unknown, output?: unknown) => string,
+  resolveUriFromInput: (input: unknown, output?: unknown) => string | undefined,
 ): AppUiResource {
   const webBase = resolvePublicBase(env);
   return {
@@ -2441,8 +2498,15 @@ export function buildChartAppUiResource(
 /**
  * `appUiResource` variant that derives the per-call widget URI from the top
  * card's `pub_id` on the tool OUTPUT (the input is a query/spec, not a pub_id).
- * Falls back to the static URI when there's no renderable top card. Shared by
- * tako_search and tako_visualize, which both render a chart widget this way.
+ * Shared by tako_search, tako_answer and tako_visualize, which all render a
+ * chart widget this way.
+ *
+ * No top card → `undefined`, NOT the static URI. A chart-less result has
+ * nothing for a widget to draw, and naming a resource anyway is what asks a
+ * host to mount one; declining is the only way the empty card disappears
+ * rather than merely getting labelled. It changes nothing on ChatGPT or
+ * claude.ai (both mount from `tools/list` registration `_meta`, which is
+ * static per tool) — see `collapse()` in the bundle for what covers those.
  */
 export function buildChartAppUiResourceFromOutputPubId(
   env: Env,
@@ -2453,7 +2517,7 @@ export function buildChartAppUiResourceFromOutputPubId(
       typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
         ? (output as { pub_id: string }).pub_id
         : "";
-    if (pubId === "") return appUiResourceUri(env);
+    if (pubId === "") return undefined;
     return appUiTemplateUriPattern(env).replace(
       "{pub_id}",
       encodeURIComponent(pubId),

@@ -263,8 +263,16 @@ export interface AppUiResource {
      * of a tool result (e.g. during pre-registration validation in
      * tests); resolvers should fall back to a sensible default URI in
      * that case.
+     *
+     * Return `undefined` to say "this call produced nothing to render".
+     * `mcp.ts` then omits the result-level `ui` keys entirely rather
+     * than falling back to the static URI, so a host that decides per
+     * RESULT mounts no widget at all. Hosts that read the URI from
+     * `tools/list` registration `_meta` (ChatGPT, claude.ai) mount
+     * regardless — for them the bundle's own empty state is what keeps
+     * a chart-less call from looking broken (see `collapse()`).
      */
-    resolveUriFromInput: (input: unknown, output?: unknown) => string;
+    resolveUriFromInput: (input: unknown, output?: unknown) => string | undefined;
   };
 }
 
