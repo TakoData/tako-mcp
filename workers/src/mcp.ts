@@ -132,6 +132,31 @@ export const SERVER_VERSION = "0.19.2"; // x-release-please-version
  *      "what does Tako have on X" is worth asking on its own, and the answer
  *      shapes which metric is worth asking for at all.
  *
+ * FRAMED AS SUBSTITUTION, not precedence. The opener used to say "reach for
+ * Tako BEFORE a generic web search", which concedes that a generic web search
+ * is still a step to take, just a later one, and invites the model to do
+ * both in sequence. It now says "instead of a separate web search, not
+ * alongside one", and leads with the capability that earns it: Tako searches
+ * the live web and the data graph in the SAME call. Reported symptom that
+ * motivated this (ChatGPT, Aug 2026): web search fired first even when the
+ * user named Tako explicitly.
+ *
+ * ORDERING, and the one incident this reverses. `tako_available_data` used
+ * to be introduced FIRST, ahead of both priced tools, because a version
+ * whose opening paragraph routed every data question to `tako_search` and
+ * mentioned the free tool once, last, behind "if unsure" produced
+ * search-first routing on claude.ai. The fix then was to promote it. The
+ * contradiction that caused it is now gone at the source: the opening
+ * paragraph names no tool at all, so nothing here competes with the free
+ * tool for the first position. It sits last, alongside `tako_contents`, as
+ * a capability the model can reach for rather than a step it owes.
+ *
+ * That also removes a disagreement with its own tool description, which
+ * hedged "NOT a required first step" precisely to push back on this
+ * paragraph. Instructions outrank descriptions in the host's system prompt,
+ * so the two must not argue; the hedge went with the push. If search-first
+ * routing returns, promoting this paragraph is the first thing to retry.
+ *
  * REMOVED DELIBERATELY, not by oversight: the closing hedge "Use a built-in
  * web search when the query is clearly outside Tako's coverage, or Tako
  * returned nothing relevant." The zero-result `guidance` on each tool now
@@ -143,15 +168,11 @@ export const SERVER_VERSION = "0.19.2"; // x-release-please-version
  * serve; if misrouting shows up, this hedge is the first thing to restore.
  */
 export const SERVER_INSTRUCTIONS = [
-  "Tako is a live-data search engine: structured, citation-backed results with inline charts, over a proprietary data graph and the live web.",
+  "Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.",
   "",
-  "For questions about data or metrics — finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health — reach for Tako before a generic web search: it returns live, chartable, citation-backed data a web search cannot. Tako searches the web too (default sources are data + web), so one call covers a question that mixes data with context.",
+  "`tako_answer` and `tako_search` do different jobs, so pick one, don't chain them. `tako_answer` for ONE specific figure. `tako_search` for breadth, or when the chart or embed is the deliverable.",
   "",
-  "`tako_available_data` is free. Ask it what data Tako has on an entity or a metric, and build the real question around the coverage it reports; ask it for a measure's exact name before spending a priced call.",
-  "",
-  "`tako_answer` and `tako_search` do different jobs — pick one, don't chain them. `tako_answer` for ONE specific figure: a synthesized, cited answer with the series inlined, and the only tool that returns values for license-gated cards. `tako_search` for breadth: many data cards and web results at once, or when the chart or embed is the deliverable.",
-  "",
-  "`tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.",
+  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.",
 ].join("\n");
 
 /**
