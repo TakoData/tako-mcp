@@ -30,11 +30,13 @@
  *      2026-08-07, invisible on ChatGPT because ChatGPT commits to the nested
  *      `tako.com` iframe and never takes this path at all.
  *
- *      Hence {@link EMBED_DATA_PATH} and the shim {@link dataProxyShim} injects:
+ *      Hence {@link EMBED_DATA_PREFIX} and the shim {@link dataProxyShim} injects:
  *      one origin-fixed passthrough for that endpoint, and a `window.fetch`
  *      wrapper that repoints the page's own location-relative call at it. Still
  *      no credential to hold — the endpoint is public (verified against
- *      production: no cookie, no CSRF header, HTTP 200).
+ *      production: no cookie, no CSRF header, HTTP 200) — but public is not the
+ *      same as read-only, and it is not: see {@link findUpstreamWrite} for the
+ *      write branch that made a request-body gate load-bearing here.
  *   2. `Card.js` and its lazily imported chunks are static assets with no API
  *      behind them, so they only have to be REACHABLE — nothing needs bundling.
  *      They are not, however, loadable straight from the CDN: it reflects CORS
@@ -119,9 +121,21 @@ export const EMBED_PROXY_PREFIX = "/embed-html/";
 export const CDN_ASSET_PREFIX = "/cdn-asset/";
 
 /**
- * Route for the card's own data endpoint. Exact path, no parameters — the
- * request body carries everything, and the upstream path is a constant here so
- * nothing about it can come from the caller.
+ * Route prefix for the card's own data endpoint. The pub_id is the single
+ * trailing segment, exactly as on {@link EMBED_PROXY_PREFIX}.
+ *
+ * The pub_id is a LOG CORRELATOR and nothing else. It never reaches the upstream
+ * URL — that is `publicBase + UPSTREAM_DATA_PATH`, both constants — and it never
+ * reaches the body. It exists because the three 502s below had no way to name
+ * the card they failed for: the body is opaque JSON and `/embed-html/` logs
+ * `... for ${pubId}` throughout, so a 502 here was the one failure in this file
+ * that could not be tied back to a chart. `handleEmbedProxy` already knows the
+ * id at the moment it injects the shim, so it bakes it into the shim's target.
+ *
+ * A path segment rather than `?pub_id=`, for two reasons: it matches the shape
+ * the rest of this file uses and reuses {@link PUB_ID_RE}, and a query would
+ * have broken the shim, whose `to = T + u.search` would concatenate a second
+ * `?` if the target already carried one.
  *
  * Exists because `Card.js` fetches every non-initial tab's data at click time
  * from `new URL("/knowledge/get_data/", window.location.href)`. On tako.com that
@@ -131,10 +145,10 @@ export const CDN_ASSET_PREFIX = "/cdn-asset/";
  * rendered its `CardError` ("There was an error loading the data.") on every tab
  * but the one the page shipped inlined.
  */
-export const EMBED_DATA_PATH = "/embed-data/";
+export const EMBED_DATA_PREFIX = "/embed-data/";
 
 /**
- * The one upstream path {@link EMBED_DATA_PATH} forwards to, and the path the
+ * The one upstream path {@link EMBED_DATA_PREFIX} forwards to, and the path the
  * injected shim matches on. A constant, never derived from the request: that is
  * what keeps this a single-endpoint passthrough rather than a POST proxy for
  * Tako's whole origin.
@@ -175,12 +189,24 @@ const DATA_UPSTREAM_TIMEOUT_MS = 20_000;
  * and then 413'd — the tab the user clicked showing exactly the error this route
  * exists to remove, which is why the number is measured rather than guessed.
  *
- * 8 MB is ~80 tabs of headroom on the largest card Tako ships, and still bounds
- * what an anonymous caller can hand Django to parse (or make this worker
- * buffer). Subtabs are free: one response carries all of a tab's subtabs, so
- * clicking through EPS/Revenue/EBITDA issues no further requests at all.
+ * The ceiling that actually binds is DJANGO'S, not this one:
+ * `DATA_UPLOAD_MAX_MEMORY_SIZE = 3670016` (3.5 MB) in the tako repo,
+ * `app/config/settings/base.py`. Anything past that is refused upstream, arrives
+ * here as a 400, and maps to a 502 — the tab error again, under a log line
+ * reading `upstream HTTP 400` that says nothing about size. So a cap ABOVE it
+ * cannot buy headroom, only a worse diagnosis.
+ *
+ * Hence 3 MB: under Django's limit, so everything this route accepts is
+ * something Django will also accept, and an over-cap body gets a 413 that names
+ * the real problem. That is ~28 tabs of headroom against the 1.29 MB the largest
+ * card Tako ships actually reaches — and the number is deliberately not tuned
+ * closer, because Django's limit lives in another repo where a change to it
+ * would not show up in this PR's tests.
+ *
+ * Subtabs are free: one response carries all of a tab's subtabs, so clicking
+ * through EPS/Revenue/EBITDA issues no further requests at all.
  */
-const MAX_DATA_REQUEST_BYTES = 8 * 1024 * 1024;
+const MAX_DATA_REQUEST_BYTES = 3 * 1024 * 1024;
 
 /**
  * Refuse an upstream body larger than this. Real embed pages measure ~100 KB;
@@ -354,10 +380,21 @@ async function rateLimited(request: Request, env: Env): Promise<Response | undef
  */
 const PUB_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Extract and validate the pub_id from `/embed-html/{pub_id}`. */
-export function parsePubId(pathname: string): string | undefined {
-  if (!pathname.startsWith(EMBED_PROXY_PREFIX)) return undefined;
-  const raw = pathname.slice(EMBED_PROXY_PREFIX.length);
+/**
+ * Extract and validate the pub_id from `/embed-html/{pub_id}`, or from
+ * `/embed-data/{pub_id}` when given that prefix.
+ *
+ * Shared deliberately. On `/embed-html/` the value is interpolated into an
+ * upstream URL, so the validation is a security boundary; on `/embed-data/` it
+ * only ever reaches a log line. Validating both the same way costs nothing and
+ * means a log correlator can never become the weaker of the two.
+ */
+export function parsePubId(
+  pathname: string,
+  prefix: string = EMBED_PROXY_PREFIX,
+): string | undefined {
+  if (!pathname.startsWith(prefix)) return undefined;
+  const raw = pathname.slice(prefix.length);
   // A trailing slash is tolerated; anything else with a slash is rejected.
   const candidate = raw.endsWith("/") ? raw.slice(0, -1) : raw;
   return PUB_ID_RE.test(candidate) ? candidate : undefined;
@@ -712,9 +749,13 @@ export async function handleEmbedProxy(
     // to point at. Without one the card still renders its initial tab, which is
     // the pre-existing behaviour, so this is additive rather than load-bearing
     // for the first paint.
+    // The pub_id rides along so the data route's failures can name the card —
+    // see `EMBED_DATA_PREFIX`. `encodeURIComponent` for the same reason the
+    // native-card URL uses it, even though `PUB_ID_RE` has already bounded the
+    // shape on the way in here.
     const shimmed = injectDataProxyShim(
       html,
-      `${widgetOrigin}${EMBED_DATA_PATH}`,
+      `${widgetOrigin}${EMBED_DATA_PREFIX}${encodeURIComponent(pubId)}`,
     );
     html = shimmed.html;
     if (shimmed.anchor === "append") {
@@ -736,22 +777,33 @@ export async function handleEmbedProxy(
   // rename or a stray whitespace change would start forwarding a live CSRF
   // token to a third party with nothing but a log line to say so.
   //
-  // A missed strip on a body that still contains the token is therefore a 502.
-  // The route's whole failure story is that a failure costs an upgrade and
-  // leaves today's chart untouched — so the safe default here is no native
-  // card, not a forwarded credential.
+  // A body that still contains the token is therefore a 502. The route's whole
+  // failure story is that a failure costs an upgrade and leaves today's chart
+  // untouched — so the safe default here is no native card, not a forwarded
+  // credential.
   //
   // Both of Django's spellings are covered. The guard used to name only
   // `csrfToken`, so the `csrfmiddlewaretoken` hidden input in the body sailed
-  // through every render — the strip is new above, and this is what keeps it
-  // honest if the tag's shape changes.
+  // through every render.
+  //
+  // The scan is UNCONDITIONAL: `!stripped && html.includes(token)` skipped it
+  // entirely once a strip had succeeded, which is the same shape as the miss this
+  // change is fixing. A page carrying the JSON island PLUS a second inline script
+  // that merely mentions `csrfToken` sets `removedCsrf = true` — the island
+  // replacer returns `whole` untouched for anything it cannot `JSON.parse` — and
+  // the second one rode through. Dropping the conjunct is strictly stronger and
+  // cannot false-positive, because neither replacement re-emits the token string:
+  // one leaves `data-tako-stripped="csrf"` and a token-free dict, the other an
+  // HTML comment. The strip flags stay, but only to say which case this is.
   for (const { token, stripped } of [
     { token: "csrfToken", stripped: sanitized.removedCsrf },
     { token: "csrfmiddlewaretoken", stripped: sanitized.removedCsrfInput },
   ]) {
-    if (!stripped && html.includes(token)) {
+    if (html.includes(token)) {
       console.error(
-        `[mcp] embed proxy could not strip ${token} for ${pubId} — refusing to forward it; upstream shape has likely changed`,
+        `[mcp] embed proxy is still carrying ${token} for ${pubId} after ` +
+          `${stripped ? "a strip that reported success — a second occurrence the replacer did not match" : "no strip — the upstream shape has likely changed"}` +
+          `; refusing to forward it`,
       );
       return textResponse("upstream shape unrecognized", 502);
     }
@@ -800,10 +852,19 @@ export async function handleEmbedProxy(
  * the entire OAuth subsystem in `index.ts`, so that is `/authorize` and `/token`
  * paying for an unauthenticated POST to an experiment route.
  *
- * Reading incrementally and cancelling at the cap means the largest thing we
- * ever hold is the cap itself. `Content-Length` is deliberately not consulted:
- * it is absent on a chunked body, and the whole point is to bound the case where
- * the caller is not telling the truth.
+ * Reading incrementally and cancelling at the cap bounds the read. Bounding the
+ * PEAK takes the second half: the accumulated chunks are released as they are
+ * copied into the result, so the two allocations do not coexist. Without that,
+ * `new ArrayBuffer(total)` while `chunks` is still reachable puts peak at ~2x the
+ * cap, and since nothing bounds request concurrency in an isolate, enough
+ * simultaneous max-size POSTs from one IP — well inside 200/60 s — would reach
+ * the 128 MB limit anyway. Halving the peak and lowering the cap to 3 MB together
+ * take the count that gets there from single digits to well past what the meter
+ * allows.
+ *
+ * `Content-Length` is deliberately not consulted: it is absent on a chunked
+ * body, and the whole point is to bound the case where the caller is not telling
+ * the truth.
  */
 async function readBoundedBody(
   request: Request,
@@ -840,7 +901,10 @@ async function readBoundedBody(
   const out = new ArrayBuffer(total);
   const view = new Uint8Array(out);
   let offset = 0;
-  for (const chunk of chunks) {
+  // `shift()` rather than `for..of`: each chunk becomes unreachable as soon as it
+  // is copied, so the accumulated chunks and the result never both exist in full.
+  // See the docstring — this is the half that actually bounds the peak.
+  for (let chunk = chunks.shift(); chunk !== undefined; chunk = chunks.shift()) {
     view.set(chunk, offset);
     offset += chunk.byteLength;
   }
@@ -848,13 +912,144 @@ async function readBoundedBody(
 }
 
 /**
- * Handle `POST /embed-data/` — forward the card's tab-data request to Tako and
- * hand the JSON back with CORS.
+ * Refuse a body that would make the upstream endpoint WRITE.
+ *
+ * `/knowledge/get_data/` is not the read-only endpoint its name suggests.
+ * `GetData.post` (tako repo, `app/backend/knowledge/views.py`) is `csrf_exempt`
+ * and unauthenticated, and for any non-empty `pub_id` in the body it does:
+ *
+ *     chart_config = ChartConfig.objects.get(pub_id=pub_id)
+ *     if chart_config.frozen_after_sharing is None or not ...:
+ *         chart_config.viz_config = serialized_viz_config
+ *         chart_config.data = data
+ *         chart_config.save()
+ *
+ * No ownership check, and `frozen_after_sharing` is `BooleanField(null=True)`, so
+ * the default is `None` and that branch is writable. The rest of the body is
+ * `parse_search_doc(payload)`, so a caller who supplies a pub_id chooses both the
+ * row overwritten and what lands in it.
+ *
+ * What has kept that off the internet is CORS, not authorization: Django's
+ * `CORS_ALLOWED_ORIGINS` is a closed allowlist, so a drive-by page's preflight
+ * for a JSON POST fails and the browser never sends the request. This route
+ * answers `Access-Control-Allow-Origin: *`, which removes exactly that barrier —
+ * and forwards only `content-type`/`accept`, so Tako would see one Cloudflare
+ * egress IP for all of it. It cannot be narrowed instead: the widget document's
+ * origin inside the host sandbox is opaque, so there is no value to allowlist.
+ *
+ * So the gate is here. The shim never sends a real pub_id — `Card.js` uses
+ * `window.frameElement?.id ?? ""`, and `frameElement` is null in any
+ * cross-origin embed, which is also what ChatGPT sends on the path where tabs
+ * work. Measured on all eleven data requests of a full twelve-tab walk: `""`
+ * every time. Refusing a non-empty value therefore costs the feature nothing and
+ * leaves `if pub_id:` unreached, which makes this route read-only upstream.
+ *
+ * The body is parsed to check it and then DISCARDED — the original bytes are what
+ * gets forwarded, so nothing about what Django receives depends on a JSON
+ * round-trip here. Parsing also gets the JSON-validity check for free, which the
+ * route was otherwise forwarding blind.
+ *
+ * Exported for tests.
+ */
+export function findUpstreamWrite(
+  body: ArrayBuffer,
+): "not-json" | "not-an-object" | "writes" | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    return "not-json";
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return "not-an-object";
+  }
+  const pubId = (parsed as Record<string, unknown>)["pub_id"];
+  // Absent, null and `""` are all the read-only shape. Anything else — including
+  // a non-string, which Django would evaluate as truthy just the same — is a
+  // write.
+  if (pubId === undefined || pubId === null || pubId === "") return undefined;
+  return "writes";
+}
+
+/**
+ * A pass-through that observes the streamed response without holding it.
+ *
+ * Two jobs, both about the failure the streaming path used to swallow:
+ *
+ *   - On a clean end it calls `settle`, which clears the upstream timeout. That
+ *     is what makes {@link DATA_UPSTREAM_TIMEOUT_MS} bound the whole exchange
+ *     rather than time-to-headers: the timer stays armed while the body flows,
+ *     so a stalled upstream aborts instead of hanging the tab forever.
+ *   - On an error it LOGS, with the pub_id and the byte count. The status line is
+ *     already sent by then, so the card will render its own error either way —
+ *     but before this, that was the only failure on this route that reached a
+ *     user with nothing written down anywhere.
+ *
+ * Constant memory: one chunk in flight, never an accumulated copy.
+ */
+function countingPassThrough(
+  source: ReadableStream<Uint8Array>,
+  pubId: string,
+  settle: () => void,
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  let seen = 0;
+  // An explicit reader loop rather than a `TransformStream`, because the hook
+  // that matters here is the SOURCE erroring and `Transformer.cancel` is not in
+  // the lib types all four tsconfig projects see. Reading by hand puts the upstream
+  // failure in an ordinary `catch`, which is both portable and the only place the
+  // byte count is in scope.
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          settle();
+          controller.close();
+          return;
+        }
+        if (value !== undefined) {
+          seen += value.byteLength;
+          controller.enqueue(value);
+        }
+      } catch (err) {
+        // An upstream reset, or our own abort firing mid-body. The status line
+        // went out long ago, so the client now holds a truncated JSON document
+        // and `Card.js` will render its own error — this line is the only record
+        // of why, and its absence was the actual gap.
+        settle();
+        console.warn(
+          `[mcp] embed data proxy response stream failed after ${seen}B for ${pubId}: ${String(err)}`,
+        );
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      // The client went away (a closed tab, a navigated widget). Not a failure,
+      // so it is not logged — but the timer has to go, and the upstream body
+      // should stop being pulled.
+      settle();
+      void reader.cancel(reason).catch(() => {});
+    },
+  });
+}
+
+/**
+ * Handle `POST /embed-data/{pub_id}` — forward the card's tab-data request to
+ * Tako and hand the JSON back with CORS.
  *
  * The upstream URL is `${PUBLIC_BASE_URL}${UPSTREAM_DATA_PATH}` and nothing
- * about it comes from the request: not the origin, not the path, not the query.
- * The caller controls only the body, which is the same thing any browser
- * pointed at the public embed page already controls.
+ * about it comes from the request: not the origin, not the path (the pub_id
+ * segment is a log correlator and reaches neither), not the query.
+ *
+ * The caller controls the body — but NOT all of it. An earlier version of this
+ * comment said the body was "the same thing anyone pointed at the public embed
+ * page already controls", which was wrong in the way that matters: for a
+ * non-empty `pub_id` the upstream endpoint WRITES that card's stored config, with
+ * no ownership check, and what has kept that off the internet is Django's CORS
+ * allowlist — precisely the barrier this route's `ACAO: *` removes. So a
+ * non-empty `pub_id` is refused here and the route is read-only upstream. See
+ * {@link findUpstreamWrite}.
  *
  * What this route does NOT do, by construction:
  *
@@ -882,7 +1077,10 @@ export async function handleEmbedDataProxy(
   const url = new URL(request.url);
   const origins = resolveProxyOrigins(env, url.origin);
   if (origins === undefined) return undefined;
-  if (url.pathname !== EMBED_DATA_PATH) return undefined;
+  // Correlator only — see `EMBED_DATA_PREFIX`. Declining a malformed one keeps
+  // the route invisible, the same as the other two.
+  const pubId = parsePubId(url.pathname, EMBED_DATA_PREFIX);
+  if (pubId === undefined) return undefined;
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
@@ -922,12 +1120,39 @@ export async function handleEmbedDataProxy(
   if (read.byteLength === 0) return textResponse("empty request body", 400);
   const body = read;
 
+  // The upstream endpoint WRITES for a non-empty `pub_id` in the body, with no
+  // ownership check. See `findUpstreamWrite` for the full shape and for why CORS
+  // rather than authorization is what has kept that off the internet.
+  const write = findUpstreamWrite(body);
+  if (write !== undefined) {
+    console.warn(
+      `[mcp] embed data proxy refused a ${write} body for ${pubId} — this route forwards read-only requests only`,
+    );
+    return textResponse(
+      write === "writes"
+        ? // Named precisely, because the one way this can bite a real user is an
+          // upstream frontend change that starts sending a pub_id for embeds.
+          "pub_id must be empty: this route forwards read-only requests only"
+        : "expected a JSON object",
+      400,
+    );
+  }
+
   const upstream = `${origins.publicBase}${UPSTREAM_DATA_PATH}`;
   const controller = new AbortController();
-  const timeout = setTimeout(
+  // NOT cleared when the headers arrive. `Card.js` sets no deadline of its own,
+  // so this is the only bound on the whole exchange — and clearing it in a
+  // `finally` around the fetch made it cover time-to-headers only, leaving a
+  // stalled response body as an unbounded spinner in the tab the user just
+  // clicked. `settle()` below clears it when the body actually finishes.
+  let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(
     () => controller.abort(),
     DATA_UPSTREAM_TIMEOUT_MS,
   );
+  const settle = (): void => {
+    if (timeout !== undefined) clearTimeout(timeout);
+    timeout = undefined;
+  };
   let response: Response;
   try {
     response = await fetch(upstream, {
@@ -938,14 +1163,19 @@ export async function handleEmbedDataProxy(
       redirect: "manual",
     });
   } catch (err) {
-    console.warn("[mcp] embed data proxy upstream failed:", err);
+    settle();
+    console.warn(`[mcp] embed data proxy upstream failed for ${pubId}:`, err);
     return textResponse("upstream unavailable", 502);
-  } finally {
-    clearTimeout(timeout);
   }
 
   if (!response.ok) {
-    console.warn(`[mcp] embed data proxy upstream HTTP ${response.status}`);
+    settle();
+    console.warn(
+      `[mcp] embed data proxy upstream HTTP ${response.status} for ${pubId}` +
+        (response.status === 400
+          ? ` — a 400 here is usually the request body exceeding Django's DATA_UPLOAD_MAX_MEMORY_SIZE (3.5 MB)`
+          : ""),
+    );
     return textResponse(
       response.status === 404 ? "data not found" : "upstream error",
       response.status === 404 ? 404 : 502,
@@ -953,30 +1183,51 @@ export async function handleEmbedDataProxy(
   }
   const upstreamType = response.headers.get("content-type") ?? "";
   if (!upstreamType.toLowerCase().includes("application/json")) {
+    settle();
     console.warn(
-      `[mcp] embed data proxy got non-JSON content-type "${upstreamType}"`,
+      `[mcp] embed data proxy got non-JSON content-type "${upstreamType}" for ${pubId}`,
     );
     return textResponse("upstream returned non-JSON", 502);
   }
 
-  // Streamed, not buffered. Nothing here needs rewriting — the payload is card
-  // data, not markup with our origin baked into it — and a tab of a large card
-  // measures ~350 KB, which is not worth holding.
-  return new Response(response.body, {
-    status: 200,
-    headers: {
-      // Pinned, not reflected. This origin is the OAuth origin; the content-type
-      // check above already refused anything else, and stating the value we serve
-      // rather than echoing upstream's means a charset or parameter surprise
-      // cannot become the MIME on `mcp.tako.com`.
-      "content-type": "application/json; charset=utf-8",
-      "access-control-allow-origin": "*",
-      // Live data behind a POST: nothing to cache, and the shared caches in
-      // between have no business trying.
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
+  // Streamed, not buffered, and deliberately so even though buffering would let
+  // this return a clean 502 on a mid-flight failure instead of a truncated 200.
+  //
+  // Buffering does not actually save the user from anything: `Card.js` calls
+  // `.json()` on the result, so a 502 and a truncated body produce the SAME
+  // "There was an error loading the data." card. What it would cost is real —
+  // responses measure up to 1.57 MB (larger than the requests, since the
+  // accumulated config comes back with the new tab's data), so a second buffer
+  // would undo what the request cap above is for, on the isolate that also serves
+  // `/authorize`.
+  //
+  // What was genuinely missing was not the status code but the LOG: a stream that
+  // died mid-flight was the one failure here that reached the user with nothing
+  // written down. `countingPassThrough` fixes that half and leaves the memory
+  // profile flat.
+  // A 200 with no body at all: nothing will ever call `settle`, so do it here or
+  // the abort timer stays armed for the full bound on a request that is finished.
+  if (response.body === null) settle();
+  return new Response(
+    response.body === null
+      ? null
+      : countingPassThrough(response.body, pubId, settle),
+    {
+      status: 200,
+      headers: {
+        // Pinned, not reflected. This origin is the OAuth origin; the
+        // content-type check above already refused anything else, and stating the
+        // value we serve rather than echoing upstream's means a charset or
+        // parameter surprise cannot become the MIME on `mcp.tako.com`.
+        "content-type": "application/json; charset=utf-8",
+        "access-control-allow-origin": "*",
+        // Live data behind a POST: nothing to cache, and the shared caches in
+        // between have no business trying.
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      },
     },
-  });
+  );
 }
 
 /**
