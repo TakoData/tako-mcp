@@ -20,13 +20,27 @@
  *        d. `get_credit_balance`          — `details.credit_balance`
  *                                           must be a number or numeric string (read-only)
  *        e. `tako_visualize`              — creates a card (charges 1 credit)
- *   6. Native-card proxy (`/embed-html/`) on the card step 5e just created —
- *      404 soft-warns (path gated off via `PUBLIC_CDN_URL`), 200 hard-asserts
- *      inert content type, a nonzero CDN rewrite, and no leaked `csrfToken`
+ *   6. Native-card proxy on the card step 5e just created — all three of its
+ *      routes, since the feature is only as live as its weakest one:
+ *        - `/embed-html/`: 404 soft-warns (path gated off via `PUBLIC_CDN_URL`),
+ *          200 hard-asserts inert content type, a nonzero CDN rewrite, no
+ *          leaked `csrfToken`, and the presence of the data-proxy shim
+ *        - `/cdn-asset/`: one rewritten asset is actually FETCHED, preferring
+ *          the JS entry bundle
+ *        - `/embed-data/{pub_id}`: called with a body shaped exactly like the
+ *          card's own, asserting JSON with `component_data` back — and then
+ *          called again with a non-empty `pub_id`, asserting 400, because that
+ *          body would otherwise reach an upstream WRITE with no ownership check
  *
- * The step-6 rewrite assertion is the one check here that exists to catch a
- * failure with NO error signal: a `PUBLIC_CDN_URL` naming the wrong CloudFront
- * distribution answers 200, mounts the card, and draws no chart.
+ * Step 6 is where the checks that catch a NO-ERROR-SIGNAL failure live, and
+ * every one of them is here because that failure shipped:
+ *   - a `PUBLIC_CDN_URL` naming the wrong CloudFront distribution answers 200,
+ *     mounts the card, and draws no chart;
+ *   - a missing or 502-ing `/embed-data/` draws the chart and then shows
+ *     "There was an error loading the data." on every tab the page did not
+ *     inline, which is most of them on a multi-tab card;
+ *   - a relaxed pub_id gate is invisible from the outside until someone
+ *     overwrites a card with it.
  *
  * Excluded by design:
  *   - `tako_agent` / `tako_agent_start` / `tako_agent_wait` — long-running;
@@ -60,6 +74,10 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+// Imported rather than spelled out, so the route this asserts against cannot
+// drift from the route the worker serves and the shim points at.
+import { EMBED_DATA_PREFIX } from "../src/embed_proxy.js";
 
 const CANARY_QUERY = "US GDP";
 
@@ -527,6 +545,122 @@ try {
         `it. Adding that header is this route's entire reason to exist.`,
     );
     ok(`/cdn-asset/ → 200 with ACAO:* for ${assetPath.slice(0, 72)}`);
+
+    // Third leg: the card's own tab-data endpoint.
+    //
+    // This is the leg whose failure is loudest to a USER and completely silent
+    // here without a check. The page inlines `component_data` for the tab it
+    // opens on and fetches every other tab at click time. Everything above can
+    // be green — page proxied, assets served, chart drawn — while eleven of the
+    // Nvidia card's twelve tabs say "There was an error loading the data.",
+    // which is exactly what shipped and what a user reported.
+    //
+    // Two distinct things to check, because either alone passes while broken:
+    const dataUrl = `${baseUrl}${EMBED_DATA_PREFIX}${tvStructured.card_id}`;
+    assert(
+      nativeBody.includes(dataUrl),
+      `/embed-html/ served a page with no data-proxy shim pointing at ` +
+        `${dataUrl}. Every tab the page did not inline will render "There was an ` +
+        `error loading the data." — the card's own fetch resolves against the ` +
+        `widget sandbox's origin without it.`,
+    );
+
+    // ...and then actually call it, the way `Card.js` does: POST the card's viz
+    // config, which the page carries in its `config-json` island. A shim
+    // pointing at a route that 502s upstream is the same user-visible failure as
+    // no shim at all.
+    const island =
+      /<script id="config-json" type="application\/json">([\s\S]*?)<\/script>/.exec(
+        nativeBody,
+      );
+    if (island === null) {
+      // A `console.warn` alone would have turned this whole leg into a skip that
+      // exits 0: an id change, an attribute reorder, or the proxy altering the
+      // tag and every assertion below is silently not run while the job stays
+      // green. That is the failure this file already argues against for the
+      // `/embed-html/` 404 a few lines up, so it gets the same treatment.
+      const why =
+        `could not find the config-json island in the proxied page, so ` +
+        `${EMBED_DATA_PREFIX} went unexercised — the leg that proves tabs load at ` +
+        `all. The island is where Card.js reads the viz config it posts; if it ` +
+        `was renamed, this check needs updating rather than deleting.`;
+      if (isDeployedTarget) fail(why);
+      console.warn(`[warn] ${why}`);
+    } else {
+      const config = JSON.parse(island[1]!) as { params?: unknown };
+      assert(
+        config.params !== undefined,
+        `config-json island has no \`params\` — the body Card.js posts is built ` +
+          `from it, so this check cannot speak for the real request shape`,
+      );
+      const dataRes = await fetch(dataUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // `pub_id` is `window.frameElement?.id ?? ""` in the page, and that is
+        // "" in every cross-origin embed — including the one ChatGPT renders,
+        // where tabs work. So "" is the real shape, not a shortcut.
+        body: JSON.stringify({ ...config.params, pub_id: "", dark_mode: false }),
+      });
+      const dataType = dataRes.headers.get("content-type") ?? "";
+      assert(
+        dataRes.status === 200,
+        `${dataUrl} → ${dataRes.status} for a request shaped exactly like the ` +
+          `card's own. A 413 means MAX_DATA_REQUEST_BYTES is under what a real ` +
+          `viz config weighs; a 400 means the pub_id gate rejected a body the ` +
+          `page itself would send; a 502 means the upstream ` +
+          `/knowledge/get_data/ contract moved. Either way every non-initial tab ` +
+          `shows an error.`,
+      );
+      assert(
+        dataRes.headers.get("access-control-allow-origin") === "*",
+        `${dataUrl} answered 200 without "access-control-allow-origin: *" ` +
+          `— the widget cannot read it, which is the whole reason to proxy`,
+      );
+      assert(
+        dataType.includes("application/json"),
+        `${dataUrl} must answer JSON (Card.js calls .json() on it), got ` +
+          `${JSON.stringify(dataType)}`,
+      );
+      const payload = (await dataRes.json()) as Record<string, unknown>;
+      assert(
+        "component_data" in payload,
+        `${dataUrl} returned JSON with no \`component_data\` — the key the ` +
+          `card renders from. The route is reachable and the contract has moved.`,
+      );
+      ok(`${EMBED_DATA_PREFIX} → 200 JSON with component_data, ACAO:*`);
+
+      // And the write gate, which is the reason this route is safe to expose at
+      // all. `/knowledge/get_data/` overwrites `ChartConfig.viz_config` for any
+      // non-empty `pub_id` in the body, with no ownership check, `csrf_exempt`
+      // and unauthenticated — and `ACAO: *` here removes the CORS allowlist that
+      // otherwise keeps a drive-by page off it. Asserted post-deploy because
+      // `findUpstreamWrite` passing its unit tests says nothing about whether the
+      // build that is actually serving traffic still calls it.
+      //
+      // Safe to send: a refusal is the assertion. If this ever returns 200 the
+      // card in the body would have been overwritten, which is why the body is
+      // this card's OWN config — the one the smoke just created and does not
+      // mind — rather than an arbitrary pub_id.
+      const writeRes = await fetch(dataUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...config.params,
+          pub_id: tvStructured.card_id,
+          dark_mode: false,
+        }),
+      });
+      assert(
+        writeRes.status === 400,
+        `${dataUrl} accepted a body carrying a non-empty pub_id ` +
+          `(${writeRes.status}, expected 400). That body reaches ` +
+          `/knowledge/get_data/, which overwrites that card's stored viz_config ` +
+          `and data with no ownership check — from any origin, since this route ` +
+          `answers ACAO:*. The gate in findUpstreamWrite is not running in the ` +
+          `deployed build.`,
+      );
+      ok(`${EMBED_DATA_PREFIX} → 400 on a non-empty pub_id (write gate holds)`);
+    }
   }
 } finally {
   await client.close().catch(() => {
