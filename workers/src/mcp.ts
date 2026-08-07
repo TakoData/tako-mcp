@@ -1228,14 +1228,30 @@ function registerTool(
           // `AnyToolModule` erases handler types at the registry
           // boundary; resolvers narrow it themselves.
           const resolvedUri = ui.dynamic.resolveUriFromInput(input, output);
-          resultMeta = {
-            ...(resultMeta ?? {}),
-            ui: {
-              ...((resultMeta?.ui as Record<string, unknown> | undefined) ?? {}),
-              resourceUri: resolvedUri,
-            },
-            "ui/resourceUri": resolvedUri,
-          };
+          // `undefined` = this call produced nothing to render. Then the
+          // result names NO ui resource: pointing at the static bundle
+          // regardless (what this used to do) is an instruction to mount a
+          // widget for a result that has no chart in it, and on a host with a
+          // minimum widget-card height that instruction is exactly the empty
+          // grey box users report. A host that decides per RESULT now mounts
+          // nothing at all.
+          //
+          // Hosts that read the URI from `tools/list` registration `_meta`
+          // are unaffected — that metadata is static per tool and still
+          // declares the widget, because a tool descriptor cannot know
+          // whether a future call will have a card. ChatGPT and claude.ai are
+          // both in that bucket; their chart-less mount is handled inside the
+          // bundle by the labelled empty state in `collapse()`.
+          if (resolvedUri !== undefined) {
+            resultMeta = {
+              ...(resultMeta ?? {}),
+              ui: {
+                ...((resultMeta?.ui as Record<string, unknown> | undefined) ?? {}),
+                resourceUri: resolvedUri,
+              },
+              "ui/resourceUri": resolvedUri,
+            };
+          }
         } catch (err) {
           console.error(
             `dynamic.resolveUriFromInput failed for ${tool.name}:`,

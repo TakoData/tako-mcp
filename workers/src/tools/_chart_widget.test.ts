@@ -86,6 +86,18 @@ describe("chart widget HTML", () => {
     expect(html).toContain('addEventListener("load"');
   });
 
+  it("positions the empty state out of flow so it cannot grow the box", () => {
+    // Two properties carry the whole design and neither is cosmetic:
+    // `position: fixed` fills the host's reserved viewport without
+    // contributing to `scrollHeight` (a host that sizes from content must not
+    // see the label as a reason to make room), and the individual offsets
+    // rather than the `inset` shorthand keep it parseable by older engines.
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    expect(ui.html).toContain("#tako-empty");
+    expect(ui.html).toMatch(/#tako-empty\s*\{[^}]*position:\s*fixed/);
+    expect(ui.html).not.toMatch(/#tako-empty\s*\{[^}]*inset:/);
+  });
+
   it("declares resourceDomains so the remote image fallback loads on claude.ai", () => {
     const ui = buildChartAppUiResourceFromOutputPubId(ENV);
     // image_url is served from the public API base; the embed page from

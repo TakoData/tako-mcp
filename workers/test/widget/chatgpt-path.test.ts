@@ -181,6 +181,32 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     expect(renderedIframe(m)).toBe(true);
   });
 
+  it("EMPTY: a chart-less toolOutput labels the card ChatGPT keeps anyway", () => {
+    // The host this was reported on. ChatGPT mounts the widget from static
+    // `openai/outputTemplate` registration metadata, so a zero-card search
+    // still gets a widget card, and it holds that card at its minimum height
+    // through the shrink to zero — an unexplained grey void beside a working
+    // answer. The bundle cannot un-mount itself; it can only make the space
+    // read as intentional. Delivered on PATH 1, the route ChatGPT actually
+    // uses, because a guard that only works over postMessage would not have
+    // covered this host at all.
+    const heights: number[] = [];
+    const m = mountWidget(html(), {
+      toolOutput: { cards: [], web_results: [], usage: {} },
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    const empty = m.widgetWin.document.getElementById(
+      "tako-empty",
+    ) as HTMLElement;
+    expect(empty.classList.contains("hidden")).toBe(false);
+    expect(empty.textContent).toMatch(/no chart/i);
+    expect(renderedIframe(m)).toBe(false);
+    // ChatGPT reads `notifyIntrinsicHeight`, not the postMessage, and the last
+    // thing it hears must be zero: labelling a box the host kept is not a
+    // request for one. [1, 0] — the mount-time floor, then the collapse.
+    expect(heights).toEqual([1, 0]);
+  });
+
   it("NO PNG FALLBACK: with openai present the widget never paints an image", () => {
     const m = mountWidget(html(), { toolOutput: PROD_STRUCTURED_CONTENT });
     // ChatGPT skips extraMeta, so there is no image_data_url; confirm the
