@@ -1221,6 +1221,124 @@ describe("native card upgrade (executed)", () => {
     expect(sizeChanges.at(-1)?.params.height).toBe(300);
     expect(m.widgetWin.document.documentElement.style.transform).toBe("");
   });
+
+  /**
+   * The native card is INTERACTIVE, and the reporter used to treat its height as
+   * a one-time measurement.
+   *
+   * Reported on claude.ai 2026-08-07 as the card being "weirdly cut off" after
+   * pressing `Show more`. Measured on the real Nvidia card at a 762 px frame:
+   * 527 px on open, 619 px after a tab switch, 641 px after `Show more`. Neither
+   * interaction fires `resize` or `load`, the ladder is finished by 3 s, and the
+   * page's own CSS is `:root{overflow-y:hidden}` — so growth past the last
+   * reported height is not scrolled and not scaled, it is gone.
+   *
+   * jsdom performs no layout, so both readings are stubbed here: `offsetHeight`
+   * is what the reporter measures and reports, `scrollHeight` is the change
+   * detector that decides whether a pass runs at all.
+   */
+  function stubLayout(
+    m: Mounted,
+    read: { offsetHeight: () => number; scrollHeight: () => number },
+  ): { fireObserver: () => void; observed: string[] } {
+    const w = m.widgetWin as unknown as {
+      HTMLElement: { prototype: object };
+      ResizeObserver?: unknown;
+    };
+    for (const [prop, get] of [
+      ["offsetHeight", read.offsetHeight],
+      ["scrollHeight", read.scrollHeight],
+    ] as const) {
+      Object.defineProperty(w.HTMLElement.prototype, prop, {
+        configurable: true,
+        get,
+      });
+    }
+    const callbacks: Array<() => void> = [];
+    const observed: string[] = [];
+    w.ResizeObserver = class {
+      private readonly cb: () => void;
+      constructor(cb: () => void) {
+        this.cb = cb;
+        callbacks.push(cb);
+      }
+      observe(target: { tagName?: string }): void {
+        observed.push(String(target?.tagName ?? "?").toLowerCase());
+      }
+      disconnect(): void {}
+    };
+    return {
+      fireObserver: () => {
+        for (const cb of callbacks) cb();
+      },
+      observed,
+    };
+  }
+
+  it("re-reports its height when the card relayouts, not just on a timer", async () => {
+    const m = mountWidget(staticWidgetHtml());
+    stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    let natural = 400;
+    const layout = stubLayout(m, {
+      offsetHeight: () => natural,
+      // Body's own content height. Kept distinct from `offsetHeight` so the two
+      // roles stay visible: one is reported, one only decides whether to look.
+      scrollHeight: () => natural,
+    });
+    deliverNative(m);
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+
+    const heights = (): number[] =>
+      m.toParent
+        .filter(
+          (msg) =>
+            (msg as { method?: string }).method ===
+            "ui/notifications/size-changed",
+        )
+        .map((msg) => (msg as { params: { height: number } }).params.height);
+
+    // It watches the BODY. Observing `documentElement` would mean every fit it
+    // applies observes itself.
+    expect(layout.observed).toEqual(["body"]);
+    expect(heights().at(-1)).toBe(400);
+    const settled = heights().length;
+
+    // A callback with nothing changed must not re-report and must not touch a
+    // style — that is what stops the correction from feeding itself every frame.
+    layout.fireObserver();
+    expect(heights().length).toBe(settled);
+
+    // `Show more`: the document grows past the host's inline ceiling. Now it has
+    // to both re-report and scale, or the user loses the rows they just asked
+    // for.
+    natural = 640;
+    layout.fireObserver();
+    expect(heights().length).toBe(settled + 1);
+    expect(heights().at(-1)).toBe(500);
+    expect(m.widgetWin.document.documentElement.style.transform).toBe(
+      `scale(${500 / 640})`,
+    );
+  });
+
+  it("survives a host with no ResizeObserver", async () => {
+    // The observer is feature-detected: losing it has to leave the ladder's
+    // behaviour intact, not throw and take that down too.
+    const m = mountWidget(staticWidgetHtml());
+    stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    delete (m.widgetWin as unknown as { ResizeObserver?: unknown })
+      .ResizeObserver;
+    deliverNative(m);
+    fireImageLoad(m);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(m.widgetWin.document.body.innerHTML).toContain("REAL CARD");
+    expect(
+      m.toParent.filter(
+        (msg) =>
+          (msg as { method?: string }).method === "ui/notifications/size-changed",
+      ).length,
+    ).toBeGreaterThan(0);
+  });
 });
 
 describe("baked widget variant (executed)", () => {

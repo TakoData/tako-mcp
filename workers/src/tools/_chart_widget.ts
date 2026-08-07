@@ -512,12 +512,42 @@ function buildFallbackWidgetHtml(embedUrl: string, message: string): string {
  * equivalent here is an explicit `transform: scale()`. Each pass clears the
  * previous fit before measuring, so the reading is always the card's natural
  * height at the real frame width and the result cannot oscillate.
+ *
+ * The ceiling is not a one-time measurement, and treating it as one was the
+ * second half of the 2026-08-07 claude.ai report. The native card is
+ * INTERACTIVE: switching tab and pressing `Show more` both relayout it, and
+ * neither fires `resize` or `load`. Measured on the real Nvidia card at a
+ * 762 px frame — 527 px on open, 619 px after a tab switch, 641 px after
+ * `Show more` — against a document whose own CSS sets `:root{overflow-y:hidden}`.
+ * So growth past the last reported height is not scrolled and not scaled, it is
+ * simply gone, which is the card being "weirdly cut off" partway through a row.
+ * The ladder below cannot cover it: the click happens whenever the user clicks.
+ *
+ * Hence the `ResizeObserver`. Two details make it safe rather than a layout loop:
+ *
+ *   - It observes `document.body`, not `documentElement`. The fit is applied to
+ *     `documentElement`, so observing that would mean every correction observed
+ *     itself.
+ *   - Applying the fit still changes body's width, which the observer DOES see.
+ *     `last` therefore records body's `scrollHeight` as it stands AFTER the fit,
+ *     and a pass whose reading matches it returns before touching a single
+ *     style. That is what terminates the sequence: correction, one confirming
+ *     callback, quiet — instead of clear/measure/re-apply every frame forever.
  */
 const NATIVE_HEIGHT_REPORTER = [
   "<script>(function(){",
   "var CAP=" + String(MAX_INLINE_WIDGET_HEIGHT_PX) + ";",
-  "function n(){",
+  // Body's scrollHeight as of the end of the last pass that did work — the
+  // reentrancy guard described above. -1 so the first pass always runs.
+  "var last=-1;",
+  "function raw(){return document.body?document.body.scrollHeight:0;}",
+  "function n(force){",
   "var d=document.documentElement;if(!d)return;",
+  // Nothing has moved since we last fitted the document, so re-fitting it would
+  // only be the observer answering itself. The `force` flag exists for the
+  // triggers that know something changed out-of-band (the frame resized) or that
+  // must report regardless of layout (the initial pass and the mount ladder).
+  "if(!force&&raw()===last)return;",
   // Measure UNSCALED: clear any fit applied on an earlier pass so `offsetHeight`
   // reports the card's natural height rather than a previously scaled one.
   "d.style.transform='';d.style.transformOrigin='';d.style.width='';",
@@ -532,18 +562,26 @@ const NATIVE_HEIGHT_REPORTER = [
   "d.style.width=(100/s)+'%';",
   "d.style.transform='scale('+s+')';",
   "h=CAP;}",
+  "last=raw();",
   "try{if(window.openai&&typeof window.openai.notifyIntrinsicHeight==='function')",
   "window.openai.notifyIntrinsicHeight(h);}catch(e){}",
   "try{window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',",
   "params:{width:(document.documentElement&&document.documentElement.clientWidth)||0,height:h}},'*');}catch(e){}",
   "}",
-  "n();",
-  "window.addEventListener('resize',n);",
-  "window.addEventListener('load',n);",
+  "function f(){n(true);}",
+  "f();",
+  "window.addEventListener('resize',f);",
+  "window.addEventListener('load',f);",
   // Card.js mounts asynchronously and lazily imports its view chunks, so the
   // first few reads land before the card has its real height. Re-report on a
   // short ladder rather than once.
-  "setTimeout(n,400);setTimeout(n,1200);setTimeout(n,3000);",
+  "setTimeout(f,400);setTimeout(f,1200);setTimeout(f,3000);",
+  // Everything after that ladder — a tab switch, `Show more`, a chart that
+  // finishes drawing late. Feature-detected because a failure to observe must
+  // leave the ladder's behaviour intact, not throw and lose it too.
+  "try{if(typeof ResizeObserver!=='undefined'&&document.body){",
+  "new ResizeObserver(function(){n(false);}).observe(document.body);",
+  "}}catch(e){}",
   "})();<\/script>",
 ].join("");
 
