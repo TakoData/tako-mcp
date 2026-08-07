@@ -1615,6 +1615,11 @@ const WIDGET_HTML = `<!doctype html>
       log("no-chart payload, collapsed widget");
       return true;
     }
+    // Past the no-chart guard, so this payload has a chart in it. Persist the
+    // identity NOW rather than at one of render()'s several success exits:
+    // what we are protecting against is losing the payload, and every branch
+    // below renders the same card from the same two URLs.
+    persistWidgetState(structuredContent);
     var url = structuredContent.embed_url;
     var imgUrl = structuredContent.image_url;
     // \`image_data_url\` and PNG natural dimensions live on \`_meta\`
@@ -1774,28 +1779,139 @@ const WIDGET_HTML = `<!doctype html>
     return true;
   }
 
+  // Mirror of what the widget last rendered, kept in ChatGPT's widget state so
+  // a reloaded conversation can repaint without \`toolOutput\`.
+  //
+  // The bug: ChatGPT rehydrates a reloaded conversation with a STRIPPED
+  // \`toolOutput\`. Observed in the wild as \`{"width":900,"height":720}\` — the
+  // two \`topCardChartFields\` defaults and nothing else, no \`embed_url\`, no
+  // \`image_url\`. render()'s no-chart guard reads that as "this call produced
+  // no card" and collapses, so a working chart turns into an empty box on
+  // reload. The server is not at fault: a repeat \`tako_answer\` call returns
+  // all ten declared keys (verified against prod), and \`topCardChartFields\`
+  // emits its six widget fields all-or-nothing, so no server path produces
+  // that pair alone.
+  //
+  // Claude does not have this failure mode — it gets a per-call dynamic
+  // \`ui/resourceUri\` carrying the \`pub_id\`, so the URI itself identifies the
+  // card. ChatGPT reads its template URI from static \`tools/list\` registration
+  // metadata (see the \`ui?.dynamic\` block in mcp.ts, which deliberately does
+  // NOT override \`openai/outputTemplate\`), so the widget has no identity of
+  // its own and \`toolOutput\` is its only source. Widget state is the Apps
+  // SDK's own answer to exactly this: \`setWidgetState\` is synchronous, and
+  // \`window.openai.widgetState\` is restored on reload.
+  //
+  // Only the structuredContent half is mirrored. \`_meta\` (the baked
+  // \`image_data_url\`) is deliberately NOT persisted: it is up to 400 KB
+  // against a store the SDK documents as ephemeral and widget-scoped, and the
+  // ChatGPT path never reads it anyway — that host's permissive \`img-src\`
+  // renders the cross-origin \`image_url\` directly. A restored render on
+  // ChatGPT therefore takes the same branch it took the first time.
+  var lastPersistedKey = null;
+  function persistWidgetState(structuredContent) {
+    var w = window;
+    if (!w || !w.openai || typeof w.openai.setWidgetState !== "function") return;
+    var embedUrl = typeof structuredContent.embed_url === "string" ? structuredContent.embed_url : "";
+    var imageUrl = typeof structuredContent.image_url === "string" ? structuredContent.image_url : "";
+    if (!embedUrl && !imageUrl) return;
+    // Write-once per card. \`setWidgetState\` re-renders the widget on some
+    // hosts, and render() is reachable from a 250 ms poll, so an unguarded
+    // write is a loop — the same hazard the height notifier guards against.
+    var key = embedUrl + "|" + imageUrl;
+    if (key === lastPersistedKey) return;
+    lastPersistedKey = key;
+    try {
+      w.openai.setWidgetState({
+        pub_id: structuredContent.pub_id,
+        embed_url: structuredContent.embed_url,
+        image_url: structuredContent.image_url,
+        width: structuredContent.width,
+        height: structuredContent.height,
+        dark_mode: structuredContent.dark_mode,
+      });
+    } catch (e) {
+      // Best-effort: a host without the API, or one that rejects the payload,
+      // must not take down the render that is already in progress.
+      log("widget-state persist failed", { error: String(e) });
+    }
+  }
+
+  // Does this payload actually carry a chart? Same two fields render()'s
+  // no-chart guard tests, and it has to be the same test: a candidate that
+  // would only collapse the widget must not count as having satisfied the
+  // search for one that would paint.
+  function hasChart(o) {
+    if (!o || typeof o !== "object") return false;
+    return typeof o.embed_url === "string" || typeof o.image_url === "string";
+  }
+
+  // Does this payload look like a WHOLE tool result, as opposed to the
+  // remains of one? A real result carries its result-shaped keys even when it
+  // found nothing — a zero-card search still ships \`cards: []\`. ChatGPT's
+  // stripped reload payload carries none of them, only the two dimension
+  // defaults. That difference is what lets a legitimate empty result be told
+  // apart from a lost one, and it is the ONLY thing standing between the
+  // restore below and repainting a stale chart over a genuine "no results".
+  function looksComplete(o) {
+    if (!o || typeof o !== "object") return false;
+    return "cards" in o || "answer" in o || "web_results" in o;
+  }
+
+  // Best-first over ordered candidates. Truthiness is NOT the selector:
+  // ChatGPT's stripped reload payload (\`{width, height}\`) is a perfectly
+  // truthy object, so a plain \`a || b\` chain picks it, hands it to render(),
+  // and collapses — which IS the reported bug, with a healthier channel
+  // sitting unread further down. Prefer a candidate carrying a chart; fall
+  // back to the first truthy one so a genuinely chart-less result still
+  // reaches render() and gets the labelled empty state, rather than being
+  // mistaken for "nothing has arrived yet" and hanging the poll.
+  function firstUsable(candidates) {
+    var i;
+    for (i = 0; i < candidates.length; i++) {
+      if (hasChart(candidates[i])) return candidates[i];
+    }
+    for (i = 0; i < candidates.length; i++) {
+      if (candidates[i]) return candidates[i];
+    }
+    return null;
+  }
+
   function pickFromOpenAi() {
     var w = window;
     if (!w || !w.openai || typeof w.openai !== "object") return null;
-    return (
-      w.openai.toolOutput ||
-      (w.openai.widget && w.openai.widget.toolOutput) ||
-      (w.openai.widget && w.openai.widget.structuredContent) ||
-      (w.openai.widget && w.openai.widget.payload) ||
-      (w.openai.toolResponseMetadata && w.openai.toolResponseMetadata.structuredContent) ||
-      null
-    );
+    var live = [
+      w.openai.toolOutput,
+      w.openai.widget && w.openai.widget.toolOutput,
+      w.openai.widget && w.openai.widget.structuredContent,
+      w.openai.widget && w.openai.widget.payload,
+      w.openai.toolResponseMetadata && w.openai.toolResponseMetadata.structuredContent,
+    ];
+    var picked = firstUsable(live);
+    if (hasChart(picked)) return picked;
+    // No live channel has a chart. Restore the mirror ONLY when nothing live
+    // looks like a whole result: a zero-card search is a complete answer that
+    // happens to have no chart, and repainting the previous card over it would
+    // show the user a chart for a question that returned nothing.
+    var i;
+    for (i = 0; i < live.length; i++) {
+      if (looksComplete(live[i])) return picked;
+    }
+    return hasChart(w.openai.widgetState) ? w.openai.widgetState : picked;
   }
+
+  // Same best-first selection as \`pickFromOpenAi\`, and for the same reason:
+  // a stripped-but-truthy \`toolOutput\` must not mask a sibling channel that
+  // still carries the chart. No widget-state fallback here — this path fires
+  // on a live \`openai:set_globals\` event, never on rehydration.
   function pickFromGlobals(globals) {
     if (!globals || typeof globals !== "object") return null;
-    return (
-      globals.toolOutput ||
-      globals.structuredContent ||
-      (globals.widget && globals.widget.toolOutput) ||
-      (globals.widget && globals.widget.structuredContent) ||
-      (globals.widget && globals.widget.payload) ||
-      null
-    );
+    return firstUsable([
+      globals.toolOutput,
+      globals.structuredContent,
+      globals.widget && globals.widget.toolOutput,
+      globals.widget && globals.widget.structuredContent,
+      globals.widget && globals.widget.payload,
+    ]);
   }
 
   // Initial intrinsic-height notification — 1 px (effectively invisible)
