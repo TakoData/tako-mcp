@@ -368,15 +368,16 @@ paths:
         underlying data, or the full text of a web page. Returns a short-lived presigned
         download URL. Send `content_format: card_json` for a rich, card-type-specific
         JSON object under `card_data` (for example a weather forecast with hourly
-        and daily records). A card_json export is never truncated, so it bills for
-        every record row, and a card type without a card_json shape returns 422. Protected-source
-        cards (data export not available) return 403. Send `quote_only: true` to get
-        only the export''s price (`cost` + `export_pricing`) with an empty payload.
-        A quote charges nothing. A quote of a row-based format also fetches nothing.
-        A card_json quote is the one exception: its price needs the real record-row
-        count, so Tako builds the payload and can call the data provider. The price
-        is then exact instead of an upper bound. That quote requires a funded account,
-        and it still charges nothing.'
+        and daily records). A card_json export accepts no row cap, so a card whose
+        record array is unbounded caps it at the platform export ceiling and sets
+        `truncated`. It bills for every record row it returns, and a card type without
+        a card_json shape returns 422. Protected-source cards (data export not available)
+        return 403. Send `quote_only: true` to get only the export''s price (`cost`
+        + `export_pricing`) with an empty payload. A quote charges nothing. A quote
+        of a row-based format also fetches nothing. A card_json quote is the one exception:
+        its price needs the real record-row count, so Tako builds the payload and
+        can call the data provider. The price is then exact instead of an upper bound.
+        That quote requires a funded account, and it still charges nothing.'
       operationId: contents
       requestBody:
         content:
@@ -1707,9 +1708,11 @@ components:
           title: Card Data
           description: 'Inline card data as a card-type-specific JSON object. The
             ''card_type'' field inside the object names its shape. Set only when content_format
-            is ''card_json''. The payload is always complete: card_json is never truncated.
-            Card types without a card_json shape return 422 on /contents and fall
-            back to ''json_compact'' on search and answer include_contents.'
+            is ''card_json''. A card_json request accepts no row cap, so a card whose
+            record array is unbounded caps it at the platform export ceiling and reports
+            ''truncated'': true. The payload then also carries the true count for
+            its record array. Card types without a card_json shape return 422 on /contents
+            and fall back to ''json_compact'' on search and answer include_contents.'
         url:
           anyOf:
           - type: string
@@ -2603,6 +2606,43 @@ components:
       - id
       - delta
       title: ReasoningEvent
+    RelatedSuggestion:
+      properties:
+        query:
+          type: string
+          title: Query
+          description: The follow-up query. Send it as the `query` of another search
+            request.
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+          description: What the query asks for, in words. Tako sets this only when
+            the query text does not say on its own, such as a lookup by identifier.
+            Most suggestions omit it because the query already reads as a question.
+            Tako composes it from the data on the card; no language model writes it.
+        node_ids:
+          items:
+            type: string
+          type: array
+          title: Node Ids
+          description: Graph node ids that identify the data this query asks for.
+            Pass them as `sources.data.node_ids` on the follow-up search to make the
+            search return that data. The list is empty when Tako cannot resolve the
+            ids; the query still works on its own.
+      type: object
+      required:
+      - query
+      title: RelatedSuggestion
+      description: 'One follow-up query for the caller to run next.
+
+
+        A suggestion is deterministic. Tako derives it either from the data a
+
+        returned card already holds, or from the knowledge graph around that card.
+
+        No language model writes these.'
     RelationKind:
       type: string
       enum:
@@ -2672,9 +2712,11 @@ components:
           title: Card Data
           description: 'Inline card data as a card-type-specific JSON object. The
             ''card_type'' field inside the object names its shape. Set only when content_format
-            is ''card_json''. The payload is always complete: card_json is never truncated.
-            Card types without a card_json shape return 422 on /contents and fall
-            back to ''json_compact'' on search and answer include_contents.'
+            is ''card_json''. A card_json request accepts no row cap, so a card whose
+            record array is unbounded caps it at the platform export ceiling and reports
+            ''truncated'': true. The payload then also carries the true count for
+            its record array. Card types without a card_json shape return 422 on /contents
+            and fall back to ''json_compact'' on search and answer include_contents.'
         url:
           anyOf:
           - type: string
@@ -3308,6 +3350,17 @@ components:
           - $ref: '#/components/schemas/OutputSettings'
           - type: 'null'
           description: Settings that control the response shape.
+        include_related:
+          anyOf:
+          - type: integer
+            maximum: 20.0
+            minimum: 1.0
+          - type: 'null'
+          title: Include Related
+          description: 'Applies to POST /v3/search only. Return follow-up query suggestions
+            in `related`. Omit this field to disable them. The value sets the maximum
+            number of suggestions, from 1 to 20. POST /v1/answer accepts this field
+            but ignores it: the answer response has no `related` field.'
       additionalProperties: false
       type: object
       required:
@@ -3332,6 +3385,16 @@ components:
           anyOf:
           - $ref: '#/components/schemas/Usage'
           - type: 'null'
+        related:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/RelatedSuggestion'
+            type: array
+          - type: 'null'
+          title: Related
+          description: Follow-up queries you can run next. Set `include_related` on
+            the request to receive them. Absent when you did not ask for them, or
+            when Tako found none.
       type: object
       required:
       - request_id
