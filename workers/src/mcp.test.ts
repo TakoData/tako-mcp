@@ -1349,13 +1349,24 @@ describe("SERVER_INSTRUCTIONS", () => {
   // while the instructions opened by sending every data question to
   // `tako_search` and mentioned `tako_available_data` once, last, behind
   // "if unsure". Observed on claude.ai as search-first routing.
-  it("introduces tako_available_data before either priced retrieval tool", () => {
+  //
+  // The ORDERING assertion that used to live here (free tool introduced
+  // ahead of both priced tools) is gone on purpose: the opening paragraph
+  // no longer names a tool, so nothing competes for first position, and
+  // the free tool reads as a capability rather than an owed step. What
+  // survives is the invariant that actually caused the incident, which was
+  // never the order but the CONTRADICTION: whatever these instructions say
+  // about the free tool must not be something its own description then
+  // argues against. Assert the disagreement cannot come back.
+  it("does not oblige a free-tool call the tool's own description denies", () => {
     const free = SERVER_INSTRUCTIONS.indexOf("`tako_available_data`");
-    const answer = SERVER_INSTRUCTIONS.indexOf("`tako_answer`");
-    const search = SERVER_INSTRUCTIONS.indexOf("`tako_search`");
     expect(free).toBeGreaterThan(-1);
-    expect(free).toBeLessThan(answer);
-    expect(free).toBeLessThan(search);
+    // No sequencing verb at server level: "first", "before", "start with".
+    expect(SERVER_INSTRUCTIONS).not.toMatch(
+      /\b(first|before|start with|begin with)\b/i,
+    );
+    const availableData = TOOL_REGISTRY.find((t) => t.name === "tako_available_data");
+    expect(availableData?.description).not.toMatch(/NOT a required first step/i);
   });
 
   // `tako_answer` (specific figure) and `tako_search` (breadth) are different
