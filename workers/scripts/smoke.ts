@@ -20,13 +20,23 @@
  *        d. `get_credit_balance`          — `details.credit_balance`
  *                                           must be a number or numeric string (read-only)
  *        e. `tako_visualize`              — creates a card (charges 1 credit)
- *   6. Native-card proxy (`/embed-html/`) on the card step 5e just created —
- *      404 soft-warns (path gated off via `PUBLIC_CDN_URL`), 200 hard-asserts
- *      inert content type, a nonzero CDN rewrite, and no leaked `csrfToken`
+ *   6. Native-card proxy on the card step 5e just created — all three of its
+ *      routes, since the feature is only as live as its weakest one:
+ *        - `/embed-html/`: 404 soft-warns (path gated off via `PUBLIC_CDN_URL`),
+ *          200 hard-asserts inert content type, a nonzero CDN rewrite, no
+ *          leaked `csrfToken`, and the presence of the data-proxy shim
+ *        - `/cdn-asset/`: one rewritten asset is actually FETCHED, preferring
+ *          the JS entry bundle
+ *        - `/embed-data/`: called with a body shaped exactly like the card's
+ *          own, asserting JSON with `component_data` back
  *
- * The step-6 rewrite assertion is the one check here that exists to catch a
- * failure with NO error signal: a `PUBLIC_CDN_URL` naming the wrong CloudFront
- * distribution answers 200, mounts the card, and draws no chart.
+ * Step 6 is where the checks that catch a NO-ERROR-SIGNAL failure live, and
+ * every one of them is here because that failure shipped:
+ *   - a `PUBLIC_CDN_URL` naming the wrong CloudFront distribution answers 200,
+ *     mounts the card, and draws no chart;
+ *   - a missing or 502-ing `/embed-data/` draws the chart and then shows
+ *     "There was an error loading the data." on every tab the page did not
+ *     inline, which is most of them on a multi-tab card.
  *
  * Excluded by design:
  *   - `tako_agent` / `tako_agent_start` / `tako_agent_wait` — long-running;
@@ -60,6 +70,10 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+// Imported rather than spelled out, so the route this asserts against cannot
+// drift from the route the worker serves and the shim points at.
+import { EMBED_DATA_PATH } from "../src/embed_proxy.js";
 
 const CANARY_QUERY = "US GDP";
 
@@ -527,6 +541,82 @@ try {
         `it. Adding that header is this route's entire reason to exist.`,
     );
     ok(`/cdn-asset/ → 200 with ACAO:* for ${assetPath.slice(0, 72)}`);
+
+    // Third leg: the card's own tab-data endpoint.
+    //
+    // This is the leg whose failure is loudest to a USER and completely silent
+    // here without a check. The page inlines `component_data` for the tab it
+    // opens on and fetches every other tab at click time. Everything above can
+    // be green — page proxied, assets served, chart drawn — while eleven of the
+    // Nvidia card's twelve tabs say "There was an error loading the data.",
+    // which is exactly what shipped and what a user reported.
+    //
+    // Two distinct things to check, because either alone passes while broken:
+    assert(
+      nativeBody.includes(`${baseUrl}${EMBED_DATA_PATH}`),
+      `/embed-html/ served a page with no data-proxy shim pointing at ` +
+        `${baseUrl}${EMBED_DATA_PATH}. Every tab the page did not inline will ` +
+        `render "There was an error loading the data." — the card's own fetch ` +
+        `resolves against the widget sandbox's origin without it.`,
+    );
+
+    // ...and then actually call it, the way `Card.js` does: POST the card's viz
+    // config, which the page carries in its `config-json` island. A shim
+    // pointing at a route that 502s upstream is the same user-visible failure as
+    // no shim at all.
+    const island =
+      /<script id="config-json" type="application\/json">([\s\S]*?)<\/script>/.exec(
+        nativeBody,
+      );
+    if (island === null) {
+      console.warn(
+        `[warn] could not find the config-json island in the proxied page, so ` +
+          `${EMBED_DATA_PATH} went unexercised. The island is where Card.js reads ` +
+          `the viz config it posts; if it was renamed, this check needs updating ` +
+          `rather than deleting.`,
+      );
+    } else {
+      const config = JSON.parse(island[1]!) as { params?: unknown };
+      assert(
+        config.params !== undefined,
+        `config-json island has no \`params\` — the body Card.js posts is built ` +
+          `from it, so this check cannot speak for the real request shape`,
+      );
+      const dataRes = await fetch(`${baseUrl}${EMBED_DATA_PATH}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // `pub_id` is `window.frameElement?.id ?? ""` in the page, and that is
+        // "" in every cross-origin embed — including the one ChatGPT renders,
+        // where tabs work. So "" is the real shape, not a shortcut.
+        body: JSON.stringify({ ...config.params, pub_id: "", dark_mode: false }),
+      });
+      const dataType = dataRes.headers.get("content-type") ?? "";
+      assert(
+        dataRes.status === 200,
+        `${EMBED_DATA_PATH} → ${dataRes.status} for a request shaped exactly like ` +
+          `the card's own. A 413 means MAX_DATA_REQUEST_BYTES is under what a ` +
+          `real viz config weighs; a 502 means the upstream ` +
+          `/knowledge/get_data/ contract moved. Either way every non-initial tab ` +
+          `shows an error.`,
+      );
+      assert(
+        dataRes.headers.get("access-control-allow-origin") === "*",
+        `${EMBED_DATA_PATH} answered 200 without "access-control-allow-origin: *" ` +
+          `— the widget cannot read it, which is the whole reason to proxy`,
+      );
+      assert(
+        dataType.includes("application/json"),
+        `${EMBED_DATA_PATH} must answer JSON (Card.js calls .json() on it), got ` +
+          `${JSON.stringify(dataType)}`,
+      );
+      const payload = (await dataRes.json()) as Record<string, unknown>;
+      assert(
+        "component_data" in payload,
+        `${EMBED_DATA_PATH} returned JSON with no \`component_data\` — the key the ` +
+          `card renders from. The route is reachable and the contract has moved.`,
+      );
+      ok(`${EMBED_DATA_PATH} → 200 JSON with component_data, ACAO:*`);
+    }
   }
 } finally {
   await client.close().catch(() => {
