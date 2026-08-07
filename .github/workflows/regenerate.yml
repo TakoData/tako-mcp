@@ -58,6 +58,10 @@ jobs:
       # today, so this does not block merge. If branch protection later requires
       # `workers-ci`, switch this push to the OPENAPI_SYNC_APP installation token
       # (needs the App id/key as repo secrets) so the standard checks re-fire.
+      #
+      # `Verify` runs against the WORKING TREE, not the commit this step creates,
+      # so it passes no matter which generated files the `git add` below forgets.
+      # Only the leftover guard covers that gap.
       - name: Commit regenerated code
         working-directory: .
         env:
@@ -65,7 +69,23 @@ jobs:
         run: |
           git config user.name "tako-bot"
           git config user.email "bot@tako.com"
-          git add workers/src/generated/schemas.ts workers/src/tools/_registry.ts registry/server.json
+          # Every path the generators write must appear here. gen-registry.ts
+          # writes three (registry/server.json, workers/src/tools/_registry.ts,
+          # registry/lhm.plugin.json) and gen-schemas.ts writes one; omitting
+          # lhm.plugin.json shipped a commit whose own `registry:check` failed in
+          # workers-ci while this job stayed green (PR #214).
+          git add workers/src/generated/schemas.ts workers/src/tools/_registry.ts registry/server.json registry/lhm.plugin.json
+          # A generated file left unstaged means the list above is incomplete: the
+          # push would land a commit that fails `registry:check`/`schemas:check`.
+          # Compare unstaged tracked edits and new untracked files, NOT
+          # `git status --porcelain`, which also reports the paths just staged and
+          # would fire on every run that has anything to commit.
+          LEFTOVER="$(git diff --name-only; git ls-files --others --exclude-standard)"
+          if [ -n "$LEFTOVER" ]; then
+            echo "::error::generators wrote files missing from the git add list above:"
+            echo "$LEFTOVER"
+            exit 1
+          fi
           if ! git diff --cached --quiet; then
             git commit -m "chore: regenerate schemas + registry from synced spec"
             git push origin "HEAD:$HEAD_REF"
