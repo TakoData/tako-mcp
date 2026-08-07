@@ -14,11 +14,27 @@
  * Why the widget can use the markup at all — the three facts that make this
  * work, all measured against production rather than assumed:
  *
- *   1. The embed page carries its own data. An ~87 KB inline JSON island holds
- *      the full card config (`config_type`, `params`, `dataset`, `components`),
- *      and a second ~1.5 KB island holds the theme (series colors, Geist fonts,
- *      tooltip, padding). Zero `fetch`/XHR/axios in the page. So there is no
- *      API to call and no credential to hold.
+ *   1. The embed page carries the data for the section it opens on. A ~230 KB
+ *      inline JSON island holds that section's card config (`config_type`,
+ *      `params`, `dataset`, `components`), and a second ~1.5 KB island holds the
+ *      theme (series colors, Geist fonts, tooltip, padding).
+ *
+ *      It does NOT carry the other sections. An earlier reading of this said
+ *      "zero fetch/XHR in the page, so there is no API to call" — true of the
+ *      first paint and false of every interaction after it. A multi-tab card
+ *      (`Nvidia Stock Overview` ships twelve tabs) inlines `component_data` for
+ *      the ACTIVE tab only and fetches the rest from `/knowledge/get_data/`,
+ *      resolved against `window.location.href`. Inside the widget that base is
+ *      the host's sandbox origin, not tako.com, so every tab but the first
+ *      rendered `There was an error loading the data.` — reported on claude.ai
+ *      2026-08-07, invisible on ChatGPT because ChatGPT commits to the nested
+ *      `tako.com` iframe and never takes this path at all.
+ *
+ *      Hence {@link EMBED_DATA_PATH} and the shim {@link dataProxyShim} injects:
+ *      one origin-fixed passthrough for that endpoint, and a `window.fetch`
+ *      wrapper that repoints the page's own location-relative call at it. Still
+ *      no credential to hold — the endpoint is public (verified against
+ *      production: no cookie, no CSRF header, HTTP 200).
  *   2. `Card.js` and its lazily imported chunks are static assets with no API
  *      behind them, so they only have to be REACHABLE — nothing needs bundling.
  *      They are not, however, loadable straight from the CDN: it reflects CORS
@@ -32,11 +48,20 @@
  *      (fonts.googleapis.com) was blocked with a reported CSP violation while
  *      the declared CDN origin was permitted.
  *
- * Two things are stripped on the way through, and both matter:
+ * Three things are stripped on the way through, and all three matter:
  *
  *   - The page-context island carries a `csrfToken`. It is scoped to the embed
  *     page's own session and useless here, but forwarding a CSRF token into a
  *     third-party sandbox is not a thing to do casually. Removed.
+ *   - So does a `<input type="hidden" name="csrfmiddlewaretoken">` in the body,
+ *     which the island strip never touched and the fail-closed guard never
+ *     noticed — it greps for the camelCase `csrfToken` and this is Django's
+ *     other spelling. Same value, same reasoning, so it is removed the same way
+ *     and the guard now covers both spellings. Not a live vulnerability: the
+ *     proxy fetch is credential-free, so the token belongs to a fresh anonymous
+ *     secret whose `Set-Cookie` we drop, and Django's double-submit check needs
+ *     the matching cookie. It was simply the module claiming a property it did
+ *     not have.
  *   - The Google Analytics bootstrap. It would load `googletagmanager.com`,
  *     which is NOT in the widget's declared `resourceDomains`, so it can only
  *     produce a CSP violation — and a blocked subresource inside the widget is
@@ -55,11 +80,12 @@
  * `resolveProxyOrigins`, and note these handlers run ahead of the whole OAuth
  * subsystem in `index.ts`.
  *
- * Neither route serves a document the browser will execute. `/embed-html/`
- * answers `text/plain` with `Content-Security-Policy: sandbox`, and
+ * None of the three routes serves a document the browser will execute.
+ * `/embed-html/` answers `text/plain` with `Content-Security-Policy: sandbox`,
  * `/cdn-asset/` is confined to the `archive/` tree and reflects only inert
- * content types. This origin is the OAuth origin; see the two constants and the
- * response headers below for what that rules out.
+ * content types, and `/embed-data/` answers a pinned `application/json` rather
+ * than echoing whatever upstream declared. This origin is the OAuth origin; see
+ * the constants and the response headers below for what that rules out.
  */
 import {
   type Env,
@@ -93,11 +119,68 @@ export const EMBED_PROXY_PREFIX = "/embed-html/";
 export const CDN_ASSET_PREFIX = "/cdn-asset/";
 
 /**
+ * Route for the card's own data endpoint. Exact path, no parameters — the
+ * request body carries everything, and the upstream path is a constant here so
+ * nothing about it can come from the caller.
+ *
+ * Exists because `Card.js` fetches every non-initial tab's data at click time
+ * from `new URL("/knowledge/get_data/", window.location.href)`. On tako.com that
+ * is same-origin and invisible. Inside the widget, `window.location.href` is the
+ * host's sandbox document, so the request went to claude.ai's origin — where it
+ * is neither in `connectDomains` nor answered by anything — and the card
+ * rendered its `CardError` ("There was an error loading the data.") on every tab
+ * but the one the page shipped inlined.
+ */
+export const EMBED_DATA_PATH = "/embed-data/";
+
+/**
+ * The one upstream path {@link EMBED_DATA_PATH} forwards to, and the path the
+ * injected shim matches on. A constant, never derived from the request: that is
+ * what keeps this a single-endpoint passthrough rather than a POST proxy for
+ * Tako's whole origin.
+ */
+export const UPSTREAM_DATA_PATH = "/knowledge/get_data/";
+
+/**
  * Upstream fetch bound. The widget shows the PNG until this resolves, so a slow
  * upstream costs an upgrade, never the chart. Deliberately below the ~8 s the
  * widget's own paths use, since this is a page fetch and not a render.
  */
 const UPSTREAM_TIMEOUT_MS = 6_000;
+
+/**
+ * Separate, longer bound for the data endpoint.
+ *
+ * The page-fetch bound above is short because the widget is showing a working
+ * PNG while it waits and a timeout costs only the upgrade. This one is different
+ * in both directions: the card is already on screen with a spinner in the tab
+ * the user just clicked, so a timeout is a visible failure, and the work
+ * upstream is a real query rather than a template render (measured against
+ * production: ~0.6 s and a ~350 KB body for one tab of a twelve-tab card).
+ * `Card.js` imposes no deadline of its own, so this is the only one.
+ */
+const DATA_UPSTREAM_TIMEOUT_MS = 20_000;
+
+/**
+ * Ceiling on the request body this route will forward.
+ *
+ * The body is the card's whole viz config, and the size that matters is not the
+ * first request's — it GROWS. `Card.js` merges each response's `viz_config` into
+ * the config it holds and posts the whole accumulated thing on the next click,
+ * so the body scales with how much of the card the user has explored.
+ *
+ * Measured end-to-end against the production Nvidia overview card, walking all
+ * twelve tabs in one session: 118 KB on the first request, 1.29 MB on the last,
+ * roughly +100 KB per tab. A first cut at 1 MB therefore worked for five tabs
+ * and then 413'd — the tab the user clicked showing exactly the error this route
+ * exists to remove, which is why the number is measured rather than guessed.
+ *
+ * 8 MB is ~80 tabs of headroom on the largest card Tako ships, and still bounds
+ * what an anonymous caller can hand Django to parse (or make this worker
+ * buffer). Subtabs are free: one response carries all of a tab's subtabs, so
+ * clicking through EPS/Revenue/EBITDA issues no further requests at all.
+ */
+const MAX_DATA_REQUEST_BYTES = 8 * 1024 * 1024;
 
 /**
  * Refuse an upstream body larger than this. Real embed pages measure ~100 KB;
@@ -327,10 +410,12 @@ function escapeJsonForScript(json: string): string {
 export function sanitizeEmbedHtml(html: string): {
   html: string;
   removedCsrf: boolean;
+  removedCsrfInput: boolean;
   removedAnalytics: boolean;
 } {
   let out = html;
   let removedCsrf = false;
+  let removedCsrfInput = false;
   let removedAnalytics = false;
 
   // The page-context island: a JSON <script> containing "csrfToken".
@@ -363,6 +448,19 @@ export function sanitizeEmbedHtml(html: string): {
     },
   );
 
+  // Django's OTHER csrf token: `{% csrf_token %}` renders a hidden input into
+  // the body, and the island strip above never saw it. It is the same secret
+  // under a different name, so it gets the same treatment. Matched on the `name`
+  // attribute rather than on `type=hidden` because the name is the part Django
+  // fixes; the whole tag goes either way.
+  out = out.replace(
+    /<input\b[^>]*\bname\s*=\s*["']?csrfmiddlewaretoken["']?[^>]*>/gi,
+    () => {
+      removedCsrfInput = true;
+      return "<!-- csrf input stripped by tako-mcp embed proxy -->";
+    },
+  );
+
   // The GA bootstrap: an inline script that injects googletagmanager.com.
   out = out.replace(
     /<script\b[^>]*>(?:(?!<\/script>)[\s\S])*?googletagmanager\.com[\s\S]*?<\/script>/gi,
@@ -372,7 +470,92 @@ export function sanitizeEmbedHtml(html: string): {
     },
   );
 
-  return { html: out, removedCsrf, removedAnalytics };
+  return { html: out, removedCsrf, removedCsrfInput, removedAnalytics };
+}
+
+/**
+ * Inline script that repoints the card's own data fetch at our passthrough.
+ *
+ * `Card.js` builds that URL as `new URL("/knowledge/get_data/",
+ * window.location.href)`. Nothing in the document can change what
+ * `window.location.href` is inside the host's sandbox, and `<base>` does not
+ * help — the page passes `location.href` explicitly rather than relying on
+ * `document.baseURI`. So the interception has to be on `fetch` itself.
+ *
+ * Deliberately narrow:
+ *
+ *   - It matches on the resolved PATHNAME being exactly
+ *     {@link UPSTREAM_DATA_PATH}. Every other fetch the card makes — the
+ *     `staticPrefix`-relative `geo/*.json` map features, anything added later —
+ *     passes through untouched.
+ *   - It only rewrites string and `URL` inputs, which is what the call site
+ *     uses. A `Request` object is forwarded as-is rather than reconstructed,
+ *     because copying one faithfully (method, headers, and a body that is a
+ *     single-use stream) is exactly the kind of thing that half-works.
+ *   - Every step is inside `try`/`catch` with a fall-through to the original
+ *     `fetch`. A throw here would break the card's OTHER fetches too, and a
+ *     broken chart is worse than a broken tab.
+ *
+ * Runs before `Card.js` regardless of where it is injected: `Card.js` is
+ * `type="module"`, so it is deferred until parsing finishes, while this is a
+ * classic inline script.
+ *
+ * Exported for tests.
+ */
+export function dataProxyShim(dataProxyUrl: string): string {
+  // The url reaches a browser inside a `<script>`. It is built from an origin
+  // that `validatePublicOrigin` has already vetted plus a constant path, so
+  // there is nothing to smuggle — but escaping `<` costs nothing and means the
+  // string can never terminate the element that carries it.
+  const target = JSON.stringify(dataProxyUrl).replace(/</g, "\\u003C");
+  const upstreamPath = JSON.stringify(UPSTREAM_DATA_PATH);
+  return [
+    "<script>(function(){",
+    `var T=${target};var P=${upstreamPath};`,
+    "var f=window.fetch;",
+    "if(typeof f!=='function')return;",
+    "window.fetch=function(input,init){",
+    "var to=null;",
+    "try{",
+    "if(typeof input==='string'||(typeof URL!=='undefined'&&input instanceof URL)){",
+    "var u=new URL(String(input),window.location.href);",
+    "if(u.pathname===P)to=T+u.search;",
+    "}",
+    "}catch(e){}",
+    "return to===null?f.apply(window,arguments):f.call(window,to,init);",
+    "};",
+    "})();<\/script>",
+  ].join("");
+}
+
+/**
+ * Put {@link dataProxyShim} into the proxied document.
+ *
+ * Anchored to `</head>` first, then to the opening `<body>` tag, and only then
+ * appended. Appending is the fallback rather than prepending on purpose:
+ * prepending would land the script ahead of `<!doctype html>` and drop the page
+ * into quirks mode, which would change the card's layout to fix its data.
+ *
+ * Exported for tests.
+ */
+export function injectDataProxyShim(
+  html: string,
+  dataProxyUrl: string,
+): { html: string; anchor: "head" | "body" | "append" } {
+  const shim = dataProxyShim(dataProxyUrl);
+  const headClose = /<\/head\s*>/i.exec(html);
+  if (headClose !== null) {
+    return {
+      html: html.slice(0, headClose.index) + shim + html.slice(headClose.index),
+      anchor: "head",
+    };
+  }
+  const bodyOpen = /<body\b[^>]*>/i.exec(html);
+  if (bodyOpen !== null) {
+    const at = bodyOpen.index + bodyOpen[0].length;
+    return { html: html.slice(0, at) + shim + html.slice(at), anchor: "body" };
+  }
+  return { html: html + shim, anchor: "append" };
 }
 
 /** Plain-text response helper, always with CORS so a widget can read the error. */
@@ -525,6 +708,23 @@ export async function handleEmbedProxy(
         `[mcp] embed proxy rewrote 0 CDN urls for ${pubId} — PUBLIC_CDN_URL (${cdnBase}) likely does not match the origin this page references`,
       );
     }
+    // Same gate as the CDN rewrite, and for the same reason: both need an origin
+    // to point at. Without one the card still renders its initial tab, which is
+    // the pre-existing behaviour, so this is additive rather than load-bearing
+    // for the first paint.
+    const shimmed = injectDataProxyShim(
+      html,
+      `${widgetOrigin}${EMBED_DATA_PATH}`,
+    );
+    html = shimmed.html;
+    if (shimmed.anchor === "append") {
+      // Still correct — a classic script anywhere beats the deferred module —
+      // but it means the document had neither a `</head>` nor a `<body>`, which
+      // is not the page we think we are proxying.
+      console.warn(
+        `[mcp] embed proxy found no head/body anchor for ${pubId} — appended the data shim`,
+      );
+    }
   }
   // FAIL CLOSED on the property this module's tests name as invariant #3:
   // nothing sensitive crosses into the sandbox.
@@ -540,11 +740,21 @@ export async function handleEmbedProxy(
   // The route's whole failure story is that a failure costs an upgrade and
   // leaves today's chart untouched — so the safe default here is no native
   // card, not a forwarded credential.
-  if (!sanitized.removedCsrf && html.includes("csrfToken")) {
-    console.error(
-      `[mcp] embed proxy could not strip the csrfToken island for ${pubId} — refusing to forward it; upstream shape has likely changed`,
-    );
-    return textResponse("upstream shape unrecognized", 502);
+  //
+  // Both of Django's spellings are covered. The guard used to name only
+  // `csrfToken`, so the `csrfmiddlewaretoken` hidden input in the body sailed
+  // through every render — the strip is new above, and this is what keeps it
+  // honest if the tag's shape changes.
+  for (const { token, stripped } of [
+    { token: "csrfToken", stripped: sanitized.removedCsrf },
+    { token: "csrfmiddlewaretoken", stripped: sanitized.removedCsrfInput },
+  ]) {
+    if (!stripped && html.includes(token)) {
+      console.error(
+        `[mcp] embed proxy could not strip ${token} for ${pubId} — refusing to forward it; upstream shape has likely changed`,
+      );
+      return textResponse("upstream shape unrecognized", 502);
+    }
   }
   return new Response(html, {
     status: 200,
@@ -573,6 +783,197 @@ export async function handleEmbedProxy(
       // effectively immutable, so a short cache is safe and spares the origin.
       "cache-control": "public, max-age=300",
       // Never let a proxied third-party document be sniffed into something else.
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+/**
+ * Read a request body, refusing anything past {@link MAX_DATA_REQUEST_BYTES}
+ * WITHOUT having buffered it first.
+ *
+ * `request.arrayBuffer()` then checking `byteLength` reads the wrong way round,
+ * and on this route that is not a style point. Cloudflare accepts request bodies
+ * up to 100 MB while an isolate has 128 MB, so `arrayBuffer()` on a hostile body
+ * can exceed the memory limit — and exceeding it kills the isolate rather than
+ * throwing something a `catch` can turn into a 413. These handlers run ahead of
+ * the entire OAuth subsystem in `index.ts`, so that is `/authorize` and `/token`
+ * paying for an unauthenticated POST to an experiment route.
+ *
+ * Reading incrementally and cancelling at the cap means the largest thing we
+ * ever hold is the cap itself. `Content-Length` is deliberately not consulted:
+ * it is absent on a chunked body, and the whole point is to bound the case where
+ * the caller is not telling the truth.
+ */
+async function readBoundedBody(
+  request: Request,
+): Promise<ArrayBuffer | "too-large" | "unreadable"> {
+  // Null for a POST with no body at all. Zero bytes, which the caller rejects as
+  // an empty body — a more accurate answer than "unreadable".
+  if (request.body === null) return new ArrayBuffer(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      total += value.byteLength;
+      if (total > MAX_DATA_REQUEST_BYTES) {
+        console.warn(
+          `[mcp] embed data proxy body exceeded ${MAX_DATA_REQUEST_BYTES}B — refusing without buffering the rest`,
+        );
+        await reader.cancel().catch(() => {});
+        return "too-large";
+      }
+      chunks.push(value);
+    }
+  } catch (err) {
+    console.warn("[mcp] embed data proxy could not read the request body:", err);
+    return "unreadable";
+  }
+  // An `ArrayBuffer` rather than the `Uint8Array` view over it, so the value is
+  // a `BodyInit` under every one of the four tsconfig projects that compile this
+  // module — two of them load DOM lib types, where a generic
+  // `Uint8Array<ArrayBufferLike>` no longer satisfies `BufferSource`.
+  const out = new ArrayBuffer(total);
+  const view = new Uint8Array(out);
+  let offset = 0;
+  for (const chunk of chunks) {
+    view.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+/**
+ * Handle `POST /embed-data/` — forward the card's tab-data request to Tako and
+ * hand the JSON back with CORS.
+ *
+ * The upstream URL is `${PUBLIC_BASE_URL}${UPSTREAM_DATA_PATH}` and nothing
+ * about it comes from the request: not the origin, not the path, not the query.
+ * The caller controls only the body, which is the same thing any browser
+ * pointed at the public embed page already controls.
+ *
+ * What this route does NOT do, by construction:
+ *
+ *   - It forwards no headers but `content-type` and `accept`. No cookie, no
+ *     `Authorization`, no `X-CSRFToken` — the endpoint needs none of them
+ *     (verified against production: a bare anonymous POST returns 200), and
+ *     inventing credentials here would turn a public passthrough into a
+ *     confused deputy.
+ *   - It does not follow a redirect, for the same reason the other two routes
+ *     do not: a 3xx would make the content-type check and the body we serve
+ *     under `ACAO: *` describe a host the configuration never named.
+ *   - It reflects the body only when upstream declares JSON. `Card.js` calls
+ *     `.json()` on the result, so an HTML error page is useless to it anyway,
+ *     and this origin is the OAuth origin — see the header block below.
+ *
+ * Metered on the native-card limiter like its siblings, and for a sharper
+ * reason: this is the only one of the three that costs Tako a query rather than
+ * a cached render. Unlike them it is one request per user CLICK, not ~10 per
+ * card render, so it sits far below the bucket that sizing was chosen for.
+ */
+export async function handleEmbedDataProxy(
+  request: Request,
+  env: Env,
+): Promise<Response | undefined> {
+  const url = new URL(request.url);
+  const origins = resolveProxyOrigins(env, url.origin);
+  if (origins === undefined) return undefined;
+  if (url.pathname !== EMBED_DATA_PATH) return undefined;
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "POST, OPTIONS",
+        // Load-bearing, unlike on the two GET routes. `Card.js` sends
+        // `Content-Type: application/json`, which is not a CORS-safelisted
+        // value, so the browser preflights and will not send the POST unless
+        // the header is named here. Without this line the route answers
+        // correctly and is never reached.
+        "access-control-allow-headers": "content-type",
+        "access-control-max-age": "86400",
+      },
+    });
+  }
+  if (request.method !== "POST") return textResponse("method not allowed", 405);
+
+  const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    return textResponse("expected application/json", 415);
+  }
+
+  // Metered ahead of BOTH the body read and the upstream fetch, so a caller
+  // cannot spend our memory or Tako's query budget on an unmetered request.
+  // `embed_proxy.test.ts` pins the ordering.
+  const limited = await rateLimited(request, env);
+  if (limited !== undefined) return limited;
+
+  const read = await readBoundedBody(request);
+  if (read === "unreadable") {
+    return textResponse("unreadable request body", 400);
+  }
+  if (read === "too-large") {
+    return textResponse("request body too large", 413);
+  }
+  if (read.byteLength === 0) return textResponse("empty request body", 400);
+  const body = read;
+
+  const upstream = `${origins.publicBase}${UPSTREAM_DATA_PATH}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    DATA_UPSTREAM_TIMEOUT_MS,
+  );
+  let response: Response;
+  try {
+    response = await fetch(upstream, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body,
+      redirect: "manual",
+    });
+  } catch (err) {
+    console.warn("[mcp] embed data proxy upstream failed:", err);
+    return textResponse("upstream unavailable", 502);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    console.warn(`[mcp] embed data proxy upstream HTTP ${response.status}`);
+    return textResponse(
+      response.status === 404 ? "data not found" : "upstream error",
+      response.status === 404 ? 404 : 502,
+    );
+  }
+  const upstreamType = response.headers.get("content-type") ?? "";
+  if (!upstreamType.toLowerCase().includes("application/json")) {
+    console.warn(
+      `[mcp] embed data proxy got non-JSON content-type "${upstreamType}"`,
+    );
+    return textResponse("upstream returned non-JSON", 502);
+  }
+
+  // Streamed, not buffered. Nothing here needs rewriting — the payload is card
+  // data, not markup with our origin baked into it — and a tab of a large card
+  // measures ~350 KB, which is not worth holding.
+  return new Response(response.body, {
+    status: 200,
+    headers: {
+      // Pinned, not reflected. This origin is the OAuth origin; the content-type
+      // check above already refused anything else, and stating the value we serve
+      // rather than echoing upstream's means a charset or parameter surprise
+      // cannot become the MIME on `mcp.tako.com`.
+      "content-type": "application/json; charset=utf-8",
+      "access-control-allow-origin": "*",
+      // Live data behind a POST: nothing to cache, and the shared caches in
+      // between have no business trying.
+      "cache-control": "no-store",
       "x-content-type-options": "nosniff",
     },
   });

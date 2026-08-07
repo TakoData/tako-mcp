@@ -1,5 +1,9 @@
 import { CORS_PATHS, corsPreflight, withCors } from "./cors.js";
-import { handleCdnAssetProxy, handleEmbedProxy } from "./embed_proxy.js";
+import {
+  handleCdnAssetProxy,
+  handleEmbedDataProxy,
+  handleEmbedProxy,
+} from "./embed_proxy.js";
 import type { Env } from "./env.js";
 import { handleIconRequest } from "./icons.js";
 import { handleMcpRequest } from "./mcp.js";
@@ -64,6 +68,15 @@ export default {
     // card work inside a sandbox. Same gate, same fall-through to 404.
     const assetProxied = await handleCdnAssetProxy(request, env);
     if (assetProxied !== undefined) return assetProxied;
+
+    // Third leg of the same feature: the card's own tab-data endpoint. The
+    // proxied page inlines data for the tab it opens on and fetches every other
+    // tab at click time from a path resolved against `window.location.href` —
+    // the host's sandbox origin inside a widget, so without this the card showed
+    // "There was an error loading the data." on eleven of Nvidia's twelve tabs.
+    // Same gate and same fall-through to 404. See `embed_proxy.ts`.
+    const dataProxied = await handleEmbedDataProxy(request, env);
+    if (dataProxied !== undefined) return dataProxied;
 
     // GET /mcp (server->client SSE stream) and DELETE /mcp (session
     // terminate) are genuinely not offered: we run stateless JSON-response
