@@ -584,19 +584,29 @@ const WIDGET_HTML = `<!doctype html>
     display: flex; align-items: center; justify-content: center;
     width: 100%; min-height: 240px;
   }
-  /* The empty state — see \`collapse()\`. Two declarations here are load-bearing,
-     not cosmetic:
+  /* The empty state — see \`collapse()\`. Three declarations here are
+     load-bearing, not cosmetic:
        - \`position: fixed\` + explicit offsets: fills the host's reserved
          viewport (whatever it kept after we asked for zero) while staying OUT
          of flow, so a host that sizes the frame from content still measures a
          zero-height document. The \`inset\` shorthand would read better and is
          deliberately not used — the offsets parse in every engine that has
          ever run this bundle.
+       - \`height: 100vh\`: redundant wherever fixed positioning resolves against
+         the viewport (every current engine), and the reason this does not
+         depend on that. The widget renders inside an iframe on hosts we do not
+         control, and WebKit has historically resolved fixed positioning inside
+         a frame against the DOCUMENT instead — where \`top/bottom: 0\` on a
+         zero-height document collapses the label to nothing. \`100vh\` is the
+         frame's own viewport either way, so the label fills the visible box on
+         both readings, and equals 0 when the host honoured the shrink, so it
+         still cannot make a collapsed widget visible or measurable.
        - transparent background: \`applyHostSurface\` paints the canvas in the
          host's own colour, and a second surface here would put a visible
          rectangle inside the very box this label exists to explain. */
   #tako-empty {
     position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+    height: 100vh;
     display: flex; align-items: center; justify-content: center;
     padding: 0 16px; box-sizing: border-box;
     font-size: 13px; text-align: center;
