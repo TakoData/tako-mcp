@@ -586,12 +586,12 @@ const WIDGET_HTML = `<!doctype html>
   }
   /* The empty state — see \`collapse()\`. Three declarations here are
      load-bearing, not cosmetic:
-       - \`position: fixed\` + explicit offsets: fills the host's reserved
-         viewport (whatever it kept after we asked for zero) while staying OUT
-         of flow, so a host that sizes the frame from content still measures a
-         zero-height document. The \`inset\` shorthand would read better and is
-         deliberately not used — the offsets parse in every engine that has
-         ever run this bundle.
+       - \`position: fixed\` + offsets: fills the host's reserved viewport
+         (whatever it kept after we asked for zero) while staying OUT of flow,
+         so a host that sizes the frame from content still measures a
+         zero-height document. Written long rather than as \`inset\` only
+         because the four sides read plainly next to the \`100vh\` below; the
+         shorthand would be equally safe.
        - \`height: 100vh\`: redundant wherever fixed positioning resolves against
          the viewport (every current engine), and the reason this does not
          depend on that. The widget renders inside an iframe on hosts we do not
@@ -603,14 +603,24 @@ const WIDGET_HTML = `<!doctype html>
          still cannot make a collapsed widget visible or measurable.
        - transparent background: \`applyHostSurface\` paints the canvas in the
          host's own colour, and a second surface here would put a visible
-         rectangle inside the very box this label exists to explain. */
+         rectangle inside the very box this label exists to explain.
+     The colour is the SILENT-HOST case only — \`collapse()\` overrides it inline
+     whenever the host declared a theme, which is the signal that actually
+     matches the backdrop. Base is the light value because an unstyled frame
+     composites to an opaque white base (measured; see \`applyHostSurface\`), and
+     the dark override uses the one signal an iframe gets for free. 4.83:1 on
+     white and 5.4:1 on a dark host, against 3.25:1 for any single grey that
+     tries to hedge both. */
   #tako-empty {
     position: fixed; top: 0; right: 0; bottom: 0; left: 0;
     height: 100vh;
     display: flex; align-items: center; justify-content: center;
     padding: 0 16px; box-sizing: border-box;
-    font-size: 13px; text-align: center;
+    font-size: 13px; text-align: center; color: #6b7280;
     pointer-events: none; background: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    #tako-empty { color: #b4b8bd; }
   }
   .hidden { display: none !important; }
 </style>
@@ -1536,20 +1546,39 @@ const WIDGET_HTML = `<!doctype html>
   // document's measurable height there. And no height is notified after the
   // zero: the label dresses a box the host chose to keep, and must never be a
   // reason to reserve one that was already given up.
-  function collapse() {
+  function collapse(labelled) {
     placeholder.classList.add("hidden");
-    if (empty) {
-      // Contrast, not decoration. The label sits on the host's own surface
-      // (\`applyHostSurface\` paints the canvas to match), so the body's
-      // placeholder grey lands around 2:1 against a light host — legible to
-      // whoever wrote it and to nobody else. Pick per resolved theme instead:
-      // ~4.7:1 on light, ~5:1 on dark. \`hostTheme()\` is known by now on every
-      // path that has a theme at all (the no-chart guard runs after
-      // \`applyHostSurface\`); the fallback is the one grey that clears 3:1 in
-      // both directions, for the watchdog case where no host ever answered.
+    // \`labelled\` is only true where the emptiness is a FACT: structured content
+    // arrived and carried no chart. The watchdog path passes false, because
+    // "nothing arrived within 10 s" is not the same claim — a failed call and a
+    // merely slow delivery are indistinguishable from in here, and this
+    // function discards whatever lands afterwards (\`rendered = true\`). Saying
+    // "No chart for this result" there would be an affirmative statement that
+    // is wrong exactly when the chart was late rather than absent. Blank keeps
+    // that path's pre-existing behaviour, and hosts show their own error for
+    // the failed call.
+    if (empty && labelled) {
+      // Contrast, not decoration. The body's placeholder grey lands around
+      // 2:1 against a light host — legible to whoever wrote it and to nobody
+      // else. When the host DECLARED a theme, use its value: ~4.8:1 on light,
+      // ~5:1 on dark, and it beats any OS signal because the host's theme and
+      // the machine's can disagree (TAKO-3781).
+      //
+      // When it declared none, leave the CSS alone. The stylesheet's base is
+      // the light value with a \`prefers-color-scheme\` dark override, which is
+      // strictly better than a compromise grey: a silent host is also one
+      // \`applyHostSurface\` leaves untouched, and per the measured note above
+      // that is the same-origin case where the canvas composites over the
+      // host's own page — so the OS signal tracks the backdrop. Residual risk,
+      // accepted: a CROSS-origin host that sends no theme composites to an
+      // opaque white base regardless of the OS, so a dark-mode machine there
+      // reads ~1.9:1. No host we know of is in that intersection (claude.ai
+      // and ChatGPT both declare a theme), and it is not detectable from in
+      // here — the white is the compositor's base, not a style we can read.
       var t = hostTheme();
-      empty.style.color =
-        t === "light" ? "#6b7280" : t === "dark" ? "#b4b8bd" : "#8b8f95";
+      if (t === "light" || t === "dark") {
+        empty.style.color = t === "light" ? "#6b7280" : "#b4b8bd";
+      }
       empty.classList.remove("hidden");
     }
     document.documentElement.style.height = "0px";
@@ -1582,7 +1611,7 @@ const WIDGET_HTML = `<!doctype html>
       typeof structuredContent.embed_url !== "string" &&
       typeof structuredContent.image_url !== "string"
     ) {
-      collapse();
+      collapse(true);
       log("no-chart payload, collapsed widget");
       return true;
     }
@@ -1810,9 +1839,14 @@ const WIDGET_HTML = `<!doctype html>
   // treatment rather than a different one. \`rendered\` makes this a no-op once
   // any chart has painted, and the 10 s bound matches the polling window so it
   // cannot race a slow-but-arriving delivery.
+  //
+  // Collapsed WITHOUT the label, deliberately: from in here a failed call and a
+  // delivery that is merely late look identical, so "No chart for this result"
+  // would be an affirmative claim that is wrong in the second case. See
+  // \`collapse()\`.
   setTimeout(function () {
     if (rendered) return;
-    collapse();
+    collapse(false);
     log("no data arrived, collapsed widget");
   }, 10000);
 

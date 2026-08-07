@@ -427,9 +427,13 @@ describe("static widget bundle (executed)", () => {
           "ui/notifications/size-changed",
       ) as Array<{ params: { height: number } }>;
       expect(sizeChanges.at(-1)?.params.height).toBe(0);
-      // A failed call gets the same labelled empty state as a zero-card one —
-      // the host reserved a box either way, and "No chart" is true of both.
-      expect(widgetEmpty(m).classList.contains("hidden")).toBe(false);
+      // Collapsed but NOT labelled. "Nothing arrived in 10 s" covers a failed
+      // call and a merely slow delivery alike, and this path discards whatever
+      // lands afterwards — so "No chart for this result" would be an
+      // affirmative claim that is wrong exactly when the chart was late. The
+      // label is reserved for the case the widget actually knows about:
+      // structured content arrived and carried no chart.
+      expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
     } finally {
       vi.useRealTimers();
     }

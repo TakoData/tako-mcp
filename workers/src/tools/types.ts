@@ -261,8 +261,9 @@ export interface AppUiResource {
      *
      * `output` may be `undefined` when the resolver is called outside
      * of a tool result (e.g. during pre-registration validation in
-     * tests); resolvers should fall back to a sensible default URI in
-     * that case.
+     * tests). That is not a special case: a resolver with no output has
+     * nothing to render either, so it takes the same branch as a call
+     * that produced no chart — `undefined`.
      *
      * Return `undefined` to say "this call produced nothing to render".
      * `mcp.ts` then omits the result-level `ui` keys entirely rather
