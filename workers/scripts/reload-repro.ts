@@ -45,7 +45,7 @@ const STRIPPED = { width: 900, height: 720 };
 /**
  * Splice a bootstrap script into the bundle's <head> so `window.openai` exists
  * before the bundle's own script runs — the ordering ChatGPT provides on the
- * synchronous path, and the one `pickFromOpenAi` is written against.
+ * synchronous path, and the one `pickPayload` is written against.
  */
 function page(title: string, note: string, openaiLiteral: string): string {
   const bundle = buildChartAppUiResourceFromOutputPubId(ENV).html;

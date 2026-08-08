@@ -1850,68 +1850,110 @@ const WIDGET_HTML = `<!doctype html>
   // found nothing — a zero-card search still ships \`cards: []\`. ChatGPT's
   // stripped reload payload carries none of them, only the two dimension
   // defaults. That difference is what lets a legitimate empty result be told
-  // apart from a lost one, and it is the ONLY thing standing between the
-  // restore below and repainting a stale chart over a genuine "no results".
+  // apart from a lost one, and it is the ONLY thing standing between a stale
+  // chart and a genuine "no results" — on BOTH routes to it: the mirror
+  // restore, and a stale sibling channel outranking a fresh \`toolOutput\`.
   function looksComplete(o) {
     if (!o || typeof o !== "object") return false;
     return "cards" in o || "answer" in o || "web_results" in o;
   }
 
-  // Best-first over ordered candidates. Truthiness is NOT the selector:
-  // ChatGPT's stripped reload payload (\`{width, height}\`) is a perfectly
-  // truthy object, so a plain \`a || b\` chain picks it, hands it to render(),
-  // and collapses — which IS the reported bug, with a healthier channel
-  // sitting unread further down. Prefer a candidate carrying a chart; fall
-  // back to the first truthy one so a genuinely chart-less result still
-  // reaches render() and gets the labelled empty state, rather than being
-  // mistaken for "nothing has arrived yet" and hanging the poll.
-  function firstUsable(candidates) {
+  // Best-first over ordered candidates, plus the widget-state mirror as the
+  // last thing tried. Truthiness is NOT the selector: ChatGPT's stripped
+  // reload payload (\`{width, height}\`) is a perfectly truthy object, so a
+  // plain \`a || b\` chain picks it, hands it to render(), and collapses —
+  // which IS the reported bug, with a healthier channel sitting unread
+  // further down.
+  //
+  // Nor is "carries a chart" the selector on its own, which is the subtler
+  // half. Preferring ANY chart-bearing candidate over list order means a
+  // stale chart in a low-priority channel outranks a fresh, whole,
+  // chart-less result in a high-priority one — and a zero-card search IS a
+  // whole result. That repaints the previous card over a question that
+  // returned nothing, the same harm the mirror is gated against, reached
+  // from the other direction. So completeness is checked BEFORE the chart
+  // preference, and the chart preference never crosses a whole result.
+  //
+  // Order of preference, and each tier exists for a case seen or reasoned
+  // about rather than for symmetry:
+  //
+  //   1. First WHOLE result, in list order, chart or not. Completeness is the
+  //      question "did a real tool result reach us", and list order is the
+  //      only freshness proxy we have — \`toolOutput\` is the canonical channel
+  //      and the rest are compatibility fallbacks. A whole result with no
+  //      chart is still authoritative: a zero-card search is a complete answer
+  //      that has nothing to draw, and render()'s no-chart guard should
+  //      collapse for it.
+  //
+  //      Note what this tier deliberately does NOT do: reach past a whole
+  //      chart-less result for a whole one that has a chart. A stale card
+  //      sitting in \`widget.structuredContent\` carries its own \`cards\` key
+  //      and so is every bit as "complete" as the fresh zero-card
+  //      \`toolOutput\` ahead of it — scanning for the chart across tiers picks
+  //      the stale one and paints a chart for a question that returned
+  //      nothing. Among whole results, order decides.
+  //   2. Fragment carrying a chart. No whole result reached us at all, so
+  //      something was lost in transit; a fragment that can still paint beats
+  //      one that cannot. This is the tier that steps over ChatGPT's stripped
+  //      \`{width, height}\` to a sibling channel that kept the URLs.
+  //   3. The mirror. Nothing live can paint and nothing live claims to be
+  //      whole, which is exactly the reload signature. Restore.
+  //   4. First truthy. Keeps a chart-less fragment reaching render() for the
+  //      labelled empty state instead of being mistaken for "nothing has
+  //      arrived yet" and hanging the poll.
+  function selectPayload(candidates, mirror) {
     var i;
+    for (i = 0; i < candidates.length; i++) {
+      if (looksComplete(candidates[i])) return candidates[i];
+    }
     for (i = 0; i < candidates.length; i++) {
       if (hasChart(candidates[i])) return candidates[i];
     }
+    if (hasChart(mirror)) return mirror;
     for (i = 0; i < candidates.length; i++) {
       if (candidates[i]) return candidates[i];
     }
     return null;
   }
 
-  function pickFromOpenAi() {
+  // ONE selection over ONE ordered candidate list, whichever way the payload
+  // arrived. Globals first (an \`openai:set_globals\` event just delivered
+  // them, so they are the freshest thing we have), then the \`window.openai\`
+  // channels, then the mirror inside \`selectPayload\`.
+  //
+  // Unified deliberately. These used to be two functions joined by
+  // \`pickFromGlobals(globals) || pickFromOpenAi()\`, and that \`||\` was a hole:
+  // a stripped-but-truthy \`toolOutput\` arriving on the event path satisfied
+  // the left side, short-circuited the right, and collapsed the widget with
+  // \`rendered = true\` before the mirror was ever read. The justification was
+  // that \`set_globals\` fires only on live calls, never on rehydration — an
+  // assumption we cannot check from in here, and the 250 ms poll below exists
+  // precisely because ChatGPT's delivery timing is not knowable. One list
+  // means the question does not have to be answered: the same precedence
+  // applies no matter which channel the payload came through.
+  function pickPayload(globals) {
     var w = window;
-    if (!w || !w.openai || typeof w.openai !== "object") return null;
-    var live = [
-      w.openai.toolOutput,
-      w.openai.widget && w.openai.widget.toolOutput,
-      w.openai.widget && w.openai.widget.structuredContent,
-      w.openai.widget && w.openai.widget.payload,
-      w.openai.toolResponseMetadata && w.openai.toolResponseMetadata.structuredContent,
-    ];
-    var picked = firstUsable(live);
-    if (hasChart(picked)) return picked;
-    // No live channel has a chart. Restore the mirror ONLY when nothing live
-    // looks like a whole result: a zero-card search is a complete answer that
-    // happens to have no chart, and repainting the previous card over it would
-    // show the user a chart for a question that returned nothing.
-    var i;
-    for (i = 0; i < live.length; i++) {
-      if (looksComplete(live[i])) return picked;
+    var oa = w && w.openai && typeof w.openai === "object" ? w.openai : null;
+    var candidates = [];
+    if (globals && typeof globals === "object") {
+      candidates.push(
+        globals.toolOutput,
+        globals.structuredContent,
+        globals.widget && globals.widget.toolOutput,
+        globals.widget && globals.widget.structuredContent,
+        globals.widget && globals.widget.payload
+      );
     }
-    return hasChart(w.openai.widgetState) ? w.openai.widgetState : picked;
-  }
-
-  // Same best-first selection as \`pickFromOpenAi\`, and for the same reason:
-  // a stripped-but-truthy \`toolOutput\` must not mask a sibling channel that
-  // still carries the chart. No widget-state fallback here — this path fires
-  // on a live \`openai:set_globals\` event, never on rehydration.
-  function pickFromGlobals(globals) {
-    if (!globals || typeof globals !== "object") return null;
-    return firstUsable([
-      globals.toolOutput,
-      globals.structuredContent,
-      globals.widget && globals.widget.toolOutput,
-      globals.widget && globals.widget.structuredContent,
-      globals.widget && globals.widget.payload,
-    ]);
+    if (oa) {
+      candidates.push(
+        oa.toolOutput,
+        oa.widget && oa.widget.toolOutput,
+        oa.widget && oa.widget.structuredContent,
+        oa.widget && oa.widget.payload,
+        oa.toolResponseMetadata && oa.toolResponseMetadata.structuredContent
+      );
+    }
+    return selectPayload(candidates, oa ? oa.widgetState : null);
   }
 
   // Initial intrinsic-height notification — 1 px (effectively invisible)
@@ -1930,11 +1972,11 @@ const WIDGET_HTML = `<!doctype html>
   // runs; otherwise we fall through to a 10s polling window because
   // ChatGPT populates the global at unpredictable times. Cost: one
   // property read every 250 ms.
-  if (!render(pickFromOpenAi())) {
+  if (!render(pickPayload(null))) {
     var attempts = 0;
     var handle = setInterval(function () {
       attempts += 1;
-      if (render(pickFromOpenAi()) || attempts >= 40) {
+      if (render(pickPayload(null)) || attempts >= 40) {
         clearInterval(handle);
       }
     }, 250);
@@ -1982,7 +2024,10 @@ const WIDGET_HTML = `<!doctype html>
   var handler = function (event) {
     var detail = event && event.detail;
     var globals = detail && detail.globals;
-    render(pickFromGlobals(globals) || pickFromOpenAi());
+    // One list, not \`globals || openai\` — see \`pickPayload\`. The event's own
+    // globals are the freshest candidates, but they do not get to short-circuit
+    // the search when what they carry is a stripped payload.
+    render(pickPayload(globals));
   };
   EVENT_NAMES.forEach(function (name) {
     window.addEventListener(name, handler);
