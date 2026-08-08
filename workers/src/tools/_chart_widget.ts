@@ -1615,6 +1615,11 @@ const WIDGET_HTML = `<!doctype html>
       log("no-chart payload, collapsed widget");
       return true;
     }
+    // Past the no-chart guard, so this payload has a chart in it. Persist the
+    // identity NOW rather than at one of render()'s several success exits:
+    // what we are protecting against is losing the payload, and every branch
+    // below renders the same card from the same two URLs.
+    persistWidgetState(structuredContent);
     var url = structuredContent.embed_url;
     var imgUrl = structuredContent.image_url;
     // \`image_data_url\` and PNG natural dimensions live on \`_meta\`
@@ -1774,28 +1779,181 @@ const WIDGET_HTML = `<!doctype html>
     return true;
   }
 
-  function pickFromOpenAi() {
+  // Mirror of what the widget last rendered, kept in ChatGPT's widget state so
+  // a reloaded conversation can repaint without \`toolOutput\`.
+  //
+  // The bug: ChatGPT rehydrates a reloaded conversation with a STRIPPED
+  // \`toolOutput\`. Observed in the wild as \`{"width":900,"height":720}\` — the
+  // two \`topCardChartFields\` defaults and nothing else, no \`embed_url\`, no
+  // \`image_url\`. render()'s no-chart guard reads that as "this call produced
+  // no card" and collapses, so a working chart turns into an empty box on
+  // reload. The server is not at fault: a repeat \`tako_answer\` call returns
+  // all ten declared keys (verified against prod), and \`topCardChartFields\`
+  // emits its six widget fields all-or-nothing, so no server path produces
+  // that pair alone.
+  //
+  // Claude does not have this failure mode — it gets a per-call dynamic
+  // \`ui/resourceUri\` carrying the \`pub_id\`, so the URI itself identifies the
+  // card. ChatGPT reads its template URI from static \`tools/list\` registration
+  // metadata (see the \`ui?.dynamic\` block in mcp.ts, which deliberately does
+  // NOT override \`openai/outputTemplate\`), so the widget has no identity of
+  // its own and \`toolOutput\` is its only source. Widget state is the Apps
+  // SDK's own answer to exactly this: \`setWidgetState\` is synchronous, and
+  // \`window.openai.widgetState\` is restored on reload.
+  //
+  // Only the structuredContent half is mirrored. \`_meta\` (the baked
+  // \`image_data_url\`) is deliberately NOT persisted: it is up to 400 KB
+  // against a store the SDK documents as ephemeral and widget-scoped, and the
+  // ChatGPT path never reads it anyway — that host's permissive \`img-src\`
+  // renders the cross-origin \`image_url\` directly. A restored render on
+  // ChatGPT therefore takes the same branch it took the first time.
+  var lastPersistedKey = null;
+  function persistWidgetState(structuredContent) {
     var w = window;
-    if (!w || !w.openai || typeof w.openai !== "object") return null;
-    return (
-      w.openai.toolOutput ||
-      (w.openai.widget && w.openai.widget.toolOutput) ||
-      (w.openai.widget && w.openai.widget.structuredContent) ||
-      (w.openai.widget && w.openai.widget.payload) ||
-      (w.openai.toolResponseMetadata && w.openai.toolResponseMetadata.structuredContent) ||
-      null
-    );
+    if (!w || !w.openai || typeof w.openai.setWidgetState !== "function") return;
+    var embedUrl = typeof structuredContent.embed_url === "string" ? structuredContent.embed_url : "";
+    var imageUrl = typeof structuredContent.image_url === "string" ? structuredContent.image_url : "";
+    if (!embedUrl && !imageUrl) return;
+    // Write-once per card. \`setWidgetState\` re-renders the widget on some
+    // hosts, and render() is reachable from a 250 ms poll, so an unguarded
+    // write is a loop — the same hazard the height notifier guards against.
+    var key = embedUrl + "|" + imageUrl;
+    if (key === lastPersistedKey) return;
+    lastPersistedKey = key;
+    try {
+      w.openai.setWidgetState({
+        pub_id: structuredContent.pub_id,
+        embed_url: structuredContent.embed_url,
+        image_url: structuredContent.image_url,
+        width: structuredContent.width,
+        height: structuredContent.height,
+        dark_mode: structuredContent.dark_mode,
+      });
+    } catch (e) {
+      // Best-effort: a host without the API, or one that rejects the payload,
+      // must not take down the render that is already in progress.
+      log("widget-state persist failed", { error: String(e) });
+    }
   }
-  function pickFromGlobals(globals) {
-    if (!globals || typeof globals !== "object") return null;
-    return (
-      globals.toolOutput ||
-      globals.structuredContent ||
-      (globals.widget && globals.widget.toolOutput) ||
-      (globals.widget && globals.widget.structuredContent) ||
-      (globals.widget && globals.widget.payload) ||
-      null
-    );
+
+  // Does this payload actually carry a chart? Same two fields render()'s
+  // no-chart guard tests, and it has to be the same test: a candidate that
+  // would only collapse the widget must not count as having satisfied the
+  // search for one that would paint.
+  function hasChart(o) {
+    if (!o || typeof o !== "object") return false;
+    return typeof o.embed_url === "string" || typeof o.image_url === "string";
+  }
+
+  // Does this payload look like a WHOLE tool result, as opposed to the
+  // remains of one? A real result carries its result-shaped keys even when it
+  // found nothing — a zero-card search still ships \`cards: []\`. ChatGPT's
+  // stripped reload payload carries none of them, only the two dimension
+  // defaults. That difference is what lets a legitimate empty result be told
+  // apart from a lost one, and it is the ONLY thing standing between a stale
+  // chart and a genuine "no results" — on BOTH routes to it: the mirror
+  // restore, and a stale sibling channel outranking a fresh \`toolOutput\`.
+  function looksComplete(o) {
+    if (!o || typeof o !== "object") return false;
+    return "cards" in o || "answer" in o || "web_results" in o;
+  }
+
+  // Best-first over ordered candidates, plus the widget-state mirror as the
+  // last thing tried. Truthiness is NOT the selector: ChatGPT's stripped
+  // reload payload (\`{width, height}\`) is a perfectly truthy object, so a
+  // plain \`a || b\` chain picks it, hands it to render(), and collapses —
+  // which IS the reported bug, with a healthier channel sitting unread
+  // further down.
+  //
+  // Nor is "carries a chart" the selector on its own, which is the subtler
+  // half. Preferring ANY chart-bearing candidate over list order means a
+  // stale chart in a low-priority channel outranks a fresh, whole,
+  // chart-less result in a high-priority one — and a zero-card search IS a
+  // whole result. That repaints the previous card over a question that
+  // returned nothing, the same harm the mirror is gated against, reached
+  // from the other direction. So completeness is checked BEFORE the chart
+  // preference, and the chart preference never crosses a whole result.
+  //
+  // Order of preference, and each tier exists for a case seen or reasoned
+  // about rather than for symmetry:
+  //
+  //   1. First WHOLE result, in list order, chart or not. Completeness is the
+  //      question "did a real tool result reach us", and list order is the
+  //      only freshness proxy we have — \`toolOutput\` is the canonical channel
+  //      and the rest are compatibility fallbacks. A whole result with no
+  //      chart is still authoritative: a zero-card search is a complete answer
+  //      that has nothing to draw, and render()'s no-chart guard should
+  //      collapse for it.
+  //
+  //      Note what this tier deliberately does NOT do: reach past a whole
+  //      chart-less result for a whole one that has a chart. A stale card
+  //      sitting in \`widget.structuredContent\` carries its own \`cards\` key
+  //      and so is every bit as "complete" as the fresh zero-card
+  //      \`toolOutput\` ahead of it — scanning for the chart across tiers picks
+  //      the stale one and paints a chart for a question that returned
+  //      nothing. Among whole results, order decides.
+  //   2. Fragment carrying a chart. No whole result reached us at all, so
+  //      something was lost in transit; a fragment that can still paint beats
+  //      one that cannot. This is the tier that steps over ChatGPT's stripped
+  //      \`{width, height}\` to a sibling channel that kept the URLs.
+  //   3. The mirror. Nothing live can paint and nothing live claims to be
+  //      whole, which is exactly the reload signature. Restore.
+  //   4. First truthy. Keeps a chart-less fragment reaching render() for the
+  //      labelled empty state instead of being mistaken for "nothing has
+  //      arrived yet" and hanging the poll.
+  function selectPayload(candidates, mirror) {
+    var i;
+    for (i = 0; i < candidates.length; i++) {
+      if (looksComplete(candidates[i])) return candidates[i];
+    }
+    for (i = 0; i < candidates.length; i++) {
+      if (hasChart(candidates[i])) return candidates[i];
+    }
+    if (hasChart(mirror)) return mirror;
+    for (i = 0; i < candidates.length; i++) {
+      if (candidates[i]) return candidates[i];
+    }
+    return null;
+  }
+
+  // ONE selection over ONE ordered candidate list, whichever way the payload
+  // arrived. Globals first (an \`openai:set_globals\` event just delivered
+  // them, so they are the freshest thing we have), then the \`window.openai\`
+  // channels, then the mirror inside \`selectPayload\`.
+  //
+  // Unified deliberately. These used to be two functions joined by
+  // \`pickFromGlobals(globals) || pickFromOpenAi()\`, and that \`||\` was a hole:
+  // a stripped-but-truthy \`toolOutput\` arriving on the event path satisfied
+  // the left side, short-circuited the right, and collapsed the widget with
+  // \`rendered = true\` before the mirror was ever read. The justification was
+  // that \`set_globals\` fires only on live calls, never on rehydration — an
+  // assumption we cannot check from in here, and the 250 ms poll below exists
+  // precisely because ChatGPT's delivery timing is not knowable. One list
+  // means the question does not have to be answered: the same precedence
+  // applies no matter which channel the payload came through.
+  function pickPayload(globals) {
+    var w = window;
+    var oa = w && w.openai && typeof w.openai === "object" ? w.openai : null;
+    var candidates = [];
+    if (globals && typeof globals === "object") {
+      candidates.push(
+        globals.toolOutput,
+        globals.structuredContent,
+        globals.widget && globals.widget.toolOutput,
+        globals.widget && globals.widget.structuredContent,
+        globals.widget && globals.widget.payload
+      );
+    }
+    if (oa) {
+      candidates.push(
+        oa.toolOutput,
+        oa.widget && oa.widget.toolOutput,
+        oa.widget && oa.widget.structuredContent,
+        oa.widget && oa.widget.payload,
+        oa.toolResponseMetadata && oa.toolResponseMetadata.structuredContent
+      );
+    }
+    return selectPayload(candidates, oa ? oa.widgetState : null);
   }
 
   // Initial intrinsic-height notification — 1 px (effectively invisible)
@@ -1814,11 +1972,11 @@ const WIDGET_HTML = `<!doctype html>
   // runs; otherwise we fall through to a 10s polling window because
   // ChatGPT populates the global at unpredictable times. Cost: one
   // property read every 250 ms.
-  if (!render(pickFromOpenAi())) {
+  if (!render(pickPayload(null))) {
     var attempts = 0;
     var handle = setInterval(function () {
       attempts += 1;
-      if (render(pickFromOpenAi()) || attempts >= 40) {
+      if (render(pickPayload(null)) || attempts >= 40) {
         clearInterval(handle);
       }
     }, 250);
@@ -1866,7 +2024,10 @@ const WIDGET_HTML = `<!doctype html>
   var handler = function (event) {
     var detail = event && event.detail;
     var globals = detail && detail.globals;
-    render(pickFromGlobals(globals) || pickFromOpenAi());
+    // One list, not \`globals || openai\` — see \`pickPayload\`. The event's own
+    // globals are the freshest candidates, but they do not get to short-circuit
+    // the search when what they carry is a stripped payload.
+    render(pickPayload(globals));
   };
   EVENT_NAMES.forEach(function (name) {
     window.addEventListener(name, handler);

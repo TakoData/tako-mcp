@@ -1349,13 +1349,60 @@ describe("SERVER_INSTRUCTIONS", () => {
   // while the instructions opened by sending every data question to
   // `tako_search` and mentioned `tako_available_data` once, last, behind
   // "if unsure". Observed on claude.ai as search-first routing.
-  it("introduces tako_available_data before either priced retrieval tool", () => {
-    const free = SERVER_INSTRUCTIONS.indexOf("`tako_available_data`");
-    const answer = SERVER_INSTRUCTIONS.indexOf("`tako_answer`");
-    const search = SERVER_INSTRUCTIONS.indexOf("`tako_search`");
-    expect(free).toBeGreaterThan(-1);
-    expect(free).toBeLessThan(answer);
-    expect(free).toBeLessThan(search);
+  //
+  // The ORDERING assertion that used to live here (free tool introduced
+  // ahead of both priced tools) is gone on purpose: the opening paragraph
+  // no longer names a tool, so nothing competes for first position, and
+  // the free tool reads as a capability rather than an owed step. What
+  // survives is the invariant that actually caused the incident, which was
+  // never the order but the CONTRADICTION: whatever these instructions say
+  // about the free tool must not be something its own description then
+  // argues against. Assert the disagreement cannot come back.
+  //
+  // Asserted as a PAIR, and that distinction is the whole point. Asserting the
+  // two halves separately — no sequencing verb here, no hedge there — pins
+  // TODAY'S resolution rather than the invariant, and pins it hard enough to
+  // block the rollback `mcp.ts` documents: if search-first routing comes back,
+  // the fix is to promote this paragraph again, and the promoted version says
+  // "ask it for a measure's exact name BEFORE spending a priced call". An
+  // unscoped absence assertion fails on that word alone, even though obliging
+  // a call NO ONE contradicts is a perfectly coherent position — it is the
+  // position this file held one commit ago.
+  //
+  // The four states, and only one of them is a bug:
+  //   neither         → today. Fine.
+  //   obliges only    → the documented rollback. Fine, and the old assertion
+  //                     blocked it.
+  //   denies only     → description carries the routing call on its own. Fine.
+  //   BOTH            → the incident. The instructions sit above the tool
+  //                     descriptions in the host's system prompt, so the model
+  //                     reads an obligation and then reads the tool denying it.
+  //                     That is what this test exists to catch.
+  it("does not oblige a free-tool call the tool's own description denies", () => {
+    const freeToolLine = SERVER_INSTRUCTIONS.split("\n").find((l) =>
+      l.includes("`tako_available_data`"),
+    );
+    expect(freeToolLine).toBeDefined();
+    const availableData = TOOL_REGISTRY.find(
+      (t) => t.name === "tako_available_data",
+    );
+    expect(availableData).toBeDefined();
+
+    // Scoped to the sentence that names the tool. Unscoped, this regex fires on
+    // any "first"/"before" anywhere in the instructions, including wording that
+    // has nothing to do with routing the free tool.
+    const obliges = /\b(first|before|start with|begin with)\b/i.test(
+      freeToolLine as string,
+    );
+    // The family of denials, not just the one phrase this PR removed —
+    // `skills/tako-*/SKILL.md` carried the same permission in two other
+    // wordings, and either could drift into the description.
+    const denies =
+      /not a required first step|not a warm-?up|straight to `?tako_(answer|search)`?/i.test(
+        availableData?.description ?? "",
+      );
+
+    expect({ obliges, denies }).not.toEqual({ obliges: true, denies: true });
   });
 
   // `tako_answer` (specific figure) and `tako_search` (breadth) are different
