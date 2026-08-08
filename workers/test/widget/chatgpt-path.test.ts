@@ -6,7 +6,7 @@
  * window.openai is present" test sets `window.openai = {}` and then
  * delivers the payload over the MCP-Apps `ui/notifications/tool-result`
  * postMessage — a route ChatGPT does not use. The three routes below are
- * the ones `pickFromOpenAi` / `pickFromGlobals` were written for.
+ * the ones `pickPayload` was written for.
  *
  * Payload is the REAL prod structuredContent from
  * `tools/call tako_search` on mcp.tako.com (2026-07-31), tako.com origins
@@ -309,18 +309,96 @@ describe("ChatGPT reload rehydration", () => {
     expect(heights).toEqual([1, 0]);
   });
 
-  it("does not rewrite state for the same card", () => {
+  it("does not rewrite state for the same card, across two deliveries", () => {
     // `setWidgetState` re-renders on some hosts and render() is reachable from
     // a 250 ms poll, so an unguarded write is a loop.
+    //
+    // The payload has to be one that render() ACCEPTS but cannot paint, and
+    // that is the whole difficulty. A healthy payload latches `rendered` on the
+    // first delivery, so every later delivery returns at render()'s `if
+    // (rendered)` guard and `lastPersistedKey` is never consulted — an earlier
+    // version of this test drove two healthy deliveries and passed with the
+    // write-once guard deleted, which is no test at all.
+    //
+    // Non-http(s) URLs thread the gap: they are strings, so the no-chart guard
+    // lets them through and `persistWidgetState` runs; but they fail the
+    // `^https?://` scheme check on every render branch, so render() falls to
+    // its `return false` with `rendered` still unset and the next delivery
+    // re-enters. That is the real re-persist loop this guard exists to stop.
     const writes: unknown[] = [];
-    const openai: Record<string, unknown> = {
-      setWidgetState: (s: unknown) => writes.push(s),
+    const unpaintable = {
+      ...PROD_STRUCTURED_CONTENT,
+      embed_url: "ftp://tako.com/embed/X/",
+      image_url: "ftp://tako.com/api/v1/image/X/",
     };
-    const m = mountWidget(html(), openai);
-    fireSetGlobals(m, { toolOutput: PROD_STRUCTURED_CONTENT }, "openai:set_globals");
-    fireSetGlobals(m, { toolOutput: PROD_STRUCTURED_CONTENT }, "openai:set_globals");
-    expect(renderedIframe(m)).toBe(true);
+    const m = mountWidget(html(), {
+      setWidgetState: (s: unknown) => writes.push(s),
+    });
+    fireSetGlobals(m, { toolOutput: unpaintable }, "openai:set_globals");
+    fireSetGlobals(m, { toolOutput: unpaintable }, "openai:set_globals");
+    // Never painted — which is what keeps render() re-entrant here.
+    expect(renderedIframe(m)).toBe(false);
     expect(writes).toHaveLength(1);
+  });
+
+  it("a whole zero-card result outranks a chart in a lesser channel", () => {
+    // The other route to the harm `looksComplete` guards against, and the one
+    // the mirror test above cannot see because it only populates `toolOutput`.
+    //
+    // Preferring any chart-bearing candidate over list order means a stale
+    // chart sitting in `widget.structuredContent` beats a fresh, whole,
+    // chart-less `toolOutput` — so the selection returns the stale card and
+    // the veto never runs. The user gets a chart for a question that returned
+    // nothing, which is exactly what the veto exists to prevent, arrived at
+    // from the other direction. Completeness has to be checked first.
+    const heights: number[] = [];
+    const m = mountWidget(html(), {
+      toolOutput: { cards: [], web_results: [], usage: {} },
+      widget: { structuredContent: PROD_STRUCTURED_CONTENT },
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    expect(renderedIframe(m)).toBe(false);
+    expect(heights).toEqual([1, 0]);
+  });
+
+  it("restores the mirror when the stripped payload arrives on the EVENT path", () => {
+    // The rehydration fix has to cover the route the host actually takes, and
+    // we cannot know which one that is. This path used to be
+    // `render(pickFromGlobals(globals) || pickFromOpenAi())`: a stripped
+    // `toolOutput` in the event's globals is truthy, so it satisfied the left
+    // side, short-circuited the right, and collapsed with `rendered = true`
+    // before the mirror was ever read — the fix silently no-opping in the case
+    // it targets. The old code justified that with "set_globals fires only on
+    // live calls, never on rehydration", which is an assumption about ChatGPT's
+    // timing, and the 250 ms poll exists because that timing is not knowable.
+    const openai: Record<string, unknown> = {};
+    const m = mountWidget(html(), openai);
+    // Nothing on mount, so the synchronous probe cannot be what renders.
+    expect(renderedIframe(m)).toBe(false);
+    openai.widgetState = PROD_STRUCTURED_CONTENT;
+    fireSetGlobals(m, { toolOutput: STRIPPED_TOOL_OUTPUT }, "openai:set_globals");
+    expect(renderedIframe(m)).toBe(true);
+    expect(frame(m).classList.contains("hidden")).toBe(false);
+  });
+
+  it("a live chart on the event path still beats the mirror", () => {
+    // The converse of the test above, and the regression that unifying the two
+    // candidate lists could plausibly introduce: globals must keep their
+    // precedence when what they carry is real. Both are populated after mount
+    // so the synchronous probe stays out of it and the event path is what the
+    // assertion is about.
+    const openai: Record<string, unknown> = {};
+    const m = mountWidget(html(), openai);
+    openai.widgetState = {
+      ...PROD_STRUCTURED_CONTENT,
+      embed_url: "https://tako.com/embed/STALE/",
+    };
+    fireSetGlobals(
+      m,
+      { toolOutput: PROD_STRUCTURED_CONTENT },
+      "openai:set_globals",
+    );
+    expect(renderedIframe(m)).toBe(true);
   });
 
   it("a zero-card result is NOT overpainted by a stale mirror", () => {
