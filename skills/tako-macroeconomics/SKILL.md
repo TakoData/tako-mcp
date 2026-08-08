@@ -20,7 +20,7 @@ Tako serves macro indicators as interactive, citation-backed charts. All tools b
 ## Pick the tool
 - `tako_answer`: **the default for any "<country> <indicator>" question.** Returns the value in prose with its cited chart and rows attached, so one priced call finishes the job. Relay the `answer` verbatim.
 - `tako_search`: reach for it when you want **breadth or a chart** rather than a number, e.g. scanning several countries or indicator variants to see what exists, or pulling the card when the chart is the deliverable. FRED/OECD/BIS cards do export, so search is more useful here than in the licensed-data skills, but it still costs a round trip to turn a card into a figure.
-- `tako_available_data`: FREE, and the right tool when the question is **what Tako covers**, or when many variants exist and you need the exact indicator name (mandatory for PCE — see below). Not a warm-up before every lookup.
+- `tako_available_data`: FREE, and the right tool when the question is **what Tako covers**, or when many variants exist and you need the exact indicator name (mandatory for PCE — see below).
 - Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → one narrow call per country in parallel, then rank. Use `tako_search` if you only need to see what exists, `tako_answer` when you need each figure.
 
 ## Query patterns (Critical)

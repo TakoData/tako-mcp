@@ -155,7 +155,19 @@ export const SERVER_VERSION = "0.19.0"; // x-release-please-version
  * hedged "NOT a required first step" precisely to push back on this
  * paragraph. Instructions outrank descriptions in the host's system prompt,
  * so the two must not argue; the hedge went with the push. If search-first
- * routing returns, promoting this paragraph is the first thing to retry.
+ * routing returns, promoting this paragraph is the first thing to retry —
+ * and the hedge must NOT come back with it, which is the invariant
+ * `mcp.test.ts` asserts as a pair rather than as two absences.
+ *
+ * The same permission lived in two more places, and review caught that the
+ * "it only existed to push back on this paragraph" reasoning above was
+ * therefore incomplete: `skills/tako-financial-research/SKILL.md` and
+ * `skills/tako-macroeconomics/SKILL.md` each told the model the free tool is
+ * "not a warm-up before every lookup" in their own words, neither written
+ * against these instructions. Left alone they would have outlived the hedge
+ * and disagreed with the description every client reads, so they went too.
+ * Three surfaces now say the same thing about the free tool: it answers a
+ * coverage question, and it is worth a call when you need an exact name.
  *
  * REMOVED DELIBERATELY, not by oversight: the closing hedge "Use a built-in
  * web search when the query is clearly outside Tako's coverage, or Tako
