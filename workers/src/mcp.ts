@@ -159,15 +159,22 @@ export const SERVER_VERSION = "0.19.2"; // x-release-please-version
  * and the hedge must NOT come back with it, which is the invariant
  * `mcp.test.ts` asserts as a pair rather than as two absences.
  *
- * The same permission lived in two more places, and review caught that the
- * "it only existed to push back on this paragraph" reasoning above was
- * therefore incomplete: `skills/tako-financial-research/SKILL.md` and
+ * The same permission lived elsewhere, and review caught that the "it only
+ * existed to push back on this paragraph" reasoning above was therefore
+ * incomplete: `skills/tako-financial-research/SKILL.md` and
  * `skills/tako-macroeconomics/SKILL.md` each told the model the free tool is
  * "not a warm-up before every lookup" in their own words, neither written
  * against these instructions. Left alone they would have outlived the hedge
  * and disagreed with the description every client reads, so they went too.
- * Three surfaces now say the same thing about the free tool: it answers a
- * coverage question, and it is worth a call when you need an exact name.
+ *
+ * And then a SECOND review round found the same lines still standing in
+ * `README.md`, which embeds all three skills whole for manual claude.ai
+ * upload. Do not read a count of surfaces here — an earlier version of this
+ * comment claimed "three" and was wrong the moment it was written, because
+ * the README copies were never in the count. The count is not the invariant
+ * and prose cannot hold it: `workers/scripts/skills.test.ts` now diffs each
+ * SKILL.md against its README copy in full, body included, so a routing line
+ * changed in one and not the other fails CI instead of shipping.
  *
  * REMOVED DELIBERATELY, not by oversight: the closing hedge "Use a built-in
  * web search when the query is clearly outside Tako's coverage, or Tako
