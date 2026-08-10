@@ -21,9 +21,11 @@
  * `>-` (folded, chomped) is the fix and the convention: a block scalar has no
  * indicator characters, so colons, quotes, and apostrophes all pass through
  * untouched, and folding a single-line body yields the identical string the
- * plain scalar was meant to produce. The frontmatter here is byte-identical to
- * the README's blocks as a result, and the parity test below is what keeps it
+ * plain scalar was meant to produce. Each skill is byte-identical to the
+ * README's copy of it as a result, and the parity test below is what keeps it
  * that way — the drift between those two copies IS the recurrence mechanism.
+ * That test covers the BODY as well as the frontmatter, because the second
+ * recurrence went through the body: see its comment.
  *
  * On the strength of the claim: the YAML-parses assertion was verified to fail
  * on the pre-fix `tako-web-traffic/SKILL.md` (js-yaml 4.1.0 throws
@@ -52,6 +54,14 @@ function skillDirNames(): string[] {
     .map((entry) => entry.name)
     .sort();
 }
+
+// The ONE sanctioned difference between a SKILL.md and its README copy. The
+// README block is step 2 of a numbered install flow, so it points back at the
+// server the reader just added; the installed file has no such context and
+// names the server instead. Both spellings appear exactly three times, once
+// per skill. Any OTHER difference is drift, and the parity test says so.
+const README_CONTEXT = "Tako MCP server installed in Step 1.";
+const SKILL_CONTEXT = "Tako MCP server (server name `tako`).";
 
 /** The raw text between the opening and closing `---` fences. */
 function frontmatterOf(markdown: string): string {
@@ -102,30 +112,47 @@ describe("bundled plugin skills", () => {
         expect(markdown).toMatch(/^description: >-$/m);
       });
 
-      it("matches the README's copy-paste block byte for byte", () => {
+      it("matches the README's copy-paste block, body included", () => {
         // THE check the module docblock is actually arguing for.
         //
         // The recurrence mechanism was drift between two copies: b12e4c6 fixed
         // the frontmatter in the README's manual-upload blocks and never in the
         // SKILL.md files the plugin installs, and nothing noticed for as long
-        // as it took to find the dead skill. Byte-identical frontmatter is what
-        // makes the two copies diffable — but "they happen to be identical
-        // today" is not a guard, and neither `gen-registry.ts` nor
-        // `gen-schemas.ts` reads `skills/` at all.
+        // as it took to find the dead skill. Neither `gen-registry.ts` nor
+        // `gen-schemas.ts` reads `skills/` at all, so nothing else diffs them.
         //
-        // Without this, rewording a description in SKILL.md and leaving the
-        // README stale keeps the whole suite green — the exact failure the
-        // docblock calls proven-to-recur.
+        // This compared FRONTMATTER ONLY until review caught what that misses.
+        // The README embeds each skill whole — frontmatter and body — so a
+        // routing line rewritten in SKILL.md and left stale in the README kept
+        // the suite green. Not hypothetical: it is what happened one commit
+        // ago, when the free-tool hedge came out of both SKILL.md files and
+        // survived in `README.md` at the two lines that mirror them. Same
+        // drift, same two copies, one section below where the guard reached.
+        //
+        // The README block is the whole file, with ONE substitution: its
+        // install-flow context sentence, since the block is step 2 of a
+        // numbered setup and "server name `tako`" names something the reader
+        // meets two steps later. Declared as data above rather than fuzzed
+        // over, so a second intentional delta cannot be introduced silently —
+        // it has to be written there, where the next reader will see it.
         const readme = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
-        const block = new RegExp(
-          `^---\\nname: ${name}\\n([\\s\\S]*?)\\n---$`,
-          "m",
-        ).exec(readme);
+        const start = new RegExp(`^---\\nname: ${name}\\n`, "m").exec(readme);
         expect(
-          block,
+          start,
           `README.md has no copy-paste block for ${name}`,
         ).not.toBeNull();
-        expect(`name: ${name}\n${block![1]!}`).toBe(frontmatterOf(markdown));
+        // The block runs to the install flow's next step, which is README
+        // scaffolding rather than skill content.
+        const tail = readme.slice(start!.index);
+        const end = /^Step 3: Ask the user to restart Claude Code$/m.exec(tail);
+        expect(
+          end,
+          `README.md block for ${name} has no "Step 3" terminator`,
+        ).not.toBeNull();
+        const block = tail.slice(0, end!.index).trimEnd();
+        expect(block.replaceAll(README_CONTEXT, SKILL_CONTEXT)).toBe(
+          markdown.trimEnd(),
+        );
       });
     });
   }
