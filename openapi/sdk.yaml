@@ -2000,15 +2000,35 @@ components:
       description: Request model for creating a card directly with components.
     DataFreshness:
       properties:
+        coverage_end:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Coverage End
+          description: The last data point in the card's data, at the granularity
+            of the underlying series. An annual series reports a year (2026). A monthly
+            or quarterly series reports a month (2026-06). A daily or intraday series
+            reports a full date (2026-06-30). This value can be in the future when
+            the card includes projections. Null for card types without a coverage
+            date. The value uses ISO 8601 reduced precision, so examine the length
+            before you parse it. A date parser reads 2026 as 2026-01-01, which is
+            the start of the period and not the end.
+          examples:
+          - '2026'
+          - 2026-06
+          - '2026-06-30'
         data_as_of:
           anyOf:
           - type: string
           - type: 'null'
           title: Data As Of
-          description: Date of the most recent observation in the card's data, as
-            an ISO date (YYYY-MM-DD). Null for card types without a coverage date.
+          description: 'Deprecated: use coverage_end. The same point, always as a
+            full ISO date (YYYY-MM-DD). For a series whose points are periods, this
+            date is the period boundary. It is not a day on which Tako observed a
+            value.'
+          deprecated: true
           examples:
-          - '2026-06-30'
+          - '2026-10-01'
         last_updated:
           anyOf:
           - type: string
@@ -2020,10 +2040,10 @@ components:
           - '2026-07-14'
       type: object
       title: DataFreshness
-      description: 'When the card''s data was last observed and last refreshed. Either
+      description: 'When the card''s data ends and when Tako last refreshed it. Either
         field
 
-        may be null when that date isn''t available for the card type.'
+        may be null when that date is not available for the card type.'
     DataPipelineAnswerEvent:
       properties:
         kind:
@@ -3625,8 +3645,9 @@ components:
           anyOf:
           - $ref: '#/components/schemas/DataFreshness'
           - type: 'null'
-          description: 'Freshness dates for the card''s data: the coverage date (data_as_of)
-            and the last refresh date (last_updated). Null when neither date is available.'
+          description: 'Freshness dates for the card''s data: where the data ends
+            (coverage_end), the same point as a full date (data_as_of, deprecated),
+            and the last refresh date (last_updated). Null when no date is available.'
       type: object
       title: TakoCard
       description: 'A Tako knowledge card on the search and answer surfaces. It carries
