@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.19.3](https://github.com/TakoData/tako-mcp/compare/v0.19.2...v0.19.3) (2026-08-11)
+
+
+### Bug Fixes
+
+* **instructions:** the test pinned the answer, and one surface kept arguing ([64b31ed](https://github.com/TakoData/tako-mcp/commit/64b31edde01b952414a68d58111926935207333b))
+* **mcp:** the instructions conceded the web search they meant to replace ([d74ef97](https://github.com/TakoData/tako-mcp/commit/d74ef97ec484cd1d29edac0ecdf7ab2a30d2774f))
+* **skills:** the hedge outlived its removal in a copy nothing diffed ([40d12f2](https://github.com/TakoData/tako-mcp/commit/40d12f28987956aed65e1852af6235865cdb3f14))
+* **widget:** the reloaded card had a chart, and we picked the wreckage ([a19f2ec](https://github.com/TakoData/tako-mcp/commit/a19f2ecb3600e8a3529e61b1882f63e41ff41cb0))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([6185ebe](https://github.com/TakoData/tako-mcp/commit/6185ebec822d0c1149f41630f195bb5ba8d9fa39))
+* sync OpenAPI spec from monorepo ([f4ea748](https://github.com/TakoData/tako-mcp/commit/f4ea748971251327465da13704c9b302cd38589b))
+* sync OpenAPI spec from TakoData/tako ([409db58](https://github.com/TakoData/tako-mcp/commit/409db58fab165031d8c921261d362ad5ef8cc43e))
+
+## [0.19.2](https://github.com/TakoData/tako-mcp/compare/v0.19.1...v0.19.2) (2026-08-09)
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([c252be8](https://github.com/TakoData/tako-mcp/commit/c252be8da97f3962ac08ab85dd6624a380473dbc))
+* sync OpenAPI spec from monorepo ([091421e](https://github.com/TakoData/tako-mcp/commit/091421eacbbdce3e78a2431d62270776057092fa))
+* sync OpenAPI spec from TakoData/tako ([5e8eee9](https://github.com/TakoData/tako-mcp/commit/5e8eee91f89ae2d0559608a0fe7aa9d23e53fa26))
+
+## [0.19.1](https://github.com/TakoData/tako-mcp/compare/v0.19.0...v0.19.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **widget:** a chart-less call left an unexplained grey box ([cfed4d9](https://github.com/TakoData/tako-mcp/commit/cfed4d920e209f246496075a3eed00267887be41))
+* **widget:** address review — honest watchdog, readable silent-host colour ([ae97e4d](https://github.com/TakoData/tako-mcp/commit/ae97e4d8a680d9a59a06ec6095b0f089164ea2f1))
+* **widget:** don't let the empty label depend on fixed-in-iframe semantics ([46d5e1c](https://github.com/TakoData/tako-mcp/commit/46d5e1c6a50882afebc039185b8e1086e0a9d441))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([5cfd3c2](https://github.com/TakoData/tako-mcp/commit/5cfd3c281edcd3ee1b794636a25b213f9f400488))
+* sync OpenAPI spec from monorepo ([ed8ef24](https://github.com/TakoData/tako-mcp/commit/ed8ef2457d75f63b4cf389acab5e0ad539576ff7))
+* sync OpenAPI spec from TakoData/tako ([f01b22a](https://github.com/TakoData/tako-mcp/commit/f01b22a4b131a9d6d57dc3de538e8b8f4c1cbd58))
+
 ## [0.19.0](https://github.com/TakoData/tako-mcp/compare/v0.18.0...v0.19.0) (2026-08-06)
 
 

@@ -368,16 +368,15 @@ paths:
         underlying data, or the full text of a web page. Returns a short-lived presigned
         download URL. Send `content_format: card_json` for a rich, card-type-specific
         JSON object under `card_data` (for example a weather forecast with hourly
-        and daily records). A card_json export accepts no row cap, so a card whose
-        record array is unbounded caps it at the platform export ceiling and sets
-        `truncated`. It bills for every record row it returns, and a card type without
-        a card_json shape returns 422. Protected-source cards (data export not available)
-        return 403. Send `quote_only: true` to get only the export''s price (`cost`
-        + `export_pricing`) with an empty payload. A quote charges nothing. A quote
-        of a row-based format also fetches nothing. A card_json quote is the one exception:
-        its price needs the real record-row count, so Tako builds the payload and
-        can call the data provider. The price is then exact instead of an upper bound.
-        That quote requires a funded account, and it still charges nothing.'
+        and daily records). A card_json export returns the complete payload: `max_rows`
+        sets the price but does not truncate it, so Tako can deliver more record rows
+        than it bills. A card whose record array is unbounded caps that array at the
+        platform export ceiling and sets `truncated`. A card type without a card_json
+        shape returns 422. Protected-source cards (data export not available) return
+        403. Send `quote_only: true` to get only the export''s price (`cost` + `export_pricing`)
+        with an empty payload. A quote charges nothing, fetches nothing, and calls
+        no data provider. Every format prices a quote from `max_rows`, so the quote
+        is an upper bound on the charge and never falls below it.'
       operationId: contents
       requestBody:
         content:
@@ -1708,11 +1707,12 @@ components:
           title: Card Data
           description: 'Inline card data as a card-type-specific JSON object. The
             ''card_type'' field inside the object names its shape. Set only when content_format
-            is ''card_json''. A card_json request accepts no row cap, so a card whose
-            record array is unbounded caps it at the platform export ceiling and reports
-            ''truncated'': true. The payload then also carries the true count for
-            its record array. Card types without a card_json shape return 422 on /contents
-            and fall back to ''json_compact'' on search and answer include_contents.'
+            is ''card_json''. A card_json request returns the complete payload: ''max_rows''
+            sets the price but does not truncate it. A card whose record array is
+            unbounded caps that array at the platform export ceiling and reports ''truncated'':
+            true. The payload then also carries the true count for its record array.
+            Card types without a card_json shape return 422 on /contents and fall
+            back to ''json_compact'' on search and answer include_contents.'
         url:
           anyOf:
           - type: string
@@ -1842,13 +1842,15 @@ components:
             minimum: 1.0
           - type: 'null'
           title: Max Rows
-          description: 'Optional cap on the rows returned for a Tako card CSV export.
+          description: Optional cap on the rows a Tako card export is priced against.
             When omitted, it defaults to the free-row allowance (20 rows), billed
             at the baseline only. Raise it to export more rows, up to the 2,000-row
             system ceiling (Tako clamps larger values). Rows beyond the free allowance
-            bill at the per-1,000-row rate. Billing counts the rows actually returned.
-            Web URLs ignore this field. Do not use this field with content_format=''card_json''
-            (400): card_json always returns the complete payload.'
+            bill at the per-1,000-row rate. Tako never bills more rows than it returns.
+            For csv, json_records and json_compact, Tako returns the rows up to this
+            cap and bills them. For card_json, Tako returns the complete payload,
+            which can hold more record rows than this cap; Tako delivers those rows
+            and does not bill them. Web URLs ignore this field.
           examples:
           - 100
         max_chars:
@@ -1869,12 +1871,13 @@ components:
             without fetching content or charging. The response item''s payload and
             url fields are null, and the request is free. `max_rows` shapes the quote
             and defaults to the 20-row free allowance, as a real export does. The
-            request ignores `mode`, and it ignores `content_format` except for ''card_json'':
-            a card_json quote reports the exact price of the complete payload, so
-            Tako builds the payload to count its rows. That build can fetch from the
-            data provider, so a card_json quote is free but not instant, and it requires
-            a funded account. The same export-safe gate applies, so an unexportable
-            card still returns 403.'
+            request ignores `mode`. Every format prices a quote from `max_rows`, so
+            a quote is instant and makes no call to a data provider. A quote is an
+            upper bound on the charge: an export of a card with fewer rows than the
+            cap bills less. A card_json quote reports no `total_rows`, because it
+            does not build the payload. The same export-safe gate applies, so an unexportable
+            card still returns 403, and a card type with no card_json shape still
+            returns 422.'
           default: false
       type: object
       required:
@@ -1997,15 +2000,35 @@ components:
       description: Request model for creating a card directly with components.
     DataFreshness:
       properties:
+        coverage_end:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Coverage End
+          description: The last data point in the card's data, at the granularity
+            of the underlying series. An annual series reports a year (2026). A monthly
+            or quarterly series reports a month (2026-06). A daily or intraday series
+            reports a full date (2026-06-30). This value can be in the future when
+            the card includes projections. Null for card types without a coverage
+            date. The value uses ISO 8601 reduced precision, so examine the length
+            before you parse it. A date parser reads 2026 as 2026-01-01, which is
+            the start of the period and not the end.
+          examples:
+          - '2026'
+          - 2026-06
+          - '2026-06-30'
         data_as_of:
           anyOf:
           - type: string
           - type: 'null'
           title: Data As Of
-          description: Date of the most recent observation in the card's data, as
-            an ISO date (YYYY-MM-DD). Null for card types without a coverage date.
+          description: 'Deprecated: use coverage_end. The same point, always as a
+            full ISO date (YYYY-MM-DD). For a series whose points are periods, this
+            date is the period boundary. It is not a day on which Tako observed a
+            value.'
+          deprecated: true
           examples:
-          - '2026-06-30'
+          - '2026-10-01'
         last_updated:
           anyOf:
           - type: string
@@ -2017,10 +2040,10 @@ components:
           - '2026-07-14'
       type: object
       title: DataFreshness
-      description: 'When the card''s data was last observed and last refreshed. Either
+      description: 'When the card''s data ends and when Tako last refreshed it. Either
         field
 
-        may be null when that date isn''t available for the card type.'
+        may be null when that date is not available for the card type.'
     DataPipelineAnswerEvent:
       properties:
         kind:
@@ -2256,12 +2279,11 @@ components:
         max_rows_ceiling:
           type: integer
           title: Max Rows Ceiling
-          description: 'Hard cap on rows a single export can return and bill; a larger
-            requested max_rows is clamped to this. Applies to the row-based formats
-            (csv, json_records, json_compact) only. A card_json export is a semantic
-            document with no row cap: it bills every record row, so above this number
-            the formula understates the charge. Send quote_only for an exact card_json
-            price.'
+          description: Hard cap on rows a single export can return and bill; a larger
+            requested max_rows is clamped to this. No format bills more than the clamped
+            max_rows, and none bills more rows than it returns. A card_json export
+            returns the complete payload, which can hold more record rows than this
+            ceiling. Tako delivers those rows and does not bill them.
       type: object
       required:
       - baseline_usd
@@ -2712,11 +2734,12 @@ components:
           title: Card Data
           description: 'Inline card data as a card-type-specific JSON object. The
             ''card_type'' field inside the object names its shape. Set only when content_format
-            is ''card_json''. A card_json request accepts no row cap, so a card whose
-            record array is unbounded caps it at the platform export ceiling and reports
-            ''truncated'': true. The payload then also carries the true count for
-            its record array. Card types without a card_json shape return 422 on /contents
-            and fall back to ''json_compact'' on search and answer include_contents.'
+            is ''card_json''. A card_json request returns the complete payload: ''max_rows''
+            sets the price but does not truncate it. A card whose record array is
+            unbounded caps that array at the platform export ceiling and reports ''truncated'':
+            true. The payload then also carries the true count for its record array.
+            Card types without a card_json shape return 422 on /contents and fall
+            back to ''json_compact'' on search and answer include_contents.'
         url:
           anyOf:
           - type: string
@@ -2810,19 +2833,22 @@ components:
 
         compute the full charge of a later export before fetching: baseline_usd +
 
-        row_cpm_usd * max(0, rows - free_rows) / 1000, with rows <=
+        row_cpm_usd * max(0, billed_rows - free_rows) / 1000, where `billed_rows`
+        is
 
-        max_rows_ceiling. The `max_rows_ceiling` bound does NOT hold for
+        the SMALLER of the rows the export returns and `max_rows` clamped to
 
-        `content_format=card_json`, which has no row cap: the baseline and CPM terms
+        `max_rows_ceiling`. One formula covers every format. A csv, json_records or
 
-        stay exact, but a card_json payload with more record rows than
+        json_compact export returns no more rows than that cap, so a card with fewer
 
-        `max_rows_ceiling` bills every one of them. Read `total_rows` on a delivered
+        rows than the cap bills only the rows it returns. A card_json export returns
 
-        card_json response, or send `quote_only`, for its exact cost. That rate
+        the complete payload, which can hold more record rows than the cap; Tako
 
-        always uses the `/contents` free row allowance,
+        delivers those rows and does not bill them. That rate always uses the
+
+        `/contents` free row allowance,
 
         whatever the caller''s inline allowance is, because `/contents` has no
 
@@ -3619,8 +3645,9 @@ components:
           anyOf:
           - $ref: '#/components/schemas/DataFreshness'
           - type: 'null'
-          description: 'Freshness dates for the card''s data: the coverage date (data_as_of)
-            and the last refresh date (last_updated). Null when neither date is available.'
+          description: 'Freshness dates for the card''s data: where the data ends
+            (coverage_end), the same point as a full date (data_as_of, deprecated),
+            and the last refresh date (last_updated). Null when no date is available.'
       type: object
       title: TakoCard
       description: 'A Tako knowledge card on the search and answer surfaces. It carries

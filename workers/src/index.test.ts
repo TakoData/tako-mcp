@@ -642,13 +642,19 @@ describe("worker routing", () => {
       openWorldHint: false,
     });
 
-    // `tako_search` is the sole chart-widget tool on ChatGPT after 0.3.0.
-    // The empty-fast widget-gap problem (ChatGPT pins widget container
-    // height at the highest ever notified and ignores shrink notifications,
-    // so a clean `count: 0` result rendered as a persistent empty container)
-    // is handled by `tako_search`'s handler throwing on empty for ChatGPT —
-    // tool errors don't reserve a widget container, so the widget can stay
-    // shipped without leaving a gap on the empty path.
+    // Registration `_meta` is STATIC per tool, and deliberately so even
+    // though a chart-less call cannot use it: a tool descriptor is written
+    // once, before any call, so it cannot know whether the next result will
+    // carry a card. That is the root of the empty-widget-gap problem — ChatGPT
+    // keeps a minimum-height widget card for every mounted widget and ignores
+    // the shrink to zero, so a zero-card search left a grey void (reported
+    // 2026-08). An earlier revision of this comment claimed the handler threw
+    // on empty for ChatGPT to dodge it; it does not, and has not since the
+    // zero-result `guidance` path replaced the throw. What covers it now is
+    // two-sided: the bundle labels the box it cannot escape (`collapse()` in
+    // `_chart_widget.ts`), and the tool RESULT names no ui resource at all
+    // when there is no chart (`mcp.test.ts`), which removes the box outright
+    // on any host that decides per call rather than per descriptor.
     const takoSearchTool = body.result.tools.find((t) => t.name === "tako_search");
     expect(takoSearchTool?._meta).toMatchObject({
       ui: { resourceUri: "ui://tako/embed/chart" },

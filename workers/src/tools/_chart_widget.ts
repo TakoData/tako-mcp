@@ -622,6 +622,44 @@ const WIDGET_HTML = `<!doctype html>
     display: flex; align-items: center; justify-content: center;
     width: 100%; min-height: 240px;
   }
+  /* The empty state — see \`collapse()\`. Three declarations here are
+     load-bearing, not cosmetic:
+       - \`position: fixed\` + offsets: fills the host's reserved viewport
+         (whatever it kept after we asked for zero) while staying OUT of flow,
+         so a host that sizes the frame from content still measures a
+         zero-height document. Written long rather than as \`inset\` only
+         because the four sides read plainly next to the \`100vh\` below; the
+         shorthand would be equally safe.
+       - \`height: 100vh\`: redundant wherever fixed positioning resolves against
+         the viewport (every current engine), and the reason this does not
+         depend on that. The widget renders inside an iframe on hosts we do not
+         control, and WebKit has historically resolved fixed positioning inside
+         a frame against the DOCUMENT instead — where \`top/bottom: 0\` on a
+         zero-height document collapses the label to nothing. \`100vh\` is the
+         frame's own viewport either way, so the label fills the visible box on
+         both readings, and equals 0 when the host honoured the shrink, so it
+         still cannot make a collapsed widget visible or measurable.
+       - transparent background: \`applyHostSurface\` paints the canvas in the
+         host's own colour, and a second surface here would put a visible
+         rectangle inside the very box this label exists to explain.
+     The colour is the SILENT-HOST case only — \`collapse()\` overrides it inline
+     whenever the host declared a theme, which is the signal that actually
+     matches the backdrop. Base is the light value because an unstyled frame
+     composites to an opaque white base (measured; see \`applyHostSurface\`), and
+     the dark override uses the one signal an iframe gets for free. 4.83:1 on
+     white and 5.4:1 on a dark host, against 3.25:1 for any single grey that
+     tries to hedge both. */
+  #tako-empty {
+    position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+    height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 16px; box-sizing: border-box;
+    font-size: 13px; text-align: center; color: #6b7280;
+    pointer-events: none; background: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    #tako-empty { color: #b4b8bd; }
+  }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -640,6 +678,11 @@ const WIDGET_HTML = `<!doctype html>
      un-hide the relevant element AND notifyHeight(actual height) in
      lockstep, so the widget grows naturally on success. -->
 <div id="tako-placeholder" class="hidden">Loading chart…</div>
+<!-- Shown only by \`collapse()\`, i.e. only once we know there is no chart to
+     draw. Never a loading state: on a host that honours the shrink this sits
+     inside a zero-height viewport and is invisible, which is the outcome we
+     prefer and must not spoil with a flash of text. -->
+<div id="tako-empty" class="hidden">No chart for this result</div>
 <iframe
   id="tako-embed"
   class="hidden"
@@ -662,6 +705,7 @@ const WIDGET_HTML = `<!doctype html>
   var image = document.getElementById("tako-embed-img");
   var imageLink = document.getElementById("tako-embed-link");
   var placeholder = document.getElementById("tako-placeholder");
+  var empty = document.getElementById("tako-empty");
   var rendered = false;
   // Origin of the iframe we loaded — used to gate the height handshake
   // listener below so we only honor resize messages from the actual
@@ -1521,10 +1565,60 @@ const WIDGET_HTML = `<!doctype html>
       return true;
   }
 
-  // Take the widget to zero height and mark it done. Used by the no-chart
-  // guard in render() and by the no-data watchdog at the bottom of the file.
-  function collapse() {
+  // Take the widget to zero height, label whatever the host refuses to give
+  // back, and mark it done. Used by the no-chart guard in render() and by the
+  // no-data watchdog at the bottom of the file.
+  //
+  // Asking for zero is not enough, and that is the whole reason the label
+  // exists. The host mounts this widget from STATIC tool-registration metadata
+  // (\`openai/outputTemplate\` / \`ui.resourceUri\` in \`tools/list\`), which cannot
+  // know whether a given call produced a chart — so every chart-less call gets
+  // a mounted widget, and a host with a minimum card height (ChatGPT, reported
+  // 2026-08 on a zero-card search) keeps that card visible after the shrink to
+  // zero. What the user then sees is an unexplained grey void next to an answer
+  // that worked.
+  //
+  // So: paint a quiet line into the space instead. Painting is free in the good
+  // case — a host that honoured the zero is showing a zero-height viewport, and
+  // \`#tako-empty\` is \`position: fixed\`, so it neither renders nor adds to the
+  // document's measurable height there. And no height is notified after the
+  // zero: the label dresses a box the host chose to keep, and must never be a
+  // reason to reserve one that was already given up.
+  function collapse(labelled) {
     placeholder.classList.add("hidden");
+    // \`labelled\` is only true where the emptiness is a FACT: structured content
+    // arrived and carried no chart. The watchdog path passes false, because
+    // "nothing arrived within 10 s" is not the same claim — a failed call and a
+    // merely slow delivery are indistinguishable from in here, and this
+    // function discards whatever lands afterwards (\`rendered = true\`). Saying
+    // "No chart for this result" there would be an affirmative statement that
+    // is wrong exactly when the chart was late rather than absent. Blank keeps
+    // that path's pre-existing behaviour, and hosts show their own error for
+    // the failed call.
+    if (empty && labelled) {
+      // Contrast, not decoration. The body's placeholder grey lands around
+      // 2:1 against a light host — legible to whoever wrote it and to nobody
+      // else. When the host DECLARED a theme, use its value: ~4.8:1 on light,
+      // ~5:1 on dark, and it beats any OS signal because the host's theme and
+      // the machine's can disagree (TAKO-3781).
+      //
+      // When it declared none, leave the CSS alone. The stylesheet's base is
+      // the light value with a \`prefers-color-scheme\` dark override, which is
+      // strictly better than a compromise grey: a silent host is also one
+      // \`applyHostSurface\` leaves untouched, and per the measured note above
+      // that is the same-origin case where the canvas composites over the
+      // host's own page — so the OS signal tracks the backdrop. Residual risk,
+      // accepted: a CROSS-origin host that sends no theme composites to an
+      // opaque white base regardless of the OS, so a dark-mode machine there
+      // reads ~1.9:1. No host we know of is in that intersection (claude.ai
+      // and ChatGPT both declare a theme), and it is not detectable from in
+      // here — the white is the compositor's base, not a style we can read.
+      var t = hostTheme();
+      if (t === "light" || t === "dark") {
+        empty.style.color = t === "light" ? "#6b7280" : "#b4b8bd";
+      }
+      empty.classList.remove("hidden");
+    }
     document.documentElement.style.height = "0px";
     document.body.style.height = "0px";
     notifyHeight(0);
@@ -1555,10 +1649,15 @@ const WIDGET_HTML = `<!doctype html>
       typeof structuredContent.embed_url !== "string" &&
       typeof structuredContent.image_url !== "string"
     ) {
-      collapse();
+      collapse(true);
       log("no-chart payload, collapsed widget");
       return true;
     }
+    // Past the no-chart guard, so this payload has a chart in it. Persist the
+    // identity NOW rather than at one of render()'s several success exits:
+    // what we are protecting against is losing the payload, and every branch
+    // below renders the same card from the same two URLs.
+    persistWidgetState(structuredContent);
     var url = structuredContent.embed_url;
     var imgUrl = structuredContent.image_url;
     // \`image_data_url\` and PNG natural dimensions live on \`_meta\`
@@ -1718,28 +1817,181 @@ const WIDGET_HTML = `<!doctype html>
     return true;
   }
 
-  function pickFromOpenAi() {
+  // Mirror of what the widget last rendered, kept in ChatGPT's widget state so
+  // a reloaded conversation can repaint without \`toolOutput\`.
+  //
+  // The bug: ChatGPT rehydrates a reloaded conversation with a STRIPPED
+  // \`toolOutput\`. Observed in the wild as \`{"width":900,"height":720}\` — the
+  // two \`topCardChartFields\` defaults and nothing else, no \`embed_url\`, no
+  // \`image_url\`. render()'s no-chart guard reads that as "this call produced
+  // no card" and collapses, so a working chart turns into an empty box on
+  // reload. The server is not at fault: a repeat \`tako_answer\` call returns
+  // all ten declared keys (verified against prod), and \`topCardChartFields\`
+  // emits its six widget fields all-or-nothing, so no server path produces
+  // that pair alone.
+  //
+  // Claude does not have this failure mode — it gets a per-call dynamic
+  // \`ui/resourceUri\` carrying the \`pub_id\`, so the URI itself identifies the
+  // card. ChatGPT reads its template URI from static \`tools/list\` registration
+  // metadata (see the \`ui?.dynamic\` block in mcp.ts, which deliberately does
+  // NOT override \`openai/outputTemplate\`), so the widget has no identity of
+  // its own and \`toolOutput\` is its only source. Widget state is the Apps
+  // SDK's own answer to exactly this: \`setWidgetState\` is synchronous, and
+  // \`window.openai.widgetState\` is restored on reload.
+  //
+  // Only the structuredContent half is mirrored. \`_meta\` (the baked
+  // \`image_data_url\`) is deliberately NOT persisted: it is up to 400 KB
+  // against a store the SDK documents as ephemeral and widget-scoped, and the
+  // ChatGPT path never reads it anyway — that host's permissive \`img-src\`
+  // renders the cross-origin \`image_url\` directly. A restored render on
+  // ChatGPT therefore takes the same branch it took the first time.
+  var lastPersistedKey = null;
+  function persistWidgetState(structuredContent) {
     var w = window;
-    if (!w || !w.openai || typeof w.openai !== "object") return null;
-    return (
-      w.openai.toolOutput ||
-      (w.openai.widget && w.openai.widget.toolOutput) ||
-      (w.openai.widget && w.openai.widget.structuredContent) ||
-      (w.openai.widget && w.openai.widget.payload) ||
-      (w.openai.toolResponseMetadata && w.openai.toolResponseMetadata.structuredContent) ||
-      null
-    );
+    if (!w || !w.openai || typeof w.openai.setWidgetState !== "function") return;
+    var embedUrl = typeof structuredContent.embed_url === "string" ? structuredContent.embed_url : "";
+    var imageUrl = typeof structuredContent.image_url === "string" ? structuredContent.image_url : "";
+    if (!embedUrl && !imageUrl) return;
+    // Write-once per card. \`setWidgetState\` re-renders the widget on some
+    // hosts, and render() is reachable from a 250 ms poll, so an unguarded
+    // write is a loop — the same hazard the height notifier guards against.
+    var key = embedUrl + "|" + imageUrl;
+    if (key === lastPersistedKey) return;
+    lastPersistedKey = key;
+    try {
+      w.openai.setWidgetState({
+        pub_id: structuredContent.pub_id,
+        embed_url: structuredContent.embed_url,
+        image_url: structuredContent.image_url,
+        width: structuredContent.width,
+        height: structuredContent.height,
+        dark_mode: structuredContent.dark_mode,
+      });
+    } catch (e) {
+      // Best-effort: a host without the API, or one that rejects the payload,
+      // must not take down the render that is already in progress.
+      log("widget-state persist failed", { error: String(e) });
+    }
   }
-  function pickFromGlobals(globals) {
-    if (!globals || typeof globals !== "object") return null;
-    return (
-      globals.toolOutput ||
-      globals.structuredContent ||
-      (globals.widget && globals.widget.toolOutput) ||
-      (globals.widget && globals.widget.structuredContent) ||
-      (globals.widget && globals.widget.payload) ||
-      null
-    );
+
+  // Does this payload actually carry a chart? Same two fields render()'s
+  // no-chart guard tests, and it has to be the same test: a candidate that
+  // would only collapse the widget must not count as having satisfied the
+  // search for one that would paint.
+  function hasChart(o) {
+    if (!o || typeof o !== "object") return false;
+    return typeof o.embed_url === "string" || typeof o.image_url === "string";
+  }
+
+  // Does this payload look like a WHOLE tool result, as opposed to the
+  // remains of one? A real result carries its result-shaped keys even when it
+  // found nothing — a zero-card search still ships \`cards: []\`. ChatGPT's
+  // stripped reload payload carries none of them, only the two dimension
+  // defaults. That difference is what lets a legitimate empty result be told
+  // apart from a lost one, and it is the ONLY thing standing between a stale
+  // chart and a genuine "no results" — on BOTH routes to it: the mirror
+  // restore, and a stale sibling channel outranking a fresh \`toolOutput\`.
+  function looksComplete(o) {
+    if (!o || typeof o !== "object") return false;
+    return "cards" in o || "answer" in o || "web_results" in o;
+  }
+
+  // Best-first over ordered candidates, plus the widget-state mirror as the
+  // last thing tried. Truthiness is NOT the selector: ChatGPT's stripped
+  // reload payload (\`{width, height}\`) is a perfectly truthy object, so a
+  // plain \`a || b\` chain picks it, hands it to render(), and collapses —
+  // which IS the reported bug, with a healthier channel sitting unread
+  // further down.
+  //
+  // Nor is "carries a chart" the selector on its own, which is the subtler
+  // half. Preferring ANY chart-bearing candidate over list order means a
+  // stale chart in a low-priority channel outranks a fresh, whole,
+  // chart-less result in a high-priority one — and a zero-card search IS a
+  // whole result. That repaints the previous card over a question that
+  // returned nothing, the same harm the mirror is gated against, reached
+  // from the other direction. So completeness is checked BEFORE the chart
+  // preference, and the chart preference never crosses a whole result.
+  //
+  // Order of preference, and each tier exists for a case seen or reasoned
+  // about rather than for symmetry:
+  //
+  //   1. First WHOLE result, in list order, chart or not. Completeness is the
+  //      question "did a real tool result reach us", and list order is the
+  //      only freshness proxy we have — \`toolOutput\` is the canonical channel
+  //      and the rest are compatibility fallbacks. A whole result with no
+  //      chart is still authoritative: a zero-card search is a complete answer
+  //      that has nothing to draw, and render()'s no-chart guard should
+  //      collapse for it.
+  //
+  //      Note what this tier deliberately does NOT do: reach past a whole
+  //      chart-less result for a whole one that has a chart. A stale card
+  //      sitting in \`widget.structuredContent\` carries its own \`cards\` key
+  //      and so is every bit as "complete" as the fresh zero-card
+  //      \`toolOutput\` ahead of it — scanning for the chart across tiers picks
+  //      the stale one and paints a chart for a question that returned
+  //      nothing. Among whole results, order decides.
+  //   2. Fragment carrying a chart. No whole result reached us at all, so
+  //      something was lost in transit; a fragment that can still paint beats
+  //      one that cannot. This is the tier that steps over ChatGPT's stripped
+  //      \`{width, height}\` to a sibling channel that kept the URLs.
+  //   3. The mirror. Nothing live can paint and nothing live claims to be
+  //      whole, which is exactly the reload signature. Restore.
+  //   4. First truthy. Keeps a chart-less fragment reaching render() for the
+  //      labelled empty state instead of being mistaken for "nothing has
+  //      arrived yet" and hanging the poll.
+  function selectPayload(candidates, mirror) {
+    var i;
+    for (i = 0; i < candidates.length; i++) {
+      if (looksComplete(candidates[i])) return candidates[i];
+    }
+    for (i = 0; i < candidates.length; i++) {
+      if (hasChart(candidates[i])) return candidates[i];
+    }
+    if (hasChart(mirror)) return mirror;
+    for (i = 0; i < candidates.length; i++) {
+      if (candidates[i]) return candidates[i];
+    }
+    return null;
+  }
+
+  // ONE selection over ONE ordered candidate list, whichever way the payload
+  // arrived. Globals first (an \`openai:set_globals\` event just delivered
+  // them, so they are the freshest thing we have), then the \`window.openai\`
+  // channels, then the mirror inside \`selectPayload\`.
+  //
+  // Unified deliberately. These used to be two functions joined by
+  // \`pickFromGlobals(globals) || pickFromOpenAi()\`, and that \`||\` was a hole:
+  // a stripped-but-truthy \`toolOutput\` arriving on the event path satisfied
+  // the left side, short-circuited the right, and collapsed the widget with
+  // \`rendered = true\` before the mirror was ever read. The justification was
+  // that \`set_globals\` fires only on live calls, never on rehydration — an
+  // assumption we cannot check from in here, and the 250 ms poll below exists
+  // precisely because ChatGPT's delivery timing is not knowable. One list
+  // means the question does not have to be answered: the same precedence
+  // applies no matter which channel the payload came through.
+  function pickPayload(globals) {
+    var w = window;
+    var oa = w && w.openai && typeof w.openai === "object" ? w.openai : null;
+    var candidates = [];
+    if (globals && typeof globals === "object") {
+      candidates.push(
+        globals.toolOutput,
+        globals.structuredContent,
+        globals.widget && globals.widget.toolOutput,
+        globals.widget && globals.widget.structuredContent,
+        globals.widget && globals.widget.payload
+      );
+    }
+    if (oa) {
+      candidates.push(
+        oa.toolOutput,
+        oa.widget && oa.widget.toolOutput,
+        oa.widget && oa.widget.structuredContent,
+        oa.widget && oa.widget.payload,
+        oa.toolResponseMetadata && oa.toolResponseMetadata.structuredContent
+      );
+    }
+    return selectPayload(candidates, oa ? oa.widgetState : null);
   }
 
   // Initial intrinsic-height notification — 1 px (effectively invisible)
@@ -1758,11 +2010,11 @@ const WIDGET_HTML = `<!doctype html>
   // runs; otherwise we fall through to a 10s polling window because
   // ChatGPT populates the global at unpredictable times. Cost: one
   // property read every 250 ms.
-  if (!render(pickFromOpenAi())) {
+  if (!render(pickPayload(null))) {
     var attempts = 0;
     var handle = setInterval(function () {
       attempts += 1;
-      if (render(pickFromOpenAi()) || attempts >= 40) {
+      if (render(pickPayload(null)) || attempts >= 40) {
         clearInterval(handle);
       }
     }, 250);
@@ -1783,9 +2035,14 @@ const WIDGET_HTML = `<!doctype html>
   // treatment rather than a different one. \`rendered\` makes this a no-op once
   // any chart has painted, and the 10 s bound matches the polling window so it
   // cannot race a slow-but-arriving delivery.
+  //
+  // Collapsed WITHOUT the label, deliberately: from in here a failed call and a
+  // delivery that is merely late look identical, so "No chart for this result"
+  // would be an affirmative claim that is wrong in the second case. See
+  // \`collapse()\`.
   setTimeout(function () {
     if (rendered) return;
-    collapse();
+    collapse(false);
     log("no data arrived, collapsed widget");
   }, 10000);
 
@@ -1805,7 +2062,10 @@ const WIDGET_HTML = `<!doctype html>
   var handler = function (event) {
     var detail = event && event.detail;
     var globals = detail && detail.globals;
-    render(pickFromGlobals(globals) || pickFromOpenAi());
+    // One list, not \`globals || openai\` — see \`pickPayload\`. The event's own
+    // globals are the freshest candidates, but they do not get to short-circuit
+    // the search when what they carry is a stripped payload.
+    render(pickPayload(globals));
   };
   EVENT_NAMES.forEach(function (name) {
     window.addEventListener(name, handler);
@@ -2364,13 +2624,15 @@ export async function fetchPngContentBlock(
  * static URI + baked `_meta.image_data_url` from `extraMeta`.
  *
  * `resolveUriFromInput` reads the top card's `pub_id` from the tool
- * output (the search input is a query, not a pub_id) and falls back to
- * the static URI when there's no renderable top card.
+ * output (the search input is a query, not a pub_id) and returns
+ * `undefined` when there's no renderable top card — see
+ * `buildChartAppUiResourceFromOutputPubId` for why declining beats
+ * naming the static bundle there.
  */
 export function buildChartAppUiResource(
   env: Env,
   requestOrigin: string | undefined,
-  resolveUriFromInput: (input: unknown, output?: unknown) => string,
+  resolveUriFromInput: (input: unknown, output?: unknown) => string | undefined,
 ): AppUiResource {
   const webBase = resolvePublicBase(env);
   return {
@@ -2479,8 +2741,15 @@ export function buildChartAppUiResource(
 /**
  * `appUiResource` variant that derives the per-call widget URI from the top
  * card's `pub_id` on the tool OUTPUT (the input is a query/spec, not a pub_id).
- * Falls back to the static URI when there's no renderable top card. Shared by
- * tako_search and tako_visualize, which both render a chart widget this way.
+ * Shared by tako_search, tako_answer and tako_visualize, which all render a
+ * chart widget this way.
+ *
+ * No top card → `undefined`, NOT the static URI. A chart-less result has
+ * nothing for a widget to draw, and naming a resource anyway is what asks a
+ * host to mount one; declining is the only way the empty card disappears
+ * rather than merely getting labelled. It changes nothing on ChatGPT or
+ * claude.ai (both mount from `tools/list` registration `_meta`, which is
+ * static per tool) — see `collapse()` in the bundle for what covers those.
  */
 export function buildChartAppUiResourceFromOutputPubId(
   env: Env,
@@ -2491,7 +2760,7 @@ export function buildChartAppUiResourceFromOutputPubId(
       typeof (output as { pub_id?: unknown } | undefined)?.pub_id === "string"
         ? (output as { pub_id: string }).pub_id
         : "";
-    if (pubId === "") return appUiResourceUri(env);
+    if (pubId === "") return undefined;
     return appUiTemplateUriPattern(env).replace(
       "{pub_id}",
       encodeURIComponent(pubId),

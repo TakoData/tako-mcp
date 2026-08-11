@@ -88,7 +88,7 @@ const NER_LABELS = [
 const DESCRIPTION = [
   "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.",
   "",
-  "Ask it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back. NOT a required first step — for a straightforward data question, tako_search or tako_answer directly is usually right.",
+  "Ask it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.",
   "",
   "Worth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).",
   "",

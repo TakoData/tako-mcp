@@ -618,6 +618,97 @@ describe("chart render gates per client", () => {
       (result.structuredContent as { guidance?: string }).guidance,
     ).toMatch(/tako_available_data/);
   });
+
+  it("a chart-less result references no ui resource at all", async () => {
+    // The result-side half of the empty-widget fix. A zero-card call has
+    // nothing to render, so it must not point at a widget: a host that decides
+    // per RESULT then mounts nothing, and no empty card appears.
+    //
+    // This does NOT reach ChatGPT or claude.ai — both read the widget URI from
+    // `tools/list` registration `_meta`, which is static per tool and stays
+    // declared (asserted in index.test.ts). Their empty card is handled inside
+    // the bundle, by the labelled empty state. This is for spec-compliant hosts
+    // that honour the per-call reference, and it is the only lever that removes
+    // the box rather than dressing it.
+    mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-3" }),
+    ]);
+
+    const result = await callSearch("claude");
+
+    const meta = result._meta as Record<string, unknown> | undefined;
+    expect(meta?.ui).toBeUndefined();
+    expect(meta?.["ui/resourceUri"]).toBeUndefined();
+  });
+
+  it("a chart-bearing result still points at its baked per-chart widget", async () => {
+    // The other side of the same branch: declining to reference a resource on
+    // an empty result must not cost the populated one its per-pub_id URI.
+    mockFetchSequence([searchResponse(), realPngResponse()]);
+
+    const result = await callSearch("claude");
+
+    const meta = result._meta as
+      | { ui?: { resourceUri?: string }; "ui/resourceUri"?: string }
+      | undefined;
+    expect(meta?.ui?.resourceUri).toBe("ui://tako/embed/chart/c1");
+    expect(meta?.["ui/resourceUri"]).toBe("ui://tako/embed/chart/c1");
+  });
+
+  /**
+   * The full client × has-chart matrix for the resource reference, because the
+   * fix is per-RESULT and the surfaces it touches are per-CLIENT. Every cell is
+   * asserted, so a change that helps one client at another's expense fails
+   * here rather than in someone's chat window.
+   *
+   *                 chart          no chart
+   *   claude        per-pub_id     absent
+   *   chatgpt       per-pub_id     absent
+   *   unknown       absent         absent   ← never had a widget; PNG block instead
+   *
+   * The `unknown` row is the load-bearing one for "nothing else regressed":
+   * those clients never reach the resolver at all (`widgetSuppressed` leaves
+   * `ui` undefined in `registerTool`), so the branch cannot touch the long tail
+   * of MCP hosts even in principle.
+   */
+  it("references a widget per client and per result, and never for unknown clients", async () => {
+    const uiOf = (result: { _meta?: Record<string, unknown> }) =>
+      (result._meta as { ui?: { resourceUri?: string } } | undefined)?.ui
+        ?.resourceUri;
+
+    // chatgpt, chart present: keeps its reference. (One fetch only — ChatGPT
+    // skips the PNG bake, and a second would throw.)
+    mockFetchSequence([searchResponse()]);
+    expect(uiOf(await callSearch("chatgpt"))).toBe("ui://tako/embed/chart/c1");
+
+    // chatgpt, no chart: no reference. The registration `_meta` still carries
+    // `openai/outputTemplate`, so ChatGPT mounts anyway and the bundle's empty
+    // state is what covers it — see chatgpt-path.test.ts.
+    mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-4" }),
+    ]);
+    expect(uiOf(await callSearch("chatgpt"))).toBeUndefined();
+
+    // unknown, chart present: no widget reference ever, and the PNG content
+    // block instead — the portable path, untouched by this branch.
+    mockFetchSequence([searchResponse(), pngResponse()]);
+    const unknownWithChart = await callSearch("unknown");
+    expect(uiOf(unknownWithChart)).toBeUndefined();
+    expect(
+      unknownWithChart.content.filter((b) => b.type === "image"),
+    ).toHaveLength(1);
+
+    // unknown, no chart: no reference, no image block, and no second fetch
+    // (no image_url to fetch) — nothing to render and nothing attempted.
+    mockFetchSequence([
+      jsonResponse(200, { cards: [], web_results: [], request_id: "req-5" }),
+    ]);
+    const unknownEmpty = await callSearch("unknown");
+    expect(uiOf(unknownEmpty)).toBeUndefined();
+    expect(unknownEmpty.content.filter((b) => b.type === "image")).toHaveLength(
+      0,
+    );
+  });
 });
 
 describe("detectMcpClient", () => {
@@ -1258,13 +1349,60 @@ describe("SERVER_INSTRUCTIONS", () => {
   // while the instructions opened by sending every data question to
   // `tako_search` and mentioned `tako_available_data` once, last, behind
   // "if unsure". Observed on claude.ai as search-first routing.
-  it("introduces tako_available_data before either priced retrieval tool", () => {
-    const free = SERVER_INSTRUCTIONS.indexOf("`tako_available_data`");
-    const answer = SERVER_INSTRUCTIONS.indexOf("`tako_answer`");
-    const search = SERVER_INSTRUCTIONS.indexOf("`tako_search`");
-    expect(free).toBeGreaterThan(-1);
-    expect(free).toBeLessThan(answer);
-    expect(free).toBeLessThan(search);
+  //
+  // The ORDERING assertion that used to live here (free tool introduced
+  // ahead of both priced tools) is gone on purpose: the opening paragraph
+  // no longer names a tool, so nothing competes for first position, and
+  // the free tool reads as a capability rather than an owed step. What
+  // survives is the invariant that actually caused the incident, which was
+  // never the order but the CONTRADICTION: whatever these instructions say
+  // about the free tool must not be something its own description then
+  // argues against. Assert the disagreement cannot come back.
+  //
+  // Asserted as a PAIR, and that distinction is the whole point. Asserting the
+  // two halves separately — no sequencing verb here, no hedge there — pins
+  // TODAY'S resolution rather than the invariant, and pins it hard enough to
+  // block the rollback `mcp.ts` documents: if search-first routing comes back,
+  // the fix is to promote this paragraph again, and the promoted version says
+  // "ask it for a measure's exact name BEFORE spending a priced call". An
+  // unscoped absence assertion fails on that word alone, even though obliging
+  // a call NO ONE contradicts is a perfectly coherent position — it is the
+  // position this file held one commit ago.
+  //
+  // The four states, and only one of them is a bug:
+  //   neither         → today. Fine.
+  //   obliges only    → the documented rollback. Fine, and the old assertion
+  //                     blocked it.
+  //   denies only     → description carries the routing call on its own. Fine.
+  //   BOTH            → the incident. The instructions sit above the tool
+  //                     descriptions in the host's system prompt, so the model
+  //                     reads an obligation and then reads the tool denying it.
+  //                     That is what this test exists to catch.
+  it("does not oblige a free-tool call the tool's own description denies", () => {
+    const freeToolLine = SERVER_INSTRUCTIONS.split("\n").find((l) =>
+      l.includes("`tako_available_data`"),
+    );
+    expect(freeToolLine).toBeDefined();
+    const availableData = TOOL_REGISTRY.find(
+      (t) => t.name === "tako_available_data",
+    );
+    expect(availableData).toBeDefined();
+
+    // Scoped to the sentence that names the tool. Unscoped, this regex fires on
+    // any "first"/"before" anywhere in the instructions, including wording that
+    // has nothing to do with routing the free tool.
+    const obliges = /\b(first|before|start with|begin with)\b/i.test(
+      freeToolLine as string,
+    );
+    // The family of denials, not just the one phrase this PR removed —
+    // `skills/tako-*/SKILL.md` carried the same permission in two other
+    // wordings, and either could drift into the description.
+    const denies =
+      /not a required first step|not a warm-?up|straight to `?tako_(answer|search)`?/i.test(
+        availableData?.description ?? "",
+      );
+
+    expect({ obliges, denies }).not.toEqual({ obliges: true, denies: true });
   });
 
   // `tako_answer` (specific figure) and `tako_search` (breadth) are different

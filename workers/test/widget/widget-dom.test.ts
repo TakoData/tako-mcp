@@ -158,6 +158,10 @@ function widgetFrame(m: Mounted): HTMLIFrameElement {
   ) as HTMLIFrameElement;
 }
 
+function widgetEmpty(m: Mounted): HTMLElement {
+  return m.widgetWin.document.getElementById("tako-empty") as HTMLElement;
+}
+
 /**
  * Deliver a `tako-embed-height` resize message as if the embed iframe
  * posted it. The widget's handler gates on `event.origin` matching the
@@ -326,6 +330,83 @@ describe("static widget bundle (executed)", () => {
     expect(sizeChanges.at(-1)?.params.height).toBe(0);
   });
 
+  it("labels the empty state for hosts that keep the box anyway", () => {
+    // ChatGPT (and any host with a minimum widget-card height) ignores the
+    // shrink above and keeps a card-sized container. The collapse asked for
+    // zero and got a grey void — so paint an intentional line INTO whatever
+    // space the host insisted on keeping. Fixed positioning is what makes
+    // that safe: on a host that DID collapse us the viewport is 0 px tall and
+    // nothing shows, and an out-of-flow element cannot grow `scrollHeight`
+    // for hosts that size from content.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, toolResult({ cards: [], web_results: [] }), m.wrapperWin);
+    const empty = widgetEmpty(m);
+    expect(empty.classList.contains("hidden")).toBe(false);
+    expect(empty.textContent).toMatch(/no chart/i);
+  });
+
+  it("colours the empty label for the host's theme, not the bundle's grey", () => {
+    // The body grey the placeholder uses lands near 2:1 on a light host, which
+    // is a label only its author can read. Both themes get their own value; the
+    // theme arrives on the handshake, which is why this asserts through it
+    // rather than poking the variable.
+    const light = mountWidget(staticWidgetHtml());
+    deliver(
+      light,
+      {
+        jsonrpc: "2.0",
+        id: "tako-ui-init",
+        result: { hostContext: { theme: "light" } },
+      },
+      light.wrapperWin,
+    );
+    deliver(light, toolResult({ cards: [] }), light.wrapperWin);
+    expect(widgetEmpty(light).style.color).toBe("rgb(107, 114, 128)");
+
+    const dark = mountWidget(staticWidgetHtml());
+    deliver(
+      dark,
+      {
+        jsonrpc: "2.0",
+        id: "tako-ui-init",
+        result: { hostContext: { theme: "dark" } },
+      },
+      dark.wrapperWin,
+    );
+    deliver(dark, toolResult({ cards: [] }), dark.wrapperWin);
+    expect(widgetEmpty(dark).style.color).toBe("rgb(180, 184, 189)");
+  });
+
+  it("never notifies a height above zero once collapsed", () => {
+    // The invariant that keeps the empty state from RESURRECTING a box a host
+    // already threw away: painting content is free, asking for room is not.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, toolResult({ cards: [] }), m.wrapperWin);
+    const heights = (
+      m.toParent.filter(
+        (msg) =>
+          (msg as { method?: string }).method ===
+          "ui/notifications/size-changed",
+      ) as Array<{ params: { height: number } }>
+    ).map((msg) => msg.params.height);
+    // 1 px is the mount-time floor sent before any data arrives.
+    expect(Math.max(...heights.slice(1))).toBe(0);
+  });
+
+  it("leaves the empty state hidden when a chart renders", () => {
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 },
+        { image_data_url: DATA_URL },
+      ),
+      m.wrapperWin,
+    );
+    fireImageLoad(m);
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
+  });
+
   it("collapses when NO tool-result ever arrives", () => {
     // The failed-tool-call case. An `isError` result carries no
     // `structuredContent`, but the host has already mounted the widget for
@@ -346,6 +427,13 @@ describe("static widget bundle (executed)", () => {
           "ui/notifications/size-changed",
       ) as Array<{ params: { height: number } }>;
       expect(sizeChanges.at(-1)?.params.height).toBe(0);
+      // Collapsed but NOT labelled. "Nothing arrived in 10 s" covers a failed
+      // call and a merely slow delivery alike, and this path discards whatever
+      // lands afterwards — so "No chart for this result" would be an
+      // affirmative claim that is wrong exactly when the chart was late. The
+      // label is reserved for the case the widget actually knows about:
+      // structured content arrived and carried no chart.
+      expect(widgetEmpty(m).classList.contains("hidden")).toBe(true);
     } finally {
       vi.useRealTimers();
     }
