@@ -368,15 +368,17 @@ paths:
         underlying data, or the full text of a web page. Returns a short-lived presigned
         download URL. Send `content_format: card_json` for a rich, card-type-specific
         JSON object under `card_data` (for example a weather forecast with hourly
-        and daily records). A card_json export returns the complete payload: `max_rows`
-        sets the price but does not truncate it, so Tako can deliver more record rows
-        than it bills. A card whose record array is unbounded caps that array at the
-        platform export ceiling and sets `truncated`. A card type without a card_json
-        shape returns 422. Protected-source cards (data export not available) return
-        403. Send `quote_only: true` to get only the export''s price (`cost` + `export_pricing`)
-        with an empty payload. A quote charges nothing, fetches nothing, and calls
-        no data provider. Every format prices a quote from `max_rows`, so the quote
-        is an upper bound on the charge and never falls below it.'
+        and daily records). A card_json export is truncated to `max_rows` like every
+        other format, so Tako never delivers more record rows than it bills. A card
+        whose record array is unbounded caps that array at the platform export ceiling
+        and sets `truncated`. A card type without a card_json shape returns 422. A
+        card returns 403 when Tako cannot export its data. A data provider that does
+        not permit export and a card whose sources Tako cannot confirm both return
+        403, and the error message states which. Send `quote_only: true` to get only
+        the export''s price (`cost` + `export_pricing`) with an empty payload. A quote
+        charges nothing, fetches nothing, and calls no data provider. Every format
+        prices a quote from `max_rows`, so the quote is an upper bound on the charge
+        and never falls below it.'
       operationId: contents
       requestBody:
         content:
@@ -406,8 +408,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/BaseAPIError'
         '403':
-          description: Action not permitted for this resource (for example, a protected-source
-            export).
+          description: Action not permitted for this resource. For a data export,
+            either a data provider does not permit export, or Tako cannot confirm
+            the data sources for the card. The message states which.
           content:
             application/json:
               schema:
@@ -1171,6 +1174,14 @@ components:
           anyOf:
           - $ref: '#/components/schemas/AnswerAgentMetadata'
           - type: 'null'
+        refusal_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Refusal Code
+          description: Set when Tako rejected the query before the agent ran. Null
+            on normal runs. Tako can add new codes, so accept a code you do not recognize.
+            The current code is 'rejected_input_classifier'.
         request_id:
           anyOf:
           - type: string
@@ -1707,12 +1718,29 @@ components:
           title: Card Data
           description: 'Inline card data as a card-type-specific JSON object. The
             ''card_type'' field inside the object names its shape. Set only when content_format
-            is ''card_json''. A card_json request returns the complete payload: ''max_rows''
-            sets the price but does not truncate it. A card whose record array is
-            unbounded caps that array at the platform export ceiling and reports ''truncated'':
-            true. The payload then also carries the true count for its record array.
-            Card types without a card_json shape return 422 on /contents and fall
-            back to ''json_compact'' on search and answer include_contents.'
+            is ''card_json''. Tako truncates the record rows in the object to ''max_rows'',
+            the same cap every other format takes, and bills the rows it returns.
+            A card whose record array is unbounded caps that array at the platform
+            export ceiling and reports ''truncated'': true. The payload then also
+            carries the true count for its record array. Card types without a card_json
+            shape return 422 on /contents and fall back to ''json_compact'' on search
+            and answer include_contents.'
+        card_data_schema:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Card Data Schema
+          description: 'JSON Schema for the object in ''card_data''. Read it to learn
+            the shape of the payload without parsing the payload. Tako sets this whenever
+            content_format is ''card_json''. It is also set in ''url'' delivery mode
+            and on a Contents quote, where ''card_data'' is null and the shape is
+            all Tako returns. A search or answer card that you did not ask to inline
+            carries a price but no schema. The ''title'' field and the ''card_type''
+            default inside the schema name the shape. The schema describes the payload
+            type, so ''card_data'' can omit a field the schema declares: Tako drops
+            a measure the provider did not supply. Null for every other content_format
+            and for web text.'
         url:
           anyOf:
           - type: string
@@ -1790,7 +1818,18 @@ components:
 
         field null and `content_format` null — the price of the export, with
 
-        nothing fetched or charged.'
+        nothing fetched or charged.
+
+
+        `card_data_schema` is the one field that does NOT follow that rule: a
+
+        card_json quote and a card_json `url` delivery both return it beside a null
+
+        `card_data`, because the shape is what those two shapes have to offer. Test
+
+        `content_format` for null to tell a quote from a delivery; a null payload
+
+        field cannot do it.'
     ContentsDeliveryMode:
       type: string
       enum:
@@ -1847,10 +1886,8 @@ components:
             at the baseline only. Raise it to export more rows, up to the 2,000-row
             system ceiling (Tako clamps larger values). Rows beyond the free allowance
             bill at the per-1,000-row rate. Tako never bills more rows than it returns.
-            For csv, json_records and json_compact, Tako returns the rows up to this
-            cap and bills them. For card_json, Tako returns the complete payload,
-            which can hold more record rows than this cap; Tako delivers those rows
-            and does not bill them. Web URLs ignore this field.
+            Every card format returns the rows up to this cap and bills them, including
+            card_json. Web URLs ignore this field.
           examples:
           - 100
         max_chars:
@@ -1869,13 +1906,17 @@ components:
           title: Quote Only
           description: 'When true, return only the price of the export (cost + export_pricing)
             without fetching content or charging. The response item''s payload and
-            url fields are null, and the request is free. `max_rows` shapes the quote
-            and defaults to the 20-row free allowance, as a real export does. The
-            request ignores `mode`. Every format prices a quote from `max_rows`, so
-            a quote is instant and makes no call to a data provider. A quote is an
-            upper bound on the charge: an export of a card with fewer rows than the
-            cap bills less. A card_json quote reports no `total_rows`, because it
-            does not build the payload. The same export-safe gate applies, so an unexportable
+            url fields are null, and the request is free. One exception: a card_json
+            quote returns ''card_data_schema'', the shape the export would deliver.
+            Test ''content_format'' for null to tell a quote from a delivery. `max_rows`
+            shapes the quote and defaults to the 20-row free allowance, as a real
+            export does. The request ignores `mode`. Every format prices a quote from
+            `max_rows`, so a quote is instant and makes no call to a data provider.
+            A quote is an upper bound on the charge: an export of a card with fewer
+            rows than the cap bills less. A card_json export is truncated to `max_rows`
+            like every other format, so the charge can never exceed the quote for
+            the same cap. A card_json quote reports no `total_rows`, because it does
+            not build the payload. The same export-safe gate applies, so an unexportable
             card still returns 403, and a card type with no card_json shape still
             returns 422.'
           default: false
@@ -2101,10 +2142,10 @@ components:
           $ref: '#/components/schemas/ContentsFormat'
           description: 'Serialization for card data: ''json_compact'' (default), ''json_records'',
             ''csv'', or ''card_json''. The first three return a free row-capped preview.
-            ''card_json'' returns a rich card-type-specific JSON object under card_data:
-            the payload is complete, so Tako bills it at the export rate for its record
-            rows. A card type with no card_json shape falls back to ''json_compact''
-            for that card.'
+            ''card_json'' returns a rich card-type-specific JSON object under card_data,
+            truncated to the same row cap, and Tako bills the record rows it returns.
+            A card type with no card_json shape falls back to ''json_compact'' for
+            that card.'
           default: json_compact
         max_rows:
           anyOf:
@@ -2224,6 +2265,10 @@ components:
       - NASCAR Races
       - NASCAR Owners
       - NASCAR Manufacturers
+      - Golf Players
+      - Golf Tournaments
+      - Golf Venues
+      - Golf Courses
       - Soccer Teams
       - Soccer Players
       - Soccer Competitions
@@ -2281,9 +2326,8 @@ components:
           title: Max Rows Ceiling
           description: Hard cap on rows a single export can return and bill; a larger
             requested max_rows is clamped to this. No format bills more than the clamped
-            max_rows, and none bills more rows than it returns. A card_json export
-            returns the complete payload, which can hold more record rows than this
-            ceiling. Tako delivers those rows and does not bill them.
+            max_rows, and none bills more rows than it returns. Every format obeys
+            this ceiling, including card_json.
       type: object
       required:
       - baseline_usd
@@ -2734,12 +2778,29 @@ components:
           title: Card Data
           description: 'Inline card data as a card-type-specific JSON object. The
             ''card_type'' field inside the object names its shape. Set only when content_format
-            is ''card_json''. A card_json request returns the complete payload: ''max_rows''
-            sets the price but does not truncate it. A card whose record array is
-            unbounded caps that array at the platform export ceiling and reports ''truncated'':
-            true. The payload then also carries the true count for its record array.
-            Card types without a card_json shape return 422 on /contents and fall
-            back to ''json_compact'' on search and answer include_contents.'
+            is ''card_json''. Tako truncates the record rows in the object to ''max_rows'',
+            the same cap every other format takes, and bills the rows it returns.
+            A card whose record array is unbounded caps that array at the platform
+            export ceiling and reports ''truncated'': true. The payload then also
+            carries the true count for its record array. Card types without a card_json
+            shape return 422 on /contents and fall back to ''json_compact'' on search
+            and answer include_contents.'
+        card_data_schema:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Card Data Schema
+          description: 'JSON Schema for the object in ''card_data''. Read it to learn
+            the shape of the payload without parsing the payload. Tako sets this whenever
+            content_format is ''card_json''. It is also set in ''url'' delivery mode
+            and on a Contents quote, where ''card_data'' is null and the shape is
+            all Tako returns. A search or answer card that you did not ask to inline
+            carries a price but no schema. The ''title'' field and the ''card_type''
+            default inside the schema name the shape. The schema describes the payload
+            type, so ''card_data'' can omit a field the schema declares: Tako drops
+            a measure the provider did not supply. Null for every other content_format
+            and for web text.'
         url:
           anyOf:
           - type: string
@@ -2838,15 +2899,11 @@ components:
 
         the SMALLER of the rows the export returns and `max_rows` clamped to
 
-        `max_rows_ceiling`. One formula covers every format. A csv, json_records or
+        `max_rows_ceiling`. One formula covers every format, card_json included:
 
-        json_compact export returns no more rows than that cap, so a card with fewer
+        every export returns no more rows than that cap, so a card with fewer rows
 
-        rows than the cap bills only the rows it returns. A card_json export returns
-
-        the complete payload, which can hold more record rows than the cap; Tako
-
-        delivers those rows and does not bill them. That rate always uses the
+        than the cap bills only the rows it returns. That rate always uses the
 
         `/contents` free row allowance,
 
@@ -2884,11 +2941,20 @@ components:
 
         `content_format` names the serialization; it is null for web text and
 
-        for an undelivered quote. When every payload field is unset, this is
+        for an undelivered quote. Read `content_format` to tell a quote from a
 
-        just the quote (`cost`); fetch the content later via the Contents
+        delivery: when it is null, this is just the quote (`cost`); fetch the
 
-        endpoint.'
+        content later via the Contents endpoint.
+
+
+        Do NOT use "every payload field is null" as that test. `card_data_schema`
+
+        is set on a card_json quote and on a card_json `url` delivery, where
+
+        `card_data` is null, so a caller reading absent payloads as "quote" reads
+
+        those two as quotes.'
     RetrievalAgentEffort:
       type: string
       enum:
@@ -2968,6 +3034,14 @@ components:
           - $ref: '#/components/schemas/ErrorObject'
           - type: 'null'
           description: Why structured output failed; present only if status is 'failed'.
+        refusal_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Refusal Code
+          description: Set when Tako rejected the query before the agent ran. Null
+            on normal runs. Tako can add new codes, so accept a code you do not recognize.
+            The current code is 'rejected_input_classifier'.
         request_id:
           anyOf:
           - type: string
