@@ -189,24 +189,31 @@ const DATA_UPSTREAM_TIMEOUT_MS = 20_000;
  * and then 413'd — the tab the user clicked showing exactly the error this route
  * exists to remove, which is why the number is measured rather than guessed.
  *
- * The ceiling that actually binds is DJANGO'S, not this one:
+ * There is a hard ceiling above this one: Django's
  * `DATA_UPLOAD_MAX_MEMORY_SIZE = 3670016` (3.5 MB) in the tako repo,
  * `app/config/settings/base.py`. Anything past that is refused upstream, arrives
  * here as a 400, and maps to a 502 — the tab error again, under a log line
- * reading `upstream HTTP 400` that says nothing about size. So a cap ABOVE it
- * cannot buy headroom, only a worse diagnosis.
+ * reading `upstream HTTP 400` that says nothing about size. So a cap above it
+ * could only buy a worse diagnosis.
  *
- * Hence 3 MB: under Django's limit, so everything this route accepts is
- * something Django will also accept, and an over-cap body gets a 413 that names
- * the real problem. That is ~28 tabs of headroom against the 1.29 MB the largest
- * card Tako ships actually reaches — and the number is deliberately not tuned
- * closer, because Django's limit lives in another repo where a change to it
- * would not show up in this PR's tests.
+ * But that ceiling is not what sizes this number. 2 MB is sized off the
+ * MEASUREMENT: 1.55x the 1.29 MB the largest card Tako ships actually reaches,
+ * which is ~7 more tabs of growth at ~100 KB each — call it 19 tabs against the
+ * 12 that card has. Everything above that was headroom nothing had asked for,
+ * paid for in memory: this body is buffered whole, and again as a string and an
+ * object graph by {@link findUpstreamWrite}, so the cap is the only lever on
+ * what one request can cost the isolate that also serves `/authorize`. It stays
+ * under Django's limit as a side effect, which is worth keeping — everything
+ * this route accepts is something Django will also accept, so an over-cap body
+ * gets a 413 that names the real problem instead of a 502.
+ *
+ * If a card ever outgrows this, the 413 says so in one line and the number moves.
+ * That is the failure this cap is supposed to have.
  *
  * Subtabs are free: one response carries all of a tab's subtabs, so clicking
  * through EPS/Revenue/EBITDA issues no further requests at all.
  */
-const MAX_DATA_REQUEST_BYTES = 3 * 1024 * 1024;
+const MAX_DATA_REQUEST_BYTES = 2 * 1024 * 1024;
 
 /**
  * Refuse an upstream body larger than this. Real embed pages measure ~100 KB;
@@ -852,15 +859,24 @@ export async function handleEmbedProxy(
  * the entire OAuth subsystem in `index.ts`, so that is `/authorize` and `/token`
  * paying for an unauthenticated POST to an experiment route.
  *
- * Reading incrementally and cancelling at the cap bounds the read. Bounding the
- * PEAK takes the second half: the accumulated chunks are released as they are
- * copied into the result, so the two allocations do not coexist. Without that,
- * `new ArrayBuffer(total)` while `chunks` is still reachable puts peak at ~2x the
- * cap, and since nothing bounds request concurrency in an isolate, enough
- * simultaneous max-size POSTs from one IP — well inside 200/60 s — would reach
- * the 128 MB limit anyway. Halving the peak and lowering the cap to 3 MB together
- * take the count that gets there from single digits to well past what the meter
- * allows.
+ * Reading incrementally and cancelling at the cap bounds the read. It does NOT
+ * bound the peak to the cap, and an earlier version of this comment claimed it
+ * did: `new ArrayBuffer(total)` runs while `chunks` still holds every byte, so
+ * the peak of this function is ~2x the accepted body no matter how the copy loop
+ * is written. Releasing chunks during the copy cannot lower a peak that has
+ * already been reached. The honest bound is 2x the cap, and the CAP is what does
+ * the bounding — which is why it is sized off the measurement rather than off
+ * Django's ceiling. See {@link MAX_DATA_REQUEST_BYTES}.
+ *
+ * What that 2x does not do is stack. A Workers isolate is single-threaded and
+ * this copy has no `await` in it, so at most one request can be inside it at a
+ * time; the same is true of {@link findUpstreamWrite}'s decode and parse. What
+ * concurrent requests do hold simultaneously is one body each — accumulating
+ * chunks here, then the returned buffer for as long as the upstream fetch runs.
+ * So N in-flight requests cost ~N x their body size plus one transient peak, and
+ * reaching the 128 MB isolate limit at a 2 MB cap takes ~60 concurrent max-size
+ * POSTs rather than the handful a naive per-request sum suggests. It is still
+ * unauthenticated traffic ahead of `/authorize`, so the cap stays the lever.
  *
  * `Content-Length` is deliberately not consulted: it is absent on a chunked
  * body, and the whole point is to bound the case where the caller is not telling
@@ -901,10 +917,12 @@ async function readBoundedBody(
   const out = new ArrayBuffer(total);
   const view = new Uint8Array(out);
   let offset = 0;
-  // `shift()` rather than `for..of`: each chunk becomes unreachable as soon as it
-  // is copied, so the accumulated chunks and the result never both exist in full.
-  // See the docstring — this is the half that actually bounds the peak.
-  for (let chunk = chunks.shift(); chunk !== undefined; chunk = chunks.shift()) {
+  // A plain walk. This used to `shift()` each chunk as it was copied, on the
+  // theory that dropping references mid-loop kept the chunks and the result from
+  // both existing in full — it does not: the allocation above already happened
+  // with every chunk live, and `chunks` goes unreachable one line below anyway
+  // when this returns. See the docstring for the bound that is actually true.
+  for (const chunk of chunks) {
     view.set(chunk, offset);
     offset += chunk.byteLength;
   }
@@ -948,6 +966,15 @@ async function readBoundedBody(
  * gets forwarded, so nothing about what Django receives depends on a JSON
  * round-trip here. Parsing also gets the JSON-validity check for free, which the
  * route was otherwise forwarding blind.
+ *
+ * It is not free in memory: this materializes the whole document a second and
+ * third time, as a decoded string and as an object graph, on top of the buffer
+ * {@link readBoundedBody} already holds. Both are transient and, because an
+ * isolate is single-threaded and there is no `await` between the decode and the
+ * return, only one request's copies can be live at a time — but the transient
+ * peak is still several multiples of the body, and the only thing that bounds it
+ * is {@link MAX_DATA_REQUEST_BYTES}. That is a reason the cap is sized off what
+ * real cards measure rather than off Django's ceiling.
  *
  * Exported for tests.
  */
@@ -1173,7 +1200,16 @@ export async function handleEmbedDataProxy(
     console.warn(
       `[mcp] embed data proxy upstream HTTP ${response.status} for ${pubId}` +
         (response.status === 400
-          ? ` — a 400 here is usually the request body exceeding Django's DATA_UPLOAD_MAX_MEMORY_SIZE (3.5 MB)`
+          ? // Size is NOT a candidate: MAX_DATA_REQUEST_BYTES is under Django's
+            // DATA_UPLOAD_MAX_MEMORY_SIZE (3.5 MB), so a body big enough to trip
+            // RequestDataTooBig got a 413 from us and never reached Django. What
+            // does arrive as a 400 is `GetData.post`'s jsonschema ValidationError
+            // branch, which answers HttpResponseBadRequest with an EMPTY message
+            // outside DEBUG — so there is nothing in the response to log and this
+            // line is the only record that it happened.
+            ` — the payload failed Django's viz-config schema validation (the ` +
+            `response body is empty by design outside DEBUG); the upstream ` +
+            `contract has likely moved`
           : ""),
     );
     return textResponse(
