@@ -1421,18 +1421,55 @@ describe("handleEmbedDataProxy", () => {
     });
     expect((await handleEmbedDataProxy(empty, ON))?.status).toBe(400);
 
-    // The cap is 3 MB, sized UNDER Django's `DATA_UPLOAD_MAX_MEMORY_SIZE` of
-    // 3.5 MB so that everything this route accepts is something Django will also
-    // accept. A cap above that could only trade a clear 413 for an `upstream
-    // HTTP 400` that says nothing about size. Real bodies reach 1.29 MB after
-    // twelve tabs.
+    // The cap is 2 MB, sized off the measurement — 1.55x the 1.29 MB a real
+    // twelve-tab walk reaches — rather than off Django's
+    // `DATA_UPLOAD_MAX_MEMORY_SIZE` of 3.5 MB. The body is held whole here and
+    // again as a string and an object graph by `findUpstreamWrite`, so headroom
+    // is not free; it stays under Django's limit too, so nothing this route
+    // accepts can be refused upstream for size.
     const huge = new Request(`https://mcp.tako.com${DATA_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: `{"pad":"${"x".repeat(3 * 1024 * 1024 + 16)}"}`,
+      body: `{"pad":"${"x".repeat(2 * 1024 * 1024 + 16)}"}`,
     });
     expect((await handleEmbedDataProxy(huge, ON))?.status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still accepts a body the size a real twelve-tab walk reaches", async () => {
+    // The regression lowering the cap could actually cause, and the one the
+    // over-cap test above cannot see: a 413 on a body a real card sends is the
+    // exact "There was an error loading the data." this route exists to remove,
+    // on the tab the user just clicked.
+    //
+    // 1.29 MB is measured, not chosen — the last of twelve requests walking the
+    // production Nvidia overview card, where each response's viz_config is merged
+    // into what Card.js re-posts on the next click.
+    const MEASURED_MAX = 1_353_614; // 1.29 MiB
+    const pad = "x".repeat(MEASURED_MAX - `{"pub_id":"","pad":""}`.length);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"component_data":{}}', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleEmbedDataProxy(
+      new Request(`https://mcp.tako.com${DATA_PATH}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: `{"pub_id":"","pad":"${pad}"}`,
+      }),
+      ON,
+    );
+    expect(res?.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Forwarded byte-for-byte: the parse in `findUpstreamWrite` is a check, not a
+    // round-trip, so a body this size is not re-serialized on the way out.
+    const forwarded = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect((forwarded.body as ArrayBuffer).byteLength).toBe(MEASURED_MAX);
   });
 
   it("stops reading an over-cap body instead of buffering it whole", async () => {
@@ -1467,7 +1504,7 @@ describe("handleEmbedDataProxy", () => {
     expect(res?.status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
     // One chunk of slop past the cap is the most a chunked read can avoid.
-    expect(pulled).toBeLessThanOrEqual(3 * 1024 * 1024 + CHUNK);
+    expect(pulled).toBeLessThanOrEqual(2 * 1024 * 1024 + CHUNK);
   });
 
   it("maps upstream failures without leaking them as success", async () => {
