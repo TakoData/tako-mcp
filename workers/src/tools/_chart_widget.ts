@@ -711,6 +711,18 @@ const WIDGET_HTML = `<!doctype html>
   // listener below so we only honor resize messages from the actual
   // embed page, not arbitrary cross-frame senders.
   var embedOrigin = null;
+  // Has the embed page told us its own content height (\`tako-embed-height\`)?
+  //
+  // Once it has, that number is AUTHORITATIVE and nothing derived may overwrite
+  // it. The embed knows what it is rendering; every other height here is an
+  // estimate of that. This matters because the estimate and the report disagree
+  // by design on responsive cards: \`aspectHeight\` extrapolates from the chart
+  // PNG's fixed 2400 px-wide render, but the live page REFLOWS at the widget's
+  // real column width — a schedule or ranked table grows rows and pagination
+  // that the flat image never had. Measured on the MLB schedule card at a
+  // 634 px column: aspect says 525 px, the page reports 732 px, and 525 px
+  // cuts the card off mid-row.
+  var embedReportedHeight = false;
 
   // How long an embed iframe gets to fire \`load\` before we decide it never
   // will. Shared by both directions — \`probeInteractiveIframe\` (does this
@@ -829,6 +841,18 @@ const WIDGET_HTML = `<!doctype html>
     if (surface !== null) mcpHostSurface = surface;
   }
 
+  // The MCP Apps standardized background tokens, best first. Same list in both
+  // readers below, because a host may deliver them either way.
+  var SURFACE_TOKENS = ["--color-background-primary", "--color-background-secondary"];
+
+  // Chrome's own Canvas colours, as literals. \`background: Canvas\` cannot be
+  // used for this: the root element's background propagates to the canvas, and
+  // when that background IS the canvas colour Chrome treats it as nothing to
+  // paint — measured, the frame stayed transparent and the white below still
+  // showed. The literals paint.
+  var CANVAS_DARK = "#121212";
+  var CANVAS_LIGHT = "#ffffff";
+
   // Per the MCP Apps spec, \`hostContext.styles.variables\` carries standardized
   // CSS custom properties. Take the primary background; fall back to the
   // surface variant if a host ships only that one.
@@ -837,11 +861,43 @@ const WIDGET_HTML = `<!doctype html>
     if (!styles || typeof styles !== "object") return null;
     var vars = styles.variables;
     if (!vars || typeof vars !== "object") return null;
-    var candidates = ["--color-background-primary", "--color-background-secondary"];
-    for (var i = 0; i < candidates.length; i++) {
-      var v = vars[candidates[i]];
+    for (var i = 0; i < SURFACE_TOKENS.length; i++) {
+      var v = vars[SURFACE_TOKENS[i]];
       if (safeCssColor(v)) return v;
     }
+    return null;
+  }
+
+  // The same tokens, read off OUR OWN root instead of the handshake.
+  //
+  // \`hostContext.styles.variables\` is how the MCP Apps spec transports them,
+  // but a host is equally free to just set the custom properties on the widget
+  // document — and ChatGPT, which never sends \`hostContext\` at all, is exactly
+  // the host that would have to. Neither OpenAI's Apps SDK reference nor its
+  // custom-UX guide documents any surface token today, so this reads as null
+  // there and the theme fallback takes over. It costs one \`getComputedStyle\`
+  // and turns "ChatGPT ships tokens" from a code change into a no-op.
+  function readSurfaceTokens() {
+    try {
+      var cs = window.getComputedStyle(document.documentElement);
+      for (var i = 0; i < SURFACE_TOKENS.length; i++) {
+        var v = (cs.getPropertyValue(SURFACE_TOKENS[i]) || "").trim();
+        if (safeCssColor(v)) return v;
+      }
+    } catch (e) { /* no computed style — fall through to the theme */ }
+    return null;
+  }
+
+  // The colour to put BEHIND the chart, best source first. Null means every
+  // source came up empty, which is the one case where painting would be a
+  // guess rather than a fix.
+  function chartBackdrop() {
+    if (mcpHostSurface) return mcpHostSurface;
+    var token = readSurfaceTokens();
+    if (token) return token;
+    var t = hostTheme();
+    if (t === "dark") return CANVAS_DARK;
+    if (t === "light") return CANVAS_LIGHT;
     return null;
   }
 
@@ -911,34 +967,49 @@ const WIDGET_HTML = `<!doctype html>
 
   // Give the card's exposed corners the right backdrop.
   //
-  // Both chart surfaces (baked PNG and native card) are rounded rectangles over
-  // a TRANSPARENT html/body, so their corners fall through to the document's
-  // backdrop. Measured behaviour, in Chrome:
+  // Every chart surface we render — baked PNG, committed iframe, native card —
+  // is a rounded rectangle (8px) over a TRANSPARENT html/body, so its four
+  // corner arcs fall through to whatever is behind. Measured in Chrome, on a
+  // page that paints white behind the widget frame:
   //
-  //   - same-origin frame, no \`color-scheme\`  -> canvas composites over the
-  //     parent, corners correct, nothing to fix.
-  //   - cross-origin / out-of-process frame    -> opaque WHITE base background.
-  //     This is the claude.ai case, and the white triangles people saw.
-  //   - document declares \`color-scheme: dark\` -> opaque base at CHROME's dark
-  //     value (~#121212), not transparent. Better than white on a dark host,
-  //     but a visible square against a host surface of any other shade.
+  //   - transparent html/body, no \`color-scheme\` -> the frame composites
+  //     through and the corners show the white. Same-origin, cross-origin,
+  //     sandboxed, and nested two frames deep all behave identically: the
+  //     nesting is not what produces the white, the host's own layer is.
+  //   - \`:root{color-scheme:dark}\` on the widget document -> did NOT cover it
+  //     in any of those configurations. It paints Chrome's #121212 base in some
+  //     frame setups and not others, so it cannot be relied on for this.
+  //   - \`background: Canvas\` on the widget root -> also did not cover it. The
+  //     root's background propagates to the canvas, and when that background IS
+  //     the canvas colour there is nothing left to paint.
+  //   - a CONCRETE colour on the chart element -> covers it, every time. The
+  //     iframe's own box background paints beneath the frame's content, so it
+  //     shows exactly where the card is transparent: the corners.
   //
-  // So there are two tiers, best first:
+  // Hence: put the backdrop on the CHART ELEMENTS, not on the canvas. It covers
+  // the only pixels that were ever wrong, and a host that reserves more space
+  // than the chart fills still shows its own surface there — no opaque box
+  // where none existed, which is what kept the earlier fix off ChatGPT.
   //
-  //   1. The host's own surface colour, when it sends one. Exact: the canvas
-  //      becomes indistinguishable from the host's page, so the square is
-  //      invisible and the corners are right.
-  //   2. \`color-scheme\` from the declared theme. Approximate, and only worth
-  //      it because the alternative on those hosts is WHITE.
+  // The canvas paint stays for tier 1 alone, where the colour IS the host's own
+  // and so cannot read as a box.
   //
-  // Both are no-ops when the host says nothing at all — that is the case where
-  // transparency already works (same-origin), and painting anything would
-  // introduce the opaque square the transparent surface exists to avoid.
+  // All of it is a no-op when no source names a colour. With nothing to key on,
+  // painting is a guess, and a wrong guess is a black corner on a light host.
   function applyHostSurface() {
     try {
       var root = document.documentElement;
-      // Tier 1 — exact, and safe to apply on ANY host: the canvas becomes the
-      // host's own colour, so it cannot look like a box.
+      var backdrop = chartBackdrop();
+      // Behind the chart, on every path. \`frame\` is the committed/probed embed
+      // iframe, \`image\` the baked PNG — both rounded, both transparent at the
+      // corners.
+      // Cleared, not just skipped, when nothing names a colour any more —
+      // otherwise a theme flip that drops its surface leaves the previous
+      // theme's backdrop painted behind the corners.
+      if (frame) frame.style.background = backdrop || "";
+      if (image) image.style.background = backdrop || "";
+      // Tier 1 — the host's exact surface, so painting the whole canvas is safe:
+      // it becomes indistinguishable from the host's own page.
       if (mcpHostSurface) {
         root.style.background = mcpHostSurface;
         if (document.body) document.body.style.background = mcpHostSurface;
@@ -946,29 +1017,20 @@ const WIDGET_HTML = `<!doctype html>
         if (t1) root.style.colorScheme = t1;
         return;
       }
-      // Tier 2 — approximate, and deliberately gated to the MCP Apps path
-      // (\`mcpHostTheme\`, not \`hostTheme()\`), i.e. NOT ChatGPT.
-      //
-      // Measured against a claude.ai-like #191817 surface: \`color-scheme\`
-      // alone paints Chrome's #121212, which reads as a visible darker square.
-      // That is a clear win over WHITE — which is what claude.ai's
-      // cross-origin frame actually shows, per the bug this fixes — and a clear
-      // LOSS on any host where the frame already composites transparently.
-      //
-      // ChatGPT exposes a theme via \`window.openai.theme\`, but its frame's
-      // base background is not something we have measured, and on that host the
-      // chart is a NESTED cross-origin iframe whose document we cannot style
-      // anyway. So there is no upside to gamble for: leave it transparent,
-      // exactly as it renders today. ChatGPT still gets themed — via the
-      // \`dark_mode\` rewrite on the iframe url, which is what actually colours
-      // its card.
-      // Falling BACK to tier 2 has to undo tier 1, not just stop repeating it.
-      // Clearing \`mcpHostSurface\` on a theme flip is half the fix; if the
-      // earlier exact colour is left on the element, the canvas keeps painting
-      // the old theme's surface no matter what this tier decides.
+      // No exact colour: undo any canvas paint tier 1 left behind. Clearing
+      // \`mcpHostSurface\` on a theme flip is only half of that — if the old
+      // colour stays on the element, the canvas keeps painting the previous
+      // theme's surface no matter what this call decides.
       root.style.background = "";
       if (document.body) document.body.style.background = "";
-      if (mcpHostTheme !== null) root.style.colorScheme = mcpHostTheme;
+      // \`color-scheme\` is still worth declaring: it is what form controls,
+      // scrollbars and the UA stylesheet inside this document key off. It is
+      // just not load-bearing for the corners any more. \`hostTheme()\` reads
+      // \`window.openai.theme\` first, so ChatGPT is covered here too — the gate
+      // that used to exclude it came off when its dark mode was measured
+      // (Aug 12 2026) showing the same white corners claude.ai had.
+      var t2 = hostTheme();
+      if (t2 !== null) root.style.colorScheme = t2;
     } catch (e) { /* pre-body or hostile host — cosmetic, never fatal */ }
   }
 
@@ -1288,8 +1350,8 @@ const WIDGET_HTML = `<!doctype html>
     // wrapped in a \`:root{background;color-scheme}\` block for the new one. And
     // \`nativeStarted\` means there is no second fetch to reconcile it, so the
     // inconsistency would be permanent for that card.
-    var snapSurface = mcpHostSurface;
-    var snapScheme = snapSurface ? hostTheme() : mcpHostTheme;
+    var snapBackdrop = chartBackdrop();
+    var snapScheme = hostTheme();
     var settled = false;
     var timer = setTimeout(function () {
       if (settled) return;
@@ -1318,30 +1380,25 @@ const WIDGET_HTML = `<!doctype html>
         );
         // The card paints its own surface with an 8px radius over a TRANSPARENT
         // html/body, so its corners fall through to the document's backdrop —
-        // which on claude.ai's cross-origin frame is opaque WHITE. Those were
-        // the white triangles under the card's corners.
+        // which behind claude.ai's widget frame is opaque WHITE. Those were the
+        // white triangles under the card's corners.
         //
-        // Same two tiers as \`applyHostSurface\`, and the same gate: the host's
-        // exact surface colour is safe anywhere, while bare \`color-scheme\`
-        // (Chrome's own #121212) only beats WHITE and would read as a visible
-        // square on a host that composites transparently — so it is limited to
-        // the MCP Apps path, where the white base is the measured behaviour.
+        // Same backdrop \`applyHostSurface\` resolves, but it has to go on the
+        // CANVAS here: this path replaces the whole document with the card, so
+        // there is no chart element left to hang a background on. That also
+        // means the canvas is covered by the card everywhere except the corners
+        // and whatever the host reserved beyond it, which is what makes an
+        // approximate colour acceptable here too.
         //
-        // In practice this path is MCP-only anyway: ChatGPT commits to the
-        // nested iframe and never reaches the native upgrade. The gate is
-        // written explicitly so it stays correct if that changes. Injected LAST
-        // so it wins over the page's own rules.
+        // Injected LAST so it wins over the page's own rules.
         var scheme = snapScheme;
-        var surface = snapSurface;
+        var backdrop = snapBackdrop;
         var schemeStyle = "";
-        if (surface) {
-          // Exact host surface — the square canvas becomes invisible.
+        if (backdrop) {
           schemeStyle =
-            '<style id="tako-host-scheme">:root,body{background:' + surface + '}' +
+            '<style id="tako-host-scheme">:root,body{background:' + backdrop + '}' +
             (scheme ? ':root{color-scheme:' + scheme + '}' : "") + '</style>';
         } else if (scheme) {
-          // Approximate: Chrome's base for the declared scheme. Worth it only
-          // because the alternative on a cross-origin frame is WHITE.
           schemeStyle =
             '<style id="tako-host-scheme">:root{color-scheme:' + scheme + '}</style>';
         }
@@ -1350,7 +1407,7 @@ const WIDGET_HTML = `<!doctype html>
           html.indexOf("</body>") !== -1
             ? html.replace("</body>", injected + "</body>")
             : html + injected;
-        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)", surface: surface || "(none)" });
+        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)", backdrop: backdrop || "(none)" });
         document.open();
         document.write(patched);
         document.close();
@@ -1736,6 +1793,16 @@ const WIDGET_HTML = `<!doctype html>
       // \`aspectHeight\` already declines per-event, so let it.
       window.addEventListener("resize", function () {
         if (frame.classList.contains("hidden")) return;
+        // The embed's own report outranks anything derived from the PNG — see
+        // \`embedReportedHeight\`. The comment above always claimed this listener
+        // stood down "after an embed-reported height has taken over", but no
+        // guard implemented it; the clause was true only by accident, because
+        // \`aspectHeight\` returned null on the one host that reaches here and
+        // the whole body was dead code. Giving it real dimensions woke it up,
+        // and it re-derived 525 px over the embed's 732 px on every resize.
+        // The embed re-reports on its own reflow, so standing down here loses
+        // nothing.
+        if (embedReportedHeight) return;
         var next = aspectHeight(imgNaturalW, imgNaturalH);
         if (next === null) return;
         committedHeight = next;
@@ -1874,6 +1941,57 @@ const WIDGET_HTML = `<!doctype html>
     }
   }
 
+  // Does this object look like the tool result's \`_meta\` — the one the chart
+  // path actually consumes? Keyed on the fields render() reads rather than on
+  // "is an object", because every candidate below is an object and only some
+  // of them are ours.
+  function hasWidgetMeta(o) {
+    if (!o || typeof o !== "object") return false;
+    return (
+      typeof o.image_natural_width === "number" ||
+      typeof o.image_data_url === "string" ||
+      typeof o.native_card_url === "string"
+    );
+  }
+  // The \`_meta\` half of the tool result, on the \`window.openai\` path.
+  //
+  // render() takes \`(structuredContent, meta)\`, but all three ChatGPT call
+  // sites used to pass one argument, so \`meta\` was \`undefined\` on every
+  // ChatGPT delivery and \`image_natural_width\`/\`image_natural_height\` were
+  // read as 0. \`aspectHeight\` then declined and the frame fell back to
+  // \`structuredContent.height\` — a number the server sends as a REQUEST, not
+  // a measurement, so a wide card got a tall frame and rendered inside a band
+  // of empty space. The server was already paying a ranged PNG read on every
+  // ChatGPT call to ship those exact dimensions; nothing was reading them.
+  //
+  // Per the Apps SDK reference, \`window.openai.toolResponseMetadata\` is
+  // "canonical widget-only tool result metadata … preserving the full MCP
+  // result envelope, including hidden \`_meta\`". The envelope's internal shape
+  // (\`call_tool_result\` / \`mcp_tool_result\`) is ChatGPT's, not the MCP spec's,
+  // so probe the documented spellings best-first instead of committing to one
+  // — the same reason \`pickFromOpenAi\` reads a list of candidates.
+  //
+  // Returns undefined, never null: this is forwarded as render()'s second
+  // argument, where the reads are all \`meta && typeof meta === "object"\`
+  // guarded, so a miss degrades to exactly the old behaviour.
+  function pickMetaFromOpenAi() {
+    var w = window;
+    if (!w || !w.openai || typeof w.openai !== "object") return undefined;
+    var trm = w.openai.toolResponseMetadata;
+    var candidates = [
+      trm,
+      trm && trm._meta,
+      trm && trm.mcp_tool_result && trm.mcp_tool_result._meta,
+      trm && trm.call_tool_result && trm.call_tool_result._meta,
+      w.openai.widget && w.openai.widget._meta,
+    ];
+    var i;
+    for (i = 0; i < candidates.length; i++) {
+      if (hasWidgetMeta(candidates[i])) return candidates[i];
+    }
+    return undefined;
+  }
+
   // Does this payload actually carry a chart? Same two fields render()'s
   // no-chart guard tests, and it has to be the same test: a candidate that
   // would only collapse the widget must not count as having satisfied the
@@ -2010,11 +2128,14 @@ const WIDGET_HTML = `<!doctype html>
   // runs; otherwise we fall through to a 10s polling window because
   // ChatGPT populates the global at unpredictable times. Cost: one
   // property read every 250 ms.
-  if (!render(pickPayload(null))) {
+  if (!render(pickPayload(null), pickMetaFromOpenAi())) {
     var attempts = 0;
     var handle = setInterval(function () {
       attempts += 1;
-      if (render(pickPayload(null)) || attempts >= 40) {
+      // Re-read the meta each tick, not once before the loop: the payload and
+      // its \`_meta\` can land on different ticks, and pinning a stale
+      // \`undefined\` here would reintroduce the exact bug this fixes.
+      if (render(pickPayload(null), pickMetaFromOpenAi()) || attempts >= 40) {
         clearInterval(handle);
       }
     }, 250);
@@ -2065,7 +2186,14 @@ const WIDGET_HTML = `<!doctype html>
     // One list, not \`globals || openai\` — see \`pickPayload\`. The event's own
     // globals are the freshest candidates, but they do not get to short-circuit
     // the search when what they carry is a stripped payload.
-    render(pickPayload(globals));
+    //
+    // Meta comes from the globals when the event carries it, else from the
+    // \`window.openai\` snapshot — the payload can arrive on the event while
+    // \`_meta\` is only ever readable off the global, so neither source alone
+    // covers both hosts' timing.
+    var eventMeta =
+      globals && hasWidgetMeta(globals._meta) ? globals._meta : undefined;
+    render(pickPayload(globals), eventMeta || pickMetaFromOpenAi());
   };
   EVENT_NAMES.forEach(function (name) {
     window.addEventListener(name, handler);
@@ -2307,6 +2435,10 @@ const WIDGET_HTML = `<!doctype html>
       var h = msg.height;
       if (typeof h !== "number" || !isFinite(h) || h <= 0 || h > 4000) return;
       var n = Math.round(h);
+      // Latch BEFORE resizing: \`notifyHeight\` can reenter through the host,
+      // and a resize that lands between the two calls would still be reading
+      // the pre-latch value and could re-derive over what we just set.
+      embedReportedHeight = true;
       setFrameHeight(n);
       notifyHeight(n);
       log("resized via embed handshake", { height: n });

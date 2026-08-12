@@ -1870,10 +1870,13 @@ describe("mcp apps host theme (executed)", () => {
     );
     fireImageLoad(m);
     await new Promise((r) => setTimeout(r, 30));
-    // Theme only, no surface colour sent -> the approximate tier, and NO
-    // background is painted (transparency is left intact).
+    // Theme only, no surface colour sent -> the approximate tier, which paints
+    // the theme's canvas literal. It used to emit `color-scheme` alone and
+    // leave the canvas transparent; measured in Chrome, `color-scheme` does not
+    // reliably paint a base, so the corners stayed white on the very hosts this
+    // tier exists for.
     expect(written).toContain("color-scheme:dark");
-    expect(written).not.toContain("background:");
+    expect(written).toContain("background:#121212");
     // Injected before </body> so it wins over the page's own rules.
     expect(written.indexOf("color-scheme:dark")).toBeLessThan(
       written.indexOf("</body>"),
@@ -1965,21 +1968,36 @@ describe("mcp apps host theme (executed)", () => {
     );
     fireImageLoad(m);
     await new Promise((r) => setTimeout(r, 30));
-    // The payload never lands, and no background is painted — it falls back
-    // to the approximate tier instead of trusting the value.
+    // The payload never lands. The document still gets a backdrop, but it is
+    // the theme's canvas literal — the rejected value is nowhere in the markup,
+    // and the escape sequence it carried never reaches the parser.
     expect(written).not.toContain("x=1");
-    expect(written).not.toContain("background:");
+    expect(written).toContain("background:#121212");
     expect(written).toContain("color-scheme:dark");
   });
 
-  it("leaves ChatGPT's canvas transparent — no box where none existed", () => {
-    // The gate that matters for cross-platform safety. ChatGPT exposes a theme,
-    // but bare `color-scheme` paints Chrome's #121212, which reads as a visible
-    // square on any host whose frame already composites transparently. Measured
-    // against a #191817 surface, that square is obvious. claude.ai's frame is
-    // WHITE (the bug), so the trade is worth it there and only there — and on
-    // ChatGPT the chart is a NESTED cross-origin iframe we could not style
-    // anyway. So: no paint, no color-scheme, nothing.
+  it("puts a backdrop behind ChatGPT's chart — its corners were white", () => {
+    // The reported bug: a dark-mode ChatGPT screenshot (Aug 12 2026) with the
+    // card's four 8px corners rendering pure #FFFFFF. This tier used to skip
+    // ChatGPT entirely, on the theory that its frame composites transparently
+    // and painting would only add a box where none existed. Measured in Chrome
+    // against a page that paints white behind the widget frame:
+    //
+    //   - Frame nesting is NOT the cause. Same-origin, cross-origin, sandboxed,
+    //     and two-deep nesting all composite through identically; the white
+    //     belongs to the host's own layer underneath.
+    //   - `color-scheme` on the widget root did NOT cover it, in any of those
+    //     configurations. It paints Chrome's base in some frame setups and not
+    //     others, so it cannot carry this fix.
+    //   - `background: Canvas` did not cover it either — a root background that
+    //     IS the canvas colour leaves nothing to paint.
+    //   - A concrete colour on the CHART ELEMENT covered it every time. The
+    //     iframe's own box background paints beneath the frame's content, so it
+    //     shows exactly where the card is transparent.
+    //
+    // Hence the backdrop goes on the chart element, not the canvas: it covers
+    // the only pixels that were wrong and leaves the rest of the widget
+    // transparent, which is what the ChatGPT exclusion was protecting.
     const m = mountWidget(staticWidgetHtml());
     (m.widgetWin as unknown as { openai: Record<string, unknown> }).openai = {
       theme: "dark",
@@ -1989,12 +2007,80 @@ describe("mcp apps host theme (executed)", () => {
       toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
       m.wrapperWin,
     );
+    // rgb(18, 18, 18) is #121212 — Chrome's dark Canvas, as a literal.
+    expect(widgetFrame(m).style.background).toBe("rgb(18, 18, 18)");
     const root = m.widgetWin.document.documentElement;
-    expect(root.style.colorScheme).toBe("");
+    expect(root.style.colorScheme).toBe("dark");
+    // The canvas itself stays transparent: a host that reserves more space than
+    // the chart fills must keep showing its own surface there.
     expect(root.style.background).toBe("");
-    // ChatGPT is still themed — via the dark_mode rewrite on the iframe url,
-    // which is what actually colours its card.
+    // The card itself is still themed by the dark_mode rewrite on the iframe url.
     expect(widgetFrame(m).getAttribute("src")).toContain("dark_mode=true");
+  });
+
+  it("follows ChatGPT into light mode instead of assuming dark", () => {
+    // The mirrored bug: a hardcoded dark backdrop would put BLACK corners on a
+    // light ChatGPT.
+    const m = mountWidget(staticWidgetHtml());
+    (m.widgetWin as unknown as { openai: Record<string, unknown> }).openai = {
+      theme: "light",
+    };
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+      m.wrapperWin,
+    );
+    expect(widgetFrame(m).style.background).toBe("rgb(255, 255, 255)");
+    expect(m.widgetWin.document.documentElement.style.colorScheme).toBe("light");
+  });
+
+  it("backs the baked PNG too, not just the iframe", () => {
+    // The PNG is the same rounded rectangle over the same transparent canvas,
+    // so it has the same corners. It is the surface claude.ai shows first and
+    // the one ChatGPT falls back to when the iframe is blocked.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(m, initResponse({ theme: "dark" }), m.wrapperWin);
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
+      m.wrapperWin,
+    );
+    const img = m.widgetWin.document.getElementById("tako-embed-img") as HTMLElement;
+    expect(img.style.background).toBe("rgb(18, 18, 18)");
+  });
+
+  it("prefers a host surface token set on our own root over the theme literal", () => {
+    // `hostContext.styles.variables` is how the MCP Apps spec transports these,
+    // but a host is equally free to just set the custom properties on the widget
+    // document — and ChatGPT, which never sends hostContext at all, is the host
+    // that would have to. Reading them makes an exact backdrop available on a
+    // host that ships tokens without a spec handshake.
+    const m = mountWidget(staticWidgetHtml());
+    m.widgetWin.document.documentElement.style.setProperty(
+      "--color-background-primary",
+      "#191817",
+    );
+    (m.widgetWin as unknown as { openai: Record<string, unknown> }).openai = {
+      theme: "dark",
+    };
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+      m.wrapperWin,
+    );
+    expect(widgetFrame(m).style.background).toBe("rgb(25, 24, 23)");
+  });
+
+  it("paints no backdrop at all when nothing names a colour", () => {
+    // No theme, no tokens, no surface. Painting here would be a guess, and the
+    // wrong guess is a black corner on a light host.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+      m.wrapperWin,
+    );
+    expect(widgetFrame(m).style.background).toBe("");
   });
 
   it("still paints ChatGPT's canvas when a surface colour IS supplied", () => {
