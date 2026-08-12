@@ -1677,8 +1677,7 @@ components:
             unless Tako returned more rows than the free row allowance; then it is
             the amount this response billed for the card. Use export_pricing on its
             own to price a /contents export of the same card. Do not add this value
-            to that result: a billed inline card uses the caller''s own inline free
-            row allowance, and export_pricing uses the /contents free row allowance.'
+            to that result: they are two prices for the same rows, not two charges.'
           default: 0.0
         data:
           anyOf:
@@ -1882,12 +1881,13 @@ components:
           - type: 'null'
           title: Max Rows
           description: Optional cap on the rows a Tako card export is priced against.
-            When omitted, it defaults to the free-row allowance (20 rows), billed
-            at the baseline only. Raise it to export more rows, up to the 2,000-row
-            system ceiling (Tako clamps larger values). Rows beyond the free allowance
-            bill at the per-1,000-row rate. Tako never bills more rows than it returns.
-            Every card format returns the rows up to this cap and bills them, including
-            card_json. Web URLs ignore this field.
+            When omitted, it defaults to your account's free-row allowance (20 rows
+            on the standard plan), billed at the baseline only. Raise it to export
+            more rows, up to the 2,000-row system ceiling (Tako clamps larger values).
+            Rows beyond the free allowance bill at the per-1,000-row rate. Tako never
+            bills more rows than it returns. Every card format returns the rows up
+            to this cap and bills them, including card_json. Web URLs ignore this
+            field.
           examples:
           - 100
         max_chars:
@@ -1909,16 +1909,16 @@ components:
             url fields are null, and the request is free. One exception: a card_json
             quote returns ''card_data_schema'', the shape the export would deliver.
             Test ''content_format'' for null to tell a quote from a delivery. `max_rows`
-            shapes the quote and defaults to the 20-row free allowance, as a real
-            export does. The request ignores `mode`. Every format prices a quote from
-            `max_rows`, so a quote is instant and makes no call to a data provider.
-            A quote is an upper bound on the charge: an export of a card with fewer
-            rows than the cap bills less. A card_json export is truncated to `max_rows`
-            like every other format, so the charge can never exceed the quote for
-            the same cap. A card_json quote reports no `total_rows`, because it does
-            not build the payload. The same export-safe gate applies, so an unexportable
-            card still returns 403, and a card type with no card_json shape still
-            returns 422.'
+            shapes the quote and defaults to your account''s free-row allowance, as
+            a real export does. The request ignores `mode`. Every format prices a
+            quote from `max_rows`, so a quote is instant and makes no call to a data
+            provider. A quote is an upper bound on the charge: an export of a card
+            with fewer rows than the cap bills less. A card_json export is truncated
+            to `max_rows` like every other format, so the charge can never exceed
+            the quote for the same cap. A card_json quote reports no `total_rows`,
+            because it does not build the payload. The same export-safe gate applies,
+            so an unexportable card still returns 403, and a card type with no card_json
+            shape still returns 422.'
           default: false
       type: object
       required:
@@ -2132,11 +2132,11 @@ components:
           $ref: '#/components/schemas/ContentsDeliveryMode'
           description: Delivery for inlined card data when include_contents is true.
             For Tako cards, include_contents always returns the most-recent rows in
-            the response body, up to max_rows, or up to the free row allowance if
-            you omit max_rows. This field therefore has no effect on Tako cards; it
-            stays for schema stability. total_rows and truncated on the returned content
-            indicate when more data is available. For a presigned download link, call
-            POST /api/v1/contents with mode='url'.
+            the response body, up to max_rows, or up to the default inline row cap
+            for your account if you omit max_rows. This field therefore has no effect
+            on Tako cards; it stays for schema stability. total_rows and truncated
+            on the returned content indicate when more data is available. For a presigned
+            download link, call POST /api/v1/contents with mode='url'.
           default: inline
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
@@ -2154,14 +2154,18 @@ components:
           - type: 'null'
           title: Max Rows
           description: Maximum number of card data rows to inline when include_contents
-            is true. If you omit this field, Tako returns the free row allowance (20
-            rows for most callers). Raise it to inline more rows, up to the 2,000-row
-            system ceiling. Tako clamps a larger value to that ceiling. Once rows
-            exceed the free row allowance, Tako charges a flat per-card baseline fee
-            plus the per-1,000-row rate, the same rate POST /api/v1/contents charges.
-            total_rows and truncated report whether more rows remain. A single response
-            also has a 2,000 billable-row budget shared across all cards, so a later
-            card can return fewer rows than you requested.
+            is true. If you omit this field, Tako returns the default inline row cap
+            for your account (20 rows on the standard plan), which is not always the
+            same as your free row allowance. Raise it to inline more rows, up to the
+            2,000-row system ceiling. Tako clamps a larger value to that ceiling.
+            Once rows exceed the free row allowance, Tako charges a flat per-card
+            baseline fee plus the per-1,000-row rate, the same rate POST /api/v1/contents
+            charges. total_rows and truncated report whether more rows remain. A single
+            response also has a 2,000 billable-row budget and a 20,000-row total budget,
+            both shared across all cards. A later card can therefore return fewer
+            rows than you requested, or no inlined rows at all. Such a card still
+            carries its export_pricing quote, so you can fetch its rows with POST
+            /api/v1/contents.
           examples:
           - 100
         node_ids:
@@ -2318,9 +2322,9 @@ components:
           type: integer
           title: Free Rows
           description: Rows included at the baseline price before the per-1,000-row
-            rate (row_cpm_usd) begins to apply. This is the /contents free row allowance.
-            It is not the inline free row allowance of a search or answer response,
-            which can be larger.
+            rate (row_cpm_usd) begins to apply. This is the /contents free row allowance
+            for your account. A search or answer response bills an inlined card against
+            this same allowance.
         max_rows_ceiling:
           type: integer
           title: Max Rows Ceiling
@@ -2347,14 +2351,14 @@ components:
         card''s distinct priced sources'' per-1,000-row rate); no per-source breakdown.
 
 
-        This formula reproduces a /contents export charge ONLY. `free_rows` here is
+        `free_rows` here is the CALLER''S allowance, the same number a billed inline
 
-        always the /contents free row allowance. It does not reproduce the `cost`
-        of
+        card''s `cost` uses -- both resolve through tako_free_rows_for. The two agreed
 
-        a billed inline card on a search or answer response, because that charge uses
+        only after /contents gained an entitlement concept; before that this field
+        was
 
-        the caller''s own inline free row allowance, which can be larger.'
+        always CSV_FREE_ROWS and the two surfaces disagreed by 3x on the same rows.'
     GeoLocation:
       properties:
         latitude:
@@ -2737,8 +2741,7 @@ components:
             unless Tako returned more rows than the free row allowance; then it is
             the amount this response billed for the card. Use export_pricing on its
             own to price a /contents export of the same card. Do not add this value
-            to that result: a billed inline card uses the caller''s own inline free
-            row allowance, and export_pricing uses the /contents free row allowance.'
+            to that result: they are two prices for the same rows, not two charges.'
           default: 0.0
         data:
           anyOf:
@@ -2903,15 +2906,14 @@ components:
 
         every export returns no more rows than that cap, so a card with fewer rows
 
-        than the cap bills only the rows it returns. That rate always uses the
+        than the cap bills only the rows it returns. That rate uses the CALLER''S
+        free
 
-        `/contents` free row allowance,
+        row allowance, the same one a billed inline card''s `cost` uses -- /contents
 
-        whatever the caller''s inline allowance is, because `/contents` has no
+        resolves the caller''s entitlement too. `export_pricing` is null for web text
 
-        entitlement concept. `export_pricing` is null for web text and
-
-        non-downloadable content.
+        and non-downloadable content.
 
 
         Do NOT combine `cost` with `export_pricing` on a billed inline card. There,
@@ -3466,6 +3468,7 @@ components:
       required:
       - query
       title: SearchRequest
+      description: Shared request for POST /api/v3/search and POST /api/v1/answer.
     SearchResponse:
       properties:
         cards:
