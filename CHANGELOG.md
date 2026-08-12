@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.19.4](https://github.com/TakoData/tako-mcp/compare/v0.19.3...v0.19.4) (2026-08-12)
+
+
+### Bug Fixes
+
+* **proxy:** the card fetches the rest of its tabs, and we sent it nowhere ([c72a10d](https://github.com/TakoData/tako-mcp/commit/c72a10d9dbfd5f99ebc1a11a0ea85470aa2a3082))
+* **proxy:** the endpoint we opened to every origin also writes ([3bca11b](https://github.com/TakoData/tako-mcp/commit/3bca11b719ee07472168bf691794b91b43448165))
+* **proxy:** the peak the comment claimed, and a cap sized off the wrong number ([c78b5cf](https://github.com/TakoData/tako-mcp/commit/c78b5cfb956e3b336ba8ca2cf81fa471369118f8))
+* **widget:** the card's height changes after we stop watching it ([75ebfa6](https://github.com/TakoData/tako-mcp/commit/75ebfa66ae4dc20de61fa324917ccf87a429fd05))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([358e1d6](https://github.com/TakoData/tako-mcp/commit/358e1d6b0bbecfb00f9a8b323f8419a0bbea677a))
+* sync OpenAPI spec from monorepo ([b731466](https://github.com/TakoData/tako-mcp/commit/b731466f5426cf67c01b20b35df2164fa2d6514e))
+* sync OpenAPI spec from monorepo ([#230](https://github.com/TakoData/tako-mcp/issues/230)) ([0795004](https://github.com/TakoData/tako-mcp/commit/07950047d0ce11d18d92d91d71b76f5720de5ab9))
+* sync OpenAPI spec from TakoData/tako ([4fa8991](https://github.com/TakoData/tako-mcp/commit/4fa89910bc9c9e5012f26c8b6df480b2f9f00db4))
+
 ## [0.19.3](https://github.com/TakoData/tako-mcp/compare/v0.19.2...v0.19.3) (2026-08-11)
 
 
