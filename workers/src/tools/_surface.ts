@@ -72,6 +72,34 @@ export function isWidgetClient(client: McpClientKind): boolean {
 }
 
 /**
+ * The ChatGPT PRODUCT family: chatgpt.com's connector AND the merged
+ * ChatGPT desktop app (`"codex"`). These share the tool surface — the
+ * split agent pair, the anonymous discoverable set, `securitySchemes`
+ * injection, the Apps-SDK reauth challenge — because they are the same
+ * product with two MCP transports (verified live against the desktop app
+ * 2026-08-13: it lists, calls, and auth-gates exactly like chatgpt.com).
+ *
+ * Deliberately NOT the same predicate as {@link isWidgetClient}: codex is
+ * family but not (yet) a widget client. Its widget sandbox origin is a
+ * custom `codex-sandbox://` scheme that tako.com's `frame-ancestors`
+ * rejects (`ERR_BLOCKED_BY_RESPONSE` on the card iframe), so widget
+ * `_meta` today would replace the working inline PNG with a grey dead
+ * tile in the desktop app.
+ *
+ * FLIP CHECKLIST — when the backend allows `codex-sandbox:` in
+ * `frame-ancestors` (tako repo `build_csp_header`, monolith/views.py) and
+ * a desktop app with `enable_mcp_apps` renders a card end-to-end:
+ *   1. add `client === "codex"` to {@link isWidgetClient};
+ *   2. switch the three `bakeImage: ctx.client !== "chatgpt"` gates
+ *      (tako_search / tako_answer / tako_visualize) to
+ *      `!isChatGptFamilyClient(ctx.client)` so codex skips the PNG
+ *      prefetch its widget no longer reads.
+ */
+export function isChatGptFamilyClient(client: McpClientKind): boolean {
+  return client === "chatgpt" || client === "codex";
+}
+
+/**
  * Optional tools that stay on the DEFAULT surface for widget clients
  * ({@link isWidgetClient}).
  *
@@ -167,7 +195,7 @@ export function isToolOnSurface(
     tier === "free" &&
     !FREE_TIER_TOOL_NAMES.has(name) &&
     !(
-      client === "chatgpt" &&
+      isChatGptFamilyClient(client) &&
       CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES.has(name)
     )
   ) {
@@ -180,8 +208,12 @@ export function isToolOnSurface(
   ) {
     return false;
   }
-  if (CHATGPT_ONLY_TOOL_NAMES.has(name) && client !== "chatgpt") return false;
-  if (CHATGPT_EXCLUDED_TOOL_NAMES.has(name) && client === "chatgpt") return false;
+  if (CHATGPT_ONLY_TOOL_NAMES.has(name) && !isChatGptFamilyClient(client)) {
+    return false;
+  }
+  if (CHATGPT_EXCLUDED_TOOL_NAMES.has(name) && isChatGptFamilyClient(client)) {
+    return false;
+  }
   return true;
 }
 
