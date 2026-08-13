@@ -1068,33 +1068,49 @@ const WIDGET_HTML = `<!doctype html>
       // interior against a transparent embed document (the case the baked-PNG
       // and native-card paths rely on) and costs nothing where the card is
       // opaque.
+      // SCOPED TO THE ChatGPT PATH. Everything below the radius clip is a fix
+      // for a bug measured on that host, and claude.ai renders correctly in
+      // production today with the ORIGINAL behaviour — so the safe change is
+      // the narrow one. \`hasOpenAiRuntime()\` is the same predicate that already
+      // decides the committed-iframe branch, so this cannot disagree with the
+      // path actually taken.
+      var chatgpt = hasOpenAiRuntime();
       if (frame) {
         frame.style.background = backdrop || "";
-        frame.style.borderRadius = backdrop ? CARD_CORNER_RADIUS : "";
+        // Clip only on ChatGPT: a square backdrop behind a rounded card leaves
+        // a crescent at each corner, which is the reported ring there.
+        frame.style.borderRadius = chatgpt && backdrop ? CARD_CORNER_RADIUS : "";
       }
       if (image) {
         image.style.background = backdrop || "";
-        image.style.borderRadius = backdrop ? CARD_CORNER_RADIUS : "";
+        image.style.borderRadius = chatgpt && backdrop ? CARD_CORNER_RADIUS : "";
       }
       // Tier 1 — the host's exact surface, so painting the whole canvas is safe:
       // it becomes indistinguishable from the host's own page.
-      // The canvas is NEVER painted, including when the host names an exact
-      // surface. That tier existed on the theory that an exact colour makes
-      // painting the whole canvas indistinguishable from the host's own page —
-      // and the reporting host disproved it: it declared \`#212121\` while
-      // rendering black behind the widget, so the paint became a full-bleed
-      // grey rectangle under a rounded card, i.e. an outline around the entire
-      // card rather than merely wrong corners.
+      // Tier 1 — the host's exact surface. RETAINED for every host except
+      // ChatGPT, unchanged from the behaviour claude.ai renders correctly in
+      // production.
       //
-      // A declared surface is a claim about the host's theme, not a measurement
-      // of the pixels behind this frame, and nothing here can verify it. So the
-      // canvas stays transparent and the host's real background shows through —
-      // which is correct by construction, on every host, without trusting
-      // anyone's colour. The backdrop above still covers the card's interior,
-      // now clipped to the card's own radius.
-      //
-      // Cleared rather than skipped: a host that sent a surface before this
-      // change, or an earlier theme, may have left one painted on the element.
+      // Suppressed on ChatGPT because that host disproved the tier's premise:
+      // it declared \`#212121\` over \`hostContext\` while rendering the page
+      // behind the widget BLACK, so painting the canvas laid a full-bleed grey
+      // rectangle under a rounded card — an outline around the whole card
+      // rather than merely wrong corners. A declared surface is a claim about
+      // the host's theme, not a measurement of the pixels behind this frame,
+      // and nothing here can verify it. Where the claim is good the paint is
+      // invisible; where it is wrong it is a ring. Only ChatGPT has been
+      // measured wrong, so only ChatGPT stops trusting it.
+      if (mcpHostSurface && !chatgpt) {
+        root.style.background = mcpHostSurface;
+        if (document.body) document.body.style.background = mcpHostSurface;
+        var t1 = hostTheme();
+        if (t1) root.style.colorScheme = t1;
+        return;
+      }
+      // No exact colour, or ChatGPT: undo any canvas paint a previous call left
+      // behind. Clearing \`mcpHostSurface\` on a theme flip is only half of that
+      // — if the old colour stays on the element, the canvas keeps painting the
+      // previous theme's surface no matter what this call decides.
       root.style.background = "";
       if (document.body) document.body.style.background = "";
       // \`color-scheme\` is still worth declaring: it is what form controls,
@@ -1482,7 +1498,19 @@ const WIDGET_HTML = `<!doctype html>
         // trusting anyone's colour. \`color-scheme\` stays: it themes the
         // UA-drawn surfaces inside the card (scrollbars, form controls) and
         // paints nothing itself.
-        if (scheme) {
+        // Same scoping as \`applyHostSurface\`: the backdrop still rides into the
+        // native document on every host EXCEPT ChatGPT, unchanged from what
+        // claude.ai renders correctly in production today. This path replaces
+        // the document with the card, so on ChatGPT the paint would be the same
+        // full-bleed rectangle under a rounded card that the canvas tier was
+        // suppressed for — and ChatGPT is the only host measured to declare a
+        // surface that does not match what it renders.
+        var backdrop = hasOpenAiRuntime() ? null : snapBackdrop;
+        if (backdrop) {
+          schemeStyle =
+            '<style id="tako-host-scheme">:root,body{background:' + backdrop + '}' +
+            (scheme ? ':root{color-scheme:' + scheme + '}' : "") + '</style>';
+        } else if (scheme) {
           schemeStyle =
             '<style id="tako-host-scheme">:root{color-scheme:' + scheme + '}</style>';
         }
@@ -1491,7 +1519,7 @@ const WIDGET_HTML = `<!doctype html>
           html.indexOf("</body>") !== -1
             ? html.replace("</body>", injected + "</body>")
             : html + injected;
-        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)" });
+        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)", backdrop: backdrop || "(none)" });
         document.open();
         document.write(patched);
         document.close();

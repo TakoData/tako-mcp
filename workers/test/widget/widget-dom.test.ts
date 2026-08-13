@@ -1722,18 +1722,9 @@ describe("mcp apps host theme (executed)", () => {
       toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
       m.wrapperWin,
     );
-    // Asserted on the CHART ELEMENT, not the canvas. The canvas paint was
-    // removed: a host that DECLARES a surface is making a claim about its
-    // theme, not a measurement of the pixels behind this frame, and the
-    // reporting host declared `#212121` while rendering black — so painting
-    // the canvas drew a full-bleed rectangle under a rounded card, i.e. an
-    // outline around the whole card. The surface still selects the backdrop
-    // colour, which is what these tests exist to protect; it is just clipped
-    // to the card's radius now instead of covering the document.
     const root = m.widgetWin.document.documentElement;
     // The DOM normalizes hex to rgb() on the way in.
-    expect(widgetFrame(m).style.background).toBe("rgb(25, 24, 23)");
-    expect(root.style.background).toBe("");
+    expect(root.style.background).toBe("rgb(25, 24, 23)");
     expect(root.style.colorScheme).toBe("dark");
   });
 
@@ -1879,28 +1870,23 @@ describe("mcp apps host theme (executed)", () => {
     );
     fireImageLoad(m);
     await new Promise((r) => setTimeout(r, 30));
-    // `color-scheme` rides in the markup; a BACKGROUND deliberately does not.
-    // This path replaces the document with the card, so painting :root/body
-    // lays a full-bleed rectangle behind a card with 8px rounded corners — the
-    // same square-behind-rounded mismatch that drew a visible outline on the
-    // iframe path, here in the one place claude.ai renders. The corners must
-    // fall through to the host's real background instead.
+    // Theme only, no surface colour sent -> the approximate tier, which paints
+    // the theme's canvas literal. It used to emit `color-scheme` alone and
+    // leave the canvas transparent; measured in Chrome, `color-scheme` does not
+    // reliably paint a base, so the corners stayed white on the very hosts this
+    // tier exists for.
     expect(written).toContain("color-scheme:dark");
-    expect(written).not.toContain("background:#121212");
+    expect(written).toContain("background:#121212");
     // Injected before </body> so it wins over the page's own rules.
     expect(written.indexOf("color-scheme:dark")).toBeLessThan(
       written.indexOf("</body>"),
     );
   });
 
-  it("never paints the native card document's canvas, even given an exact surface", async () => {
-    // Inverted deliberately. A declared surface is a CLAIM about the host's
-    // theme, not a measurement of the pixels behind this frame: the reporting
-    // host declared `#212121` over `hostContext` while rendering black, so
-    // painting it drew a grey rectangle under a rounded card. Nothing here can
-    // verify the colour, so the canvas stays transparent and the host's real
-    // background shows through the corners — correct on every host, without
-    // trusting anyone's value.
+  it("paints the native card document in the host's surface colour", async () => {
+    // The native path replaces this document, so the colour has to ride in the
+    // markup — and this is the tier that makes the corners exact rather than
+    // approximate.
     const m = mountWidget(staticWidgetHtml());
     let written = "";
     (m.widgetWin as unknown as { fetch: unknown }).fetch = () =>
@@ -1937,7 +1923,7 @@ describe("mcp apps host theme (executed)", () => {
     );
     fireImageLoad(m);
     await new Promise((r) => setTimeout(r, 30));
-    expect(written).not.toContain("background:");
+    expect(written).toContain("background:rgb(25, 24, 23)");
     expect(written).toContain("color-scheme:dark");
   });
 
@@ -1986,11 +1972,7 @@ describe("mcp apps host theme (executed)", () => {
     // the theme's canvas literal — the rejected value is nowhere in the markup,
     // and the escape sequence it carried never reaches the parser.
     expect(written).not.toContain("x=1");
-    // Stronger than before: there is no colour interpolated into this markup at
-    // ALL any more, so the injection sink the `safeCssColor` allow-list existed
-    // to defend is gone rather than merely guarded. `color-scheme` takes a
-    // keyword, not a host-supplied string.
-    expect(written).not.toContain("background:");
+    expect(written).toContain("background:#121212");
     expect(written).toContain("color-scheme:dark");
   });
 
@@ -2034,49 +2016,6 @@ describe("mcp apps host theme (executed)", () => {
     expect(root.style.background).toBe("");
     // The card itself is still themed by the dark_mode rewrite on the iframe url.
     expect(widgetFrame(m).getAttribute("src")).toContain("dark_mode=true");
-  });
-
-  it("falls back to prefers-color-scheme when the host names no theme", () => {
-    // The gap the previous two tests could not see, because both hand the
-    // widget a theme. A host that exposes NONE — no `window.openai`, no MCP
-    // `hostContext` theme, no `--color-background-*` tokens — left
-    // `chartBackdrop()` returning null, so nothing was painted and the card's
-    // rounded corners fell through to the host's own white layer.
-    //
-    // The card was themed anyway: every chart url carries `dark_mode=auto`,
-    // which the embed page resolves from `prefers-color-scheme` INSIDE the
-    // frame. So the card came out dark while the backdrop stayed unpainted —
-    // that asymmetry is the white-corner report, and reading the same signal
-    // the card reads is what closes it.
-    const m = mountWidget(staticWidgetHtml());
-    const win = m.widgetWin as unknown as {
-      matchMedia: (q: string) => { matches: boolean };
-      openai?: unknown;
-    };
-    // No `window.openai`, no hostContext — only the media query, dark.
-    win.matchMedia = (q: string) => ({ matches: q.includes("dark") });
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
-      m.wrapperWin,
-    );
-    expect(widgetFrame(m).style.background).toBe("rgb(18, 18, 18)");
-  });
-
-  it("stays unpainted when no source names a theme at all", () => {
-    // The guard on the fallback: with no host theme AND no media preference,
-    // painting is a guess, and a wrong guess is a BLACK corner on a light host.
-    // Nothing named a colour, so nothing is painted.
-    const m = mountWidget(staticWidgetHtml());
-    (
-      m.widgetWin as unknown as { matchMedia: (q: string) => { matches: boolean } }
-    ).matchMedia = () => ({ matches: false });
-    deliver(
-      m,
-      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
-      m.wrapperWin,
-    );
-    expect(widgetFrame(m).style.background).toBe("");
   });
 
   it("follows ChatGPT into light mode instead of assuming dark", () => {
@@ -2144,9 +2083,23 @@ describe("mcp apps host theme (executed)", () => {
     expect(widgetFrame(m).style.background).toBe("");
   });
 
-  it("still paints ChatGPT's canvas when a surface colour IS supplied", () => {
-    // Tier 1 is exact, so it is safe on every host — the gate is only on the
-    // approximate tier.
+  it("never paints ChatGPT's canvas, even when a surface colour IS supplied", () => {
+    // Inverted for ChatGPT ONLY, and measured rather than reasoned. Tier 1 was
+    // held to be "exact, so safe on every host"; ChatGPT disproved it by
+    // DECLARING `#212121` over `hostContext` while rendering the page behind the
+    // widget black. Painting that laid a full-bleed rectangle under a card with
+    // 8px rounded corners — an outline around the whole card, not merely wrong
+    // corners.
+    //
+    // A declared surface is a claim about the host's theme, not a measurement of
+    // the pixels behind this frame. Where the claim is good the paint is
+    // invisible; where it is wrong it is a ring. Only ChatGPT has been measured
+    // wrong, so only ChatGPT stops trusting it — every other host keeps tier 1,
+    // pinned by the test above, because claude.ai renders correctly with it in
+    // production.
+    //
+    // The colour is not discarded: it still paints the chart ELEMENT, clipped to
+    // the card's radius so it cannot overhang the corners.
     const m = mountWidget(staticWidgetHtml());
     (m.widgetWin as unknown as { openai: Record<string, unknown> }).openai = {
       theme: "dark",
@@ -2163,7 +2116,34 @@ describe("mcp apps host theme (executed)", () => {
       toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
       m.wrapperWin,
     );
+    expect(m.widgetWin.document.documentElement.style.background).toBe("");
     expect(widgetFrame(m).style.background).toBe("rgb(25, 24, 23)");
+    expect(widgetFrame(m).style.borderRadius).toBe("8px");
+  });
+
+  it("leaves a NON-ChatGPT host unclipped, so claude.ai is untouched", () => {
+    // The scoping guarantee, stated as a test. claude.ai renders correctly in
+    // production with the square backdrop and the canvas paint, so the fix for
+    // ChatGPT must not reach it: no radius on the element, and tier 1 still
+    // paints the canvas (asserted above).
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      initResponse({
+        theme: "dark",
+        styles: { variables: { "--color-background-primary": "#191817" } },
+      }),
+      m.wrapperWin,
+    );
+    deliver(
+      m,
+      toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL, height: 600 }),
+      m.wrapperWin,
+    );
+    expect(widgetFrame(m).style.borderRadius).toBe("");
+    expect(m.widgetWin.document.documentElement.style.background).toBe(
+      "rgb(25, 24, 23)",
+    );
   });
 
   it("drops a stale surface when the host flips theme without sending one", () => {
@@ -2210,7 +2190,9 @@ describe("mcp apps host theme (executed)", () => {
       toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
       m.wrapperWin,
     );
-    expect(widgetFrame(m).style.background).toBe("rgb(25, 24, 23)");
+    expect(m.widgetWin.document.documentElement.style.background).toBe(
+      "rgb(25, 24, 23)",
+    );
   });
 
   it("keeps a surface that arrives WITH the theme flip", () => {
@@ -2236,7 +2218,9 @@ describe("mcp apps host theme (executed)", () => {
       toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
       m.wrapperWin,
     );
-    expect(widgetFrame(m).style.background).toBe("rgb(255, 255, 255)");
+    expect(m.widgetWin.document.documentElement.style.background).toBe(
+      "rgb(255, 255, 255)",
+    );
   });
 
   it("rejects shape-valid values that are not colours", () => {
@@ -2281,7 +2265,10 @@ describe("mcp apps host theme (executed)", () => {
         toolResult({ embed_url: EMBED_URL, image_url: IMAGE_URL }, { image_data_url: DATA_URL }),
         m.wrapperWin,
       );
-      expect(widgetFrame(m).style.background, `${good} must paint`).not.toBe("");
+      expect(
+        m.widgetWin.document.documentElement.style.background,
+        `${good} must paint`,
+      ).not.toBe("");
     }
   });
 
