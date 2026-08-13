@@ -26,6 +26,7 @@
  * `gen-registry.ts` (it is NOT a `ToolModule`).
  */
 import { FREE_TIER_TOOL_NAMES, type Tier } from "../freetier.js";
+import { isChatGptFamilyClient } from "./_surface.js";
 import type { McpClientKind } from "./types.js";
 
 /** OAuth scope every Worker-issued access token carries — see `oauth/`. */
@@ -78,7 +79,7 @@ export function securitySchemesForTool(
     type: "oauth2",
     scopes: [OAUTH_TOOL_SCOPE],
   };
-  return ctx.client === "chatgpt" &&
+  return isChatGptFamilyClient(ctx.client) &&
     ctx.tier === "free" &&
     FREE_TIER_TOOL_NAMES.has(name)
     ? [{ type: "noauth" }, oauth2]

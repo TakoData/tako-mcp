@@ -52,6 +52,7 @@ import {
   wwwAuthenticate,
 } from "./tools/_security.js";
 import {
+  isChatGptFamilyClient,
   isToolOnSurface,
   isWidgetClient,
   toolAnnotationsForClient,
@@ -273,6 +274,16 @@ export function detectMcpClient(userAgent: string | null): McpClientKind {
   // pinned. If it sends `Claude-User` it is indistinguishable from
   // claude.ai here and gets widget `_meta` it cannot render.
   if (ua.includes("claude") || ua.includes("anthropic")) return "claude";
+  // The merged ChatGPT desktop app's runtime — one MCP client for desktop
+  // Chat/Work threads, Codex tasks, and the headless CLI — sends
+  // `codex-mcp-client/<version>` (verified live 2026-08-13 against
+  // 0.147.0-alpha.6.6 and 0.148.0-alpha.9; the name is pinned in
+  // openai/codex `codex-rs/rmcp-client/src/utils.rs`). Must run BEFORE the
+  // ChatGPT block: today's UA contains neither `chatgpt` nor `openai`, but
+  // an OpenAI-branded rename (e.g. `openai-codex/…`) would otherwise be
+  // swallowed by the `openai` substring match and lose the codex-specific
+  // widget handling.
+  if (ua.includes("codex")) return "codex";
   // ChatGPT's Apps SDK connector typically advertises `ChatGPT-User`,
   // `openai-mcp`, or similar in UA. OpenAI's published crawler/agent UAs
   // (`GPTBot`, `OAI-SearchBot`) contain neither substring, so match them
@@ -476,7 +487,8 @@ export function createMcpServer(
       tier,
       origin: options.requestOrigin,
       widgetSuppressedForTool:
-        client === "chatgpt" && CHATGPT_NO_WIDGET_TOOL_NAMES.has(tool.name),
+        isChatGptFamilyClient(client) &&
+        CHATGPT_NO_WIDGET_TOOL_NAMES.has(tool.name),
       registeredResourceUris,
       registeredTemplateNames,
     });
@@ -1121,7 +1133,7 @@ function registerTool(
           // — and funneling anonymous users into (working) sign-in would
           // mask a shared-key outage as a per-user auth failure.
           if (
-            options.client === "chatgpt" &&
+            isChatGptFamilyClient(options.client) &&
             options.tier === "authenticated" &&
             err instanceof DjangoUnauthorizedError
           ) {
@@ -1638,12 +1650,13 @@ export async function handleMcpRequest(
     try {
       const response = await transport.handleRequest(request);
       await logSdkValidationRejections(requestForLogging, response);
-      // ChatGPT-only compatibility adapter: rewrite the buffered
+      // ChatGPT-family compatibility adapter: rewrite the buffered
       // `tools/list` response to carry the top-level `securitySchemes`
-      // field its Apps SDK reads (the MCP SDK cannot serialize unknown
-      // descriptor fields — see `tools/_security.ts`). Every other
-      // client gets the SDK's response untouched.
-      return client === "chatgpt"
+      // field the Apps SDK reads (the MCP SDK cannot serialize unknown
+      // descriptor fields — see `tools/_security.ts`). The desktop app
+      // (`"codex"`) reads the same field for its connector link-account
+      // flow. Every other client gets the SDK's response untouched.
+      return isChatGptFamilyClient(client)
         ? await withChatGptToolSecuritySchemes(response, tier)
         : response;
     } finally {
