@@ -166,6 +166,27 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
 // card" signal (the backend's export-safe gate 403s cards without it), so
 // slimming must preserve exactly what the wire said: never fabricate a
 // descriptor on an unexportable card, never drop one from an exportable card.
+describe("slimCard — share opt-in on the passthrough embed_url", () => {
+  // cards[].embed_url is backend passthrough; without the opt-in the SAME
+  // top card carried showShare on the widget-rendered structuredContent url
+  // but not on the copy an agent quotes from the text.
+  it("appends showShare=true to a card's embed_url", () => {
+    const card: TakoCard = {
+      card_id: "c1",
+      title: "t",
+      embed_url: "https://trytako.com/embed/c1/",
+    };
+    expect(slimCard(card, null).embed_url).toBe(
+      "https://trytako.com/embed/c1/?showShare=true",
+    );
+  });
+
+  it("leaves a card without an embed_url untouched", () => {
+    const card: TakoCard = { card_id: "c1", title: "t" };
+    expect(slimCard(card, null)).not.toHaveProperty("embed_url");
+  });
+});
+
 describe("slimCard — content presence is the export-eligibility signal", () => {
   it("does not fabricate a content descriptor on a card without one (not exportable)", () => {
     const card: TakoCard = { card_id: "c1", title: "t" };

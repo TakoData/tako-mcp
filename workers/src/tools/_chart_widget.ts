@@ -1149,23 +1149,47 @@ const WIDGET_HTML = `<!doctype html>
   }
 
   // The only origin the embed iframe may load. Substituted at resource-build
-  // time (see \`buildChartAppUiResourceFromOutputPubId\`) with the same
-  // \`resolvePublicBase\` origin \`buildChartUrls\` writes into \`embed_url\`, so
-  // the pin and the url cannot drift per-env. This matters more now that the
-  // iframe carries \`allow="clipboard-write"\`: the Permissions-Policy default
-  // allowlist is 'src', which follows the frame WHEREVER it navigates, and
-  // the scheme check alone would extend clipboard access to any https origin
-  // a hostile or corrupted tool result named. An unsubstituted placeholder
-  // (raw-template contexts, e.g. direct WIDGET_HTML reads in tests) keeps the
-  // scheme-only behavior rather than bricking every chart.
+  // time (see \`buildChartAppUiResourceFromOutputPubId\`) with the origin of the
+  // same \`resolvePublicBase\` value \`buildChartUrls\` writes into \`embed_url\`,
+  // so the pin and the url cannot drift per-env. This matters more now that
+  // the iframe carries \`allow="clipboard-write"\`: the Permissions-Policy
+  // default allowlist is 'src', which follows the frame WHEREVER it navigates,
+  // and the scheme check alone would extend clipboard access to any https
+  // origin a hostile or corrupted tool result named. An unsubstituted
+  // placeholder (raw-template contexts, e.g. direct WIDGET_HTML reads in
+  // tests) keeps the scheme-only behavior rather than bricking every chart.
+  //
+  // OPERATIONAL COUPLING: hosts cache this bundle BY URI and the cache is not
+  // known to invalidate on redeploy (it survives connector re-adds). So a
+  // web-origin migration (e.g. staging.trytako.com → staging.tako.com) mints
+  // new embed_urls while cached bundles keep pinning the OLD origin, and every
+  // chart silently degrades to PNG. The lever is \`WIDGET_URI_SUFFIX\`: bump it
+  // in the same deploy as any origin change, so hosts fetch a fresh bundle
+  // under a fresh URI.
   var EXPECTED_EMBED_ORIGIN = "__EXPECTED_EMBED_ORIGIN__";
-  function embedOriginOk(url) {
-    if (EXPECTED_EMBED_ORIGIN.indexOf("http") !== 0) return true;
+  function pinnedOriginOk(pin, url) {
+    if (pin.indexOf("http") !== 0) return true;
     try {
-      return new URL(url).origin === EXPECTED_EMBED_ORIGIN;
+      return new URL(url).origin === pin;
     } catch (err) {
       return false;
     }
+  }
+  function embedOriginOk(url) {
+    return pinnedOriginOk(EXPECTED_EMBED_ORIGIN, url);
+  }
+
+  // Same pin, for the native-card upgrade URL — a strictly WIDER grant than
+  // the iframe: \`upgradeToNativeCard\` fetches it and document.write()s the
+  // response into this document, where injected script runs in the widget
+  // origin. The host CSP (\`connectDomains\`) is the spec-level backstop; this
+  // is the same last-hop defense the embed pin provides. Substituted with the
+  // worker's own origin (\`resolveWidgetOrigin\`) — the origin \`nativeCardUrl\`
+  // on the server builds from — when that origin is known at resource-build
+  // time; unknown means the native path is off and the placeholder stays.
+  var EXPECTED_NATIVE_ORIGIN = "__EXPECTED_NATIVE_ORIGIN__";
+  function nativeOriginOk(url) {
+    return pinnedOriginOk(EXPECTED_NATIVE_ORIGIN, url);
   }
 
   // Rewrite \`dark_mode\` on a chart url to match the host. Leaves the url alone
@@ -1861,8 +1885,12 @@ const WIDGET_HTML = `<!doctype html>
     var probeEnabled =
       meta && typeof meta === "object" && meta.interactive_probe === true;
     // Proxied embed-page URL for the native upgrade. Absent → PNG only.
+    // Origin-pinned like the embed url, and for a stronger reason: this url
+    // gets fetched and document.write()n — see EXPECTED_NATIVE_ORIGIN.
     var nativeCardUrl =
-      meta && typeof meta === "object" && typeof meta.native_card_url === "string"
+      meta && typeof meta === "object" &&
+      typeof meta.native_card_url === "string" &&
+      nativeOriginOk(meta.native_card_url)
         ? meta.native_card_url
         : "";
     var imgNaturalW = meta && typeof meta === "object" && typeof meta.image_natural_width === "number"
@@ -2748,6 +2776,22 @@ export function buildChartUrls(
 }
 
 /**
+ * Append the card-share opt-in to an embed url that lacks it.
+ *
+ * For urls the MCP does NOT build: `cards[].embed_url` is backend passthrough
+ * (search/answer via `slimCard`, the agent verbatim), and without this the
+ * SAME top card carried the opt-in on the widget-rendered
+ * `structuredContent.embed_url` but not on the copy an agent quotes from the
+ * text — two different urls for one card. Idempotent, and a caller (or a
+ * future `showShare=false`) is left alone rather than silently overridden —
+ * same contract as the widget's `withoutTracking`.
+ */
+export function withShareOptIn(url: string): string {
+  if (url.includes("showShare=")) return url;
+  return url + (url.includes("?") ? "&" : "?") + "showShare=true";
+}
+
+/**
  * Fetch the chart PNG and return its `data:image/...;base64,...` URI
  * along with the source PNG's natural pixel dimensions. The dimensions
  * let the widget pre-size its document height (so claude.ai's outer
@@ -2917,12 +2961,26 @@ export function buildChartAppUiResource(
     // per-call URI overrides.
     uri: appUiResourceUri(env),
     name: APP_UI_RESOURCE_NAME,
-    // Pin the embed iframe to the env's public web origin — the same value
-    // `buildChartUrls` writes into `embed_url`, so the widget's origin check
-    // and the URLs it receives cannot disagree. See EXPECTED_EMBED_ORIGIN in
-    // the bundle. `resolvePublicBase` output is a validated http(s) origin
-    // with no trailing slash, so plain string substitution is safe here.
-    html: WIDGET_HTML.replace("__EXPECTED_EMBED_ORIGIN__", webBase),
+    // Pin the embed iframe to the env's public web origin — derived from the
+    // same value `buildChartUrls` writes into `embed_url`, so the widget's
+    // origin check and the URLs it receives cannot disagree. `new URL().origin`
+    // rather than the raw base: `validatePublicOrigin` tolerates a path
+    // (`https://tako.com/app` passes), and a pathed base substituted verbatim
+    // could never equal any `URL.origin`, silently degrading every chart to
+    // the PNG. The native-card pin gets the worker's own origin — the one
+    // `nativeCardUrl` builds from — when it is resolvable; otherwise the
+    // placeholder stays and the widget keeps the scheme-only check (the
+    // native path is off in that configuration anyway).
+    html: (() => {
+      const pinned = WIDGET_HTML.replace(
+        "__EXPECTED_EMBED_ORIGIN__",
+        new URL(webBase).origin,
+      );
+      const nativeOrigin = resolveWidgetOrigin(env, requestOrigin);
+      return nativeOrigin === undefined
+        ? pinned
+        : pinned.replace("__EXPECTED_NATIVE_ORIGIN__", nativeOrigin);
+    })(),
     // `frameDomains` is the host CSP's allow-list for nested iframes —
     // without the widget's parent origin in here, the host blocks
     // `<iframe src="https://tako.com/embed/...">`. Pin to exactly the

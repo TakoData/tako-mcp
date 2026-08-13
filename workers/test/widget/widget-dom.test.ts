@@ -29,7 +29,8 @@ import {
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
-const EMBED_URL = "https://staging.trytako.com/embed/abc123/?dark_mode=auto";
+const EMBED_URL =
+  "https://staging.trytako.com/embed/abc123/?dark_mode=auto&showShare=true";
 // What the widget must actually put in an `iframe.src`: the same embed url with
 // analytics suppressed. `withoutTracking` in `_chart_widget.ts` appends it to
 // every in-widget iframe load — OpenAI's iframe policy singles out tracking
@@ -956,6 +957,37 @@ describe("native card upgrade (executed)", () => {
     // The PNG is the committed baseline BEFORE any fetch happens.
     expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
     expect(f.calls).toEqual([]);
+    fireImageLoad(m);
+    expect(f.calls).toEqual([NATIVE_URL]);
+  });
+
+  it("PIN: refuses to fetch a native card from a foreign origin", () => {
+    // upgradeToNativeCard document.write()s the response into the widget's
+    // own document — a wider grant than the pinned iframe's clipboard-write.
+    // With the bundle built for a known worker origin, a native_card_url on
+    // any other origin must never be fetched; the PNG stays.
+    const html = buildChartAppUiResourceFromOutputPubId(
+      ENV,
+      "https://mcp.example.test",
+    ).html;
+    const m = mountWidget(html);
+    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    deliverNative(m, "https://evil.example/embed-html/abc123");
+    fireImageLoad(m);
+    expect(f.calls).toEqual([]);
+    expect(widgetImg(m).getAttribute("src")).toBe(DATA_URL);
+  });
+
+  it("PIN: still fetches from the pinned worker origin", () => {
+    // Positive control for the refusal above — the pin admits the origin the
+    // server actually builds native_card_url from.
+    const html = buildChartAppUiResourceFromOutputPubId(
+      ENV,
+      "https://mcp.example.test",
+    ).html;
+    const m = mountWidget(html);
+    const f = stubFetch(m, () => htmlResponse(NATIVE_HTML));
+    deliverNative(m);
     fireImageLoad(m);
     expect(f.calls).toEqual([NATIVE_URL]);
   });
