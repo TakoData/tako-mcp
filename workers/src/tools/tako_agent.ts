@@ -28,6 +28,7 @@ import {
   AnswerAgentRun as AnswerAgentRunContract,
   AnswerAgentRunRequest,
 } from "../generated/schemas.js";
+import { withShareOptIn } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
@@ -235,6 +236,24 @@ export async function pollAgentRun(
   let pollCount = 0;
   let lastRun: AgentRun | undefined;
 
+  // Share opt-in on the passthrough card embed_urls, so the url an agent
+  // quotes into its answer matches the one every other surface serves for
+  // the same card — see withShareOptIn in _chart_widget.ts.
+  const withSharedCards = (run: AgentRun): AgentRun =>
+    run.result == null || run.result.cards.length === 0
+      ? run
+      : {
+          ...run,
+          result: {
+            ...run.result,
+            cards: run.result.cards.map((c) =>
+              typeof c.embed_url === "string" && c.embed_url !== ""
+                ? { ...c, embed_url: withShareOptIn(c.embed_url) }
+                : c,
+            ),
+          },
+        };
+
   while (true) {
     let wire: AgentRunWire;
     try {
@@ -316,11 +335,11 @@ export async function pollAgentRun(
       logWireGuardFailure("tako_agent", "output-normalise", parsed.error, wire);
       throw new Error("Tako agent run endpoint returned an unexpected shape.");
     }
-    lastRun = parsed.data;
+    lastRun = withSharedCards(parsed.data);
     pollCount += 1; // MCP requires progress to strictly increase per token.
     await ctx.sendProgress(pollCount, { message: `Agent running… (${parsed.data.status})` });
     if (parsed.data.status === "completed" || parsed.data.status === "failed") {
-      return { ...parsed.data, timed_out: false };
+      return { ...lastRun, timed_out: false };
     }
     // Budget check: stop before the next poll would land past the deadline.
     // Worst case the loop still overruns budgetMs by up to

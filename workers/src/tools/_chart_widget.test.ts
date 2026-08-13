@@ -7,6 +7,7 @@ import {
   appUiResourceUri,
   buildChartAppUiResourceFromOutputPubId,
   buildChartUrls,
+  withShareOptIn,
 } from "./_chart_widget.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
@@ -174,6 +175,59 @@ describe("embed origin pin (clipboard-write scope)", () => {
     expect(ui.html).not.toContain("__EXPECTED_EMBED_ORIGIN__");
     expect(ui.html).toContain(
       'var EXPECTED_EMBED_ORIGIN = "https://staging.trytako.com"',
+    );
+  });
+});
+
+describe("withShareOptIn (passthrough embed urls)", () => {
+  it("appends with ? on a bare url and & on a queried one", () => {
+    expect(withShareOptIn("https://tako.com/embed/a/")).toBe(
+      "https://tako.com/embed/a/?showShare=true",
+    );
+    expect(withShareOptIn("https://tako.com/embed/a/?dark_mode=auto")).toBe(
+      "https://tako.com/embed/a/?dark_mode=auto&showShare=true",
+    );
+  });
+
+  it("is idempotent and never overrides an explicit value", () => {
+    const once = withShareOptIn("https://tako.com/embed/a/");
+    expect(withShareOptIn(once)).toBe(once);
+    const optedOut = "https://tako.com/embed/a/?showShare=false";
+    expect(withShareOptIn(optedOut)).toBe(optedOut);
+  });
+});
+
+describe("pin substitution edge cases", () => {
+  it("pins the ORIGIN even when the configured base carries a path", () => {
+    // validatePublicOrigin tolerates a path; substituting the raw base
+    // verbatim could never equal any URL.origin, silently degrading every
+    // chart to the PNG.
+    const ui = buildChartAppUiResourceFromOutputPubId({
+      DJANGO_BASE_URL: "https://staging.trytako.com",
+      PUBLIC_BASE_URL: "https://staging.trytako.com/app",
+    } as Env);
+    expect(ui.html).toContain(
+      'var EXPECTED_EMBED_ORIGIN = "https://staging.trytako.com"',
+    );
+  });
+
+  it("pins native_card_url to the worker origin when it is resolvable", () => {
+    const ui = buildChartAppUiResourceFromOutputPubId(
+      ENV,
+      "https://mcp.example.test",
+    );
+    expect(ui.html).toContain(
+      'var EXPECTED_NATIVE_ORIGIN = "https://mcp.example.test"',
+    );
+  });
+
+  it("leaves the native placeholder (scheme-only check) when the worker origin is unknown", () => {
+    // No requestOrigin and no PUBLIC_MCP_URL: the native path is off in this
+    // configuration (nativeCardUrl resolves to undefined server-side), so the
+    // widget keeps the scheme-only behavior rather than refusing everything.
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    expect(ui.html).toContain(
+      'var EXPECTED_NATIVE_ORIGIN = "__EXPECTED_NATIVE_ORIGIN__"',
     );
   });
 });

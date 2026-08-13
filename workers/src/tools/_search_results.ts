@@ -16,6 +16,7 @@ import {
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
   buildChartUrls,
+  withShareOptIn,
 } from "./_chart_widget.js";
 
 // Backend ResultContent (api/ga/content_types.py) — a result's export
@@ -457,10 +458,17 @@ function orderCardKeys(card: TakoCard): TakoCard {
  */
 export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
   const exportable = card.exportable ?? card.content != null;
+  // Share opt-in on the passthrough embed_url, so the url an agent quotes
+  // from the text matches the one the widget renders for the same card —
+  // see withShareOptIn.
+  const shared =
+    typeof card.embed_url === "string" && card.embed_url !== ""
+      ? { ...card, embed_url: withShareOptIn(card.embed_url) }
+      : card;
   const slimmed =
-    card.content == null
-      ? { ...card, exportable }
-      : { ...card, exportable, content: slimCardContent(card.content, capRows) };
+    shared.content == null
+      ? { ...shared, exportable }
+      : { ...shared, exportable, content: slimCardContent(shared.content, capRows) };
   return orderCardKeys(
     exportable ? slimmed : { ...slimmed, values_hint: valuesHint(card) },
   );

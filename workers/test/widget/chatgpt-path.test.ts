@@ -22,7 +22,7 @@ import { buildChartAppUiResourceFromOutputPubId } from "../../src/tools/_chart_w
 const ENV: Env = { DJANGO_BASE_URL: "https://tako.com" };
 
 const PUB_ID = "VKd7qE8K9Ba16kMFENNQ";
-const EMBED_URL = `https://tako.com/embed/${PUB_ID}/?dark_mode=auto`;
+const EMBED_URL = `https://tako.com/embed/${PUB_ID}/?dark_mode=auto&showShare=true`;
 const IMAGE_URL = `https://tako.com/api/v1/image/${PUB_ID}/?dark_mode=true`;
 
 // Verbatim shape of prod's structuredContent (cards/web_results elided).

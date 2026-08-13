@@ -23,7 +23,13 @@ describe("tako_agent", () => {
         status: "completed",
         result: {
           answer: "42",
-          cards: [],
+          cards: [
+            {
+              card_id: "agentcard",
+              title: "Agent card",
+              embed_url: "https://trytako.com/embed/agentcard/",
+            },
+          ],
           citations: [{ index: 1, title: "Source", url: "https://example.com" }],
         },
       });
@@ -43,6 +49,10 @@ describe("tako_agent", () => {
     expect(out.status).toBe("completed");
     expect(out.timed_out).toBe(false);
     expect(out.result?.answer).toBe("42");
+    // Passthrough cards pick up the share opt-in — see withShareOptIn.
+    expect(out.result?.cards[0]?.embed_url).toBe(
+      "https://trytako.com/embed/agentcard/?showShare=true",
+    );
     // The Answer Agent's unified citation registry flows through (replacing the
     // generic agent's web_results).
     expect(out.result?.citations).toHaveLength(1);
