@@ -58,8 +58,14 @@ export const CHATGPT_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([
  * ChatGPT renders the widget as a fully interactive iframe; Claude renders
  * the same bundle via its image branch (claude.ai's host CSP blocks the
  * cross-origin iframe today — anthropics/claude-ai-mcp#40 — and the bundle
- * probes for that at runtime). Everything else — Cursor, Windsurf, Gemini
- * CLI, LibreChat, Claude Code's terminal client — gets the PNG.
+ * probes for that at runtime). The ChatGPT desktop app (`"codex"`) renders
+ * the same interactive iframe as chatgpt.com from its `codex-sandbox://`
+ * webview — REQUIRES tako.com's `frame-ancestors` to allow the
+ * `codex-sandbox:` scheme (shipped in TakoData/tako#29218; before that
+ * deploy the iframe dies with `ERR_BLOCKED_BY_RESPONSE` and the app shows
+ * a grey tile where the PNG used to be). Everything else — Cursor,
+ * Windsurf, Gemini CLI, LibreChat, Claude Code's terminal client — gets
+ * the PNG.
  *
  * This is the ONE definition of "widget client". `mcp.ts` computes
  * `widgetSuppressed` from it, and {@link WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES}
@@ -68,7 +74,7 @@ export const CHATGPT_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([
  * `client === …` comparisons in separate files before).
  */
 export function isWidgetClient(client: McpClientKind): boolean {
-  return client === "chatgpt" || client === "claude";
+  return client === "chatgpt" || client === "claude" || client === "codex";
 }
 
 /**
@@ -79,21 +85,13 @@ export function isWidgetClient(client: McpClientKind): boolean {
  * product with two MCP transports (verified live against the desktop app
  * 2026-08-13: it lists, calls, and auth-gates exactly like chatgpt.com).
  *
- * Deliberately NOT the same predicate as {@link isWidgetClient}: codex is
- * family but not (yet) a widget client. Its widget sandbox origin is a
- * custom `codex-sandbox://` scheme that tako.com's `frame-ancestors`
- * rejects (`ERR_BLOCKED_BY_RESPONSE` on the card iframe), so widget
- * `_meta` today would replace the working inline PNG with a grey dead
- * tile in the desktop app.
- *
- * FLIP CHECKLIST — when the backend allows `codex-sandbox:` in
- * `frame-ancestors` (tako repo `build_csp_header`, monolith/views.py) and
- * a desktop app with `enable_mcp_apps` renders a card end-to-end:
- *   1. add `client === "codex"` to {@link isWidgetClient};
- *   2. switch the three `bakeImage: ctx.client !== "chatgpt"` gates
- *      (tako_search / tako_answer / tako_visualize) to
- *      `!isChatGptFamilyClient(ctx.client)` so codex skips the PNG
- *      prefetch its widget no longer reads.
+ * Deliberately NOT the same predicate as {@link isWidgetClient}: claude is
+ * a widget client but not ChatGPT family, and the two sets gate different
+ * things — this one the product surface, that one the widget `_meta`.
+ * Codex joined `isWidgetClient` only once tako.com's `frame-ancestors`
+ * allowed the `codex-sandbox:` scheme (TakoData/tako#29218) — its widget
+ * iframe is blocked with `ERR_BLOCKED_BY_RESPONSE` on any backend without
+ * that deploy, leaving a grey dead tile where the PNG used to be.
  */
 export function isChatGptFamilyClient(client: McpClientKind): boolean {
   return client === "chatgpt" || client === "codex";
