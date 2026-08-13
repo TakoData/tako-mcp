@@ -254,9 +254,12 @@ describe("handleEmbedProxy — experiment on", () => {
     // into a third-party widget sandbox, where a Google Tag Manager beacon has
     // no business (and would only trip the sandbox CSP). The sanitizer still
     // strips GA if the flag is ever not honoured — see `sanitizeEmbedHtml`.
+    // `showShare=true` is the card-share opt-in, carried here because the
+    // document.write delivery hides the widget's own query string from the
+    // page's location-based gates.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      `https://tako.com/embed/${PUB_ID}/?dark_mode=auto&disable_tracking=true`,
+      `https://tako.com/embed/${PUB_ID}/?dark_mode=auto&disable_tracking=true&showShare=true`,
     );
   });
 

@@ -666,7 +666,15 @@ export async function handleEmbedProxy(
   // sanitizer below still strips GA belt-and-braces, in case an upstream
   // change stops honouring the flag), and a proxy read is a machine fetch, not
   // a person viewing a chart, so counting it was always noise.
-  const upstream = `${origins.publicBase}/embed/${pubId}/?dark_mode=${darkMode}&disable_tracking=true`;
+  //
+  // `showShare=true` opts the card into its share control (tako PR #28735) on
+  // the ONLY path where the browser url can't carry the opt-in: this document
+  // is document.written into the widget sandbox, so the page's location-based
+  // gates never see the widget's query string. The param here reaches Django
+  // at render time instead — inert until the tako side bakes it (and the
+  // pub_id + canonical origin) into json_script islands the gates can fall
+  // back on; a page that ignores it renders exactly as before.
+  const upstream = `${origins.publicBase}/embed/${pubId}/?dark_mode=${darkMode}&disable_tracking=true&showShare=true`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
   let response: Response;
