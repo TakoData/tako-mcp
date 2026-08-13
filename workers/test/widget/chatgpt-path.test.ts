@@ -181,6 +181,25 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     expect(renderedIframe(m)).toBe(true);
   });
 
+  it("PIN: refuses to commit the iframe to a non-Tako origin", () => {
+    // The iframe carries allow="clipboard-write" and the Permissions-Policy
+    // default allowlist ('src') follows the frame wherever it navigates. So
+    // the widget must not hand the frame — and with it, clipboard access —
+    // to whatever https origin a corrupted tool result names. Scheme checks
+    // alone pass this URL; the EXPECTED_EMBED_ORIGIN pin is what refuses it.
+    const m = mountWidget(html(), {
+      toolOutput: {
+        ...PROD_STRUCTURED_CONTENT,
+        embed_url: `https://evil.example/embed/${PUB_ID}/?dark_mode=auto`,
+      },
+    });
+    expect(renderedIframe(m)).toBe(false);
+    const src = frame(m).getAttribute("src");
+    expect(src ?? "").not.toContain("evil.example");
+    // The card still renders — it falls back to the PNG path.
+    expect(img(m).getAttribute("src")).toBe(IMAGE_URL);
+  });
+
   it("EMPTY: a chart-less toolOutput labels the card ChatGPT keeps anyway", () => {
     // The host this was reported on. ChatGPT mounts the widget from static
     // `openai/outputTemplate` registration metadata, so a zero-card search

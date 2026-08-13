@@ -163,3 +163,17 @@ describe("widget iframe clipboard delegation", () => {
     );
   });
 });
+
+describe("embed origin pin (clipboard-write scope)", () => {
+  // The widget's iframe delegates clipboard-write, and Permissions-Policy's
+  // default 'src' allowlist follows the frame wherever it navigates — so the
+  // served bundle must pin the frame to the env's own web origin, the same
+  // value buildChartUrls writes into embed_url.
+  it("substitutes the placeholder with the env's public web origin", () => {
+    const ui = buildChartAppUiResourceFromOutputPubId(ENV);
+    expect(ui.html).not.toContain("__EXPECTED_EMBED_ORIGIN__");
+    expect(ui.html).toContain(
+      'var EXPECTED_EMBED_ORIGIN = "https://staging.trytako.com"',
+    );
+  });
+});
