@@ -1148,6 +1148,26 @@ const WIDGET_HTML = `<!doctype html>
     return url + (url.indexOf("?") === -1 ? "?" : "&") + "disable_tracking=true";
   }
 
+  // The only origin the embed iframe may load. Substituted at resource-build
+  // time (see \`buildChartAppUiResourceFromOutputPubId\`) with the same
+  // \`resolvePublicBase\` origin \`buildChartUrls\` writes into \`embed_url\`, so
+  // the pin and the url cannot drift per-env. This matters more now that the
+  // iframe carries \`allow="clipboard-write"\`: the Permissions-Policy default
+  // allowlist is 'src', which follows the frame WHEREVER it navigates, and
+  // the scheme check alone would extend clipboard access to any https origin
+  // a hostile or corrupted tool result named. An unsubstituted placeholder
+  // (raw-template contexts, e.g. direct WIDGET_HTML reads in tests) keeps the
+  // scheme-only behavior rather than bricking every chart.
+  var EXPECTED_EMBED_ORIGIN = "__EXPECTED_EMBED_ORIGIN__";
+  function embedOriginOk(url) {
+    if (EXPECTED_EMBED_ORIGIN.indexOf("http") !== 0) return true;
+    try {
+      return new URL(url).origin === EXPECTED_EMBED_ORIGIN;
+    } catch (err) {
+      return false;
+    }
+  }
+
   // Rewrite \`dark_mode\` on a chart url to match the host. Leaves the url alone
   // when the host is silent, so \`auto\` survives rather than being guessed at.
   //
@@ -1858,7 +1878,10 @@ const WIDGET_HTML = `<!doctype html>
     // server-side too, but the widget is the last hop before the DOM,
     // so a hostile MCP server shipping \`javascript:\` would otherwise
     // execute in the widget origin once dropped into \`src\`.
-    var validEmbed = typeof url === "string" && /^https?:\\/\\//.test(url);
+    var validEmbed =
+      typeof url === "string" &&
+      /^https?:\\/\\//.test(url) &&
+      embedOriginOk(url);
     var validDataImage = typeof imgDataUrl === "string" && imgDataUrl.indexOf("data:image/") === 0;
     var validHttpImage = typeof imgUrl === "string" && /^https?:\\/\\//.test(imgUrl);
     // Prefer the inlined \`data:\` URI over the cross-origin URL — the
@@ -2894,7 +2917,12 @@ export function buildChartAppUiResource(
     // per-call URI overrides.
     uri: appUiResourceUri(env),
     name: APP_UI_RESOURCE_NAME,
-    html: WIDGET_HTML,
+    // Pin the embed iframe to the env's public web origin — the same value
+    // `buildChartUrls` writes into `embed_url`, so the widget's origin check
+    // and the URLs it receives cannot disagree. See EXPECTED_EMBED_ORIGIN in
+    // the bundle. `resolvePublicBase` output is a validated http(s) origin
+    // with no trailing slash, so plain string substitution is safe here.
+    html: WIDGET_HTML.replace("__EXPECTED_EMBED_ORIGIN__", webBase),
     // `frameDomains` is the host CSP's allow-list for nested iframes —
     // without the widget's parent origin in here, the host blocks
     // `<iframe src="https://tako.com/embed/...">`. Pin to exactly the
