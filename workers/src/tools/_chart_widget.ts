@@ -688,7 +688,7 @@ const WIDGET_HTML = `<!doctype html>
   class="hidden"
   scrolling="no"
   frameborder="0"
-  allow="fullscreen"
+  allow="fullscreen; clipboard-write"
   title="Tako chart"
 ></iframe>
 <a
@@ -2700,6 +2700,14 @@ export async function fetchPngDimensions(
  * host knows it. `image_url` is a server-rendered PNG, where the
  * backend can't read browser preferences, so it stays
  * `true`/`false` driven by the `darkMode` arg.
+ *
+ * `embed_url` also carries `showShare=true` — the embed page's card share
+ * control is opt-in per host (tako PR #28735) and renders nothing without
+ * it. The page still hard-suppresses the control where a share affordance
+ * would be wrong (auth-gated cards, glanceable tiles, white-label,
+ * postMessage shells, `?screenshot=true`), so this opt-in is safe to carry
+ * unconditionally. `withHostTheme` only rewrites the `dark_mode=` segment,
+ * so the param survives theme rewrites.
  */
 export function buildChartUrls(
   env: Env,
@@ -2711,7 +2719,7 @@ export function buildChartUrls(
   const imageFlag = darkMode ? "true" : "false";
   const encoded = encodeURIComponent(pubId);
   return {
-    embed_url: `${webBase}/embed/${encoded}/?dark_mode=auto`,
+    embed_url: `${webBase}/embed/${encoded}/?dark_mode=auto&showShare=true`,
     image_url: `${apiBase}/api/v1/image/${encoded}/?dark_mode=${imageFlag}`,
   };
 }

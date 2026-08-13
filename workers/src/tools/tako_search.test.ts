@@ -372,7 +372,7 @@ describe("tako_search response mapping", () => {
     expect(out.pub_id).toBe("aapl-price");
     expect(out.guidance).toBeUndefined();
     expect(out.embed_url).toBe(
-      "https://staging.trytako.com/embed/aapl-price/?dark_mode=auto",
+      "https://staging.trytako.com/embed/aapl-price/?dark_mode=auto&showShare=true",
     );
     expect(out.image_url).toBe(
       "https://staging.trytako.com/api/v1/image/aapl-price/?dark_mode=true",
