@@ -850,6 +850,13 @@ const WIDGET_HTML = `<!doctype html>
   // when that background IS the canvas colour Chrome treats it as nothing to
   // paint — measured, the frame stayed transparent and the white below still
   // showed. The literals paint.
+  // The card's own corner radius, mirrored so our backdrop is clipped to the
+  // same shape it sits behind. A square backdrop behind a rounded card leaves a
+  // crescent at each corner, and that crescent is visible on any host whose
+  // real background differs from the backdrop colour — which is every host,
+  // since the colour is a claim from \`hostContext\` and not a measurement.
+  // Sourced from the embed page's card (8px); if that changes, this follows.
+  var CARD_CORNER_RADIUS = "8px";
   var CANVAS_DARK = "#121212";
   var CANVAS_LIGHT = "#ffffff";
 
@@ -896,8 +903,43 @@ const WIDGET_HTML = `<!doctype html>
     var token = readSurfaceTokens();
     if (token) return token;
     var t = hostTheme();
+    if (t === null) t = mediaTheme();
     if (t === "dark") return CANVAS_DARK;
     if (t === "light") return CANVAS_LIGHT;
+    return null;
+  }
+
+  // Last-resort theme source: this frame's own \`prefers-color-scheme\`.
+  //
+  // Why it belongs here, and why its absence was the bug. Every chart url
+  // carries \`dark_mode=auto\`, which the embed page resolves from
+  // \`prefers-color-scheme\` INSIDE this iframe. So on a host that exposes no
+  // theme at all — no \`window.openai\`, no MCP \`hostContext\`, no
+  // \`--color-background-*\` tokens — the CARD still renders themed, from the
+  // media query, while \`chartBackdrop()\` returned null and painted nothing.
+  // The card came out dark, its rounded corners fell through to the host's own
+  // layer, and that layer is white. That asymmetry IS the white-corner report:
+  // the card knew it was dark and the backdrop did not.
+  //
+  // Reading the same signal the card reads makes the two agree by construction,
+  // which is the property that actually matters — a backdrop that disagrees
+  // with the card is worse than none.
+  //
+  // Deliberately NOT folded into \`hostTheme()\`: that also drives
+  // \`withHostTheme()\`, which rewrites \`dark_mode\` on the chart urls. Feeding a
+  // media-query value there would turn \`auto\` into an explicit \`true\`/\`false\` —
+  // the same result by a longer road, but it would stop the embed page from
+  // resolving the theme itself, which is the behaviour every other host relies
+  // on. Backdrop only.
+  //
+  // Returns null when the media query is unavailable or has no preference, so
+  // "no source names a colour" still means paint nothing.
+  function mediaTheme() {
+    try {
+      if (!window.matchMedia) return null;
+      if (window.matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
+      if (window.matchMedia("(prefers-color-scheme: light)").matches) return "light";
+    } catch (e) { /* no matchMedia in this frame */ }
     return null;
   }
 
@@ -1006,21 +1048,53 @@ const WIDGET_HTML = `<!doctype html>
       // Cleared, not just skipped, when nothing names a colour any more —
       // otherwise a theme flip that drops its surface leaves the previous
       // theme's backdrop painted behind the corners.
-      if (frame) frame.style.background = backdrop || "";
-      if (image) image.style.background = backdrop || "";
+      // Rounded to the CARD's radius, not left square.
+      //
+      // This is the whole bug, measured from inside the frame: the card paints
+      // its own surface with an 8px radius, our backdrop was a SQUARE rectangle
+      // behind it, and the crescent where the two disagree is a visible ring on
+      // every host whose real background differs from the colour we picked.
+      //
+      // And it always differs eventually, because the colour is not knowable.
+      // The reporting host DECLARED \`#212121\` over MCP \`hostContext\` while
+      // rendering the page behind the widget black — so the backdrop was doing
+      // exactly what it was told and still drawing a grey outline on black.
+      // Matching the radius removes the dependency: the paint now lies entirely
+      // under the card, the corners fall through to whatever the host actually
+      // renders, and the card reads as a floating rounded card on the host's
+      // own surface — which is what it is.
+      //
+      // The paint is kept rather than dropped: it still covers the card's
+      // interior against a transparent embed document (the case the baked-PNG
+      // and native-card paths rely on) and costs nothing where the card is
+      // opaque.
+      if (frame) {
+        frame.style.background = backdrop || "";
+        frame.style.borderRadius = backdrop ? CARD_CORNER_RADIUS : "";
+      }
+      if (image) {
+        image.style.background = backdrop || "";
+        image.style.borderRadius = backdrop ? CARD_CORNER_RADIUS : "";
+      }
       // Tier 1 — the host's exact surface, so painting the whole canvas is safe:
       // it becomes indistinguishable from the host's own page.
-      if (mcpHostSurface) {
-        root.style.background = mcpHostSurface;
-        if (document.body) document.body.style.background = mcpHostSurface;
-        var t1 = hostTheme();
-        if (t1) root.style.colorScheme = t1;
-        return;
-      }
-      // No exact colour: undo any canvas paint tier 1 left behind. Clearing
-      // \`mcpHostSurface\` on a theme flip is only half of that — if the old
-      // colour stays on the element, the canvas keeps painting the previous
-      // theme's surface no matter what this call decides.
+      // The canvas is NEVER painted, including when the host names an exact
+      // surface. That tier existed on the theory that an exact colour makes
+      // painting the whole canvas indistinguishable from the host's own page —
+      // and the reporting host disproved it: it declared \`#212121\` while
+      // rendering black behind the widget, so the paint became a full-bleed
+      // grey rectangle under a rounded card, i.e. an outline around the entire
+      // card rather than merely wrong corners.
+      //
+      // A declared surface is a claim about the host's theme, not a measurement
+      // of the pixels behind this frame, and nothing here can verify it. So the
+      // canvas stays transparent and the host's real background shows through —
+      // which is correct by construction, on every host, without trusting
+      // anyone's colour. The backdrop above still covers the card's interior,
+      // now clipped to the card's own radius.
+      //
+      // Cleared rather than skipped: a host that sent a surface before this
+      // change, or an earlier theme, may have left one painted on the element.
       root.style.background = "";
       if (document.body) document.body.style.background = "";
       // \`color-scheme\` is still worth declaring: it is what form controls,
@@ -1392,13 +1466,23 @@ const WIDGET_HTML = `<!doctype html>
         //
         // Injected LAST so it wins over the page's own rules.
         var scheme = snapScheme;
-        var backdrop = snapBackdrop;
         var schemeStyle = "";
-        if (backdrop) {
-          schemeStyle =
-            '<style id="tako-host-scheme">:root,body{background:' + backdrop + '}' +
-            (scheme ? ':root{color-scheme:' + scheme + '}' : "") + '</style>';
-        } else if (scheme) {
+        // \`color-scheme\` only — the backdrop is deliberately NOT painted here.
+        //
+        // This path replaces the whole document with the card, so
+        // \`:root,body{background:…}\` paints a FULL-BLEED rectangle behind a card
+        // that has 8px rounded corners: the same square-behind-rounded mismatch
+        // that drew a visible outline on the iframe path, in the one place
+        // claude.ai actually renders. And the colour is no more knowable here —
+        // it comes from the same \`hostContext\` claim, which the reporting host
+        // got wrong (declared \`#212121\`, rendered black).
+        //
+        // Leaving the canvas transparent lets the host's real background show
+        // through the card's corners, which is correct on every host without
+        // trusting anyone's colour. \`color-scheme\` stays: it themes the
+        // UA-drawn surfaces inside the card (scrollbars, form controls) and
+        // paints nothing itself.
+        if (scheme) {
           schemeStyle =
             '<style id="tako-host-scheme">:root{color-scheme:' + scheme + '}</style>';
         }
@@ -1407,7 +1491,7 @@ const WIDGET_HTML = `<!doctype html>
           html.indexOf("</body>") !== -1
             ? html.replace("</body>", injected + "</body>")
             : html + injected;
-        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)", backdrop: backdrop || "(none)" });
+        log("native card upgrading", { bytes: patched.length, scheme: scheme || "(host silent)" });
         document.open();
         document.write(patched);
         document.close();
