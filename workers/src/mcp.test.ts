@@ -52,6 +52,16 @@ describe("detectMcpClient", () => {
     expect(detectMcpClient("")).toBe("unknown");
     expect(detectMcpClient("curl/8.4.0")).toBe("unknown");
   });
+
+  it("maps the ChatGPT desktop app's runtime to codex", () => {
+    // The merged desktop app (Chat/Work threads, Codex tasks, and the
+    // headless CLI) all connect through one client — verified live
+    // 2026-08-13 on 0.147.0-alpha.6.6 and 0.148.0-alpha.9.
+    expect(detectMcpClient("codex-mcp-client/0.148.0-alpha.9")).toBe("codex");
+    // The codex check must beat the broad `openai` substring match, so a
+    // future OpenAI-branded rename keeps codex-specific widget handling.
+    expect(detectMcpClient("openai-codex/1.0")).toBe("codex");
+  });
 });
 
 describe("toolAnnotationsForClient", () => {

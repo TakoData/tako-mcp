@@ -17,7 +17,11 @@
 import { describe, expect, it } from "vitest";
 
 import { detectMcpClient } from "../mcp.js";
-import { isToolOnSurface, isWidgetClient } from "./_surface.js";
+import {
+  isChatGptFamilyClient,
+  isToolOnSurface,
+  isWidgetClient,
+} from "./_surface.js";
 import type { McpClientKind } from "./types.js";
 
 interface Row {
@@ -53,6 +57,18 @@ const CLIENTS: Row[] = [
     kind: "unknown",
     widget: false,
   },
+  // ChatGPT family but deliberately NOT a widget client yet: the desktop
+  // app's widget sandbox is a `codex-sandbox://` scheme origin that
+  // tako.com's `frame-ancestors` rejects, so widget `_meta` would replace
+  // the working inline PNG with a grey dead tile. Flip checklist lives on
+  // `isChatGptFamilyClient` in `_surface.ts` — do not flip this row's
+  // `widget` without completing it.
+  {
+    ua: "codex-mcp-client/0.148.0-alpha.9",
+    label: "ChatGPT desktop app / Codex runtime",
+    kind: "codex",
+    widget: false,
+  },
   { ua: "cursor-vscode/1.0", label: "Cursor", kind: "unknown", widget: false },
   { ua: "Windsurf/1.0", label: "Windsurf", kind: "unknown", widget: false },
   { ua: "python-httpx/0.27.0", label: "generic HTTP client", kind: "unknown", widget: false },
@@ -81,9 +97,41 @@ describe("widget exposure boundary", () => {
 
   it("exposes the widget to exactly two client kinds", () => {
     // Guards against a third kind being added to `isWidgetClient` without
-    // anyone revisiting what that means for the default surface.
-    const kinds: McpClientKind[] = ["chatgpt", "claude", "unknown"];
+    // anyone revisiting what that means for the default surface. `"codex"`
+    // in particular must stay out until tako.com's `frame-ancestors`
+    // allows `codex-sandbox:` — see the flip checklist on
+    // `isChatGptFamilyClient`.
+    const kinds: McpClientKind[] = ["chatgpt", "claude", "codex", "unknown"];
     expect(kinds.filter(isWidgetClient)).toEqual(["chatgpt", "claude"]);
+  });
+
+  it("puts exactly chatgpt and codex in the ChatGPT product family", () => {
+    const kinds: McpClientKind[] = ["chatgpt", "claude", "codex", "unknown"];
+    expect(kinds.filter(isChatGptFamilyClient)).toEqual(["chatgpt", "codex"]);
+  });
+
+  it("gives codex the ChatGPT tool split, without the widget", () => {
+    // The desktop app is the same product as chatgpt.com on the tool
+    // surface (verified live against the app 2026-08-13). Split pair in
+    // when opted in, dispatch+poll agent out even when asked for:
+    expect(
+      isToolOnSurface("tako_agent_start", "codex", new Set(["tako_agent_start"]), "authenticated"),
+    ).toBe(true);
+    expect(
+      isToolOnSurface("tako_agent_start", "unknown", new Set(["tako_agent_start"]), "authenticated"),
+    ).toBe(false);
+    expect(
+      isToolOnSurface("tako_agent", "codex", new Set(["tako_agent"]), "authenticated"),
+    ).toBe(false);
+    // Anonymous family listing keeps the auth-gated submitted tool visible
+    // so the host can offer link-account from the descriptor — a surface
+    // `unknown` clients never see.
+    expect(isToolOnSurface("tako_contents", "codex", new Set(), "free")).toBe(true);
+    expect(isToolOnSurface("tako_contents", "unknown", new Set(), "free")).toBe(false);
+    // tako_visualize stays off codex's default surface for now: default-on
+    // rides `isWidgetClient` (its whole output is the widget chart), so it
+    // returns exactly when the widget flip happens.
+    expect(isToolOnSurface("tako_visualize", "codex", new Set(), "authenticated")).toBe(false);
   });
 
   it("lets a non-widget client opt in explicitly", () => {
