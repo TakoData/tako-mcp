@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.19.5](https://github.com/TakoData/tako-mcp/compare/v0.19.4...v0.19.5) (2026-08-13)
+
+
+### Bug Fixes
+
+* **deps:** bump ws and fast-uri past CVE-2026-48779 and CVE-2026-13676 ([2466f47](https://github.com/TakoData/tako-mcp/commit/2466f47c84cca8f27805000f561782223247afab))
+* **deps:** bump ws and fast-uri past CVE-2026-48779 and CVE-2026-13676 ([a1243d3](https://github.com/TakoData/tako-mcp/commit/a1243d33deb316a26237dc6d2240feede19032f2))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([1cbba49](https://github.com/TakoData/tako-mcp/commit/1cbba499f60b973d331d1a9b22b74bb5ccce0c04))
+* sync OpenAPI spec from monorepo ([507a632](https://github.com/TakoData/tako-mcp/commit/507a632da9c2b7e3d019b7712d9fc3fdd3e535d0))
+* sync OpenAPI spec from TakoData/tako ([f933c71](https://github.com/TakoData/tako-mcp/commit/f933c7180cefe48550aac6586e3908c8108544ff))
+
 ## [0.19.4](https://github.com/TakoData/tako-mcp/compare/v0.19.3...v0.19.4) (2026-08-12)
 
 
