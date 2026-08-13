@@ -6,6 +6,7 @@ import {
   APP_UI_RESOURCE_URI,
   appUiResourceUri,
   buildChartAppUiResourceFromOutputPubId,
+  buildChartUrls,
 } from "./_chart_widget.js";
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
@@ -126,5 +127,36 @@ describe("chart widget HTML", () => {
     for (const d of ui.resourceDomains!) {
       expect(d).toMatch(/^https:\/\//);
     }
+  });
+});
+
+describe("buildChartUrls (card share opt-in)", () => {
+  // The share control on the embed page is OPT-IN per host (tako PR #28735):
+  // nothing renders unless the embedding URL carries ?showShare=true. MCP
+  // surfaces want it on every displayed card, so the one URL builder opts in.
+  it("opts the embed url into the card share control", () => {
+    const { embed_url } = buildChartUrls(ENV, "abc123", true);
+    expect(embed_url).toBe(
+      "https://staging.trytako.com/embed/abc123/?dark_mode=auto&showShare=true",
+    );
+  });
+
+  it("keeps the param off the PNG url — a static image has no chrome", () => {
+    const { image_url } = buildChartUrls(ENV, "abc123", false);
+    expect(image_url).toBe(
+      "https://staging.trytako.com/api/v1/image/abc123/?dark_mode=false",
+    );
+  });
+});
+
+describe("widget iframe clipboard delegation", () => {
+  // The share dialog copies links via navigator.clipboard.writeText, which
+  // only works in a nested browsing context when every ancestor delegates
+  // clipboard-write down the chain. We control this hop; the host controls
+  // the one above it.
+  it("delegates clipboard-write to the embed iframe", () => {
+    expect(__chart_widget_test_only__.WIDGET_HTML).toContain(
+      'allow="fullscreen; clipboard-write"',
+    );
   });
 });
