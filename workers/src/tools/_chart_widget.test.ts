@@ -75,7 +75,10 @@ describe("chart widget HTML", () => {
     // separate template strings — a size-changed regression in one is
     // invisible to assertions on the other.
     const html = __chart_widget_test_only__.buildBakedWidgetHtml({
-      embedUrl: "https://staging.trytako.com/embed/abc123/?dark_mode=auto",
+      // Production-shaped url (buildChartUrls output), so the `&` in the
+      // query exercises htmlEscape on the baked anchor.
+      embedUrl:
+        "https://staging.trytako.com/embed/abc123/?dark_mode=auto&showShare=true",
       imageDataUrl: "data:image/png;base64,AAAA",
       naturalWidth: 800,
       naturalHeight: 600,

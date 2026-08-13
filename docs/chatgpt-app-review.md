@@ -115,13 +115,18 @@ the declaration and the URL cannot drift. No wildcards, no third-party frames, o
 (`/embed/{pub_id}/`).
 
 **What the framed page contains** (measured on production, `pub_id`
-`VKd7qE8K9Ba16kMFENNQ`, 2026-08-04): the chart, its title, and source attribution. Three
-external origins are referenced — Tako's own asset CDN (`d12w4pyrrczi5e.cloudfront.net`,
-16 refs: `Card.js`, its chunks, fonts, card images), `www.spglobal.com` (4 refs, all inside
-the card's own JSON island as the `source_details.url` for an S&P-sourced series), and —
-before this change — `www.googletagmanager.com`. There are **no advertisements, no checkout,
-no signup, no sign-in, and no upgrade UI**: the served markup contains zero `<a>` elements,
-and no occurrence of "sign up", "log in", "upgrade", "pricing", "subscribe" or "checkout".
+`VKd7qE8K9Ba16kMFENNQ`, 2026-08-04; re-measured 2026-08-13 with `showShare=true`): the
+chart, its title, source attribution, and — since the share opt-in — a share control in the
+card's action cluster, opening a dialog of copyable Tako URLs for this same card (copy
+fields, not navigation; the control mounts client-side and is Tako PR #28735's opt-in
+surface). Three external origins are referenced — Tako's own asset CDN
+(`d12w4pyrrczi5e.cloudfront.net`, 16 refs: `Card.js`, its chunks, fonts, card images),
+`www.spglobal.com` (4 refs, all inside the card's own JSON island as the
+`source_details.url` for an S&P-sourced series), and — before this change —
+`www.googletagmanager.com`. There are **no advertisements, no checkout, no signup, no
+sign-in, and no upgrade UI**: the served markup contains zero `<a>` elements (re-verified
+with `showShare=true`, 2026-08-13), and no occurrence of "sign up", "log in", "upgrade",
+"pricing", "subscribe" or "checkout".
 
 **Analytics removed.** Every iframe load the widget performs now carries
 `disable_tracking=true` (`withoutTracking` in `workers/src/tools/_chart_widget.ts`). On
@@ -131,8 +136,9 @@ references only the Tako CDN and the S&P attribution links, and contains zero
 `googletagmanager` references. Asserted by `test/widget/chatgpt-path.test.ts`
 (`renderedIframe`) and `test/widget/widget-dom.test.ts` (`EMBED_IFRAME_SRC`).
 
-The shareable `embed_url` in `structuredContent` is deliberately left plain — a link a
-person clicks in their own browser is an ordinary tako.com visit. The flag applies only to
+The shareable `embed_url` in `structuredContent` carries `showShare=true` (the card share
+opt-in) but no tracking flag — a link a person clicks in their own browser is an ordinary
+tako.com visit, now with the share control visible. `disable_tracking` applies only to
 loads the widget itself performs.
 
 **The nested-frame fallback exists.** On hosts whose CSP blocks the frame, the widget
