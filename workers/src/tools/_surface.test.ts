@@ -3,10 +3,11 @@
  * registered surface.
  *
  * The requirement this encodes: the chart widget and the tool that exists to
- * produce one (`tako_visualize`) reach the two hosts that render widgets
- * inline — ChatGPT and claude.ai / Claude Desktop — and NOTHING else. Generic
- * MCP clients keep the portable inline-PNG path and must opt in explicitly
- * with `?tools=visualize` if they want the tool at all.
+ * produce one (`tako_visualize`) reach the three hosts that render widgets
+ * inline — ChatGPT, the ChatGPT desktop app (codex), and claude.ai / Claude
+ * Desktop — and NOTHING else. Generic MCP clients keep the portable
+ * inline-PNG path and must opt in explicitly with `?tools=visualize` if they
+ * want the tool at all.
  *
  * Why a table and not per-case assertions: the boundary is enforced by two
  * separate things agreeing — `detectMcpClient`'s UA buckets and
@@ -57,17 +58,17 @@ const CLIENTS: Row[] = [
     kind: "unknown",
     widget: false,
   },
-  // ChatGPT family but deliberately NOT a widget client yet: the desktop
-  // app's widget sandbox is a `codex-sandbox://` scheme origin that
-  // tako.com's `frame-ancestors` rejects, so widget `_meta` would replace
-  // the working inline PNG with a grey dead tile. Flip checklist lives on
-  // `isChatGptFamilyClient` in `_surface.ts` — do not flip this row's
-  // `widget` without completing it.
+  // The ChatGPT desktop app renders the same interactive iframe as
+  // chatgpt.com from its `codex-sandbox://` webview. Widget membership
+  // DEPENDS on tako.com's `frame-ancestors` allowing the `codex-sandbox:`
+  // scheme (TakoData/tako#29218) — on a backend without that deploy the
+  // iframe is blocked and the app shows a grey tile, so don't revert that
+  // header without flipping this row back to false.
   {
     ua: "codex-mcp-client/0.148.0-alpha.9",
     label: "ChatGPT desktop app / Codex runtime",
     kind: "codex",
-    widget: false,
+    widget: true,
   },
   { ua: "cursor-vscode/1.0", label: "Cursor", kind: "unknown", widget: false },
   { ua: "Windsurf/1.0", label: "Windsurf", kind: "unknown", widget: false },
@@ -95,14 +96,13 @@ describe("widget exposure boundary", () => {
     });
   }
 
-  it("exposes the widget to exactly two client kinds", () => {
-    // Guards against a third kind being added to `isWidgetClient` without
-    // anyone revisiting what that means for the default surface. `"codex"`
-    // in particular must stay out until tako.com's `frame-ancestors`
-    // allows `codex-sandbox:` — see the flip checklist on
-    // `isChatGptFamilyClient`.
+  it("exposes the widget to exactly three client kinds", () => {
+    // Guards against a kind being added to `isWidgetClient` without anyone
+    // revisiting what that means for the default surface. `"codex"` is a
+    // member only because tako.com's `frame-ancestors` allows
+    // `codex-sandbox:` (TakoData/tako#29218).
     const kinds: McpClientKind[] = ["chatgpt", "claude", "codex", "unknown"];
-    expect(kinds.filter(isWidgetClient)).toEqual(["chatgpt", "claude"]);
+    expect(kinds.filter(isWidgetClient)).toEqual(["chatgpt", "claude", "codex"]);
   });
 
   it("puts exactly chatgpt and codex in the ChatGPT product family", () => {
@@ -110,7 +110,7 @@ describe("widget exposure boundary", () => {
     expect(kinds.filter(isChatGptFamilyClient)).toEqual(["chatgpt", "codex"]);
   });
 
-  it("gives codex the ChatGPT tool split, without the widget", () => {
+  it("gives codex the full ChatGPT tool split", () => {
     // The desktop app is the same product as chatgpt.com on the tool
     // surface (verified live against the app 2026-08-13). Split pair in
     // when opted in, dispatch+poll agent out even when asked for:
@@ -128,10 +128,6 @@ describe("widget exposure boundary", () => {
     // `unknown` clients never see.
     expect(isToolOnSurface("tako_contents", "codex", new Set(), "free")).toBe(true);
     expect(isToolOnSurface("tako_contents", "unknown", new Set(), "free")).toBe(false);
-    // tako_visualize stays off codex's default surface for now: default-on
-    // rides `isWidgetClient` (its whole output is the widget chart), so it
-    // returns exactly when the widget flip happens.
-    expect(isToolOnSurface("tako_visualize", "codex", new Set(), "authenticated")).toBe(false);
   });
 
   it("lets a non-widget client opt in explicitly", () => {
