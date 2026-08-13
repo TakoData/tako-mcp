@@ -2316,8 +2316,8 @@ components:
           type: number
           title: Row Cpm Usd
           description: USD charged per 1,000 rows on rows beyond the free allowance
-            (free_rows). Card-level total across the card's priced sources; no per-source
-            breakdown.
+            (free_rows). Card-level rate, set by the card's most expensive source;
+            no per-source breakdown.
         free_rows:
           type: integer
           title: Free Rows
@@ -2346,9 +2346,11 @@ components:
 
         charge = baseline_usd + row_cpm_usd * max(0, rows - free_rows) / 1000,
 
-        rows <= max_rows_ceiling. row_cpm_usd is the card-level total (sum of the
+        rows <= max_rows_ceiling. row_cpm_usd is the card-level rate: the
 
-        card''s distinct priced sources'' per-1,000-row rate); no per-source breakdown.
+        per-1,000-row rate of the card''s most expensive source (TAKO-3916 — a card
+
+        costs its most expensive source, never a sum); no per-source breakdown.
 
 
         `free_rows` here is the CALLER''S allowance, the same number a billed inline
@@ -2863,9 +2865,11 @@ components:
 
         Pricing: for a Tako card CSV export, the charge is a flat per-export
 
-        baseline plus a per-source, per-row CPM on the rows returned beyond the
+        baseline plus a per-row CPM, at the rate of the card''s most expensive
 
-        free row allowance. Web text bills at the standard Contents rate.
+        source, on the rows returned beyond the free row allowance. Web text bills
+
+        at the standard Contents rate.
 
 
         The meaning of `cost` depends on the surface. On `/contents` responses,
