@@ -593,38 +593,47 @@ describe("chart render gates per client", () => {
     ).toBeUndefined();
   });
 
-  it("chatgpt client: widget metadata ships, no image block, and no PNG prefetch", async () => {
-    // Exactly ONE response queued: the v3 search. ChatGPT keeps the
-    // interactive widget (which loads `embed_url` itself), so neither
-    // the image-content-block fetch nor `extraMeta`'s PNG prefetch may
-    // fire — `mockFetchSequence` throws loudly on any second call.
-    mockFetchSequence([searchResponse()]);
+  it.each(["chatgpt", "codex"] as const)(
+    "%s client: widget metadata ships, no image block, dimensions-only PNG read",
+    async (client) => {
+      // Codex mirrors chatgpt exactly since the flip (PR #240): widget
+      // `_meta`, no image content block, and a RANGED dimensions read
+      // instead of the full PNG bake. ACCEPTED-COST RECORD (validated
+      // live 2026-08-14, PR #239 body): a flag-off desktop app and the
+      // headless Codex CLI share this UA and lose the inline PNG this
+      // result used to carry (measured 2026-08-13: [text] only vs
+      // [text, image] for unknown).
+      //
+      // The earlier shape of this test queued ONE response and relied on
+      // `mockFetchSequence`'s queue-exhaustion throw to pin "no PNG
+      // prefetch" — but the top card carries an `image_url`, so
+      // `extraMeta` DOES fetch (the ranged `fetchPngDimensions`), and the
+      // throw was swallowed by that helper's catch and again by mcp.ts's
+      // `extraMeta` catch: a revert to the full-bake path stayed green
+      // (round-3 review finding on PR #239). Now the second fetch is
+      // queued and asserted: exactly two calls, and the PNG one carries a
+      // Range header — a full `fetchImageDataUrlAndDims` bake reads the
+      // whole body and sends none.
+      const fetchMock = mockFetchSequence([
+        searchResponse(),
+        new Response(new Uint8Array(64), {
+          status: 206,
+          headers: { "content-type": "image/png" },
+        }),
+      ]);
 
-    const result = await callSearch("chatgpt");
+      const result = await callSearch(client);
 
-    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
-    expect(
-      (result._meta as { ui?: unknown } | undefined)?.ui,
-    ).toBeDefined();
-  });
-
-  it("codex client: widget metadata ships, no image block, and no PNG prefetch", async () => {
-    // THE FLIP (supersedes PR #239's staged pin): codex now mirrors
-    // chatgpt exactly — widget `_meta`, no image content block, no PNG
-    // prefetch. KNOWN COSTS accepted by this flip, do not merge until
-    // they are answered live (see the draft PR's open questions):
-    // flag-off desktop users and the headless Codex CLI lose the inline
-    // PNG this result used to carry (measured 2026-08-13: [text] only vs
-    // [text, image] for unknown).
-    mockFetchSequence([searchResponse()]);
-
-    const result = await callSearch("codex");
-
-    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
-    expect(
-      (result._meta as { ui?: unknown } | undefined)?.ui,
-    ).toBeDefined();
-  });
+      expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+      expect(
+        (result._meta as { ui?: unknown } | undefined)?.ui,
+      ).toBeDefined();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const pngRequest = new Request(...(fetchMock.mock.calls[1] as [RequestInfo, RequestInit?]));
+      expect(pngRequest.url).toContain("/api/v1/image/");
+      expect(pngRequest.headers.get("range")).not.toBeNull();
+    },
+  );
 
   it("claude client: no image block when the search returns zero cards", async () => {
     // Empty result → no top card → no image_url → `extraMeta`'s PNG

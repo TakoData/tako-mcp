@@ -30,6 +30,7 @@ import {
 import {
   isToolOnSurface,
   toolAnnotationsForClient,
+  WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES,
 } from "../src/tools/_surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 
@@ -293,28 +294,41 @@ export function assertChatgptSubmissionParity(
   // The submission covers the ChatGPT PRODUCT, and the product has two MCP
   // transports: chatgpt.com's connector AND the desktop app (detected as
   // "codex"). Every surface equality above is asserted against "chatgpt"
-  // only, so without this block a revert of codex's family/widget
-  // membership (e.g. dropping it from `isChatGptFamilyClient`) would leave
-  // `registry:check` green while the desktop app lists a DIFFERENT tool set
-  // than the submission declares — review finding on PR #239. Equality of
-  // the two members' surfaces at both tiers is exactly "the family shares
-  // one surface", which is the premise the submission rests on.
+  // only, so without this block a revert of codex's FAMILY membership
+  // (dropping it from `isChatGptFamilyClient`) would leave `registry:check`
+  // green while the desktop app lists a DIFFERENT tool set than the
+  // submission declares — review finding on PR #239.
+  //
+  // Deliberately compared MODULO the widget-default-on names: this check
+  // runs as a DEPLOY GATE (workers-deploy.yml), and the widget flip's only
+  // rollback lever is removing `codex` from `isWidgetClient` (there is no
+  // widget kill switch in `Env`). That one-line revert drops the
+  // default-on `tako_visualize` from codex while chatgpt keeps it — a raw
+  // surface equality here would fail the gate and BLOCK the rollback
+  // deploy, telling the operator to undo their rollback (round-3 review
+  // finding on PR #239). So the gate asserts only what the FAMILY
+  // predicate feeds; codex's widget membership is pinned in the test
+  // suites instead (_surface.test.ts membership table, index.test.ts,
+  // mcp.test.ts), which fail loudly without holding a deploy hostage.
   for (const tier of ["authenticated", "free"] as const) {
-    const chatgptSurface = tools
-      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns, tier))
-      .map((t) => t.name)
-      .sort();
-    const codexSurface = tools
-      .filter((t) => isToolOnSurface(t.name, "codex", noOptIns, tier))
-      .map((t) => t.name)
-      .sort();
+    const familySurface = (client: "chatgpt" | "codex"): string[] =>
+      tools
+        .filter(
+          (t) =>
+            !WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES.has(t.name) &&
+            isToolOnSurface(t.name, client, noOptIns, tier),
+        )
+        .map((t) => t.name)
+        .sort();
+    const chatgptSurface = familySurface("chatgpt");
+    const codexSurface = familySurface("codex");
     if (JSON.stringify(codexSurface) !== JSON.stringify(chatgptSurface)) {
       problems.push(
         `codex (ChatGPT desktop app) ${tier} surface [${codexSurface.join(
           ", ",
         )}] diverges from chatgpt's [${chatgptSurface.join(
           ", ",
-        )}] — the submission describes the ChatGPT product, which includes the desktop app; restore family membership in workers/src/tools/_surface.ts`,
+        )}] (widget-default-on names excluded) — the submission describes the ChatGPT product, which includes the desktop app; restore family membership in workers/src/tools/_surface.ts`,
       );
     }
   }

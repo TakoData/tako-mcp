@@ -72,6 +72,21 @@ export const CHATGPT_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([
  * below keys off it too, so the tool that ships a widget and the clients that
  * receive widget metadata cannot drift apart (they were two hand-maintained
  * `client === …` comparisons in separate files before).
+ *
+ * ACCEPTED COST of `"codex"` membership: one UA covers the desktop app,
+ * Codex tasks, AND the headless Codex CLI, so the CLI — a terminal that
+ * renders no widget — pays the default-on `tako_visualize` schema
+ * (~3.5k tokens, the largest descriptor on the surface) in every session,
+ * the exact cost {@link WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES} spares Claude
+ * Code by bucketing it `unknown`. A carve-out has no per-REQUEST signal:
+ * the UA is shared, and the one real discriminator — the widget-capable
+ * app advertises `io.modelcontextprotocol/ui` in `initialize` — appears
+ * only there, while this Worker computes surfaces statelessly on every
+ * request. Distinguishing the CLI therefore means persisting per-session
+ * capability state, a follow-up-shaped change, not a predicate edit here.
+ * The trade favors the desktop app deliberately — it is where codex
+ * traffic comes from — and is recorded on PR #239 alongside the CLI's
+ * lost inline PNG (round-3 review finding).
  */
 export function isWidgetClient(client: McpClientKind): boolean {
   return client === "chatgpt" || client === "claude" || client === "codex";
