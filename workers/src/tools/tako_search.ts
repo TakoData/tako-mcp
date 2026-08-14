@@ -26,7 +26,6 @@ import {
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
-import { isChatGptFamilyClient } from "./_surface.js";
 import {
   renderSearchMarkdown,
   searchSlimOutputShape,
@@ -314,15 +313,14 @@ const tako_search = {
     // gate we pay the full chart-render latency
     // (`PNG_FETCH_TIMEOUT_MS` = 8s upper bound) on every ChatGPT
     // tool call just to populate a field the host throws away.
-    // The ChatGPT family (chatgpt.com AND the desktop app) gets DIMENSIONS
-    // ONLY (a 64-byte ranged read): their widget renders `embed_url` in an
-    // iframe and never reads the baked PNG, but it cannot measure that
-    // cross-origin iframe's content, so without the card's real aspect
-    // ratio the iframe falls back to a fixed height and leaves empty bands
-    // under a wide chart. Claude gets the full baked image — there the
+    // ChatGPT gets DIMENSIONS ONLY (a 64-byte ranged read): its widget renders
+    // `embed_url` in an iframe and never reads the baked PNG, but it cannot
+    // measure that cross-origin iframe's content, so without the card's real
+    // aspect ratio the iframe falls back to a fixed height and leaves empty
+    // bands under a wide chart. Claude gets the full baked image — there the
     // PNG *is* the chart.
     return buildChartExtraMeta(output.image_url, {
-      bakeImage: !isChatGptFamilyClient(ctx.client),
+      bakeImage: ctx.client !== "chatgpt",
       env: ctx.env,
       origin: ctx.origin,
       pubId: output.pub_id,
