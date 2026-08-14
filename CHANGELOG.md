@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.20.0](https://github.com/TakoData/tako-mcp/compare/v0.19.5...v0.20.0) (2026-08-14)
+
+
+### Features
+
+* **proxy:** carry the share opt-in on the native-card upstream fetch ([4de080f](https://github.com/TakoData/tako-mcp/commit/4de080f04204bcb4a4ce06ed8b9a4c628bc8f6ac))
+* **widget:** opt every displayed card into the embed page's share control ([af1ae58](https://github.com/TakoData/tako-mcp/commit/af1ae588501b7eaa2810778b8b060e99923acd33))
+
+
+### Bug Fixes
+
+* **widget:** address review — origin-extract the pin, extend it to native_card_url, normalize passthrough embed_urls ([577b794](https://github.com/TakoData/tako-mcp/commit/577b79405e272c9d57ad9244e51ba9e89a3b01b8))
+* **widget:** pin the embed iframe to the env's web origin before granting clipboard ([e5c16bd](https://github.com/TakoData/tako-mcp/commit/e5c16bdc11deb385ffb29c18fa0e44ffed8c3015))
+* **widget:** scope the corner fix to ChatGPT; leave claude.ai untouched ([138a790](https://github.com/TakoData/tako-mcp/commit/138a790b991938e5b46b3fe6c62b2adff8ebca96))
+* **widget:** the card's corners, on every host, without guessing a colour ([dd4dcb6](https://github.com/TakoData/tako-mcp/commit/dd4dcb6890b6a224b28f7e126a2711ebfc6e46cc))
+* **widget:** the corner white, the height we asked for, and the `_meta` nobody read ([f3de766](https://github.com/TakoData/tako-mcp/commit/f3de76607facec28f94306ce2e1340da4d3123f9))
+
+
+### Documentation
+
+* **review:** re-measure app-review claims with showShare; production-shaped baked fixture ([e9bb7b0](https://github.com/TakoData/tako-mcp/commit/e9bb7b0a358469a245dd9100de00543b530f0c4d))
+
 ## [0.19.5](https://github.com/TakoData/tako-mcp/compare/v0.19.4...v0.19.5) (2026-08-13)
 
 
