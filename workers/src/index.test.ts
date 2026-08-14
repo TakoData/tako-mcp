@@ -374,9 +374,9 @@ describe("worker routing", () => {
       expect(t._meta?.["com.tako/securitySchemes"]).toEqual([
         { type: "oauth2", scopes: ["mcp"] },
       ]);
-      // The top-level `securitySchemes` field is a ChatGPT-only
+      // The top-level `securitySchemes` field is a ChatGPT-family
       // compatibility injection (`withChatGptToolSecuritySchemes`) — this
-      // request has no User-Agent, so non-ChatGPT descriptors must NOT
+      // request has no User-Agent, so non-family descriptors must NOT
       // carry it.
       expect(
         (t as { securitySchemes?: unknown }).securitySchemes,
@@ -418,8 +418,9 @@ describe("worker routing", () => {
     // ChatGPT's Apps SDK reads `securitySchemes` at the descriptor TOP
     // LEVEL (developers.openai.com/apps-sdk/build/auth). The MCP SDK
     // drops unknown descriptor fields, so `handleMcpRequest` injects the
-    // field into the buffered response for ChatGPT clients only
-    // (`withChatGptToolSecuritySchemes`).
+    // field into the buffered response for ChatGPT-family clients only
+    // (`withChatGptToolSecuritySchemes` — chatgpt.com and the desktop
+    // app's codex runtime).
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -464,6 +465,62 @@ describe("worker routing", () => {
     const oauth2 = { type: "oauth2", scopes: ["mcp"] };
     for (const t of body.result.tools) {
       expect(t.securitySchemes, t.name).toEqual([oauth2]);
+    }
+  });
+
+  it("POST /mcp tools/list serves the codex desktop app the family surface, without the widget", async () => {
+    // End-to-end pin for the ChatGPT desktop app (codex runtime): it gets
+    // the ChatGPT-family treatment — securitySchemes injection included —
+    // but NOT the widget `_meta` and NOT default-on tako_visualize, both
+    // of which are gated on `isWidgetClient` until tako.com's
+    // `frame-ancestors` allows `codex-sandbox:` AND the flip is validated
+    // live (see isChatGptFamilyClient's flip checklist). Without this
+    // test, reverting any single `isChatGptFamilyClient` call site back
+    // to `client === "chatgpt"` passes the whole suite while silently
+    // degrading the desktop app to the 3-tool unknown surface.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+        "user-agent": "codex-mcp-client/0.148.0-alpha.9",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: {
+        tools: Array<{
+          name: string;
+          _meta?: Record<string, unknown>;
+          securitySchemes?: Array<{ type: string; scopes?: string[] }>;
+        }>;
+      };
+    };
+    // Family surface minus the widget-gated visualize (default-on rides
+    // `isWidgetClient`, which codex has not joined yet).
+    expect(body.result.tools.map((t) => t.name).sort()).toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+      "tako_search",
+    ]);
+    const oauth2 = { type: "oauth2", scopes: ["mcp"] };
+    for (const t of body.result.tools) {
+      // The family injection reaches codex descriptors...
+      expect(t.securitySchemes, t.name).toEqual([oauth2]);
+      // ...but widget `_meta` must not: a codex widget iframe is blocked
+      // by tako.com's frame-ancestors until the backend deploy, and
+      // widget `_meta` suppresses the inline PNG the app renders today.
+      expect(t._meta?.["openai/outputTemplate"], t.name).toBeUndefined();
+      expect(t._meta?.["ui"], t.name).toBeUndefined();
     }
   });
 

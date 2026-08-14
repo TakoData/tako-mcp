@@ -88,7 +88,8 @@ export interface ToolContext {
    * `embed_url` directly and never reads the baked-in image), and
    * `mcp.ts` uses it to gate which tools each host sees — the
    * `tako_agent_start` / `tako_agent_wait` pair is registered only
-   * when `client === "chatgpt"`.
+   * for the ChatGPT family (`isChatGptFamilyClient`: chatgpt.com and
+   * the desktop app's codex runtime).
    *
    * NB: this is a server-instance-level value (set from User-Agent
    * detection at server creation), NOT a per-request flag. Don't

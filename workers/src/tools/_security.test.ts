@@ -11,12 +11,18 @@ describe("securitySchemesForTool", () => {
   const OAUTH2 = { type: "oauth2", scopes: ["mcp"] };
   const ANON_CHATGPT = { client: "chatgpt", tier: "free" } as const;
 
-  it("advertises noauth + oauth2 for the free tools on an ANONYMOUS ChatGPT listing", () => {
-    for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
-      expect(securitySchemesForTool(name, ANON_CHATGPT)).toEqual([
-        { type: "noauth" },
-        OAUTH2,
-      ]);
+  it("advertises noauth + oauth2 for the free tools on an ANONYMOUS ChatGPT-family listing", () => {
+    // Parameterized over the family: the desktop app (codex) reads the
+    // same Apps SDK metadata as chatgpt.com. A revert of the
+    // isChatGptFamilyClient call in securitySchemesForTool would pass a
+    // chatgpt-only version of this test.
+    for (const client of ["chatgpt", "codex"] as const) {
+      for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
+        expect(securitySchemesForTool(name, { client, tier: "free" })).toEqual([
+          { type: "noauth" },
+          OAUTH2,
+        ]);
+      }
     }
   });
 
@@ -42,7 +48,9 @@ describe("securitySchemesForTool", () => {
     }
   });
 
-  it("keeps non-ChatGPT clients on the pre-existing oauth2-only constant", () => {
+  it("keeps non-family clients on the pre-existing oauth2-only constant", () => {
+    // codex is deliberately NOT in this loop — it is ChatGPT family and
+    // takes the noauth+oauth2 branch above.
     for (const client of ["claude", "unknown"] as const) {
       for (const tier of ["free", "authenticated"] as const) {
         expect(securitySchemesForTool("tako_search", { client, tier })).toEqual([

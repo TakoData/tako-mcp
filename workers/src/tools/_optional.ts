@@ -16,8 +16,9 @@
  *
  * `agent` spans all three agent tool files: the single-call `tako_agent`
  * (Claude / unknown clients) and the `tako_agent_start` / `tako_agent_wait`
- * split pair (ChatGPT). The alias enables the *feature*; the per-client
- * filters in `_surface.ts` (`CHATGPT_ONLY_TOOL_NAMES` / `CHATGPT_EXCLUDED_TOOL_NAMES`)
+ * split pair (the ChatGPT family — chatgpt.com and the desktop app's codex
+ * runtime). The alias enables the *feature*; the per-client filters in
+ * `_surface.ts` (`CHATGPT_ONLY_TOOL_NAMES` / `CHATGPT_EXCLUDED_TOOL_NAMES`)
  * then narrow to the correct variant for the calling client. Users never need
  * to know the split exists — they enable `agent` and get the right tool.
  *
@@ -25,7 +26,7 @@
  * tools are useful but rarely needed, so they are kept off the default
  * surface to save per-session context. They compose freely, e.g.
  * `?tools=visualize,credits`. Exception: `tako_visualize` stays on the
- * default surface for ChatGPT clients (it powers the chart widget) — see
+ * default surface for widget clients (it powers the chart widget) — see
  * `WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES` in `_surface.ts`.
  *
  * `graph` enables the three low-level graph primitives (search / related /

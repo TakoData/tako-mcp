@@ -608,6 +608,28 @@ describe("chart render gates per client", () => {
     ).toBeDefined();
   });
 
+  it("codex client: chart ships as an inline image content block, NO widget metadata", async () => {
+    // THE staged-rollout pin (adversarial review, PR #239): the desktop
+    // app's `enable_mcp_apps` flag is off for almost all users and the
+    // same UA covers the headless Codex CLI — for both, widget `_meta`
+    // would suppress this image block (the mutual-exclusion gate) and
+    // the chart would vanish from the chat entirely. Codex therefore
+    // keeps the unknown-style PNG until the flip is validated live.
+    // Measured 2026-08-13: a widget-classified codex build returned
+    // [text] only, vs [text, image] for unknown — this test exists so
+    // that regression can never ship silently again.
+    mockFetchSequence([searchResponse(), pngResponse()]);
+
+    const result = await callSearch("codex");
+
+    const imageBlocks = result.content.filter((b) => b.type === "image");
+    expect(imageBlocks).toHaveLength(1);
+    expect(imageBlocks[0]?.mimeType).toBe("image/png");
+    expect(
+      (result._meta as { ui?: unknown } | undefined)?.ui,
+    ).toBeUndefined();
+  });
+
   it("claude client: no image block when the search returns zero cards", async () => {
     // Empty result → no top card → no image_url → `extraMeta`'s PNG
     // prefetch must not fire (queue holds only the search response; an
@@ -1035,26 +1057,34 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     expect(result._meta?.["mcp/www_authenticate"]).toBeUndefined();
   });
 
-  it("a Django 401 on ChatGPT attaches the reauth challenge to the mapped error", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse(401, { detail: "Invalid API key." })),
-    );
-    const result = await callTool(
-      { client: "chatgpt", requestOrigin: "https://mcp.example.com" },
-      "tako_search",
-      { query: "US GDP" },
-    );
-    expect(result.isError).toBe(true);
-    const challenges = result._meta?.["mcp/www_authenticate"] as string[];
-    expect(challenges).toHaveLength(1);
-    expect(challenges[0]).toContain('error="invalid_token"');
-    expect(challenges[0]).toContain("error_description=");
-    // The existing structured error detail is preserved alongside.
-    expect(
-      (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
-    ).toBe("unauthorized");
-  });
+  it.each(["chatgpt", "codex"] as const)(
+    "a Django 401 on %s attaches the reauth challenge to the mapped error",
+    async (client) => {
+      // Parameterized over the ChatGPT family: the desktop app's
+      // link-account re-auth flow keys on the same
+      // `_meta["mcp/www_authenticate"]` field (isChatGptFamilyClient gate
+      // in registerTool). A revert of that gate to `=== "chatgpt"` would
+      // pass a chatgpt-only version of this test.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => jsonResponse(401, { detail: "Invalid API key." })),
+      );
+      const result = await callTool(
+        { client, requestOrigin: "https://mcp.example.com" },
+        "tako_search",
+        { query: "US GDP" },
+      );
+      expect(result.isError).toBe(true);
+      const challenges = result._meta?.["mcp/www_authenticate"] as string[];
+      expect(challenges).toHaveLength(1);
+      expect(challenges[0]).toContain('error="invalid_token"');
+      expect(challenges[0]).toContain("error_description=");
+      // The existing structured error detail is preserved alongside.
+      expect(
+        (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
+      ).toBe("unauthorized");
+    },
+  );
 
   it("a Django 401 on the FREE tier does not claim the caller's session expired", async () => {
     // On free tier the rejected credential is the SHARED free-tier key,
