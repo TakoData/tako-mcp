@@ -96,34 +96,40 @@ describe("widget exposure boundary", () => {
     });
   }
 
-  // `Record<McpClientKind, true>` makes this list provably exhaustive: a
-  // fifth kind added to the union in types.ts fails COMPILATION here until
-  // someone decides its widget/family membership — the review found the
-  // previous hand-listed arrays let a new kind silently skip these guards.
-  const ALL_KINDS: Record<McpClientKind, true> = {
-    chatgpt: true,
-    claude: true,
-    codex: true,
-    unknown: true,
+  // A per-kind expected-membership TABLE, not a filtered list: a fifth kind
+  // added to the union in types.ts fails COMPILATION here until someone
+  // writes down BOTH of its memberships — with the previous
+  // `.filter(...).toEqual([...])` shape, satisfying the compiler only took
+  // `newkind: true` in a fixture and the new kind landed silently on the
+  // unknown surface (review finding on PR #239). Per-kind assertions are
+  // also insertion-order independent, so reordering this literal can't
+  // fail without a behavior change.
+  //
+  // The memberships gate different things and genuinely diverge (claude):
+  // `widget` = receives widget `_meta` + default-on `tako_visualize`;
+  // `family` = the ChatGPT product surface (agent split, anonymous
+  // discoverable listing, securitySchemes injection). `codex` is a widget
+  // member only because tako.com's `frame-ancestors` allows
+  // `codex-sandbox:` (TakoData/tako#29218) AND the flip was validated live
+  // against the desktop app.
+  const EXPECTED_MEMBERSHIP: Record<
+    McpClientKind,
+    { widget: boolean; family: boolean }
+  > = {
+    chatgpt: { widget: true, family: true },
+    claude: { widget: true, family: false },
+    codex: { widget: true, family: true },
+    unknown: { widget: false, family: false },
   };
-  const KINDS = Object.keys(ALL_KINDS) as McpClientKind[];
 
-  it("exposes the widget to exactly three client kinds", () => {
-    // Guards against a kind being added to `isWidgetClient` without anyone
-    // revisiting what that means for the default surface. `"codex"` is a
-    // member only because tako.com's `frame-ancestors` allows
-    // `codex-sandbox:` (TakoData/tako#29218) AND the flip was validated
-    // live against the desktop app.
-    expect(KINDS.filter(isWidgetClient)).toEqual([
-      "chatgpt",
-      "claude",
-      "codex",
-    ]);
-  });
-
-  it("puts exactly chatgpt and codex in the ChatGPT product family", () => {
-    expect(KINDS.filter(isChatGptFamilyClient)).toEqual(["chatgpt", "codex"]);
-  });
+  for (const [kind, expected] of Object.entries(EXPECTED_MEMBERSHIP) as Array<
+    [McpClientKind, { widget: boolean; family: boolean }]
+  >) {
+    it(`membership table: ${kind} widget=${expected.widget} family=${expected.family}`, () => {
+      expect(isWidgetClient(kind)).toBe(expected.widget);
+      expect(isChatGptFamilyClient(kind)).toBe(expected.family);
+    });
+  }
 
   it("gives codex the full ChatGPT tool split", () => {
     // The desktop app is the same product as chatgpt.com on the tool

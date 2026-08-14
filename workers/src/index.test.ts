@@ -1,4 +1,4 @@
-import { SELF } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Env } from "./env.js";
 import worker from "./index.js";
@@ -524,6 +524,77 @@ describe("worker routing", () => {
         expect(t._meta?.["openai/outputTemplate"], t.name).toBeDefined();
       }
     }
+  });
+
+  it("POST /mcp tools/list keeps the anonymous codex listing on the family surface, not unknown's", async () => {
+    // The authenticated codex pin above cannot distinguish "codex resolved
+    // as ChatGPT family" from "codex fell to `unknown`" by names alone on
+    // the free tier's opposite failure: an ANONYMOUS `unknown` listing is
+    // the three free-tier tools, while an anonymous FAMILY listing keeps
+    // the auth-gated submitted tools visible for the link-account
+    // affordance (`CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES`). So this is
+    // the request shape where a `detectMcpClient` regression for the
+    // desktop app is VISIBLE as a listing diff — pin it. (Review finding
+    // on PR #239: the authenticated assertion alone also matched the
+    // authenticated no-UA surface.)
+    //
+    // The suite's worker env deliberately leaves the free-tier bindings
+    // unset so every other test exercises the fail-closed 401, and `SELF`'s
+    // bindings can't be changed per-test — so this dispatches the handler
+    // directly with an env where all three free-tier bindings exist
+    // (key + both limiters; freetier.ts activates only on the full set).
+    const allow: RateLimit = { limit: async () => ({ success: true }) };
+    const freeTierEnv: Env = {
+      ...(env as Env),
+      FREE_TIER_API_KEY: "free-tier-test-key",
+      FREE_TIER_RATE_LIMITER: allow,
+      FREE_TIER_GLOBAL_RATE_LIMITER: allow,
+    };
+    const listTools = async (userAgent?: string) => {
+      const res = await worker.fetch(
+        new Request("https://example.com/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            // No authorization header: tier resolves to "free".
+            ...(userAgent === undefined ? {} : { "user-agent": userAgent }),
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/list",
+            params: {},
+          }),
+        }),
+        freeTierEnv,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        result: { tools: Array<{ name: string }> };
+      };
+      return body.result.tools.map((t) => t.name).sort();
+    };
+
+    // Anonymous desktop app: full family listing — the free-tier trio plus
+    // the two auth-gated tools that must stay listed pre-link so the host
+    // can offer sign-in from the descriptor.
+    expect(await listTools("codex-mcp-client/0.148.0-alpha.9")).toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+      "tako_search",
+      "tako_visualize",
+    ]);
+    // Same request with an unrecognized UA: the anonymous surface shrinks
+    // to the free-tier trio. This contrast is what makes the codex
+    // assertion above meaningful — the two listings differ, so a
+    // classifier miss fails here instead of degrading silently.
+    expect(await listTools("some-unknown-agent/1.0")).toEqual([
+      "tako_answer",
+      "tako_available_data",
+      "tako_search",
+    ]);
   });
 
   it("POST /mcp tools/list declares the chart widget _meta for claude clients", async () => {

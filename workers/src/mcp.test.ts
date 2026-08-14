@@ -1130,12 +1130,12 @@ describe("withChatGptToolSecuritySchemes", () => {
     const res = new Response("event: message\ndata: {}\n\n", {
       headers: { "content-type": "text/event-stream" },
     });
-    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt")).toBe(res);
   });
 
   it("returns the original response when the body is not valid JSON (body stays readable)", async () => {
     const res = new Response("{not json", { headers: JSON_CT });
-    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt");
     expect(out).toBe(res);
     // The adapter reads a clone — the original body must not be consumed.
     await expect(out.text()).resolves.toBe("{not json");
@@ -1146,7 +1146,7 @@ describe("withChatGptToolSecuritySchemes", () => {
       JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
       { headers: JSON_CT },
     );
-    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt")).toBe(res);
   });
 
   it("rewrites tools/list, drops the stale content-length, and keeps status", async () => {
@@ -1159,7 +1159,7 @@ describe("withChatGptToolSecuritySchemes", () => {
       status: 200,
       headers: { ...JSON_CT, "content-length": String(body.length) },
     });
-    const out = await withChatGptToolSecuritySchemes(res, "free");
+    const out = await withChatGptToolSecuritySchemes(res, "free", "chatgpt");
     expect(out).not.toBe(res);
     expect(out.status).toBe(200);
     expect(out.headers.get("content-length")).toBeNull();
@@ -1180,7 +1180,7 @@ describe("withChatGptToolSecuritySchemes", () => {
       result: { tools: [{ name: "tako_search" }] },
     });
     const res = new Response(body, { headers: JSON_CT });
-    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt");
     const json = (await out.json()) as {
       result: { tools: Array<{ securitySchemes?: unknown }> };
     };

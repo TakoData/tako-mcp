@@ -318,17 +318,25 @@ export interface ToolModule<
    */
   description: string;
   /**
-   * Optional per-client description overrides. The Worker selects the
-   * entry matching the request's detected `McpClientKind` and falls
-   * back to {@link description} when no entry exists. Use this when a
-   * tool's instructions diverge meaningfully by host (e.g. claude.ai
-   * auto-renders charts inline with server-side escalation while
-   * ChatGPT must redirect to the Tako agent on empty results) —
-   * sending each model only the directive it can act on is more
-   * reliable than asking it to self-identify and filter from a single
-   * description with conditional clauses.
+   * Optional per-client description overrides, resolved by ANNOTATION
+   * FAMILY, not raw detected kind: `claude` clients read the `claude`
+   * entry; everything else — chatgpt, codex, AND `unknown` — reads the
+   * `chatgpt` entry (see `annotationClientFamily` in `_surface.ts` for
+   * why `unknown` resolves chatgpt: an OpenAI reviewer or crawler whose
+   * UA the classifier misses must never see text that contradicts
+   * `chatgpt-app-submission.json`). Falls back to {@link description}
+   * when no entry exists. Use this when a tool's instructions diverge
+   * meaningfully by host (e.g. claude.ai auto-renders charts inline
+   * with server-side escalation while ChatGPT must redirect to the Tako
+   * agent on empty results) — sending each model only the directive it
+   * can act on is more reliable than asking it to self-identify and
+   * filter from a single description with conditional clauses.
+   *
+   * The key type is the two FAMILY names, not `McpClientKind`: a
+   * `codex:`/`unknown:` entry could never be resolved, so allowing the
+   * keys would only create dead config that still typechecks.
    */
-  descriptionByClient?: Partial<Record<McpClientKind, string>>;
+  descriptionByClient?: Partial<Record<"claude" | "chatgpt", string>>;
   inputSchema: InputSchema;
   outputSchema?: z.ZodType<Output>;
   annotations: ToolAnnotations;
@@ -364,7 +372,7 @@ export interface ToolModule<
    * false everywhere.
    */
   annotationsByClient?: Partial<
-    Record<McpClientKind, Partial<ToolAnnotations>>
+    Record<"claude" | "chatgpt", Partial<ToolAnnotations>>
   >;
   handler: (input: z.infer<InputSchema>, ctx: ToolContext) => Promise<Output>;
   /**
@@ -452,13 +460,13 @@ export interface ToolModule<
 export interface AnyToolModule {
   name: string;
   description: string;
-  descriptionByClient?: Partial<Record<McpClientKind, string>>;
+  descriptionByClient?: Partial<Record<"claude" | "chatgpt", string>>;
   inputSchema: z.ZodObject<z.ZodRawShape>;
   outputSchema?: z.ZodType<unknown>;
   annotations: ToolAnnotations;
   /** Per-client annotation overrides — see {@link ToolModule.annotationsByClient}. */
   annotationsByClient?: Partial<
-    Record<McpClientKind, Partial<ToolAnnotations>>
+    Record<"claude" | "chatgpt", Partial<ToolAnnotations>>
   >;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;
   renderText?: (output: unknown, ctx: ToolContext) => string;

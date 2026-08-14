@@ -266,33 +266,40 @@ describe("tako_answer renders a chart, exactly like tako_search", () => {
     expect(typeof takoAnswer.extraContentBlocks).toBe("function");
   });
 
-  it("sends ChatGPT dimensions only, never the whole PNG", async () => {
-    // `bakeImage: ctx.client !== "chatgpt"` is justified as "a 64-byte ranged
-    // read instead of a ~170 KB render". Inverted, every ChatGPT answer call
-    // pays the full PNG_FETCH_TIMEOUT_MS budget for a payload that host
-    // discards — and nothing caught that, here or in search.
-    const seen: { url: string; range: string | null }[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation((async (
-      input: RequestInfo | URL,
-      init?: RequestInit,
-    ) => {
-      const req = new Request(input as RequestInfo, init);
-      seen.push({ url: req.url, range: req.headers.get("range") });
-      // 8 bytes of PNG signature + IHDR length so the dimension parser has
-      // something to chew on; the assertion is about the REQUEST.
-      return new Response(new Uint8Array(64), {
-        status: 206,
-        headers: { "content-type": "image/png" },
-      });
-    }) as typeof fetch);
+  it.each(["chatgpt", "codex"] as const)(
+    "sends %s dimensions only, never the whole PNG",
+    async (client) => {
+      // `bakeImage: !isChatGptFamilyClient(ctx.client)` is justified as "a
+      // 64-byte ranged read instead of a ~170 KB render". Inverted, every
+      // family answer call pays the full PNG_FETCH_TIMEOUT_MS budget for a
+      // payload that host discards — and nothing caught that, here or in
+      // search. Both family members are pinned because the gate is one of
+      // the three named in the staged-rollout checklist (search, answer,
+      // visualize): a per-tool revert to `client !== "chatgpt"` would strip
+      // the desktop app's dimensions path while the suite stayed green.
+      const seen: { url: string; range: string | null }[] = [];
+      vi.spyOn(globalThis, "fetch").mockImplementation((async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        const req = new Request(input as RequestInfo, init);
+        seen.push({ url: req.url, range: req.headers.get("range") });
+        // 8 bytes of PNG signature + IHDR length so the dimension parser has
+        // something to chew on; the assertion is about the REQUEST.
+        return new Response(new Uint8Array(64), {
+          status: 206,
+          headers: { "content-type": "image/png" },
+        });
+      }) as typeof fetch);
 
-    await takoAnswer.extraMeta!(
-      { image_url: "https://x.test/api/v1/image/abc/", pub_id: "abc" } as never,
-      { ...CTX, client: "chatgpt" } as never,
-    );
-    expect(seen).toHaveLength(1);
-    expect(seen[0]!.range).not.toBeNull();
-  });
+      await takoAnswer.extraMeta!(
+        { image_url: "https://x.test/api/v1/image/abc/", pub_id: "abc" } as never,
+        { ...CTX, client } as never,
+      );
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.range).not.toBeNull();
+    },
+  );
 
   it("returns no content block when there is no chart", async () => {
     // `fetchPngContentBlock(undefined)` would fetch the string "undefined".

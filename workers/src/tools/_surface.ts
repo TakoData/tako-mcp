@@ -228,7 +228,9 @@ export function isToolOnSurface(
  * Apps-review labels to a generic third-party MCP client merely
  * understates `openWorldHint` on retrieval — cosmetic, and reversible.
  */
-export function annotationClientFamily(client: McpClientKind): McpClientKind {
+export function annotationClientFamily(
+  client: McpClientKind,
+): "claude" | "chatgpt" {
   return client === "claude" ? "claude" : "chatgpt";
 }
 
