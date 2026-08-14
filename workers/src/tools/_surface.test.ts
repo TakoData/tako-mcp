@@ -95,19 +95,29 @@ describe("widget exposure boundary", () => {
     });
   }
 
+  // `Record<McpClientKind, true>` makes this list provably exhaustive: a
+  // fifth kind added to the union in types.ts fails COMPILATION here until
+  // someone decides its widget/family membership — the review found the
+  // previous hand-listed arrays let a new kind silently skip these guards.
+  const ALL_KINDS: Record<McpClientKind, true> = {
+    chatgpt: true,
+    claude: true,
+    codex: true,
+    unknown: true,
+  };
+  const KINDS = Object.keys(ALL_KINDS) as McpClientKind[];
+
   it("exposes the widget to exactly two client kinds", () => {
-    // Guards against a third kind being added to `isWidgetClient` without
+    // Guards against a kind being added to `isWidgetClient` without
     // anyone revisiting what that means for the default surface. `"codex"`
     // in particular must stay out until tako.com's `frame-ancestors`
-    // allows `codex-sandbox:` — see the flip checklist on
-    // `isChatGptFamilyClient`.
-    const kinds: McpClientKind[] = ["chatgpt", "claude", "codex", "unknown"];
-    expect(kinds.filter(isWidgetClient)).toEqual(["chatgpt", "claude"]);
+    // allows `codex-sandbox:` AND the flip is validated live — see the
+    // flip checklist on `isChatGptFamilyClient`.
+    expect(KINDS.filter(isWidgetClient)).toEqual(["chatgpt", "claude"]);
   });
 
   it("puts exactly chatgpt and codex in the ChatGPT product family", () => {
-    const kinds: McpClientKind[] = ["chatgpt", "claude", "codex", "unknown"];
-    expect(kinds.filter(isChatGptFamilyClient)).toEqual(["chatgpt", "codex"]);
+    expect(KINDS.filter(isChatGptFamilyClient)).toEqual(["chatgpt", "codex"]);
   });
 
   it("gives codex the ChatGPT tool split, without the widget", () => {

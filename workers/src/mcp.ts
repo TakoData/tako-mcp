@@ -52,6 +52,7 @@ import {
   wwwAuthenticate,
 } from "./tools/_security.js";
 import {
+  annotationClientFamily,
   isChatGptFamilyClient,
   isToolOnSurface,
   isWidgetClient,
@@ -231,9 +232,16 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * image branch, since claude.ai's host-side CSP ignores declared
  * `frameDomains` and the widget's runtime `window.openai` check falls
  * back to the static image there) while unknown clients fall back to
- * the inline PNG `image` content block, and routing ChatGPT through
- * the agent split pair (its Apps SDK doesn't reset tool-call timeouts
- * on progress notifications).
+ * the inline PNG `image` content block, and routing the ChatGPT FAMILY
+ * (chatgpt.com and the desktop app's codex runtime — see
+ * `isChatGptFamilyClient`) through the agent split pair (the Apps SDK
+ * doesn't reset tool-call timeouts on progress notifications).
+ *
+ * INVARIANT: the detected kind is presentation/routing metadata only —
+ * it must NEVER feed an authorization decision. The UA is
+ * caller-controlled; execution gating keys on tier/token (see the
+ * free-tier dispatch gate in `registerTool`), so a spoofed UA can widen
+ * what a connection SEES, never what it can EXECUTE.
  *
  * The match is intentionally loose: we don't care about exact UA
  * strings, just whether the request smells like one of the major
@@ -696,8 +704,15 @@ function registerTool(
   // self-identifying its host — empirically unreliable, since the
   // model has no first-class signal beyond the description text
   // itself.
+  // Resolved through `annotationClientFamily` (not the raw kind) so a
+  // `chatgpt:` override reaches the whole ChatGPT family — the desktop app
+  // (`"codex"`) must see the same descriptions as chatgpt.com, the same way
+  // it already resolves the same annotations. Reading `options.client`
+  // directly here would silently exempt codex from the first
+  // `descriptionByClient` override any tool adds.
   const description =
-    tool.descriptionByClient?.[options.client] ?? tool.description;
+    tool.descriptionByClient?.[annotationClientFamily(options.client)] ??
+    tool.description;
   const config: Record<string, unknown> = {
     title: tool.annotations.title,
     description,
@@ -1575,9 +1590,10 @@ export async function handleMcpRequest(
     const url = new URL(request.url);
     const requestOrigin = url.origin;
     // Detect calling client from User-Agent so we can route the chart
-    // widget to ChatGPT and Claude (unknown clients fall back to the
-    // inline PNG) and route ChatGPT through the agent split pair. See
-    // `detectMcpClient` for the matching rules.
+    // widget to widget clients (see `isWidgetClient`; unknown clients
+    // fall back to the inline PNG) and route the ChatGPT family — both
+    // chatgpt.com and the desktop app — through the agent split pair.
+    // See `detectMcpClient` for the matching rules.
     const userAgent = request.headers.get("user-agent");
     const client = detectMcpClient(userAgent);
     // Log the RAW User-Agent next to the kind it resolved to, once per
@@ -1657,7 +1673,7 @@ export async function handleMcpRequest(
       // (`"codex"`) reads the same field for its connector link-account
       // flow. Every other client gets the SDK's response untouched.
       return isChatGptFamilyClient(client)
-        ? await withChatGptToolSecuritySchemes(response, tier)
+        ? await withChatGptToolSecuritySchemes(response, tier, client)
         : response;
     } finally {
       // TODO(Phase 2): revisit this unconditional close.
@@ -1715,24 +1731,33 @@ export async function handleMcpRequest(
 export async function withChatGptToolSecuritySchemes(
   response: Response,
   tier: Tier,
+  // The DETECTED client, threaded through so the scheme derivation and the
+  // log line below carry the real kind. Hardcoding "chatgpt" here was
+  // functionally identical (the caller already gates on the ChatGPT
+  // family, and `securitySchemesForTool` branches on the same predicate)
+  // but it made codex traffic log as chatgpt — hiding codex adoption and
+  // codex UA drift from `wrangler tail` — and would silently misroute the
+  // day the two family members diverge in `securitySchemesForTool`.
+  // Defaulted for existing tests; production passes the detected kind.
+  client: McpClientKind = "chatgpt",
 ): Promise<Response> {
   try {
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) return response;
     const body = (await response.clone().json()) as unknown;
     const transformed = withToolSecuritySchemes(body, {
-      client: "chatgpt",
+      client,
       tier,
     });
     if (transformed === body) return response;
     // Positive rollout/observability signal: this line appearing in
-    // `wrangler tail` proves the UA resolved to chatgpt AND the
-    // injection ran. Its ABSENCE while ChatGPT sign-in misbehaves points
-    // straight at `detectMcpClient` (e.g. a connector UA change) —
+    // `wrangler tail` proves the UA resolved to a ChatGPT-family client
+    // AND the injection ran. Its ABSENCE while ChatGPT sign-in misbehaves
+    // points straight at `detectMcpClient` (e.g. a connector UA change) —
     // without it, a UA miss is indistinguishable from "ChatGPT changed
     // something" (review finding on PR #183).
     console.log(
-      `[mcp] tools/list securitySchemes injected client=chatgpt tier=${tier}`,
+      `[mcp] tools/list securitySchemes injected client=${client} tier=${tier}`,
     );
     const headers = new Headers(response.headers);
     // The rewritten body has a different byte length; let the runtime
