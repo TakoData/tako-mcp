@@ -357,6 +357,45 @@ describe("tako_visualize input schema", () => {
 
 // --- Contract guard tests (A7) ---
 
+describe("tako_visualize chart prefetch, exactly like tako_search", () => {
+  it.each(["chatgpt", "codex"] as const)(
+    "sends %s dimensions only, never the whole PNG",
+    async (client) => {
+      // Third of the three `bakeImage: !isChatGptFamilyClient(ctx.client)`
+      // gates named in the staged-rollout checklist (search, answer,
+      // visualize). Search's gate is pinned in mcp.test.ts and answer's in
+      // tako_answer.test.ts; without this one, a per-tool revert here
+      // would bake the full PNG into every desktop-app visualize call —
+      // paying the render latency for a payload the widget discards —
+      // while the suite stayed green.
+      const seen: { url: string; range: string | null }[] = [];
+      vi.spyOn(globalThis, "fetch").mockImplementation((async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        const req = new Request(input as RequestInfo, init);
+        seen.push({ url: req.url, range: req.headers.get("range") });
+        // 8 bytes of PNG signature + IHDR length so the dimension parser
+        // has something to chew on; the assertion is about the REQUEST.
+        return new Response(new Uint8Array(64), {
+          status: 206,
+          headers: { "content-type": "image/png" },
+        });
+      }) as typeof fetch);
+
+      await takoVisualize.extraMeta!(
+        {
+          image_url: "https://x.test/api/v1/image/card_abc123/",
+          pub_id: "card_abc123",
+        } as never,
+        { ...CTX, client } as never,
+      );
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.range).not.toBeNull();
+    },
+  );
+});
+
 // Representative thin_viz/create response that the backend returns
 // (a full card dump; ThinVizCard documents only the populated subset).
 const KNOWLEDGE_CARD_WIRE = {

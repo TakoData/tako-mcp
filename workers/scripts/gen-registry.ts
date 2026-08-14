@@ -290,6 +290,35 @@ export function assertChatgptSubmissionParity(
     }
   }
 
+  // The submission covers the ChatGPT PRODUCT, and the product has two MCP
+  // transports: chatgpt.com's connector AND the desktop app (detected as
+  // "codex"). Every surface equality above is asserted against "chatgpt"
+  // only, so without this block a revert of codex's family/widget
+  // membership (e.g. dropping it from `isChatGptFamilyClient`) would leave
+  // `registry:check` green while the desktop app lists a DIFFERENT tool set
+  // than the submission declares — review finding on PR #239. Equality of
+  // the two members' surfaces at both tiers is exactly "the family shares
+  // one surface", which is the premise the submission rests on.
+  for (const tier of ["authenticated", "free"] as const) {
+    const chatgptSurface = tools
+      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns, tier))
+      .map((t) => t.name)
+      .sort();
+    const codexSurface = tools
+      .filter((t) => isToolOnSurface(t.name, "codex", noOptIns, tier))
+      .map((t) => t.name)
+      .sort();
+    if (JSON.stringify(codexSurface) !== JSON.stringify(chatgptSurface)) {
+      problems.push(
+        `codex (ChatGPT desktop app) ${tier} surface [${codexSurface.join(
+          ", ",
+        )}] diverges from chatgpt's [${chatgptSurface.join(
+          ", ",
+        )}] — the submission describes the ChatGPT product, which includes the desktop app; restore family membership in workers/src/tools/_surface.ts`,
+      );
+    }
+  }
+
   const HINT_KEYS = ["readOnlyHint", "openWorldHint", "destructiveHint"] as const;
   for (const [name, resolved] of expected) {
     const declared = declaredTools[name];

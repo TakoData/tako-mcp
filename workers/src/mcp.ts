@@ -1738,8 +1738,11 @@ export async function withChatGptToolSecuritySchemes(
   // but it made codex traffic log as chatgpt — hiding codex adoption and
   // codex UA drift from `wrangler tail` — and would silently misroute the
   // day the two family members diverge in `securitySchemesForTool`.
-  // Defaulted for existing tests; production passes the detected kind.
-  client: McpClientKind = "chatgpt",
+  // REQUIRED (no `= "chatgpt"` default): the schemes body is byte-identical
+  // for the two family members today, so nothing asserts this argument —
+  // a default would let a revert to a hardcoded kind pass the whole suite
+  // while silently flattening the log line's client dimension.
+  client: McpClientKind,
 ): Promise<Response> {
   try {
     const contentType = response.headers.get("content-type") ?? "";
