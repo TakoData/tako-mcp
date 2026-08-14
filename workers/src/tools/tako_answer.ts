@@ -4,6 +4,7 @@ import { djangoPost } from "../django.js";
 import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
+import { isChatGptFamilyClient } from "./_surface.js";
 import {
   answerSlimOutputShape,
   renderAnswerMarkdown,
@@ -378,11 +379,12 @@ const takoAnswer = {
   // there; the only reason it is duplicated rather than shared is that the
   // hooks are per-tool fields on `ToolModule`.
   async extraMeta(output, ctx) {
-    // ChatGPT renders `embed_url` in an iframe and never reads the baked PNG,
-    // but still needs the aspect ratio to size that iframe — dimensions only
-    // there (a 64-byte ranged read instead of a ~170 KB render).
+    // The ChatGPT family renders `embed_url` in an iframe and never reads
+    // the baked PNG, but still needs the aspect ratio to size that iframe —
+    // dimensions only there (a 64-byte ranged read instead of a ~170 KB
+    // render).
     return buildChartExtraMeta(output.image_url, {
-      bakeImage: ctx.client !== "chatgpt",
+      bakeImage: !isChatGptFamilyClient(ctx.client),
       env: ctx.env,
       origin: ctx.origin,
       pubId: output.pub_id,

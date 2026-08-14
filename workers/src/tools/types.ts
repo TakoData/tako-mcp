@@ -35,12 +35,11 @@ import type { Tier } from "../freetier.js";
  * as `codex-mcp-client/<version>`, one shared MCP client for desktop
  * Chat/Work threads, Codex tasks, and the headless CLI). It is the
  * ChatGPT product family for tool-surface purposes (see
- * `isChatGptFamilyClient` in `_surface.ts`) but deliberately NOT a widget
- * client yet: its widget sandbox is a custom `codex-sandbox://` scheme
- * origin that tako.com's `frame-ancestors` does not allow, so widget
- * `_meta` would make the app mount a card it cannot paint — a grey tile
- * where the inline PNG used to be. `isWidgetClient` documents the flip
- * checklist for when the backend CSP ships.
+ * `isChatGptFamilyClient` in `_surface.ts`) AND a widget client — its
+ * widget sandbox is a custom `codex-sandbox://` scheme origin, which
+ * tako.com's `frame-ancestors` admits since TakoData/tako#29218; on a
+ * backend without that header the card iframe is blocked and the app
+ * shows a grey tile (see `isWidgetClient` in `_surface.ts`).
  */
 export type McpClientKind = "claude" | "chatgpt" | "codex" | "unknown";
 
