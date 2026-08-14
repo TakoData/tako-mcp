@@ -18,7 +18,8 @@
  * fixed key list from its config and the `tools/list` handler rebuilds each
  * descriptor from fixed fields, so unknown top-level fields are dropped
  * (verified against 1.29.0 and 1.30.0). `mcp.ts` therefore injects the
- * field into the already-buffered JSON response for ChatGPT clients via
+ * field into the already-buffered JSON response for ChatGPT-FAMILY
+ * clients (chatgpt.com and the desktop app's codex runtime) via
  * {@link withToolSecuritySchemes} — a post-serialization adapter, not an
  * SDK fork.
  *
