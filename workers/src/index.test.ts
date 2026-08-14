@@ -468,16 +468,13 @@ describe("worker routing", () => {
     }
   });
 
-  it("POST /mcp tools/list serves the codex desktop app the family surface, without the widget", async () => {
-    // End-to-end pin for the ChatGPT desktop app (codex runtime): it gets
-    // the ChatGPT-family treatment — securitySchemes injection included —
-    // but NOT the widget `_meta` and NOT default-on tako_visualize, both
-    // of which are gated on `isWidgetClient` until tako.com's
-    // `frame-ancestors` allows `codex-sandbox:` AND the flip is validated
-    // live (see isChatGptFamilyClient's flip checklist). Without this
-    // test, reverting any single `isChatGptFamilyClient` call site back
-    // to `client === "chatgpt"` passes the whole suite while silently
-    // degrading the desktop app to the 3-tool unknown surface.
+  it("POST /mcp tools/list serves the codex desktop app the family surface, with the widget", async () => {
+    // End-to-end pin for the ChatGPT desktop app (codex runtime) AFTER
+    // the widget flip: full ChatGPT-family treatment — securitySchemes
+    // injection, default-on tako_visualize, and widget `_meta` — exactly
+    // mirroring chatgpt.com. Without this test, reverting any single
+    // `isChatGptFamilyClient`/`isWidgetClient` call site passes the
+    // whole suite while silently degrading the desktop app.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -504,23 +501,28 @@ describe("worker routing", () => {
         }>;
       };
     };
-    // Family surface minus the widget-gated visualize (default-on rides
-    // `isWidgetClient`, which codex has not joined yet).
+    // Full family surface, identical to chatgpt.com: visualize is
+    // default-on because codex is a widget client after the flip.
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
+      "tako_visualize",
     ]);
     const oauth2 = { type: "oauth2", scopes: ["mcp"] };
+    const widgetOwners = new Set([
+      "tako_answer",
+      "tako_search",
+      "tako_visualize",
+    ]);
     for (const t of body.result.tools) {
       // The family injection reaches codex descriptors...
       expect(t.securitySchemes, t.name).toEqual([oauth2]);
-      // ...but widget `_meta` must not: a codex widget iframe is blocked
-      // by tako.com's frame-ancestors until the backend deploy, and
-      // widget `_meta` suppresses the inline PNG the app renders today.
-      expect(t._meta?.["openai/outputTemplate"], t.name).toBeUndefined();
-      expect(t._meta?.["ui"], t.name).toBeUndefined();
+      // ...and the chart tools carry the widget `_meta` chatgpt.com gets.
+      if (widgetOwners.has(t.name)) {
+        expect(t._meta?.["openai/outputTemplate"], t.name).toBeDefined();
+      }
     }
   });
 

@@ -608,26 +608,22 @@ describe("chart render gates per client", () => {
     ).toBeDefined();
   });
 
-  it("codex client: chart ships as an inline image content block, NO widget metadata", async () => {
-    // THE staged-rollout pin (adversarial review, PR #239): the desktop
-    // app's `enable_mcp_apps` flag is off for almost all users and the
-    // same UA covers the headless Codex CLI — for both, widget `_meta`
-    // would suppress this image block (the mutual-exclusion gate) and
-    // the chart would vanish from the chat entirely. Codex therefore
-    // keeps the unknown-style PNG until the flip is validated live.
-    // Measured 2026-08-13: a widget-classified codex build returned
-    // [text] only, vs [text, image] for unknown — this test exists so
-    // that regression can never ship silently again.
-    mockFetchSequence([searchResponse(), pngResponse()]);
+  it("codex client: widget metadata ships, no image block, and no PNG prefetch", async () => {
+    // THE FLIP (supersedes PR #239's staged pin): codex now mirrors
+    // chatgpt exactly — widget `_meta`, no image content block, no PNG
+    // prefetch. KNOWN COSTS accepted by this flip, do not merge until
+    // they are answered live (see the draft PR's open questions):
+    // flag-off desktop users and the headless Codex CLI lose the inline
+    // PNG this result used to carry (measured 2026-08-13: [text] only vs
+    // [text, image] for unknown).
+    mockFetchSequence([searchResponse()]);
 
     const result = await callSearch("codex");
 
-    const imageBlocks = result.content.filter((b) => b.type === "image");
-    expect(imageBlocks).toHaveLength(1);
-    expect(imageBlocks[0]?.mimeType).toBe("image/png");
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
     expect(
       (result._meta as { ui?: unknown } | undefined)?.ui,
-    ).toBeUndefined();
+    ).toBeDefined();
   });
 
   it("claude client: no image block when the search returns zero cards", async () => {
