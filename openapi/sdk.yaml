@@ -2238,6 +2238,7 @@ components:
       - NAICS Industries
       - BLS Industries
       - PSC Categories
+      - Purchase Categories
       - Federal Contractors
       - Federal Agencies
       - Federal Subagencies
