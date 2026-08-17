@@ -247,6 +247,7 @@ describe("checkFreeTierRateLimit", () => {
     const req = mcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
       kind: "allowed",
+      body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
     });
     expect((config.globalLimiter as ReturnType<typeof fakeLimiter>).keys).toEqual([
       "global",
@@ -293,6 +294,7 @@ describe("checkFreeTierRateLimit", () => {
     const req = mcpRequest(TOOLS_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" });
     await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
       kind: "allowed",
+      body: TOOLS_CALL_BODY,
     });
     expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([
       "203.0.113.7",
@@ -331,6 +333,12 @@ describe("checkFreeTierRateLimit", () => {
     });
     await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
       kind: "allowed",
+      body: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "tako_agent", arguments: {} },
+      },
     });
     expect((config.limiter as ReturnType<typeof fakeLimiter>).keys).toEqual([]);
     expect((config.globalLimiter as ReturnType<typeof fakeLimiter>).keys).toEqual([
@@ -434,6 +442,7 @@ describe("checkFreeTierRateLimit", () => {
       const req = mcpRequest(TOOLS_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" });
       await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
         kind: "allowed",
+        body: TOOLS_CALL_BODY,
       });
       expect(errSpy).toHaveBeenCalledOnce();
       expect(String(errSpy.mock.calls[0]?.[0])).toContain("failing open");
@@ -449,6 +458,7 @@ describe("checkFreeTierRateLimit", () => {
       const req = mcpRequest(TOOLS_CALL_BODY);
       await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
         kind: "allowed",
+        body: TOOLS_CALL_BODY,
       });
       expect(errSpy).toHaveBeenCalledOnce();
       expect(String(errSpy.mock.calls[0]?.[0])).toContain("failing open");
@@ -1027,8 +1037,9 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("an anonymous call to a hidden tool does not burn per-IP quota", async () => {
+  it("an anonymous call to a hidden tool answers sign-in guidance, burns no per-IP quota, never hits Django", async () => {
     const limiter = fakeLimiter(false); // would 429 the call if consulted
+    const fetchMock = mockFetchSequence([]);
     const res = await worker.fetch(
       post({
         jsonrpc: "2.0",
@@ -1038,11 +1049,45 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       }),
       freeEnv(limiter),
     );
-    // The SDK answers "tool not found" itself (the tool is unregistered
-    // on the free tier); the per-IP bucket is untouched.
+    // Pre-dispatch gate (`freeTierHiddenToolResponse`): a KNOWN tool the
+    // free tier can't run answers the same auth-required result the
+    // ChatGPT dispatch gate uses — NOT the SDK's bare "tool not found",
+    // which reads as "this tool does not exist" when the truth is "sign
+    // in and it works". Per-IP bucket untouched, nothing reaches Django.
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      id: number;
+      result: {
+        content: Array<{ text: string }>;
+        isError: boolean;
+        _meta: Record<string, { kind?: string }>;
+      };
+    };
+    expect(body.id).toBe(8);
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toContain("linked Tako account");
+    expect(body.result._meta["tako/error"]?.kind).toBe("auth_required");
+    expect(limiter.keys).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("an anonymous call to a NONEXISTENT tool still gets the SDK's genuine tool-not-found", async () => {
+    // The gate only answers for names the registry knows — claiming a
+    // typo'd tool needs auth would send the caller on a pointless sign-in.
+    const limiter = fakeLimiter(false);
+    const res = await worker.fetch(
+      post({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/call",
+        params: { name: "tako_nonexistent", arguments: {} },
+      }),
+      freeEnv(limiter),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
     expect(JSON.stringify(body)).toMatch(/not found/i);
+    expect(JSON.stringify(body)).not.toMatch(/linked Tako account/i);
     expect(limiter.keys).toEqual([]);
   });
 
@@ -1082,7 +1127,12 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.content[0]?.text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
   });
 
-  it("authenticated credit exhaustion keeps the real Django error (no capacity substitution)", async () => {
+  it("authenticated credit exhaustion gets the curated payment message with the top-up pointer (no capacity masking)", async () => {
+    // The free tier masks 402s as neutral "capacity" (the caller has no
+    // account to top up); an authenticated caller OWNS the balance, so the
+    // actionable answer names the cause and the fix. Before
+    // `paymentRequiredToolResult` this fell through as the raw
+    // "Django returned 402 for POST …" — an internal name and no guidance.
     mockFetchSequence([
       new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
         status: 402,
@@ -1095,11 +1145,49 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
+      result: {
+        content: Array<{ text: string }>;
+        isError: boolean;
+        _meta: Record<string, { kind?: string; status?: number }>;
+      };
+    };
+    expect(body.result.isError).toBe(true);
+    const text = body.result.content[0]?.text ?? "";
+    expect(text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
+    expect(text).toContain("out of credits");
+    // Unknown client → the tako.com top-up pointer is included.
+    expect(text).toContain("tako.com");
+    expect(body.result._meta["tako/error"]?.kind).toBe("payment_required");
+    expect(body.result._meta["tako/error"]?.status).toBe(402);
+  });
+
+  it("authenticated credit exhaustion on a ChatGPT-family client carries no top-up pointer", async () => {
+    // Same commerce-policy reasoning as the free-tier message guards:
+    // this text reaches ChatGPT's model as tool-result text, and OpenAI
+    // forbids promoting purchases through an app. The factual cause stays;
+    // the where-to-buy directive goes.
+    mockFetchSequence([
+      new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
+        status: 402,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+    const res = await worker.fetch(
+      post(ANSWER_CALL_BODY, {
+        authorization: "Bearer real-user-token",
+        "user-agent": "openai-mcp/1.0",
+      }),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
       result: { content: Array<{ text: string }>; isError: boolean };
     };
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]?.text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
-    expect(body.result.content[0]?.text).toContain("402");
+    const text = body.result.content[0]?.text ?? "";
+    expect(text).toContain("out of credits");
+    expect(text).not.toContain("tako.com");
+    expect(text).not.toMatch(/https?:\/\//);
   });
 
   it("a malformed Authorization header still 401s even with the free tier configured", async () => {

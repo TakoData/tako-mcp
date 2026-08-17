@@ -188,13 +188,45 @@ export const SERVER_VERSION = "0.20.0"; // x-release-please-version
  * model's trust in the whole surface. Watch routing on questions Tako cannot
  * serve; if misrouting shows up, this hedge is the first thing to restore.
  */
-export const SERVER_INSTRUCTIONS = [
+const SHARED_INSTRUCTION_PARAGRAPHS = [
   "Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.",
   "",
   "`tako_answer` and `tako_search` do different jobs, so pick one, don't chain them. `tako_answer` for ONE specific figure. `tako_search` for breadth, or when the chart or embed is the deliverable.",
+];
+
+export const SERVER_INSTRUCTIONS = [
+  ...SHARED_INSTRUCTION_PARAGRAPHS,
   "",
   "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.",
 ].join("\n");
+
+/**
+ * Instructions served to ANONYMOUS (free-tier) connections. Identical to
+ * `SERVER_INSTRUCTIONS` except the last paragraph: the authenticated text
+ * describes `tako_contents` as if it were callable, but the anonymous
+ * surface hides it on most clients — a model given the authenticated
+ * paragraph calls a tool that "does not exist" and reads the SDK's
+ * unknown-tool error as a server bug. The free variant states the actual
+ * toolset and that the rest unlocks with a Tako account, which converts
+ * the contradiction into accurate discoverability (and pairs with the
+ * pre-dispatch gate in `handleMcpRequest`, which answers such calls with
+ * sign-in guidance instead of "tool not found").
+ *
+ * The shared paragraphs are spread from one array, not copied, so tuning
+ * the cross-tool guidance cannot drift the two tiers apart. Authenticated
+ * connections keep `SERVER_INSTRUCTIONS` byte-identical — existing
+ * integrations see no change.
+ */
+export const FREE_TIER_SERVER_INSTRUCTIONS = [
+  ...SHARED_INSTRUCTION_PARAGRAPHS,
+  "",
+  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. This connection is anonymous: `tako_available_data`, `tako_search`, and `tako_answer` are the full toolset here. Other tools — like `tako_contents`, which reads one source in full (an exportable card's rows, or a web page's text by url) — become available on a connection authenticated with a Tako account.",
+].join("\n");
+
+/** The `initialize` instructions for a connection's tier. */
+export function serverInstructionsForTier(tier: Tier): string {
+  return tier === "free" ? FREE_TIER_SERVER_INSTRUCTIONS : SERVER_INSTRUCTIONS;
+}
 
 /**
  * MCP Apps UI resource MIME type. Hosts (claude.ai, ChatGPT Apps SDK, VS
@@ -401,6 +433,26 @@ export function createMcpServer(
         ]
       : undefined;
 
+  // Tier resolution is fail-closed against a future call site that sets
+  // the tier only on ToolContext: `options.tier` wins when provided, but
+  // an omitted option falls back to `ctx.tier` (NOT straight to
+  // "authenticated") — the dispatch gate below is the only execution
+  // barrier for auth-required tools, so its input must never silently
+  // default permissive when the caller declared a tier anywhere. If both
+  // are provided they must agree; a disagreement is a config bug that
+  // fails loud rather than picking a side. Resolved BEFORE the server is
+  // constructed because the `initialize` instructions are tier-specific.
+  if (
+    options.tier !== undefined &&
+    ctx.tier !== undefined &&
+    options.tier !== ctx.tier
+  ) {
+    throw new Error(
+      `createMcpServer: options.tier ("${options.tier}") disagrees with ctx.tier ("${ctx.tier}")`,
+    );
+  }
+  const tier = options.tier ?? ctx.tier ?? "authenticated";
+
   const server = new McpServer(
     {
       name: SERVER_NAME,
@@ -413,7 +465,7 @@ export function createMcpServer(
     },
     {
       jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: serverInstructionsForTier(tier),
     },
   );
 
@@ -459,24 +511,6 @@ export function createMcpServer(
   // success state.
   const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
   const client = options.client ?? "unknown";
-  // Tier resolution is fail-closed against a future call site that sets
-  // the tier only on ToolContext: `options.tier` wins when provided, but
-  // an omitted option falls back to `ctx.tier` (NOT straight to
-  // "authenticated") — the dispatch gate below is the only execution
-  // barrier for auth-required tools, so its input must never silently
-  // default permissive when the caller declared a tier anywhere. If both
-  // are provided they must agree; a disagreement is a config bug that
-  // fails loud rather than picking a side.
-  if (
-    options.tier !== undefined &&
-    ctx.tier !== undefined &&
-    options.tier !== ctx.tier
-  ) {
-    throw new Error(
-      `createMcpServer: options.tier ("${options.tier}") disagrees with ctx.tier ("${ctx.tier}")`,
-    );
-  }
-  const tier = options.tier ?? ctx.tier ?? "authenticated";
   // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
   // Empty by default → the default surface excludes every optional tool.
   const enabledOptionalToolNames =
@@ -1119,21 +1153,22 @@ function registerTool(
           console.error(
             `[mcp] tool error tool=${tool.name} client=${options.client} tier=${callCtx.tier} kind=${djangoErrorKind(err)} status=${err.status ?? "(none)"} method=${err.method} path=${err.path}: ${err.message}`,
           );
-          // Free tier: the shared account exhausting its Tako credits is
-          // the tier's expected steady-state failure (the Django-side cap
-          // is the fail-open spend backstop). Surface it as the neutral
-          // capacity message, not the raw billing error — which would read
-          // as a bug to an anonymous user who has no account to top up.
-          // Status 402 is the complete signal (Django's
-          // PaymentRequiredError always serves 402); matching on body text
-          // would let any 4xx that echoes caller-supplied input masquerade
-          // as credit exhaustion.
-          if (
-            callCtx.tier === "free" &&
-            err instanceof DjangoHttpError &&
-            err.status === 402
-          ) {
-            return freeTierCreditsToolResult();
+          // Credit exhaustion (Django 402) maps per tier. Free tier: the
+          // shared account running dry is the tier's expected steady-state
+          // failure (the Django-side cap is the fail-open spend backstop),
+          // surfaced as the neutral capacity message — the raw billing
+          // error would read as a bug to an anonymous user who has no
+          // account to top up. Authenticated tier: the caller OWNS the
+          // exhausted balance, so the curated message names the cause and
+          // the fix instead of the raw "Django returned 402" text (see
+          // `paymentRequiredToolResult`). Status 402 is the complete
+          // signal (Django's PaymentRequiredError always serves 402);
+          // matching on body text would let any 4xx that echoes
+          // caller-supplied input masquerade as credit exhaustion.
+          if (err instanceof DjangoHttpError && err.status === 402) {
+            return callCtx.tier === "free"
+              ? freeTierCreditsToolResult()
+              : paymentRequiredToolResult(err, options.client);
           }
           const mapped = djangoErrorToToolResult(err);
           // A 401 from Django on an AUTHENTICATED connection means the
@@ -1444,6 +1479,74 @@ export function djangoErrorToToolResult(err: DjangoError): {
 }
 
 /**
+ * Model-visible message for an AUTHENTICATED caller whose own Tako account
+ * is out of credits (Django 402). Before this mapping the caller got the
+ * raw `djangoErrorToToolResult` text — "Django returned 402 for POST …" —
+ * which names an internal, says nothing about credits, and gives the agent
+ * no way to tell "add credits" from "server bug". Unlike the free tier's
+ * `FREE_TIER_CREDITS_MESSAGE` (which deliberately masks the cause, because
+ * an anonymous caller has no account to top up), an authenticated caller
+ * OWNS the exhausted balance, so naming the cause is the actionable answer.
+ *
+ * The base message states the cause, the retry semantics (retrying without
+ * adding credits fails again — stops the agent burning turns), and the
+ * surviving free move (`tako_available_data`).
+ */
+export const PAYMENT_REQUIRED_MESSAGE =
+  "This Tako account is out of credits, so the call could not run. " +
+  "Retrying without adding credits will fail again. `tako_available_data` " +
+  "is free and still works.";
+
+/**
+ * The top-up pointer appended for every client EXCEPT the ChatGPT family.
+ * OpenAI's commerce policy forbids promoting or selling digital services,
+ * subscriptions, tokens, or credits through an app, and this string reaches
+ * ChatGPT's model as tool-result text — the same reasoning that keeps every
+ * free-tier message in `freetier.ts` link-free (see
+ * `FREE_TIER_LIMIT_MESSAGE`). Stating the factual cause ("out of credits")
+ * is error reporting and stays in the base message on every client; the
+ * where-to-buy directive is the part that crosses into promotion, so it is
+ * gated. Bare domain, no path: deep links rot (the `/account/` path the old
+ * free-tier upsell used was already stale when it was removed).
+ */
+export const PAYMENT_REQUIRED_TOPUP_SUFFIX =
+  " Add credits to the account on tako.com to continue.";
+
+/**
+ * Convert an authenticated-tier Django 402 into a curated payment-required
+ * tool result. Same envelope as `djangoErrorToToolResult` (`isError: true`,
+ * text content, `_meta["tako/error"]` detail with the upstream body kept
+ * for debugging) with the model-visible text replaced by actionable
+ * out-of-credits guidance. The free tier never reaches this — its 402s map
+ * to `freeTierCreditsToolResult` first (see the catch in `registerTool`).
+ */
+export function paymentRequiredToolResult(
+  err: DjangoHttpError,
+  client: McpClientKind,
+): {
+  content: Array<{ type: "text"; text: string }>;
+  _meta: Record<string, unknown>;
+  isError: true;
+} {
+  const detail: Record<string, unknown> = {
+    kind: "payment_required",
+    path: err.path,
+    method: err.method,
+    status: err.status,
+  };
+  const body = errorResponseBody(err);
+  if (body !== undefined) detail.body = body;
+  const text = isChatGptFamilyClient(client)
+    ? PAYMENT_REQUIRED_MESSAGE
+    : PAYMENT_REQUIRED_MESSAGE + PAYMENT_REQUIRED_TOPUP_SUFFIX;
+  return {
+    content: [{ type: "text", text }],
+    _meta: { "tako/error": detail },
+    isError: true,
+  };
+}
+
+/**
  * The upstream response body captured on the error, or `undefined` for
  * subtypes that carry none (timeout, unparseable-2xx). Every body-bearing
  * subtype exposes it as `.body`; centralising the `instanceof` fan-out here
@@ -1471,6 +1574,84 @@ function djangoErrorKind(err: DjangoError): string {
   if (err instanceof DjangoResponseParseError) return "response_parse";
   if (err instanceof DjangoHttpError) return "http";
   return "unknown";
+}
+
+/**
+ * Every tool name the registry knows, regardless of surface. Built once at
+ * module scope — the registry is static.
+ */
+const REGISTRY_TOOL_NAMES: ReadonlySet<string> = new Set(
+  TOOL_REGISTRY.map((tool) => tool.name),
+);
+
+/**
+ * Pre-SDK gate for anonymous `tools/call`s naming a KNOWN tool that the
+ * free tier cannot execute. Returns the sign-in guidance as a JSON-RPC
+ * tool result, or `null` when the request is not that shape (let the SDK
+ * handle it).
+ *
+ * Why this exists: on non-ChatGPT clients, auth-required tools are hidden
+ * from the anonymous surface entirely (see `isToolOnSurface`), so a call
+ * to one — typically a model acting on the server instructions or on stale
+ * conversation memory of an authenticated session — got the SDK's bare
+ * "tool not found". That reads as "this tool does not exist", when the
+ * truth is "sign in and it works", a dead end the model cannot correct.
+ * This gate answers with the SAME `authRequiredToolResult` the ChatGPT
+ * dispatch gate in `registerTool` uses, so every client gets readable,
+ * actionable text (the `_meta["mcp/www_authenticate"]` challenge it
+ * carries is what ChatGPT's link UI keys on; other hosts ignore unknown
+ * `_meta`). The tools stay UNLISTED on non-ChatGPT anonymous surfaces —
+ * the original anti-turn-waste rationale was about listing, not about
+ * answering an explicit call helpfully.
+ *
+ * Scope guards, in order:
+ * - only single `tools/call` bodies (other methods, batches: not ours);
+ * - only names outside `FREE_TIER_TOOL_NAMES` (free tools proceed);
+ * - only names the registry KNOWS (a typo'd name falls through to the
+ *   SDK's genuine unknown-tool error — claiming a nonexistent tool needs
+ *   auth would send the caller on a pointless sign-in);
+ * - only well-formed ids (without one, no valid result can be addressed;
+ *   the SDK rejects the shape itself).
+ *
+ * Metering note: these calls were never per-IP metered (see
+ * `isMeteredJsonRpcBody`) and still aren't — the global ceiling already
+ * counted the request before admission returned.
+ */
+export function freeTierHiddenToolResponse(
+  body: unknown,
+  origin: string,
+): Response | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return null;
+  }
+  const { method, params, id } = body as {
+    method?: unknown;
+    params?: unknown;
+    id?: unknown;
+  };
+  if (method !== "tools/call") return null;
+  if (typeof params !== "object" || params === null) return null;
+  const name = (params as { name?: unknown }).name;
+  if (typeof name !== "string") return null;
+  if (FREE_TIER_TOOL_NAMES.has(name)) return null;
+  if (!REGISTRY_TOOL_NAMES.has(name)) return null;
+  if (typeof id !== "string" && typeof id !== "number") return null;
+  // Same greppable signal as the dispatch gate in `registerTool`, with a
+  // marker for which layer answered.
+  console.log(
+    `[mcp] auth-required tool blocked on free tier tool=${name} layer=pre-dispatch`,
+  );
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      result: authRequiredToolResult(origin),
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    },
+  );
 }
 
 /**
@@ -1535,8 +1716,14 @@ export async function handleMcpRequest(
         return freeTierBatchResponse();
       case "limited":
         return freeTierLimitResponse(meterResult.requestId);
-      case "allowed":
+      case "allowed": {
+        // Known-but-auth-required tool called anonymously: answer with
+        // sign-in guidance instead of letting the SDK say "tool not
+        // found" (see `freeTierHiddenToolResponse`).
+        const gated = freeTierHiddenToolResponse(meterResult.body, origin);
+        if (gated !== null) return gated;
         break;
+      }
     }
     token = freeTier.apiKey;
     tier = "free";
