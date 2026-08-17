@@ -144,7 +144,14 @@ export type JsonRpcRequestId = string | number | null;
 
 /** Outcome of the anonymous-path admission checks, in check order. */
 export type FreeTierMeterResult =
-  | { kind: "allowed" }
+  /**
+   * Admitted. `body` is the parsed JSON-RPC body when the peek could parse
+   * one (absent for unparseable bodies) — carried so the caller can gate
+   * `tools/call`s naming known-but-auth-required tools BEFORE the SDK sees
+   * them (see `handleMcpRequest`'s hidden-tool gate in `mcp.ts`) without a
+   * second body read.
+   */
+  | { kind: "allowed"; body?: unknown }
   /**
    * Per-colo ceiling exhausted — every anonymous request counts here.
    * `requestId` is set when the body is a `tools/call` request (any tool
@@ -239,12 +246,13 @@ export async function checkFreeTierRateLimit(
 
   if (peeked.kind === "unparseable") return { kind: "allowed" };
   if (Array.isArray(body)) return { kind: "batch" };
-  if (!isMeteredJsonRpcBody(body)) return { kind: "allowed" };
+  if (!isMeteredJsonRpcBody(body)) return { kind: "allowed", body };
 
   const rawId = (body as { id?: unknown }).id;
   const requestId: JsonRpcRequestId =
     typeof rawId === "string" || typeof rawId === "number" ? rawId : null;
-  return hitPerIpLimiter(request, config.limiter, requestId);
+  const metered = await hitPerIpLimiter(request, config.limiter, requestId);
+  return metered.kind === "allowed" ? { kind: "allowed", body } : metered;
 }
 
 /**

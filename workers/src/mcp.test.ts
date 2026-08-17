@@ -18,7 +18,11 @@ import {
   createMcpServer,
   detectMcpClient,
   djangoErrorToToolResult,
+  FREE_TIER_SERVER_INSTRUCTIONS,
   logSdkValidationRejections,
+  PAYMENT_REQUIRED_MESSAGE,
+  PAYMENT_REQUIRED_TOPUP_SUFFIX,
+  paymentRequiredToolResult,
   SERVER_INSTRUCTIONS,
   structuredContentFor,
   withChatGptToolSecuritySchemes,
@@ -808,6 +812,44 @@ describe("server instructions", () => {
       // must always name the tool and position it against web search.
       expect(instructions).toContain("tako_search");
       expect(instructions?.toLowerCase()).toContain("web search");
+      // Authenticated connections (the default) keep the canonical
+      // instructions byte-identical — the free-tier variant must never
+      // leak to existing integrations.
+      expect(instructions).toBe(SERVER_INSTRUCTIONS);
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  });
+
+  it("anonymous connections get the free-tier variant that states the actual toolset", async () => {
+    // The authenticated last paragraph describes `tako_contents` as if it
+    // were callable, but the anonymous surface hides it on most clients —
+    // a model given that paragraph calls a tool that "does not exist" and
+    // reads the SDK's unknown-tool error as a server bug. The free variant
+    // must state the anonymous toolset and that the rest unlocks with a
+    // Tako account.
+    const ctx: ToolContext = {
+      token: "free-tier-key",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" },
+      sendProgress: noopSendProgress,
+      client: "unknown",
+      tier: "free",
+    };
+    const server = createMcpServer(ctx, { tier: "free" });
+    const mcpClient = new Client(
+      { name: "instructions-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      const instructions = mcpClient.getInstructions();
+      expect(instructions).toBe(FREE_TIER_SERVER_INSTRUCTIONS);
+      expect(instructions).toContain("anonymous");
+      expect(instructions).toContain("Tako account");
     } finally {
       await mcpClient.close();
       await server.close();
@@ -1376,6 +1418,51 @@ describe("structuredContentFor", () => {
   });
 });
 
+describe("paymentRequiredToolResult", () => {
+  const err402 = () =>
+    new DjangoHttpError({
+      path: "/api/v1/answer/",
+      method: "POST",
+      status: 402,
+      body: '{"error_type": "PAYMENT_REQUIRED"}',
+    });
+
+  it("names the cause, the retry semantics, and the surviving free tool", () => {
+    const result = paymentRequiredToolResult(err402(), "unknown");
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("out of credits");
+    expect(text).toContain("tako_available_data");
+    // The raw upstream framing must not leak — "Django" is an internal.
+    expect(text).not.toContain("Django");
+    const detail = result._meta["tako/error"] as {
+      kind: string;
+      status: number;
+      body?: string;
+    };
+    expect(detail.kind).toBe("payment_required");
+    expect(detail.status).toBe(402);
+    expect(detail.body).toContain("PAYMENT_REQUIRED");
+  });
+
+  it("appends the top-up pointer for non-ChatGPT clients only", () => {
+    for (const client of ["unknown", "claude"] as const) {
+      expect(paymentRequiredToolResult(err402(), client).content[0]?.text).toBe(
+        PAYMENT_REQUIRED_MESSAGE + PAYMENT_REQUIRED_TOPUP_SUFFIX,
+      );
+    }
+    // ChatGPT family: OpenAI's commerce policy forbids promoting purchases
+    // through an app, and this text reaches ChatGPT's model verbatim. The
+    // factual cause stays; the where-to-buy directive goes.
+    for (const client of ["chatgpt", "codex"] as const) {
+      const text = paymentRequiredToolResult(err402(), client).content[0]?.text;
+      expect(text).toBe(PAYMENT_REQUIRED_MESSAGE);
+      expect(text).not.toMatch(/https?:\/\//);
+      expect(text).not.toMatch(/tako\.com/);
+    }
+  });
+});
+
 describe("SERVER_INSTRUCTIONS", () => {
   it("names every tool an agent must choose between", () => {
     for (const tool of [
@@ -1386,6 +1473,39 @@ describe("SERVER_INSTRUCTIONS", () => {
     ]) {
       expect(SERVER_INSTRUCTIONS).toContain(tool);
     }
+  });
+
+  it("the free-tier variant shares the cross-tool guidance and differs only in the last paragraph", () => {
+    // The shared paragraphs are spread from one array in `mcp.ts`; this
+    // pins the invariant so a future edit that forks the tiers' guidance
+    // (rather than just the toolset paragraph) fails loudly.
+    const sharedAuth = SERVER_INSTRUCTIONS.split("\n").slice(0, -1);
+    const sharedFree = FREE_TIER_SERVER_INSTRUCTIONS.split("\n").slice(0, -1);
+    expect(sharedFree).toEqual(sharedAuth);
+    expect(FREE_TIER_SERVER_INSTRUCTIONS).not.toBe(SERVER_INSTRUCTIONS);
+  });
+
+  it("the free-tier variant states the anonymous toolset and the account unlock", () => {
+    // All three executable tools named (the model must know what it CAN
+    // call), plus `tako_contents` as the unlock teaser — paired with the
+    // pre-dispatch gate in `handleMcpRequest`, which answers a call to it
+    // with sign-in guidance rather than "tool not found".
+    for (const tool of [
+      "tako_search",
+      "tako_answer",
+      "tako_available_data",
+      "tako_contents",
+    ]) {
+      expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain(tool);
+    }
+    expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain("anonymous");
+    expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain("Tako account");
+    // No links, no pricing — the same commerce-policy constraint the
+    // free-tier limit messages carry (see freetier.test.ts guards).
+    expect(FREE_TIER_SERVER_INSTRUCTIONS).not.toMatch(/https?:\/\//);
+    expect(FREE_TIER_SERVER_INSTRUCTIONS).not.toMatch(
+      /upgrade|subscri|purchas|\bbuy\b|pricing|\$/i,
+    );
   });
 
   // The instructions sit ABOVE the tool descriptions in the host's system
