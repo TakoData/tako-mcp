@@ -33,6 +33,24 @@ Enforced by `freetier.test.ts` → "no user-facing message promotes an account, 
 or an upgrade", which bans URLs and account/pricing/upgrade wording across every message
 the module can emit — including any added later.
 
+Two model-visible strings live OUTSIDE `freetier.ts` and are gated per client instead of
+banned outright (`workers/src/mcp.ts`):
+
+- `FREE_TIER_SERVER_INSTRUCTIONS` — the anonymous `initialize` instructions. States which
+  tools run anonymously and that others "become available on a connection authenticated
+  with a Tako account". No links, no pricing, no upgrade wording (enforced by
+  `mcp.test.ts` → "the free-tier variant states the anonymous toolset and the account
+  unlock"). Account *linking* is the flow OpenAI's own Apps SDK auth guide expects, so
+  naming it is not commerce copy.
+- `PAYMENT_REQUIRED_MESSAGE` (+ remedy splice) — an AUTHENTICATED caller's own account out
+  of credits (Django 402). Every client gets the factual cause-only message. The remedy
+  sentence (spliced from Django's own 402 body — "Upgrade your plan…" / "Add credits…") is
+  commerce copy, so it appears ONLY for positively-identified Anthropic clients:
+  `commerceCopyAllowedForUa` fails CLOSED, sending ChatGPT-family and every unrecognized
+  UA (reviewers, crawlers, not-yet-classified ChatGPT clients) the cause-only text.
+  Enforced by `mcp.test.ts` → "omits ALL remedy copy when commerce copy is not allowed"
+  and the ChatGPT/unknown e2e case in `freetier.test.ts`.
+
 Paid functionality itself is untouched: an authenticated connection behaves exactly as
 before, and `get_credit_balance` (opt-in only, not on the ChatGPT surface) still answers
 account questions when a user asks one.

@@ -927,8 +927,13 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(challenges[0]).toContain(
       'resource_metadata="https://example.com/.well-known/oauth-protected-resource"',
     );
-    // Blocked at dispatch: no Django call on the shared key, and non-free
-    // tool names never consume the per-IP bucket.
+    // Over HTTP this is now answered by the PRE-DISPATCH gate
+    // (`freeTierHiddenToolResponse` in `handleMcpRequest`) — the
+    // `registerTool` dispatch gate behind it returns the same result and
+    // stays directly exercised by the in-memory `callTool` tests in
+    // mcp.test.ts (defense in depth, not dead code). Either way: no
+    // Django call on the shared key, and non-free tool names never
+    // consume the per-IP bucket.
     expect(fetchMock).not.toHaveBeenCalled();
     expect(limiter.keys).toEqual([]);
   });
@@ -1067,7 +1072,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     };
     expect(body.id).toBe(8);
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]?.text).toContain("linked Tako account");
+    expect(body.result.content[0]?.text).toContain("requires a Tako account");
     expect(body.result._meta["tako/error"]?.kind).toBe("auth_required");
     expect(limiter.keys).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -1089,7 +1094,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
     expect(JSON.stringify(body)).toMatch(/not found/i);
-    expect(JSON.stringify(body)).not.toMatch(/linked Tako account/i);
+    expect(JSON.stringify(body)).not.toMatch(/requires a Tako account/i);
     expect(limiter.keys).toEqual([]);
   });
 
@@ -1112,7 +1117,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
     expect(JSON.stringify(body)).toMatch(/not found/i);
-    expect(JSON.stringify(body)).not.toMatch(/linked Tako account/i);
+    expect(JSON.stringify(body)).not.toMatch(/requires a Tako account/i);
     expect(limiter.keys).toEqual([]);
   });
 
@@ -1138,7 +1143,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       result: { content: Array<{ text: string }>; isError: boolean };
     };
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]?.text).toContain("linked Tako account");
+    expect(body.result.content[0]?.text).toContain("requires a Tako account");
     expect(limiter.keys).toEqual([]);
   });
 
@@ -1193,18 +1198,40 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.content[0]?.text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
   });
 
-  it("authenticated credit exhaustion on a claude client gets the curated payment message with the top-up pointer", async () => {
+  // The two REAL 402 bodies the priced endpoints emit (verified against
+  // subscriptions/decorators.py in the monorepo): monthly plan credits
+  // (regrant each cycle; remedy = upgrade/wait) vs prepaid PAYG balance
+  // (remedy = add credits).
+  const SUBSCRIPTION_402 = () =>
+    new Response(
+      JSON.stringify({
+        error: "insufficient_credits",
+        message:
+          "You don't have enough credits for this request (need 3, have 0). " +
+          "Upgrade your plan for more credits.",
+        upgrade_url: "/pricing",
+      }),
+      { status: 402, headers: { "content-type": "application/json" } },
+    );
+  const PAYG_402 = () =>
+    new Response(
+      JSON.stringify({
+        error_type: "PAYMENT_REQUIRED",
+        error_message:
+          "Your API credit balance is exhausted. Add credits to continue.",
+        balance_cents: 0,
+      }),
+      { status: 402, headers: { "content-type": "application/json" } },
+    );
+
+  it("authenticated credit exhaustion on a claude client splices Django's own remedy", async () => {
     // The free tier masks 402s as neutral "capacity" (the caller has no
     // account to top up); an authenticated caller OWNS the balance, so the
-    // actionable answer names the cause and the fix. Before
-    // `paymentRequiredToolResult` this fell through as the raw
-    // "Django returned 402 for POST …" — an internal name and no guidance.
-    mockFetchSequence([
-      new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
-        status: 402,
-        headers: { "content-type": "application/json" },
-      }),
-    ]);
+    // actionable answer names the cause and the backend's OWN remedy —
+    // which differs by account type, so it is spliced from the 402 body
+    // rather than hand-written. Before `paymentRequiredToolResult` this
+    // fell through as the raw "Django returned 402 for POST …".
+    mockFetchSequence([SUBSCRIPTION_402()]);
     const res = await worker.fetch(
       post(ANSWER_CALL_BODY, {
         authorization: "Bearer real-user-token",
@@ -1224,29 +1251,46 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     const text = body.result.content[0]?.text ?? "";
     expect(text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
     expect(text).toContain("out of credits");
-    // Positively-identified claude client → the tako.com pointer is
-    // included.
-    expect(text).toContain("tako.com");
+    // A subscription 402 names the subscription remedy — not "add
+    // credits", which a FREE/PRO subscriber cannot do.
+    expect(text).toContain("Upgrade your plan for more credits.");
     expect(body.result._meta["tako/error"]?.kind).toBe("payment_required");
     expect(body.result._meta["tako/error"]?.status).toBe(402);
   });
 
-  it("authenticated credit exhaustion on ChatGPT-family and UNKNOWN clients carries no top-up pointer", async () => {
-    // ChatGPT family: OpenAI's commerce policy forbids promoting purchases
-    // through an app, and this text reaches ChatGPT's model as tool-result
-    // text. UNKNOWN fails closed for the same reason `annotationClientFamily`
-    // buckets it with chatgpt: an OpenAI reviewer/crawler — or a ChatGPT
-    // UA `detectMcpClient` hasn't learned yet (the desktop app's
-    // `codex-mcp-client` UA was exactly that once) — lands on unknown, and
-    // serving it commerce copy is the policy violation this gating exists
-    // to prevent. The factual cause stays on every client.
+  it("authenticated credit exhaustion on Claude Code (unknown McpClientKind) still gets the remedy", async () => {
+    // Claude Code deliberately buckets as "unknown" for widget routing;
+    // the commerce gate keys on the UA allowlist instead, so the flagship
+    // raw-Bearer client is not stranded with OpenAI's crawlers.
+    mockFetchSequence([PAYG_402()]);
+    const res = await worker.fetch(
+      post(ANSWER_CALL_BODY, {
+        authorization: "Bearer real-user-token",
+        "user-agent": "claude-code/2.1.220 (sdk-cli)",
+      }),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.result.isError).toBe(true);
+    const text = body.result.content[0]?.text ?? "";
+    expect(text).toContain("out of credits");
+    // A PAYG 402 names the PAYG remedy.
+    expect(text).toContain("Add credits to continue.");
+  });
+
+  it("authenticated credit exhaustion on ChatGPT-family and UNRECOGNIZED clients carries no remedy copy", async () => {
+    // OpenAI's commerce policy forbids promoting purchases through an
+    // app, and Django's remedies name plan upgrades and credit purchases
+    // — exactly that copy. Unrecognized UAs fail closed for the same
+    // reason `annotationClientFamily` buckets unknown with chatgpt: an
+    // OpenAI reviewer/crawler — or a ChatGPT UA `detectMcpClient` hasn't
+    // learned yet (the desktop app's `codex-mcp-client` UA was exactly
+    // that once) — lands there. The factual cause stays on every client.
     for (const userAgent of ["openai-mcp/1.0", "python-httpx/0.27"]) {
-      mockFetchSequence([
-        new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
-          status: 402,
-          headers: { "content-type": "application/json" },
-        }),
-      ]);
+      mockFetchSequence([SUBSCRIPTION_402()]);
       const res = await worker.fetch(
         post(ANSWER_CALL_BODY, {
           authorization: "Bearer real-user-token",
@@ -1263,6 +1307,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       expect(text).toContain("out of credits");
       expect(text).not.toContain("tako.com");
       expect(text).not.toMatch(/https?:\/\//);
+      expect(text).not.toMatch(/upgrade|add credits/i);
     }
   });
 
