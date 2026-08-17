@@ -358,6 +358,35 @@ export function detectMcpClient(userAgent: string | null): McpClientKind {
   return "unknown";
 }
 
+/**
+ * May this connection's model-visible errors carry commerce copy (billing
+ * remedies, account-management pointers)? An explicit allowlist of
+ * POSITIVELY-identified Anthropic clients, deliberately separate from
+ * `McpClientKind`: the kind taxonomy is widget/surface routing, and it
+ * buckets Claude Code as `"unknown"` on purpose (a terminal renders no
+ * widget) — which would strand the flagship raw-Bearer client in the same
+ * bucket as OpenAI's crawlers if the commerce gate keyed on
+ * `client === "claude"` alone. Reusing a widget-capability signal as a
+ * commerce-policy proxy conflates two different populations.
+ *
+ * Fails CLOSED: `null`, empty, and unrecognized UAs get no commerce copy —
+ * an OpenAI reviewer, directory crawler, or a ChatGPT-family UA
+ * `detectMcpClient` has not learned yet lands there (the desktop app's
+ * `codex-mcp-client` UA did exactly that once), and commerce copy reaching
+ * ChatGPT's model violates OpenAI's policy against promoting purchases
+ * through an app.
+ *
+ * Same trust model as `detectMcpClient`: the UA is caller-controlled and
+ * this gates COPY only, never execution or spend.
+ */
+export function commerceCopyAllowedForUa(userAgent: string | null): boolean {
+  if (userAgent === null || userAgent === "") return false;
+  // Claude Code (and the Agent SDK riding it) — `claude-code/<version>` —
+  // is `"unknown"` for widget routing but unambiguously Anthropic here.
+  if (userAgent.toLowerCase().includes("claude-code")) return true;
+  return detectMcpClient(userAgent) === "claude";
+}
+
 // Per-client annotation resolution lives with the tool surface config in
 // `tools/_surface.ts` (each tool declares its own `annotationsByClient`
 // next to its canonical MCP annotations — see `annotationsByClient` in
@@ -403,6 +432,13 @@ export function createMcpServer(
      * full surface.
      */
     tier?: Tier;
+    /**
+     * Whether model-visible errors may carry commerce copy (billing
+     * remedies) — from `commerceCopyAllowedForUa`. Defaults FALSE
+     * (fail-closed: tests and non-HTTP callers get the cause-only
+     * messages).
+     */
+    commerceCopyAllowed?: boolean;
   } = {},
 ): McpServer {
   // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
@@ -532,6 +568,7 @@ export function createMcpServer(
     registerTool(server, tool, ctx, {
       client,
       tier,
+      commerceCopyAllowed: options.commerceCopyAllowed ?? false,
       origin: options.requestOrigin,
       widgetSuppressedForTool:
         isChatGptFamilyClient(client) &&
@@ -701,6 +738,12 @@ function registerTool(
      * executing them on the shared free-tier account.
      */
     tier: Tier;
+    /**
+     * Whether this connection's model-visible errors may carry commerce
+     * copy (see `commerceCopyAllowedForUa`). Consumed by the 402 mapping
+     * in the catch below.
+     */
+    commerceCopyAllowed: boolean;
     /**
      * Request origin (e.g. `https://mcp.tako.com`) used to build the
      * `resource_metadata` URL in `_meta["mcp/www_authenticate"]`
@@ -1173,7 +1216,7 @@ function registerTool(
           if (err instanceof DjangoHttpError && err.status === 402) {
             return callCtx.tier === "free"
               ? freeTierCreditsToolResult()
-              : paymentRequiredToolResult(err, options.client);
+              : paymentRequiredToolResult(err, options.commerceCopyAllowed);
           }
           const mapped = djangoErrorToToolResult(err);
           // A 401 from Django on an AUTHENTICATED connection means the
@@ -1488,45 +1531,66 @@ export function djangoErrorToToolResult(err: DjangoError): {
  * is out of credits (Django 402). Before this mapping the caller got the
  * raw `djangoErrorToToolResult` text — "Django returned 402 for POST …" —
  * which names an internal, says nothing about credits, and gives the agent
- * no way to tell "add credits" from "server bug". Unlike the free tier's
+ * no way to tell "needs credits" from "server bug". Unlike the free tier's
  * `FREE_TIER_CREDITS_MESSAGE` (which deliberately masks the cause, because
  * an anonymous caller has no account to top up), an authenticated caller
  * OWNS the exhausted balance, so naming the cause is the actionable answer.
  *
- * The base message states the cause, the retry semantics (retrying without
- * adding credits fails again — stops the agent burning turns), and the
- * surviving free move (`tako_available_data`).
+ * States the cause, the retry semantics, and the surviving free move —
+ * and deliberately NO remedy. Two different backends emit this 402 with
+ * two different remedies (`subscriptions/decorators.py` in the monorepo):
+ * `SubscriptionCreditThrottle` drains MONTHLY plan credits that regrant
+ * each cycle (remedy: upgrade the plan, or wait for the reset), while
+ * `meters_api_credits` gates the prepaid PAYG balance (remedy: add
+ * credits). A hand-written remedy here is wrong for one of the two — the
+ * first shipped version said "add credits", which a FREE/PRO subscriber
+ * cannot do — so the remedy is spliced from the 402 body's own message
+ * instead (see `paymentRequiredRemedy`), and only where commerce copy is
+ * allowed. "until the account has credits again" is the reset-safe retry
+ * phrasing: true across a monthly regrant, a plan change, and a top-up.
  */
 export const PAYMENT_REQUIRED_MESSAGE =
   "This Tako account is out of credits, so the call could not run. " +
-  "Retrying without adding credits will fail again. `tako_available_data` " +
-  "is free and still works.";
+  "Priced calls will keep failing until the account has credits again; " +
+  "`tako_available_data` is free and still works.";
 
 /**
- * The top-up pointer appended ONLY for positively-identified non-OpenAI
- * clients (today: the claude family). OpenAI's commerce policy forbids
- * promoting or selling digital services, subscriptions, tokens, or credits
- * through an app, and this string reaches ChatGPT's model as tool-result
- * text — the same reasoning that keeps every free-tier message in
- * `freetier.ts` link-free (see `FREE_TIER_LIMIT_MESSAGE`). Stating the
- * factual cause ("out of credits") is error reporting and stays in the
- * base message on every client; the where-to-buy directive is the part
- * that crosses into promotion, so it is gated.
- *
- * `unknown` deliberately does NOT get the suffix — the same asymmetry
- * argument as `annotationClientFamily` in `tools/_surface.ts`: an OpenAI
- * reviewer, directory crawler, or a ChatGPT-family UA that
- * `detectMcpClient` has not learned yet lands on `unknown` (the desktop
- * app's `codex-mcp-client` UA did exactly that before its rule was
- * added), and serving it commerce copy is an app-rejection risk. A
- * generic third-party client merely missing the pointer is cosmetic — the
- * base message already names the cause.
- *
- * Bare domain, no path: deep links rot (the `/account/` path the old
- * free-tier upsell used was already stale when it was removed).
+ * Remedy line appended when the 402 body carries no recognizable message
+ * (both real emitters do; this covers shape drift). Bare domain, no path:
+ * deep links rot (the `/account/` path the old free-tier upsell used was
+ * already stale when it was removed).
  */
-export const PAYMENT_REQUIRED_TOPUP_SUFFIX =
-  " Add credits to the account on tako.com to continue.";
+export const PAYMENT_REQUIRED_REMEDY_FALLBACK =
+  "The account's credits can be managed on tako.com.";
+
+/**
+ * The remedy sentence for a 402, taken from Django's OWN response body —
+ * `message` (SubscriptionCreditThrottle's `insufficient_credits` shape) or
+ * `error_message` (the PAYG `PAYMENT_REQUIRED` shape). The backend knows
+ * which ledger ran dry and names the matching remedy ("Upgrade your plan
+ * for more credits." / "Add credits to continue."), so splicing beats
+ * hand-maintaining a remedy that is wrong for one account type. Callers
+ * gate WHERE this appears (commerce-allowed clients only — the backend
+ * remedies are promotional copy under OpenAI's policy).
+ */
+export function paymentRequiredRemedy(body: string | undefined): string {
+  if (body !== undefined) {
+    try {
+      const parsed = JSON.parse(body) as {
+        message?: unknown;
+        error_message?: unknown;
+      };
+      for (const candidate of [parsed.message, parsed.error_message]) {
+        if (typeof candidate === "string" && candidate.trim().length > 0) {
+          return candidate.trim();
+        }
+      }
+    } catch {
+      // Non-JSON body → fallback.
+    }
+  }
+  return PAYMENT_REQUIRED_REMEDY_FALLBACK;
+}
 
 /**
  * Convert an authenticated-tier Django 402 into a curated payment-required
@@ -1535,10 +1599,16 @@ export const PAYMENT_REQUIRED_TOPUP_SUFFIX =
  * for debugging) with the model-visible text replaced by actionable
  * out-of-credits guidance. The free tier never reaches this — its 402s map
  * to `freeTierCreditsToolResult` first (see the catch in `registerTool`).
+ *
+ * `commerceCopyAllowed` (from `commerceCopyAllowedForUa`) gates the remedy
+ * sentence: Django's own remedies name plan upgrades and credit purchases,
+ * which is exactly the copy OpenAI's commerce policy bans from an app —
+ * so ChatGPT-family and unrecognized clients get the cause-only message,
+ * and positively-identified Anthropic clients get the backend's remedy.
  */
 export function paymentRequiredToolResult(
   err: DjangoHttpError,
-  client: McpClientKind,
+  commerceCopyAllowed: boolean,
 ): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;
@@ -1552,13 +1622,9 @@ export function paymentRequiredToolResult(
   };
   const body = errorResponseBody(err);
   if (body !== undefined) detail.body = body;
-  // Fail CLOSED on client identity: only a positively-identified claude
-  // client gets the pointer (see `PAYMENT_REQUIRED_TOPUP_SUFFIX` for why
-  // `unknown` must not).
-  const text =
-    client === "claude"
-      ? PAYMENT_REQUIRED_MESSAGE + PAYMENT_REQUIRED_TOPUP_SUFFIX
-      : PAYMENT_REQUIRED_MESSAGE;
+  const text = commerceCopyAllowed
+    ? `${PAYMENT_REQUIRED_MESSAGE} ${paymentRequiredRemedy(body)}`
+    : PAYMENT_REQUIRED_MESSAGE;
   return {
     content: [{ type: "text", text }],
     _meta: { "tako/error": detail },
@@ -1877,6 +1943,7 @@ export async function handleMcpRequest(
       client,
       enabledOptionalToolNames,
       tier,
+      commerceCopyAllowed: commerceCopyAllowedForUa(userAgent),
     });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker

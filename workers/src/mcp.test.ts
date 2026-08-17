@@ -14,14 +14,16 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
+import { FREE_TIER_TOOL_NAMES } from "./freetier.js";
 import {
+  commerceCopyAllowedForUa,
   createMcpServer,
   detectMcpClient,
   djangoErrorToToolResult,
   FREE_TIER_SERVER_INSTRUCTIONS,
   logSdkValidationRejections,
   PAYMENT_REQUIRED_MESSAGE,
-  PAYMENT_REQUIRED_TOPUP_SUFFIX,
+  PAYMENT_REQUIRED_REMEDY_FALLBACK,
   paymentRequiredToolResult,
   SERVER_INSTRUCTIONS,
   structuredContentFor,
@@ -1419,19 +1421,41 @@ describe("structuredContentFor", () => {
 });
 
 describe("paymentRequiredToolResult", () => {
-  const err402 = () =>
+  // The two REAL 402 bodies these endpoints emit (verified against the
+  // monorepo, subscriptions/decorators.py):
+  //   - SubscriptionCreditThrottle: monthly plan credits, regrant each
+  //     cycle — remedy is a plan upgrade or the reset.
+  const SUBSCRIPTION_402_BODY = JSON.stringify({
+    error: "insufficient_credits",
+    message:
+      "You don't have enough credits for this request (need 3, have 0). " +
+      "Upgrade your plan for more credits.",
+    upgrade_url: "/pricing",
+  });
+  //   - meters_api_credits: prepaid PAYG balance — remedy is adding
+  //     credits.
+  const PAYG_402_BODY = JSON.stringify({
+    error_type: "PAYMENT_REQUIRED",
+    error_message: "Your API credit balance is exhausted. Add credits to continue.",
+    balance_cents: 0,
+  });
+
+  const err402 = (body: string = PAYG_402_BODY) =>
     new DjangoHttpError({
       path: "/api/v1/answer/",
       method: "POST",
       status: 402,
-      body: '{"error_type": "PAYMENT_REQUIRED"}',
+      body,
     });
 
-  it("names the cause, the retry semantics, and the surviving free tool", () => {
-    const result = paymentRequiredToolResult(err402(), "unknown");
+  it("names the cause, reset-safe retry semantics, and the surviving free tool", () => {
+    const result = paymentRequiredToolResult(err402(), false);
     expect(result.isError).toBe(true);
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("out of credits");
+    // Reset-safe phrasing: monthly plan credits regrant each cycle, so an
+    // unconditional "retrying will fail" would be false across a reset.
+    expect(text).toContain("until the account has credits again");
     expect(text).toContain("tako_available_data");
     // The raw upstream framing must not leak — "Django" is an internal.
     expect(text).not.toContain("Django");
@@ -1445,23 +1469,70 @@ describe("paymentRequiredToolResult", () => {
     expect(detail.body).toContain("PAYMENT_REQUIRED");
   });
 
-  it("appends the top-up pointer ONLY for positively-identified claude clients", () => {
-    expect(paymentRequiredToolResult(err402(), "claude").content[0]?.text).toBe(
-      PAYMENT_REQUIRED_MESSAGE + PAYMENT_REQUIRED_TOPUP_SUFFIX,
-    );
-    // ChatGPT family: OpenAI's commerce policy forbids promoting purchases
-    // through an app, and this text reaches ChatGPT's model verbatim. The
-    // factual cause stays; the where-to-buy directive goes. `unknown`
-    // fails CLOSED — an OpenAI reviewer/crawler, or a ChatGPT-family UA
-    // `detectMcpClient` hasn't learned yet (the desktop app's
-    // `codex-mcp-client` UA was exactly that once), lands on unknown, and
-    // commerce copy there is the violation this gating exists to prevent
-    // (same asymmetry argument as `annotationClientFamily`).
-    for (const client of ["chatgpt", "codex", "unknown"] as const) {
-      const text = paymentRequiredToolResult(err402(), client).content[0]?.text;
+  it("splices Django's own remedy per account type when commerce copy is allowed", () => {
+    // The backend knows which ledger ran dry; a hand-written remedy is
+    // wrong for one of the two account types ("add credits" is
+    // impossible for FREE/PRO subscribers — their credits regrant
+    // monthly and the remedy is a plan change).
+    const subscription = paymentRequiredToolResult(
+      err402(SUBSCRIPTION_402_BODY),
+      true,
+    ).content[0]?.text;
+    expect(subscription).toContain("Upgrade your plan for more credits.");
+    expect(subscription).not.toContain("Add credits");
+
+    const payg = paymentRequiredToolResult(err402(PAYG_402_BODY), true)
+      .content[0]?.text;
+    expect(payg).toContain("Add credits to continue.");
+    expect(payg).not.toContain("Upgrade your plan");
+
+    // Unrecognized body shape → the neutral fallback, never a guess.
+    const fallback = paymentRequiredToolResult(err402("not json"), true)
+      .content[0]?.text;
+    expect(fallback).toContain(PAYMENT_REQUIRED_REMEDY_FALLBACK);
+  });
+
+  it("omits ALL remedy copy when commerce copy is not allowed", () => {
+    // OpenAI's commerce policy forbids promoting purchases through an
+    // app, and Django's remedies name plan upgrades and credit purchases
+    // — exactly that copy. `commerceCopyAllowedForUa` fails closed, so
+    // ChatGPT-family AND unrecognized clients land here.
+    for (const body of [SUBSCRIPTION_402_BODY, PAYG_402_BODY]) {
+      const text = paymentRequiredToolResult(err402(body), false).content[0]
+        ?.text;
       expect(text).toBe(PAYMENT_REQUIRED_MESSAGE);
       expect(text).not.toMatch(/https?:\/\//);
       expect(text).not.toMatch(/tako\.com/);
+      expect(text).not.toMatch(/upgrade|purchas|\bbuy\b|add credits/i);
+    }
+  });
+});
+
+describe("commerceCopyAllowedForUa", () => {
+  it("allows only positively-identified Anthropic clients", () => {
+    // claude.ai / Claude Desktop connectors.
+    expect(commerceCopyAllowedForUa("claude-mcp-client/1.0")).toBe(true);
+    expect(commerceCopyAllowedForUa("Anthropic/1.0")).toBe(true);
+    // Claude Code buckets as "unknown" in McpClientKind (widget routing —
+    // a terminal renders no widget) but is unambiguously Anthropic for
+    // commerce copy; keying on `client === "claude"` alone would strand
+    // the flagship raw-Bearer client with OpenAI's crawlers.
+    expect(commerceCopyAllowedForUa("claude-code/2.1.220 (sdk-cli)")).toBe(
+      true,
+    );
+  });
+
+  it("fails closed for OpenAI-family, unknown, and absent UAs", () => {
+    for (const ua of [
+      "ChatGPT/1.0 (+https://chatgpt.com)",
+      "openai-mcp/1.0",
+      "codex-mcp-client/0.148.0-alpha.9",
+      "GPTBot/1.2",
+      "python-httpx/0.27",
+      "",
+      null,
+    ]) {
+      expect(commerceCopyAllowedForUa(ua)).toBe(false);
     }
   });
 });
@@ -1509,6 +1580,29 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect(FREE_TIER_SERVER_INSTRUCTIONS).not.toMatch(
       /upgrade|subscri|purchas|\bbuy\b|pricing|\$/i,
     );
+  });
+
+  it("the free-tier toolset sentence tracks FREE_TIER_TOOL_NAMES exactly", () => {
+    // The sentence is hand-written prose, so nothing structural ties it to
+    // the executable set: adding a fourth free tool (or dropping one)
+    // would leave every other test green while `initialize` ships a false
+    // statement of what runs — injected ABOVE the tool descriptions in
+    // the host system prompt, where it wins disagreements. Same drift
+    // class the env-binding sync test in freetier.test.ts pins.
+    const toolsetParagraph = FREE_TIER_SERVER_INSTRUCTIONS.split("\n").at(-1) ?? "";
+    // Every executable tool must be named…
+    for (const name of FREE_TIER_TOOL_NAMES) {
+      expect(toolsetParagraph).toContain(`\`${name}\``);
+    }
+    // …and no other registry tool may be, except the `tako_contents`
+    // unlock teaser (whose call-time answer is the pre-dispatch gate's
+    // sign-in guidance, so naming it is safe).
+    const allowed = new Set([...FREE_TIER_TOOL_NAMES, "tako_contents"]);
+    for (const tool of TOOL_REGISTRY) {
+      if (!allowed.has(tool.name)) {
+        expect(toolsetParagraph).not.toContain(tool.name);
+      }
+    }
   });
 
   // The instructions sit ABOVE the tool descriptions in the host's system

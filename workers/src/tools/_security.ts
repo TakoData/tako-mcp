@@ -149,7 +149,14 @@ export function authRequiredToolResult(origin: string | undefined): {
     content: [
       {
         type: "text",
-        text: "This tool requires a linked Tako account. Sign in with Tako to continue.",
+        // Both remedies, because this text now reaches every client (the
+        // pre-dispatch gate in `mcp.ts` answers anonymous calls to gated
+        // tools on all clients, not just ChatGPT): hosts with a linking
+        // UI (ChatGPT; OAuth-capable clients like claude.ai and Claude
+        // Code) sign in, config-file clients (Cursor et al.) connect with
+        // an API key. "Sign in" alone told a config-file user to do
+        // something their host has no flow for.
+        text: "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.",
       },
     ],
     _meta: {

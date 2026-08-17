@@ -154,8 +154,12 @@ export const WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES: ReadonlySet<string> = new Set(
  * runnable: `registerTool` in `mcp.ts` gates the call at dispatch time
  * and answers with an `_meta["mcp/www_authenticate"]` challenge instead
  * of executing on the shared free-tier account. Every other client keeps
- * the original policy (hidden entirely — a listed tool that errors on
- * call wastes agent turns on hosts with no linking UI to show).
+ * auth-required tools UNLISTED (a listed tool that errors on call wastes
+ * agent turns), but an EXPLICIT anonymous call to one is no longer a bare
+ * "tool not found": the pre-dispatch gate in `handleMcpRequest`
+ * (`freeTierHiddenToolResponse`) answers it with the same account
+ * guidance on every client — listing stays ChatGPT-only, call-time
+ * guidance is universal.
  *
  * This set plus `FREE_TIER_TOOL_NAMES` must EQUAL the tools
  * `chatgpt-app-submission.json` declares — `assertChatgptSubmissionParity`
