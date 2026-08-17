@@ -1445,16 +1445,19 @@ describe("paymentRequiredToolResult", () => {
     expect(detail.body).toContain("PAYMENT_REQUIRED");
   });
 
-  it("appends the top-up pointer for non-ChatGPT clients only", () => {
-    for (const client of ["unknown", "claude"] as const) {
-      expect(paymentRequiredToolResult(err402(), client).content[0]?.text).toBe(
-        PAYMENT_REQUIRED_MESSAGE + PAYMENT_REQUIRED_TOPUP_SUFFIX,
-      );
-    }
+  it("appends the top-up pointer ONLY for positively-identified claude clients", () => {
+    expect(paymentRequiredToolResult(err402(), "claude").content[0]?.text).toBe(
+      PAYMENT_REQUIRED_MESSAGE + PAYMENT_REQUIRED_TOPUP_SUFFIX,
+    );
     // ChatGPT family: OpenAI's commerce policy forbids promoting purchases
     // through an app, and this text reaches ChatGPT's model verbatim. The
-    // factual cause stays; the where-to-buy directive goes.
-    for (const client of ["chatgpt", "codex"] as const) {
+    // factual cause stays; the where-to-buy directive goes. `unknown`
+    // fails CLOSED — an OpenAI reviewer/crawler, or a ChatGPT-family UA
+    // `detectMcpClient` hasn't learned yet (the desktop app's
+    // `codex-mcp-client` UA was exactly that once), lands on unknown, and
+    // commerce copy there is the violation this gating exists to prevent
+    // (same asymmetry argument as `annotationClientFamily`).
+    for (const client of ["chatgpt", "codex", "unknown"] as const) {
       const text = paymentRequiredToolResult(err402(), client).content[0]?.text;
       expect(text).toBe(PAYMENT_REQUIRED_MESSAGE);
       expect(text).not.toMatch(/https?:\/\//);

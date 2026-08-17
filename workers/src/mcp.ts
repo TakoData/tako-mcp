@@ -220,7 +220,12 @@ export const SERVER_INSTRUCTIONS = [
 export const FREE_TIER_SERVER_INSTRUCTIONS = [
   ...SHARED_INSTRUCTION_PARAGRAPHS,
   "",
-  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. This connection is anonymous: `tako_available_data`, `tako_search`, and `tako_answer` are the full toolset here. Other tools — like `tako_contents`, which reads one source in full (an exportable card's rows, or a web page's text by url) — become available on a connection authenticated with a Tako account.",
+  // "the tools that run", not "the full toolset": on ChatGPT-family
+  // anonymous connections two auth-required tools stay LISTED for the
+  // link-account UI (see `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES`), so
+  // a toolset-count claim would be false there; what's true on every
+  // client is which tools EXECUTE.
+  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. This connection is anonymous: `tako_available_data`, `tako_search`, and `tako_answer` are the tools that run here. Other tools — like `tako_contents`, which reads one source in full (an exportable card's rows, or a web page's text by url) — become available on a connection authenticated with a Tako account.",
 ].join("\n");
 
 /** The `initialize` instructions for a connection's tier. */
@@ -1498,15 +1503,26 @@ export const PAYMENT_REQUIRED_MESSAGE =
   "is free and still works.";
 
 /**
- * The top-up pointer appended for every client EXCEPT the ChatGPT family.
- * OpenAI's commerce policy forbids promoting or selling digital services,
- * subscriptions, tokens, or credits through an app, and this string reaches
- * ChatGPT's model as tool-result text — the same reasoning that keeps every
- * free-tier message in `freetier.ts` link-free (see
- * `FREE_TIER_LIMIT_MESSAGE`). Stating the factual cause ("out of credits")
- * is error reporting and stays in the base message on every client; the
- * where-to-buy directive is the part that crosses into promotion, so it is
- * gated. Bare domain, no path: deep links rot (the `/account/` path the old
+ * The top-up pointer appended ONLY for positively-identified non-OpenAI
+ * clients (today: the claude family). OpenAI's commerce policy forbids
+ * promoting or selling digital services, subscriptions, tokens, or credits
+ * through an app, and this string reaches ChatGPT's model as tool-result
+ * text — the same reasoning that keeps every free-tier message in
+ * `freetier.ts` link-free (see `FREE_TIER_LIMIT_MESSAGE`). Stating the
+ * factual cause ("out of credits") is error reporting and stays in the
+ * base message on every client; the where-to-buy directive is the part
+ * that crosses into promotion, so it is gated.
+ *
+ * `unknown` deliberately does NOT get the suffix — the same asymmetry
+ * argument as `annotationClientFamily` in `tools/_surface.ts`: an OpenAI
+ * reviewer, directory crawler, or a ChatGPT-family UA that
+ * `detectMcpClient` has not learned yet lands on `unknown` (the desktop
+ * app's `codex-mcp-client` UA did exactly that before its rule was
+ * added), and serving it commerce copy is an app-rejection risk. A
+ * generic third-party client merely missing the pointer is cosmetic — the
+ * base message already names the cause.
+ *
+ * Bare domain, no path: deep links rot (the `/account/` path the old
  * free-tier upsell used was already stale when it was removed).
  */
 export const PAYMENT_REQUIRED_TOPUP_SUFFIX =
@@ -1536,9 +1552,13 @@ export function paymentRequiredToolResult(
   };
   const body = errorResponseBody(err);
   if (body !== undefined) detail.body = body;
-  const text = isChatGptFamilyClient(client)
-    ? PAYMENT_REQUIRED_MESSAGE
-    : PAYMENT_REQUIRED_MESSAGE + PAYMENT_REQUIRED_TOPUP_SUFFIX;
+  // Fail CLOSED on client identity: only a positively-identified claude
+  // client gets the pointer (see `PAYMENT_REQUIRED_TOPUP_SUFFIX` for why
+  // `unknown` must not).
+  const text =
+    client === "claude"
+      ? PAYMENT_REQUIRED_MESSAGE + PAYMENT_REQUIRED_TOPUP_SUFFIX
+      : PAYMENT_REQUIRED_MESSAGE;
   return {
     content: [{ type: "text", text }],
     _meta: { "tako/error": detail },
@@ -1586,9 +1606,9 @@ const REGISTRY_TOOL_NAMES: ReadonlySet<string> = new Set(
 
 /**
  * Pre-SDK gate for anonymous `tools/call`s naming a KNOWN tool that the
- * free tier cannot execute. Returns the sign-in guidance as a JSON-RPC
- * tool result, or `null` when the request is not that shape (let the SDK
- * handle it).
+ * free tier cannot execute but authentication WOULD unlock. Returns the
+ * sign-in guidance as a JSON-RPC tool result, or `null` when the request
+ * is not that shape (let the SDK handle it).
  *
  * Why this exists: on non-ChatGPT clients, auth-required tools are hidden
  * from the anonymous surface entirely (see `isToolOnSurface`), so a call
@@ -1605,13 +1625,26 @@ const REGISTRY_TOOL_NAMES: ReadonlySet<string> = new Set(
  * answering an explicit call helpfully.
  *
  * Scope guards, in order:
- * - only single `tools/call` bodies (other methods, batches: not ours);
+ * - only single `jsonrpc: "2.0"` `tools/call` bodies (other methods,
+ *   batches, envelope-less shapes: not ours — the SDK rejects those with
+ *   the right error itself);
  * - only names outside `FREE_TIER_TOOL_NAMES` (free tools proceed);
  * - only names the registry KNOWS (a typo'd name falls through to the
  *   SDK's genuine unknown-tool error — claiming a nonexistent tool needs
  *   auth would send the caller on a pointless sign-in);
+ * - only names on THIS connection's AUTHENTICATED surface (same client,
+ *   same `?tools=` opt-ins, tier flipped) — the sign-in promise must be
+ *   true. `tako_agent` without `?tools=agent`, or the ChatGPT-only split
+ *   pair on a Claude client, would still be "tool not found" after
+ *   signing in, so promising auth there just moves the dead end one
+ *   sign-in later; those fall through to the SDK's accurate not-found.
  * - only well-formed ids (without one, no valid result can be addressed;
  *   the SDK rejects the shape itself).
+ *
+ * Probing note: this gate lets an anonymous caller distinguish known
+ * from unknown tool names, which discloses nothing — the full tool list
+ * is published in `registry/server.json` and anonymous `tools/list`
+ * already works.
  *
  * Metering note: these calls were never per-IP metered (see
  * `isMeteredJsonRpcBody`) and still aren't — the global ceiling already
@@ -1620,26 +1653,33 @@ const REGISTRY_TOOL_NAMES: ReadonlySet<string> = new Set(
 export function freeTierHiddenToolResponse(
   body: unknown,
   origin: string,
+  client: McpClientKind,
+  enabledOptionalToolNames: ReadonlySet<string>,
 ): Response | null {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return null;
   }
-  const { method, params, id } = body as {
+  const { jsonrpc, method, params, id } = body as {
+    jsonrpc?: unknown;
     method?: unknown;
     params?: unknown;
     id?: unknown;
   };
+  if (jsonrpc !== "2.0") return null;
   if (method !== "tools/call") return null;
   if (typeof params !== "object" || params === null) return null;
   const name = (params as { name?: unknown }).name;
   if (typeof name !== "string") return null;
   if (FREE_TIER_TOOL_NAMES.has(name)) return null;
   if (!REGISTRY_TOOL_NAMES.has(name)) return null;
+  if (!isToolOnSurface(name, client, enabledOptionalToolNames, "authenticated")) {
+    return null;
+  }
   if (typeof id !== "string" && typeof id !== "number") return null;
   // Same greppable signal as the dispatch gate in `registerTool`, with a
   // marker for which layer answered.
   console.log(
-    `[mcp] auth-required tool blocked on free tier tool=${name} layer=pre-dispatch`,
+    `[mcp] auth-required tool blocked on free tier tool=${name} client=${client} layer=pre-dispatch`,
   );
   return new Response(
     JSON.stringify({
@@ -1719,8 +1759,17 @@ export async function handleMcpRequest(
       case "allowed": {
         // Known-but-auth-required tool called anonymously: answer with
         // sign-in guidance instead of letting the SDK say "tool not
-        // found" (see `freeTierHiddenToolResponse`).
-        const gated = freeTierHiddenToolResponse(meterResult.body, origin);
+        // found" (see `freeTierHiddenToolResponse`). Client detection and
+        // `?tools=` parsing are re-run later on the SDK path with logging;
+        // both are pure, so the double call cannot disagree.
+        const gated = freeTierHiddenToolResponse(
+          meterResult.body,
+          origin,
+          detectMcpClient(request.headers.get("user-agent")),
+          parseEnabledOptionalToolNames(
+            new URL(request.url).searchParams.get("tools"),
+          ),
+        );
         if (gated !== null) return gated;
         break;
       }
