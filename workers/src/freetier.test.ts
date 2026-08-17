@@ -22,6 +22,7 @@ import {
   resolveFreeTierConfig,
 } from "./freetier.js";
 import worker from "./index.js";
+import { FREE_TIER_SERVER_INSTRUCTIONS } from "./mcp.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
 /**
@@ -1045,15 +1046,16 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
         jsonrpc: "2.0",
         id: 8,
         method: "tools/call",
-        params: { name: "tako_agent", arguments: { query: "x" } },
+        params: { name: "tako_contents", arguments: { urls: ["x"] } },
       }),
       freeEnv(limiter),
     );
-    // Pre-dispatch gate (`freeTierHiddenToolResponse`): a KNOWN tool the
-    // free tier can't run answers the same auth-required result the
-    // ChatGPT dispatch gate uses — NOT the SDK's bare "tool not found",
-    // which reads as "this tool does not exist" when the truth is "sign
-    // in and it works". Per-IP bucket untouched, nothing reaches Django.
+    // Pre-dispatch gate (`freeTierHiddenToolResponse`): a tool that
+    // authentication WOULD unlock answers the same auth-required result
+    // the ChatGPT dispatch gate uses — NOT the SDK's bare "tool not
+    // found", which reads as "this tool does not exist" when the truth is
+    // "sign in and it works". Per-IP bucket untouched, nothing reaches
+    // Django.
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       id: number;
@@ -1089,6 +1091,70 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(JSON.stringify(body)).toMatch(/not found/i);
     expect(JSON.stringify(body)).not.toMatch(/linked Tako account/i);
     expect(limiter.keys).toEqual([]);
+  });
+
+  it("an anonymous call to an opt-in tool NOT enabled on this connection gets tool-not-found, not sign-in", async () => {
+    // `tako_agent` is `?tools=agent` opt-in: signing in on THIS URL (no
+    // opt-in) would still be "tool not found", so promising auth would
+    // just move the dead end one sign-in later. The gate checks the
+    // AUTHENTICATED surface for the same client + opt-ins before
+    // answering.
+    const limiter = fakeLimiter(false);
+    const res = await worker.fetch(
+      post({
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: { name: "tako_agent", arguments: { query: "x" } },
+      }),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as unknown;
+    expect(JSON.stringify(body)).toMatch(/not found/i);
+    expect(JSON.stringify(body)).not.toMatch(/linked Tako account/i);
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("an anonymous call to an opt-in tool that IS enabled via ?tools= gets sign-in guidance", async () => {
+    // With `?tools=agent` on the connection URL, authentication alone
+    // unlocks the tool — so here the sign-in promise is true.
+    const limiter = fakeLimiter(false);
+    const res = await worker.fetch(
+      new Request("https://example.com/mcp?tools=agent", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 11,
+          method: "tools/call",
+          params: { name: "tako_agent", arguments: { query: "x" } },
+        }),
+      }),
+      freeEnv(limiter),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toContain("linked Tako account");
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("an anonymous initialize returns the free-tier instructions variant", async () => {
+    // The tier-specific instructions must ride the real HTTP path, not
+    // just `createMcpServer` (covered in mcp.test.ts) — this pins the
+    // wiring in `handleMcpRequest`.
+    const res = await worker.fetch(
+      post(INITIALIZE_BODY),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { instructions?: string };
+    };
+    expect(body.result.instructions).toBe(FREE_TIER_SERVER_INSTRUCTIONS);
   });
 
   it("free-tier credit exhaustion (Django 402) surfaces as the capacity message, not a billing error", async () => {
@@ -1127,7 +1193,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.content[0]?.text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
   });
 
-  it("authenticated credit exhaustion gets the curated payment message with the top-up pointer (no capacity masking)", async () => {
+  it("authenticated credit exhaustion on a claude client gets the curated payment message with the top-up pointer", async () => {
     // The free tier masks 402s as neutral "capacity" (the caller has no
     // account to top up); an authenticated caller OWNS the balance, so the
     // actionable answer names the cause and the fix. Before
@@ -1140,7 +1206,10 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       }),
     ]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, { authorization: "Bearer real-user-token" }),
+      post(ANSWER_CALL_BODY, {
+        authorization: "Bearer real-user-token",
+        "user-agent": "claude-mcp-client/1.0",
+      }),
       freeEnv(fakeLimiter(true)),
     );
     expect(res.status).toBe(200);
@@ -1155,39 +1224,46 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     const text = body.result.content[0]?.text ?? "";
     expect(text).not.toBe(FREE_TIER_CREDITS_MESSAGE);
     expect(text).toContain("out of credits");
-    // Unknown client → the tako.com top-up pointer is included.
+    // Positively-identified claude client → the tako.com pointer is
+    // included.
     expect(text).toContain("tako.com");
     expect(body.result._meta["tako/error"]?.kind).toBe("payment_required");
     expect(body.result._meta["tako/error"]?.status).toBe(402);
   });
 
-  it("authenticated credit exhaustion on a ChatGPT-family client carries no top-up pointer", async () => {
-    // Same commerce-policy reasoning as the free-tier message guards:
-    // this text reaches ChatGPT's model as tool-result text, and OpenAI
-    // forbids promoting purchases through an app. The factual cause stays;
-    // the where-to-buy directive goes.
-    mockFetchSequence([
-      new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
-        status: 402,
-        headers: { "content-type": "application/json" },
-      }),
-    ]);
-    const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, {
-        authorization: "Bearer real-user-token",
-        "user-agent": "openai-mcp/1.0",
-      }),
-      freeEnv(fakeLimiter(true)),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      result: { content: Array<{ text: string }>; isError: boolean };
-    };
-    expect(body.result.isError).toBe(true);
-    const text = body.result.content[0]?.text ?? "";
-    expect(text).toContain("out of credits");
-    expect(text).not.toContain("tako.com");
-    expect(text).not.toMatch(/https?:\/\//);
+  it("authenticated credit exhaustion on ChatGPT-family and UNKNOWN clients carries no top-up pointer", async () => {
+    // ChatGPT family: OpenAI's commerce policy forbids promoting purchases
+    // through an app, and this text reaches ChatGPT's model as tool-result
+    // text. UNKNOWN fails closed for the same reason `annotationClientFamily`
+    // buckets it with chatgpt: an OpenAI reviewer/crawler — or a ChatGPT
+    // UA `detectMcpClient` hasn't learned yet (the desktop app's
+    // `codex-mcp-client` UA was exactly that once) — lands on unknown, and
+    // serving it commerce copy is the policy violation this gating exists
+    // to prevent. The factual cause stays on every client.
+    for (const userAgent of ["openai-mcp/1.0", "python-httpx/0.27"]) {
+      mockFetchSequence([
+        new Response(JSON.stringify({ error_type: "PAYMENT_REQUIRED" }), {
+          status: 402,
+          headers: { "content-type": "application/json" },
+        }),
+      ]);
+      const res = await worker.fetch(
+        post(ANSWER_CALL_BODY, {
+          authorization: "Bearer real-user-token",
+          "user-agent": userAgent,
+        }),
+        freeEnv(fakeLimiter(true)),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        result: { content: Array<{ text: string }>; isError: boolean };
+      };
+      expect(body.result.isError).toBe(true);
+      const text = body.result.content[0]?.text ?? "";
+      expect(text).toContain("out of credits");
+      expect(text).not.toContain("tako.com");
+      expect(text).not.toMatch(/https?:\/\//);
+    }
   });
 
   it("a malformed Authorization header still 401s even with the free tier configured", async () => {
