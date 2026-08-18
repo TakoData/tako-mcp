@@ -137,6 +137,16 @@ function renderedIframe(m: Mounted): boolean {
   );
 }
 
+/**
+ * Fire the committed iframe's `load` event as if the embed page painted.
+ * The widget defers its reveal (unhide + host height notification) to this
+ * event so the card expands with pixels in it, not seconds before.
+ */
+function fireFrameLoad(m: Mounted): void {
+  const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event }).Event;
+  frame(m).dispatchEvent(new WidgetEvent("load"));
+}
+
 afterEach(() => {
   for (const dom of mounted.splice(0)) dom.window.close();
 });
@@ -145,6 +155,11 @@ describe("ChatGPT Apps SDK delivery paths", () => {
   it("PATH 1: window.openai.toolOutput present before the script runs", () => {
     const m = mountWidget(html(), { toolOutput: PROD_STRUCTURED_CONTENT });
     expect(renderedIframe(m)).toBe(true);
+    // Committed but veiled (height 0, layout box live) until the embed page
+    // loads — reveal-on-load.
+    expect(frame(m).classList.contains("veiled")).toBe(true);
+    fireFrameLoad(m);
+    expect(frame(m).classList.contains("veiled")).toBe(false);
     expect(frame(m).classList.contains("hidden")).toBe(false);
   });
 
@@ -299,6 +314,7 @@ describe("ChatGPT reload rehydration", () => {
     });
     // Without the fallback this collapses to the labelled empty state.
     expect(renderedIframe(m)).toBe(true);
+    fireFrameLoad(m);
     expect(frame(m).classList.contains("hidden")).toBe(false);
   });
 
@@ -397,6 +413,7 @@ describe("ChatGPT reload rehydration", () => {
     openai.widgetState = PROD_STRUCTURED_CONTENT;
     fireSetGlobals(m, { toolOutput: STRIPPED_TOOL_OUTPUT }, "openai:set_globals");
     expect(renderedIframe(m)).toBe(true);
+    fireFrameLoad(m);
     expect(frame(m).classList.contains("hidden")).toBe(false);
   });
 

@@ -661,6 +661,15 @@ const WIDGET_HTML = `<!doctype html>
     #tako-empty { color: #b4b8bd; }
   }
   .hidden { display: none !important; }
+  /* The committed iframe's awaiting-load state. Height 0 — NOT
+     display:none — so the frame keeps a real layout box at the real
+     column width while invisible. Under display:none the embed page
+     boots against a 0-width viewport: media queries resolve to a
+     stacked mobile layout, and a \`tako-embed-height\` measured there
+     is wrong in a way ChatGPT's pin-the-max-height quirk would make
+     permanent. \`!important\` so the class outranks the inline height
+     \`setFrameHeight\` stages at commit time. */
+  .veiled { height: 0 !important; min-height: 0 !important; }
 </style>
 </head>
 <body>
@@ -1346,10 +1355,10 @@ const WIDGET_HTML = `<!doctype html>
       // document the embed endpoint returns — including a Tako 404/5xx
       // error page. On a host whose CSP allows \`frame-src\`, an embed-page
       // outage would swap the known-good PNG for an error page. Accepted
-      // for now: the only positive signal from the cross-origin embed is
-      // the \`tako-embed-height\` message, which the Tako web app does not
-      // emit yet (see the handler comment near the bottom). Once it does,
-      // gate \`succeed()\` on that message instead of the bare \`load\`.
+      // for now: the positive signal from the cross-origin embed is the
+      // \`tako-embed-height\` message, which the Tako web app DOES emit now
+      // (measured — see \`embedReportedHeight\`); gating \`succeed()\` on it
+      // instead of the bare \`load\` remains the follow-up.
       if (probeNavigated) succeed();
     }
     document.addEventListener("securitypolicyviolation", onViolation);
@@ -1367,23 +1376,35 @@ const WIDGET_HTML = `<!doctype html>
   // One watchdog per widget lifetime, same reasoning as \`probeStarted\`.
   var watchStarted = false;
 
-  // Watch an iframe we have ALREADY shown the user, and downgrade to the PNG
-  // if it never loads. Used only on the \`window.openai\` path, which commits
-  // to the iframe up front instead of probing behind a PNG.
+  // Settles the live committed-iframe watchdog, when one is armed. Set by
+  // \`watchCommittedIframe\`, called by the \`tako-embed-height\` handler: an
+  // accepted handshake message proves the embed is RUNNING, which is a
+  // strictly stronger signal than \`load\` — \`load\` waits on every
+  // subresource, so a stalled font could otherwise let the timeout
+  // downgrade a chart the user is already looking at.
+  var settleCommittedWatch = null;
+
+  // Watch the committed (initially veiled) embed iframe and downgrade to
+  // the PNG if it never loads. Used only on the \`window.openai\` path,
+  // which commits to the iframe up front instead of probing behind a PNG.
   //
-  // Settle signals, mirroring the probe's:
-  //  - \`load\` on the frame → the embed rendered; stand down.
+  // Settle signals:
+  //  - \`load\` on the frame → the embed rendered; stand down AND reveal it
+  //    (\`opts.onLoaded\` — the frame stays veiled until one of the settle
+  //    signals proves there are pixels to show).
+  //  - an accepted \`tako-embed-height\` message → the embed is running;
+  //    the handler reveals and settles via \`settleCommittedWatch\`.
   //  - \`securitypolicyviolation\` for \`frame-src\` → definitive host block.
   //  - no \`load\` within the timeout → covers suppressed violation events,
   //    network stalls, and an embed endpoint that never finishes.
   //
-  // Same KNOWN GAP as the probe, in the opposite direction: \`load\` fires for
-  // any document the endpoint returns, so a Tako error page counts as a
-  // successful load and keeps the iframe. Closing that needs a positive
-  // signal from the embed page itself (the \`tako-embed-height\` message it
-  // does not emit yet), at which point BOTH this and \`onLoad\` in the probe
-  // should gate on it instead.
-  function watchCommittedIframe(url, imageOpts) {
+  // Same KNOWN GAP as the probe, in the opposite direction: \`load\` fires
+  // for any document the endpoint returns, so a Tako error page counts as
+  // a successful load and keeps the iframe. The \`tako-embed-height\`
+  // message (now measured live — see \`embedReportedHeight\`) is the
+  // positive signal that could close it; gating \`succeed()\`/\`onLoad\` on
+  // it remains the follow-up.
+  function watchCommittedIframe(url, opts) {
     if (watchStarted) return;
     watchStarted = true;
     var settled = false;
@@ -1394,6 +1415,11 @@ const WIDGET_HTML = `<!doctype html>
       document.removeEventListener("securitypolicyviolation", onViolation);
       frame.removeEventListener("load", onLoad);
     }
+    settleCommittedWatch = function () {
+      if (settled) return;
+      cleanup();
+      log("committed iframe settled via embed handshake", { src: url });
+    };
     function downgrade(reason) {
       if (settled) return;
       cleanup();
@@ -1401,6 +1427,7 @@ const WIDGET_HTML = `<!doctype html>
       // cannot appear on top of the PNG, and stop honoring its height
       // messages.
       embedOrigin = null;
+      frame.classList.remove("veiled");
       frame.classList.add("hidden");
       frame.src = "about:blank";
       log("iframe never loaded, falling back to image", { reason: reason });
@@ -1408,10 +1435,10 @@ const WIDGET_HTML = `<!doctype html>
       // so \`image_data_url\` is absent there — but \`image_url\` is present in
       // structuredContent, which is what makes this path work). Surface the
       // click-through rather than a silent empty frame.
-      if (imageOpts.imageSrc === null) {
+      if (opts.imageSrc === null) {
         placeholder.innerHTML = "";
         placeholder.classList.remove("hidden");
-        if (imageOpts.validEmbed) {
+        if (opts.validEmbed) {
           var anchor = document.createElement("a");
           anchor.href = url;
           anchor.target = "_blank";
@@ -1428,11 +1455,11 @@ const WIDGET_HTML = `<!doctype html>
       }
       paintImage({
         embedUrl: url,
-        imageSrc: imageOpts.imageSrc,
-        validEmbed: imageOpts.validEmbed,
-        height: imageOpts.height,
-        isDataUrl: imageOpts.isDataUrl,
-        imageUrl: imageOpts.imageUrl,
+        imageSrc: opts.imageSrc,
+        validEmbed: opts.validEmbed,
+        height: opts.height,
+        isDataUrl: opts.isDataUrl,
+        imageUrl: opts.imageUrl,
         // The iframe just failed. Do not go looking for it again.
         allowProbe: false,
       });
@@ -1448,6 +1475,10 @@ const WIDGET_HTML = `<!doctype html>
       if (settled) return;
       cleanup();
       log("committed iframe loaded", { src: url });
+      // Reveal-on-load: the embed has rendered, so it is finally safe to
+      // give the card its height. Wired through the watchdog because it is
+      // the one place already listening for the event.
+      if (typeof opts.onLoaded === "function") opts.onLoaded();
     }
     document.addEventListener("securitypolicyviolation", onViolation);
     frame.addEventListener("load", onLoad);
@@ -1939,7 +1970,42 @@ const WIDGET_HTML = `<!doctype html>
       var fitted = aspectHeight(imgNaturalW, imgNaturalH);
       committedHeight = fitted !== null ? fitted : h;
       setFrameHeight(committedHeight);
+      // Committed but VEILED, not revealed. The src was committed one line
+      // up, so the cross-origin embed page is still loading — showing the
+      // frame now (and notifying the full height, as the tail used to)
+      // expands the host's card around an empty frame for however long
+      // tako.com/embed takes to paint, which reads as a broken blank box.
+      // The reveal instead rides the same \`load\` event the watchdog below
+      // already listens for, so the expansion and the pixels arrive
+      // together. Veiled (height 0, layout box live — see the \`.veiled\`
+      // rule) rather than \`hidden\` (display:none) so the embed boots at
+      // the REAL column width; under display:none it would lay out at a
+      // 0-width viewport and could report a degenerate height that
+      // ChatGPT's pin-the-max quirk makes permanent. Failure paths are
+      // untouched: a CSP violation or the watchdog timeout still downgrade
+      // to the PNG, which reveals itself on \`img.load\`.
       frame.classList.remove("hidden");
+      frame.classList.add("veiled");
+      var revealCommittedFrame = function () {
+        // Idempotent — the embed-height handler may have revealed first —
+        // and a downgraded (hidden) frame must never be resurrected.
+        if (frame.classList.contains("hidden")) return;
+        if (!frame.classList.contains("veiled")) return;
+        frame.classList.remove("veiled");
+        // The embed's own report is AUTHORITATIVE (see embedReportedHeight):
+        // if it arrived first, the handler already sized the frame and told
+        // the host — re-notifying \`committedHeight\` here would hand the
+        // host a stale number.
+        if (embedReportedHeight) return;
+        // Re-fit at reveal time: the resize listener stands down while
+        // the frame is veiled, and the column may have laid out (or
+        // changed) between commit and load.
+        var next = aspectHeight(imgNaturalW, imgNaturalH);
+        if (next !== null) committedHeight = next;
+        setFrameHeight(committedHeight);
+        notifyHeight(committedHeight);
+        log("committed iframe revealed", { height: committedHeight });
+      };
       // Reflow on column changes (host sidebar toggle, window resize, mobile
       // rotation). Without this the frame keeps its mount-time height and the
       // empty band comes back at the new width. Skipped once a downgrade has
@@ -1955,7 +2021,11 @@ const WIDGET_HTML = `<!doctype html>
       // failure this block exists to prevent, reached by a different route.
       // \`aspectHeight\` already declines per-event, so let it.
       window.addEventListener("resize", function () {
+        // Stands down while the frame is hidden (downgraded) OR still
+        // veiled awaiting its \`load\` reveal — revealCommittedFrame re-fits
+        // for the veiled window, so nothing is lost.
         if (frame.classList.contains("hidden")) return;
+        if (frame.classList.contains("veiled")) return;
         // The embed's own report outranks anything derived from the PNG — see
         // \`embedReportedHeight\`. The comment above always claimed this listener
         // stood down "after an embed-reported height has taken over", but no
@@ -1992,6 +2062,7 @@ const WIDGET_HTML = `<!doctype html>
         height: h,
         isDataUrl: validDataImage,
         imageUrl: imgUrl,
+        onLoaded: revealCommittedFrame,
       });
     } else if (validImage) {
       return paintImage({
@@ -2037,12 +2108,18 @@ const WIDGET_HTML = `<!doctype html>
     placeholder.classList.add("hidden");
     rendered = true;
     var finalHeight = committedHeight !== null ? committedHeight : h;
-    notifyHeight(finalHeight);
+    // The committed-iframe branch defers the host height notification to
+    // \`revealCommittedFrame\` — announcing the full chart height here is
+    // what used to expand the card around a still-loading embed. The
+    // no-image \`validEmbed\` fallback keeps the immediate notify: it has
+    // no watchdog wired to reveal it later.
+    if (!useIframe) notifyHeight(finalHeight);
     log("rendered", {
       mode: useIframe ? "iframe" : "iframe-fallback",
       src: url,
       height: finalHeight,
       fitted: committedHeight !== null,
+      revealDeferred: useIframe,
     });
     return true;
   }
@@ -2595,6 +2672,13 @@ const WIDGET_HTML = `<!doctype html>
       return;
     }
     if (msg.type === "tako-embed-height" && embedOrigin && event.origin === embedOrigin) {
+      // Source pin, on top of the origin gate: only the widget's OWN embed
+      // iframe may drive resize/reveal. Origin alone would also admit any
+      // other browsing context running on the pinned Tako origin that can
+      // reach this window through the frame tree (e.g. a second widget's
+      // embed traversing \`top.frames\`), and this branch now controls
+      // visibility, not just size.
+      if (event.source !== frame.contentWindow) return;
       var h = msg.height;
       if (typeof h !== "number" || !isFinite(h) || h <= 0 || h > 4000) return;
       var n = Math.round(h);
@@ -2603,6 +2687,19 @@ const WIDGET_HTML = `<!doctype html>
       // the pre-latch value and could re-derive over what we just set.
       embedReportedHeight = true;
       setFrameHeight(n);
+      // The message can only come from the running embed page, so it is an
+      // even stronger "it rendered" signal than the frame's \`load\`:
+      //  - a committed frame still awaiting its load-reveal must unveil
+      //    now, or the notify below expands the host card around an
+      //    invisible frame;
+      //  - the watchdog must stand down, or a stalled subresource holding
+      //    \`load\` past the timeout would downgrade a chart the user is
+      //    already looking at.
+      // Deliberately does NOT touch the \`hidden\` class: a downgraded frame
+      // is unreachable here anyway (\`downgrade()\` nulls \`embedOrigin\`
+      // before hiding), and this branch should hold no un-hide power.
+      frame.classList.remove("veiled");
+      if (typeof settleCommittedWatch === "function") settleCommittedWatch();
       notifyHeight(n);
       log("resized via embed handshake", { height: n });
     }
