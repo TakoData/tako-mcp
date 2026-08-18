@@ -176,9 +176,20 @@ function deliverEmbedHeight(m: Mounted, height: number): void {
     new WidgetMessageEvent("message", {
       data: { type: "tako-embed-height", height },
       origin: "https://staging.trytako.com",
-      source: m.widgetWin as unknown as MessageEventSource,
+      // The handler is gated on `event.source === frame.contentWindow` —
+      // only the widget's OWN embed iframe may drive resize/reveal, not any
+      // other same-origin browsing context that can reach this window.
+      source: widgetFrame(m).contentWindow as unknown as MessageEventSource,
     }),
   );
+}
+
+/** Every `size-changed` height the widget has posted to the host so far. */
+function sizeChangesOf(m: Mounted): Array<{ params: { height: number } }> {
+  return m.toParent.filter(
+    (msg) =>
+      (msg as { method?: string }).method === "ui/notifications/size-changed",
+  ) as Array<{ params: { height: number } }>;
 }
 
 /** Fire the probe iframe's `load` event as if the embed page loaded. */
@@ -608,8 +619,10 @@ describe("interactive iframe capability probe (executed)", () => {
     const m = mountWidget(staticWidgetHtml());
     (m.widgetWin as unknown as { openai: object }).openai = {};
     deliver(m, CHART_RESULT, m.wrapperWin);
-    // ChatGPT path: no PNG detour, no probe — straight to the iframe.
+    // ChatGPT path: no PNG detour, no probe — straight to the iframe,
+    // which stays hidden until the embed page loads (reveal-on-load).
     expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
+    fireFrameLoad(m);
     expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
     expect(widgetImg(m).getAttribute("src")).toBeNull();
   });
@@ -685,12 +698,112 @@ describe("committed iframe watchdog (executed)", () => {
     expect(widgetFrame(m).getAttribute("height")).toBe(String(expected));
     // Explicitly NOT the requested height.
     expect(widgetFrame(m).getAttribute("height")).not.toBe("720");
-    // The host is told the same number, or the outer container keeps the band.
-    const sizeChanges = m.toParent.filter(
-      (msg) =>
-        (msg as { method?: string }).method === "ui/notifications/size-changed",
-    ) as Array<{ params: { height: number } }>;
-    expect(sizeChanges.at(-1)?.params.height).toBe(expected);
+    // The host is told the same number — at reveal (the frame's `load`),
+    // or the outer container keeps the band.
+    fireFrameLoad(m);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(expected);
+  });
+
+  it("keeps the committed iframe veiled until the embed loads, then reveals", () => {
+    // The "weird loading phase" on ChatGPT: the widget used to unhide the
+    // iframe and notify the full chart height at delivery, expanding the
+    // host's card seconds before tako.com/embed had painted anything — a
+    // full-height blank box. Reveal-on-load makes the expansion and the
+    // pixels arrive together. Failure paths are unchanged: a CSP violation
+    // or the watchdog timeout still downgrade to the PNG.
+    //
+    // Veiled, NOT display:none-hidden: the frame keeps its layout box (at
+    // height 0) so the embed page boots with the REAL column width. Under
+    // display:none the embed would lay out at a 0-width viewport, and a
+    // `tako-embed-height` measured in that degenerate layout would be
+    // notified and permanently pinned by ChatGPT's max-height quirk.
+    const m = mountChatGpt();
+    setColumnWidth(m, COLUMN_WIDTH);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 720 },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      m.wrapperWin,
+    );
+    // Committed (src pinned, height staged, layout box live) but veiled —
+    // and the host has not been told to expand: the last size-changed is
+    // still the 1 px mount floor.
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+    expect(widgetFrame(m).classList.contains("veiled")).toBe(true);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(1);
+    fireFrameLoad(m);
+    expect(widgetFrame(m).classList.contains("veiled")).toBe(false);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(
+      Math.round((COLUMN_WIDTH * 1101) / 2400),
+    );
+  });
+
+  it("re-fits at reveal when layout settled between commit and load", () => {
+    // The resize listener stands down while the frame is hidden, so the
+    // reveal must re-derive the height itself — otherwise a widget whose
+    // tool-result arrived before layout (clientWidth 0 → the 720 fallback)
+    // would reveal at 720 even though the column is known by then.
+    const m = mountChatGpt();
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 720 },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      m.wrapperWin,
+    );
+    expect(widgetFrame(m).getAttribute("height")).toBe("720");
+    setColumnWidth(m, COLUMN_WIDTH);
+    fireFrameLoad(m);
+    expect(widgetFrame(m).getAttribute("height")).toBe(
+      String(Math.round((COLUMN_WIDTH * 1101) / 2400)),
+    );
+  });
+
+  it("an embed-height report while awaiting load reveals AND settles the watchdog", () => {
+    // `tako-embed-height` can only come from the running embed page, so it
+    // is an even stronger "it rendered" signal than `load`. Without the
+    // unveil, the handler's notify would expand the host card around an
+    // invisible frame — the exact blank box reveal-on-load removes.
+    const m = mountChatGpt();
+    deliver(m, CHATGPT_RESULT, m.wrapperWin);
+    expect(widgetFrame(m).classList.contains("veiled")).toBe(true);
+    deliverEmbedHeight(m, 500);
+    expect(widgetFrame(m).classList.contains("veiled")).toBe(false);
+    expect(widgetFrame(m).getAttribute("height")).toBe("500");
+    // The handshake must also SETTLE the committed-iframe watchdog: the
+    // embed has proven it rendered, so a late `load` (slow font, stalled
+    // subresource) must not let the 8 s timeout downgrade a chart the user
+    // is already looking at. A frame-src violation after the handshake is
+    // the synchronous probe for that — with the watchdog settled its
+    // listener is gone, so nothing downgrades.
+    fireFrameSrcViolation(m);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(false);
+    expect(widgetFrame(m).getAttribute("src")).toBe(EMBED_IFRAME_SRC);
+  });
+
+  it("ignores an embed-height report whose sender is not our embed frame", () => {
+    // Origin alone would admit any browsing context on the pinned Tako
+    // origin that can reach this window through the frame tree — and the
+    // branch now controls visibility, not just size. The sender must be the
+    // widget's OWN embed iframe.
+    const m = mountChatGpt();
+    deliver(m, CHATGPT_RESULT, m.wrapperWin);
+    const WidgetMessageEvent = (
+      m.widgetWin as unknown as { MessageEvent: typeof MessageEvent }
+    ).MessageEvent;
+    m.widgetWin.dispatchEvent(
+      new WidgetMessageEvent("message", {
+        data: { type: "tako-embed-height", height: 500 },
+        origin: "https://staging.trytako.com", // right origin...
+        source: m.widgetWin as unknown as MessageEventSource, // ...wrong window
+      }),
+    );
+    expect(widgetFrame(m).classList.contains("veiled")).toBe(true);
+    expect(widgetFrame(m).getAttribute("height")).not.toBe("500");
   });
 
   it("sizes a tall list card taller than a wide chart card", () => {
@@ -756,6 +869,9 @@ describe("committed iframe watchdog (executed)", () => {
     expect(widgetFrame(m).getAttribute("height")).toBe(
       String(Math.round((400 * 1101) / 2400)),
     );
+    // Reveal first: the resize listener stands down while the frame is
+    // hidden awaiting its `load`.
+    fireFrameLoad(m);
     setColumnWidth(m, 900);
     fireResize(m);
     expect(widgetFrame(m).getAttribute("height")).toBe(
@@ -784,6 +900,7 @@ describe("committed iframe watchdog (executed)", () => {
     );
     // Mounted on the fallback, as it must be — there is nothing to fit to yet.
     expect(widgetFrame(m).getAttribute("height")).toBe("720");
+    fireFrameLoad(m);
 
     // Layout settles and the host reflows.
     setColumnWidth(m, COLUMN_WIDTH);

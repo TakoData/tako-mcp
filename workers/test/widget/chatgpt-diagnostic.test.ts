@@ -153,6 +153,16 @@ function committedHeight(m: Mounted): number {
   return Number.parseInt(frame(m).style.height, 10);
 }
 
+/**
+ * Fire the committed iframe's `load` event as if the embed page painted —
+ * the widget reveals (unhides) the frame only then, so the host card
+ * expands with pixels in it rather than seconds before.
+ */
+function fireFrameLoad(m: Mounted): void {
+  const WidgetEvent = (m.widgetWin as unknown as { Event: typeof Event }).Event;
+  frame(m).dispatchEvent(new WidgetEvent("load"));
+}
+
 afterEach(() => {
   for (const dom of mounted.splice(0)) dom.window.close();
 });
@@ -163,6 +173,11 @@ describe("ChatGPT chart chain — link by link", () => {
     expect(frame(m).getAttribute("src")).toBe(
       `${EMBED_URL}&disable_tracking=true`,
     );
+    // Veiled (height 0, layout box live) until the embed page loads —
+    // reveal-on-load — then fully visible.
+    expect(frame(m).classList.contains("veiled")).toBe(true);
+    fireFrameLoad(m);
+    expect(frame(m).classList.contains("veiled")).toBe(false);
     expect(frame(m).classList.contains("hidden")).toBe(false);
   });
 
@@ -213,6 +228,7 @@ describe("ChatGPT chart chain — link by link", () => {
     // `render()` is guarded, so this lands on exactly the old behaviour rather
     // than throwing on a missing field.
     const m = mountWidget({ toolOutput: STRUCTURED_CONTENT });
+    fireFrameLoad(m);
     expect(frame(m).classList.contains("hidden")).toBe(false);
     expect(committedHeight(m)).toBe(STRUCTURED_CONTENT.height);
   });
@@ -257,7 +273,8 @@ describe("ChatGPT chart chain — link by link", () => {
     expect(committedHeight(m)).toBe(Math.round(720 * CARD_ASPECT)); // estimate
 
     // The embed page reports its true content height. Origin must match the
-    // embed url — the handler ignores messages from anywhere else.
+    // embed url AND the sender must be the widget's own embed iframe — the
+    // handler ignores messages from anywhere else.
     const WidgetMessageEvent = (
       m.widgetWin as unknown as { MessageEvent: typeof MessageEvent }
     ).MessageEvent;
@@ -265,6 +282,7 @@ describe("ChatGPT chart chain — link by link", () => {
       new WidgetMessageEvent("message", {
         data: { type: "tako-embed-height", height: 732 },
         origin: "https://tako.com",
+        source: frame(m).contentWindow as unknown as MessageEventSource,
       }),
     );
     expect(committedHeight(m)).toBe(732);
