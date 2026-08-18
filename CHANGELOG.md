@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.21.0](https://github.com/TakoData/tako-mcp/compare/v0.20.0...v0.21.0) (2026-08-18)
+
+
+### Features
+
+* **mcp:** actionable failure guidance for out-of-credits and gated tools ([51d272f](https://github.com/TakoData/tako-mcp/commit/51d272fed5e5663c1febebea044d7d72544fbf91))
+* **mcp:** recognize the ChatGPT desktop app, stage its widget behind the CSP fix ([6df2205](https://github.com/TakoData/tako-mcp/commit/6df220535af273d2fdaf084a69ac0b7cf3483b0c))
+* **widget:** flip the ChatGPT desktop app to the interactive card ([172e6e6](https://github.com/TakoData/tako-mcp/commit/172e6e6ce3db250f606b1fb0560dd9791ea10c78))
+
+
+### Bug Fixes
+
+* **registry:** stop the codex parity gate from blocking a widget rollback ([88d1b07](https://github.com/TakoData/tako-mcp/commit/88d1b073eb57ed4d693b1234b7724c5005dafd8a))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([4d308ab](https://github.com/TakoData/tako-mcp/commit/4d308ab5ec984deb4b3aacc7c3a396256ba63091))
+* sync OpenAPI spec from monorepo ([54aea77](https://github.com/TakoData/tako-mcp/commit/54aea770ce7d3789888798bd3c9644b82a51d4a6))
+* sync OpenAPI spec from TakoData/tako ([8296f70](https://github.com/TakoData/tako-mcp/commit/8296f70276ee41442ce8f0a14cee76ab6175abbe))
+
 ## [0.20.0](https://github.com/TakoData/tako-mcp/compare/v0.19.5...v0.20.0) (2026-08-14)
 
 
