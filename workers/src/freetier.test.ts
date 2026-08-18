@@ -479,7 +479,11 @@ describe("freeTierLimitResponse", () => {
     const body = (await res.json()) as {
       jsonrpc: string;
       id: number;
-      result: { content: Array<{ type: string; text: string }>; isError: boolean };
+      result: {
+        content: Array<{ type: string; text: string }>;
+        isError: boolean;
+        _meta: Record<string, unknown>;
+      };
     };
     expect(body.jsonrpc).toBe("2.0");
     expect(body.id).toBe(4);
@@ -487,6 +491,12 @@ describe("freeTierLimitResponse", () => {
     expect(body.result.content).toEqual([
       { type: "text", text: FREE_TIER_LIMIT_MESSAGE },
     ]);
+    // The failed-call discriminant every other error result carries. The
+    // chart widget keys its labelled empty state on it — without this the
+    // most common anonymous-ChatGPT failure left an unlabelled blank box.
+    expect(body.result._meta).toEqual({
+      "tako/error": { kind: "rate_limited" },
+    });
   });
 
   it("without a request id: degrades to the legacy 429 with Retry-After", async () => {
@@ -510,13 +520,23 @@ describe("freeTierGlobalLimitResponse", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       id: string;
-      result: { content: Array<{ type: string; text: string }>; isError: boolean };
+      result: {
+        content: Array<{ type: string; text: string }>;
+        isError: boolean;
+        _meta: Record<string, unknown>;
+      };
     };
     expect(body.id).toBe("req-3");
     expect(body.result.isError).toBe(true);
     expect(body.result.content).toEqual([
       { type: "text", text: FREE_TIER_GLOBAL_LIMIT_MESSAGE },
     ]);
+    // Same discriminant as the per-IP bucket, kind mirroring the 429
+    // branch's data.kind — distinct spellings on purpose (see the
+    // function's comment on topology visibility).
+    expect(body.result._meta).toEqual({
+      "tako/error": { kind: "global_rate_limited" },
+    });
   });
 
   it("without an id: a 429 JSON-RPC error with the capacity message and Retry-After", async () => {

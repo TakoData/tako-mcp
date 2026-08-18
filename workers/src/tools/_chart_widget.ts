@@ -683,9 +683,11 @@ const WIDGET_HTML = `<!doctype html>
      between widget mount and chart data arrival on hosts with slow
      postMessage delivery (~200 ms on claude.ai); ChatGPT's
      window.openai.toolOutput is synchronous so no visible flash.
-     The chart-rendering paths (iframe / img.load / iframe-fallback)
-     un-hide the relevant element AND notifyHeight(actual height) in
-     lockstep, so the widget grows naturally on success. -->
+     The img.load and iframe-fallback paths un-hide the relevant element
+     AND notifyHeight(actual height) in lockstep; the committed-iframe
+     path defers both to its reveal (\`revealCommittedFrame\` /
+     tako-embed-height — the frame stays veiled until the embed proves it
+     painted), so the widget still only grows when there are pixels. -->
 <div id="tako-placeholder" class="hidden">Loading chart…</div>
 <!-- Shown only by \`collapse()\`, i.e. only once we know there is no chart to
      draw. Never a loading state: on a host that honours the shrink this sits
@@ -755,9 +757,10 @@ const WIDGET_HTML = `<!doctype html>
 
   // Height for the embed iframe, derived from the CARD's real aspect ratio.
   //
-  // A cross-origin iframe never sizes itself to its content, and the Tako embed
-  // page does not report its height, so this height is the only thing deciding
-  // the box. It used to be \`structuredContent.height\` — a flat 720 — against a
+  // A cross-origin iframe never sizes itself to its content, so until the
+  // embed's own \`tako-embed-height\` report arrives (it DOES emit one now —
+  // see \`embedReportedHeight\`, which outranks this everywhere) this height
+  // is the only thing deciding the box. It used to be \`structuredContent.height\` — a flat 720 — against a
   // chat column around 700 px wide. That is a near-square frame holding a card
   // whose real aspect is 2.18:1 for a plain chart, so the card painted ~320 px
   // tall and left ~400 px of empty background beneath it. Ranked/list cards run
@@ -1473,6 +1476,28 @@ const WIDGET_HTML = `<!doctype html>
     }
     function onLoad() {
       if (settled) return;
+      // Stray-load guard. \`#tako-embed\` is parser-inserted with no \`src\`,
+      // so the browser queues a \`load\` for its initial about:blank
+      // document. On the synchronous \`toolOutput\` path — ChatGPT's primary
+      // one — render() commits the src and this listener attaches in the
+      // same parse task, so that stray event is delivered NEXT tick, long
+      // before the embed responds. Unguarded it would settle the watchdog
+      // (no CSP downgrade, no timeout, no PNG fallback for the rest of the
+      // widget's life) and reveal the veiled frame at full height around
+      // nothing — both halves of the bug this file exists to prevent.
+      //
+      // about:blank is the ONE document this frame can host that is
+      // same-origin-readable; the real embed is cross-origin, where
+      // \`contentDocument\` reads null (or throws on stricter engines). So a
+      // readable document still sitting on about:blank identifies the
+      // stray exactly, with no timing heuristics.
+      try {
+        var straydoc = frame.contentDocument;
+        if (straydoc && straydoc.location && straydoc.location.href === "about:blank") {
+          log("ignored stray about:blank load");
+          return;
+        }
+      } catch (e) { /* cross-origin read — the genuine embed load */ }
       cleanup();
       log("committed iframe loaded", { src: url });
       // Reveal-on-load: the embed has rendered, so it is finally safe to
@@ -1992,10 +2017,14 @@ const WIDGET_HTML = `<!doctype html>
         if (frame.classList.contains("hidden")) return;
         if (!frame.classList.contains("veiled")) return;
         frame.classList.remove("veiled");
-        // The embed's own report is AUTHORITATIVE (see embedReportedHeight):
-        // if it arrived first, the handler already sized the frame and told
-        // the host — re-notifying \`committedHeight\` here would hand the
-        // host a stale number.
+        // Defensive, and believed UNREACHABLE under current wiring: the
+        // only writer of \`embedReportedHeight\` also settles the watchdog,
+        // whose cleanup removes the \`load\` listener — so handshake-first
+        // never reaches this function, and load-first sets the flag only
+        // after this returns. Kept anyway as a one-line invariant (the
+        // embed's own report is authoritative; never notify a stale
+        // aspect estimate over it) so a future rewiring of the settle
+        // path cannot silently regress the height contract.
         if (embedReportedHeight) return;
         // Re-fit at reveal time: the resize listener stands down while
         // the frame is veiled, and the column may have laid out (or
@@ -2257,8 +2286,9 @@ const WIDGET_HTML = `<!doctype html>
   // Does this object say the CALL ITSELF failed? Two spellings, both
   // positive claims rather than inferences: the MCP envelope's
   // \`isError: true\`, and the server's own \`_meta["tako/error"]\`
-  // discriminant (attached to every mapped upstream failure — Django
-  // errors, free-tier capacity; see \`djangoErrorToToolResult\` in mcp.ts).
+  // discriminant (attached to every server-built failure — Django errors,
+  // free-tier credits/capacity, and both free-tier rate limiters; see
+  // \`djangoErrorToToolResult\` in mcp.ts and \`freetier.ts\`).
   // Either is the affirmative knowledge the no-data watchdog lacks: a
   // failed call and a late delivery stop being indistinguishable the
   // moment one of these is visible.
@@ -2291,8 +2321,29 @@ const WIDGET_HTML = `<!doctype html>
   function pickErrorFromOpenAi() {
     var w = window;
     if (!w || !w.openai || typeof w.openai !== "object") return false;
-    return trmHasError(w.openai.toolResponseMetadata);
+    // Both envelope carriers \`pickMetaFromOpenAi\` probes:
+    // \`toolResponseMetadata\`, and \`openai.widget\` — the spelling dev-mode
+    // custom connectors actually populate. Dropping the latter would send a
+    // failed call on such a host to the silent watchdog collapse even
+    // though its \`tako/error\` was sitting right there.
+    return (
+      trmHasError(w.openai.toolResponseMetadata) ||
+      trmHasError(w.openai.widget)
+    );
   }
+
+  // Failed-call signal seen on a SNIFFED ChatGPT channel (globals event or
+  // the \`window.openai\` snapshot). Deliberately NOT acted on immediately:
+  // whether ChatGPT populates \`toolResponseMetadata\` under \`isError\` — and
+  // with what staleness — is not provable from outside the host, and the
+  // poll below exists precisely because payload and \`_meta\` can land on
+  // different ticks. So the sighting is only recorded here, the poll keeps
+  // running so a late payload always wins, and the no-data watchdog turns
+  // the sighting into the LABELLED collapse at its exit. Contrast the
+  // MCP-Apps \`ui/notifications/tool-result\` path, which acts on
+  // \`isError\` immediately: there the host has delivered THE result for
+  // this call, so there is nothing left to wait for.
+  var errorSeen = false;
 
   // Label-and-collapse for a KNOWN-failed call. The same collapse the
   // no-chart guard uses, with failure copy: hosts that keep the box anyway
@@ -2426,30 +2477,25 @@ const WIDGET_HTML = `<!doctype html>
   // ChatGPT populates the global at unpredictable times. Cost: one
   // property read every 250 ms.
   if (!render(pickPayload(null), pickMetaFromOpenAi())) {
-    // Payload first, error second — see \`collapseFailed\`. An \`isError\`
-    // result never grows a payload later, so acting on it synchronously
-    // spares the user the 10 s of blank box the watchdog would allow.
-    if (pickErrorFromOpenAi()) {
-      collapseFailed();
-    } else {
-      var attempts = 0;
-      var handle = setInterval(function () {
-        attempts += 1;
-        // Re-read the meta each tick, not once before the loop: the payload and
-        // its \`_meta\` can land on different ticks, and pinning a stale
-        // \`undefined\` here would reintroduce the exact bug this fixes.
-        if (render(pickPayload(null), pickMetaFromOpenAi())) {
-          clearInterval(handle);
-          return;
-        }
-        if (pickErrorFromOpenAi()) {
-          collapseFailed();
-          clearInterval(handle);
-          return;
-        }
-        if (attempts >= 40) clearInterval(handle);
-      }, 250);
-    }
+    // Payload first, error second — see \`collapseFailed\`. The error
+    // sighting is only RECORDED (see \`errorSeen\`): the poll always runs
+    // its full window so a payload landing on a later tick still wins,
+    // and the watchdog below turns the sighting into the labelled
+    // collapse at exit.
+    if (pickErrorFromOpenAi()) errorSeen = true;
+    var attempts = 0;
+    var handle = setInterval(function () {
+      attempts += 1;
+      // Re-read the meta each tick, not once before the loop: the payload and
+      // its \`_meta\` can land on different ticks, and pinning a stale
+      // \`undefined\` here would reintroduce the exact bug this fixes.
+      if (render(pickPayload(null), pickMetaFromOpenAi())) {
+        clearInterval(handle);
+        return;
+      }
+      if (pickErrorFromOpenAi()) errorSeen = true;
+      if (attempts >= 40) clearInterval(handle);
+    }, 250);
   }
 
   // No-data watchdog. If nothing renderable has arrived by the time the
@@ -2468,12 +2514,20 @@ const WIDGET_HTML = `<!doctype html>
   // any chart has painted, and the 10 s bound matches the polling window so it
   // cannot race a slow-but-arriving delivery.
   //
-  // Collapsed WITHOUT the label, deliberately: from in here a failed call and a
-  // delivery that is merely late look identical, so "No chart for this result"
-  // would be an affirmative claim that is wrong in the second case. See
-  // \`collapse()\`.
+  // Labelled or blank, decided HERE and only here for the ChatGPT
+  // channels: when an error signal was sighted during the window
+  // (\`errorSeen\`, re-checked once more at exit for a sighting that landed
+  // after the poll's last tick), the failure is a fact and the collapse
+  // says so. Otherwise blank, deliberately: "nothing arrived in 10 s"
+  // covers a failed call and a merely late delivery alike, and "No chart
+  // for this result" would be an affirmative claim that is wrong in the
+  // second case. See \`collapse()\`.
   setTimeout(function () {
     if (rendered) return;
+    if (errorSeen || pickErrorFromOpenAi()) {
+      collapseFailed();
+      return;
+    }
     collapse(false);
     log("no data arrived, collapsed widget");
   }, 10000);
@@ -2508,12 +2562,13 @@ const WIDGET_HTML = `<!doctype html>
     // Nothing renderable on any channel — but the event may be the delivery
     // of a FAILED call (the host populated \`toolResponseMetadata\` and fired
     // the event with no useful detail, the same timing PATH 3 has for
-    // success). Check the event's own globals and the live snapshot.
+    // success). Sighted, not acted on — see \`errorSeen\`: the watchdog
+    // labels at exit, so a payload arriving on a later event still wins.
     if (
       (globals && trmHasError(globals.toolResponseMetadata)) ||
       pickErrorFromOpenAi()
     ) {
-      collapseFailed();
+      errorSeen = true;
     }
   };
   EVENT_NAMES.forEach(function (name) {
@@ -2636,11 +2691,12 @@ const WIDGET_HTML = `<!doctype html>
   // uses the \`window.openai\` path further up.
   //
   // Also handles a \`tako-embed-height\` resize message from the inner
-  // embed iframe, gated to that iframe's origin. The Tako web app does
-  // not emit it yet — when it ships, the widget will start
-  // self-correcting chart heights without a worker redeploy. Sanity
-  // bounds (positive integer < 4000 px) keep a hostile or buggy embed
-  // from blowing the iframe up to nonsensical sizes.
+  // embed iframe, gated to that iframe's origin AND sender window. The
+  // Tako web app emits it now (measured live — see \`embedReportedHeight\`),
+  // so this is a live channel: it self-corrects chart heights, reveals a
+  // veiled committed frame, and settles the committed-iframe watchdog.
+  // Sanity bounds (positive integer < 4000 px) keep a hostile or buggy
+  // embed from blowing the iframe up to nonsensical sizes.
   window.addEventListener("message", function (event) {
     var msg = event.data;
     if (!msg || typeof msg !== "object") return;
