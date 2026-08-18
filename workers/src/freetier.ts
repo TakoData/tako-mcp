@@ -394,6 +394,13 @@ export function freeTierLimitResponse(requestId: JsonRpcRequestId): Response {
       id: requestId,
       result: {
         content: [{ type: "text", text: FREE_TIER_LIMIT_MESSAGE }],
+        // Same discriminant every other failed tool result carries
+        // (djangoErrorToToolResult, freeTierCreditsToolResult, …), same
+        // spelling as the 429 branch's `data.kind` above. The chart widget
+        // keys its labelled empty state on this: rate limiting is the most
+        // common anonymous-ChatGPT failure, and without the marker it was
+        // the one failure that still left an unlabelled blank box.
+        _meta: { "tako/error": { kind: "rate_limited" } },
         isError: true,
       },
     }),
@@ -462,6 +469,10 @@ export function freeTierGlobalLimitResponse(
       id: requestId,
       result: {
         content: [{ type: "text", text: FREE_TIER_GLOBAL_LIMIT_MESSAGE }],
+        // See freeTierLimitResponse: the widget's failed-call label keys on
+        // this. Kind mirrors the 429 branch's `data.kind`, distinct from the
+        // per-IP bucket on purpose (comment above).
+        _meta: { "tako/error": { kind: "global_rate_limited" } },
         isError: true,
       },
     }),

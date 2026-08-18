@@ -968,6 +968,125 @@ describe("committed iframe watchdog (executed)", () => {
     expect(widgetImg(m).getAttribute("src")).toBeNull();
   });
 
+  it("ignores the srcless iframe's stray about:blank load", () => {
+    // #tako-embed is parser-inserted with no `src`, so the browser queues a
+    // `load` for its initial about:blank document — delivered right after
+    // the watchdog attaches its listener on the synchronous toolOutput
+    // path. Unguarded, that one event settled the watchdog (killing the
+    // CSP/timeout → PNG downgrade for the widget's life) and revealed the
+    // veiled frame at full height around nothing. The guard keys on the one
+    // fact that separates the stray from the real embed: about:blank is
+    // same-origin-readable, the cross-origin embed is not. jsdom navigates
+    // the frame's document synchronously on src assignment, so the stray
+    // state is modelled by pinning contentDocument back to an about:blank
+    // reading.
+    const m = mountChatGpt();
+    setColumnWidth(m, COLUMN_WIDTH);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 720 },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      m.wrapperWin,
+    );
+    Object.defineProperty(widgetFrame(m), "contentDocument", {
+      configurable: true,
+      get: () => ({ location: { href: "about:blank" } }) as unknown as Document,
+    });
+    fireFrameLoad(m); // the stray
+    // No reveal — the frame stays veiled, and the host was not told to grow.
+    expect(widgetFrame(m).classList.contains("veiled")).toBe(true);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(1);
+    // No settle either — the watchdog must still be armed, so a CSP block
+    // arriving after the stray still downgrades to the PNG.
+    fireFrameSrcViolation(m);
+    expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
+    expect(widgetImg(m).getAttribute("src")).toBe(IMAGE_URL);
+  });
+
+  it("still reveals on the genuine load after ignoring the stray", () => {
+    const m = mountChatGpt();
+    setColumnWidth(m, COLUMN_WIDTH);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 720 },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      m.wrapperWin,
+    );
+    Object.defineProperty(widgetFrame(m), "contentDocument", {
+      configurable: true,
+      get: () => ({ location: { href: "about:blank" } }) as unknown as Document,
+    });
+    fireFrameLoad(m); // stray — ignored
+    expect(widgetFrame(m).classList.contains("veiled")).toBe(true);
+    // The embed responds: cross-origin, so contentDocument reads null.
+    Object.defineProperty(widgetFrame(m), "contentDocument", {
+      configurable: true,
+      get: () => null,
+    });
+    fireFrameLoad(m); // the genuine load
+    expect(widgetFrame(m).classList.contains("veiled")).toBe(false);
+    expect(sizeChangesOf(m).at(-1)?.params.height).toBe(
+      Math.round((COLUMN_WIDTH * 1101) / 2400),
+    );
+  });
+
+  it("downgrades a veiled frame to the PNG when nothing loads in the settle window", () => {
+    // The veiled→timeout→PNG path end to end: every other downgrade test
+    // reaches downgrade() via a CSP violation, so the timeout branch — and
+    // the `remove("veiled")` before `add("hidden")`, and the PNG revealing
+    // itself out of a veiled frame — never ran under test.
+    vi.useFakeTimers();
+    try {
+      const m = mountChatGpt();
+      setColumnWidth(m, COLUMN_WIDTH);
+      deliver(m, CHATGPT_RESULT, m.wrapperWin);
+      expect(widgetFrame(m).classList.contains("veiled")).toBe(true);
+      vi.advanceTimersByTime(8000); // IFRAME_SETTLE_MS
+      // Downgraded: unveiled AND hidden (an element carrying both classes
+      // would resurrect at height 0 if `hidden` were ever lifted), frame
+      // unloaded, PNG painted in its place.
+      expect(widgetFrame(m).classList.contains("veiled")).toBe(false);
+      expect(widgetFrame(m).classList.contains("hidden")).toBe(true);
+      expect(widgetFrame(m).getAttribute("src")).toBe("about:blank");
+      expect(widgetImg(m).getAttribute("src")).toBe(IMAGE_URL);
+      // The PNG reveals itself on its own load, exactly like the CSP path.
+      fireImageLoad(m);
+      expect(widgetLink(m).classList.contains("hidden")).toBe(false);
+      expect(widgetLink(m).getAttribute("href")).toBe(EMBED_URL);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stands down the resize re-fit while the frame is veiled", () => {
+    // The reveal re-fits for the veiled window (test above), so the live
+    // listener must not fight it: a column change before `load` is picked
+    // up at reveal time, not mid-veil.
+    const m = mountChatGpt();
+    setColumnWidth(m, COLUMN_WIDTH);
+    deliver(
+      m,
+      toolResult(
+        { embed_url: EMBED_URL, image_url: IMAGE_URL, height: 720 },
+        { image_natural_width: 2400, image_natural_height: 1101 },
+      ),
+      m.wrapperWin,
+    );
+    const staged = widgetFrame(m).getAttribute("height");
+    setColumnWidth(m, 900);
+    fireResize(m);
+    expect(widgetFrame(m).getAttribute("height")).toBe(staged);
+    // Reveal picks up the new width.
+    fireFrameLoad(m);
+    expect(widgetFrame(m).getAttribute("height")).toBe(
+      String(Math.round((900 * 1101) / 2400)),
+    );
+  });
+
   it("falls back to the remote PNG when the host CSP blocks the iframe", () => {
     const m = mountChatGpt();
     deliver(m, CHATGPT_RESULT, m.wrapperWin);

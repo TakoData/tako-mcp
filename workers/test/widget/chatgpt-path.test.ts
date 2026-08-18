@@ -13,7 +13,7 @@
  * and all.
  */
 import { JSDOM, VirtualConsole } from "jsdom";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../../src/env.js";
 import { buildChartAppUiResourceFromOutputPubId } from "../../src/tools/_chart_widget.js";
@@ -282,32 +282,76 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     // area. An `isError` result carries no `structuredContent`, ChatGPT mounts
     // the widget from static registration metadata anyway, holds it at its
     // default height, and ignores shrink notifications — so the no-data
-    // watchdog's unlabelled collapse reads as a broken card for ten seconds
-    // and a blank one forever after. But a failed call is not unknowable:
-    // every mapped upstream failure carries `_meta["tako/error"]`, and
-    // `toolResponseMetadata` preserves the result envelope for the widget.
-    // Reading it turns the blank into the same intentional labelled state a
-    // zero-card search already gets — synchronously, not after 10 s.
-    const heights: number[] = [];
-    const m = mountWidget(html(), {
-      toolOutput: null,
-      toolResponseMetadata: {
-        _meta: {
-          "tako/error": { kind: "timeout", path: "/api/v3/search/", method: "POST" },
+    // watchdog's unlabelled collapse reads as a broken card. But a failed
+    // call is not unknowable: every server-built failure carries
+    // `_meta["tako/error"]`, and `toolResponseMetadata` preserves the result
+    // envelope for the widget.
+    //
+    // The label lands at the WATCHDOG's exit, not synchronously: the sniffed
+    // ChatGPT channels are not provably fresh, so an error sighting is only
+    // recorded (`errorSeen`) while the poll runs its full window — a payload
+    // landing on a later tick must still win (test below). The watchdog then
+    // turns the sighting into the labelled collapse.
+    vi.useFakeTimers();
+    try {
+      const heights: number[] = [];
+      const m = mountWidget(html(), {
+        toolOutput: null,
+        toolResponseMetadata: {
+          _meta: {
+            "tako/error": { kind: "timeout", path: "/api/v3/search/", method: "POST" },
+          },
         },
-      },
-      theme: "light",
-      notifyIntrinsicHeight: (h: number) => heights.push(h),
-    });
-    const empty = m.widgetWin.document.getElementById(
-      "tako-empty",
-    ) as HTMLElement;
-    expect(empty.classList.contains("hidden")).toBe(false);
-    expect(empty.textContent).toMatch(/failed/i);
-    expect(renderedIframe(m)).toBe(false);
-    // Same contract as the zero-card empty state: the mount-time floor, then
-    // the collapse. Labelling a box the host kept is not a request for one.
-    expect(heights).toEqual([1, 0]);
+        theme: "light",
+        notifyIntrinsicHeight: (h: number) => heights.push(h),
+      });
+      const empty = m.widgetWin.document.getElementById(
+        "tako-empty",
+      ) as HTMLElement;
+      // Sighted but not yet acted on — the payload window is still open.
+      expect(empty.classList.contains("hidden")).toBe(true);
+      vi.advanceTimersByTime(10_000);
+      expect(empty.classList.contains("hidden")).toBe(false);
+      expect(empty.textContent).toMatch(/failed/i);
+      expect(renderedIframe(m)).toBe(false);
+      // Same contract as the zero-card empty state: the mount-time floor,
+      // then the collapse. Labelling a box the host kept is not a request
+      // for one.
+      expect(heights).toEqual([1, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ERROR: a payload landing after an error sighting still renders", () => {
+    // The redesign's reason to exist. An early `tako/error` read at boot
+    // must not be terminal: whether ChatGPT populates `toolResponseMetadata`
+    // under `isError` — and with what staleness — is not provable from the
+    // jsdom harness, and payload and `_meta` are known to land on different
+    // ticks. So a chart arriving mid-window wins over the sighting, and the
+    // watchdog then no-ops.
+    vi.useFakeTimers();
+    try {
+      const openai: Record<string, unknown> = {
+        toolResponseMetadata: {
+          _meta: { "tako/error": { kind: "timeout" } },
+        },
+      };
+      const m = mountWidget(html(), openai);
+      const empty = m.widgetWin.document.getElementById(
+        "tako-empty",
+      ) as HTMLElement;
+      expect(empty.classList.contains("hidden")).toBe(true);
+      // The payload lands two ticks later.
+      openai.toolOutput = PROD_STRUCTURED_CONTENT;
+      vi.advanceTimersByTime(500);
+      expect(renderedIframe(m)).toBe(true);
+      // And the watchdog must not label over a rendered chart.
+      vi.advanceTimersByTime(10_000);
+      expect(empty.classList.contains("hidden")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ERROR: the envelope's own isError flag is enough (SDK-wrapped errors)", () => {
@@ -315,38 +359,53 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     // them in a generic error result WITHOUT `_meta["tako/error"]`. The
     // envelope's `isError: true` is the one signal those still carry, on
     // whichever spelling ChatGPT's envelope uses.
-    const m = mountWidget(html(), {
-      toolOutput: null,
-      toolResponseMetadata: {
-        mcp_tool_result: {
-          isError: true,
-          content: [{ type: "text", text: "Tako search endpoint returned an unexpected shape." }],
+    vi.useFakeTimers();
+    try {
+      const m = mountWidget(html(), {
+        toolOutput: null,
+        toolResponseMetadata: {
+          mcp_tool_result: {
+            isError: true,
+            content: [{ type: "text", text: "Tako search endpoint returned an unexpected shape." }],
+          },
         },
-      },
-    });
-    const empty = m.widgetWin.document.getElementById(
-      "tako-empty",
-    ) as HTMLElement;
-    expect(empty.classList.contains("hidden")).toBe(false);
-    expect(empty.textContent).toMatch(/failed/i);
+      });
+      const empty = m.widgetWin.document.getElementById(
+        "tako-empty",
+      ) as HTMLElement;
+      vi.advanceTimersByTime(10_000);
+      expect(empty.classList.contains("hidden")).toBe(false);
+      expect(empty.textContent).toMatch(/failed/i);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ERROR: a late-arriving error on the event path labels too", () => {
     // Same failure, delivered the way PATH 3 delivers success: the host
     // populates `toolResponseMetadata` after mount and fires the globals
-    // event with no useful detail.
-    const openai: Record<string, unknown> = {};
-    const m = mountWidget(html(), openai);
-    const empty = m.widgetWin.document.getElementById(
-      "tako-empty",
-    ) as HTMLElement;
-    expect(empty.classList.contains("hidden")).toBe(true);
-    openai.toolResponseMetadata = {
-      _meta: { "tako/error": { kind: "http", status: 502 } },
-    };
-    fireSetGlobals(m, undefined, "openai:set_globals");
-    expect(empty.classList.contains("hidden")).toBe(false);
-    expect(empty.textContent).toMatch(/failed/i);
+    // event with no useful detail. The event only records the sighting;
+    // the watchdog labels at exit.
+    vi.useFakeTimers();
+    try {
+      const openai: Record<string, unknown> = {};
+      const m = mountWidget(html(), openai);
+      const empty = m.widgetWin.document.getElementById(
+        "tako-empty",
+      ) as HTMLElement;
+      expect(empty.classList.contains("hidden")).toBe(true);
+      openai.toolResponseMetadata = {
+        _meta: { "tako/error": { kind: "http", status: 502 } },
+      };
+      fireSetGlobals(m, undefined, "openai:set_globals");
+      // Sighted, not yet labelled — a payload could still arrive.
+      expect(empty.classList.contains("hidden")).toBe(true);
+      vi.advanceTimersByTime(10_000);
+      expect(empty.classList.contains("hidden")).toBe(false);
+      expect(empty.textContent).toMatch(/failed/i);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ERROR: a renderable payload wins over a stale error signal", () => {
