@@ -2254,6 +2254,63 @@ const WIDGET_HTML = `<!doctype html>
     return "cards" in o || "answer" in o || "web_results" in o;
   }
 
+  // Does this object say the CALL ITSELF failed? Two spellings, both
+  // positive claims rather than inferences: the MCP envelope's
+  // \`isError: true\`, and the server's own \`_meta["tako/error"]\`
+  // discriminant (attached to every mapped upstream failure — Django
+  // errors, free-tier capacity; see \`djangoErrorToToolResult\` in mcp.ts).
+  // Either is the affirmative knowledge the no-data watchdog lacks: a
+  // failed call and a late delivery stop being indistinguishable the
+  // moment one of these is visible.
+  function isErrorSignal(o) {
+    if (!o || typeof o !== "object") return false;
+    if (o.isError === true) return true;
+    var direct = o["tako/error"];
+    if (direct && typeof direct === "object") return true;
+    var meta = o._meta;
+    if (meta && typeof meta === "object") {
+      var nested = meta["tako/error"];
+      if (nested && typeof nested === "object") return true;
+    }
+    return false;
+  }
+
+  // The failed-call signal across ChatGPT's envelope spellings — same
+  // best-first probing (and the same reason) as \`pickMetaFromOpenAi\`:
+  // \`toolResponseMetadata\` "preserves the full MCP result envelope,
+  // including hidden \`_meta\`", but the envelope's internal shape is
+  // ChatGPT's, not the spec's.
+  function trmHasError(trm) {
+    if (!trm || typeof trm !== "object") return false;
+    return (
+      isErrorSignal(trm) ||
+      isErrorSignal(trm.mcp_tool_result) ||
+      isErrorSignal(trm.call_tool_result)
+    );
+  }
+  function pickErrorFromOpenAi() {
+    var w = window;
+    if (!w || !w.openai || typeof w.openai !== "object") return false;
+    return trmHasError(w.openai.toolResponseMetadata);
+  }
+
+  // Label-and-collapse for a KNOWN-failed call. The same collapse the
+  // no-chart guard uses, with failure copy: hosts that keep the box anyway
+  // (ChatGPT pins its mount height and ignores shrinks) then show an
+  // intentional labelled state instead of a blank card that reads as a
+  // display failure. The label makes no claim about WHY — the host renders
+  // the error text itself, right next to this box.
+  //
+  // Every call site checks the payload channels FIRST: a result that can
+  // paint must never be pre-empted by leftover error metadata in a lesser
+  // channel, and within one call a chart and \`isError\` never coexist.
+  function collapseFailed() {
+    if (rendered) return;
+    empty.textContent = "No chart: the call failed.";
+    collapse(true);
+    log("failed call, collapsed widget with label");
+  }
+
   // Best-first over ordered candidates, plus the widget-state mirror as the
   // last thing tried. Truthiness is NOT the selector: ChatGPT's stripped
   // reload payload (\`{width, height}\`) is a perfectly truthy object, so a
@@ -2369,16 +2426,30 @@ const WIDGET_HTML = `<!doctype html>
   // ChatGPT populates the global at unpredictable times. Cost: one
   // property read every 250 ms.
   if (!render(pickPayload(null), pickMetaFromOpenAi())) {
-    var attempts = 0;
-    var handle = setInterval(function () {
-      attempts += 1;
-      // Re-read the meta each tick, not once before the loop: the payload and
-      // its \`_meta\` can land on different ticks, and pinning a stale
-      // \`undefined\` here would reintroduce the exact bug this fixes.
-      if (render(pickPayload(null), pickMetaFromOpenAi()) || attempts >= 40) {
-        clearInterval(handle);
-      }
-    }, 250);
+    // Payload first, error second — see \`collapseFailed\`. An \`isError\`
+    // result never grows a payload later, so acting on it synchronously
+    // spares the user the 10 s of blank box the watchdog would allow.
+    if (pickErrorFromOpenAi()) {
+      collapseFailed();
+    } else {
+      var attempts = 0;
+      var handle = setInterval(function () {
+        attempts += 1;
+        // Re-read the meta each tick, not once before the loop: the payload and
+        // its \`_meta\` can land on different ticks, and pinning a stale
+        // \`undefined\` here would reintroduce the exact bug this fixes.
+        if (render(pickPayload(null), pickMetaFromOpenAi())) {
+          clearInterval(handle);
+          return;
+        }
+        if (pickErrorFromOpenAi()) {
+          collapseFailed();
+          clearInterval(handle);
+          return;
+        }
+        if (attempts >= 40) clearInterval(handle);
+      }, 250);
+    }
   }
 
   // No-data watchdog. If nothing renderable has arrived by the time the
@@ -2433,7 +2504,17 @@ const WIDGET_HTML = `<!doctype html>
     // covers both hosts' timing.
     var eventMeta =
       globals && hasWidgetMeta(globals._meta) ? globals._meta : undefined;
-    render(pickPayload(globals), eventMeta || pickMetaFromOpenAi());
+    if (render(pickPayload(globals), eventMeta || pickMetaFromOpenAi())) return;
+    // Nothing renderable on any channel — but the event may be the delivery
+    // of a FAILED call (the host populated \`toolResponseMetadata\` and fired
+    // the event with no useful detail, the same timing PATH 3 has for
+    // success). Check the event's own globals and the live snapshot.
+    if (
+      (globals && trmHasError(globals.toolResponseMetadata)) ||
+      pickErrorFromOpenAi()
+    ) {
+      collapseFailed();
+    }
   };
   EVENT_NAMES.forEach(function (name) {
     window.addEventListener(name, handler);
@@ -2511,7 +2592,11 @@ const WIDGET_HTML = `<!doctype html>
     // but a second release must not be able to replay the same payload.
     heldToolResult = null;
     log("released held tool-result", { why: why, theme: mcpHostTheme });
-    render(held.structuredContent, held._meta);
+    if (!render(held.structuredContent, held._meta) && isErrorSignal(held)) {
+      // The held first result can be a FAILED call too — same treatment as
+      // the direct-delivery branch above.
+      collapseFailed();
+    }
   }
 
   function sendInitRequest() {
@@ -2668,7 +2753,12 @@ const WIDGET_HTML = `<!doctype html>
       // Per the MCP Apps spec §"Wire protocol — Host → View
       // notification", \`params._meta\` is part of the tool-result
       // notification.
-      render(params.structuredContent, params._meta);
+      if (!render(params.structuredContent, params._meta) && isErrorSignal(params)) {
+        // A failed call: \`isError\` results carry no \`structuredContent\`, so
+        // render() had nothing to paint — but the params themselves say why.
+        // Label now instead of leaving the box to the silent watchdog.
+        collapseFailed();
+      }
       return;
     }
     if (msg.type === "tako-embed-height" && embedOrigin && event.origin === embedOrigin) {

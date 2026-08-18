@@ -276,6 +276,95 @@ describe("ChatGPT Apps SDK delivery paths", () => {
     // bundle does not fall back to the remote image_url either.
     expect(img(m).getAttribute("src")).toBeNull();
   });
+
+  it("ERROR: a failed call labels the box instead of leaving it blank", () => {
+    // The reported bug: an expanded Tako tool call showing a tall, pure-blank
+    // area. An `isError` result carries no `structuredContent`, ChatGPT mounts
+    // the widget from static registration metadata anyway, holds it at its
+    // default height, and ignores shrink notifications — so the no-data
+    // watchdog's unlabelled collapse reads as a broken card for ten seconds
+    // and a blank one forever after. But a failed call is not unknowable:
+    // every mapped upstream failure carries `_meta["tako/error"]`, and
+    // `toolResponseMetadata` preserves the result envelope for the widget.
+    // Reading it turns the blank into the same intentional labelled state a
+    // zero-card search already gets — synchronously, not after 10 s.
+    const heights: number[] = [];
+    const m = mountWidget(html(), {
+      toolOutput: null,
+      toolResponseMetadata: {
+        _meta: {
+          "tako/error": { kind: "timeout", path: "/api/v3/search/", method: "POST" },
+        },
+      },
+      theme: "light",
+      notifyIntrinsicHeight: (h: number) => heights.push(h),
+    });
+    const empty = m.widgetWin.document.getElementById(
+      "tako-empty",
+    ) as HTMLElement;
+    expect(empty.classList.contains("hidden")).toBe(false);
+    expect(empty.textContent).toMatch(/failed/i);
+    expect(renderedIframe(m)).toBe(false);
+    // Same contract as the zero-card empty state: the mount-time floor, then
+    // the collapse. Labelling a box the host kept is not a request for one.
+    expect(heights).toEqual([1, 0]);
+  });
+
+  it("ERROR: the envelope's own isError flag is enough (SDK-wrapped errors)", () => {
+    // Handler bugs and wire-guard throws re-throw to the MCP SDK, which wraps
+    // them in a generic error result WITHOUT `_meta["tako/error"]`. The
+    // envelope's `isError: true` is the one signal those still carry, on
+    // whichever spelling ChatGPT's envelope uses.
+    const m = mountWidget(html(), {
+      toolOutput: null,
+      toolResponseMetadata: {
+        mcp_tool_result: {
+          isError: true,
+          content: [{ type: "text", text: "Tako search endpoint returned an unexpected shape." }],
+        },
+      },
+    });
+    const empty = m.widgetWin.document.getElementById(
+      "tako-empty",
+    ) as HTMLElement;
+    expect(empty.classList.contains("hidden")).toBe(false);
+    expect(empty.textContent).toMatch(/failed/i);
+  });
+
+  it("ERROR: a late-arriving error on the event path labels too", () => {
+    // Same failure, delivered the way PATH 3 delivers success: the host
+    // populates `toolResponseMetadata` after mount and fires the globals
+    // event with no useful detail.
+    const openai: Record<string, unknown> = {};
+    const m = mountWidget(html(), openai);
+    const empty = m.widgetWin.document.getElementById(
+      "tako-empty",
+    ) as HTMLElement;
+    expect(empty.classList.contains("hidden")).toBe(true);
+    openai.toolResponseMetadata = {
+      _meta: { "tako/error": { kind: "http", status: 502 } },
+    };
+    fireSetGlobals(m, undefined, "openai:set_globals");
+    expect(empty.classList.contains("hidden")).toBe(false);
+    expect(empty.textContent).toMatch(/failed/i);
+  });
+
+  it("ERROR: a renderable payload wins over a stale error signal", () => {
+    // Payload first, error check second, on every delivery path. A chart that
+    // can paint must never be pre-empted into a failure label by leftover
+    // metadata from another channel.
+    const m = mountWidget(html(), {
+      toolOutput: PROD_STRUCTURED_CONTENT,
+      toolResponseMetadata: {
+        _meta: { "tako/error": { kind: "timeout" } },
+      },
+    });
+    expect(renderedIframe(m)).toBe(true);
+    const empty = m.widgetWin.document.getElementById(
+      "tako-empty",
+    ) as HTMLElement;
+    expect(empty.classList.contains("hidden")).toBe(true);
+  });
 });
 
 // The reported bug: a chart that renders fine, then comes back as an empty box

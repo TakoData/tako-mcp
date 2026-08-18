@@ -451,6 +451,37 @@ describe("static widget bundle (executed)", () => {
     }
   });
 
+  it("labels the collapse when the tool-result itself says the call failed", () => {
+    // The MCP-Apps twin of the ChatGPT failed-call case: the host delivers
+    // the error result as a `ui/notifications/tool-result` whose params carry
+    // `isError: true` and `_meta["tako/error"]` but no `structuredContent`.
+    // That is a positive signal — unlike the silent 10 s watchdog — so the
+    // widget can collapse immediately AND label the box for hosts that keep
+    // it visible anyway.
+    const m = mountWidget(staticWidgetHtml());
+    deliver(
+      m,
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-result",
+        params: {
+          isError: true,
+          content: [{ type: "text", text: "Django returned 502 for POST /api/v3/search/" }],
+          _meta: { "tako/error": { kind: "http", status: 502 } },
+        },
+      },
+      m.wrapperWin,
+    );
+    expect(widgetEmpty(m).classList.contains("hidden")).toBe(false);
+    expect(widgetEmpty(m).textContent).toMatch(/failed/i);
+    expect(m.widgetWin.document.documentElement.style.height).toBe("0px");
+    const sizeChanges = m.toParent.filter(
+      (msg) =>
+        (msg as { method?: string }).method === "ui/notifications/size-changed",
+    ) as Array<{ params: { height: number } }>;
+    expect(sizeChanges.at(-1)?.params.height).toBe(0);
+  });
+
   it("does not collapse a chart that already rendered", () => {
     // The watchdog must be a no-op once anything painted, or a slow host
     // would have its working chart yanked at the 10 s mark.
