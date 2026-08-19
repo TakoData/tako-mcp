@@ -330,6 +330,20 @@ describe("djangoErrorToToolResult", () => {
     expect(text).toContain("retry the SAME call once");
   });
 
+  it("a Django timeout carries the transient-retry sentence", () => {
+    const result = djangoErrorToToolResult(
+      new DjangoTimeoutError({
+        path: "/api/v1/answer/",
+        method: "POST",
+        timeoutMs: 130000,
+      }),
+    );
+    expect(result.isError).toBe(true);
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("timed out");
+    expect(text).toContain("transient upstream condition");
+  });
+
   it("does NOT invite a retry on a non-transient 5xx", () => {
     const err = new DjangoHttpError({
       path: "/api/v1/whatever", method: "GET", status: 501, body: "boom",
