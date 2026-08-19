@@ -1510,16 +1510,16 @@ export function djangoErrorToToolResult(err: DjangoError): {
       : is4xx && detailText !== undefined
         ? `${err.message}: ${detailText}`
         : err.message;
-  // Transient statuses carry no LLM-actionable body, so without this they
-  // reach the model as a bare "Django returned 408 for POST /api/v1/answer/" —
-  // indistinguishable from a permanent failure, which pushes the agent to
-  // abandon Tako on an error that a single retry clears. Observed live: a
-  // cold-path answer call 408'd, then returned the figure on the very next
-  // attempt. `_graph.ts` already gives graph calls this treatment; this is the
-  // same signal for every other endpoint. A handler's own `modelGuidance`
-  // wins untouched — it is already self-correcting by construction.
+  // Retryable = a transient HTTP status OR a timeout. DjangoTimeoutError is
+  // constructed without a status (there was no response), which used to
+  // exclude the single most retry-worthy failure — the 130s search/answer
+  // ceilings — from this guidance. The comment above argues this exact case
+  // for 408; a timeout is the same condition observed from our side.
+  const retryable =
+    err instanceof DjangoTimeoutError ||
+    (err.status !== undefined && RETRYABLE_STATUS.has(err.status));
   const text =
-    err.modelGuidance === undefined && err.status !== undefined && RETRYABLE_STATUS.has(err.status)
+    err.modelGuidance === undefined && retryable
       ? `${base} This is a transient upstream condition, not a bad request: retry the SAME call once after a short backoff before changing approach.`
       : base;
   return {
