@@ -1429,8 +1429,11 @@ function registerTool(
 }
 
 /** Upstream statuses that clear on their own: worth one retry of the same
- *  call, as opposed to a 4xx that needs the request changed. */
-const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
+ *  call, as opposed to a 4xx that needs the request changed. Includes 500
+ *  (transient handler crash or proxy error) since 5xx bodies are stripped from
+ *  the text channel, making the 500 indistinguishable from permanent failure
+ *  without the retry sentence — a 500 clears on retry exactly like a 502. */
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
 /**
  * Convert a `DjangoError` into an MCP `CallToolResult` with `isError: true`.
