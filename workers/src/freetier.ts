@@ -346,9 +346,27 @@ async function hitPerIpLimiter(
  * (see `freeTierLimitResponse`). Paid-account functionality itself is
  * allowed — advertising it here is not. A caller who wants their own key
  * finds it the same way every other Tako API user does, on tako.com.
+ * The one exception is `FREE_TIER_COMMERCE_UPSELL` below, appended only on
+ * connections positively identified as Anthropic clients.
  */
 export const FREE_TIER_LIMIT_MESSAGE =
   "Rate limit reached for anonymous access. Try again in a minute.";
+
+/**
+ * Upsell sentence appended to the limit/capacity messages — ONLY when the
+ * caller passes `commerceCopyAllowed: true`, which `mcp.ts` derives from
+ * `commerceCopyAllowedForUa` (an allowlist of POSITIVELY-identified
+ * Anthropic clients; unknown UAs fail closed). The base messages stay
+ * commerce-free because they reach ChatGPT's model (see
+ * `FREE_TIER_LIMIT_MESSAGE`); Anthropic hosts have no such policy, and the
+ * anonymous limit is the natural moment to say an account exists — the
+ * same conversion point Exa's keyless tier uses ("add your own API key to
+ * continue"). Bare domain, no deep link: deep links rot (the `/account/`
+ * path a previous version of this copy used was already stale when it was
+ * removed — see `PAYMENT_REQUIRED_REMEDY_FALLBACK` in `mcp.ts`).
+ */
+export const FREE_TIER_COMMERCE_UPSELL =
+  "Connecting a Tako account (tako.com) lifts these anonymous-access limits.";
 
 /**
  * Response for an over-limit metered `tools/call`.
@@ -366,8 +384,18 @@ export const FREE_TIER_LIMIT_MESSAGE =
  * matching result cannot be built, so this degrades to the legacy 429
  * (`code: -32000`, distinct from `-32001` auth failures) with a
  * `Retry-After` matching the limiter window.
+ *
+ * `commerceCopyAllowed` (from `commerceCopyAllowedForUa` in `mcp.ts`)
+ * appends `FREE_TIER_COMMERCE_UPSELL`; defaults false so every caller
+ * fails closed.
  */
-export function freeTierLimitResponse(requestId: JsonRpcRequestId): Response {
+export function freeTierLimitResponse(
+  requestId: JsonRpcRequestId,
+  commerceCopyAllowed = false,
+): Response {
+  const message = commerceCopyAllowed
+    ? `${FREE_TIER_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`
+    : FREE_TIER_LIMIT_MESSAGE;
   if (requestId === null) {
     return new Response(
       JSON.stringify({
@@ -375,7 +403,7 @@ export function freeTierLimitResponse(requestId: JsonRpcRequestId): Response {
         id: null,
         error: {
           code: -32000,
-          message: FREE_TIER_LIMIT_MESSAGE,
+          message,
           data: { kind: "rate_limited" },
         },
       }),
@@ -393,7 +421,7 @@ export function freeTierLimitResponse(requestId: JsonRpcRequestId): Response {
       jsonrpc: "2.0",
       id: requestId,
       result: {
-        content: [{ type: "text", text: FREE_TIER_LIMIT_MESSAGE }],
+        content: [{ type: "text", text: message }],
         // Same discriminant every other failed tool result carries
         // (djangoErrorToToolResult, freeTierCreditsToolResult, …), same
         // spelling as the 429 branch's `data.kind` above. The chart widget
@@ -431,10 +459,16 @@ export const FREE_TIER_GLOBAL_LIMIT_MESSAGE =
  * tool-error result the model can read; otherwise (handshake methods,
  * unparseable bodies, batches) a plain 429 with `Retry-After` is the only
  * shape available.
+ *
+ * Same `commerceCopyAllowed` semantics as `freeTierLimitResponse`.
  */
 export function freeTierGlobalLimitResponse(
   requestId: JsonRpcRequestId,
+  commerceCopyAllowed = false,
 ): Response {
+  const message = commerceCopyAllowed
+    ? `${FREE_TIER_GLOBAL_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`
+    : FREE_TIER_GLOBAL_LIMIT_MESSAGE;
   if (requestId === null) {
     return new Response(
       JSON.stringify({
@@ -450,7 +484,7 @@ export function freeTierGlobalLimitResponse(
           // topology ever needs to be genuinely opaque, the MESSAGES have to
           // converge first — and that costs the caller the difference between
           // "slow down" and "come back later".
-          message: FREE_TIER_GLOBAL_LIMIT_MESSAGE,
+          message,
           data: { kind: "global_rate_limited" },
         },
       }),
@@ -468,7 +502,7 @@ export function freeTierGlobalLimitResponse(
       jsonrpc: "2.0",
       id: requestId,
       result: {
-        content: [{ type: "text", text: FREE_TIER_GLOBAL_LIMIT_MESSAGE }],
+        content: [{ type: "text", text: message }],
         // See freeTierLimitResponse: the widget's failed-call label keys on
         // this. Kind mirrors the 429 branch's `data.kind`, distinct from the
         // per-IP bucket on purpose (comment above).
@@ -588,14 +622,23 @@ export const FREE_TIER_CREDITS_MESSAGE =
  * account is. "capacity" says only that the request cannot be served right
  * now. The guard test therefore bans credit and billing wording from the
  * kind, and does NOT ban "shared".
+ *
+ * `commerceCopyAllowed` (same semantics as `freeTierLimitResponse`) appends
+ * the account upsell WITHOUT unmasking the cause: "connect an account to
+ * get past shared capacity" is true and actionable whether the shared
+ * account is rate-limited or dry, so the balance-gauge concern above is
+ * untouched.
  */
-export function freeTierCreditsToolResult(): {
+export function freeTierCreditsToolResult(commerceCopyAllowed = false): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;
   isError: true;
 } {
+  const text = commerceCopyAllowed
+    ? `${FREE_TIER_CREDITS_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`
+    : FREE_TIER_CREDITS_MESSAGE;
   return {
-    content: [{ type: "text", text: FREE_TIER_CREDITS_MESSAGE }],
+    content: [{ type: "text", text }],
     _meta: { "tako/error": { kind: "capacity" } },
     isError: true,
   };

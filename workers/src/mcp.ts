@@ -1215,7 +1215,7 @@ function registerTool(
           // caller-supplied input masquerade as credit exhaustion.
           if (err instanceof DjangoHttpError && err.status === 402) {
             return callCtx.tier === "free"
-              ? freeTierCreditsToolResult()
+              ? freeTierCreditsToolResult(options.commerceCopyAllowed)
               : paymentRequiredToolResult(err, options.commerceCopyAllowed);
           }
           const mapped = djangoErrorToToolResult(err);
@@ -1812,16 +1812,27 @@ export async function handleMcpRequest(
     // ceiling → body-size bound → batch rejection → per-IP metering of
     // free-tool calls), then act as the shared free-tier account
     // downstream. See `checkFreeTierRateLimit` for the ordering rationale.
+    //
+    // The commerce flag gates the account-upsell suffix on the two limit
+    // messages (see `FREE_TIER_COMMERCE_UPSELL`). Computed here AND at
+    // `createMcpServer` below; `commerceCopyAllowedForUa` is pure, so the
+    // double call cannot disagree (same reasoning as `detectMcpClient`).
+    const commerceCopyAllowed = commerceCopyAllowedForUa(
+      request.headers.get("user-agent"),
+    );
     const meterResult = await checkFreeTierRateLimit(request, freeTier);
     switch (meterResult.kind) {
       case "global_limited":
-        return freeTierGlobalLimitResponse(meterResult.requestId);
+        return freeTierGlobalLimitResponse(
+          meterResult.requestId,
+          commerceCopyAllowed,
+        );
       case "too_large":
         return freeTierTooLargeResponse();
       case "batch":
         return freeTierBatchResponse();
       case "limited":
-        return freeTierLimitResponse(meterResult.requestId);
+        return freeTierLimitResponse(meterResult.requestId, commerceCopyAllowed);
       case "allowed": {
         // Known-but-auth-required tool called anonymously: answer with
         // sign-in guidance instead of letting the SDK say "tool not

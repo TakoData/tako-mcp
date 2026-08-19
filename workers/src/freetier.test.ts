@@ -5,6 +5,7 @@ import type { Env, RateLimit } from "./env.js";
 import {
   checkFreeTierRateLimit,
   FREE_TIER_BATCH_MESSAGE,
+  FREE_TIER_COMMERCE_UPSELL,
   FREE_TIER_CREDITS_MESSAGE,
   FREE_TIER_GLOBAL_LIMIT_MESSAGE,
   FREE_TIER_LIMIT_MESSAGE,
@@ -795,6 +796,69 @@ describe("wrangler.jsonc ↔ message drift", () => {
   });
 });
 
+describe("commerce-gated upsell (FREE_TIER_COMMERCE_UPSELL)", () => {
+  // The base messages above stay commerce-free because they reach ChatGPT's
+  // model. On connections POSITIVELY identified as Anthropic clients
+  // (`commerceCopyAllowedForUa` in mcp.ts — the same allowlist that gates
+  // the authenticated 402 remedy), the anonymous limit moment is the one
+  // place a caller can be told that an account lifts the limits — the same
+  // conversion point Exa's keyless tier uses. The flag defaults to false,
+  // so every producer fails closed.
+
+  it("is absent from every producer by default (fails closed)", async () => {
+    const limited = (await freeTierLimitResponse(1).json()) as {
+      result: { content: Array<{ text: string }> };
+    };
+    expect(limited.result.content[0]?.text).toBe(FREE_TIER_LIMIT_MESSAGE);
+    const global = (await freeTierGlobalLimitResponse(2).json()) as {
+      result: { content: Array<{ text: string }> };
+    };
+    expect(global.result.content[0]?.text).toBe(
+      FREE_TIER_GLOBAL_LIMIT_MESSAGE,
+    );
+    expect(freeTierCreditsToolResult().content[0]?.text).toBe(
+      FREE_TIER_CREDITS_MESSAGE,
+    );
+  });
+
+  it("is appended to all three limit/capacity surfaces when allowed, in both response shapes", async () => {
+    const limited = (await freeTierLimitResponse(1, true).json()) as {
+      result: { content: Array<{ text: string }> };
+    };
+    expect(limited.result.content[0]?.text).toBe(
+      `${FREE_TIER_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
+    const limited429 = (await freeTierLimitResponse(null, true).json()) as {
+      error: { message: string };
+    };
+    expect(limited429.error.message).toBe(
+      `${FREE_TIER_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
+    const global = (await freeTierGlobalLimitResponse("x", true).json()) as {
+      result: { content: Array<{ text: string }> };
+    };
+    expect(global.result.content[0]?.text).toBe(
+      `${FREE_TIER_GLOBAL_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
+    expect(freeTierCreditsToolResult(true).content[0]?.text).toBe(
+      `${FREE_TIER_CREDITS_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
+  });
+
+  it("obeys the hygiene rules that are not commerce-specific", () => {
+    // It exists to name the account path, so the commerce-word ban does not
+    // apply — but the other message rules still do: no scheme URL (bare
+    // domain only — deep links rot), no stale host, no rate figure, and no
+    // "free" (the tier never names itself).
+    expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/https?:\/\//);
+    expect(FREE_TIER_COMMERCE_UPSELL).not.toContain("trytako.com");
+    expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(
+      /\d+\s*requests?\s*(\/|per)\s*(min|minute|sec|second)/i,
+    );
+    expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/\bfree\b/i);
+  });
+});
+
 describe("free tier end-to-end (worker.fetch with stub env)", () => {
   const JSON_HEADERS = {
     "content-type": "application/json",
@@ -1329,6 +1393,63 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       expect(text).not.toMatch(/https?:\/\//);
       expect(text).not.toMatch(/upgrade|add credits/i);
     }
+  });
+
+  it("anonymous rate limit on a claude client carries the account upsell", async () => {
+    // The one place an anonymous Anthropic-client caller can learn that an
+    // account lifts the limits — the same conversion moment Exa's keyless
+    // tier uses ("add your own API key to continue").
+    const res = await worker.fetch(
+      post(ANSWER_CALL_BODY, {
+        "user-agent": "claude-code/2.1.220 (sdk-cli)",
+        "cf-connecting-ip": "203.0.113.9",
+      }),
+      freeEnv(fakeLimiter(false)),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toBe(
+      `${FREE_TIER_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
+  });
+
+  it("anonymous rate limit on ChatGPT-family and unrecognized clients stays neutral", async () => {
+    // Same fail-closed rule as the authenticated 402 remedy: commerce copy
+    // reaching ChatGPT's model violates OpenAI policy, and an unrecognized
+    // UA could be an OpenAI reviewer or crawler.
+    for (const userAgent of ["ChatGPT/1.0", "python-httpx/0.27"]) {
+      const res = await worker.fetch(
+        post(ANSWER_CALL_BODY, { "user-agent": userAgent }),
+        freeEnv(fakeLimiter(false)),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        result: { content: Array<{ text: string }> };
+      };
+      expect(body.result.content[0]?.text).toBe(FREE_TIER_LIMIT_MESSAGE);
+    }
+  });
+
+  it("anonymous shared-account 402 on a claude client keeps the neutral cause and adds the upsell", async () => {
+    // The cause stays masked (an anonymous caller must not learn the shared
+    // account's balance state), but an Anthropic-client caller does get told
+    // that connecting an account is the way past shared capacity.
+    mockFetchSequence([SUBSCRIPTION_402()]);
+    const res = await worker.fetch(
+      post(ANSWER_CALL_BODY, { "user-agent": "claude-mcp-client/1.0" }),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toBe(
+      `${FREE_TIER_CREDITS_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
   });
 
   it("a malformed Authorization header still 401s even with the free tier configured", async () => {
