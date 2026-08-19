@@ -16,6 +16,7 @@ import {
 import type { Env } from "./env.js";
 import { FREE_TIER_TOOL_NAMES } from "./freetier.js";
 import {
+  AUTH_INVALID_MESSAGE,
   commerceCopyAllowedForUa,
   createMcpServer,
   detectMcpClient,
@@ -1160,6 +1161,8 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
       expect(
         (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
       ).toBe("unauthorized");
+      const text = (result.content?.[0] as { text?: string } | undefined)?.text;
+      expect(text).toBe(AUTH_INVALID_MESSAGE);
     },
   );
 
@@ -1189,7 +1192,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     ).toBe("unauthorized");
   });
 
-  it("a Django 401 on non-ChatGPT clients keeps the error result unchanged", async () => {
+  it("a Django 401 on an authenticated claude client gets the recovery message and re-auth challenge", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => jsonResponse(401, { detail: "Invalid API key." })),
@@ -1200,7 +1203,15 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
       { query: "US GDP" },
     );
     expect(result.isError).toBe(true);
-    expect(result._meta?.["mcp/www_authenticate"]).toBeUndefined();
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toBe(AUTH_INVALID_MESSAGE);
+    expect(text).not.toContain("Django");
+    const challenges = result._meta?.["mcp/www_authenticate"] as string[] | undefined;
+    expect(challenges?.[0]).toContain('error="invalid_token"');
+    // the structured detail survives for clients that key on it
+    expect(
+      (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
+    ).toBe("unauthorized");
   });
 });
 

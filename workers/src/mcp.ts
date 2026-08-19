@@ -1220,23 +1220,24 @@ function registerTool(
           }
           const mapped = djangoErrorToToolResult(err);
           // A 401 from Django on an AUTHENTICATED connection means the
-          // caller's own credential was rejected — for an OAuth-linked
-          // user, a stale or revoked Tako token. Attach the
-          // `_meta["mcp/www_authenticate"]` challenge on ChatGPT so its
-          // client offers re-linking (the OpenAI Apps SDK keys the reauth
-          // UI on this exact field); other clients keep the unchanged
-          // error result. Free-tier connections are excluded: there the
+          // caller's own credential was rejected — a stale/revoked OAuth
+          // token or a rotated raw API key. Curated text (AUTH_INVALID_MESSAGE)
+          // plus the `mcp/www_authenticate` challenge, on EVERY client:
+          // ChatGPT keys its re-link UI on the challenge, and hosts that
+          // don't understand the `_meta` key ignore it, so attaching it
+          // universally costs nothing and future OAuth-capable hosts get it
+          // for free. Free-tier connections are excluded: there the
           // rejected credential is the SHARED free-tier key, so "your
           // session expired" would be false for a caller with no session
           // — and funneling anonymous users into (working) sign-in would
           // mask a shared-key outage as a per-user auth failure.
           if (
-            isChatGptFamilyClient(options.client) &&
             options.tier === "authenticated" &&
             err instanceof DjangoUnauthorizedError
           ) {
             return {
               ...mapped,
+              content: [{ type: "text" as const, text: AUTH_INVALID_MESSAGE }],
               _meta: {
                 ...mapped._meta,
                 "mcp/www_authenticate": [
@@ -1556,6 +1557,25 @@ export const PAYMENT_REQUIRED_MESSAGE =
   "This Tako account is out of credits, so the call could not run. " +
   "Priced calls will keep failing until the account has credits again; " +
   "`tako_available_data` is free and still works.";
+
+/**
+ * Model-visible message for an AUTHENTICATED caller whose Tako credential
+ * Django rejected (401) — an expired/revoked OAuth-linked API token, or a
+ * raw key the user rotated at tako.com. Before this, only ChatGPT-family
+ * clients got recovery guidance (the `mcp/www_authenticate` challenge);
+ * everyone else saw the raw "Django returned 401 …" text — internal
+ * jargon, no next step, and no host flow triggered because the result is
+ * HTTP 200. Names both remedies for the same reason
+ * `authRequiredToolResult` does: connector hosts re-link, config-file
+ * clients re-key. The free tier NEVER gets this message — there the
+ * rejected credential is the shared free-tier key (see the 401 mapping in
+ * `registerTool`), and "sign in again" would mask a shared-key outage as
+ * a per-user failure.
+ */
+export const AUTH_INVALID_MESSAGE =
+  "This connection's Tako authorization is no longer valid, so the call could not run. " +
+  "Calls will keep failing until it is re-authorized: sign in with Tako again " +
+  "(reconnect the Tako connector), or update the API key if this connection uses one.";
 
 /**
  * Remedy line appended when the 402 body carries no recognizable message
