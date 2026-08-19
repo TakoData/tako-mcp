@@ -316,9 +316,23 @@ describe("djangoErrorToToolResult", () => {
     expect(result.content[0]?.text).toContain("retry the SAME call once");
   });
 
+  it("a Django 500 carries the transient-retry sentence (most common upstream fault)", () => {
+    const err = new DjangoHttpError({
+      path: "/api/v3/search/",
+      method: "POST",
+      status: 500,
+      body: "boom",
+    });
+    const result = djangoErrorToToolResult(err);
+    expect(result.isError).toBe(true);
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("transient upstream condition");
+    expect(text).toContain("retry the SAME call once");
+  });
+
   it("does NOT invite a retry on a non-transient 5xx", () => {
     const err = new DjangoHttpError({
-      path: "/api/v1/whatever", method: "GET", status: 500, body: "boom",
+      path: "/api/v1/whatever", method: "GET", status: 501, body: "boom",
     });
     const text = djangoErrorToToolResult(err).content[0]?.text ?? "";
     expect(text).toBe(err.message);
