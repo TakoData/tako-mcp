@@ -140,11 +140,16 @@ export function wwwAuthenticate(
  * `error="insufficient_scope"` mirrors OpenAI's own login example — the
  * anonymous grant lacks the access this tool needs.
  */
-export function authRequiredToolResult(origin: string | undefined): {
+export function authRequiredToolResult(
+  origin: string | undefined,
+  recoveryHint?: string,
+): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;
   isError: true;
 } {
+  const base =
+    "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.";
   return {
     content: [
       {
@@ -155,8 +160,13 @@ export function authRequiredToolResult(origin: string | undefined): {
         // UI (ChatGPT; OAuth-capable clients like claude.ai and Claude
         // Code) sign in, config-file clients (Cursor et al.) connect with
         // an API key. "Sign in" alone told a config-file user to do
-        // something their host has no flow for.
-        text: "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.",
+        // something their host has no flow for. `recoveryHint` (from
+        // `anonymousSignInHint` in mcp.ts) appends the CLIENT-SPECIFIC
+        // step where the client is positively identified — absent for
+        // ChatGPT (its link-account UI acts on the `_meta` challenge
+        // instead) and for unknown UAs (fails closed; could be OpenAI's
+        // review crawler).
+        text: recoveryHint === undefined ? base : `${base} ${recoveryHint}`,
       },
     ],
     _meta: {

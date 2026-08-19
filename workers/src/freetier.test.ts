@@ -1162,6 +1162,83 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("anonymous call to a gated tool on claude.ai names the Connect step", async () => {
+    const res = await worker.fetch(
+      post(
+        {
+          jsonrpc: "2.0",
+          id: 9,
+          method: "tools/call",
+          params: { name: "tako_contents", arguments: { urls: ["https://x.com"] } },
+        },
+        { "user-agent": "Claude-User/1.0" },
+      ),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(body.result.isError).toBe(true);
+    const text = body.result.content[0]?.text ?? "";
+    expect(text).toContain("This tool requires a Tako account.");
+    expect(text).toContain("Settings → Connectors");
+  });
+
+  it("anonymous call to a gated tool on Claude Code names the API-key step", async () => {
+    const res = await worker.fetch(
+      post(
+        {
+          jsonrpc: "2.0",
+          id: 10,
+          method: "tools/call",
+          params: { name: "tako_contents", arguments: { urls: ["https://x.com"] } },
+        },
+        { "user-agent": "claude-code/2.1.220 (sdk-cli)" },
+      ),
+      freeEnv(fakeLimiter(true)),
+    );
+    const body = (await res.json()) as {
+      result: { content: Array<{ text: string }> };
+    };
+    const text = body.result.content[0]?.text ?? "";
+    expect(text).toContain("Tako API key");
+    expect(text).toContain("Claude Code");
+  });
+
+  it("anonymous gated-tool text on ChatGPT and unknown UAs is unchanged", async () => {
+    for (const userAgent of ["ChatGPT/1.0", "python-httpx/0.27"]) {
+      // `tako_contents`, not `tako_visualize`: `tako_visualize` is opt-in
+      // (`OPTIONAL_TOOL_NAMES`) and default-on only for widget clients
+      // (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES` — chatgpt/claude/codex), so
+      // it is off the AUTHENTICATED surface for `python-httpx`'s "unknown"
+      // client and the pre-dispatch gate never answers for it, regardless
+      // of any sign-in hint — an unrelated surface gap, not something this
+      // task's hint logic controls. `tako_contents` is unconditionally on
+      // every client's authenticated surface, so it exercises the same
+      // "byte-identical when the client is not positively identified"
+      // path this test is actually about.
+      const res = await worker.fetch(
+        post(
+          {
+            jsonrpc: "2.0",
+            id: 11,
+            method: "tools/call",
+            params: { name: "tako_contents", arguments: { urls: ["https://x.com"] } },
+          },
+          { "user-agent": userAgent },
+        ),
+        freeEnv(fakeLimiter(true)),
+      );
+      const body = (await res.json()) as {
+        result: { content: Array<{ text: string }> };
+      };
+      expect(body.result.content[0]?.text).toBe(
+        "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.",
+      );
+    }
+  });
+
   it("an anonymous call to a NONEXISTENT tool still gets the SDK's genuine tool-not-found", async () => {
     // The gate only answers for names the registry knows — claiming a
     // typo'd tool needs auth would send the caller on a pointless sign-in.

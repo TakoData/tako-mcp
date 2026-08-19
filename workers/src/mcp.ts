@@ -387,6 +387,28 @@ export function commerceCopyAllowedForUa(userAgent: string | null): boolean {
   return detectMcpClient(userAgent) === "claude";
 }
 
+/**
+ * The client-specific sign-in step appended to `authRequiredToolResult`,
+ * or undefined when the client cannot be positively identified as an
+ * Anthropic host (fails closed like `commerceCopyAllowedForUa` — an
+ * unrecognized UA could be OpenAI's review crawler, and ChatGPT's own
+ * link-account UI acts on the `_meta` challenge instead of prose). UA
+ * (not `McpClientKind`) is the input because Claude Code deliberately
+ * buckets as "unknown" for widget routing yet has a completely different
+ * sign-in step (config-file API key) than claude.ai (connector Connect
+ * button). No URLs, no UI deep paths beyond the settings pane name —
+ * copy rots (see PAYMENT_REQUIRED_REMEDY_FALLBACK).
+ */
+export function anonymousSignInHint(userAgent: string | null): string | undefined {
+  if (userAgent === null || userAgent === "") return undefined;
+  if (userAgent.toLowerCase().includes("claude-code")) {
+    return "In Claude Code, re-add this Tako server with a Tako API key to enable it.";
+  }
+  return detectMcpClient(userAgent) === "claude"
+    ? "In Claude, open Settings → Connectors and connect Tako, then retry this call."
+    : undefined;
+}
+
 // Per-client annotation resolution lives with the tool surface config in
 // `tools/_surface.ts` (each tool declares its own `annotationsByClient`
 // next to its canonical MCP annotations — see `annotationsByClient` in
@@ -439,6 +461,15 @@ export function createMcpServer(
      * messages).
      */
     commerceCopyAllowed?: boolean;
+    /**
+     * Client-specific sign-in step for the free-tier dispatch gate; from
+     * `anonymousSignInHint`. Appended to `authRequiredToolResult`'s base
+     * text when the calling client is positively identified as an
+     * Anthropic host. Omitted (the default) → no hint, byte-identical to
+     * today's text — the correct behavior for tests, non-HTTP callers,
+     * ChatGPT, and unrecognized UAs.
+     */
+    signInHint?: string;
   } = {},
 ): McpServer {
   // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
@@ -570,6 +601,9 @@ export function createMcpServer(
       tier,
       commerceCopyAllowed: options.commerceCopyAllowed ?? false,
       origin: options.requestOrigin,
+      ...(options.signInHint !== undefined
+        ? { signInHint: options.signInHint }
+        : {}),
       widgetSuppressedForTool:
         isChatGptFamilyClient(client) &&
         CHATGPT_NO_WIDGET_TOOL_NAMES.has(tool.name),
@@ -752,6 +786,13 @@ function registerTool(
      * `error_description` (the parts ChatGPT's sign-in UI keys on).
      */
     origin: string | undefined;
+    /**
+     * Client-specific sign-in step appended to `authRequiredToolResult`
+     * by the free-tier dispatch gate below (see `anonymousSignInHint`).
+     * `undefined` in tests / non-HTTP contexts, on ChatGPT, and on
+     * unrecognized UAs — the base text stays byte-identical there.
+     */
+    signInHint?: string;
     /**
      * Set of `appUiResource` URIs already registered with the SDK on
      * this `McpServer` instance. Tools whose `appUiResource.uri`
@@ -1181,7 +1222,7 @@ function registerTool(
         console.log(
           `[mcp] auth-required tool blocked on free tier tool=${tool.name} client=${options.client}`,
         );
-        return authRequiredToolResult(options.origin);
+        return authRequiredToolResult(options.origin, options.signInHint);
       }
       let output: unknown;
       try {
@@ -1744,6 +1785,7 @@ export function freeTierHiddenToolResponse(
   origin: string,
   client: McpClientKind,
   enabledOptionalToolNames: ReadonlySet<string>,
+  signInHint?: string,
 ): Response | null {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return null;
@@ -1774,7 +1816,7 @@ export function freeTierHiddenToolResponse(
     JSON.stringify({
       jsonrpc: "2.0",
       id,
-      result: authRequiredToolResult(origin),
+      result: authRequiredToolResult(origin, signInHint),
     }),
     {
       status: 200,
@@ -1869,6 +1911,7 @@ export async function handleMcpRequest(
           parseEnabledOptionalToolNames(
             new URL(request.url).searchParams.get("tools"),
           ),
+          anonymousSignInHint(request.headers.get("user-agent")),
         );
         if (gated !== null) return gated;
         break;
@@ -1971,6 +2014,7 @@ export async function handleMcpRequest(
         }`,
       );
     }
+    const signInHint = anonymousSignInHint(userAgent);
     const server = createMcpServer(ctx, {
       iconsBaseUrl: requestOrigin,
       requestOrigin,
@@ -1978,6 +2022,7 @@ export async function handleMcpRequest(
       enabledOptionalToolNames,
       tier,
       commerceCopyAllowed: commerceCopyAllowedForUa(userAgent),
+      ...(signInHint !== undefined ? { signInHint } : {}),
     });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
