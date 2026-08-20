@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.21.1](https://github.com/TakoData/tako-mcp/compare/v0.21.0...v0.21.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **widget:** address review — stray-load guard, non-terminal error sighting ([a238922](https://github.com/TakoData/tako-mcp/commit/a238922ca855fd0aa8797ee6898fa1346bd0f76e))
+* **widget:** label the box a failed call leaves behind, instead of blank ([bb1bef9](https://github.com/TakoData/tako-mcp/commit/bb1bef917215acc1c40324b12c5a8c7328fa378d))
+* **widget:** reveal the ChatGPT committed iframe only when the embed has painted ([a8b49c5](https://github.com/TakoData/tako-mcp/commit/a8b49c58588f0c0771a2e0059a5f9c9b6793e44e))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#250](https://github.com/TakoData/tako-mcp/issues/250)) ([286fa2b](https://github.com/TakoData/tako-mcp/commit/286fa2b18f0ea9c2ab7acb8556e96eed4619c3d2))
+
 ## [0.21.0](https://github.com/TakoData/tako-mcp/compare/v0.20.0...v0.21.0) (2026-08-18)
 
 

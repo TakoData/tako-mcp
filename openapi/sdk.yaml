@@ -608,7 +608,8 @@ paths:
           description: 'Conflict. code is one of: ''conflict'' (the thread already
             has a run in flight); ''thread_product_mismatch'' (the thread belongs
             to a different agent product); ''source_indexes_mismatch'' (a follow-up
-            changed the thread''s pinned source_indexes).'
+            changed the thread''s pinned source_indexes); ''effort_mismatch'' (a follow-up
+            changed the thread''s pinned effort).'
           content:
             application/json:
               schema:
@@ -1110,17 +1111,28 @@ components:
       type: string
       enum:
       - medium
+      - high
       title: AnswerAgentEffort
-      description: 'Effort taxonomy for the Answer Agent (POST /v1/agent/answer/runs).
+      description: 'Effort levels for the Answer Agent (POST /v1/agent/answer/runs).
 
 
-        The Answer Agent shares the effort vocabulary with the Retrieval Agent,
+        ''medium'' is the default. ''high'' uses the same models and the same data.
+        It only
 
-        but only ''medium'' is available today. Unsupported values return 400.
+        makes the model reason more, and it gives the run more time. A ''high'' run
+        can
 
-        Effort does not select an engine; it is a forward-compatible quality and
+        give a better answer, and it always takes longer. ''low'' is not available.
+        A
 
-        pricing control.'
+        request that sends ''low'' gets a 400 response.
+
+
+        The effort is fixed for the life of a thread. A follow-up that sends a different
+
+        effort gets a 409 response with the code ''effort_mismatch''. To use a different
+
+        effort, start a new thread.'
     AnswerAgentMetadata:
       properties:
         definitions:
@@ -1313,7 +1325,10 @@ components:
             thread.
         effort:
           $ref: '#/components/schemas/AnswerAgentEffort'
-          description: Answer-agent effort. Only 'medium' is currently supported.
+          description: 'The effort level. ''medium'' is the default. ''high'' makes
+            the model reason more on the same data, and the run takes longer. The
+            effort is fixed for the life of a thread: a follow-up that sends a different
+            effort gets a 409 response with the code ''effort_mismatch''.'
           default: medium
         source_indexes:
           items:

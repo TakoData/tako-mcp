@@ -2,7 +2,7 @@
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
   "namespace": "com.tako",
   "name": "tako-mcp",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "title": "Tako MCP Server",
   "description": "Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have. That includes company financials, macroeconomic indicators, web and app traffic, sports, US government spending, and more.",
   "repository": {
