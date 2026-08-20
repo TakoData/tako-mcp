@@ -144,7 +144,7 @@ export const takoCardSchema = z
       .string()
       .optional()
       .describe(
-        `Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — headline in \`description\` when the card carries one, specific figures via tako_answer, where you ${PINNED_FROM_CARD}.`,
+        `Present only on exportable:false cards — license-gated, or marked non-exportable because this connection cannot use tako_contents: where this card's values live — headline in \`description\` when the card carries one, specific figures via tako_answer, where you ${PINNED_FROM_CARD}.`,
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
@@ -175,7 +175,7 @@ export const webResultSchema = z
     url: z
       .string()
       .describe(
-        "The web page URL. Always fetchable via tako_contents for the page's full text (web urls need no `exportable` flag, unlike cards) — a fallback you can read when no Tako data card fits the query.",
+        "The web page URL. tako_contents reads the page's full text from it (web urls need no `exportable` flag, unlike cards) — a fallback when no Tako data card fits the query.",
       ),
     // Tako asks for Exa highlights (see buildSearchBody / buildAnswerBody), so
     // this is query-selected passages, not the page's opening text: it can be
@@ -446,18 +446,49 @@ function orderCardKeys(card: TakoCard): TakoCard {
   return out as TakoCard;
 }
 
+/** Per-connection facts `slimCard` needs beyond the card itself. */
+export interface SlimCardOptions {
+  /**
+   * Whether the CONNECTION can act on `exportable: true` — i.e. whether
+   * `tako_contents` is on its tool surface (see `connectionCanExport` in
+   * `_surface.ts`; the handlers pass it from `ctx.client`/`ctx.tier`).
+   * Defaults to true.
+   *
+   * When false, an exportable card is re-marked `exportable: false` for
+   * this response: the flag's documented meaning is "can be fetched with
+   * tako_contents", and on this connection it cannot — leaving it true
+   * sends the model into the documented gate-on-the-flag contract and
+   * straight into a wall. Alongside the flip, `export_pricing` (a rate
+   * card for a tool this connection cannot call) is dropped from the
+   * content, and a CONNECTION-scoped values_hint routes the model to
+   * tako_answer — which IS free-tier — with the same metric-node pin the
+   * license-gated hint uses. The inline preview rows are kept: they are
+   * the free tier's data. Cards the BACKEND marked non-exportable keep
+   * the license-gated hint wording; only the connection case is re-worded.
+   */
+  connectionCanExport?: boolean;
+}
+
 /**
  * Immutable: return a new card, slimmed and tagged with an explicit
  * `exportable` flag — a positive boolean so the model reads an explicit "no"
  * instead of having to notice a MISSING `content` key (which LLMs overlook,
  * then call tako_contents anyway and draw a 403). The backend emits the flag
  * authoritatively (TakoData/tako#27989, same fail-closed gate as /contents),
- * so a wire value passes through untouched; deriving from `content` presence
- * is only the fallback for older backends. Keys are re-ordered data-first
- * (see CARD_KEY_ORDER). Pure in-memory — no I/O.
+ * so a wire value passes through untouched on connections that can export;
+ * deriving from `content` presence is only the fallback for older backends.
+ * On connections that CANNOT export (see SlimCardOptions) the flag is
+ * re-scoped to the connection. Keys are re-ordered data-first (see
+ * CARD_KEY_ORDER). Pure in-memory — no I/O.
  */
-export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
-  const exportable = card.exportable ?? card.content != null;
+export const slimCard = (
+  card: TakoCard,
+  capRows: number | null,
+  opts?: SlimCardOptions,
+): TakoCard => {
+  const canExport = opts?.connectionCanExport ?? true;
+  const cardExportable = card.exportable ?? card.content != null;
+  const exportable = cardExportable && canExport;
   // Share opt-in on the passthrough embed_url, so the url an agent quotes
   // from the text matches the one the widget renders for the same card —
   // see withShareOptIn.
@@ -465,12 +496,21 @@ export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
     typeof card.embed_url === "string" && card.embed_url !== ""
       ? { ...card, embed_url: withShareOptIn(card.embed_url) }
       : card;
+  let content = shared.content == null ? shared.content : slimCardContent(shared.content, capRows);
+  if (!canExport && content != null) {
+    const { export_pricing: _exportPricing, ...rest } = content as LooseContent;
+    void _exportPricing;
+    content = rest as ResultContent;
+  }
   const slimmed =
-    shared.content == null
-      ? { ...shared, exportable }
-      : { ...shared, exportable, content: slimCardContent(shared.content, capRows) };
+    content == null ? { ...shared, exportable } : { ...shared, exportable, content };
   return orderCardKeys(
-    exportable ? slimmed : { ...slimmed, values_hint: valuesHint(card) },
+    exportable
+      ? slimmed
+      : {
+          ...slimmed,
+          values_hint: cardExportable ? tierValuesHint(card) : valuesHint(card),
+        },
   );
 };
 
@@ -484,7 +524,7 @@ export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
 // The "headline value is in description" clause is asserted only when the
 // card actually carries a description — an unverified pointer is worse than
 // none.
-function valuesHint(card: TakoCard): string {
+function cardAnswerFallback(card: TakoCard): string {
   // Pin the METRIC node ALONE, with strict. This used to emit every node id on
   // the card — entity AND metric — and never mentioned `strict`, which is the
   // one combination measured to do nothing: at the default `strict:false` a pin
@@ -509,7 +549,23 @@ function valuesHint(card: TakoCard): string {
     typeof card.description === "string" && card.description.trim() !== ""
       ? "headline value is in description; "
       : "";
-  return `rows not exportable; ${headline}for specific figures call tako_answer${pin}`;
+  return `${headline}for specific figures call tako_answer${pin}`;
+}
+
+function valuesHint(card: TakoCard): string {
+  return `rows not exportable; ${cardAnswerFallback(card)}`;
+}
+
+// The CONNECTION-scoped variant (see SlimCardOptions): the card is
+// exportable, this connection just cannot reach tako_contents. Worded
+// honestly — "not exportable" would misdescribe a card the user could
+// export after authenticating, and the agent may relay that distinction.
+function tierValuesHint(card: TakoCard): string {
+  // "full rows", not "rows": the card may carry inline preview rows in the
+  // SAME response (the tier flip keeps them), and the unqualified word
+  // would contradict the adjacent rows pointer and steer the model away
+  // from data it already has.
+  return `full rows require an authenticated Tako connection; ${cardAnswerFallback(card)}`;
 }
 
 // Only paragraph-length strings are worth hoisting — moving a short label

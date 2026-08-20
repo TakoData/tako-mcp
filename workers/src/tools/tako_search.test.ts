@@ -740,3 +740,91 @@ describe("tako_search graph grounding", () => {
     ]);
   });
 });
+
+// The tier flip, proven THROUGH the handler — the slimCard unit tests can't
+// catch a regression in the wiring (dropping the opts argument, passing the
+// wrong ctx field), which would ship the old false-export contract while the
+// whole unit suite stays green.
+describe("tako_search per-connection export markings", () => {
+  const EXPORTABLE_CARD = {
+    card_id: "c1",
+    title: "US GDP",
+    description: "Latest value $27.4T",
+    exportable: true,
+    nodes: [{ id: "mt::gdp::1", name: "GDP", type: "metric" }],
+    content: {
+      content_format: "json_compact",
+      cost: 0.001,
+      data: null,
+      records: null,
+      dataset: {
+        columns: [
+          { name: "t", type: "datetime", unit: null },
+          { name: "v", type: "number", unit: null },
+        ],
+        rows: [["2026-01-01", 1]],
+        total_rows: 40,
+        truncated: false,
+        ref: "c1",
+        sources: [],
+      },
+      url: null,
+      expires_at: null,
+      total_rows: 40,
+      truncated: false,
+      export_pricing: {
+        baseline_usd: 0.01,
+        row_cpm_usd: 0.05,
+        free_rows: 20,
+        max_rows_ceiling: 2000,
+      },
+    },
+  };
+
+  const response = () =>
+    jsonResponse(200, {
+      cards: [EXPORTABLE_CARD],
+      web_results: [],
+      request_id: "req-tier",
+    });
+
+  it("free-tier claude connection re-marks the card and strips export_pricing", async () => {
+    mockFetchSequence([response()]);
+    const out = await tako_search.handler(
+      { ...DEFAULTS, query: "US GDP", include_contents: true },
+      { ...CTX, tier: "free" },
+    );
+    const card = out.cards[0] as Record<string, unknown>;
+    expect(card?.exportable).toBe(false);
+    expect(card?.content).not.toHaveProperty("export_pricing");
+    expect(card?.values_hint).toContain("tako_answer");
+    expect(card?.values_hint).toContain("authenticated");
+    // Preview rows survive — they are the free tier's data.
+    expect(
+      ((card?.content as { dataset?: { rows?: unknown[] } })?.dataset?.rows ?? []).length,
+    ).toBe(1);
+  });
+
+  it("free-tier ChatGPT connection keeps exportable:true (the sign-in funnel)", async () => {
+    mockFetchSequence([response()]);
+    const out = await tako_search.handler(
+      { ...DEFAULTS, query: "US GDP", include_contents: true },
+      { ...CTX, client: "chatgpt", tier: "free" },
+    );
+    const card = out.cards[0] as Record<string, unknown>;
+    expect(card?.exportable).toBe(true);
+    expect(card?.content).toHaveProperty("export_pricing");
+    expect(card).not.toHaveProperty("values_hint");
+  });
+
+  it("authenticated connection is untouched (exportable + pricing kept)", async () => {
+    mockFetchSequence([response()]);
+    const out = await tako_search.handler(
+      { ...DEFAULTS, query: "US GDP", include_contents: true },
+      { ...CTX, tier: "authenticated" },
+    );
+    const card = out.cards[0] as Record<string, unknown>;
+    expect(card?.exportable).toBe(true);
+    expect(card?.content).toHaveProperty("export_pricing");
+  });
+});

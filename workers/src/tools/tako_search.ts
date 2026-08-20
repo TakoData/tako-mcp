@@ -26,7 +26,7 @@ import {
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
-import { isChatGptFamilyClient } from "./_surface.js";
+import { connectionCanExport, isChatGptFamilyClient } from "./_surface.js";
 import {
   renderSearchMarkdown,
   searchSlimOutputShape,
@@ -57,9 +57,9 @@ const DESCRIPTION = [
   "",
   'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric\'s exact name, run `tako_available_data` (free) instead of guessing here.',
   "",
-  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. To read a web result in full, call `tako_contents` on its url (web urls are always fetchable; a card's full csv needs `exportable: true`).",
+  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. To read a web result in full, call `tako_contents` on its url (web urls are never export-gated — no `exportable` flag applies; a card's full csv needs `exportable: true`).",
   "",
-  `Non-exportable cards (\`exportable: false\`, usually license-gated) return no rows: read the headline value from the card's \`description\` when it carries one, or get specific figures via \`tako_answer\` — ${PINNED_FROM_CARD} (each such card carries a \`values_hint\` saying exactly this).`,
+  `Non-exportable cards (\`exportable: false\` — license-gated, or this connection cannot use tako_contents) yield no rows beyond any inline preview: read the preview and the headline value from the card's \`description\` when it carries one, or get specific figures via \`tako_answer\` — ${PINNED_FROM_CARD} (each such card carries a \`values_hint\` saying exactly this).`,
   "",
   "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
 ].join("\n");
@@ -284,8 +284,12 @@ const tako_search = {
     const cap = input.include_contents
       ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
       : null;
+    // Per-connection export markings: a keyless connection without
+    // tako_contents on its surface must not see `exportable: true` (see
+    // SlimCardOptions; the unset-tier default lives in connectionCanExport).
+    const canExport = connectionCanExport(ctx);
     const { cards: slimCards, glossary } = hoistSourceGlossary(
-      cards.data.map((c) => slimCard(c, cap)),
+      cards.data.map((c) => slimCard(c, cap, { connectionCanExport: canExport })),
     );
     const output = buildSearchOutput(
       slimCards,

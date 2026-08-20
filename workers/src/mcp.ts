@@ -1229,7 +1229,10 @@ function registerTool(
         console.log(
           `[mcp] auth-required tool blocked on free tier tool=${tool.name} client=${options.client}`,
         );
-        return authRequiredToolResult(options.origin, options.signInHint);
+        return authRequiredToolResult(options.origin, {
+          recoveryHint: options.signInHint,
+          toolName: tool.name,
+        });
       }
       let output: unknown;
       try {
@@ -1829,7 +1832,13 @@ export function freeTierHiddenToolResponse(
     JSON.stringify({
       jsonrpc: "2.0",
       id,
-      result: authRequiredToolResult(origin, signInHint),
+      // `name` is CLIENT-SUPPLIED (the tools/call request's tool name) —
+      // authRequiredToolResult only compares it against literals; it must
+      // never be interpolated into the message text.
+      result: authRequiredToolResult(origin, {
+        recoveryHint: signInHint,
+        toolName: name,
+      }),
     }),
     {
       status: 200,

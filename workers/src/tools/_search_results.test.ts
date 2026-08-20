@@ -354,7 +354,82 @@ describe("slimCard — values_hint on gated cards", () => {
     const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
     expect(slimCard(card, 5)).not.toHaveProperty("values_hint");
   });
+});
 
+// A keyless connection (tier "free", non-ChatGPT client) has NO tako_contents
+// on its surface, so `exportable: true` there advertises a tool the model
+// cannot reach — it follows the documented "gate on the flag" contract and
+// hits a wall. slimCard re-marks the card per connection: flag flipped, the
+// unreachable tool's rate card dropped, and a connection-scoped values_hint
+// routing to tako_answer (which IS free-tier) stamped instead.
+describe("slimCard — connection-tier export gate (connectionCanExport: false)", () => {
+  const exportableCard = (): TakoCard => ({
+    card_id: "c1",
+    description: "Latest value 59.2%, up 1.1pp",
+    exportable: true,
+    content: {
+      ...dataset([
+        ["2024-01-01", 1],
+        ["2024-01-02", 2],
+      ]),
+      export_pricing: {
+        baseline_usd: 0.01,
+        row_cpm_usd: 0.05,
+        free_rows: 20,
+        max_rows_ceiling: 2000,
+      },
+    } as unknown as ResultContent,
+    nodes: [{ id: "mt::m::1", name: "Metric", type: "metric" }],
+  });
+
+  it("re-marks an exportable card exportable:false with a connection-scoped hint", () => {
+    const out = slimCard(exportableCard(), 5, { connectionCanExport: false });
+    expect(out.exportable).toBe(false);
+    const hint = out.values_hint ?? "";
+    // Honest wording: the CARD is exportable — the CONNECTION can't reach
+    // tako_contents — so the license-gated "not exportable" must not appear.
+    expect(hint).toContain("authenticated");
+    expect(hint).not.toContain("not exportable");
+    // Same agent-executable routing as the license-gated hint: tako_answer
+    // with the metric node alone pinned, strict:true.
+    expect(hint).toContain("tako_answer");
+    expect(hint).toContain('["mt::m::1"]');
+    expect(hint).toContain("strict:true");
+  });
+
+  it("keeps the inline preview rows but strips export_pricing", () => {
+    const out = slimCard(exportableCard(), 5, { connectionCanExport: false });
+    // The preview rows are the free tier's data — they must survive.
+    expect(rowsOf(out.content)).toHaveLength(2);
+    // A rate card for a tool this connection cannot call is noise.
+    expect(out.content).not.toHaveProperty("export_pricing");
+  });
+
+  it("keeps the license-gated wording for a card the BACKEND marked non-exportable", () => {
+    const card: TakoCard = { card_id: "c1", exportable: false };
+    const hint = slimCard(card, 5, { connectionCanExport: false }).values_hint ?? "";
+    expect(hint).toContain("not exportable");
+    expect(hint).not.toContain("authenticated");
+  });
+
+  it("defaults to authenticated behavior when opts are omitted", () => {
+    const out = slimCard(exportableCard(), 5);
+    expect(out.exportable).toBe(true);
+    expect(out).not.toHaveProperty("values_hint");
+    expect(out.content).toHaveProperty("export_pricing");
+  });
+
+  it("an explicit connectionCanExport: true behaves exactly like omitted opts", () => {
+    // The strip must key on the boolean's VALUE, not on opts presence —
+    // authenticated handlers pass an explicit true on every call.
+    const out = slimCard(exportableCard(), 5, { connectionCanExport: true });
+    expect(out.exportable).toBe(true);
+    expect(out).not.toHaveProperty("values_hint");
+    expect(out.content).toHaveProperty("export_pricing");
+  });
+});
+
+describe("slimCard — key ordering", () => {
   it("orders description and values_hint before the URL/methodology chrome", () => {
     const card: TakoCard = {
       card_id: "c1",

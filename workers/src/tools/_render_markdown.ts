@@ -176,8 +176,15 @@ type LooseContent = {
 };
 
 /** One line describing the rows that rode in structuredContent, instead of a
- *  second copy of them. */
-function rowsPointer(content: TakoCard["content"]): string | undefined {
+ *  second copy of them. The tako_contents pointer renders only on exportable
+ *  cards — a tier-gated card (exportable re-scoped false by slimCard) keeps
+ *  its preview rows, and advertising "full export via tako_contents" there
+ *  would reinstate exactly the unreachable-tool trap the flag flip removes;
+ *  its values_hint already names the tako_answer route instead. */
+function rowsPointer(
+  content: TakoCard["content"],
+  exportable: boolean,
+): string | undefined {
   if (content == null) return undefined;
   const c = content as LooseContent;
   // `|| undefined`, not bare lengths: a channel present but EMPTY (e.g.
@@ -195,7 +202,8 @@ function rowsPointer(content: TakoCard["content"]): string | undefined {
   if (shown === undefined || shown === 0) return undefined;
   const total = c.total_rows ?? undefined;
   const of = total !== undefined && total > shown ? ` of ${total}` : "";
-  return `data: ${shown}${of} rows in structuredContent.cards[].content (full export via tako_contents).`;
+  const exportPointer = exportable ? " (full export via tako_contents)" : "";
+  return `data: ${shown}${of} rows in structuredContent.cards[].content${exportPointer}.`;
 }
 
 /** Names riding on a card's sources/methodologies arrays (paragraphs live in
@@ -316,7 +324,7 @@ function renderCard(card: TakoCard, idx: number): string {
   // model twice for the same table on every host that counts content AND
   // structuredContent. A one-line pointer keeps the text channel a readable
   // index of what arrived.
-  const rows = rowsPointer(card.content);
+  const rows = rowsPointer(card.content, card.exportable === true);
   if (rows !== undefined) lines.push(rows);
 
   return lines.join("\n");

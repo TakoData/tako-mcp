@@ -234,6 +234,57 @@ export function isToolOnSurface(
   return true;
 }
 
+/** `isToolOnSurface`'s opt-in set for tools that are not optional — the
+ *  parameter is irrelevant for them, but the signature needs a value. */
+const NO_OPTIONAL_TOOLS: ReadonlySet<string> = new Set();
+
+/**
+ * Whether this connection can act on a card's `exportable: true` — i.e.
+ * whether `tako_contents` is on its tool surface at all. Derived from
+ * {@link isToolOnSurface} (not restated) so the answer can never drift from
+ * the listing decision:
+ *
+ * - authenticated → always true;
+ * - anonymous, non-ChatGPT → false — the tool is hidden, so `exportable:
+ *   true` would send the model chasing a tool it cannot reach;
+ * - anonymous ChatGPT family → TRUE, deliberately: the tool is
+ *   listed-but-gated there (see
+ *   {@link CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES}) and the model
+ *   calling it is exactly what fires the link-account sign-in challenge.
+ *   Re-marking cards non-exportable would suppress those calls and kill
+ *   the funnel.
+ *
+ * ACCEPTED COST of the family carve-out: the `codex` bucket's UA also
+ * covers the HEADLESS Codex CLI, which has no link-account UI — a keyless
+ * CLI agent still sees `exportable: true` and walks into the auth gate,
+ * softened only by that gate's agent fallback text. Same trade, same
+ * reason, as `isWidgetClient`'s codex membership above: the UA carries no
+ * per-request signal to split the bucket, and the desktop app is where
+ * codex traffic comes from.
+ *
+ * Consumed by `slimCard` (via the tako_search / tako_answer handlers) to
+ * keep a card's export markings truthful per connection.
+ *
+ * Takes the connection facts as one object (the shape `ToolContext`
+ * carries) so the `tier` default lives HERE, once: an unset tier is an
+ * authenticated direct call — the same resolution `createMcpServer`
+ * documents (`options.tier ?? ctx.tier ?? "authenticated"`), and
+ * `registerTool`'s callCtx always stamps a concrete tier before any MCP
+ * dispatch reaches a handler, so the default can only apply to direct
+ * (test/internal) calls.
+ */
+export function connectionCanExport(ctx: {
+  client: McpClientKind;
+  tier?: Tier;
+}): boolean {
+  return isToolOnSurface(
+    "tako_contents",
+    ctx.client,
+    NO_OPTIONAL_TOOLS,
+    ctx.tier ?? "authenticated",
+  );
+}
+
 /**
  * Which `annotationsByClient` family a client's annotations resolve from.
  *

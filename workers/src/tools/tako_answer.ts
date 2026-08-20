@@ -4,7 +4,7 @@ import { djangoPost } from "../django.js";
 import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
-import { isChatGptFamilyClient } from "./_surface.js";
+import { connectionCanExport, isChatGptFamilyClient } from "./_surface.js";
 import {
   answerSlimOutputShape,
   renderAnswerMarkdown,
@@ -53,7 +53,7 @@ const DESCRIPTION = [
   "",
   "It is the only tool whose single response can finish the job: it reads the cited pages internally, inlines the cited cards' rows, and returns a coverage verdict. Retrieval hands back captions and links you must then chase, and every extra round trip re-sends the whole conversation.",
   "",
-  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.",
+  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (license-gated, or non-exportable on this connection), ask here with its METRIC node id pinned and strict:true to get the figures.",
   "",
   "Reach past it only for a different job: `tako_search` for breadth recon (it locates data, it does not carry values), `tako_available_data` when the question is what Tako covers, the Answer Agent for open-ended research.",
   "",
@@ -328,8 +328,12 @@ const takoAnswer = {
     const ordered = citesByPosition
       ? parsed.data.cards
       : orderCardsByUsefulness(parsed.data.cards);
+    // Per-connection export markings — same rule as tako_search (see
+    // SlimCardOptions in _search_results.ts; the unset-tier default lives
+    // in connectionCanExport).
+    const canExport = connectionCanExport(ctx);
     const { cards, glossary } = hoistSourceGlossary(
-      ordered.map((c) => slimCard(c, cap)),
+      ordered.map((c) => slimCard(c, cap, { connectionCanExport: canExport })),
     );
     const web_results = parsed.data.web_results.map(slimWebResult);
     return {
