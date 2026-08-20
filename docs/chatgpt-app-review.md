@@ -18,9 +18,9 @@ credits. Existing paid-account functionality is fine; advertising it is not.
 
 Four anonymous-tier messages used to end with "get an API key at
 `https://tako.com/account/` …". Each is delivered as tool-result *text*, so each reached the
-model and could be relayed to the user. All four are now pure capacity/retry statements
-with no link, no pricing, and no mention of accounts or upgrades
-(`workers/src/freetier.ts`):
+model and could be relayed to the user. As delivered to ChatGPT-family and every
+unrecognized client, all four are pure capacity/retry statements with no link, no
+pricing, and no mention of accounts or upgrades (`workers/src/freetier.ts`):
 
 | Constant | Now reads |
 | --- | --- |
@@ -30,11 +30,22 @@ with no link, no pricing, and no mention of accounts or upgrades
 | `FREE_TIER_CREDITS_MESSAGE` | Anonymous access is temporarily out of shared capacity. Try again later. |
 
 Enforced by `freetier.test.ts` → "no user-facing message promotes an account, a purchase,
-or an upgrade", which bans URLs and account/pricing/upgrade wording across every message
-the module can emit — including any added later.
+or an upgrade", which bans URLs and account/pricing/upgrade wording across every BASE
+message the module can emit (`ALL_FREE_TIER_MESSAGES` — a new base message is covered by
+adding one line there). One suffix is deliberately outside that ban and gated per client
+instead:
 
-Two model-visible strings live OUTSIDE `freetier.ts` and are gated per client instead of
-banned outright (`workers/src/mcp.ts`):
+- `FREE_TIER_COMMERCE_UPSELL` (`workers/src/freetier.ts`) — "Connecting a Tako account
+  (tako.com) lifts these anonymous-access limits." Appended to the two rate-limit
+  messages and the shared-capacity message ONLY when the caller passes
+  `commerceCopyAllowedForUa` (positively-identified Anthropic clients; fails CLOSED, so
+  ChatGPT-family and every unrecognized UA — reviewers, crawlers, not-yet-classified
+  ChatGPT clients — get the byte-identical base text). Enforced by `freetier.test.ts` →
+  the "commerce-gated upsell" describe (default-off for every producer) and the
+  ChatGPT/unknown e2e byte-identity cases.
+
+Two more model-visible strings live OUTSIDE `freetier.ts` and are likewise gated per
+client instead of banned outright (`workers/src/mcp.ts`):
 
 - `FREE_TIER_SERVER_INSTRUCTIONS` — the anonymous `initialize` instructions. States which
   tools run anonymously and that others "become available on a connection authenticated

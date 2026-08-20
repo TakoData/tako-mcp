@@ -132,13 +132,17 @@ Behavior when active:
 - If the shared account itself runs out of Tako credits (Django 402),
   the tool result carries the same style of capacity message instead of
   the raw billing error.
-- None of these messages links to an account page, quotes a price, or
-  suggests getting an API key, and a guard test in `freetier.test.ts`
-  keeps it that way: they ship as model-visible text, and OpenAI's
-  commerce policy forbids promoting digital services or credits from an
-  app. Callers who want their own key get one at
-  https://tako.com/console/api-keys — documented here and on tako.com,
-  never in a tool response.
+- As delivered to ChatGPT-family and unrecognized clients, none of these
+  messages links to an account page, quotes a price, or suggests getting
+  an API key, and a guard test in `freetier.test.ts` keeps it that way:
+  they ship as model-visible text, and OpenAI's commerce policy forbids
+  promoting digital services or credits from an app. On positively
+  identified Anthropic clients ONLY (`commerceCopyAllowedForUa`, fails
+  closed), the limit/capacity messages append `FREE_TIER_COMMERCE_UPSELL`
+  — "Connecting a Tako account (tako.com) lifts these anonymous-access
+  limits." — where no such policy applies. Callers who want their own key
+  get one at https://tako.com/console/api-keys — documented here and on
+  tako.com, never in ChatGPT-visible tool text.
 - Each per-IP-metered request logs one line:
   `[free-tier] ip=<key> allowed|limited`.
 - JSON-RPC batch requests (array bodies) are rejected outright with an

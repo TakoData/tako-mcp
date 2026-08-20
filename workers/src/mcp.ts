@@ -395,14 +395,19 @@ export function commerceCopyAllowedForUa(userAgent: string | null): boolean {
  * link-account UI acts on the `_meta` challenge instead of prose). UA
  * (not `McpClientKind`) is the input because Claude Code deliberately
  * buckets as "unknown" for widget routing yet has a completely different
- * sign-in step (config-file API key) than claude.ai (connector Connect
- * button). No URLs, no UI deep paths beyond the settings pane name —
- * copy rots (see PAYMENT_REQUIRED_REMEDY_FALLBACK).
+ * sign-in step (in-place `/mcp` OAuth — this Worker is a full
+ * authorization server — with a config-file API key as the fallback)
+ * than claude.ai (connector Connect button). No URLs, no UI deep paths
+ * beyond the settings pane name — copy rots (see
+ * PAYMENT_REQUIRED_REMEDY_FALLBACK).
  */
 export function anonymousSignInHint(userAgent: string | null): string | undefined {
   if (userAgent === null || userAgent === "") return undefined;
   if (userAgent.toLowerCase().includes("claude-code")) {
-    return "In Claude Code, re-add this Tako server with a Tako API key to enable it.";
+    // OAuth first: Claude Code authenticates a remote MCP server in place
+    // (`/mcp` → Authenticate) against this Worker's own /authorize + /token;
+    // re-adding with an API key works but is the long way round.
+    return "In Claude Code, run /mcp and authenticate with Tako (or re-add the server with a Tako API key) to enable it.";
   }
   return detectMcpClient(userAgent) === "claude"
     ? "In Claude, open Settings → Connectors and connect Tako, then retry this call."
@@ -462,8 +467,10 @@ export function createMcpServer(
      */
     commerceCopyAllowed?: boolean;
     /**
-     * Client-specific sign-in step for the free-tier dispatch gate; from
-     * `anonymousSignInHint`. Appended to `authRequiredToolResult`'s base
+     * Client-specific sign-in step for the free-tier dispatch gate — its
+     * ONLY reader; `handleMcpRequest` passes it solely on `tier: "free"`
+     * connections, so authenticated servers never carry it. From
+     * `anonymousSignInHint`; appended to `authRequiredToolResult`'s base
      * text when the calling client is positively identified as an
      * Anthropic host. Omitted (the default) → no hint, byte-identical to
      * today's text — the correct behavior for tests, non-HTTP callers,
@@ -1285,7 +1292,11 @@ function registerTool(
                   wwwAuthenticate(
                     options.origin,
                     "invalid_token",
-                    "Your Tako session is no longer valid. Sign in with Tako again to continue.",
+                    // Mirrors AUTH_INVALID_MESSAGE's remedy pair: this
+                    // challenge now ships on every authenticated client,
+                    // including raw-API-key connections where "sign in" alone
+                    // names the one remedy that client doesn't use.
+                    "Your Tako authorization is no longer valid. Sign in with Tako again, or update the API key, to continue.",
                   ),
                 ],
               },
@@ -1471,11 +1482,13 @@ function registerTool(
 }
 
 /** Upstream statuses that clear on their own: worth one retry of the same
- *  call, as opposed to a 4xx that needs the request changed. Includes 500
- *  (transient handler crash or proxy error) since 5xx bodies are stripped from
- *  the text channel, making the 500 indistinguishable from permanent failure
- *  without the retry sentence — a 500 clears on retry exactly like a 502. */
-const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+ *  call, as opposed to a 4xx that needs the request changed. Non-transient
+ *  5xx stays bare on purpose: 502/503/504 are infrastructure faults, while a
+ *  Django 500 is usually a handler crash the same input reproduces — inviting
+ *  a retry there loops the model against a deterministic failure. (500 was
+ *  briefly added here and reverted in review: unlike 408, which earned its
+ *  slot with an observed live recovery, no transient-500 observation exists.) */
+const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
 
 /**
  * Convert a `DjangoError` into an MCP `CallToolResult` with `isError: true`.
@@ -2014,7 +2027,13 @@ export async function handleMcpRequest(
         }`,
       );
     }
-    const signInHint = anonymousSignInHint(userAgent);
+    // Free tier only: the free-tier dispatch gate is the option's sole
+    // reader, so passing it on authenticated connections would wire an
+    // option that nothing consumes (review finding) — an invitation for a
+    // future reader to "fix" the dead option by appending the hint where
+    // the free-tier gate was not what fired.
+    const signInHint =
+      tier === "free" ? anonymousSignInHint(userAgent) : undefined;
     const server = createMcpServer(ctx, {
       iconsBaseUrl: requestOrigin,
       requestOrigin,
