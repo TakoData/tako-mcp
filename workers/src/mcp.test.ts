@@ -16,6 +16,7 @@ import {
 import type { Env } from "./env.js";
 import { FREE_TIER_TOOL_NAMES } from "./freetier.js";
 import {
+  anonymousSignInHint,
   AUTH_INVALID_MESSAGE,
   commerceCopyAllowedForUa,
   createMcpServer,
@@ -317,20 +318,6 @@ describe("djangoErrorToToolResult", () => {
     expect(result.content[0]?.text).toContain("retry the SAME call once");
   });
 
-  it("a Django 500 carries the transient-retry sentence (most common upstream fault)", () => {
-    const err = new DjangoHttpError({
-      path: "/api/v3/search/",
-      method: "POST",
-      status: 500,
-      body: "boom",
-    });
-    const result = djangoErrorToToolResult(err);
-    expect(result.isError).toBe(true);
-    const text = (result.content[0] as { text: string }).text;
-    expect(text).toContain("transient upstream condition");
-    expect(text).toContain("retry the SAME call once");
-  });
-
   it("a Django timeout carries the transient-retry sentence", () => {
     const result = djangoErrorToToolResult(
       new DjangoTimeoutError({
@@ -346,8 +333,10 @@ describe("djangoErrorToToolResult", () => {
   });
 
   it("does NOT invite a retry on a non-transient 5xx", () => {
+    // 500 specifically: usually a handler crash the same input reproduces,
+    // not an infrastructure fault — see RETRYABLE_STATUS's comment.
     const err = new DjangoHttpError({
-      path: "/api/v1/whatever", method: "GET", status: 501, body: "boom",
+      path: "/api/v1/whatever", method: "GET", status: 500, body: "boom",
     });
     const text = djangoErrorToToolResult(err).content[0]?.text ?? "";
     expect(text).toBe(err.message);
@@ -1190,6 +1179,13 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     expect(
       (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
     ).toBe("unauthorized");
+    // The regression this guard is named for is a TEXT-channel one: if the
+    // authenticated-401 content override ever escapes its tier gate, the
+    // _meta assertions above stay green while anonymous callers are told to
+    // sign in about the shared key. Pin the text too (review finding).
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).not.toBe(AUTH_INVALID_MESSAGE);
+    expect(text).not.toMatch(/sign in|session|re-?authoriz/i);
   });
 
   it("a Django 401 on an authenticated claude client gets the recovery message and re-auth challenge", async () => {
@@ -1572,6 +1568,42 @@ describe("commerceCopyAllowedForUa", () => {
       null,
     ]) {
       expect(commerceCopyAllowedForUa(ua)).toBe(false);
+    }
+  });
+});
+
+describe("anonymousSignInHint", () => {
+  // Table-driven over every UA family (review finding): the e2e tests pin
+  // ChatGPT and python-httpx through worker.fetch, but codex is the branch
+  // that matters most — it is ChatGPT-FAMILY, so a hint leaking there is
+  // the exact policy failure the fail-closed design exists to prevent, and
+  // `detectMcpClient`'s match ordering is the only thing stopping it.
+  it("names the in-place OAuth step (API key as fallback) for Claude Code", () => {
+    const hint = anonymousSignInHint("claude-code/2.1.220 (sdk-cli)");
+    expect(hint).toContain("Claude Code");
+    expect(hint).toContain("/mcp");
+    expect(hint).toContain("Tako API key");
+  });
+
+  it("names the connector Connect step for claude.ai / Claude Desktop", () => {
+    for (const ua of ["Claude-User/1.0", "claude-mcp-client/1.0", "Anthropic/1.0"]) {
+      const hint = anonymousSignInHint(ua);
+      expect(hint).toContain("Settings → Connectors");
+    }
+  });
+
+  it("returns undefined for ChatGPT-family, codex, unknown, and absent UAs", () => {
+    for (const ua of [
+      "ChatGPT/1.0 (+https://chatgpt.com)",
+      "openai-mcp/1.0",
+      "codex-mcp-client/0.148.0-alpha.9",
+      "GPTBot/1.2",
+      "OAI-SearchBot/1.0",
+      "python-httpx/0.27",
+      "",
+      null,
+    ]) {
+      expect(anonymousSignInHint(ua)).toBeUndefined();
     }
   });
 });

@@ -27,10 +27,17 @@ import { FREE_TIER_SERVER_INSTRUCTIONS } from "./mcp.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
 /**
- * Every string this module can put in front of a caller — and therefore in
- * front of a host's MODEL, since four of the five ship as tool-result text.
- * The two guard tests below hold for all of them together, so a new message
- * added to `freetier.ts` is covered by adding one line here.
+ * Every BASE string this module can put in front of a caller — and therefore
+ * in front of a host's MODEL, since four of the five ship as tool-result
+ * text. The two guard tests below hold for all of them together, so a new
+ * base message added to `freetier.ts` is covered by adding one line here.
+ *
+ * Deliberately NOT in this list: `FREE_TIER_COMMERCE_UPSELL`, which exists
+ * to violate the account-copy ban — on positively-identified Anthropic
+ * clients only. Its own describe ("commerce-gated upsell") proves it is
+ * absent by default from every producer and holds it to the hygiene rules
+ * that are not commerce-specific; `docs/chatgpt-app-review.md` §1 records
+ * the client gate for reviewers.
  */
 const ALL_FREE_TIER_MESSAGES = [
   FREE_TIER_LIMIT_MESSAGE,
