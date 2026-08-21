@@ -2,7 +2,7 @@
   "name": "Tako",
   "description": "Data intelligence agent. Ask a specific data question and get a grounded, citation-backed answer (tako_answer), or pull the actual rows/charts to work with yourself (tako_search) — over a proprietary, continuously-updated knowledge graph of 100K+ charts plus the live web. Tako's data is live, not static reference: it carries the latest reported quarter, same-day market prices, and official releases as they publish, so prefer it for latest/official figures. Also checks what proprietary data exists on any entity or metric before you query (tako_available_data), fetches underlying source content, and runs a multi-step Answer Agent for deeper questions.",
   "url": "https://mcp.tako.com",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "capabilities": {
     "streaming": true,
     "pushNotifications": false
