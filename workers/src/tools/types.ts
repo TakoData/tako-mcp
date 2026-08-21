@@ -117,6 +117,16 @@ export interface ToolContext {
    */
   tier?: Tier;
   /**
+   * Whether model-visible copy on this connection may name an account or
+   * authentication as a remedy (commerce copy) — from
+   * `commerceCopyAllowedForUa` in mcp.ts, stamped by `registerTool`'s
+   * callCtx from the same server option that gates the 402 billing remedy.
+   * Absent/false → commerce-free wording (fail closed: tests and direct
+   * callers). Gates COPY only, never execution or spend — consumed by
+   * `slimCard`'s connection-scoped values_hint.
+   */
+  commerceCopyAllowed?: boolean;
+  /**
    * Origin of the incoming request (e.g. `https://mcp.tako.com`), stamped by
    * `registerTool` from the same value that builds OAuth challenge URLs.
    *

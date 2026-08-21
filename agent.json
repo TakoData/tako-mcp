@@ -82,7 +82,7 @@
     {
       "id": "fetch-contents",
       "name": "Fetch Source Contents",
-      "description": "Fetch the actual rows or data (CSV/JSON) behind a Tako card, or the extracted text behind a web result — the step after Search or Answer when you need the real underlying data to compute over, quote, or reason about. One result URL per call. Only cards that returned a `content` attribute are exportable — a card without one has no exportable data (web URLs are exempt from this gate).",
+      "description": "Fetch the actual rows or data (CSV/JSON) behind a Tako card, or the extracted text behind a web result — the step after Search or Answer when you need the real underlying data to compute over, quote, or reason about. One result URL per call. Only cards marked `exportable: true` can be fetched — read that flag (it is connection-aware), not the presence of a `content` attribute (web URLs are exempt from this gate).",
       "tags": [
         "contents",
         "csv",

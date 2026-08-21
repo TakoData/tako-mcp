@@ -20,8 +20,9 @@ How to do it:
   web half of the same search still applies.
 - If `tako_answer` comes back with a `guidance` field saying no data cards grounded the
   answer, say so plainly and pivot the question. Do not rephrase and retry the same ask.
-- Need the full text behind a web result rather than its excerpt? Call `tako_contents` on
-  the url, with `query` set so you get just the matching passages.
+- Need the full text behind a web result rather than its excerpt? If `tako_contents` is
+  available on your connection (it needs an authenticated one), call it on the url with
+  `query` set so you get just the matching passages; otherwise work from the snippet.
 
 Report the answer, the period or date it applies to, and the source. Say which kind of
 source it was, a named data provider or a web page. Include the **Open in Tako** link for

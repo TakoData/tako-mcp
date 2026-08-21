@@ -49,7 +49,7 @@ import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.",
   "",
-  `It locates data — and for \`exportable: true\` cards it also includes a free 20-row preview by default (\`include_contents\`) — but a license-gated card carries no rows at all (headline value only, via \`description\`), and a web result is only a snippet, not a value. For a plain "what is X", \`tako_answer\` is the better-suited tool: one written figure beats parsing a preview table yourself, and reaching here first for that costs an extra round trip that re-sends the whole conversation. To ask it about a card you already have, ${PINNED_FROM_CARD}.`,
+  `It locates data — and for cards that carry inline data it also includes a free 20-row preview by default (\`include_contents\`) — but a license-gated card carries no rows at all (headline value only, via \`description\`), and a web result is only a snippet, not a value. For a plain "what is X", \`tako_answer\` is the better-suited tool: one written figure beats parsing a preview table yourself, and reaching here first for that costs an extra round trip that re-sends the whole conversation. To ask it about a card you already have, ${PINNED_FROM_CARD}.`,
   "",
   "Best for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_answer` or `tako_contents`. It is cheap and fast, and built for exactly this fan-out.",
   "",
@@ -111,7 +111,7 @@ const inputSchema = z.object({
     .max(MAX_PREVIEW_ROWS)
     .default(INLINE_PREVIEW_ROW_CAP)
     .describe(
-      `Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). Lower it to trim context on broad fan-outs. For MORE than ${INLINE_PREVIEW_ROW_CAP} rows, call tako_contents on the card's url (max_rows up to 2,000 — first ${INLINE_PREVIEW_ROW_CAP} free, priced beyond). Ignored when include_contents is false.`,
+      `Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). Lower it to trim context on broad fan-outs. For MORE than ${INLINE_PREVIEW_ROW_CAP} rows — on cards marked \`exportable: true\` — call tako_contents on the card's url (max_rows up to 2,000 — first ${INLINE_PREVIEW_ROW_CAP} free, priced beyond). Ignored when include_contents is false.`,
     ),
   country_code: z
     .string()
@@ -289,7 +289,12 @@ const tako_search = {
     // SlimCardOptions; the unset-tier default lives in connectionCanExport).
     const canExport = connectionCanExport(ctx);
     const { cards: slimCards, glossary } = hoistSourceGlossary(
-      cards.data.map((c) => slimCard(c, cap, { connectionCanExport: canExport })),
+      cards.data.map((c) =>
+        slimCard(c, cap, {
+          connectionCanExport: canExport,
+          commerceCopyAllowed: ctx.commerceCopyAllowed ?? false,
+        }),
+      ),
     );
     const output = buildSearchOutput(
       slimCards,
@@ -298,6 +303,7 @@ const tako_search = {
       wire.usage ?? null,
       ctx.env,
       input.sources,
+      canExport,
     );
     // Glossary spreads on LAST so it serializes after the data — truncating
     // clients then drop boilerplate first.

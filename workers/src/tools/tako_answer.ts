@@ -99,7 +99,7 @@ const inputSchema = z.object({
     .max(MAX_PREVIEW_ROWS)
     .default(INLINE_PREVIEW_ROW_CAP)
     .describe(
-      `Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). For more rows, call tako_contents on the card's url (priced beyond the first ${INLINE_PREVIEW_ROW_CAP}). Ignored when include_contents is false.`,
+      `Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). For more rows — on cards marked \`exportable: true\` — call tako_contents on the card's url (priced beyond the first ${INLINE_PREVIEW_ROW_CAP}). Ignored when include_contents is false.`,
     ),
   country_code: z
     .string()
@@ -333,7 +333,12 @@ const takoAnswer = {
     // in connectionCanExport).
     const canExport = connectionCanExport(ctx);
     const { cards, glossary } = hoistSourceGlossary(
-      ordered.map((c) => slimCard(c, cap, { connectionCanExport: canExport })),
+      ordered.map((c) =>
+        slimCard(c, cap, {
+          connectionCanExport: canExport,
+          commerceCopyAllowed: ctx.commerceCopyAllowed ?? false,
+        }),
+      ),
     );
     const web_results = parsed.data.web_results.map(slimWebResult);
     return {

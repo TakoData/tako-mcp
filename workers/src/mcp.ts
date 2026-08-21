@@ -780,9 +780,10 @@ function registerTool(
      */
     tier: Tier;
     /**
-     * Whether this connection's model-visible errors may carry commerce
+     * Whether this connection's model-visible text may carry commerce
      * copy (see `commerceCopyAllowedForUa`). Consumed by the 402 mapping
-     * in the catch below.
+     * in the catch below, and stamped into callCtx so handlers can gate
+     * copy the same way (the connection-scoped values_hint in slimCard).
      */
     commerceCopyAllowed: boolean;
     /**
@@ -1216,6 +1217,9 @@ function registerTool(
         client: options.client,
         tier: options.tier,
         origin: options.origin,
+        // Already defaulted fail-closed at the createMcpServer boundary:
+        // only a positively-identified Anthropic host gets commerce copy.
+        commerceCopyAllowed: options.commerceCopyAllowed,
       };
       // Free-tier dispatch gate: auth-required tools can be LISTED on an
       // anonymous connection (ChatGPT needs the descriptor to offer its

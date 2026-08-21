@@ -43,7 +43,7 @@ Parameters:
 - `effort` (string, "fast" | "instant"): "fast" (default) or "instant" (fastest, cached embeds). Omit for fast.
 - `count` (integer, 1-20, default 10): Maximum results per source.
 - `include_contents` (boolean, default true): Inline each card's row preview; set false for a pointers-only response (cheaper when fanning out many parallel queries, or when coverage is unconfirmed). Full rows are always a separate `tako_contents` call.
-- `preview_rows` (integer, 1-250, default 20): Cap on each card's inlined MOST-RECENT rows when `include_contents` is true. 20 is the free inline allowance the server ships — values above your account's allowance have no effect; lower it to trim context. For more rows call `tako_contents` (first 20 free, priced beyond). Ignored when `include_contents` is false.
+- `preview_rows` (integer, 1-250, default 20): Cap on each card's inlined MOST-RECENT rows when `include_contents` is true. 20 is the free inline allowance the server ships — values above your account's allowance have no effect; lower it to trim context. For more rows call `tako_contents` on an `exportable: true` card (first 20 free, priced beyond). Ignored when `include_contents` is false.
 - `country_code` (string, default "US"): ISO country code.
 - `locale` (string, default "en-US"): Locale.
 - `node_ids` (array of strings, max 20, optional): Graph node ids (from `tako_available_data`, or a card's `nodes`) to PIN into the proprietary data source — strong retrieval boost.

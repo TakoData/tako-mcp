@@ -372,6 +372,7 @@ describe("slimCard — connection-tier export gate (connectionCanExport: false)"
         ["2024-01-01", 1],
         ["2024-01-02", 2],
       ]),
+      cost: 0.01,
       export_pricing: {
         baseline_usd: 0.01,
         row_cpm_usd: 0.05,
@@ -386,9 +387,11 @@ describe("slimCard — connection-tier export gate (connectionCanExport: false)"
     const out = slimCard(exportableCard(), 5, { connectionCanExport: false });
     expect(out.exportable).toBe(false);
     const hint = out.values_hint ?? "";
-    // Honest wording: the CARD is exportable — the CONNECTION can't reach
-    // tako_contents — so the license-gated "not exportable" must not appear.
-    expect(hint).toContain("authenticated");
+    // Connection-scoped wording: the CARD is exportable — the CONNECTION
+    // can't reach tako_contents — so the license-gated "not exportable"
+    // must not appear, and "full rows" must (preview rows may ride in the
+    // same response).
+    expect(hint).toContain("full rows are not available on this connection");
     expect(hint).not.toContain("not exportable");
     // Same agent-executable routing as the license-gated hint: tako_answer
     // with the metric node alone pinned, strict:true.
@@ -397,12 +400,49 @@ describe("slimCard — connection-tier export gate (connectionCanExport: false)"
     expect(hint).toContain("strict:true");
   });
 
-  it("keeps the inline preview rows but strips export_pricing", () => {
+  it("names the account remedy only when commerce copy is allowed", () => {
+    // The "authenticated Tako connection" wording is account copy, gated
+    // like FREE_TIER_COMMERCE_UPSELL: an unrecognized UA may be a
+    // ChatGPT-family client detectMcpClient has not learned yet, and
+    // account copy reaching ChatGPT's model violates OpenAI's commerce
+    // policy. Default (omitted) fails closed to the neutral wording.
+    const allowed = slimCard(exportableCard(), 5, {
+      connectionCanExport: false,
+      commerceCopyAllowed: true,
+    }).values_hint ?? "";
+    expect(allowed).toContain("full rows require an authenticated Tako connection");
+    const denied = slimCard(exportableCard(), 5, {
+      connectionCanExport: false,
+      commerceCopyAllowed: false,
+    }).values_hint ?? "";
+    expect(denied).not.toContain("authenticated");
+    const defaulted = slimCard(exportableCard(), 5, {
+      connectionCanExport: false,
+    }).values_hint ?? "";
+    expect(defaulted).toBe(denied);
+  });
+
+  it("the commerce-free hint passes the free-tier copy hygiene rules", () => {
+    // Same prohibitions the freetier.test.ts scans hold over the base
+    // messages: the neutral hint ships to unrecognized UAs, so it must
+    // carry no URL and no account/purchase/upgrade copy.
+    const hint = slimCard(exportableCard(), 5, {
+      connectionCanExport: false,
+    }).values_hint ?? "";
+    expect(hint).not.toMatch(/https?:\/\//);
+    expect(hint).not.toMatch(
+      /api key|account|sign ?up|upgrade|subscri|purchas|\bbuy\b|\bplan\b|pricing|\bcredits?\b|\$/i,
+    );
+  });
+
+  it("keeps the inline preview rows but strips export_pricing and cost", () => {
     const out = slimCard(exportableCard(), 5, { connectionCanExport: false });
     // The preview rows are the free tier's data — they must survive.
     expect(rowsOf(out.content)).toHaveLength(2);
-    // A rate card for a tool this connection cannot call is noise.
+    // A rate card for a tool this connection cannot call is noise — and so
+    // is `cost`, the prospective /contents quote for the same export.
     expect(out.content).not.toHaveProperty("export_pricing");
+    expect(out.content).not.toHaveProperty("cost");
   });
 
   it("keeps the license-gated wording for a card the BACKEND marked non-exportable", () => {
@@ -417,6 +457,7 @@ describe("slimCard — connection-tier export gate (connectionCanExport: false)"
     expect(out.exportable).toBe(true);
     expect(out).not.toHaveProperty("values_hint");
     expect(out.content).toHaveProperty("export_pricing");
+    expect(out.content).toHaveProperty("cost");
   });
 
   it("an explicit connectionCanExport: true behaves exactly like omitted opts", () => {
@@ -426,6 +467,7 @@ describe("slimCard — connection-tier export gate (connectionCanExport: false)"
     expect(out.exportable).toBe(true);
     expect(out).not.toHaveProperty("values_hint");
     expect(out.content).toHaveProperty("export_pricing");
+    expect(out.content).toHaveProperty("cost");
   });
 });
 
@@ -540,6 +582,53 @@ describe("buildSearchOutput — zero-card guidance", () => {
   it("treats the legacy \"tako\" source alias as data", () => {
     const out = buildSearchOutput([], [], "req-6", null, ENV, ["tako"]);
     expect(out.guidance).toMatch(/node_id/);
+  });
+
+  // The guidance is TOOL OUTPUT: it reaches keyless models on connections
+  // where tako_contents is not on the surface at all, so its web-fallback
+  // sentence must not route them at a hidden tool. The snippets already in
+  // web_results are that connection's web fallback.
+  it("routes a keyless connection to the snippets, not to tako_contents", () => {
+    for (const sources of [["data", "web"], ["web"]]) {
+      const out = buildSearchOutput(
+        [],
+        [{ title: "t", url: "https://x.com" }],
+        "req-7",
+        null,
+        ENV,
+        sources,
+        false,
+      );
+      const g = out.guidance ?? "";
+      expect(g).toContain("Answer from the web_results snippets.");
+      expect(g).not.toContain("tako_contents on the most relevant url");
+    }
+  });
+
+  it("keeps the tako_contents web fallback when the connection can export", () => {
+    // Both explicit true and the omitted default (authenticated direct
+    // calls) keep the full-page routing.
+    const explicit = buildSearchOutput(
+      [],
+      [{ title: "t", url: "https://x.com" }],
+      "req-8",
+      null,
+      ENV,
+      ["data", "web"],
+      true,
+    );
+    expect(explicit.guidance).toContain(
+      "tako_contents on the most relevant url fetches its full page text",
+    );
+    const defaulted = buildSearchOutput(
+      [],
+      [{ title: "t", url: "https://x.com" }],
+      "req-8",
+      null,
+      ENV,
+      ["data", "web"],
+    );
+    expect(defaulted.guidance).toBe(explicit.guidance);
   });
 
   it("omits guidance when any card is present", () => {

@@ -797,12 +797,32 @@ describe("tako_search per-connection export markings", () => {
     const card = out.cards[0] as Record<string, unknown>;
     expect(card?.exportable).toBe(false);
     expect(card?.content).not.toHaveProperty("export_pricing");
+    // `cost` is the prospective /contents quote — the same unreachable
+    // export's price — so it is stripped alongside the rate card.
+    expect(card?.content).not.toHaveProperty("cost");
+    // The CONNECTION-scoped hint, not the license-gated one: default ctx
+    // carries no commerceCopyAllowed, so the wording is the commerce-free
+    // variant (no account remedy named).
     expect(card?.values_hint).toContain("tako_answer");
-    expect(card?.values_hint).toContain("authenticated");
+    expect(card?.values_hint).toContain("connection");
+    expect(card?.values_hint).not.toContain("not exportable");
+    expect(card?.values_hint).not.toContain("authenticated");
     // Preview rows survive — they are the free tier's data.
     expect(
       ((card?.content as { dataset?: { rows?: unknown[] } })?.dataset?.rows ?? []).length,
     ).toBe(1);
+  });
+
+  it("free-tier connection with commerce copy allowed names the account remedy", async () => {
+    // Proves the ctx.commerceCopyAllowed wiring through the handler — the
+    // slimCard unit tests cannot catch the handler dropping the flag.
+    mockFetchSequence([response()]);
+    const out = await tako_search.handler(
+      { ...DEFAULTS, query: "US GDP", include_contents: true },
+      { ...CTX, tier: "free", commerceCopyAllowed: true },
+    );
+    const card = out.cards[0] as Record<string, unknown>;
+    expect(card?.values_hint).toContain("authenticated Tako connection");
   });
 
   it("free-tier ChatGPT connection keeps exportable:true (the sign-in funnel)", async () => {
@@ -826,5 +846,6 @@ describe("tako_search per-connection export markings", () => {
     const card = out.cards[0] as Record<string, unknown>;
     expect(card?.exportable).toBe(true);
     expect(card?.content).toHaveProperty("export_pricing");
+    expect(card?.content).toHaveProperty("cost");
   });
 });

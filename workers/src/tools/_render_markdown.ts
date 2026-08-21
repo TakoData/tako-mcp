@@ -64,7 +64,7 @@ export const searchSlimOutputShape = z.looseObject({
     .array(z.looseObject({}))
     .optional()
     .describe(
-      "Web results, each with a `snippet`. A snippet is the passages selected against your query, not the page's opening text, so it usually carries the answer-bearing sentence. A ' … ' inside one marks a discontinuity — either passages joined from different parts of the page, or the page's own ellipsis — so read it as a whole and never quote across it as one continuous sentence. `null` means that page had no relevant passage — its url is still fetchable via tako_contents.",
+      "Web results, each with a `snippet`. A snippet is the passages selected against your query, not the page's opening text, so it usually carries the answer-bearing sentence. A ' … ' inside one marks a discontinuity — either passages joined from different parts of the page, or the page's own ellipsis — so read it as a whole and never quote across it as one continuous sentence. `null` means that page had no relevant passage — its url can still be read with tako_contents (web urls are never export-gated).",
     ),
   usage: usageAdvertisedSchema
     .nullable()

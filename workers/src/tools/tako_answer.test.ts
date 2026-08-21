@@ -786,6 +786,11 @@ describe("tako_answer per-connection export markings", () => {
     const card = out.cards[0] as Record<string, unknown>;
     expect(card?.exportable).toBe(false);
     expect(card?.content).not.toHaveProperty("export_pricing");
+    // The CONNECTION-scoped hint must be selected, not the license-gated
+    // one — "tako_answer" alone appears in both (shared routing), so it
+    // cannot discriminate the wiring this test names.
     expect(card?.values_hint).toContain("tako_answer");
+    expect(card?.values_hint).toContain("connection");
+    expect(card?.values_hint).not.toContain("not exportable");
   });
 });
