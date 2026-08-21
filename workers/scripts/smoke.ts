@@ -79,6 +79,13 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 // drift from the route the worker serves and the shim points at.
 import { EMBED_DATA_PREFIX } from "../src/embed_proxy.js";
 
+// Imported for the same reason: the visualize step validates the deployed
+// result against the tool's OWN `outputSchema`, so a field the tool stops
+// advertising breaks this file's typecheck instead of only its post-deploy
+// run. Reading a dropped field is exactly how this file's old `card_id`
+// assert kept the deploy smoke red for 17 days after PR #210 removed it.
+import takoVisualize from "../src/tools/tako_visualize.js";
+
 const CANARY_QUERY = "US GDP";
 
 // Both env vars are required — no in-script defaults. The single source of
@@ -379,19 +386,26 @@ try {
       },
     ],
   });
-  const tvStructured = tvResult.structuredContent as
-    | { card_id?: string; embed_url?: string }
-    | undefined;
-  assert(tvStructured, "tako_visualize missing structuredContent");
+  const tvParsed = takoVisualize.outputSchema.safeParse(tvResult.structuredContent);
   assert(
-    typeof tvStructured.card_id === "string" && tvStructured.card_id.length > 0,
-    "tako_visualize returned no card_id",
+    tvParsed.success,
+    `tako_visualize structuredContent does not match its outputSchema: ` +
+      JSON.stringify(tvParsed.error?.issues ?? []).slice(0, 400),
+  );
+  const tvStructured = tvParsed.data;
+  // `pub_id`, not `card_id` — PR #210 dropped `card_id` from the schema
+  // (OpenAI app review: one id in front of the model, not two) and `pub_id`
+  // carries the identical string. Both are `.optional()` in `autoChainShape`,
+  // so the parse above cannot assert presence; these two do.
+  assert(
+    typeof tvStructured.pub_id === "string" && tvStructured.pub_id.length > 0,
+    "tako_visualize returned no pub_id",
   );
   assert(
     typeof tvStructured.embed_url === "string" && /^https?:\/\//.test(tvStructured.embed_url),
     `tako_visualize.embed_url is not http(s): ${JSON.stringify(tvStructured?.embed_url)}`,
   );
-  ok(`tako_visualize → card_id ${tvStructured.card_id}`);
+  ok(`tako_visualize → pub_id ${tvStructured.pub_id}`);
 
   // -------------------------------------------------------------------------
   // 6. Native-card proxy — the interactive/themed chart path on claude.ai
@@ -428,14 +442,14 @@ try {
   // between creating a card and its embed page existing, which is not something
   // to redden a deploy over.
   const nativeRes = await fetch(
-    `${baseUrl}/embed-html/${encodeURIComponent(tvStructured.card_id)}`,
+    `${baseUrl}/embed-html/${encodeURIComponent(tvStructured.pub_id)}`,
   );
   const nativeBody = await nativeRes.text();
   if (nativeRes.status === 404) {
     if (nativeBody.includes("chart not found")) {
       console.warn(
         `[warn] /embed-html/ → 404 "chart not found": the route is LIVE, but ` +
-          `card ${tvStructured.card_id} did not resolve upstream (likely lag ` +
+          `card ${tvStructured.pub_id} did not resolve upstream (likely lag ` +
           `between creating it and its embed page existing).`,
       );
     } else {
@@ -556,7 +570,7 @@ try {
     // which is exactly what shipped and what a user reported.
     //
     // Two distinct things to check, because either alone passes while broken:
-    const dataUrl = `${baseUrl}${EMBED_DATA_PREFIX}${tvStructured.card_id}`;
+    const dataUrl = `${baseUrl}${EMBED_DATA_PREFIX}${tvStructured.pub_id}`;
     assert(
       nativeBody.includes(dataUrl),
       `/embed-html/ served a page with no data-proxy shim pointing at ` +
@@ -646,7 +660,7 @@ try {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           ...config.params,
-          pub_id: tvStructured.card_id,
+          pub_id: tvStructured.pub_id,
           dark_mode: false,
         }),
       });
