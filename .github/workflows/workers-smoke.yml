@@ -7,6 +7,9 @@ name: workers-smoke
 #     `push` to main -> staging, `release: published` -> production. Because both
 #     sides read the same signal, the badge cannot claim to have smoked an env
 #     the deploy did not touch.
+#   - `pull_request` on the release-please branch: gate cutting a release on a
+#     staging that still answers. Smokes STAGING, not production — see the
+#     comment on the trigger.
 #   - `workflow_dispatch`: manual trigger to smoke any base URL.
 #
 # We still DO NOT auto-smoke after a `workflow_dispatch` deploy: that one takes
@@ -30,6 +33,22 @@ on:
   workflow_run:
     workflows: [workers-deploy]
     types: [completed]
+  # Release gate. The release-please PR is the last human decision point before
+  # a production deploy, and until now nothing about the deployed worker was
+  # asserted there: `typecheck-and-test` proves the code compiles, not that the
+  # thing serving traffic answers. The target here is STAGING, deliberately —
+  # the tip being released is already deployed to staging, and production has
+  # nothing new on it yet. So this check does not verify production; it refuses
+  # to cut a release out of a staging that cannot answer a tools/call.
+  #
+  # `.release-please-manifest.json` as the only path: release-please is the sole
+  # writer of that file, so a normal PR never starts this workflow and never
+  # shows a skipped check. The head_ref guard on the job is the correctness
+  # half — the path filter only keeps other PRs quiet.
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - '.release-please-manifest.json'
   workflow_dispatch:
     inputs:
       base_url:
@@ -52,9 +71,15 @@ env:
 # smoke if a newer deploy to the SAME env lands while it's running. Keyed by the
 # resolved env rather than by base_url alone, so a release-triggered prod smoke
 # does not cancel a staging one that is still running.
+# The release-PR arm gets its OWN lane, keyed by PR number. It resolves to the
+# staging base URL like a post-deploy staging smoke does, so sharing the lane
+# would let a release-PR run cancel the post-deploy run that actually gates the
+# staging badge (and the reverse).
 concurrency:
   group: >-
-    workers-smoke-${{ github.event.inputs.base_url ||
+    workers-smoke-${{ github.event_name == 'pull_request' &&
+    format('release-pr-{0}', github.event.number) ||
+    github.event.inputs.base_url ||
     (github.event.workflow_run.event == 'release' && 'production' || 'staging') }}
   cancel-in-progress: true
 
@@ -75,8 +100,15 @@ jobs:
     #
     # Upstream `workflow_dispatch` runs are still skipped: their env comes from
     # an input this event does not expose.
+    #
+    # The `pull_request` arm is guarded on `head_ref`, not on the path filter
+    # alone: a path filter decides whether the WORKFLOW starts, and any PR that
+    # touched `.release-please-manifest.json` for its own reasons would start it.
+    # Only release-please's branch may spend a credit and publish a card here.
     if: |
       github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'release-please--branches--main') ||
       (github.event.workflow_run.conclusion == 'success' &&
        (github.event.workflow_run.event == 'push' ||
         github.event.workflow_run.event == 'release'))
@@ -136,7 +168,14 @@ jobs:
       # passed — tighten this once the case set has proven stable.
       # Same target resolution as the Smoke step above — kept in lockstep so the
       # two steps in one job can never be pointed at different environments.
+      #
+      # Skipped on the release PR. It is `continue-on-error`, so it gates
+      # nothing there, and every case it runs is a metered call — spending them
+      # to print a result no one can block on is the wrong trade at the one
+      # trigger that fires per release. The post-deploy staging run still
+      # reports it on the same commit.
       - name: Golden queries
+        if: github.event_name != 'pull_request'
         continue-on-error: true
         env:
           GOLDEN_BASE_URL: >-

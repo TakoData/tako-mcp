@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.22.0](https://github.com/TakoData/tako-mcp/compare/v0.21.1...v0.22.0) (2026-08-21)
+
+
+### Features
+
+* commerce-gated account upsell on free-tier limit messages ([fcfb0e4](https://github.com/TakoData/tako-mcp/commit/fcfb0e4d27c2e4f55729ca09ec05aac782fb0ce2))
+
+
+### Bug Fixes
+
+* **mcp:** anonymous sign-in guidance names the concrete step on Claude clients ([623ac6a](https://github.com/TakoData/tako-mcp/commit/623ac6a8642761bd5e484694d40f34fcae9d9fc7))
+* **mcp:** authenticated 401s carry a recovery path on every client ([932d2c5](https://github.com/TakoData/tako-mcp/commit/932d2c59c1a8782e77bc181b799578fb1ff402aa))
+* **mcp:** timeouts carry the transient-retry sentence ([f80ca57](https://github.com/TakoData/tako-mcp/commit/f80ca57c2efc0ba1cfc72b928b78013cfaf6ae74))
+* **mcp:** treat Django 500 as retryable in model-facing guidance ([0988f69](https://github.com/TakoData/tako-mcp/commit/0988f6946713691fb41124a990332870a34daeea))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#252](https://github.com/TakoData/tako-mcp/issues/252)) ([b3888b6](https://github.com/TakoData/tako-mcp/commit/b3888b6367fdb55ebfe950f94adda18882a0b08a))
+
 ## [0.21.1](https://github.com/TakoData/tako-mcp/compare/v0.21.0...v0.21.1) (2026-08-20)
 
 
