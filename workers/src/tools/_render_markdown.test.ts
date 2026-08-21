@@ -161,6 +161,31 @@ describe("renderSearchMarkdown", () => {
     expect(mdCsv).not.toContain("```csv");
   });
 
+  it("keeps the tako_contents export pointer on an exportable card", () => {
+    // The mirror of the drop case below — without it, an inverted flag at
+    // the renderCard call site would pass the whole suite while removing
+    // the export routing from every card.
+    const c = card({
+      exportable: true,
+      content: { content_format: "csv", data: "date,v\n2026-01-01,1", total_rows: 40 },
+    });
+    const md = renderSearchMarkdown(searchOutput({ cards: [c] }));
+    expect(md).toContain("full export via tako_contents");
+  });
+
+  it("drops the tako_contents export pointer on a non-exportable card that kept preview rows", () => {
+    // The tier-gated shape from slimCard: exportable re-scoped to false,
+    // preview rows retained. Advertising "full export via tako_contents"
+    // here would reinstate the unreachable-tool trap the flip removes.
+    const gated = card({
+      exportable: false,
+      content: { content_format: "csv", data: "date,v\n2026-01-01,1", total_rows: 40 },
+    });
+    const md = renderSearchMarkdown(searchOutput({ cards: [gated] }));
+    expect(md).toContain("rows in structuredContent");
+    expect(md).not.toContain("full export via tako_contents");
+  });
+
   it("renders methodology names so glossary entries stay attributable, plus retrieval metadata", () => {
     const c = card({
       methodologies: [{ methodology_name: "consensus" }],

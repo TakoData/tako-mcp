@@ -722,3 +722,75 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
     expect(out.guidance).toBeUndefined();
   });
 });
+
+// Mirror of tako_search's per-connection export-marking handler tests: the
+// two handlers wire connectionCanExport into slimCard independently, so they
+// can regress independently.
+describe("tako_answer per-connection export markings", () => {
+  it("free-tier claude connection re-marks a cited exportable card", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        answer: "US GDP was about $29 trillion.",
+        cards: [
+          {
+            card_id: "abc123",
+            title: "US GDP",
+            description: "Latest value $29T",
+            exportable: true,
+            nodes: [{ id: "mt::gdp::1", name: "GDP", type: "metric" }],
+            content: {
+              content_format: "json_compact",
+              cost: 0.001,
+              total_rows: 40,
+              truncated: false,
+              dataset: {
+                columns: [
+                  { name: "t", type: "datetime", unit: null },
+                  { name: "v", type: "number", unit: null },
+                ],
+                rows: [["2026-01-01", 1]],
+                total_rows: 40,
+                truncated: false,
+                ref: "abc123",
+                sources: [],
+              },
+              data: null,
+              records: null,
+              url: null,
+              expires_at: null,
+              export_pricing: {
+                baseline_usd: 0.01,
+                row_cpm_usd: 0.05,
+                free_rows: 20,
+                max_rows_ceiling: 2000,
+              },
+            },
+          },
+        ],
+        web_results: [],
+        request_id: "req-tier-answer",
+      }),
+    ]);
+    const out = await takoAnswer.handler(
+      {
+        query: "US GDP",
+        sources: ["data"],
+        include_contents: true,
+        preview_rows: 20,
+        country_code: "US",
+        locale: "en-US",
+        strict: false,
+      },
+      { ...CTX, tier: "free" },
+    );
+    const card = out.cards[0] as Record<string, unknown>;
+    expect(card?.exportable).toBe(false);
+    expect(card?.content).not.toHaveProperty("export_pricing");
+    // The CONNECTION-scoped hint must be selected, not the license-gated
+    // one — "tako_answer" alone appears in both (shared routing), so it
+    // cannot discriminate the wiring this test names.
+    expect(card?.values_hint).toContain("tako_answer");
+    expect(card?.values_hint).toContain("connection");
+    expect(card?.values_hint).not.toContain("not exportable");
+  });
+});

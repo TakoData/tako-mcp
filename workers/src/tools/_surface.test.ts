@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 
 import { detectMcpClient } from "../mcp.js";
 import {
+  connectionCanExport,
   isChatGptFamilyClient,
   isToolOnSurface,
   isWidgetClient,
@@ -179,4 +180,40 @@ describe("widget exposure boundary", () => {
       ).toBe(false);
     }
   });
+});
+
+// The per-connection "can the model act on `exportable: true`" predicate that
+// tako_search / tako_answer feed into slimCard. Derived from isToolOnSurface
+// so the card markings and the actual tool surface cannot drift apart.
+describe("connectionCanExport", () => {
+  it("is true on every authenticated connection", () => {
+    for (const kind of ["chatgpt", "codex", "claude", "unknown"] as McpClientKind[]) {
+      expect(connectionCanExport({ client: kind, tier: "authenticated" })).toBe(true);
+    }
+  });
+
+  it("is false on anonymous non-ChatGPT connections (tako_contents is hidden)", () => {
+    for (const kind of ["claude", "unknown"] as McpClientKind[]) {
+      expect(connectionCanExport({ client: kind, tier: "free" })).toBe(false);
+    }
+  });
+
+  it("stays true on anonymous ChatGPT-family connections (the sign-in funnel)", () => {
+    // tako_contents is listed-but-gated there on purpose: the model calling
+    // it is what fires the link-account challenge. Flipping cards to
+    // exportable:false would suppress those calls and kill the funnel.
+    for (const kind of ["chatgpt", "codex"] as McpClientKind[]) {
+      expect(connectionCanExport({ client: kind, tier: "free" })).toBe(true);
+    }
+  });
+});
+
+// The unset-tier default lives inside connectionCanExport (one place):
+// an unset tier is an authenticated direct call, per createMcpServer's
+// documented resolution — registerTool's callCtx always stamps a concrete
+// tier before MCP dispatch, so this default cannot fire on a free
+// connection served over HTTP.
+it("connectionCanExport treats an unset tier as authenticated", () => {
+  expect(connectionCanExport({ client: "claude" })).toBe(true);
+  expect(connectionCanExport({ client: "unknown" })).toBe(true);
 });

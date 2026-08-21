@@ -111,6 +111,63 @@ describe("authRequiredToolResult", () => {
     );
     expect(result._meta["tako/error"]).toEqual({ kind: "auth_required" });
   });
+
+  // An autonomous agent cannot sign in mid-run, so the message must also
+  // name what the agent CAN do right now — mirroring the license-gated
+  // values_hint's tako_answer routing (metric node pinned, strict:true).
+  it("appends the agent-executable tako_answer fallback for tako_contents", () => {
+    const result = authRequiredToolResult("https://mcp.tako.com", {
+      toolName: "tako_contents",
+    });
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("requires a Tako account");
+    expect(text).toContain("tako_answer");
+    expect(text).toContain("strict:true");
+    // The challenge metadata must be unchanged — it is what ChatGPT's
+    // sign-in UI keys on, and the fallback must not degrade it.
+    const challenges = result._meta["mcp/www_authenticate"] as string[];
+    expect(challenges[0]).toContain('error="insufficient_scope"');
+  });
+
+  it("appends a presentation fallback for tako_visualize", () => {
+    const text =
+      authRequiredToolResult("https://mcp.tako.com", {
+        toolName: "tako_visualize",
+      }).content[0]?.text ?? "";
+    expect(text).toContain("requires a Tako account");
+    // Both halves of the fallback, asserted separately, and NOT the
+    // contents-branch routing — so the two per-tool fallbacks cannot be
+    // swapped or merged without a failure here.
+    expect(text).toContain("table");
+    expect(text).toContain("embed_url");
+    expect(text).not.toContain("tako_answer");
+  });
+
+  it("keeps the bare message for unknown or omitted tool names", () => {
+    for (const opts of [undefined, { toolName: "tako_graph_search" }]) {
+      const text =
+        authRequiredToolResult("https://mcp.tako.com", opts).content[0]?.text ?? "";
+      expect(text).toContain("requires a Tako account");
+      expect(text).not.toContain("tako_answer");
+    }
+  });
+
+  it("composes the client sign-in step with the tool fallback, hint first", () => {
+    // Order matters: base (human remedies) → client-specific sign-in step
+    // → agent-executable fallback. The hint mid-sentence would read as part
+    // of the fallback's instructions.
+    const text =
+      authRequiredToolResult("https://mcp.tako.com", {
+        recoveryHint: "In Claude, open Settings → Connectors and connect Tako, then retry this call.",
+        toolName: "tako_contents",
+      }).content[0]?.text ?? "";
+    expect(text.indexOf("requires a Tako account")).toBeLessThan(
+      text.indexOf("Settings → Connectors"),
+    );
+    expect(text.indexOf("Settings → Connectors")).toBeLessThan(
+      text.indexOf("tako_answer"),
+    );
+  });
 });
 
 describe("withToolSecuritySchemes", () => {

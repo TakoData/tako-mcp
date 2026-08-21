@@ -27,6 +27,7 @@
  * `gen-registry.ts` (it is NOT a `ToolModule`).
  */
 import { FREE_TIER_TOOL_NAMES, type Tier } from "../freetier.js";
+import { PINNED_FROM_CARD } from "./_search_results.js";
 import { isChatGptFamilyClient } from "./_surface.js";
 import type { McpClientKind } from "./types.js";
 
@@ -142,31 +143,66 @@ export function wwwAuthenticate(
  */
 export function authRequiredToolResult(
   origin: string | undefined,
-  recoveryHint?: string,
+  opts?: {
+    /**
+     * CLIENT-specific sign-in step (from `anonymousSignInHint` in mcp.ts),
+     * appended where the client is positively identified as an Anthropic
+     * host — absent for ChatGPT (its link-account UI acts on the `_meta`
+     * challenge instead) and for unknown UAs (fails closed; could be
+     * OpenAI's review crawler).
+     */
+    recoveryHint?: string | undefined;
+    /**
+     * The gated tool being called, for the TOOL-specific agent fallback
+     * below. Absent → base message (plus any recoveryHint) only. On the
+     * hidden-tool pre-dispatch path this value is CLIENT-SUPPLIED (the
+     * tools/call `name`): it must only ever be COMPARED against literals,
+     * never interpolated into the message text.
+     */
+    toolName?: string;
+  },
 ): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;
   isError: true;
 } {
+  // Both remedies, because this text now reaches every client (the
+  // pre-dispatch gate in `mcp.ts` answers anonymous calls to gated
+  // tools on all clients, not just ChatGPT): hosts with a linking
+  // UI (ChatGPT; OAuth-capable clients like claude.ai and Claude
+  // Code) sign in, config-file clients (Cursor et al.) connect with
+  // an API key. "Sign in" alone told a config-file user to do
+  // something their host has no flow for.
   const base =
     "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.";
+  const recoveryHint =
+    opts?.recoveryHint === undefined ? "" : ` ${opts.recoveryHint}`;
+  // Both remedies above (and the recoveryHint) are HUMAN remedies — an
+  // autonomous agent cannot sign in mid-run, so the message must also name
+  // what the agent CAN do right now, the way the license-gated values_hint
+  // does. Tailored per tool because the fallback genuinely differs:
+  // tako_contents has a data fallback (tako_answer IS free-tier);
+  // tako_visualize only a presentation one. Unlike the recoveryHint it is
+  // NOT client-gated: it names only free-tier tools and carries no
+  // pricing/upgrade copy — model-visible free-tier strings must stay
+  // commerce-free (see FREE_TIER_LIMIT_MESSAGE) — so it is safe for
+  // ChatGPT and unrecognized UAs alike.
+  // The pin recipe interpolates PINNED_FROM_CARD — the canonical fragment —
+  // rather than restating it: hand-restatements of the pin form are exactly
+  // what the drift guards (_pin_form.test.ts, gen-registry's docs check)
+  // exist to kill, and this tool-result string is outside both guards'
+  // scan surfaces.
+  const agentFallback =
+    opts?.toolName === "tako_contents"
+      ? ` Without an account you can still get a Tako card's figures: the headline value is in the card's \`description\`, and specific figures come from tako_answer — ${PINNED_FROM_CARD} — and state the period you need in the query. Web page text beyond the snippets already in \`web_results\` has no anonymous fallback; use those snippets and cite the page URL instead.`
+      : opts?.toolName === "tako_visualize"
+        ? " Without an account, present the data as a markdown table or text instead, or cite a search result card's embed_url."
+        : "";
   return {
     content: [
       {
         type: "text",
-        // Both remedies, because this text now reaches every client (the
-        // pre-dispatch gate in `mcp.ts` answers anonymous calls to gated
-        // tools on all clients, not just ChatGPT): hosts with a linking
-        // UI (ChatGPT; OAuth-capable clients like claude.ai and Claude
-        // Code) sign in, config-file clients (Cursor et al.) connect with
-        // an API key. "Sign in" alone told a config-file user to do
-        // something their host has no flow for. `recoveryHint` (from
-        // `anonymousSignInHint` in mcp.ts) appends the CLIENT-SPECIFIC
-        // step where the client is positively identified — absent for
-        // ChatGPT (its link-account UI acts on the `_meta` challenge
-        // instead) and for unknown UAs (fails closed; could be OpenAI's
-        // review crawler).
-        text: recoveryHint === undefined ? base : `${base} ${recoveryHint}`,
+        text: base + recoveryHint + agentFallback,
       },
     ],
     _meta: {

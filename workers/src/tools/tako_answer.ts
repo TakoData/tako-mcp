@@ -4,7 +4,7 @@ import { djangoPost } from "../django.js";
 import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
-import { isChatGptFamilyClient } from "./_surface.js";
+import { connectionCanExport, isChatGptFamilyClient } from "./_surface.js";
 import {
   answerSlimOutputShape,
   renderAnswerMarkdown,
@@ -53,7 +53,7 @@ const DESCRIPTION = [
   "",
   "It is the only tool whose single response can finish the job: it reads the cited pages internally, inlines the cited cards' rows, and returns a coverage verdict. Retrieval hands back captions and links you must then chase, and every extra round trip re-sends the whole conversation.",
   "",
-  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.",
+  "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (license-gated, or non-exportable on this connection), ask here with its METRIC node id pinned and strict:true to get the figures.",
   "",
   "Reach past it only for a different job: `tako_search` for breadth recon (it locates data, it does not carry values), `tako_available_data` when the question is what Tako covers, the Answer Agent for open-ended research.",
   "",
@@ -99,7 +99,7 @@ const inputSchema = z.object({
     .max(MAX_PREVIEW_ROWS)
     .default(INLINE_PREVIEW_ROW_CAP)
     .describe(
-      `Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). For more rows, call tako_contents on the card's url (priced beyond the first ${INLINE_PREVIEW_ROW_CAP}). Ignored when include_contents is false.`,
+      `Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). For more rows — on cards marked \`exportable: true\` — call tako_contents on the card's url (priced beyond the first ${INLINE_PREVIEW_ROW_CAP}). Ignored when include_contents is false.`,
     ),
   country_code: z
     .string()
@@ -328,8 +328,17 @@ const takoAnswer = {
     const ordered = citesByPosition
       ? parsed.data.cards
       : orderCardsByUsefulness(parsed.data.cards);
+    // Per-connection export markings — same rule as tako_search (see
+    // SlimCardOptions in _search_results.ts; the unset-tier default lives
+    // in connectionCanExport).
+    const canExport = connectionCanExport(ctx);
     const { cards, glossary } = hoistSourceGlossary(
-      ordered.map((c) => slimCard(c, cap)),
+      ordered.map((c) =>
+        slimCard(c, cap, {
+          connectionCanExport: canExport,
+          commerceCopyAllowed: ctx.commerceCopyAllowed ?? false,
+        }),
+      ),
     );
     const web_results = parsed.data.web_results.map(slimWebResult);
     return {

@@ -43,7 +43,7 @@ const DESCRIPTION = [
   "",
   "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Get their figures from `tako_answer` instead: pin the card's METRIC node_id with strict:true and state the period you need in the query (e.g. \"...for FY2023-FY2025\"), which is what turns a headline number into a series. Call this tool only on `exportable: true` cards; even then a rare card 403s — bounce to tako_answer the same way, do not retry here.",
   "",
-  "Web URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
+  "Web URLs are never export-gated (no `exportable` flag applies) — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
 ].join("\n");
 
 // Curate the input from the contract explicitly: `.pick` only the fields we

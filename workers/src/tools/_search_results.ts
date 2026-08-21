@@ -144,7 +144,7 @@ export const takoCardSchema = z
       .string()
       .optional()
       .describe(
-        `Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — headline in \`description\` when the card carries one, specific figures via tako_answer, where you ${PINNED_FROM_CARD}.`,
+        `Present only on exportable:false cards — license-gated, or marked non-exportable because this connection cannot use tako_contents: where this card's values live — headline in \`description\` when the card carries one, specific figures via tako_answer, where you ${PINNED_FROM_CARD}.`,
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
@@ -175,7 +175,7 @@ export const webResultSchema = z
     url: z
       .string()
       .describe(
-        "The web page URL. Always fetchable via tako_contents for the page's full text (web urls need no `exportable` flag, unlike cards) — a fallback you can read when no Tako data card fits the query.",
+        "The web page URL. tako_contents reads the page's full text from it (web urls need no `exportable` flag, unlike cards) — a fallback when no Tako data card fits the query.",
       ),
     // Tako asks for Exa highlights (see buildSearchBody / buildAnswerBody), so
     // this is query-selected passages, not the page's opening text: it can be
@@ -340,8 +340,10 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * output (mcp.ts stringifies `output` into `content.text` AND sets it as
  * `structuredContent`, which counts toward context on claude.ai), so removing
  * rows here shrinks both at once. Metadata (content_format / cost / total_rows
- * / truncated / export_pricing / url) is always kept so the "N rows available,
- * priced — call tako_contents" signal survives.
+ * / truncated / export_pricing / url) is kept HERE so the "N rows available,
+ * priced — call tako_contents" signal survives — but one layer up, `slimCard`'s
+ * connection gate strips the price fields (`export_pricing` / `cost`) again
+ * when the connection cannot reach tako_contents at all.
  *
  *   capRows === null → drop all rows (the model fetches via tako_contents).
  *   capRows === N    → keep the N most-recent rows (order-aware, a bounded peek).
@@ -446,18 +448,60 @@ function orderCardKeys(card: TakoCard): TakoCard {
   return out as TakoCard;
 }
 
+/** Per-connection facts `slimCard` needs beyond the card itself. */
+export interface SlimCardOptions {
+  /**
+   * Whether the CONNECTION can act on `exportable: true` — i.e. whether
+   * `tako_contents` is on its tool surface (see `connectionCanExport` in
+   * `_surface.ts`; the handlers pass it from `ctx.client`/`ctx.tier`).
+   * Defaults to true.
+   *
+   * When false, an exportable card is re-marked `exportable: false` for
+   * this response: the flag's documented meaning is "can be fetched with
+   * tako_contents", and on this connection it cannot — leaving it true
+   * sends the model into the documented gate-on-the-flag contract and
+   * straight into a wall. Alongside the flip, `export_pricing` (a rate
+   * card for a tool this connection cannot call) is dropped from the
+   * content, and a CONNECTION-scoped values_hint routes the model to
+   * tako_answer — which IS free-tier — with the same metric-node pin the
+   * license-gated hint uses. The inline preview rows are kept: they are
+   * the free tier's data. Cards the BACKEND marked non-exportable keep
+   * the license-gated hint wording; only the connection case is re-worded.
+   */
+  connectionCanExport?: boolean;
+  /**
+   * Whether model-visible copy on this connection may name an account /
+   * authentication as a remedy — from `commerceCopyAllowedForUa` in
+   * `mcp.ts`, threaded through `ToolContext` by the handlers. Defaults
+   * FALSE (fail closed, matching `createMcpServer`'s option): an
+   * unrecognized UA may be a ChatGPT-family client `detectMcpClient` has
+   * not learned yet, and account copy reaching ChatGPT's model violates
+   * OpenAI's commerce policy. Gates only the WORDING of the
+   * connection-scoped values_hint (see `tierValuesHint`), never behavior.
+   */
+  commerceCopyAllowed?: boolean;
+}
+
 /**
  * Immutable: return a new card, slimmed and tagged with an explicit
  * `exportable` flag — a positive boolean so the model reads an explicit "no"
  * instead of having to notice a MISSING `content` key (which LLMs overlook,
  * then call tako_contents anyway and draw a 403). The backend emits the flag
  * authoritatively (TakoData/tako#27989, same fail-closed gate as /contents),
- * so a wire value passes through untouched; deriving from `content` presence
- * is only the fallback for older backends. Keys are re-ordered data-first
- * (see CARD_KEY_ORDER). Pure in-memory — no I/O.
+ * so a wire value passes through untouched on connections that can export;
+ * deriving from `content` presence is only the fallback for older backends.
+ * On connections that CANNOT export (see SlimCardOptions) the flag is
+ * re-scoped to the connection. Keys are re-ordered data-first (see
+ * CARD_KEY_ORDER). Pure in-memory — no I/O.
  */
-export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
-  const exportable = card.exportable ?? card.content != null;
+export const slimCard = (
+  card: TakoCard,
+  capRows: number | null,
+  opts?: SlimCardOptions,
+): TakoCard => {
+  const canExport = opts?.connectionCanExport ?? true;
+  const cardExportable = card.exportable ?? card.content != null;
+  const exportable = cardExportable && canExport;
   // Share opt-in on the passthrough embed_url, so the url an agent quotes
   // from the text matches the one the widget renders for the same card —
   // see withShareOptIn.
@@ -465,26 +509,47 @@ export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
     typeof card.embed_url === "string" && card.embed_url !== ""
       ? { ...card, embed_url: withShareOptIn(card.embed_url) }
       : card;
+  let content = shared.content == null ? shared.content : slimCardContent(shared.content, capRows);
+  if (!canExport && content != null) {
+    // Both price fields point at the same unreachable export: `export_pricing`
+    // is the rate card, `cost` the prospective /contents quote for THIS card.
+    // A quote for a tool this connection cannot call is the same noise twice.
+    const { export_pricing: _exportPricing, cost: _cost, ...rest } =
+      content as LooseContent;
+    void _exportPricing;
+    void _cost;
+    content = rest as ResultContent;
+  }
   const slimmed =
-    shared.content == null
-      ? { ...shared, exportable }
-      : { ...shared, exportable, content: slimCardContent(shared.content, capRows) };
+    content == null ? { ...shared, exportable } : { ...shared, exportable, content };
   return orderCardKeys(
-    exportable ? slimmed : { ...slimmed, values_hint: valuesHint(card) },
+    exportable
+      ? slimmed
+      : {
+          ...slimmed,
+          values_hint: cardExportable
+            ? tierValuesHint(card, opts?.commerceCopyAllowed ?? false)
+            : valuesHint(card),
+        },
   );
 };
 
-// Routing hint for a non-exportable (exportable:false) card. Such cards carry
-// no rows on any surface — specific figures come from tako_answer — so the
-// hint makes that routing per-card and deterministic instead of a
-// tool-description recall exercise. Wording stays NEUTRAL ("not exportable",
-// not "license-gated"): the backend's export_safe() also fails closed on
-// blank/unresolvable source names and config-alignment errors, and narrating
-// those as a licensing decision would keep real bugs from being reported.
-// The "headline value is in description" clause is asserted only when the
-// card actually carries a description — an unverified pointer is worse than
-// none.
-function valuesHint(card: TakoCard): string {
+// Agent-executable routing shared by BOTH values_hint producers below:
+//
+//   - `valuesHint` — LICENSE-gated: the backend marked the card
+//     exportable:false, so it carries no rows on ANY surface;
+//   - `tierValuesHint` — CONNECTION-gated: the card IS exportable, this
+//     connection just cannot reach tako_contents, and inline preview rows
+//     may ride in the SAME response.
+//
+// The helper holds for both because it is routing only — where specific
+// figures come from (tako_answer) — and says nothing about rows; the row
+// story is each producer's framing sentence. Either way the hint makes the
+// routing per-card and deterministic instead of a tool-description recall
+// exercise. The "headline value is in description" clause is asserted only
+// when the card actually carries a description — an unverified pointer is
+// worse than none.
+function cardAnswerFallback(card: TakoCard): string {
   // Pin the METRIC node ALONE, with strict. This used to emit every node id on
   // the card — entity AND metric — and never mentioned `strict`, which is the
   // one combination measured to do nothing: at the default `strict:false` a pin
@@ -509,7 +574,40 @@ function valuesHint(card: TakoCard): string {
     typeof card.description === "string" && card.description.trim() !== ""
       ? "headline value is in description; "
       : "";
-  return `rows not exportable; ${headline}for specific figures call tako_answer${pin}`;
+  return `${headline}for specific figures call tako_answer${pin}`;
+}
+
+// LICENSE-gated hint. Wording stays NEUTRAL ("not exportable", not
+// "license-gated"): the backend's export_safe() also fails closed on
+// blank/unresolvable source names and config-alignment errors, and narrating
+// those as a licensing decision would keep real bugs from being reported.
+function valuesHint(card: TakoCard): string {
+  return `rows not exportable; ${cardAnswerFallback(card)}`;
+}
+
+// The CONNECTION-scoped variant (see SlimCardOptions): the card is
+// exportable, this connection just cannot reach tako_contents. Worded
+// honestly where allowed — "not exportable" would misdescribe a card the
+// user could export after authenticating, and the agent may relay that
+// distinction.
+function tierValuesHint(card: TakoCard, commerceCopyAllowed: boolean): string {
+  // "full rows", not "rows": the card may carry inline preview rows in the
+  // SAME response (the tier flip keeps them), and the unqualified word
+  // would contradict the adjacent rows pointer and steer the model away
+  // from data it already has.
+  //
+  // Naming the account remedy is COMMERCE COPY, so it rides only where the
+  // client is a positively-identified Anthropic host — the same gate, for
+  // the same reason, as FREE_TIER_COMMERCE_UPSELL: an unrecognized UA may
+  // be a ChatGPT-family client `detectMcpClient` has not learned yet (the
+  // desktop app's `codex-mcp-client` was exactly that once), and account
+  // copy reaching ChatGPT's model violates OpenAI's commerce policy.
+  // (Identified ChatGPT-anon never reaches this hint at all —
+  // `connectionCanExport` keeps the funnel's cards exportable.) The
+  // neutral variant states the same connection fact without the remedy.
+  return commerceCopyAllowed
+    ? `full rows require an authenticated Tako connection; ${cardAnswerFallback(card)}`
+    : `full rows are not available on this connection; ${cardAnswerFallback(card)}`;
 }
 
 // Only paragraph-length strings are worth hoisting — moving a short label
@@ -811,7 +909,16 @@ export const NARROWER_WEB_ATTEMPT =
 function buildZeroResultGuidance(
   hasWebResults: boolean,
   sources: SearchedSources,
+  connectionCanExport: boolean,
 ): string {
+  // This guidance is TOOL OUTPUT — it reaches the model on every connection,
+  // including keyless ones where tako_contents is not on the surface at all
+  // (see `connectionCanExport` in _surface.ts). Routing such a connection to
+  // tako_contents would send the model at a tool it cannot see; the snippets
+  // already in web_results are its web fallback.
+  const webAnswerStep = connectionCanExport
+    ? "Answer from the web_results (tako_contents on the most relevant url fetches its full page text)."
+    : "Answer from the web_results snippets.";
   if (hasWebResults) {
     // A web-only search has zero cards BY CONSTRUCTION — the data index was
     // never queried — so the branch below would report a graph verdict from
@@ -828,14 +935,14 @@ function buildZeroResultGuidance(
     if (!searchedData(sources)) {
       return [
         "This search returned web results. It ran on the WEB source only, so it says NOTHING about whether Tako's data graph covers this — do not report a coverage gap on the strength of it.",
-        "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
+        webAnswerStep,
         "Need more? Refine and re-search freely: prefer SEVERAL narrow queries (one per entity, provider or site) over one broad one.",
         'If a chart, dataset or proprietary figure is what you actually want, re-run with sources:["data","web"] (same price) or check tako_available_data (free) — that is what answers the coverage question.',
       ].join(" ");
     }
     return [
       "This search returned web results but no data cards. That is a verdict about the DATA GRAPH only: it does not cover this query, and rewording will not change that.",
-      "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
+      webAnswerStep,
       `If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, and then ${PINNED_RETRY}.`,
       REFINE_WEB_FREELY,
     ].join(" ");
@@ -1014,6 +1121,11 @@ export function buildSearchOutput(
   usage: Usage | null,
   env: Env,
   searchedSources: readonly string[],
+  // Whether this connection can reach tako_contents — steers the zero-card
+  // guidance's web-fallback sentence (see buildZeroResultGuidance). Defaults
+  // true, matching slimCard's connectionCanExport default: an unset value is
+  // an authenticated direct call.
+  connectionCanExport: boolean = true,
 ): SearchOutput {
   // Order before anything reads cards[0]: the widget/pub_id fields below lift
   // the TOP card, so the chart the host renders follows the same ordering the
@@ -1036,6 +1148,7 @@ export function buildSearchOutput(
           guidance: buildZeroResultGuidance(
             webResults.length > 0,
             searchedSources,
+            connectionCanExport,
           ),
         }
       : {}),

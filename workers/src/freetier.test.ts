@@ -25,6 +25,7 @@ import {
 import worker from "./index.js";
 import { FREE_TIER_SERVER_INSTRUCTIONS } from "./mcp.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
+import { PINNED_FROM_CARD } from "./tools/_search_results.js";
 
 /**
  * Every BASE string this module can put in front of a caller — and therefore
@@ -1190,6 +1191,13 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     const text = body.result.content[0]?.text ?? "";
     expect(text).toContain("This tool requires a Tako account.");
     expect(text).toContain("Settings → Connectors");
+    // The client sign-in step and the tool-specific agent fallback must
+    // COMPOSE through the real gate (hint first) — the unit test alone
+    // would not catch a call site dropping toolName when signInHint is set.
+    expect(text).toContain("tako_answer");
+    expect(text.indexOf("Settings → Connectors")).toBeLessThan(
+      text.indexOf("tako_answer"),
+    );
   });
 
   it("anonymous call to a gated tool on Claude Code names the API-key step", async () => {
@@ -1211,9 +1219,12 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     const text = body.result.content[0]?.text ?? "";
     expect(text).toContain("Tako API key");
     expect(text).toContain("Claude Code");
+    // Composition through the second (pre-dispatch) gate too — see the
+    // claude.ai case above.
+    expect(text).toContain("tako_answer");
   });
 
-  it("anonymous gated-tool text on ChatGPT and unknown UAs is unchanged", async () => {
+  it("anonymous gated-tool text on ChatGPT and unknown UAs carries no client sign-in step", async () => {
     for (const userAgent of ["ChatGPT/1.0", "python-httpx/0.27"]) {
       // `tako_contents`, not `tako_visualize`: `tako_visualize` is opt-in
       // (`OPTIONAL_TOOL_NAMES`) and default-on only for widget clients
@@ -1240,8 +1251,23 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       const body = (await res.json()) as {
         result: { content: Array<{ text: string }> };
       };
-      expect(body.result.content[0]?.text).toBe(
-        "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.",
+      const text = body.result.content[0]?.text ?? "";
+      // EXACT pin, not substrings. This text reaches ChatGPT's model, and
+      // `authRequiredToolResult`'s output is in none of the hygiene scans
+      // above (they ban the account copy this message legitimately
+      // carries — it IS the auth challenge), so this assertion is the only
+      // guard against a future sentence being appended unreviewed. It also
+      // proves the client sign-in step did not leak (an unknown UA could
+      // be OpenAI's review crawler) and that the TOOL-specific agent
+      // fallback — which is deliberately NOT client-gated — did compose.
+      // `PINNED_FROM_CARD` is interpolated (not restated) for the same
+      // reason the producer interpolates it: the pin recipe's drift guards
+      // do not scan this string.
+      expect(text).toBe(
+        "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue." +
+          " Without an account you can still get a Tako card's figures: the headline value is in the card's `description`, and specific figures come from tako_answer — " +
+          PINNED_FROM_CARD +
+          " — and state the period you need in the query. Web page text beyond the snippets already in `web_results` has no anonymous fallback; use those snippets and cite the page URL instead.",
       );
     }
   });
