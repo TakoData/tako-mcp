@@ -122,10 +122,11 @@ paths:
         That path still works until 1 February 2027. Move to /v1/graph/search.'
       operationId: graphSearch
       parameters:
-      - description: Search text (min 2 chars).
+      - description: Search text (min 1 char).
         required: true
         schema:
           type: string
+          minLength: 1
         name: q
         in: query
       - description: 'Comma-separated facets: metric,entity.'
@@ -138,6 +139,7 @@ paths:
         required: false
         schema:
           type: integer
+          minimum: 1
         name: limit
         in: query
       - description: Prefer results with this NER label (boost, not a filter — matching
@@ -527,8 +529,8 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 100.0
-          minimum: 1.0
+          maximum: 100
+          minimum: 1
         name: limit
         in: query
       responses:
@@ -643,7 +645,7 @@ paths:
         required: false
         schema:
           type: integer
-          minimum: 0.0
+          minimum: 0
         name: starting_after
         in: query
       responses:
@@ -699,8 +701,8 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 100.0
-          minimum: 1.0
+          maximum: 100
+          minimum: 1
         name: limit
         in: query
       responses:
@@ -815,7 +817,7 @@ paths:
         required: false
         schema:
           type: integer
-          minimum: 0.0
+          minimum: 0
         name: starting_after
         in: query
       responses:
@@ -1414,7 +1416,7 @@ components:
       properties:
         seq:
           type: integer
-          minimum: 0.0
+          minimum: 0
           title: Seq
         run_id:
           type: string
@@ -1892,7 +1894,7 @@ components:
         max_rows:
           anyOf:
           - type: integer
-            minimum: 1.0
+            minimum: 1
           - type: 'null'
           title: Max Rows
           description: Optional cap on the rows a Tako card export is priced against.
@@ -1907,8 +1909,8 @@ components:
           - 100
         max_chars:
           type: integer
-          maximum: 1000000.0
-          minimum: 1.0
+          maximum: 1000000
+          minimum: 1
           title: Max Chars
           description: Character cap on extracted web page text. Ignored for Tako
             card URLs (they use max_rows). The default is the full page text, up to
@@ -2014,8 +2016,8 @@ components:
         height:
           anyOf:
           - type: integer
-            maximum: 2000.0
-            minimum: 100.0
+            maximum: 2000
+            minimum: 100
           - type: 'null'
           title: Height
           description: Chart height in pixels. When set, overrides the default aspect-ratio-based
@@ -2041,8 +2043,8 @@ components:
         image_ttl_minutes:
           anyOf:
           - type: integer
-            maximum: 1440.0
-            minimum: 1.0
+            maximum: 1440
+            minimum: 1
           - type: 'null'
           title: Image Ttl Minutes
           description: Minutes to keep the preview image available for download (zero-data-retention
@@ -2131,8 +2133,8 @@ components:
       properties:
         count:
           type: integer
-          maximum: 20.0
-          minimum: 1.0
+          maximum: 20
+          minimum: 1
           title: Count
           description: Maximum number of results to return for this source. 1-20.
           default: 5
@@ -2165,7 +2167,7 @@ components:
         max_rows:
           anyOf:
           - type: integer
-            minimum: 1.0
+            minimum: 1
           - type: 'null'
           title: Max Rows
           description: Maximum number of card data rows to inline when include_contents
@@ -3300,7 +3302,7 @@ components:
       properties:
         seq:
           type: integer
-          minimum: 0.0
+          minimum: 0
           title: Seq
         run_id:
           type: string
@@ -3431,6 +3433,7 @@ components:
       properties:
         query:
           type: string
+          minLength: 1
           title: Query
           description: Natural language search query.
           examples:
@@ -3475,8 +3478,8 @@ components:
         include_related:
           anyOf:
           - type: integer
-            maximum: 20.0
-            minimum: 1.0
+            maximum: 20
+            minimum: 1
           - type: 'null'
           title: Include Related
           description: 'Applies to POST /v3/search only. Return follow-up query suggestions
@@ -3537,6 +3540,7 @@ components:
           description: Web source. The search includes it only if present.
       additionalProperties: false
       type: object
+      minProperties: 1
       title: Sources
       description: 'Per-source settings. The search includes an index only if its
         field is
@@ -4280,8 +4284,8 @@ components:
         count:
           anyOf:
           - type: integer
-            maximum: 20.0
-            minimum: 1.0
+            maximum: 20
+            minimum: 1
           - type: 'null'
           title: Count
           description: Maximum number of results to return for this source. The range
@@ -4320,8 +4324,8 @@ components:
         snippet_max_chars:
           anyOf:
           - type: integer
-            maximum: 20000.0
-            minimum: 1.0
+            maximum: 20000
+            minimum: 1
           - type: 'null'
           title: Snippet Max Chars
           description: Character cap on the text excerpt returned per web result.
@@ -4342,8 +4346,8 @@ components:
           default: false
         article_content_max_chars:
           type: integer
-          maximum: 1000000.0
-          minimum: 1.0
+          maximum: 1000000
+          minimum: 1
           title: Article Content Max Chars
           description: Character cap on the full article text when include_contents
             is true. Default 30000, maximum 1000000.
