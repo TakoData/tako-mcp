@@ -21,6 +21,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SearchRequest'
+        required: true
       responses:
         '200':
           description: Fast-pipeline search results (Tako cards + web results)
@@ -61,15 +62,18 @@ paths:
       tags:
       - tako
       summary: Answer
-      description: Fast-pipeline retrieval plus an LLM-synthesized answer. Tako may
+      description: 'Fast-pipeline retrieval plus an LLM-synthesized answer. Tako may
         omit sources that cannot provide usable text. This endpoint returns 3 web
-        results when you omit sources.web.count.
+        results when you omit sources.web.count. The effort level also selects the
+        synthesis model: ''instant'' answers with the fastest model, and ''fast''
+        (the default) and ''deep'' answer with a stronger one.'
       operationId: answer
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SearchRequest'
+        required: true
       responses:
         '200':
           description: Synthesized answer grounded in Tako results, web results, or
@@ -129,10 +133,14 @@ paths:
           minLength: 1
         name: q
         in: query
-      - description: 'Comma-separated facets: metric,entity.'
+      - description: Facets to include. Defaults to metric and entity.
         required: false
+        style: form
+        explode: false
         schema:
-          type: string
+          items:
+            $ref: '#/components/schemas/GraphNodeType'
+          type: array
         name: types
         in: query
       - description: Max results (default 20, max 50).
@@ -387,6 +395,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ContentsRequest'
+        required: true
       responses:
         '200':
           description: 'Downloadable content for a result: a presigned URL plus format
@@ -447,6 +456,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateCardRequest'
+        required: true
       responses:
         '200':
           description: Card created successfully from schema
@@ -567,6 +577,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AnswerAgentRunRequest'
+        required: true
       responses:
         '202':
           description: 'Run dispatched. With Accept: application/json, poll GET /v1/agent/answer/runs/{run_id}
@@ -739,6 +750,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RetrievalAgentRunRequest'
+        required: true
       responses:
         '202':
           description: 'Run dispatched. With Accept: application/json, poll GET /v1/agent/retrieval/runs/{run_id}
@@ -1691,10 +1703,10 @@ components:
             the amount actually billed. On a quote_only response it is a prospective
             /contents export price, because Tako fetched nothing and billed nothing.
             On a search or answer downloadable card it is also a prospective price,
-            unless Tako returned more rows than the free row allowance; then it is
-            the amount this response billed for the card. Use export_pricing on its
-            own to price a /contents export of the same card. Do not add this value
-            to that result: they are two prices for the same rows, not two charges.'
+            unless Tako inlined rows for the card; then it is the amount this response
+            billed for the card. Use export_pricing on its own to price a /contents
+            export of the same card. Do not add this value to that result: they are
+            two prices for the same rows, not two charges.'
           default: 0.0
         data:
           anyOf:
@@ -1787,8 +1799,11 @@ components:
             at the 2,000-row system ceiling. On a search or answer response, Tako
             also applies a budget of 2,000 billable rows that all cards in the response
             share, so it can return fewer rows for a later card than max_rows asked
-            for. Rows within the free row allowance do not use that budget, so a request
-            that omits max_rows is never capped by it.
+            for. A request that omits max_rows spends 20 rows per card from that budget,
+            so it is bounded by it at about 100 cards -- above any reachable result
+            count, but not immune the way it was when those rows were free. A card
+            the budget can no longer pay for still returns a small preview rather
+            than nothing.
           default: false
         export_pricing:
           anyOf:
@@ -1897,14 +1912,14 @@ components:
             minimum: 1
           - type: 'null'
           title: Max Rows
-          description: Optional cap on the rows a Tako card export is priced against.
-            When omitted, it defaults to your account's free-row allowance (20 rows
-            on the standard plan), billed at the baseline only. Raise it to export
-            more rows, up to the 2,000-row system ceiling (Tako clamps larger values).
-            Rows beyond the free allowance bill at the per-1,000-row rate. Tako never
-            bills more rows than it returns. Every card format returns the rows up
-            to this cap and bills them, including card_json. Web URLs ignore this
-            field.
+          description: Optional cap on the rows a Tako card export returns and is
+            priced against. When omitted, it defaults to the whole card, up to the
+            2,000-row system ceiling (Tako clamps larger values). Every row returned
+            bills at the per-1,000-row rate, on top of the flat per-export baseline.
+            Tako never bills more rows than it returns, so a card holding fewer rows
+            than this cap bills only what it holds. Every card format returns the
+            rows up to this cap and bills them, including card_json. Web URLs ignore
+            this field.
           examples:
           - 100
         max_chars:
@@ -1926,16 +1941,16 @@ components:
             url fields are null, and the request is free. One exception: a card_json
             quote returns ''card_data_schema'', the shape the export would deliver.
             Test ''content_format'' for null to tell a quote from a delivery. `max_rows`
-            shapes the quote and defaults to your account''s free-row allowance, as
-            a real export does. The request ignores `mode`. Every format prices a
-            quote from `max_rows`, so a quote is instant and makes no call to a data
-            provider. A quote is an upper bound on the charge: an export of a card
-            with fewer rows than the cap bills less. A card_json export is truncated
-            to `max_rows` like every other format, so the charge can never exceed
-            the quote for the same cap. A card_json quote reports no `total_rows`,
-            because it does not build the payload. The same export-safe gate applies,
-            so an unexportable card still returns 403, and a card type with no card_json
-            shape still returns 422.'
+            shapes the quote and defaults to the whole card, as a real export does.
+            The request ignores `mode`. Every format prices a quote from `max_rows`,
+            so a quote is instant and makes no call to a data provider. A quote is
+            an upper bound on the charge: an export of a card with fewer rows than
+            the cap bills less. A card_json export is truncated to `max_rows` like
+            every other format, so the charge can never exceed the quote for the same
+            cap. A card_json quote reports no `total_rows`, because it does not build
+            the payload. The same export-safe gate applies, so an unexportable card
+            still returns 403, and a card type with no card_json shape still returns
+            422.'
           default: false
       type: object
       required:
@@ -2158,11 +2173,11 @@ components:
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
           description: 'Serialization for card data: ''json_compact'' (default), ''json_records'',
-            ''csv'', or ''card_json''. The first three return a free row-capped preview.
+            ''csv'', or ''card_json''. The first three return a row-capped preview.
             ''card_json'' returns a rich card-type-specific JSON object under card_data,
-            truncated to the same row cap, and Tako bills the record rows it returns.
-            A card type with no card_json shape falls back to ''json_compact'' for
-            that card.'
+            truncated to the same row cap. Tako bills the rows it returns on every
+            one of the four. A card type with no card_json shape falls back to ''json_compact''
+            for that card.'
           default: json_compact
         max_rows:
           anyOf:
@@ -2170,19 +2185,20 @@ components:
             minimum: 1
           - type: 'null'
           title: Max Rows
-          description: Maximum number of card data rows to inline when include_contents
+          description: 'Maximum number of card data rows to inline when include_contents
             is true. If you omit this field, Tako returns the default inline row cap
-            for your account (20 rows on the standard plan), which is not always the
-            same as your free row allowance. Raise it to inline more rows, up to the
-            2,000-row system ceiling. Tako clamps a larger value to that ceiling.
-            Once rows exceed the free row allowance, Tako charges a flat per-card
-            baseline fee plus the per-1,000-row rate, the same rate POST /api/v1/contents
-            charges. total_rows and truncated report whether more rows remain. A single
-            response also has a 2,000 billable-row budget and a 20,000-row total budget,
-            both shared across all cards. A later card can therefore return fewer
-            rows than you requested, or no inlined rows at all. Such a card still
-            carries its export_pricing quote, so you can fetch its rows with POST
-            /api/v1/contents.
+            for your account (20 rows on the standard plan). That cap is deliberately
+            smaller than the 2,000 rows POST /api/v1/contents returns by default:
+            a search response inlines many cards, so the same number bills once per
+            card. Raise it to inline more rows, up to the 2,000-row system ceiling.
+            Tako clamps a larger value to that ceiling. Every inlined row is billed:
+            a flat per-card baseline fee plus the per-1,000-row rate, the same rate
+            POST /api/v1/contents charges. total_rows and truncated report whether
+            more rows remain. A single response also has a 2,000 billable-row budget
+            and a 20,000-row total budget, both shared across all cards. A later card
+            can therefore return fewer rows than you requested, or no inlined rows
+            at all. Such a card still carries its export_pricing quote, so you can
+            fetch its rows with POST /api/v1/contents.'
           examples:
           - 100
         node_ids:
@@ -2333,16 +2349,19 @@ components:
         row_cpm_usd:
           type: number
           title: Row Cpm Usd
-          description: USD charged per 1,000 rows on rows beyond the free allowance
-            (free_rows). Card-level rate, set by the card's most expensive source;
-            no per-source breakdown.
+          description: USD charged per 1,000 rows delivered. Card-level rate, set
+            by the card's most expensive source; no per-source breakdown. This is
+            0 if your account's row charges are waived, in which case an export costs
+            baseline_usd whatever its size.
         free_rows:
           type: integer
           title: Free Rows
-          description: Rows included at the baseline price before the per-1,000-row
-            rate (row_cpm_usd) begins to apply. This is the /contents free row allowance
-            for your account. A search or answer response bills an inlined card against
-            this same allowance.
+          description: 'Deprecated and always 0. Row allowances are gone: an account
+            that pays nothing per row now reports row_cpm_usd of 0 instead, which
+            the cost formula already accounts for. Stop reading this field; it will
+            be removed.'
+          default: 0
+          deprecated: true
         max_rows_ceiling:
           type: integer
           title: Max Rows Ceiling
@@ -2354,7 +2373,6 @@ components:
       required:
       - baseline_usd
       - row_cpm_usd
-      - free_rows
       - max_rows_ceiling
       title: ExportPricing
       description: 'Card-CSV export pricing RATE for the /contents endpoint, published
@@ -2362,23 +2380,20 @@ components:
 
         caller can compute an export''s cost before fetching. A /contents export
 
-        charge = baseline_usd + row_cpm_usd * max(0, rows - free_rows) / 1000,
-
-        rows <= max_rows_ceiling. row_cpm_usd is the card-level rate: the
-
-        per-1,000-row rate of the card''s most expensive source (TAKO-3916 — a card
-
-        costs its most expensive source, never a sum); no per-source breakdown.
+        charge = baseline_usd + row_cpm_usd * rows / 1000, rows <= max_rows_ceiling.
 
 
-        `free_rows` here is the CALLER''S allowance, the same number a billed inline
+        row_cpm_usd is the card-level rate: the per-1,000-row rate of the card''s
+        most
 
-        card''s `cost` uses -- both resolve through tako_free_rows_for. The two agreed
+        expensive source (TAKO-3916 — a card costs its most expensive source, never
+        a
 
-        only after /contents gained an entitlement concept; before that this field
-        was
+        sum); no per-source breakdown. It is per-CALLER: an account whose row charges
 
-        always CSV_FREE_ROWS and the two surfaces disagreed by 3x on the same rows.'
+        are waived sees 0 here, and the same formula then yields the baseline alone,
+
+        which is exactly what that account is billed.'
     GeoLocation:
       properties:
         latitude:
@@ -2758,10 +2773,10 @@ components:
             the amount actually billed. On a quote_only response it is a prospective
             /contents export price, because Tako fetched nothing and billed nothing.
             On a search or answer downloadable card it is also a prospective price,
-            unless Tako returned more rows than the free row allowance; then it is
-            the amount this response billed for the card. Use export_pricing on its
-            own to price a /contents export of the same card. Do not add this value
-            to that result: they are two prices for the same rows, not two charges.'
+            unless Tako inlined rows for the card; then it is the amount this response
+            billed for the card. Use export_pricing on its own to price a /contents
+            export of the same card. Do not add this value to that result: they are
+            two prices for the same rows, not two charges.'
           default: 0.0
         data:
           anyOf:
@@ -2854,8 +2869,11 @@ components:
             at the 2,000-row system ceiling. On a search or answer response, Tako
             also applies a budget of 2,000 billable rows that all cards in the response
             share, so it can return fewer rows for a later card than max_rows asked
-            for. Rows within the free row allowance do not use that budget, so a request
-            that omits max_rows is never capped by it.
+            for. A request that omits max_rows spends 20 rows per card from that budget,
+            so it is bounded by it at about 100 cards -- above any reachable result
+            count, but not immune the way it was when those rows were free. A card
+            the budget can no longer pay for still returns a small preview rather
+            than nothing.
           default: false
         export_pricing:
           anyOf:
@@ -2885,9 +2903,9 @@ components:
 
         baseline plus a per-row CPM, at the rate of the card''s most expensive
 
-        source, on the rows returned beyond the free row allowance. Web text bills
+        source, on every row returned. Web text bills at the standard Contents
 
-        at the standard Contents rate.
+        rate.
 
 
         The meaning of `cost` depends on the surface. On `/contents` responses,
@@ -2902,9 +2920,9 @@ components:
 
         card, `cost` is a prospective `/contents` quote (the per-export baseline
 
-        floor) unless Tako returned more rows than the caller''s free row
+        floor) unless Tako inlined rows for the card, in which case it is what this
 
-        allowance, in which case it is what this response billed for the card. The
+        response billed for the card. The
 
         billed cards sum to `usage.data.cost_usd`, never to
 
@@ -2919,38 +2937,35 @@ components:
 
         compute the full charge of a later export before fetching: baseline_usd +
 
-        row_cpm_usd * max(0, billed_rows - free_rows) / 1000, where `billed_rows`
-        is
+        row_cpm_usd * billed_rows / 1000, where `billed_rows` is the SMALLER of the
 
-        the SMALLER of the rows the export returns and `max_rows` clamped to
+        rows the export returns and `max_rows` clamped to `max_rows_ceiling`. One
 
-        `max_rows_ceiling`. One formula covers every format, card_json included:
+        formula covers every format, card_json included: every export returns no
 
-        every export returns no more rows than that cap, so a card with fewer rows
+        more rows than that cap, so a card with fewer rows than the cap bills only
 
-        than the cap bills only the rows it returns. That rate uses the CALLER''S
-        free
+        the rows it returns. `row_cpm_usd` is the CALLER''S rate -- 0 where their
+        row
 
-        row allowance, the same one a billed inline card''s `cost` uses -- /contents
+        charges are waived, the same waiver a billed inline card''s `cost` uses, and
 
-        resolves the caller''s entitlement too. `export_pricing` is null for web text
+        /contents resolves it too. `export_pricing` is null for web text
 
         and non-downloadable content.
 
 
         Do NOT combine `cost` with `export_pricing` on a billed inline card. There,
 
-        `cost` is the amount THIS response charged, computed against the caller''s
+        `cost` is the amount THIS response charged, over the rows this response
 
-        own inline free row allowance, so it is not a `/contents` price. For a
+        inlined, so it is not a `/contents` price for the same card: the two cover
 
-        caller whose inline allowance is larger than the `/contents` allowance the
+        different row counts, because a search response''s default inline cap is far
 
-        two fields disagree, because the inline charge starts above the larger
+        smaller than what `/contents` returns. Read `cost` for what this response
 
-        allowance and the published `/contents` formula starts above the smaller
-
-        one. Read `cost` for what this response billed. Use `export_pricing` alone
+        billed. Use `export_pricing` alone
 
         to price a `/contents` export of the same card.
 
@@ -3424,16 +3439,23 @@ components:
       title: SearchEffortLevel
       description: 'Public effort taxonomy for search and answer. FAST is the default.
 
-        INSTANT serves cached embeds without a new data retrieval and works in
+        INSTANT serves cached embeds without a new data retrieval and works in all
 
-        all environments. DEEP widens Tako retrieval and adds an LLM rerank for
+        environments. On /v1/answer it also writes the answer with the fastest
 
-        higher-quality results; it is slower and bills at a premium tier.'
+        synthesis model, so it trades answer quality for latency. On /v1/answer FAST
+
+        and DEEP both write the answer with a stronger model. DEEP also widens Tako
+
+        retrieval and adds an LLM rerank for higher-quality results; it''s slower
+
+        and bills at a premium tier.'
     SearchRequest:
       properties:
         query:
           type: string
           minLength: 1
+          pattern: \S
           title: Query
           description: Natural language search query.
           examples:
@@ -3528,15 +3550,11 @@ components:
     Sources:
       properties:
         data:
-          anyOf:
-          - $ref: '#/components/schemas/DataSourceSettings'
-          - type: 'null'
+          $ref: '#/components/schemas/DataSourceSettings'
           description: Tako data source (curated knowledge). The search includes it
             only if present. Tako accepts the legacy key 'tako' as a synonym.
         web:
-          anyOf:
-          - $ref: '#/components/schemas/WebSourceSettings'
-          - type: 'null'
+          $ref: '#/components/schemas/WebSourceSettings'
           description: Web source. The search includes it only if present.
       additionalProperties: false
       type: object
@@ -4256,14 +4274,6 @@ components:
           description: Downloadable content descriptor for this result, fetched via
             the Contents endpoint. Web results are always downloadable as text. None
             for callers that do not populate it.
-        citation_number:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: Citation Number
-          description: 1-based citation number that the answer's inline [N] markers
-            reference. Set only when the answer inline-cites this result (the Agent
-            API); None on raw-retrieval surfaces.
       type: object
       required:
       - title
