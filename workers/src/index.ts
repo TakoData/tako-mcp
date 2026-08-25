@@ -7,6 +7,7 @@ import {
 import type { Env } from "./env.js";
 import { handleIconRequest } from "./icons.js";
 import { handleMcpRequest } from "./mcp.js";
+import { surfaceForPath } from "./surface.js";
 import {
   handleAuthorize,
   handleAuthServerMetadata,
@@ -30,8 +31,9 @@ export default {
       });
     }
 
-    if (request.method === "POST" && url.pathname === "/mcp") {
-      return handleMcpRequest(request, env);
+    const surface = surfaceForPath(url.pathname);
+    if (request.method === "POST" && surface !== null) {
+      return handleMcpRequest(request, env, surface);
     }
 
     // CORS preflight for the discovery + DCR + token endpoints. Browser-
@@ -102,7 +104,7 @@ export default {
     // AWS's remote servers both return 405 here and connect cleanly.
     if (
       (request.method === "GET" || request.method === "DELETE") &&
-      url.pathname === "/mcp"
+      surface !== null
     ) {
       return new Response("method not allowed", {
         status: 405,

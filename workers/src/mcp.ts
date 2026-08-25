@@ -29,6 +29,7 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
+import type { Surface } from "./surface.js";
 import {
   checkFreeTierRateLimit,
   FREE_TIER_TOOL_NAMES,
@@ -1863,6 +1864,7 @@ export function freeTierHiddenToolResponse(
 export async function handleMcpRequest(
   request: Request,
   env: Env,
+  _surface: Surface = "generic",
 ): Promise<Response> {
   // Gate the endpoint behind Bearer auth — with one carve-out. A request
   // whose Authorization header is fully ABSENT (kind="missing") is served

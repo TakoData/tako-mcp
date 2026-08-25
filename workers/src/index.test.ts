@@ -133,6 +133,33 @@ describe("worker routing", () => {
       });
     }
 
+    it("GET /mcp/chatgpt returns 405 with Allow: POST (same carve-out)", async () => {
+      const res = await SELF.fetch("https://example.com/mcp/chatgpt", {
+        method: "GET",
+        headers: { accept: "text/event-stream" },
+      });
+      expect(res.status).toBe(405);
+      expect(res.headers.get("allow")).toBe("POST");
+    });
+
+    it("POST /mcp/chatgpt reaches the MCP handler; unknown MCP-ish paths 404", async () => {
+      const reached = await SELF.fetch("https://example.com/mcp/chatgpt", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      });
+      expect(reached.status).not.toBe(404);
+      const unknown = await SELF.fetch("https://example.com/mcp/oauth", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(unknown.status).toBe(404);
+    });
+
     it("GET /mcp does not 404 even when a stale Mcp-Session-Id is sent", async () => {
       // A client that had previously been handed a session id (or invented
       // one) must still not be told the session expired.
