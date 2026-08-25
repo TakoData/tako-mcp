@@ -3,7 +3,7 @@
   "name": "io.github.TakoData/tako-mcp",
   "title": "Tako",
   "description": "Give your agent web search and authoritative datasets: S&P Global, FRED, OECD, SimilarWeb & more.",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "repository": {
     "url": "https://github.com/TakoData/tako-mcp",
     "source": "github"
