@@ -127,7 +127,7 @@ if (TOKEN === undefined || TOKEN === "") {
 const headers = { Authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
 
 async function graphSearch(q: string, types?: "entity" | "metric"): Promise<GraphNode[]> {
-  const url = new URL("/api/beta/graph/search", BASE);
+  const url = new URL("/api/v1/graph/search", BASE);
   url.searchParams.set("q", q);
   url.searchParams.set("limit", "10");
   if (types !== undefined) url.searchParams.set("types", types);
@@ -141,7 +141,7 @@ async function scopedMetrics(
   filter: string | null,
 ): Promise<{ items: GraphNode[]; complete: boolean } | null> {
   if (filter === null) return null;
-  const url = new URL("/api/beta/graph/related", BASE);
+  const url = new URL("/api/v1/graph/related", BASE);
   url.searchParams.set("node_id", entityId);
   url.searchParams.set("relation", "metrics");
   url.searchParams.set("q", filter);

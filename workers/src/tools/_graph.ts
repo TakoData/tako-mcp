@@ -70,7 +70,7 @@ const NODE_ID_HINT =
   "Node ids come from tako_available_data results or a tako_search card's `nodes` — never a plain name; resolve the name first.";
 
 /**
- * Translate a transport/HTTP error from a `/beta/graph/*` call into an
+ * Translate a transport/HTTP error from a `/v1/graph/*` call into an
  * agent-facing message that points at the fix, instead of leaking a raw
  * "Django returned 400 for GET …".
  *

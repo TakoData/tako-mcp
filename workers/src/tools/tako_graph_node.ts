@@ -1,7 +1,7 @@
 /**
  * `tako_graph_node` — hydrate a single graph-node id into full detail.
  *
- * Wraps `GET /api/beta/graph/node/{id}`. Use it when you hold a bare node id
+ * Wraps `GET /api/v1/graph/node/{id}`. Use it when you hold a bare node id
  * (e.g. from a tako_search card's slim `nodes`) and need aliases/subtype/label
  * to compose a grounded query. Validated against the loose graphNodeSchema
  * facade (not the strict generated GraphNode, whose enums drift).
@@ -43,7 +43,7 @@ const tako_graph_node = {
     chatgpt: { openWorldHint: false },
   },
   async handler(input: Input, ctx): Promise<Output> {
-    const path = `/api/beta/graph/node/${encodeURIComponent(input.id)}`;
+    const path = `/api/v1/graph/node/${encodeURIComponent(input.id)}`;
     let data: unknown;
     try {
       data = await djangoGet<unknown>(ctx.env, ctx.token, path, {

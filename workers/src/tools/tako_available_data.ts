@@ -253,7 +253,7 @@ const tako_available_data = {
       let raw: unknown;
       try {
         raw = await djangoGet<unknown>(
-          ctx.env, ctx.token, "/api/beta/graph/search",
+          ctx.env, ctx.token, "/api/v1/graph/search",
           { query, timeoutMs: 15_000 },
         );
       } catch (err) {
@@ -307,7 +307,7 @@ const tako_available_data = {
               let relatedRaw: unknown;
               try {
                 relatedRaw = await djangoGet<unknown>(
-                  ctx.env, ctx.token, "/api/beta/graph/related",
+                  ctx.env, ctx.token, "/api/v1/graph/related",
                   { query: relatedQuery, timeoutMs: 15_000 },
                 );
               } catch (pageErr) {
@@ -370,7 +370,7 @@ const tako_available_data = {
     ): Promise<{ node: GraphNode; total: number; capped: boolean }> => {
       try {
         const raw = await djangoGet<unknown>(
-          ctx.env, ctx.token, "/api/beta/graph/related",
+          ctx.env, ctx.token, "/api/v1/graph/related",
           { query: { node_id: node.id, relation: coverageKindFor(node.type), limit: 1 }, timeoutMs: 15_000 },
         );
         const parsed = relatedShape.safeParse(raw);
@@ -418,7 +418,7 @@ const tako_available_data = {
       if (filter === null) return null;
       try {
         const raw = await djangoGet<unknown>(
-          ctx.env, ctx.token, "/api/beta/graph/related",
+          ctx.env, ctx.token, "/api/v1/graph/related",
           {
             query: {
               node_id: entityNodeId, relation: "metrics",

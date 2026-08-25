@@ -1,7 +1,7 @@
 /**
  * `tako_graph_search` — resolve a name to Tako data-graph node(s).
  *
- * Wraps `GET /api/beta/graph/search`. Free + fast. The resolved node ids pin
+ * Wraps `GET /api/v1/graph/search`. Free + fast. The resolved node ids pin
  * into tako_search / tako_answer (sources.data.node_ids). Validated against the
  * loose graphSearchOutputShape facade (not the strict generated schema, whose
  * enums drift — see the handler note).
@@ -79,7 +79,7 @@ const tako_graph_search = {
     let data: unknown;
     try {
       data = await djangoGet<unknown>(
-        ctx.env, ctx.token, "/api/beta/graph/search",
+        ctx.env, ctx.token, "/api/v1/graph/search",
         { query, timeoutMs: 15_000 },
       );
     } catch (err) {

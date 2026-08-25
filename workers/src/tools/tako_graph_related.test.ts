@@ -41,7 +41,7 @@ describe("tako_graph_related", () => {
     ]);
     await takoGraphRelated.handler({ node_id: "tesla-x1" }, CTX);
     const url = new URL(requestFrom(fetchMock.mock.calls[0]).url);
-    expect(url.pathname).toBe("/api/beta/graph/related");
+    expect(url.pathname).toBe("/api/v1/graph/related");
     expect(url.searchParams.get("node_id")).toBe("tesla-x1");
     expect(url.searchParams.has("q")).toBe(false);
     expect(url.searchParams.has("relation")).toBe(false);

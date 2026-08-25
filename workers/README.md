@@ -47,7 +47,7 @@ The **genuinely global ceiling is Django's Redis-backed per-user
 throttling on the free-tier account** — every anonymous request
 authenticates as that one user, landing on `_SEARCH_USER` (720/min,
 `/api/v3/search/`), `_DRF_USER` (720/min, `/api/v1/answer/`), and
-`_GRAPH_TIER` (180/min + 10,000/day, `/api/beta/graph/*`) in
+`_GRAPH_TIER` (180/min + 10,000/day, `/api/v1/graph/*`) in
 `app/backend/api/throttling/policy.py`. Note none of these weighs tool
 cost: the worst case is that many `tako_answer` calls.
 

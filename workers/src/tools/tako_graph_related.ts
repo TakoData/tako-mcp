@@ -1,7 +1,7 @@
 /**
  * `tako_graph_related` — explore what a resolved graph node connects to.
  *
- * Wraps `GET /api/beta/graph/related`. Overview mode (no relation, no q) is the
+ * Wraps `GET /api/v1/graph/related`. Overview mode (no relation, no q) is the
  * coverage map; drill mode (relation=<key>) pages one group. `q` is a single
  * substring filter — to cover several name-variants of a metric, call this
  * tool once per variant (graph calls are free). Wire-guarded against the
@@ -87,7 +87,7 @@ const tako_graph_related = {
     let data: unknown;
     try {
       data = await djangoGet<unknown>(
-        ctx.env, ctx.token, "/api/beta/graph/related",
+        ctx.env, ctx.token, "/api/v1/graph/related",
         { query, timeoutMs: 15_000 },
       );
     } catch (err) {
