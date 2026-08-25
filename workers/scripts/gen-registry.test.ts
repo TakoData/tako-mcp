@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
-import { CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES } from "../src/tools/_surface.js";
 import {
   assertAllToolsDescribed,
   assertChatgptSubmissionParity,
@@ -221,9 +220,9 @@ describe("assertPinFormInDocs", () => {
 });
 
 describe("assertChatgptSubmissionParity", () => {
-  // Fixture tool on ChatGPT's default authenticated surface: not optional,
-  // not chatgpt-only/excluded, not a free-tier name — so the only gates it
-  // exercises are the ones under test here.
+  // Fixture tool on the chatgpt surface's default listing: not optional,
+  // not chatgpt-only/excluded — so the only gates it exercises are the
+  // ones under test here.
   const tool = (
     name: string,
     overrides?: { chatgpt?: { openWorldHint?: boolean; readOnlyHint?: boolean } },
@@ -233,43 +232,27 @@ describe("assertChatgptSubmissionParity", () => {
       title: name,
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: true,
     },
-    ...(overrides !== undefined ? { annotationsByClient: overrides } : {}),
+    ...(overrides !== undefined ? { annotationsBySurface: overrides } : {}),
   });
   const submission = (
     tools: Record<string, { annotations?: Record<string, unknown> }>,
   ) => JSON.stringify({ tools });
 
-  // A REAL name, not a synthetic one. The function grew a second assertion —
-  // the anonymous ChatGPT surface must EQUAL the declared tools — which reads
-  // the real `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` constant, so a
-  // synthetic `tako_x` can never satisfy it. This test kept the old fixture and
-  // has been failing ever since, invisibly: `scripts/*.test.ts` matched no
-  // vitest project until `vitest.scripts.config.ts` existed, so it never ran.
-  //
-  // Using every anonymous-discoverable name keeps the fixture honest if that
-  // set changes: the parity assertion is EQUALITY in both directions, so a name
-  // added there without appearing here fails this test rather than passing
-  // vacuously.
-  const ANON_NAMES = [...CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES];
-
   it("passes when the declared tools and hints match the runtime descriptors", () => {
-    const tools = ANON_NAMES.map((n) => tool(n, { chatgpt: { openWorldHint: false } }));
-    const declared = submission(
-      Object.fromEntries(
-        ANON_NAMES.map((n) => [
-          n,
-          {
-            annotations: {
-              readOnlyHint: true,
-              destructiveHint: false,
-              openWorldHint: false,
-            },
-          },
-        ]),
-      ),
-    );
+    const tools = [tool("tako_x", { chatgpt: { openWorldHint: false } })];
+    const declared = submission({
+      tako_x: {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+    });
     expect(() => assertChatgptSubmissionParity(tools, declared)).not.toThrow();
   });
 
@@ -285,7 +268,7 @@ describe("assertChatgptSubmissionParity", () => {
     ).toThrow(/missing tool "tako_x"/);
   });
 
-  it("fails on a declared tool that is not on ChatGPT's default surface", () => {
+  it("fails on a declared tool that is not on the chatgpt surface", () => {
     expect(() =>
       assertChatgptSubmissionParity(
         [],
@@ -301,6 +284,7 @@ describe("assertChatgptSubmissionParity", () => {
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
+          idempotentHint: true,
           openWorldHint: true, // runtime serves false for chatgpt
         },
       },
@@ -310,12 +294,19 @@ describe("assertChatgptSubmissionParity", () => {
     );
   });
 
-  it("fails when a free-tier surface tool is missing from the submission", () => {
-    // `tako_search` is in FREE_TIER_TOOL_NAMES: anonymous connections must
-    // never see a tool the submission does not declare.
-    expect(() =>
-      assertChatgptSubmissionParity([tool("tako_search")], submission({})),
-    ).toThrow(/anonymous free-tier ChatGPT surface but not declared/);
+  it("fails on a missing idempotentHint — OpenAI review requires all four hints explicit", () => {
+    const declared = submission({
+      tako_x: {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: true,
+        },
+      },
+    });
+    expect(() => assertChatgptSubmissionParity([tool("tako_x")], declared)).toThrow(
+      /tool "tako_x" idempotentHint: submission declares undefined, runtime serves true/,
+    );
   });
 
   // NOTE: parity against the REAL registry + committed submission file is
