@@ -63,10 +63,10 @@ const tako_agent_wait = {
     destructiveHint: false,
     openWorldHint: true,
   },
-  annotationsByClient: {
+  annotationsBySurface: {
     // Polling an existing run creates nothing — read-only on both
     // readings; only `openWorldHint` diverges (Apps review reads it as
-    // "publishes/mutates public state"). See `annotationsByClient` in
+    // "publishes/mutates public state"). See `annotationsBySurface` in
     // types.ts.
     chatgpt: { openWorldHint: false },
   },

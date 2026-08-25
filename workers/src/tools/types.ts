@@ -341,15 +341,11 @@ export interface ToolModule<
   outputSchema?: z.ZodType<Output>;
   annotations: ToolAnnotations;
   /**
-   * Optional per-client annotation overrides, merged over
-   * {@link annotations} — the same resolution shape as
-   * {@link descriptionByClient} (see `toolAnnotationsForClient` in
-   * `_surface.ts`). The canonical `annotations` follow the MCP spec's
-   * readings; they are what `claude` clients and the generated registry
-   * see. `chatgpt` AND `unknown` clients resolve the `chatgpt` override
-   * family (see `annotationClientFamily` in `_surface.ts`), so OpenAI
-   * review tooling with an unrecognized UA can never see labels that
-   * contradict `chatgpt-app-submission.json`.
+   * Optional per-surface annotation overrides, merged over
+   * {@link annotations} on the chatgpt surface (see
+   * `toolAnnotationsForSurface` in `_surface.ts`). The canonical
+   * `annotations` follow the MCP spec's readings; they are what the
+   * generic surface and the generated registry see.
    *
    * Exists because OpenAI's ChatGPT Apps review reads `openWorldHint`
    * differently from the MCP protocol. MCP: domain of interaction (web
@@ -359,9 +355,9 @@ export interface ToolModule<
    * closed-world under Apps review, and `tako_visualize` (mints public
    * chart URLs) is the reverse.
    *
-   * `readOnlyHint` needs NO per-client override — its meaning is the
+   * `readOnlyHint` needs NO per-surface override — its meaning is the
    * same in both ecosystems ("does not modify its environment"), and the
-   * write line is drawn once, for every client: a call is a WRITE when
+   * write line is drawn once, for every surface: a call is a WRITE when
    * it creates a durable, user-addressable resource — an agent run
    * reachable later via `run_id`/`thread_id` (`tako_agent`,
    * `tako_agent_start`), a chart card with public URLs
@@ -371,9 +367,7 @@ export interface ToolModule<
    * counting billing as a write would make `readOnlyHint` vacuously
    * false everywhere.
    */
-  annotationsByClient?: Partial<
-    Record<"claude" | "chatgpt", Partial<ToolAnnotations>>
-  >;
+  annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
   handler: (input: z.infer<InputSchema>, ctx: ToolContext) => Promise<Output>;
   /**
    * Optional model-facing text renderer. When present, `mcp.ts` uses its
@@ -464,10 +458,8 @@ export interface AnyToolModule {
   inputSchema: z.ZodObject<z.ZodRawShape>;
   outputSchema?: z.ZodType<unknown>;
   annotations: ToolAnnotations;
-  /** Per-client annotation overrides — see {@link ToolModule.annotationsByClient}. */
-  annotationsByClient?: Partial<
-    Record<"claude" | "chatgpt", Partial<ToolAnnotations>>
-  >;
+  /** Per-surface annotation overrides — see {@link ToolModule.annotationsBySurface}. */
+  annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;
   renderText?: (output: unknown, ctx: ToolContext) => string;
   slimStructured?: (output: unknown) => Record<string, unknown>;

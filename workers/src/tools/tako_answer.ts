@@ -269,10 +269,10 @@ const takoAnswer = {
     destructiveHint: false,
     openWorldHint: true,
   },
-  annotationsByClient: {
+  annotationsBySurface: {
     // Apps review reads `openWorldHint` as "publishes/mutates public or
     // third-party state", not MCP's domain-of-interaction — retrieval is
-    // closed-world there. See `annotationsByClient` in types.ts.
+    // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
   // Declared as the FULL internal shape (assignable to the slim advertised

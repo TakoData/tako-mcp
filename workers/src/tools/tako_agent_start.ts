@@ -55,11 +55,11 @@ const tako_agent_start = {
     destructiveHint: false,
     openWorldHint: true,
   },
-  annotationsByClient: {
+  annotationsBySurface: {
     // Apps review reads `openWorldHint` as "publishes/mutates public or
     // third-party state", not MCP's domain-of-interaction, so the
     // open-world retrieval flag drops for the ChatGPT family. See
-    // `annotationsByClient` in types.ts.
+    // `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<Output> {
