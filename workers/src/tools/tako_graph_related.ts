@@ -65,6 +65,7 @@ const tako_graph_related = {
     title: "Tako: Graph Related",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
   annotationsBySurface: {

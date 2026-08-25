@@ -61,6 +61,7 @@ const tako_graph_search = {
     title: "Tako: Graph Search",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
   annotationsBySurface: {

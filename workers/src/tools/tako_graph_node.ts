@@ -34,6 +34,7 @@ const tako_graph_node = {
     title: "Tako: Graph Node",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
   annotationsBySurface: {

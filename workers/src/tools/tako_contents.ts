@@ -474,6 +474,7 @@ const takoContents = {
     title: "Tako: Fetch Contents",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
   annotationsBySurface: {

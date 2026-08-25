@@ -53,6 +53,8 @@ const tako_agent_start = {
     // `run_id`/`thread_id`. Non-destructive: it only ever adds runs.
     readOnlyHint: false,
     destructiveHint: false,
+    // idempotentHint false: each call dispatches a new agent run.
+    idempotentHint: false,
     openWorldHint: true,
   },
   annotationsBySurface: {

@@ -216,6 +216,7 @@ const tako_available_data = {
     title: "Tako: Available Data",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
   annotationsBySurface: {

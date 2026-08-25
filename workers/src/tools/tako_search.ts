@@ -230,6 +230,7 @@ const tako_search = {
     title: "Tako: Search",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
   annotationsBySurface: {

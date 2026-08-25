@@ -61,6 +61,7 @@ const tako_agent_wait = {
     title: "Tako: Wait for Agent Run",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
   annotationsBySurface: {

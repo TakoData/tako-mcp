@@ -52,6 +52,7 @@ const get_credit_balance = {
     title: "Tako: Get Credit Balance",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: false,
   },
   // Deliberately no `annotationsBySurface`: a private account lookup is

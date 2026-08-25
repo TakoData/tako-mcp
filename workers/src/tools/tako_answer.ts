@@ -267,6 +267,7 @@ const takoAnswer = {
     title: "Tako: Answer",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
   annotationsBySurface: {

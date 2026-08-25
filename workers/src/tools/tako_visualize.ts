@@ -382,6 +382,8 @@ const tako_visualize = {
     title: "Tako: Visualize",
     readOnlyHint: false,
     destructiveHint: false,
+    // idempotentHint false: each call mints a new persistent Tako card.
+    idempotentHint: false,
     // Closed domain per the MCP spec's openWorldHint: it renders data the
     // caller already supplied into a card; it does not interact with an
     // open/unpredictable set of external entities the way a web search does.
