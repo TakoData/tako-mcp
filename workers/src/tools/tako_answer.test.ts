@@ -40,7 +40,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
-  client: "claude",
+  surface: "generic",
 };
 
 const FULL_RESPONSE = {
@@ -266,17 +266,14 @@ describe("tako_answer renders a chart, exactly like tako_search", () => {
     expect(typeof takoAnswer.extraContentBlocks).toBe("function");
   });
 
-  it.each(["chatgpt", "codex"] as const)(
-    "sends %s dimensions only, never the whole PNG",
-    async (client) => {
-      // `bakeImage: !isChatGptFamilyClient(ctx.client)` is justified as "a
+  it.each(["chatgpt"] as const)(
+    "sends the %s surface dimensions only, never the whole PNG",
+    async (surface) => {
+      // `bakeImage: ctx.surface !== "chatgpt"` is justified as "a
       // 64-byte ranged read instead of a ~170 KB render". Inverted, every
-      // family answer call pays the full PNG_FETCH_TIMEOUT_MS budget for a
-      // payload that host discards — and nothing caught that, here or in
-      // search. Both family members are pinned because the gate is one of
-      // the three named in the staged-rollout checklist (search, answer,
-      // visualize): a per-tool revert to `client !== "chatgpt"` would strip
-      // the desktop app's dimensions path while the suite stayed green.
+      // chatgpt-surface call pays the full PNG_FETCH_TIMEOUT_MS budget for
+      // a payload the host discards — and nothing caught that, here or in
+      // search.
       const seen: { url: string; range: string | null }[] = [];
       vi.spyOn(globalThis, "fetch").mockImplementation((async (
         input: RequestInfo | URL,
@@ -294,7 +291,7 @@ describe("tako_answer renders a chart, exactly like tako_search", () => {
 
       await takoAnswer.extraMeta!(
         { image_url: "https://x.test/api/v1/image/abc/", pub_id: "abc" } as never,
-        { ...CTX, client } as never,
+        { ...CTX, surface } as never,
       );
       expect(seen).toHaveLength(1);
       expect(seen[0]!.range).not.toBeNull();

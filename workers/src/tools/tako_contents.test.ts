@@ -13,7 +13,7 @@ import { DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoUnauthorizedEr
 import { djangoErrorToToolResult } from "../mcp.js";
 import tool, { BATCH_CHAR_BUDGET, MAX_CONTENTS_URLS } from "./tako_contents.js";
 
-const ctx = { token: "t", env: {} as never, client: "claude" as const, sendProgress: vi.fn() };
+const ctx = { token: "t", env: {} as never, surface: "generic" as const, sendProgress: vi.fn() };
 
 afterEach(() => {
   vi.restoreAllMocks();

@@ -25,7 +25,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
-  client: "claude",
+  surface: "generic",
 };
 
 // Full thin_viz/create wire fixture matching the backend's actual response.
@@ -358,9 +358,9 @@ describe("tako_visualize input schema", () => {
 // --- Contract guard tests (A7) ---
 
 describe("tako_visualize chart prefetch, exactly like tako_search", () => {
-  it.each(["chatgpt", "codex"] as const)(
-    "sends %s dimensions only, never the whole PNG",
-    async (client) => {
+  it.each(["chatgpt"] as const)(
+    "sends the %s surface dimensions only, never the whole PNG",
+    async (surface) => {
       // Third of the three `bakeImage: !isChatGptFamilyClient(ctx.client)`
       // gates named in the staged-rollout checklist (search, answer,
       // visualize). Search's gate is pinned in mcp.test.ts and answer's in
@@ -388,7 +388,7 @@ describe("tako_visualize chart prefetch, exactly like tako_search", () => {
           image_url: "https://x.test/api/v1/image/card_abc123/",
           pub_id: "card_abc123",
         } as never,
-        { ...CTX, client } as never,
+        { ...CTX, surface } as never,
       );
       expect(seen).toHaveLength(1);
       expect(seen[0]!.range).not.toBeNull();

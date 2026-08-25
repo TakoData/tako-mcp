@@ -53,17 +53,10 @@ import {
   wwwAuthenticate,
 } from "./tools/_security.js";
 import {
-  annotationClientFamily,
-  isChatGptFamilyClient,
   isToolOnSurface,
-  isWidgetClient,
-  toolAnnotationsForClient,
+  toolAnnotationsForSurface,
 } from "./tools/_surface.js";
-import type {
-  AnyToolModule,
-  McpClientKind,
-  ToolContext,
-} from "./tools/types.js";
+import type { AnyToolModule, ToolContext } from "./tools/types.js";
 
 /**
  * Server identity. `registry/server.json` is the canonical source — versions are
@@ -261,163 +254,19 @@ const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
  * having to reach for request state themselves.
  */
 /**
- * Detect the calling MCP client from the HTTP `User-Agent` header.
- *
- * Used to gate per-client behavior that we'd otherwise have to ask the
- * LLM to figure out from prose — specifically, routing the chart to
- * the MCP Apps widget for ChatGPT and Claude (the two hosts that render
- * it inline — ChatGPT via the interactive iframe branch, Claude via the
- * image branch, since claude.ai's host-side CSP ignores declared
- * `frameDomains` and the widget's runtime `window.openai` check falls
- * back to the static image there) while unknown clients fall back to
- * the inline PNG `image` content block, and routing the ChatGPT FAMILY
- * (chatgpt.com and the desktop app's codex runtime — see
- * `isChatGptFamilyClient`) through the agent split pair (the Apps SDK
- * doesn't reset tool-call timeouts on progress notifications).
- *
- * INVARIANT: the detected kind is presentation/routing metadata only —
- * it must NEVER feed an authorization decision. The UA is
- * caller-controlled; execution gating keys on tier/token (see the
- * free-tier dispatch gate in `registerTool`), so a spoofed UA can widen
- * what a connection SEES, never what it can EXECUTE.
- *
- * The match is intentionally loose: we don't care about exact UA
- * strings, just whether the request smells like one of the major
- * MCP-app hosts. Unknown UAs fall through to the inline-PNG `image`
- * content block, not the widget — that path is the portable fallback
- * that works on the long tail of MCP hosts that don't (yet) implement
- * MCP Apps, so an unrecognized client still gets a chart it can render.
+ * The one sign-in sentence appended to `authRequiredToolResult` on the
+ * generic surface (spec D17). One generic sentence for every client — the
+ * per-UA hint variants died with the User-Agent classifier. Hosts with a
+ * linking UI (claude.ai, Claude Code, any OAuth-capable client) sign in;
+ * config-file clients connect with an API key. No URLs, no UI deep paths
+ * — copy rots (see PAYMENT_REQUIRED_REMEDY_FALLBACK).
  */
-// `McpClientKind` is defined in `tools/types.ts` (re-exported below)
-// so tool modules can reference it without a circular import on
-// `mcp.ts`. Keep the re-export so existing imports from `./mcp.js`
-// continue to work — `index.ts`, `auth.ts`, etc. all read it from
-// here.
-export type { McpClientKind };
+export const GENERIC_SIGN_IN_HINT =
+  "Sign in with your client's MCP authentication, or connect with a Tako API key.";
 
-export function detectMcpClient(userAgent: string | null): McpClientKind {
-  if (userAgent === null || userAgent === "") return "unknown";
-  const ua = userAgent.toLowerCase();
-  // Claude Code's HTTP MCP client (and the Agent SDK, which runs Claude
-  // Code under the hood) sends `claude-code/<version> (sdk-cli)` —
-  // verified empirically 2026-07-27 against claude-code 2.1.220. It is
-  // a terminal, not an MCP Apps host: it cannot render the widget, and
-  // `"claude"` is widget-only (the widget suppresses the PNG content
-  // block via the `ui === undefined` mutual exclusion). Bucket it as
-  // `"unknown"` so it keeps the portable inline-PNG path. Must run
-  // BEFORE the broad "claude" substring match below.
-  if (ua.includes("claude-code")) return "unknown";
-  // Claude.ai and Claude Desktop custom connectors are server-to-server
-  // from Anthropic's backend (egress 160.79.104.0/21) and identify as
-  // `Claude-User` (occasionally `python-httpx`, which falls through to
-  // "unknown" → PNG — acceptable, that path renders everywhere). Match
-  // on any remaining "claude" / "anthropic" substring. The user's own
-  // browser UA never reaches /mcp directly (claude.ai proxies through
-  // its backend), so this won't false-positive on user browsers.
-  //
-  // Known residual risk: the Messages API `mcp_servers` connector also
-  // egresses from Anthropic's backend and its UA is not publicly
-  // pinned. If it sends `Claude-User` it is indistinguishable from
-  // claude.ai here and gets widget `_meta` it cannot render.
-  if (ua.includes("claude") || ua.includes("anthropic")) return "claude";
-  // The merged ChatGPT desktop app's runtime — one MCP client for desktop
-  // Chat/Work threads, Codex tasks, and the headless CLI — sends
-  // `codex-mcp-client/<version>` (verified live 2026-08-13 against
-  // 0.147.0-alpha.6.6 and 0.148.0-alpha.9; the name is pinned in
-  // openai/codex `codex-rs/rmcp-client/src/utils.rs`). Must run BEFORE the
-  // ChatGPT block: today's UA contains neither `chatgpt` nor `openai`, but
-  // an OpenAI-branded rename (e.g. `openai-codex/…`) would otherwise be
-  // swallowed by the `openai` substring match and lose the codex-specific
-  // widget handling.
-  if (ua.includes("codex")) return "codex";
-  // ChatGPT's Apps SDK connector typically advertises `ChatGPT-User`,
-  // `openai-mcp`, or similar in UA. OpenAI's published crawler/agent UAs
-  // (`GPTBot`, `OAI-SearchBot`) contain neither substring, so match them
-  // explicitly — and deliberately at the full `chatgpt` classification,
-  // not just for annotations: `McpClientKind` also selects the tool set
-  // (`isToolOnSurface`), widget registration, and image content blocks,
-  // and if OpenAI-family tooling (directory crawler, app review harness)
-  // lists our tools it must see the same TOOL SURFACE
-  // `chatgpt-app-submission.json` declares, not the `unknown` surface
-  // (which swaps the split agent pair for `tako_agent` and drops
-  // `tako_visualize`). The extra levers are harmless to a crawler: the
-  // widget is inert metadata and image suppression only trims response
-  // bytes. Residual risk for a UA outside these families is narrow:
-  // `unknown` already serves the Apps-review annotation labels (see
-  // `annotationClientFamily` in `tools/_surface.ts`), so only the
-  // tool-set difference remains. The actual connector UA should still be
-  // confirmed against production request logs rather than the
-  // `"ChatGPT/1.0"` stand-in the tests use.
-  if (
-    ua.includes("chatgpt") ||
-    ua.includes("openai") ||
-    ua.includes("gptbot") ||
-    ua.includes("oai-searchbot")
-  ) {
-    return "chatgpt";
-  }
-  return "unknown";
-}
-
-/**
- * May this connection's model-visible errors carry commerce copy (billing
- * remedies, account-management pointers)? An explicit allowlist of
- * POSITIVELY-identified Anthropic clients, deliberately separate from
- * `McpClientKind`: the kind taxonomy is widget/surface routing, and it
- * buckets Claude Code as `"unknown"` on purpose (a terminal renders no
- * widget) — which would strand the flagship raw-Bearer client in the same
- * bucket as OpenAI's crawlers if the commerce gate keyed on
- * `client === "claude"` alone. Reusing a widget-capability signal as a
- * commerce-policy proxy conflates two different populations.
- *
- * Fails CLOSED: `null`, empty, and unrecognized UAs get no commerce copy —
- * an OpenAI reviewer, directory crawler, or a ChatGPT-family UA
- * `detectMcpClient` has not learned yet lands there (the desktop app's
- * `codex-mcp-client` UA did exactly that once), and commerce copy reaching
- * ChatGPT's model violates OpenAI's policy against promoting purchases
- * through an app.
- *
- * Same trust model as `detectMcpClient`: the UA is caller-controlled and
- * this gates COPY only, never execution or spend.
- */
-export function commerceCopyAllowedForUa(userAgent: string | null): boolean {
-  if (userAgent === null || userAgent === "") return false;
-  // Claude Code (and the Agent SDK riding it) — `claude-code/<version>` —
-  // is `"unknown"` for widget routing but unambiguously Anthropic here.
-  if (userAgent.toLowerCase().includes("claude-code")) return true;
-  return detectMcpClient(userAgent) === "claude";
-}
-
-/**
- * The client-specific sign-in step appended to `authRequiredToolResult`,
- * or undefined when the client cannot be positively identified as an
- * Anthropic host (fails closed like `commerceCopyAllowedForUa` — an
- * unrecognized UA could be OpenAI's review crawler, and ChatGPT's own
- * link-account UI acts on the `_meta` challenge instead of prose). UA
- * (not `McpClientKind`) is the input because Claude Code deliberately
- * buckets as "unknown" for widget routing yet has a completely different
- * sign-in step (in-place `/mcp` OAuth — this Worker is a full
- * authorization server — with a config-file API key as the fallback)
- * than claude.ai (connector Connect button). No URLs, no UI deep paths
- * beyond the settings pane name — copy rots (see
- * PAYMENT_REQUIRED_REMEDY_FALLBACK).
- */
-export function anonymousSignInHint(userAgent: string | null): string | undefined {
-  if (userAgent === null || userAgent === "") return undefined;
-  if (userAgent.toLowerCase().includes("claude-code")) {
-    // OAuth first: Claude Code authenticates a remote MCP server in place
-    // (`/mcp` → Authenticate) against this Worker's own /authorize + /token;
-    // re-adding with an API key works but is the long way round.
-    return "In Claude Code, run /mcp and authenticate with Tako (or re-add the server with a Tako API key) to enable it.";
-  }
-  return detectMcpClient(userAgent) === "claude"
-    ? "In Claude, open Settings → Connectors and connect Tako, then retry this call."
-    : undefined;
-}
-
-// Per-client annotation resolution lives with the tool surface config in
-// `tools/_surface.ts` (each tool declares its own `annotationsByClient`
-// next to its canonical MCP annotations — see `annotationsByClient` in
+// Per-surface annotation resolution lives with the tool surface config in
+// `tools/_surface.ts` (each tool declares its own `annotationsBySurface`
+// next to its canonical MCP annotations — see `annotationsBySurface` in
 // `tools/types.ts` for the MCP-vs-Apps-review semantics).
 
 export function createMcpServer(
@@ -436,7 +285,12 @@ export function createMcpServer(
      * non-HTTP contexts → challenges omit `resource_metadata`.
      */
     requestOrigin?: string;
-    client?: McpClientKind;
+    /**
+     * Path-selected surface this server instance serves (see
+     * `surface.ts`). Defaults to `"generic"` — the right surface for
+     * tests and non-HTTP callers.
+     */
+    surface?: Surface;
     /**
      * Opt-in tool names the caller enabled for this request via the `tools`
      * query param (resolved by `parseEnabledOptionalToolNames`). Tools in
@@ -447,37 +301,17 @@ export function createMcpServer(
     enabledOptionalToolNames?: Set<string>;
     /**
      * Connection tier. `"free"` (anonymous, no Authorization header)
-     * restricts the EXECUTABLE toolset to `FREE_TIER_TOOL_NAMES` — on
-     * ChatGPT the auth-required submitted tools stay LISTED for the
-     * link-account UI but are blocked at dispatch (see
-     * `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`
-     * and the free-tier gate in `registerTool`). Resolution order when
-     * omitted: `ctx.tier` first, then `"authenticated"` — the fallback
-     * to the ToolContext value is deliberate fail-closed behavior, so a
-     * caller that declares the tier anywhere engages the dispatch gate
-     * (see the resolution + disagreement assertion below). Tests and
-     * non-HTTP callers that set neither still get the authenticated
-     * full surface.
+     * restricts the EXECUTABLE toolset to `FREE_TIER_TOOL_NAMES`. The
+     * LISTING never varies by tier (spec D4): listed auth-required tools
+     * are blocked at dispatch with sign-in instructions (see the
+     * free-tier gate in `registerTool`). Resolution order when omitted:
+     * `ctx.tier` first, then `"authenticated"` — the fallback to the
+     * ToolContext value is deliberate fail-closed behavior, so a caller
+     * that declares the tier anywhere engages the dispatch gate (see the
+     * resolution + disagreement assertion below). Tests and non-HTTP
+     * callers that set neither still get the authenticated full surface.
      */
     tier?: Tier;
-    /**
-     * Whether model-visible errors may carry commerce copy (billing
-     * remedies) — from `commerceCopyAllowedForUa`. Defaults FALSE
-     * (fail-closed: tests and non-HTTP callers get the cause-only
-     * messages).
-     */
-    commerceCopyAllowed?: boolean;
-    /**
-     * Client-specific sign-in step for the free-tier dispatch gate — its
-     * ONLY reader; `handleMcpRequest` passes it solely on `tier: "free"`
-     * connections, so authenticated servers never carry it. From
-     * `anonymousSignInHint`; appended to `authRequiredToolResult`'s base
-     * text when the calling client is positively identified as an
-     * Anthropic host. Omitted (the default) → no hint, byte-identical to
-     * today's text — the correct behavior for tests, non-HTTP callers,
-     * ChatGPT, and unrecognized UAs.
-     */
-    signInHint?: string;
   } = {},
 ): McpServer {
   // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
@@ -570,51 +404,40 @@ export function createMcpServer(
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
 
-  // Which tools appear for which client — and the ChatGPT-only /
+  // Which tools appear on which surface — and the ChatGPT-only /
   // ChatGPT-excluded / ChatGPT-default-on membership sets — live in
   // `tools/_surface.ts`, shared with `gen-registry.ts` so the
   // `chatgpt-app-submission.json` parity check validates the exact
   // surface this loop registers.
-  //
-  // Tools whose `appUiResource` should NOT ship on ChatGPT (separate
-  // from the blanket unknown-client suppression in `widgetSuppressed` —
-  // ChatGPT and Claude are the only clients that get the widget at all).
-  // The mechanism is kept in place for future per-tool gating, but
-  // is currently empty: `tako_search` ships its widget on ChatGPT,
-  // and a zero-match search returns a SUCCESS result (with `guidance`,
-  // no `pub_id`/`embed_url`) — the widget bundle detects that empty
-  // shape by the absence of any chart URL and collapses itself
-  // (see `_chart_widget.ts`), so no persistent blank box is left.
-  //
-  // Add a tool name here only if it has a UI bundle that produces
-  // unrenderable / blank widgets on ChatGPT in some legitimate
-  // success state.
-  const CHATGPT_NO_WIDGET_TOOL_NAMES = new Set<string>();
-  const client = options.client ?? "unknown";
+  const surface = options.surface ?? "generic";
   // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
   // Empty by default → the default surface excludes every optional tool.
   const enabledOptionalToolNames =
     options.enabledOptionalToolNames ?? new Set<string>();
 
   for (const tool of TOOL_REGISTRY) {
-    // Surface membership (free-tier gate + opt-in gate + per-client
-    // filters) is decided by `isToolOnSurface` in `tools/_surface.ts` —
-    // shared with the codegen parity check so `chatgpt-app-submission.json`
-    // can't drift from what this loop actually registers.
-    if (!isToolOnSurface(tool.name, client, enabledOptionalToolNames, tier)) {
+    // Surface membership (opt-in gate + per-surface filters) is decided
+    // by `isToolOnSurface` in `tools/_surface.ts` — shared with the
+    // codegen parity check so `chatgpt-app-submission.json` can't drift
+    // from what this loop actually registers. Deliberately tier-blind:
+    // the listing is auth-invariant (spec D4); anonymous execution is
+    // gated at dispatch in `registerTool`.
+    if (!isToolOnSurface(tool.name, surface, enabledOptionalToolNames)) {
       continue;
     }
     registerTool(server, tool, ctx, {
-      client,
+      surface,
       tier,
-      commerceCopyAllowed: options.commerceCopyAllowed ?? false,
+      // Commerce copy (billing remedies, account pointers) is allowed on
+      // the generic surface for every client (spec D5); the chatgpt
+      // surface never carries it — OpenAI's app guidelines ban
+      // purchase-promoting text in model-visible output.
+      commerceCopyAllowed: surface === "generic",
       origin: options.requestOrigin,
-      ...(options.signInHint !== undefined
-        ? { signInHint: options.signInHint }
-        : {}),
-      widgetSuppressedForTool:
-        isChatGptFamilyClient(client) &&
-        CHATGPT_NO_WIDGET_TOOL_NAMES.has(tool.name),
+      // One generic sign-in sentence (spec D17); the chatgpt surface
+      // relies on the `_meta["mcp/www_authenticate"]` challenge instead
+      // of prose (its link-account UI acts on the challenge).
+      ...(surface === "generic" ? { signInHint: GENERIC_SIGN_IN_HINT } : {}),
       registeredResourceUris,
       registeredTemplateNames,
     });
@@ -771,19 +594,18 @@ function registerTool(
   tool: AnyToolModule,
   ctx: ToolContext,
   options: {
-    client: McpClientKind;
+    surface: Surface;
     /**
-     * Connection tier the server instance was built for — the SAME value
-     * that drove `isToolOnSurface`, so the free-tier dispatch gate below
-     * can never disagree with the listing decision. `"free"` blocks
+     * Connection tier the server instance was built for. `"free"` blocks
      * non-free tools at call time with an auth challenge instead of
-     * executing them on the shared free-tier account.
+     * executing them on the shared free-tier account — the listing
+     * itself never varies by tier (spec D4).
      */
     tier: Tier;
     /**
      * Whether this connection's model-visible errors may carry commerce
-     * copy (see `commerceCopyAllowedForUa`). Consumed by the 402 mapping
-     * in the catch below.
+     * copy (`surface === "generic"` — see the registration loop).
+     * Consumed by the 402 mapping in the catch below.
      */
     commerceCopyAllowed: boolean;
     /**
@@ -795,10 +617,10 @@ function registerTool(
      */
     origin: string | undefined;
     /**
-     * Client-specific sign-in step appended to `authRequiredToolResult`
-     * by the free-tier dispatch gate below (see `anonymousSignInHint`).
-     * `undefined` in tests / non-HTTP contexts, on ChatGPT, and on
-     * unrecognized UAs — the base text stays byte-identical there.
+     * Sign-in sentence appended to `authRequiredToolResult` by the
+     * free-tier dispatch gate below (`GENERIC_SIGN_IN_HINT` on the
+     * generic surface). `undefined` on the chatgpt surface — its
+     * link-account UI acts on the `_meta` challenge instead of prose.
      */
     signInHint?: string;
     /**
@@ -816,39 +638,15 @@ function registerTool(
      * share `appUiResource.dynamic.templateName`.
      */
     registeredTemplateNames: Set<string>;
-    /**
-     * Per-tool widget suppression layered on top of the
-     * client-blanket suppression below. Set true to skip
-     * `appUiResource` for this specific tool/client combination —
-     * see `CHATGPT_NO_WIDGET_TOOL_NAMES` for the rationale.
-     */
-    widgetSuppressedForTool?: boolean;
   },
 ): void {
   // SDK's `registerTool` takes `ZodRawShape` (the `.shape` of a z.object),
   // not a full ZodObject — pull `.shape` here so tool files don't have to.
-  // Description selection: if the tool defines a per-client override
-  // matching the calling client, ship that text; otherwise fall back
-  // to the default. Per-client text avoids the failure mode where a
-  // single description embeds host-conditional directives ("On
-  // Claude.ai…", "On ChatGPT…") and relies on the model
-  // self-identifying its host — empirically unreliable, since the
-  // model has no first-class signal beyond the description text
-  // itself.
-  // Resolved through `annotationClientFamily` (not the raw kind) so a
-  // `chatgpt:` override reaches the whole ChatGPT family — the desktop app
-  // (`"codex"`) must see the same descriptions as chatgpt.com, the same way
-  // it already resolves the same annotations. Reading `options.client`
-  // directly here would silently exempt codex from the first
-  // `descriptionByClient` override any tool adds.
-  const description =
-    tool.descriptionByClient?.[annotationClientFamily(options.client)] ??
-    tool.description;
   const config: Record<string, unknown> = {
     title: tool.annotations.title,
-    description,
+    description: tool.description,
     inputSchema: tool.inputSchema.shape,
-    annotations: toolAnnotationsForClient(tool, options.client),
+    annotations: toolAnnotationsForSurface(tool, options.surface),
   };
 
   // Advertise per-tool auth on every runtime descriptor. This only survives
@@ -864,7 +662,7 @@ function registerTool(
   // The widget block below MERGES into this rather than replacing it.
   config._meta = {
     "com.tako/securitySchemes": securitySchemesForTool(tool.name, {
-      client: options.client,
+      surface: options.surface,
       tier: options.tier,
     }),
   };
@@ -910,70 +708,22 @@ function registerTool(
   // can read `ui.dynamic` and resolve the per-call widget URI for the
   // dynamic-resource path.
   //
-  // Two independent gates control whether the chart shows up inline
-  // for this tool call.
+  // One gate controls whether the chart ships as a widget or a PNG:
+  // `widgetSuppressed`. The chatgpt surface keeps the MCP Apps widget
+  // (the Apps SDK renders it as a fully interactive iframe); the generic
+  // surface suppresses it and ships the inline PNG `image` content block
+  // instead (spec D14/D15) — the portable fallback the long tail of MCP
+  // hosts (Cursor, Windsurf, Gemini CLI, LibreChat, claude.ai, …) can
+  // render. claude.ai's widget path is a fast-follow gated on two open
+  // host bugs: anthropics/claude-ai-mcp#753 (an extra content block
+  // starves the widget of tool-result events) and #40 (declared CSP
+  // `frameDomains` ignored). The `embed_url` in the structured content
+  // stays the click-through to the interactive chart everywhere.
   //
-  //   - `widgetSuppressed` → skip `appUiResource`. The host won't
-  //     get a widget URI in the tool's `_meta`, so it won't load
-  //     the chart bundle. Three-way policy, one widget bundle:
-  //
-  //       - ChatGPT keeps the widget its Apps SDK renders as a fully
-  //         interactive iframe (`frameDomains` populated, `embed_url`
-  //         loaded live inside the sandbox).
-  //       - Claude clients ALSO keep the widget, but render it via the
-  //         image branch first: the server declares
-  //         `csp.frameDomains` identically for every client (see
-  //         `buildChartAppUiResource` — it always sets `frameDomains:
-  //         [webBase]`), but claude.ai's host-side sandbox currently
-  //         restricts third-party iframes regardless of what's
-  //         declared there (anthropics/claude-ai-mcp#40, pending
-  //         Claude's own MCP Apps security review), so the iframe
-  //         never loads on claude.ai today. The bundle's client-side
-  //         JS paints the server-fetched `_meta.image_data_url` PNG
-  //         (see the `extraMeta` comment below) as the baseline, then
-  //         probes the `embed_url` iframe in the background and swaps
-  //         it in only if the host's CSP actually lets it load (see
-  //         `probeInteractiveIframe` in `_chart_widget.ts`) — so
-  //         Claude upgrades to the interactive chart automatically
-  //         once Anthropic fixes #40, without a Tako redeploy.
-  //       - Unknown clients still suppress the widget — the long tail
-  //         of MCP hosts (Cursor, Windsurf, Gemini CLI, LibreChat, …)
-  //         almost never implements the MCP Apps spec, so shipping
-  //         widget metadata there just blocks the far more portable
-  //         image content-block fallback below.
-  //
-  //   - `inlinePngFallbackSuppressed` → skip the
-  //     `extraContentBlocks` PNG image content block. Without
-  //     suppression, that hook fires on tools that have no
-  //     `appUiResource` to provide a "render the chart inline as
-  //     an image" fallback for hosts that don't support MCP UI.
-  //
-  // Net effect: ChatGPT and Claude both render the MCP Apps widget
-  // (interactive iframe on ChatGPT, image-branch card on Claude —
-  // both render inline in the chat body); unknown clients get the
-  // chart as an `image` content block instead, visible to the model
-  // while it composes its answer. The `embed_url` in the structured
-  // content stays the click-through to the interactive chart
-  // everywhere. (Historically both gates fired together on claude —
-  // link-only, no widget, no image — and unknown clients got widget
-  // metadata they couldn't render; see the 2026-07 note below for why
-  // claude.ai gets the widget now instead of the PNG block.)
-  //
-  // Per-tool ChatGPT suppression (`widgetSuppressedForTool`) still
-  // fires both gates. That set exists for tools whose widget renders
-  // blank/broken on ChatGPT in some legitimate success state — the
-  // intended fallback there is the plain text + markdown-link answer,
-  // not a PNG. (The image-block/widget mutual exclusion is separately
-  // guaranteed by the `ui === undefined` condition at the call-time
+  // (The image-block/widget mutual exclusion is separately guaranteed by
+  // the `ui === undefined` condition at the call-time
   // `extraContentBlocks` gate.)
-  // `isWidgetClient` is the shared definition in `tools/_surface.ts` — the
-  // same predicate that decides which clients keep `tako_visualize` on their
-  // default surface. Two inlined `client === …` comparisons in two files is
-  // how a widget-owning tool ends up registered on a client that never
-  // receives widget metadata (or vice versa).
-  const widgetSuppressed =
-    !isWidgetClient(options.client) || options.widgetSuppressedForTool === true;
-  const inlinePngFallbackSuppressed = options.widgetSuppressedForTool === true;
+  const widgetSuppressed = options.surface !== "chatgpt";
   const ui =
     tool.appUiResource !== undefined && !widgetSuppressed
       ? tool.appUiResource(ctx.env, options.origin)
@@ -1178,7 +928,7 @@ function registerTool(
       // can't survive longer than the client's default (60 s on the
       // TS SDK) on those clients.
       console.log(
-        `[mcp] tool=${tool.name} client=${options.client} progressToken=${progressToken ?? "(none)"}`,
+        `[mcp] tool=${tool.name} surface=${options.surface} progressToken=${progressToken ?? "(none)"}`,
       );
       const sendProgress: ToolContext["sendProgress"] = async (
         progress,
@@ -1214,21 +964,20 @@ function registerTool(
       const callCtx: ToolContext = {
         ...ctx,
         sendProgress,
-        client: options.client,
+        surface: options.surface,
         tier: options.tier,
         origin: options.origin,
       };
-      // Free-tier dispatch gate: auth-required tools can be LISTED on an
-      // anonymous connection (ChatGPT needs the descriptor to offer its
-      // link-account UI — see `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES`
-      // in `_surface.ts`) but must never EXECUTE on the shared free-tier
-      // account. Gate on the registration-time tier — the same value that
-      // decided the surface — before the handler can touch Django. The
-      // `_meta["mcp/www_authenticate"]` challenge in the result is what
-      // triggers ChatGPT's sign-in prompt (OpenAI Apps SDK auth guide).
+      // Free-tier dispatch gate: the listing is auth-invariant (spec D4),
+      // so an auth-required tool (`tako_contents`) IS listed on an
+      // anonymous connection — but it must never EXECUTE on the shared
+      // free-tier account. Gate on the registration-time tier before the
+      // handler can touch Django, and answer with sign-in instructions
+      // (spec D6). The `_meta["mcp/www_authenticate"]` challenge in the
+      // result is what an OAuth-capable host's sign-in UI keys on.
       if (options.tier === "free" && !FREE_TIER_TOOL_NAMES.has(tool.name)) {
         console.log(
-          `[mcp] auth-required tool blocked on free tier tool=${tool.name} client=${options.client}`,
+          `[mcp] auth-required tool blocked on free tier tool=${tool.name} surface=${options.surface}`,
         );
         return authRequiredToolResult(options.origin, options.signInHint);
       }
@@ -1248,7 +997,7 @@ function registerTool(
           // `err.message` is body-free by construction (log-injection guard
           // in django.ts); the capped body lives in `_meta` client-side only.
           console.error(
-            `[mcp] tool error tool=${tool.name} client=${options.client} tier=${callCtx.tier} kind=${djangoErrorKind(err)} status=${err.status ?? "(none)"} method=${err.method} path=${err.path}: ${err.message}`,
+            `[mcp] tool error tool=${tool.name} surface=${options.surface} tier=${callCtx.tier} kind=${djangoErrorKind(err)} status=${err.status ?? "(none)"} method=${err.method} path=${err.path}: ${err.message}`,
           );
           // Credit exhaustion (Django 402) maps per tier. Free tier: the
           // shared account running dry is the tier's expected steady-state
@@ -1309,7 +1058,7 @@ function registerTool(
         // SDK, which converts them into client-visible tool text WITHOUT
         // logging — so this line is the only server-side record of them.
         console.error(
-          `[mcp] tool error tool=${tool.name} client=${options.client} tier=${callCtx.tier} kind=handler-throw:`,
+          `[mcp] tool error tool=${tool.name} surface=${options.surface} tier=${callCtx.tier} kind=handler-throw:`,
           err,
         );
         throw err;
@@ -1318,7 +1067,7 @@ function registerTool(
       // absent from both response channels now (see `_render_markdown.ts`),
       // so this is the sole record that ties a user's complaint about a
       // specific answer to a backend request.
-      logToolRequestId(tool.name, options.client ?? "unknown", output);
+      logToolRequestId(tool.name, options.surface, output);
       // Model-facing text channel: a tool's `renderText` (markdown for
       // prose-heavy results) when declared, else the JSON-stringified
       // output. A throwing renderer degrades to the JSON fallback rather
@@ -1351,20 +1100,15 @@ function registerTool(
       // tail of MCP hosts (Cursor, Windsurf, Gemini CLI, LibreChat, …)
       // gets the chart inline: the PNG image content block renders as
       // a generic `image` block, with `embed_url` in the structured
-      // content as the interactive click-through. Claude clients no
-      // longer take this path — they get the MCP Apps widget instead
-      // (see `widgetSuppressed` above), so this hook never fires for
-      // `client === "claude"`.
+      // content as the interactive click-through. The chatgpt surface
+      // never takes this path — it gets the MCP Apps widget instead
+      // (see `widgetSuppressed` above).
       //
       // Pairing image content blocks with widget metadata in the
       // same result silently disabled ChatGPT's widget data flow, so
       // the `ui === undefined` condition keeps content-block image
       // fallbacks and widget metadata mutually exclusive.
-      if (
-        tool.extraContentBlocks !== undefined &&
-        ui === undefined &&
-        !inlinePngFallbackSuppressed
-      ) {
+      if (tool.extraContentBlocks !== undefined && ui === undefined) {
         try {
           const extra = await tool.extraContentBlocks(output, callCtx);
           content.push(...extra);
@@ -1678,7 +1422,7 @@ export function paymentRequiredRemedy(body: string | undefined): string {
  * out-of-credits guidance. The free tier never reaches this — its 402s map
  * to `freeTierCreditsToolResult` first (see the catch in `registerTool`).
  *
- * `commerceCopyAllowed` (from `commerceCopyAllowedForUa`) gates the remedy
+ * `commerceCopyAllowed` (true on the generic surface only) gates the remedy
  * sentence: Django's own remedies name plan upgrades and credit purchases,
  * which is exactly the copy OpenAI's commerce policy bans from an app —
  * so ChatGPT-family and unrecognized clients get the cause-only message,
@@ -1754,19 +1498,17 @@ const REGISTRY_TOOL_NAMES: ReadonlySet<string> = new Set(
  * sign-in guidance as a JSON-RPC tool result, or `null` when the request
  * is not that shape (let the SDK handle it).
  *
- * Why this exists: on non-ChatGPT clients, auth-required tools are hidden
- * from the anonymous surface entirely (see `isToolOnSurface`), so a call
- * to one — typically a model acting on the server instructions or on stale
- * conversation memory of an authenticated session — got the SDK's bare
- * "tool not found". That reads as "this tool does not exist", when the
- * truth is "sign in and it works", a dead end the model cannot correct.
- * This gate answers with the SAME `authRequiredToolResult` the ChatGPT
- * dispatch gate in `registerTool` uses, so every client gets readable,
- * actionable text (the `_meta["mcp/www_authenticate"]` challenge it
- * carries is what ChatGPT's link UI keys on; other hosts ignore unknown
- * `_meta`). The tools stay UNLISTED on non-ChatGPT anonymous surfaces —
- * the original anti-turn-waste rationale was about listing, not about
- * answering an explicit call helpfully.
+ * Why this exists: the listing is auth-invariant (spec D4), so a listed
+ * auth-required tool (`tako_contents`) called anonymously — or a call
+ * from stale conversation memory of an authenticated session — must
+ * answer with sign-in guidance, never the SDK's bare "tool not found"
+ * (which reads as "this tool does not exist", a dead end the model
+ * cannot correct). This gate answers with the SAME
+ * `authRequiredToolResult` the dispatch gate in `registerTool` uses, so
+ * every client gets readable, actionable text (the
+ * `_meta["mcp/www_authenticate"]` challenge it carries is what an
+ * OAuth-capable host's sign-in UI keys on; other hosts ignore unknown
+ * `_meta`).
  *
  * Scope guards, in order:
  * - only single `jsonrpc: "2.0"` `tools/call` bodies (other methods,
@@ -1776,12 +1518,11 @@ const REGISTRY_TOOL_NAMES: ReadonlySet<string> = new Set(
  * - only names the registry KNOWS (a typo'd name falls through to the
  *   SDK's genuine unknown-tool error — claiming a nonexistent tool needs
  *   auth would send the caller on a pointless sign-in);
- * - only names on THIS connection's AUTHENTICATED surface (same client,
- *   same `?tools=` opt-ins, tier flipped) — the sign-in promise must be
- *   true. `tako_agent` without `?tools=agent`, or the ChatGPT-only split
- *   pair on a Claude client, would still be "tool not found" after
- *   signing in, so promising auth there just moves the dead end one
- *   sign-in later; those fall through to the SDK's accurate not-found.
+ * - only names on THIS connection's surface (same `?tools=` opt-ins) —
+ *   the sign-in promise must be true. `tako_agent` without
+ *   `?tools=agent` would still be "tool not found" after signing in, so
+ *   promising auth there just moves the dead end one sign-in later;
+ *   those fall through to the SDK's accurate not-found.
  * - only well-formed ids (without one, no valid result can be addressed;
  *   the SDK rejects the shape itself).
  *
@@ -1797,7 +1538,7 @@ const REGISTRY_TOOL_NAMES: ReadonlySet<string> = new Set(
 export function freeTierHiddenToolResponse(
   body: unknown,
   origin: string,
-  client: McpClientKind,
+  surface: Surface,
   enabledOptionalToolNames: ReadonlySet<string>,
   signInHint?: string,
 ): Response | null {
@@ -1817,14 +1558,14 @@ export function freeTierHiddenToolResponse(
   if (typeof name !== "string") return null;
   if (FREE_TIER_TOOL_NAMES.has(name)) return null;
   if (!REGISTRY_TOOL_NAMES.has(name)) return null;
-  if (!isToolOnSurface(name, client, enabledOptionalToolNames, "authenticated")) {
+  if (!isToolOnSurface(name, surface, enabledOptionalToolNames)) {
     return null;
   }
   if (typeof id !== "string" && typeof id !== "number") return null;
   // Same greppable signal as the dispatch gate in `registerTool`, with a
   // marker for which layer answered.
   console.log(
-    `[mcp] auth-required tool blocked on free tier tool=${name} client=${client} layer=pre-dispatch`,
+    `[mcp] auth-required tool blocked on free tier tool=${name} surface=${surface} layer=pre-dispatch`,
   );
   return new Response(
     JSON.stringify({
@@ -1901,12 +1642,10 @@ export async function handleMcpRequest(
     // downstream. See `checkFreeTierRateLimit` for the ordering rationale.
     //
     // The commerce flag gates the account-upsell suffix on the two limit
-    // messages (see `FREE_TIER_COMMERCE_UPSELL`). Computed here AND at
-    // `createMcpServer` below; `commerceCopyAllowedForUa` is pure, so the
-    // double call cannot disagree (same reasoning as `detectMcpClient`).
-    const commerceCopyAllowed = commerceCopyAllowedForUa(
-      request.headers.get("user-agent"),
-    );
+    // messages (see `FREE_TIER_COMMERCE_UPSELL`). The free tier serves
+    // only the generic surface (gated above), where commerce copy is
+    // allowed for every client (spec D5).
+    const commerceCopyAllowed = surface === "generic";
     const meterResult = await checkFreeTierRateLimit(request, freeTier);
     switch (meterResult.kind) {
       case "global_limited":
@@ -1923,17 +1662,17 @@ export async function handleMcpRequest(
       case "allowed": {
         // Known-but-auth-required tool called anonymously: answer with
         // sign-in guidance instead of letting the SDK say "tool not
-        // found" (see `freeTierHiddenToolResponse`). Client detection and
-        // `?tools=` parsing are re-run later on the SDK path with logging;
-        // both are pure, so the double call cannot disagree.
+        // found" (see `freeTierHiddenToolResponse`). `?tools=` parsing
+        // is re-run later on the SDK path with logging; it is pure, so
+        // the double call cannot disagree.
         const gated = freeTierHiddenToolResponse(
           meterResult.body,
           origin,
-          detectMcpClient(request.headers.get("user-agent")),
+          surface,
           parseEnabledOptionalToolNames(
             new URL(request.url).searchParams.get("tools"),
           ),
-          anonymousSignInHint(request.headers.get("user-agent")),
+          GENERIC_SIGN_IN_HINT,
         );
         if (gated !== null) return gated;
         break;
@@ -1971,15 +1710,13 @@ export async function handleMcpRequest(
   // tool call inside `registerTool`'s SDK callback (where the
   // request's `progressToken` and the SDK's `sendNotification` are
   // available). Outside of a tool-call scope, no client is listening.
-  // `client` defaults to `"unknown"` and is overridden by the
-  // request-handler before tool dispatch.
   const ctx: ToolContext = {
     token,
     env,
     sendProgress: async () => {
       /* no-op outside tool-call scope */
     },
-    client: "unknown",
+    surface,
     tier,
   };
 
@@ -1990,36 +1727,16 @@ export async function handleMcpRequest(
     // connectors from referencing prod URLs and vice versa.
     const url = new URL(request.url);
     const requestOrigin = url.origin;
-    // Detect calling client from User-Agent so we can route the chart
-    // widget to widget clients (see `isWidgetClient`; unknown clients
-    // fall back to the inline PNG) and route the ChatGPT family — both
-    // chatgpt.com and the desktop app — through the agent split pair.
-    // See `detectMcpClient` for the matching rules.
-    const userAgent = request.headers.get("user-agent");
-    const client = detectMcpClient(userAgent);
-    // Log the RAW User-Agent next to the kind it resolved to, once per
-    // request. The UA is the only per-request client-identity signal we have
-    // (stateless transport: `initialize`'s `clientInfo` does not ride along on
-    // the later `tools/list` / `tools/call` POSTs), and `McpClientKind` decides
-    // the tool SET, widget registration, image content blocks, annotation
-    // labels, and the ChatGPT `securitySchemes` injection. A UA that
-    // `detectMcpClient` fails to recognize therefore degrades all five at once
-    // — silently, and to a surface that still works, which is exactly why it
-    // can go unnoticed.
-    //
-    // Until now nothing logged the UA itself: `detectMcpClient`'s own docblock
-    // asks for the real ChatGPT connector UA to be "confirmed against
-    // production request logs", and no such confirmation was possible, because
-    // the only ChatGPT-linked log line (`securitySchemes injected`) proves a
-    // match and says nothing when the match FAILS. One `wrangler tail` while a
-    // client connects now answers it.
+    // Log the RAW User-Agent once per request — OBSERVABILITY ONLY, never
+    // branching (spec D2: behavior keys on the request path, not the UA).
     //
     // JSON.stringify, not raw interpolation: the UA is caller-controlled, and
     // an embedded newline would otherwise forge a second log line (same
     // log-injection reasoning as `django.ts`). Capped because a UA is
     // untrusted length, not because any real one is long.
+    const userAgent = request.headers.get("user-agent");
     console.log(
-      `[mcp] request client=${client} ua=${JSON.stringify(
+      `[mcp] request surface=${surface} ua=${JSON.stringify(
         (userAgent ?? "(absent)").slice(0, 200),
       )}`,
     );
@@ -2036,21 +1753,12 @@ export async function handleMcpRequest(
         }`,
       );
     }
-    // Free tier only: the free-tier dispatch gate is the option's sole
-    // reader, so passing it on authenticated connections would wire an
-    // option that nothing consumes (review finding) — an invitation for a
-    // future reader to "fix" the dead option by appending the hint where
-    // the free-tier gate was not what fired.
-    const signInHint =
-      tier === "free" ? anonymousSignInHint(userAgent) : undefined;
     const server = createMcpServer(ctx, {
       iconsBaseUrl: requestOrigin,
       requestOrigin,
-      client,
+      surface,
       enabledOptionalToolNames,
       tier,
-      commerceCopyAllowed: commerceCopyAllowedForUa(userAgent),
-      ...(signInHint !== undefined ? { signInHint } : {}),
     });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no
     // `Mcp-Session-Id` header is issued or validated. This matches the Worker
@@ -2076,14 +1784,13 @@ export async function handleMcpRequest(
     try {
       const response = await transport.handleRequest(request);
       await logSdkValidationRejections(requestForLogging, response);
-      // ChatGPT-family compatibility adapter: rewrite the buffered
-      // `tools/list` response to carry the top-level `securitySchemes`
-      // field the Apps SDK reads (the MCP SDK cannot serialize unknown
-      // descriptor fields — see `tools/_security.ts`). The desktop app
-      // (`"codex"`) reads the same field for its connector link-account
-      // flow. Every other client gets the SDK's response untouched.
-      return isChatGptFamilyClient(client)
-        ? await withChatGptToolSecuritySchemes(response, tier, client)
+      // ChatGPT compatibility adapter: rewrite the buffered `tools/list`
+      // response to carry the top-level `securitySchemes` field the Apps
+      // SDK reads (the MCP SDK cannot serialize unknown descriptor
+      // fields — see `tools/_security.ts`). The generic surface gets the
+      // SDK's response untouched.
+      return surface === "chatgpt"
+        ? await withChatGptToolSecuritySchemes(response, tier, surface)
         : response;
     } finally {
       // TODO(Phase 2): revisit this unconditional close.
@@ -2141,36 +1848,24 @@ export async function handleMcpRequest(
 export async function withChatGptToolSecuritySchemes(
   response: Response,
   tier: Tier,
-  // The DETECTED client, threaded through so the scheme derivation and the
-  // log line below carry the real kind. Hardcoding "chatgpt" here was
-  // functionally identical (the caller already gates on the ChatGPT
-  // family, and `securitySchemesForTool` branches on the same predicate)
-  // but it made codex traffic log as chatgpt — hiding codex adoption and
-  // codex UA drift from `wrangler tail` — and would silently misroute the
-  // day the two family members diverge in `securitySchemesForTool`.
-  // REQUIRED (no `= "chatgpt"` default): the schemes body is byte-identical
-  // for the two family members today, so nothing asserts this argument —
-  // a default would let a revert to a hardcoded kind pass the whole suite
-  // while silently flattening the log line's client dimension.
-  client: McpClientKind,
+  // The serving surface, threaded through so the scheme derivation and
+  // the log line below stay consistent with the caller's gate.
+  surface: Surface,
 ): Promise<Response> {
   try {
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) return response;
     const body = (await response.clone().json()) as unknown;
     const transformed = withToolSecuritySchemes(body, {
-      client,
+      surface,
       tier,
     });
     if (transformed === body) return response;
     // Positive rollout/observability signal: this line appearing in
-    // `wrangler tail` proves the UA resolved to a ChatGPT-family client
-    // AND the injection ran. Its ABSENCE while ChatGPT sign-in misbehaves
-    // points straight at `detectMcpClient` (e.g. a connector UA change) —
-    // without it, a UA miss is indistinguishable from "ChatGPT changed
-    // something" (review finding on PR #183).
+    // `wrangler tail` proves the chatgpt surface served a tools/list AND
+    // the injection ran (review finding on PR #183).
     console.log(
-      `[mcp] tools/list securitySchemes injected client=${client} tier=${tier}`,
+      `[mcp] tools/list securitySchemes injected surface=${surface} tier=${tier}`,
     );
     const headers = new Headers(response.headers);
     // The rewritten body has a different byte length; let the runtime

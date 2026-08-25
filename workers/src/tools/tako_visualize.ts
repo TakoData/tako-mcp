@@ -32,7 +32,6 @@ import {
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
-import { isChatGptFamilyClient } from "./_surface.js";
 import { autoChainShape } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
@@ -463,7 +462,7 @@ const tako_visualize = {
     // bands under a wide chart. Claude gets the full baked image — there the
     // PNG *is* the chart.
     return buildChartExtraMeta(output.image_url, {
-      bakeImage: !isChatGptFamilyClient(ctx.client),
+      bakeImage: ctx.surface !== "chatgpt",
       env: ctx.env,
       origin: ctx.origin,
       pubId: output.pub_id,

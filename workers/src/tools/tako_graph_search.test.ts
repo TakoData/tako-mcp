@@ -12,7 +12,7 @@ import {
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 const CTX: ToolContext = {
-  token: "sk-test", env: ENV, sendProgress: noopSendProgress, client: "claude",
+  token: "sk-test", env: ENV, sendProgress: noopSendProgress, surface: "generic",
 };
 
 const RESULTS = {

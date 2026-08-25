@@ -23,7 +23,7 @@ import {
   resolveFreeTierConfig,
 } from "./freetier.js";
 import worker from "./index.js";
-import { FREE_TIER_SERVER_INSTRUCTIONS } from "./mcp.js";
+import { FREE_TIER_SERVER_INSTRUCTIONS, GENERIC_SIGN_IN_HINT } from "./mcp.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
 /**
@@ -942,7 +942,10 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(globalLimiter.keys).toEqual(["global"]);
   });
 
-  it("anonymous tools/list shows the free tools, unmetered per-IP", async () => {
+  it("anonymous tools/list shows the auth-invariant default surface, unmetered per-IP", async () => {
+    // Spec D4: the listing never changes with auth state. tako_contents
+    // is listed anonymously — the dispatch gate (not the listing) is what
+    // answers sign-in instructions when it is called.
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(post(TOOLS_LIST_BODY), freeEnv(limiter));
     expect(res.status).toBe(200);
@@ -951,16 +954,18 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     };
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "tako_available_data",
+      "tako_contents",
       "tako_search",
     ]);
     expect(limiter.keys).toEqual([]);
   });
 
-  it("anonymous ChatGPT tools/list shows the submitted tools with top-level securitySchemes", async () => {
-    // The ChatGPT link-account flow requires the two auth-required
-    // submitted tools to stay LISTED anonymously, and the Apps SDK reads
-    // securitySchemes at the descriptor TOP LEVEL (injected by
-    // withChatGptToolSecuritySchemes — the MCP SDK drops unknown fields).
+  it("a ChatGPT UA on /mcp gets the same anonymous listing — the UA changes nothing", async () => {
+    // The UA classifier is gone (spec D2). No top-level securitySchemes
+    // injection on the generic surface either — that adapter serves only
+    // /mcp/chatgpt (asserted in index.test.ts); per-tool schemes still
+    // ride the reverse-DNS `_meta` key, where the two free tools
+    // advertise noauth on an anonymous connection.
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(
       post(TOOLS_LIST_BODY, { "user-agent": "ChatGPT/1.0" }),
@@ -971,7 +976,8 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       result: {
         tools: Array<{
           name: string;
-          securitySchemes?: Array<{ type: string; scopes?: string[] }>;
+          securitySchemes?: unknown;
+          _meta?: Record<string, unknown>;
         }>;
       };
     };
@@ -979,17 +985,15 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       "tako_available_data",
       "tako_contents",
       "tako_search",
-      "tako_visualize",
     ]);
     const oauth2 = { type: "oauth2", scopes: ["mcp"] };
-    const byName = new Map(
-      body.result.tools.map((t) => [t.name, t.securitySchemes]),
-    );
-    for (const name of ["tako_search", "tako_available_data"]) {
-      expect(byName.get(name), name).toEqual([{ type: "noauth" }, oauth2]);
-    }
-    for (const name of ["tako_contents", "tako_visualize"]) {
-      expect(byName.get(name), name).toEqual([oauth2]);
+    for (const t of body.result.tools) {
+      expect(t.securitySchemes, t.name).toBeUndefined();
+      expect(t._meta?.["com.tako/securitySchemes"], t.name).toEqual(
+        FREE_TIER_TOOL_NAMES.has(t.name)
+          ? [{ type: "noauth" }, oauth2]
+          : [oauth2],
+      );
     }
     expect(limiter.keys).toEqual([]);
   });
@@ -1074,7 +1078,11 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     };
     expect(body.id).toBe(SEARCH_CALL_BODY.id);
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]?.text).toBe(FREE_TIER_LIMIT_MESSAGE);
+    // Commerce copy is allowed for everyone on /mcp (spec D5): the limit
+    // message carries the account upsell for every client.
+    expect(body.result.content[0]?.text).toBe(
+      `${FREE_TIER_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
   });
 
   it("a non-tools/call request over the per-colo ceiling gets the capacity 429", async () => {
@@ -1085,7 +1093,9 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     );
     expect(res.status).toBe(429);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
+    expect(body.error.message).toBe(
+      `${FREE_TIER_GLOBAL_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
     expect(limiter.keys).toEqual([]);
   });
 
@@ -1102,7 +1112,9 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     };
     expect(body.id).toBe(SEARCH_CALL_BODY.id);
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]?.text).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
+    expect(body.result.content[0]?.text).toBe(
+      `${FREE_TIER_GLOBAL_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
     expect(limiter.keys).toEqual([]);
   });
 
@@ -1175,62 +1187,14 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("anonymous call to a gated tool on claude.ai names the Connect step", async () => {
-    const res = await worker.fetch(
-      post(
-        {
-          jsonrpc: "2.0",
-          id: 9,
-          method: "tools/call",
-          params: { name: "tako_contents", arguments: { urls: ["https://x.com"] } },
-        },
-        { "user-agent": "Claude-User/1.0" },
-      ),
-      freeEnv(fakeLimiter(true)),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      result: { content: Array<{ text: string }>; isError: boolean };
-    };
-    expect(body.result.isError).toBe(true);
-    const text = body.result.content[0]?.text ?? "";
-    expect(text).toContain("This tool requires a Tako account.");
-    expect(text).toContain("Settings → Connectors");
-  });
-
-  it("anonymous call to a gated tool on Claude Code names the API-key step", async () => {
-    const res = await worker.fetch(
-      post(
-        {
-          jsonrpc: "2.0",
-          id: 10,
-          method: "tools/call",
-          params: { name: "tako_contents", arguments: { urls: ["https://x.com"] } },
-        },
-        { "user-agent": "claude-code/2.1.220 (sdk-cli)" },
-      ),
-      freeEnv(fakeLimiter(true)),
-    );
-    const body = (await res.json()) as {
-      result: { content: Array<{ text: string }> };
-    };
-    const text = body.result.content[0]?.text ?? "";
-    expect(text).toContain("Tako API key");
-    expect(text).toContain("Claude Code");
-  });
-
-  it("anonymous gated-tool text on ChatGPT and unknown UAs is unchanged", async () => {
-    for (const userAgent of ["ChatGPT/1.0", "python-httpx/0.27"]) {
-      // `tako_contents`, not `tako_visualize`: `tako_visualize` is opt-in
-      // (`OPTIONAL_TOOL_NAMES`) and default-on only for widget clients
-      // (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES` — chatgpt/claude/codex), so
-      // it is off the AUTHENTICATED surface for `python-httpx`'s "unknown"
-      // client and the pre-dispatch gate never answers for it, regardless
-      // of any sign-in hint — an unrelated surface gap, not something this
-      // task's hint logic controls. `tako_contents` is unconditionally on
-      // every client's authenticated surface, so it exercises the same
-      // "byte-identical when the client is not positively identified"
-      // path this test is actually about.
+  it("anonymous call to a gated tool gets one generic sign-in hint, regardless of UA", async () => {
+    // Spec D17: one sentence for every client — the per-UA hint variants
+    // died with the User-Agent classifier.
+    for (const userAgent of [
+      "claude-code/2.1.220 (sdk-cli)",
+      "ChatGPT/1.0",
+      "python-httpx/0.27",
+    ]) {
       const res = await worker.fetch(
         post(
           {
@@ -1247,7 +1211,8 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
         result: { content: Array<{ text: string }> };
       };
       expect(body.result.content[0]?.text).toBe(
-        "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.",
+        "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue. " +
+          GENERIC_SIGN_IN_HINT,
       );
     }
   });
@@ -1350,7 +1315,9 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       result: { content: Array<{ text: string }>; isError: boolean };
     };
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]?.text).toBe(FREE_TIER_CREDITS_MESSAGE);
+    expect(body.result.content[0]?.text).toBe(
+      `${FREE_TIER_CREDITS_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
   });
 
   it("a 4xx body merely CONTAINING 'PAYMENT_REQUIRED' text is not mistaken for credit exhaustion", async () => {
@@ -1455,14 +1422,11 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(text).toContain("Add credits to continue.");
   });
 
-  it("authenticated credit exhaustion on ChatGPT-family and UNRECOGNIZED clients carries no remedy copy", async () => {
-    // OpenAI's commerce policy forbids promoting purchases through an
-    // app, and Django's remedies name plan upgrades and credit purchases
-    // — exactly that copy. Unrecognized UAs fail closed for the same
-    // reason `annotationClientFamily` buckets unknown with chatgpt: an
-    // OpenAI reviewer/crawler — or a ChatGPT UA `detectMcpClient` hasn't
-    // learned yet (the desktop app's `codex-mcp-client` UA was exactly
-    // that once) — lands there. The factual cause stays on every client.
+  it("authenticated credit exhaustion on /mcp carries the remedy for every UA — and /mcp/chatgpt never does", async () => {
+    // Commerce copy keys on the surface now (spec D5): the generic
+    // surface carries Django's remedy for every client, and the chatgpt
+    // surface — where OpenAI's commerce policy forbids purchase-promoting
+    // copy — keeps the factual cause only.
     for (const userAgent of ["openai-mcp/1.0", "python-httpx/0.27"]) {
       mockFetchSequence([SUBSCRIPTION_402()]);
       const res = await worker.fetch(
@@ -1479,10 +1443,32 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       expect(body.result.isError).toBe(true);
       const text = body.result.content[0]?.text ?? "";
       expect(text).toContain("out of credits");
-      expect(text).not.toContain("tako.com");
-      expect(text).not.toMatch(/https?:\/\//);
-      expect(text).not.toMatch(/upgrade|add credits/i);
+      expect(text).toContain("Upgrade your plan for more credits.");
     }
+
+    mockFetchSequence([SUBSCRIPTION_402()]);
+    const chatgptRes = await worker.fetch(
+      new Request("https://example.com/mcp/chatgpt", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: "Bearer real-user-token",
+        },
+        body: JSON.stringify(SEARCH_CALL_BODY),
+      }),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(chatgptRes.status).toBe(200);
+    const chatgptBody = (await chatgptRes.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(chatgptBody.result.isError).toBe(true);
+    const chatgptText = chatgptBody.result.content[0]?.text ?? "";
+    expect(chatgptText).toContain("out of credits");
+    expect(chatgptText).not.toContain("tako.com");
+    expect(chatgptText).not.toMatch(/https?:\/\//);
+    expect(chatgptText).not.toMatch(/upgrade|add credits/i);
   });
 
   it("anonymous rate limit on a claude client carries the account upsell", async () => {
@@ -1506,10 +1492,11 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     );
   });
 
-  it("anonymous rate limit on ChatGPT-family and unrecognized clients stays neutral", async () => {
-    // Same fail-closed rule as the authenticated 402 remedy: commerce copy
-    // reaching ChatGPT's model violates OpenAI policy, and an unrecognized
-    // UA could be an OpenAI reviewer or crawler.
+  it("anonymous rate limit carries the account upsell for every UA on /mcp", async () => {
+    // Commerce copy keys on the surface (spec D5), and the free tier
+    // serves /mcp only — so the upsell reaches every client here. The
+    // chatgpt surface never reaches this path (it 401s anonymous
+    // requests before admission).
     for (const userAgent of ["ChatGPT/1.0", "python-httpx/0.27"]) {
       const res = await worker.fetch(
         post(SEARCH_CALL_BODY, { "user-agent": userAgent }),
@@ -1519,7 +1506,9 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       const body = (await res.json()) as {
         result: { content: Array<{ text: string }> };
       };
-      expect(body.result.content[0]?.text).toBe(FREE_TIER_LIMIT_MESSAGE);
+      expect(body.result.content[0]?.text).toBe(
+        `${FREE_TIER_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+      );
     }
   });
 

@@ -344,7 +344,7 @@ describe("worker routing", () => {
     expect(body.error.data.kind).toBe("missing");
   });
 
-  it("POST /mcp tools/list returns the default tool set (non-ChatGPT clients)", async () => {
+  it("POST /mcp tools/list returns the default tool set", async () => {
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -400,32 +400,21 @@ describe("worker routing", () => {
       expect(t._meta?.["com.tako/securitySchemes"]).toEqual([
         { type: "oauth2", scopes: ["mcp"] },
       ]);
-      // The top-level `securitySchemes` field is a ChatGPT-family
-      // compatibility injection (`withChatGptToolSecuritySchemes`) — this
-      // request has no User-Agent, so non-family descriptors must NOT
-      // carry it.
+      // The top-level `securitySchemes` field is a chatgpt-surface
+      // compatibility injection (`withChatGptToolSecuritySchemes`) — the
+      // generic surface must NOT carry it.
       expect(
         (t as { securitySchemes?: unknown }).securitySchemes,
       ).toBeUndefined();
-      // No User-Agent → client `unknown`, which resolves the ChatGPT
-      // override family (see `annotationClientFamily` in
-      // tools/_surface.ts): retrieval is closed-world under the Apps
-      // reading, so an OpenAI reviewer with an unrecognized UA never sees
-      // labels contradicting chatgpt-app-submission.json. Only `claude`
-      // retains the canonical MCP open-world meaning.
-      expect(t.annotations.openWorldHint).toBe(false);
+      // The generic surface serves canonical MCP annotations (spec D2):
+      // retrieval is open-world per the spec's own web-search example.
+      expect(t.annotations.openWorldHint).toBe(true);
     }
 
-    // MCP Apps: this request carries no User-Agent, so `detectMcpClient`
-    // falls through to "unknown" — the one bucket still denied the chart
-    // widget (see `widgetSuppressed` in mcp.ts). ChatGPT and Claude both
-    // get the widget now (interactive iframe on ChatGPT, image-branch
-    // render on Claude); only the unknown long tail (Cursor, Windsurf,
-    // Gemini CLI, …) falls back to the inline PNG `image` content block
-    // on tool results, so NO tool in this listing declares widget
-    // metadata under any of the three keys. The ChatGPT- and Claude-side
-    // widget metadata is asserted in the respective tools/list tests
-    // below.
+    // MCP Apps: the generic surface never declares widget metadata
+    // (spec D14/D15) — charts ship as inline PNG `image` content blocks
+    // on tool results instead. The chatgpt-surface widget metadata is
+    // asserted in the /mcp/chatgpt tests below.
     for (const t of body.result.tools) {
       const meta = t._meta as
         | {
@@ -440,20 +429,18 @@ describe("worker routing", () => {
     }
   });
 
-  it("POST /mcp tools/list serves ChatGPT the submitted tools with top-level securitySchemes", async () => {
+  it("POST /mcp/chatgpt tools/list serves the submitted tools with top-level securitySchemes", async () => {
     // ChatGPT's Apps SDK reads `securitySchemes` at the descriptor TOP
     // LEVEL (developers.openai.com/apps-sdk/build/auth). The MCP SDK
     // drops unknown descriptor fields, so `handleMcpRequest` injects the
-    // field into the buffered response for ChatGPT-family clients only
-    // (`withChatGptToolSecuritySchemes` — chatgpt.com and the desktop
-    // app's codex runtime).
-    const res = await SELF.fetch("https://example.com/mcp", {
+    // field into the buffered response on the chatgpt surface only
+    // (`withChatGptToolSecuritySchemes`).
+    const res = await SELF.fetch("https://example.com/mcp/chatgpt", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        "user-agent": "ChatGPT/1.0",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -494,59 +481,6 @@ describe("worker routing", () => {
     }
   });
 
-  it("POST /mcp tools/list serves the codex desktop app the family surface, with the widget", async () => {
-    // End-to-end pin for the ChatGPT desktop app (codex runtime) AFTER
-    // the widget flip: full ChatGPT-family treatment — securitySchemes
-    // injection, default-on tako_visualize, and widget `_meta` — exactly
-    // mirroring chatgpt.com. Without this test, reverting any single
-    // `isChatGptFamilyClient`/`isWidgetClient` call site passes the
-    // whole suite while silently degrading the desktop app.
-    const res = await SELF.fetch("https://example.com/mcp", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: AUTH_HEADER,
-        "user-agent": "codex-mcp-client/0.148.0-alpha.9",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/list",
-        params: {},
-      }),
-    });
-
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      result: {
-        tools: Array<{
-          name: string;
-          _meta?: Record<string, unknown>;
-          securitySchemes?: Array<{ type: string; scopes?: string[] }>;
-        }>;
-      };
-    };
-    // Full family surface, identical to chatgpt.com: visualize is
-    // default-on because codex is a widget client after the flip.
-    expect(body.result.tools.map((t) => t.name).sort()).toEqual([
-      "tako_available_data",
-      "tako_contents",
-      "tako_search",
-      "tako_visualize",
-    ]);
-    const oauth2 = { type: "oauth2", scopes: ["mcp"] };
-    const widgetOwners = new Set(["tako_search", "tako_visualize"]);
-    for (const t of body.result.tools) {
-      // The family injection reaches codex descriptors...
-      expect(t.securitySchemes, t.name).toEqual([oauth2]);
-      // ...and the chart tools carry the widget `_meta` chatgpt.com gets.
-      if (widgetOwners.has(t.name)) {
-        expect(t._meta?.["openai/outputTemplate"], t.name).toBeDefined();
-      }
-    }
-  });
-
   it("POST /mcp/chatgpt without Authorization is a 401 challenge even with free-tier bindings", async () => {
     // The ChatGPT app surface requires OAuth (spec D9): no anonymous state
     // exists there. The same anonymous request on /mcp serves the free tier.
@@ -583,90 +517,17 @@ describe("worker routing", () => {
     expect(served.status).toBe(200);
   });
 
-  it("POST /mcp tools/list keeps the anonymous codex listing on the family surface, not unknown's", async () => {
-    // The authenticated codex pin above cannot distinguish "codex resolved
-    // as ChatGPT family" from "codex fell to `unknown`" by names alone on
-    // the free tier's opposite failure: an ANONYMOUS `unknown` listing is
-    // the three free-tier tools, while an anonymous FAMILY listing keeps
-    // the auth-gated submitted tools visible for the link-account
-    // affordance (`CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES`). So this is
-    // the request shape where a `detectMcpClient` regression for the
-    // desktop app is VISIBLE as a listing diff — pin it. (Review finding
-    // on PR #239: the authenticated assertion alone also matched the
-    // authenticated no-UA surface.)
-    //
-    // The suite's worker env deliberately leaves the free-tier bindings
-    // unset so every other test exercises the fail-closed 401, and `SELF`'s
-    // bindings can't be changed per-test — so this dispatches the handler
-    // directly with an env where all three free-tier bindings exist
-    // (key + both limiters; freetier.ts activates only on the full set).
-    const allow: RateLimit = { limit: async () => ({ success: true }) };
-    const freeTierEnv: Env = {
-      ...(env as Env),
-      FREE_TIER_API_KEY: "free-tier-test-key",
-      FREE_TIER_RATE_LIMITER: allow,
-      FREE_TIER_GLOBAL_RATE_LIMITER: allow,
-    };
-    const listTools = async (userAgent?: string) => {
-      const res = await worker.fetch(
-        new Request("https://example.com/mcp", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            accept: "application/json, text/event-stream",
-            // No authorization header: tier resolves to "free".
-            ...(userAgent === undefined ? {} : { "user-agent": userAgent }),
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 2,
-            method: "tools/list",
-            params: {},
-          }),
-        }),
-        freeTierEnv,
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        result: { tools: Array<{ name: string }> };
-      };
-      return body.result.tools.map((t) => t.name).sort();
-    };
-
-    // Anonymous desktop app: full family listing — the free tools plus
-    // the auth-gated tools that must stay listed pre-link so the host
-    // can offer sign-in from the descriptor.
-    expect(await listTools("codex-mcp-client/0.148.0-alpha.9")).toEqual([
-      "tako_available_data",
-      "tako_contents",
-      "tako_search",
-      "tako_visualize",
-    ]);
-    // Same request with an unrecognized UA: the anonymous surface shrinks
-    // to the free tools. This contrast is what makes the codex
-    // assertion above meaningful — the two listings differ, so a
-    // classifier miss fails here instead of degrading silently.
-    expect(await listTools("some-unknown-agent/1.0")).toEqual([
-      "tako_available_data",
-      "tako_search",
-    ]);
-  });
-
-  it("POST /mcp tools/list declares the chart widget _meta for claude clients", async () => {
-    // claude.ai loads the widget URI from the `tools/list` registration
-    // `_meta`, not from a separate handshake (see the mcp.ts April
-    // findings on Claude's Apps loading path) — so registration `_meta`
-    // is the load-bearing wire surface for inline charts on claude.ai,
-    // same as it is for ChatGPT. This pins `tako_search`'s listing to
-    // carry all three widget keys for a claude User-Agent, mirroring the
-    // ChatGPT assertion above.
-    const res = await SELF.fetch("https://example.com/mcp", {
+  it("POST /mcp/chatgpt tools/list declares the chart widget _meta", async () => {
+    // ChatGPT loads the widget URI from the `tools/list` registration
+    // `_meta` — the load-bearing wire surface for inline charts. This
+    // pins `tako_search`'s listing to carry all three widget keys on the
+    // chatgpt surface.
+    const res = await SELF.fetch("https://example.com/mcp/chatgpt", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        "user-agent": "claude-mcp-client/1.0",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -690,16 +551,17 @@ describe("worker routing", () => {
       "ui/resourceUri": "ui://tako/embed/chart",
       "openai/outputTemplate": "ui://tako/embed/chart",
     });
-    // The second widget owner. `tako_visualize` is on Claude's DEFAULT
-    // surface (no `?tools=visualize`) precisely so the tool whose entire
-    // output is a chart can render that chart inline here — a listing without
-    // the widget keys would leave it a link-only tool and defeat the point.
-    // Both tools share one `ui://tako/embed/chart` resource; `mcp.ts` dedupes
-    // the registration and still wires `_meta` onto each tool.
+    // The second widget owner. `tako_visualize` is on the chatgpt
+    // DEFAULT surface (no `?tools=visualize`) precisely so the tool whose
+    // entire output is a chart can render that chart inline here — a
+    // listing without the widget keys would leave it a link-only tool and
+    // defeat the point. Both tools share one `ui://tako/embed/chart`
+    // resource; `mcp.ts` dedupes the registration and still wires `_meta`
+    // onto each tool.
     const takoVisualizeTool = body.result.tools.find(
       (t) => t.name === "tako_visualize",
     );
-    expect(takoVisualizeTool, "tako_visualize must be on claude's default surface").toBeDefined();
+    expect(takoVisualizeTool, "tako_visualize must be on the chatgpt default surface").toBeDefined();
     expect(takoVisualizeTool?._meta).toMatchObject({
       ui: { resourceUri: "ui://tako/embed/chart" },
       "ui/resourceUri": "ui://tako/embed/chart",
@@ -707,18 +569,17 @@ describe("worker routing", () => {
     });
   });
 
-  it("POST /mcp tools/list serves canonical MCP annotations to claude UAs", async () => {
-    // `claude` is the one client family that keeps the canonical MCP
-    // hint readings — every other family, unknown included, resolves the
-    // ChatGPT override set (see `annotationClientFamily` in
-    // tools/_surface.ts). Pin the split end-to-end.
-    const res = await SELF.fetch("https://example.com/mcp", {
+  it("POST /mcp tools/list serves canonical MCP annotations to every client", async () => {
+    // The generic surface keeps the canonical MCP hint readings for
+    // everyone; only /mcp/chatgpt resolves the Apps-review overrides
+    // (see `toolAnnotationsForSurface`). Pin the split end-to-end —
+    // ?tools=visualize so the one override-bearing write tool is listed.
+    const res = await SELF.fetch("https://example.com/mcp?tools=visualize", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        "user-agent": "claude-mcp-client/1.0",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -737,10 +598,9 @@ describe("worker routing", () => {
         }>;
       };
     };
-    // 3 retrieval tools + tako_visualize (default-on for widget clients).
+    // 3 retrieval tools + tako_visualize (opted in above).
     expect(body.result.tools).toHaveLength(4);
-    // The 3 retrieval tools keep the MCP spec's open-world, read-only meaning
-    // for claude.
+    // The 3 retrieval tools keep the MCP spec's open-world, read-only meaning.
     const retrieval = body.result.tools.filter(
       (t) => t.name !== "tako_visualize",
     );
@@ -749,12 +609,13 @@ describe("worker routing", () => {
       expect(t.annotations.openWorldHint, t.name).toBe(true);
       expect(t.annotations.readOnlyHint, t.name).toBe(true);
     }
-    // And `tako_visualize` keeps the CANONICAL readings on claude — a write
+    // And `tako_visualize` keeps the CANONICAL readings here — a write
     // (`readOnlyHint: false`) over a closed domain (`openWorldHint: false`,
     // since it renders data the caller already supplied). Its
-    // `annotationsByClient.chatgpt` override widens `openWorldHint` to true
+    // `annotationsBySurface.chatgpt` override widens `openWorldHint` to true
     // for Apps review, which reads the hint as "publishes publicly visible
-    // state"; that override must NOT leak to claude, which reads it per spec.
+    // state"; that override must NOT leak to the generic surface, which
+    // serves it per spec.
     const visualize = body.result.tools.find(
       (t) => t.name === "tako_visualize",
     );
@@ -762,17 +623,15 @@ describe("worker routing", () => {
     expect(visualize?.annotations.openWorldHint).toBe(false);
   });
 
-  it("POST /mcp?tools=agent adds the agent split pair on ChatGPT clients", async () => {
-    const res = await SELF.fetch("https://example.com/mcp?tools=agent", {
+  it("POST /mcp/chatgpt?tools=agent adds the agent split pair", async () => {
+    const res = await SELF.fetch(
+      "https://example.com/mcp/chatgpt?tools=agent",
+      {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        // `detectMcpClient` matches "chatgpt" / "openai" substrings
-        // in the User-Agent — the Apps SDK's UA includes one of
-        // these. We use a stand-in here.
-        "user-agent": "ChatGPT/1.0 (+https://chatgpt.com)",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -848,14 +707,13 @@ describe("worker routing", () => {
     });
   });
 
-  it("POST /mcp (no tools param) omits every agent tool on ChatGPT clients", async () => {
-    const res = await SELF.fetch("https://example.com/mcp", {
+  it("POST /mcp/chatgpt (no tools param) omits every agent tool", async () => {
+    const res = await SELF.fetch("https://example.com/mcp/chatgpt", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        "user-agent": "ChatGPT/1.0 (+https://chatgpt.com)",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -922,15 +780,13 @@ describe("worker routing", () => {
     });
   });
 
-  it("POST /mcp?tools=agent adds the single tako_agent tool on non-ChatGPT clients", async () => {
+  it("POST /mcp?tools=agent adds the single tako_agent tool", async () => {
     const res = await SELF.fetch("https://example.com/mcp?tools=agent", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        // Non-ChatGPT UA → single-call `tako_agent`, not the split pair.
-        "user-agent": "claude-mcp-client/1.0",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -945,20 +801,17 @@ describe("worker routing", () => {
       result: { tools: Array<{ name: string }> };
     };
     const names = new Set(body.result.tools.map((t) => t.name));
-    // Claude / unknown clients get the single-call tool...
+    // The generic surface gets the single-call tool...
     expect(names.has("tako_agent")).toBe(true);
-    // ...and never the ChatGPT-only split pair.
+    // ...and never the chatgpt-only split pair.
     expect(names.has("tako_agent_start")).toBe(false);
     expect(names.has("tako_agent_wait")).toBe(false);
     expect(names.has("tako_search")).toBe(true);
     // Other opt-in tools stay absent — `?tools=agent` enables only the agent.
-    // Not `tako_visualize`: this is a claude UA, and visualize is default-on
-    // for widget clients (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES`), so its
-    // presence here says nothing about the alias. `credits` is the honest
-    // check that the alias widened nothing beyond the agent.
+    expect(names.has("tako_visualize")).toBe(false);
     expect(names.has("get_credit_balance")).toBe(false);
-    // 3 defaults + tako_visualize (widget client) + tako_agent = 5.
-    expect(body.result.tools).toHaveLength(5);
+    // 3 defaults + tako_agent = 4.
+    expect(body.result.tools).toHaveLength(4);
   });
 
   it("POST /mcp?tools=<unknown> ignores the bad value and serves the default 3 tools", async () => {
@@ -1063,7 +916,6 @@ describe("worker routing", () => {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        "user-agent": "claude-mcp-client/1.0",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -1084,12 +936,12 @@ describe("worker routing", () => {
     expect(names.has("tako_graph_related")).toBe(true);
     expect(names.has("tako_graph_node")).toBe(true);
     expect(names.has("tako_available_data")).toBe(true);
-    // Other opt-ins stay off. `tako_visualize` is excluded from this check:
-    // the UA is claude, where it is default-on for widget clients.
+    // Other opt-ins stay off.
+    expect(names.has("tako_visualize")).toBe(false);
     expect(names.has("tako_agent")).toBe(false);
     expect(names.has("get_credit_balance")).toBe(false);
-    // 3 defaults + tako_visualize (widget client) + the 3 graph primitives = 7.
-    expect(body.result.tools).toHaveLength(7);
+    // 3 defaults + the 3 graph primitives = 6.
+    expect(body.result.tools).toHaveLength(6);
   });
 
   it("POST /mcp?tools=visualize,credits composes multiple single-tool aliases", async () => {
@@ -1101,7 +953,6 @@ describe("worker routing", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           authorization: AUTH_HEADER,
-          "user-agent": "claude-mcp-client/1.0",
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
@@ -1221,17 +1072,16 @@ describe("worker routing", () => {
     expect(claudeDesc).not.toContain("start_deep_knowledge_search");
   });
 
-  it("POST /mcp resources/list includes the chart widget bundle (ChatGPT)", async () => {
-    // The widget resource registers for ChatGPT here; the Claude
-    // registration is asserted separately below (see `widgetSuppressed`
-    // in mcp.ts — unknown clients are the only ones that don't get it).
-    const res = await SELF.fetch("https://example.com/mcp", {
+  it("POST /mcp/chatgpt resources/list includes the chart widget bundle", async () => {
+    // The widget resource registers on the chatgpt surface only (see
+    // `widgetSuppressed` in mcp.ts — the generic surface ships the
+    // inline PNG instead).
+    const res = await SELF.fetch("https://example.com/mcp/chatgpt", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        "user-agent": "ChatGPT/1.0 (+https://chatgpt.com)",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -1278,14 +1128,13 @@ describe("worker routing", () => {
     expect((chatgptResourceDomains as string[]).length).toBeGreaterThan(0);
   });
 
-  it("POST /mcp resources/read returns the widget HTML at the MCP Apps mimeType (ChatGPT)", async () => {
-    const res = await SELF.fetch("https://example.com/mcp", {
+  it("POST /mcp/chatgpt resources/read returns the widget HTML at the MCP Apps mimeType", async () => {
+    const res = await SELF.fetch("https://example.com/mcp/chatgpt", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
-        "user-agent": "ChatGPT/1.0 (+https://chatgpt.com)",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -1328,14 +1177,14 @@ describe("worker routing", () => {
     expect(item.text).toContain("tako-embed");
   });
 
-  it("POST /mcp resources/list returns an empty list (not -32601) for unknown clients", async () => {
-    // The chart widget resource registers for ChatGPT and Claude clients —
-    // the two hosts that render MCP Apps widgets (see `widgetSuppressed`
-    // in mcp.ts) — so no `registerResource` call ever happens on an
-    // unknown-client server instance — and without this the SDK would
-    // never advertise the `resources` capability, turning `resources/list`
-    // into a hard -32601 for capability-probing clients (Smithery's scan,
-    // some hosts). Mirror of the prompts/list guarantee below.
+  it("POST /mcp resources/list returns an empty list (not -32601) on the generic surface", async () => {
+    // The chart widget resource registers on the chatgpt surface only
+    // (see `widgetSuppressed` in mcp.ts) — so no `registerResource` call
+    // ever happens on a generic server instance — and without this the
+    // SDK would never advertise the `resources` capability, turning
+    // `resources/list` into a hard -32601 for capability-probing clients
+    // (Smithery's scan, some hosts). Mirror of the prompts/list
+    // guarantee below.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -1359,12 +1208,11 @@ describe("worker routing", () => {
     expect(body.result?.resources).toEqual([]);
   });
 
-  it("POST /mcp resources/list includes the chart widget bundle (Claude)", async () => {
-    // Claude clients now get the same widget resource registration as
-    // ChatGPT (the gate flip in mcp.ts) — claude.ai renders MCP Apps
-    // widgets inline in the chat body, unlike its collapsed treatment of
-    // `image` content blocks, so the widget resource must be discoverable
-    // via `resources/list` for a claude-mcp-client user agent too.
+  it("POST /mcp resources/list stays empty for claude UAs too — the UA changes nothing", async () => {
+    // The UA classifier is gone (spec D2): a claude UA on /mcp gets the
+    // same generic surface as everyone else, so no widget resource is
+    // registered. claude.ai's widget path is a fast-follow gated on
+    // anthropics/claude-ai-mcp#753 and #40.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -1382,41 +1230,11 @@ describe("worker routing", () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      result: {
-        resources: Array<{
-          uri: string;
-          mimeType?: string;
-          _meta?: Record<string, unknown>;
-        }>;
-      };
+      result?: { resources: unknown[] };
+      error?: { code: number };
     };
-    const widget = body.result.resources.find(
-      (r) => r.uri === "ui://tako/embed/chart",
-    );
-    expect(widget).toBeDefined();
-    expect(widget?.mimeType).toBe("text/html;profile=mcp-app");
-    // CSP-allowed iframe domain mirrors `resolvePublicBase(env)` (which in
-    // tests resolves to `DJANGO_BASE_URL` / `http://localhost:8000`). The
-    // server declares this identically for every client — Claude clients
-    // don't get a restricted `frameDomains` list; claude.ai's own
-    // host-side sandbox is what blocks the iframe, not this metadata.
-    expect(widget?._meta).toMatchObject({
-      ui: { csp: { frameDomains: ["http://localhost:8000"] } },
-    });
-    // `resourceDomains` allow-lists the origins the image-branch fallback
-    // is permitted to fetch/embed from (the remote `image_url` and the
-    // server-fetched `image_data_url`) — must be a non-empty array of
-    // valid origins (staging/production always resolve to `https://`;
-    // the local test config's `DJANGO_BASE_URL` is `http://localhost:8000`,
-    // same as the `frameDomains` assertion above).
-    const resourceDomains = (
-      widget?._meta as { ui?: { csp?: { resourceDomains?: unknown } } }
-    )?.ui?.csp?.resourceDomains;
-    expect(Array.isArray(resourceDomains)).toBe(true);
-    expect((resourceDomains as string[]).length).toBeGreaterThan(0);
-    for (const origin of resourceDomains as string[]) {
-      expect(origin).toMatch(/^https?:\/\//);
-    }
+    expect(body.error).toBeUndefined();
+    expect(body.result?.resources).toEqual([]);
   });
 
   it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {

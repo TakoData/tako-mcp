@@ -41,7 +41,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
-  client: "claude",
+  surface: "generic",
 };
 
 // Defaults the handler expects post-zod parse (the MCP framework applies
