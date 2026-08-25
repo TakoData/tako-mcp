@@ -342,7 +342,7 @@ async function fetchOne(
     // export-safe gate (e.g. protected-source export); 404 is "does not
     // exist or has no exportable data". Both are framed as the LIKELY
     // cause — not asserted fact — since 403 in particular can have other
-    // causes (cf. _graph.ts, where a 403 on /beta/graph is an edge block,
+    // causes (cf. _graph.ts, where a 403 on /v1/graph is an edge block,
     // not a query problem). The backend's detail is spliced in only when
     // extractErrorDetail recognises a structured envelope — a raw slice
     // would flood the model text with an edge/WAF HTML block page.

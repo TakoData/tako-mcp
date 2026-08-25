@@ -1,7 +1,7 @@
 /**
  * Tests for the relevance gate.
  *
- * Every case here is a REAL candidate observed from `/api/beta/graph/search`
+ * Every case here is a REAL candidate observed from `/api/v1/graph/search`
  * on staging (2026-07-29), not an invented string — the gate exists to fix
  * measured failures, so it is pinned against them.
  */

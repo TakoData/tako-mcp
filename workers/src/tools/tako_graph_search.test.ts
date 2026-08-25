@@ -33,7 +33,7 @@ describe("tako_graph_search", () => {
     expect(takoGraphSearch.name).toBe("tako_graph_search");
   });
 
-  it("sends q/types/label/limit as query params to /api/beta/graph/search", async () => {
+  it("sends q/types/label/limit as query params to /api/v1/graph/search", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, RESULTS)]);
 
     const out = await takoGraphSearch.handler(
@@ -43,7 +43,7 @@ describe("tako_graph_search", () => {
 
     const req = requestFrom(fetchMock.mock.calls[0]);
     const url = new URL(req.url);
-    expect(url.pathname).toBe("/api/beta/graph/search");
+    expect(url.pathname).toBe("/api/v1/graph/search");
     expect(req.method).toBe("GET");
     expect(url.searchParams.get("q")).toBe("Tesla");
     expect(url.searchParams.get("types")).toBe("entity");

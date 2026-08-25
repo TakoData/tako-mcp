@@ -83,7 +83,7 @@ describe("tako_available_data", () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, { results: [] })]);
     await takoAvailableData.handler({ q: "apple", types: "entity", label: "ORG" }, CTX);
     const url = new URL(requestFrom(fetchMock.mock.calls[0]).url);
-    expect(url.pathname).toBe("/api/beta/graph/search");
+    expect(url.pathname).toBe("/api/v1/graph/search");
     expect(url.searchParams.get("q")).toBe("apple");
     expect(url.searchParams.get("limit")).toBe("10");
     expect(url.searchParams.get("types")).toBe("entity");
@@ -118,7 +118,7 @@ describe("tako_available_data", () => {
     expect(fetchMock.mock.calls).toHaveLength(4);
     const drills = fetchMock.mock.calls.slice(1).map((c) => new URL(requestFrom(c).url));
     for (const url of drills) {
-      expect(url.pathname).toBe("/api/beta/graph/related");
+      expect(url.pathname).toBe("/api/v1/graph/related");
       expect(url.searchParams.get("relation")).toBe("metrics");
     }
     // Exactly one full-page drill; the others are cheap probes.
@@ -644,12 +644,12 @@ describe("tako_available_data — lookup path", () => {
     // 4 searches + 1 pair-confirm probe. Still no coverage drill.
     expect(fetchMock.mock.calls).toHaveLength(5);
     for (const call of fetchMock.mock.calls.slice(0, 4)) {
-      expect(new URL(requestFrom(call).url).pathname).toBe("/api/beta/graph/search");
+      expect(new URL(requestFrom(call).url).pathname).toBe("/api/v1/graph/search");
     }
     // The confirmation is scoped to the ENTITY and asks for its metrics —
     // never the reverse direction, whose lists are capped and generic.
     const probe = new URL(requestFrom(fetchMock.mock.calls[4]).url);
-    expect(probe.pathname).toBe("/api/beta/graph/related");
+    expect(probe.pathname).toBe("/api/v1/graph/related");
     expect(probe.searchParams.get("node_id")).toBe("ent::nvidia::1");
     expect(probe.searchParams.get("relation")).toBe("metrics");
     expect(probe.searchParams.get("q")).toBe("Gross Margin (%)");
@@ -714,7 +714,7 @@ describe("tako_available_data — lookup path", () => {
     // and the probe cannot supply one (it never chooses a node). Paying a round
     // trip here would buy nothing.
     expect(fetchMock.mock.calls).toHaveLength(5); // 4 searches + 1 drill
-    expect(new URL(requestFrom(fetchMock.mock.calls[4]).url).pathname).toBe("/api/beta/graph/related");
+    expect(new URL(requestFrom(fetchMock.mock.calls[4]).url).pathname).toBe("/api/v1/graph/related");
     expect(out.metric).toBeNull();
     expect(out.next_call).toBeNull();
     expect(out.matches[0]?.coverage.names).toEqual(["Revenue", "Net Income"]);
@@ -1306,7 +1306,7 @@ describe("tako_available_data — pair confirmation", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
     const related = fetchMock.mock.calls.filter(
-      (c) => new URL(requestFrom(c).url).pathname === "/api/beta/graph/related",
+      (c) => new URL(requestFrom(c).url).pathname === "/api/v1/graph/related",
     );
     expect(related).toHaveLength(1);
     expect(out.verified).toBe("pair");

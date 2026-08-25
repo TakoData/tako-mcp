@@ -1,7 +1,7 @@
 /**
  * Name plausibility for graph candidates — the relevance gate.
  *
- * `/api/beta/graph/search` is a fuzzy matcher and its nodes carry NO score
+ * `/api/v1/graph/search` is a fuzzy matcher and its nodes carry NO score
  * field, so there is nothing backend-side to threshold on. Without a gate the
  * top hits for a query are frequently about something else entirely, and
  * `tako_available_data` reports coverage for whatever it drilled: measured on

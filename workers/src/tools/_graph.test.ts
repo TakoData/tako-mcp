@@ -11,7 +11,7 @@ import {
 import { graphErrorMessage } from "./_graph.js";
 
 describe("graphErrorMessage", () => {
-  const P = { path: "/api/beta/graph/search", method: "GET" as const };
+  const P = { path: "/api/v1/graph/search", method: "GET" as const };
 
   it("401 → key/environment guidance", () => {
     const msg = graphErrorMessage(new DjangoUnauthorizedError(P), "search");
@@ -32,7 +32,7 @@ describe("graphErrorMessage", () => {
 
   it("related 404 → points at node_id, and clarifies relation is NOT a 404", () => {
     const msg = graphErrorMessage(
-      new DjangoNotFoundError({ path: "/api/beta/graph/related", method: "GET" }),
+      new DjangoNotFoundError({ path: "/api/v1/graph/related", method: "GET" }),
       "related",
       "bogus-node-9",
     );
@@ -42,7 +42,7 @@ describe("graphErrorMessage", () => {
 
   it("node 404 → explains where ids come from and echoes the id", () => {
     const msg = graphErrorMessage(
-      new DjangoNotFoundError({ path: "/api/beta/graph/node/x", method: "GET" }),
+      new DjangoNotFoundError({ path: "/api/v1/graph/node/x", method: "GET" }),
       "node",
       "not-a-real-id",
     );
