@@ -55,19 +55,16 @@ import type { Env, RateLimit } from "./env.js";
 export type Tier = "free" | "authenticated";
 
 /**
- * The complete anonymous EXECUTABLE tool surface. On most clients
- * everything else is hidden (not listed, not callable) rather than
- * listed-but-erroring — tools that error on call waste agent turns. The
- * one exception is ChatGPT, whose link-account UI requires the two
- * auth-required submitted tools to stay LISTED on anonymous connections
- * (`CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`);
- * those answer an `_meta["mcp/www_authenticate"]` challenge at dispatch
- * (see the free-tier gate in `mcp.ts`) and never execute anonymously.
+ * The complete anonymous EXECUTABLE tool surface. The listing is
+ * auth-invariant (spec D4): every default tool stays listed on anonymous
+ * connections, and a tool outside this set — `tako_contents` — answers
+ * sign-in instructions at dispatch time (see the free-tier gate in
+ * `mcp.ts`) instead of executing on the shared account. `tako_answer` is
+ * opt-in via `?tools=answer` (spec D1) and never executes anonymously.
  */
 export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
   "tako_available_data",
   "tako_search",
-  "tako_answer",
 ]);
 
 /**

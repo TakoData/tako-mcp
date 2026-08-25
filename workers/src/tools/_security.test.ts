@@ -17,7 +17,7 @@ describe("securitySchemesForTool", () => {
     // isChatGptFamilyClient call in securitySchemesForTool would pass a
     // chatgpt-only version of this test.
     for (const client of ["chatgpt", "codex"] as const) {
-      for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
+      for (const name of ["tako_search", "tako_available_data"]) {
         expect(securitySchemesForTool(name, { client, tier: "free" })).toEqual([
           { type: "noauth" },
           OAUTH2,
@@ -28,6 +28,7 @@ describe("securitySchemesForTool", () => {
 
   it("advertises oauth2 only for auth-required tools, even anonymously", () => {
     for (const name of [
+      "tako_answer",
       "tako_contents",
       "tako_visualize",
       "tako_agent",

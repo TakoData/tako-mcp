@@ -90,13 +90,12 @@ const TOOLS_CALL_BODY = {
   jsonrpc: "2.0",
   id: 1,
   method: "tools/call",
-  params: { name: "tako_answer", arguments: { query: "US GDP" } },
+  params: { name: "tako_search", arguments: { query: "US GDP" } },
 };
 
 describe("FREE_TIER_TOOL_NAMES", () => {
-  it("is exactly the three approved free tools", () => {
+  it("is exactly search and available_data (spec D1/D6)", () => {
     expect([...FREE_TIER_TOOL_NAMES].sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_search",
     ]);
@@ -179,8 +178,17 @@ describe("isMeteredJsonRpcBody", () => {
     }
   });
 
-  it("does not meter a tools/call for a hidden tool (returns 'tool not found' without spend)", () => {
-    for (const name of ["tako_agent", "get_credit_balance", "no_such_tool"]) {
+  it("does not meter a tools/call for a non-executable tool (answered without spend)", () => {
+    // tako_answer is opt-in (spec D1) and tako_contents is listed but
+    // auth-required (spec D6): neither executes anonymously, so neither
+    // consumes the per-IP bucket.
+    for (const name of [
+      "tako_agent",
+      "tako_answer",
+      "tako_contents",
+      "get_credit_balance",
+      "no_such_tool",
+    ]) {
       expect(
         isMeteredJsonRpcBody({
           jsonrpc: "2.0",
@@ -435,7 +443,7 @@ describe("checkFreeTierRateLimit", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         ...TOOLS_CALL_BODY,
-        params: { name: "tako_answer", arguments: { query: bigQuery } },
+        params: { name: "tako_search", arguments: { query: bigQuery } },
       }),
     });
     await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
@@ -906,11 +914,11 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     },
   };
   const TOOLS_LIST_BODY = { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} };
-  const ANSWER_CALL_BODY = {
+  const SEARCH_CALL_BODY = {
     jsonrpc: "2.0",
     id: 3,
     method: "tools/call",
-    params: { name: "tako_answer", arguments: { query: "US GDP" } },
+    params: { name: "tako_search", arguments: { query: "US GDP" } },
   };
 
   afterEach(() => {
@@ -934,7 +942,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(globalLimiter.keys).toEqual(["global"]);
   });
 
-  it("anonymous tools/list shows exactly the three free tools, unmetered per-IP", async () => {
+  it("anonymous tools/list shows the free tools, unmetered per-IP", async () => {
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(post(TOOLS_LIST_BODY), freeEnv(limiter));
     expect(res.status).toBe(200);
@@ -942,14 +950,13 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       result: { tools: Array<{ name: string }> };
     };
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_search",
     ]);
     expect(limiter.keys).toEqual([]);
   });
 
-  it("anonymous ChatGPT tools/list shows the five submitted tools with top-level securitySchemes", async () => {
+  it("anonymous ChatGPT tools/list shows the submitted tools with top-level securitySchemes", async () => {
     // The ChatGPT link-account flow requires the two auth-required
     // submitted tools to stay LISTED anonymously, and the Apps SDK reads
     // securitySchemes at the descriptor TOP LEVEL (injected by
@@ -969,7 +976,6 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       };
     };
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
@@ -979,7 +985,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     const byName = new Map(
       body.result.tools.map((t) => [t.name, t.securitySchemes]),
     );
-    for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
+    for (const name of ["tako_search", "tako_available_data"]) {
       expect(byName.get(name), name).toEqual([{ type: "noauth" }, oauth2]);
     }
     for (const name of ["tako_contents", "tako_visualize"]) {
@@ -1031,7 +1037,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
 
   it("anonymous tools/call forwards the TRIMMED FREE_TIER_API_KEY to Django and meters the IP", async () => {
     const limiter = fakeLimiter(true);
-    // tako_answer POSTs /api/v1/answer/ once; the handler's response
+    // tako_search POSTs its search endpoint once; the handler's response
     // handling is irrelevant here — the assertion is the outgoing header.
     const fetchMock = mockFetchSequence([
       new Response(JSON.stringify({}), {
@@ -1043,7 +1049,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     (env as { FREE_TIER_API_KEY?: string }).FREE_TIER_API_KEY =
       "free-tier-secret-key\n";
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
+      post(SEARCH_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
       env,
     );
     expect(res.status).toBe(200);
@@ -1056,7 +1062,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
   it("an over-limit anonymous tools/call gets a 200 TOOL ERROR the model can read", async () => {
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
+      post(SEARCH_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
       freeEnv(limiter),
     );
     // Not a 429: the SDK client throws on non-2xx, so the message would
@@ -1066,7 +1072,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       id: number;
       result: { content: Array<{ type: string; text: string }>; isError: boolean };
     };
-    expect(body.id).toBe(ANSWER_CALL_BODY.id);
+    expect(body.id).toBe(SEARCH_CALL_BODY.id);
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0]?.text).toBe(FREE_TIER_LIMIT_MESSAGE);
   });
@@ -1086,7 +1092,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
   it("a tools/call over the per-colo ceiling gets a 200 TOOL ERROR the model can read", async () => {
     const limiter = fakeLimiter(true);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY),
+      post(SEARCH_CALL_BODY),
       freeEnv(limiter, fakeLimiter(false)),
     );
     expect(res.status).toBe(200);
@@ -1094,7 +1100,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       id: number;
       result: { content: Array<{ text: string }>; isError: boolean };
     };
-    expect(body.id).toBe(ANSWER_CALL_BODY.id);
+    expect(body.id).toBe(SEARCH_CALL_BODY.id);
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0]?.text).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
     expect(limiter.keys).toEqual([]);
@@ -1103,7 +1109,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
   it("an oversized anonymous body gets a 413 without reaching Django", async () => {
     const fetchMock = mockFetchSequence([]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, {
+      post(SEARCH_CALL_BODY, {
         "content-length": String(MAX_FREE_TIER_BODY_BYTES + 1),
       }),
       freeEnv(fakeLimiter(true)),
@@ -1117,7 +1123,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     const fetchMock = mockFetchSequence([]);
     const res = await worker.fetch(
       post([
-        ANSWER_CALL_BODY,
+        SEARCH_CALL_BODY,
         {
           jsonrpc: "2.0",
           id: 7,
@@ -1338,7 +1344,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
         headers: { "content-type": "application/json" },
       }),
     ]);
-    const res = await worker.fetch(post(ANSWER_CALL_BODY), freeEnv(limiter));
+    const res = await worker.fetch(post(SEARCH_CALL_BODY), freeEnv(limiter));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       result: { content: Array<{ text: string }>; isError: boolean };
@@ -1357,7 +1363,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
         { status: 403, headers: { "content-type": "application/json" } },
       ),
     ]);
-    const res = await worker.fetch(post(ANSWER_CALL_BODY), freeEnv(limiter));
+    const res = await worker.fetch(post(SEARCH_CALL_BODY), freeEnv(limiter));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       result: { content: Array<{ text: string }>; isError: boolean };
@@ -1401,7 +1407,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     // fell through as the raw "Django returned 402 for POST …".
     mockFetchSequence([SUBSCRIPTION_402()]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, {
+      post(SEARCH_CALL_BODY, {
         authorization: "Bearer real-user-token",
         "user-agent": "claude-mcp-client/1.0",
       }),
@@ -1432,7 +1438,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     // raw-Bearer client is not stranded with OpenAI's crawlers.
     mockFetchSequence([PAYG_402()]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, {
+      post(SEARCH_CALL_BODY, {
         authorization: "Bearer real-user-token",
         "user-agent": "claude-code/2.1.220 (sdk-cli)",
       }),
@@ -1460,7 +1466,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     for (const userAgent of ["openai-mcp/1.0", "python-httpx/0.27"]) {
       mockFetchSequence([SUBSCRIPTION_402()]);
       const res = await worker.fetch(
-        post(ANSWER_CALL_BODY, {
+        post(SEARCH_CALL_BODY, {
           authorization: "Bearer real-user-token",
           "user-agent": userAgent,
         }),
@@ -1484,7 +1490,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     // account lifts the limits — the same conversion moment Exa's keyless
     // tier uses ("add your own API key to continue").
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, {
+      post(SEARCH_CALL_BODY, {
         "user-agent": "claude-code/2.1.220 (sdk-cli)",
         "cf-connecting-ip": "203.0.113.9",
       }),
@@ -1506,7 +1512,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     // UA could be an OpenAI reviewer or crawler.
     for (const userAgent of ["ChatGPT/1.0", "python-httpx/0.27"]) {
       const res = await worker.fetch(
-        post(ANSWER_CALL_BODY, { "user-agent": userAgent }),
+        post(SEARCH_CALL_BODY, { "user-agent": userAgent }),
         freeEnv(fakeLimiter(false)),
       );
       expect(res.status).toBe(200);
@@ -1523,7 +1529,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     // that connecting an account is the way past shared capacity.
     mockFetchSequence([SUBSCRIPTION_402()]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, { "user-agent": "claude-mcp-client/1.0" }),
+      post(SEARCH_CALL_BODY, { "user-agent": "claude-mcp-client/1.0" }),
       freeEnv(fakeLimiter(true)),
     );
     expect(res.status).toBe(200);
@@ -1601,7 +1607,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       }),
     ]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY),
+      post(SEARCH_CALL_BODY),
       freeEnv(throwingLimiter(), throwingLimiter()),
     );
     expect(res.status).toBe(200);
