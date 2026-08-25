@@ -1864,7 +1864,7 @@ export function freeTierHiddenToolResponse(
 export async function handleMcpRequest(
   request: Request,
   env: Env,
-  _surface: Surface = "generic",
+  surface: Surface,
 ): Promise<Response> {
   // Gate the endpoint behind Bearer auth — with one carve-out. A request
   // whose Authorization header is fully ABSENT (kind="missing") is served
@@ -1878,7 +1878,14 @@ export async function handleMcpRequest(
     bearer = extractBearer(request);
   } catch (err) {
     if (!(err instanceof BearerAuthError)) throw err;
-    freeTier = err.kind === "missing" ? resolveFreeTierConfig(env) : null;
+    // The ChatGPT app surface requires OAuth (spec D9): no anonymous state
+    // exists there, so an absent header is a plain 401 challenge — the
+    // flow OpenAI's Apps SDK bootstraps from. Only /mcp serves the free
+    // tier.
+    freeTier =
+      surface === "generic" && err.kind === "missing"
+        ? resolveFreeTierConfig(env)
+        : null;
     if (freeTier === null) {
       return bearerAuthResponse(request, err);
     }

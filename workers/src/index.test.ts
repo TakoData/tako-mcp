@@ -553,6 +553,42 @@ describe("worker routing", () => {
     }
   });
 
+  it("POST /mcp/chatgpt without Authorization is a 401 challenge even with free-tier bindings", async () => {
+    // The ChatGPT app surface requires OAuth (spec D9): no anonymous state
+    // exists there. The same anonymous request on /mcp serves the free tier.
+    const allow: RateLimit = { limit: async () => ({ success: true }) };
+    const freeTierEnv: Env = {
+      ...(env as Env),
+      FREE_TIER_API_KEY: "free-tier-test-key",
+      FREE_TIER_RATE_LIMITER: allow,
+      FREE_TIER_GLOBAL_RATE_LIMITER: allow,
+    };
+    const anonymousList = (path: string) =>
+      worker.fetch(
+        new Request(`https://example.com${path}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/list",
+            params: {},
+          }),
+        }),
+        freeTierEnv,
+      );
+    const challenged = await anonymousList("/mcp/chatgpt");
+    expect(challenged.status).toBe(401);
+    expect(challenged.headers.get("www-authenticate")).toContain(
+      "resource_metadata=",
+    );
+    const served = await anonymousList("/mcp");
+    expect(served.status).toBe(200);
+  });
+
   it("POST /mcp tools/list keeps the anonymous codex listing on the family surface, not unknown's", async () => {
     // The authenticated codex pin above cannot distinguish "codex resolved
     // as ChatGPT family" from "codex fell to `unknown`" by names alone on
