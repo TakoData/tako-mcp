@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.1](https://github.com/TakoData/tako-mcp/compare/v0.22.0...v0.22.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **graph:** sync the OpenAPI spec and move off the deprecated /beta/graph alias ([#255](https://github.com/TakoData/tako-mcp/issues/255)) ([64fc114](https://github.com/TakoData/tako-mcp/commit/64fc114c376048936dc4cd59936410e429c42014))
+
 ## [0.22.0](https://github.com/TakoData/tako-mcp/compare/v0.21.1...v0.22.0) (2026-08-21)
 
 
