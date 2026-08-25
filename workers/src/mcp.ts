@@ -184,27 +184,21 @@ export const SERVER_VERSION = "0.22.2"; // x-release-please-version
  */
 const SHARED_INSTRUCTION_PARAGRAPHS = [
   "Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.",
-  "",
-  "`tako_answer` and `tako_search` do different jobs, so pick one, don't chain them. `tako_answer` for ONE specific figure. `tako_search` for breadth, or when the chart or embed is the deliverable.",
 ];
 
 export const SERVER_INSTRUCTIONS = [
   ...SHARED_INSTRUCTION_PARAGRAPHS,
   "",
-  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.",
+  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url. Set `include_contents: true` on `tako_search` when you need the rows themselves.",
 ].join("\n");
 
 /**
  * Instructions served to ANONYMOUS (free-tier) connections. Identical to
  * `SERVER_INSTRUCTIONS` except the last paragraph: the authenticated text
- * describes `tako_contents` as if it were callable, but the anonymous
- * surface hides it on most clients — a model given the authenticated
- * paragraph calls a tool that "does not exist" and reads the SDK's
- * unknown-tool error as a server bug. The free variant states the actual
- * toolset and that the rest unlocks with a Tako account, which converts
- * the contradiction into accurate discoverability (and pairs with the
- * pre-dispatch gate in `handleMcpRequest`, which answers such calls with
- * sign-in guidance instead of "tool not found").
+ * describes `tako_contents` as if it were runnable, but an anonymous call
+ * to it answers sign-in instructions (the dispatch gate in
+ * `registerTool`). The free variant states which tools actually EXECUTE
+ * and that the rest unlocks with a Tako account.
  *
  * The shared paragraphs are spread from one array, not copied, so tuning
  * the cross-tool guidance cannot drift the two tiers apart. Authenticated
@@ -214,12 +208,11 @@ export const SERVER_INSTRUCTIONS = [
 export const FREE_TIER_SERVER_INSTRUCTIONS = [
   ...SHARED_INSTRUCTION_PARAGRAPHS,
   "",
-  // "the tools that run", not "the full toolset": on ChatGPT-family
-  // anonymous connections two auth-required tools stay LISTED for the
-  // link-account UI (see `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES`), so
-  // a toolset-count claim would be false there; what's true on every
-  // client is which tools EXECUTE.
-  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. This connection is anonymous: `tako_available_data` and `tako_search` are the tools that run here. Other tools — like `tako_contents`, which reads one source in full (an exportable card's rows, or a web page's text by url) — become available on a connection authenticated with a Tako account.",
+  // "the tools that run", not "the full toolset": the LISTING is
+  // auth-invariant (spec D4) — `tako_contents` stays listed anonymously —
+  // so a toolset-count claim would be false; what's true is which tools
+  // EXECUTE.
+  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. This connection is anonymous: `tako_available_data` and `tako_search` are the tools that run here. `tako_contents` — which reads one source in full (an exportable card's rows, or a web page's text by url) — and inline rows on search (`include_contents: true`) need a connection signed in with a Tako account.",
 ].join("\n");
 
 /** The `initialize` instructions for a connection's tier. */
@@ -980,6 +973,24 @@ function registerTool(
           `[mcp] auth-required tool blocked on free tier tool=${tool.name} surface=${options.surface}`,
         );
         return authRequiredToolResult(options.origin, options.signInHint);
+      }
+      // Anonymous-input gate: a free tool can still carry an input shape
+      // that needs a signed-in connection — `include_contents: true`
+      // inlines billed rows (spec D12). Refused calls are unmetered
+      // upstream: the reject runs before the handler touches Django.
+      if (callCtx.tier === "free" && tool.anonymousInputRejects !== undefined) {
+        const reason = tool.anonymousInputRejects(
+          input as Record<string, unknown>,
+        );
+        if (reason !== undefined) {
+          console.log(`[mcp] anonymous input rejected tool=${tool.name}`);
+          return authRequiredToolResult(
+            options.origin,
+            options.signInHint === undefined
+              ? reason
+              : `${reason} ${options.signInHint}`,
+          );
+        }
       }
       let output: unknown;
       try {

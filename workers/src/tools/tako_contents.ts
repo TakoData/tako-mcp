@@ -37,13 +37,13 @@ import {
 import type { ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Fetch the real content behind result URLs (1-10 per call) from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.",
+  "Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.",
   "",
-  "Best for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.",
+  "Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline (and, with include_contents: true, a rows preview), not the full series.",
   "",
-  "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Get their figures from `tako_answer` instead: pin the card's METRIC node_id with strict:true and state the period you need in the query (e.g. \"...for FY2023-FY2025\"), which is what turns a headline number into a series. Call this tool only on `exportable: true` cards; even then a rare card 403s — bounce to tako_answer the same way, do not retry here.",
+  "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.",
   "",
-  "Web URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
+  "Web URLs always work — so this is also the fallback path when tako_search surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
 ].join("\n");
 
 // Curate the input from the contract explicitly: `.pick` only the fields we

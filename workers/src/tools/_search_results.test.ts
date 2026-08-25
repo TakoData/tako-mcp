@@ -282,7 +282,11 @@ describe("slimCard — explicit exportable flag", () => {
 // tool-description recall exercise. Wording is neutral ("not exportable"):
 // export_safe() also fails closed on non-licensing causes.
 describe("slimCard — values_hint on gated cards", () => {
-  it("stamps a values_hint with pinned node_ids on an exportable:false card", () => {
+  it("stamps a plain not-exportable hint that routes to NO tool", () => {
+    // `tako_answer` is opt-in (spec D1): a hint naming it would send the
+    // model into "tool not found" on the default surface, so the hint
+    // states what IS true (no rows on any path; headline in description)
+    // and advises no call at all.
     const card: TakoCard = {
       card_id: "c1",
       exportable: false,
@@ -293,43 +297,9 @@ describe("slimCard — values_hint on gated cards", () => {
     };
     const hint = slimCard(card, 5).values_hint;
     expect(hint).toContain("not exportable");
-    expect(hint).toContain("tako_answer");
-    // The METRIC node alone, with strict — pinning the entity too re-admits
-    // every other card for that entity, and without strict a pin is inert.
-    expect(hint).toContain('["n2"]');
-    expect(hint).not.toContain("n1");
-    expect(hint).toContain("strict:true");
-  });
-
-  it("falls back to the mt:: id prefix when the card's nodes arrive untyped", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      exportable: false,
-      nodes: [
-        { id: "ent::acme::1", name: "Acme", type: "" },
-        { id: "mt::revenue::2", name: "Revenue", type: "" },
-      ],
-    };
-    expect(slimCard(card, 5).values_hint).toContain('["mt::revenue::2"]');
-  });
-
-  it("advises no pin at all when the card carries no metric node", () => {
-    // Silence beats steering the model into the variant measured to misfire.
-    const card: TakoCard = {
-      card_id: "c1",
-      exportable: false,
-      nodes: [{ id: "ent::acme::1", name: "Acme", type: "entity" }],
-    };
-    const hint = slimCard(card, 5).values_hint;
-    expect(hint).toContain("tako_answer");
+    expect(hint).not.toContain("tako_answer");
     expect(hint).not.toContain("node_ids");
-  });
-
-  it("stamps a node-less hint when the gated card has no nodes", () => {
-    const card: TakoCard = { card_id: "c1", exportable: false };
-    const hint = slimCard(card, 5).values_hint;
-    expect(hint).toContain("tako_answer");
-    expect(hint).not.toContain("node_ids");
+    expect(hint).not.toContain("strict");
   });
 
   it("points at the headline only when the card actually carries a description", () => {

@@ -56,7 +56,7 @@ const DESCRIPTION = [
   "",
   "Reach past it only for a different job: `tako_search` for breadth recon (it locates data, it does not carry values), `tako_available_data` when the question is what Tako covers, the Answer Agent for open-ended research.",
   "",
-  "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Cited cards inline their recent rows (see include_contents/preview_rows), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
+  "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
   "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.",
 ].join("\n");
@@ -87,9 +87,9 @@ const inputSchema = z.object({
   // response dense, converting those cascades into single-call runs.
   include_contents: z
     .boolean()
-    .default(true)
+    .default(false)
     .describe(
-      "Inline each cited data card's recent rows alongside the answer (default true; preview_rows sets how many) — the values arrive with the prose, no follow-up fetch. Set false — prose + citations only — for broad fan-outs or when coverage is unconfirmed (no prior tako_available_data check). DATA cards only; cited web pages are never auto-inlined (billed per page — use tako_contents).",
+      "Set true to inline each cited data card's recent rows alongside the answer (`preview_rows` caps how many; rows are billed per 1k) — the values arrive with the prose, no follow-up fetch. Leave false (the default) for prose + citations only. DATA cards only; cited web pages are never auto-inlined (billed per page — use tako_contents).",
     ),
   preview_rows: z
     .number()
@@ -98,7 +98,7 @@ const inputSchema = z.object({
     .max(MAX_PREVIEW_ROWS)
     .default(INLINE_PREVIEW_ROW_CAP)
     .describe(
-      `Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). For more rows, call tako_contents on the card's url (priced beyond the first ${INLINE_PREVIEW_ROW_CAP}). Ignored when include_contents is false.`,
+      `Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}; rows are billed per 1k). For more rows, call tako_contents on the card's url (max_rows up to 2,000, billed per 1k rows). Ignored when include_contents is false.`,
     ),
   country_code: z
     .string()
@@ -192,7 +192,7 @@ export function buildAnswerBody(input: Input): z.input<typeof AnswerRequest> {
   if (input.sources.includes("data") || input.sources.includes("tako")) {
     const data: NonNullable<
       NonNullable<z.input<typeof AnswerRequest>["sources"]>["data"]
-    > = { include_contents: input.include_contents ?? true };
+    > = { include_contents: input.include_contents ?? false };
     if (input.node_ids !== undefined && input.node_ids.length > 0) {
       data.node_ids = input.node_ids;
     }

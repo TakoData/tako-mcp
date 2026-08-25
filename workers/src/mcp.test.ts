@@ -922,6 +922,42 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     },
   );
 
+  it("anonymous include_contents: true on tako_search is refused with sign-in copy, unexecuted", async () => {
+    // Spec D10/D12: anonymous connections never inline rows. The refusal
+    // names both exits and the call never reaches Django (unmetered
+    // upstream — the reject happens before the handler).
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await callTool(
+      { tier: "free", requestOrigin: "https://mcp.example.com" },
+      "tako_search",
+      { query: "US GDP", include_contents: true },
+      "free",
+    );
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
+    ).toBe("auth_required");
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toMatch(/retry without include_contents/i);
+
+    // The same call authenticated executes normally.
+    const okFetch = vi.fn(async () =>
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r1" }),
+    );
+    vi.stubGlobal("fetch", okFetch);
+    const ok = await callTool(
+      { requestOrigin: "https://mcp.example.com" },
+      "tako_search",
+      { query: "US GDP", include_contents: true },
+    );
+    expect(okFetch).toHaveBeenCalled();
+    expect(
+      (ok._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
+    ).not.toBe("auth_required");
+  });
+
   it("a tier set ONLY on ToolContext still engages the dispatch gate (fail-closed default)", async () => {
     // Regression guard for the gate's input resolution: a future call
     // site that declares the tier on ctx but forgets options.tier must
@@ -1395,15 +1431,13 @@ describe("paymentRequiredToolResult", () => {
 });
 
 describe("SERVER_INSTRUCTIONS", () => {
-  it("names every tool an agent must choose between", () => {
-    for (const tool of [
-      "tako_search",
-      "tako_answer",
-      "tako_available_data",
-      "tako_contents",
-    ]) {
+  it("names every DEFAULT-surface tool an agent must choose between — and no opt-in tool", () => {
+    for (const tool of ["tako_search", "tako_available_data", "tako_contents"]) {
       expect(SERVER_INSTRUCTIONS).toContain(tool);
     }
+    // tako_answer is opt-in (spec D1): naming it here would route models
+    // to a tool the default connection has not registered.
+    expect(SERVER_INSTRUCTIONS).not.toContain("tako_answer");
   });
 
   it("the free-tier variant shares the cross-tool guidance and differs only in the last paragraph", () => {
@@ -1421,12 +1455,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     // call), plus `tako_contents` as the unlock teaser — paired with the
     // pre-dispatch gate in `handleMcpRequest`, which answers a call to it
     // with sign-in guidance rather than "tool not found".
-    for (const tool of [
-      "tako_search",
-      "tako_answer",
-      "tako_available_data",
-      "tako_contents",
-    ]) {
+    for (const tool of ["tako_search", "tako_available_data", "tako_contents"]) {
       expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain(tool);
     }
     expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain("anonymous");
@@ -1524,11 +1553,9 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect({ obliges, denies }).not.toEqual({ obliges: true, denies: true });
   });
 
-  // `tako_answer` (specific figure) and `tako_search` (breadth) are different
-  // jobs, not a ranked pipeline — an ordering invites the model to chain them.
-  it("presents answer and search as a choice, not a sequence", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/different jobs/i);
-  });
+  // `tako_answer` is opt-in (spec D1) — the answer-vs-search routing
+  // paragraph left with it. The instructions must not reference the
+  // opt-in tool at all (see "names every DEFAULT-surface tool" above).
 
   // Inverted deliberately. The pin form USED to be asserted here, and the
   // A/B retired it: pinning happened on 12% of runs with the server-level copy
@@ -1558,11 +1585,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     }
   });
 
-  // The one line with a measured behavioural effect, so it is pinned verbatim
-  // rather than by paraphrase.
-  it("keeps the answer-vs-search split in its measured phrasing", () => {
-    expect(SERVER_INSTRUCTIONS).toContain("pick one, don't chain them");
-  });
+
 
   // `tako_available_data` answers coverage questions in its own right, not
   // only as a gate in front of the priced tools: "what does Tako have on X"

@@ -144,7 +144,7 @@ export const takoCardSchema = z
       .string()
       .optional()
       .describe(
-        `Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — headline in \`description\` when the card carries one, specific figures via tako_answer, where you ${PINNED_FROM_CARD}.`,
+        "Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — the headline in `description` when the card carries one; the rows themselves cannot be exported on any path.",
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
@@ -474,42 +474,22 @@ export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
   );
 };
 
-// Routing hint for a non-exportable (exportable:false) card. Such cards carry
-// no rows on any surface — specific figures come from tako_answer — so the
-// hint makes that routing per-card and deterministic instead of a
-// tool-description recall exercise. Wording stays NEUTRAL ("not exportable",
-// not "license-gated"): the backend's export_safe() also fails closed on
-// blank/unresolvable source names and config-alignment errors, and narrating
-// those as a licensing decision would keep real bugs from being reported.
-// The "headline value is in description" clause is asserted only when the
-// card actually carries a description — an unverified pointer is worse than
-// none.
+// Hint for a non-exportable (exportable:false) card. Such cards carry no
+// rows on any path — `tako_answer` (opt-in since spec D1) is off the
+// default surface, so the hint no longer routes there; naming a tool the
+// connection has not registered sends the model into "tool not found".
+// Wording stays NEUTRAL ("not exportable", not "license-gated"): the
+// backend's export_safe() also fails closed on blank/unresolvable source
+// names and config-alignment errors, and narrating those as a licensing
+// decision would keep real bugs from being reported. The "headline value
+// is in description" clause is asserted only when the card actually
+// carries a description — an unverified pointer is worse than none.
 function valuesHint(card: TakoCard): string {
-  // Pin the METRIC node ALONE, with strict. This used to emit every node id on
-  // the card — entity AND metric — and never mentioned `strict`, which is the
-  // one combination measured to do nothing: at the default `strict:false` a pin
-  // does not steer retrieval at all, and under `strict:true` the entity id
-  // re-admits every other card for that entity (strict is an OR over pinned
-  // nodes), which once turned "no such card" into a plausible-looking WRONG
-  // metric. Same correction already applied to next_call and the zero-card
-  // guidance; this hint was the last place still advising the broken form.
-  //
-  // `type` is the wire's own discriminator; the `mt::` id prefix is a fallback
-  // for cards whose nodes arrive untyped. With neither, no pin is advised —
-  // silence beats steering the model into the variant that misfires.
-  const nodes = card.nodes ?? [];
-  const metricIds = nodes
-    .filter((n) => n.type === "metric" || n.id.startsWith("mt::"))
-    .map((n) => n.id);
-  const pin =
-    metricIds.length > 0
-      ? ` with node_ids ${JSON.stringify(metricIds)} pinned and strict:true`
-      : "";
   const headline =
     typeof card.description === "string" && card.description.trim() !== ""
-      ? "headline value is in description; "
+      ? "; headline value is in description"
       : "";
-  return `rows not exportable; ${headline}for specific figures call tako_answer${pin}`;
+  return `rows not exportable${headline}`;
 }
 
 // Only paragraph-length strings are worth hoisting — moving a short label

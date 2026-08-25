@@ -1059,12 +1059,11 @@ describe("worker routing", () => {
     expect(chatgptDesc).toBe(claudeDesc);
     expect(unknownDesc).toBe(claudeDesc);
 
-    // Promises the inline auto-render and routes the "I just want a written
-    // answer" case to tako_answer. The cross-reference is client-agnostic
-    // (names the peer data tool, not the ChatGPT-only agent split tools)
-    // since this one description string is served verbatim to every host.
+    // Promises the inline auto-render. It must NOT reference `tako_answer`
+    // — opt-in since spec D1, so naming it would route models to a tool
+    // the default connection has not registered.
     expect(claudeDesc).toContain("auto-renders inline");
-    expect(claudeDesc).toContain("tako_answer");
+    expect(claudeDesc).not.toContain("tako_answer");
 
     // No residue from the removed legacy deep/async machinery.
     expect(claudeDesc).not.toContain("auto-escalation");

@@ -863,14 +863,25 @@ describe("commerce-gated upsell (FREE_TIER_COMMERCE_UPSELL)", () => {
   it("obeys the hygiene rules that are not commerce-specific", () => {
     // It exists to name the account path, so the commerce-word ban does not
     // apply — but the other message rules still do: no scheme URL (bare
-    // domain only — deep links rot), no stale host, no rate figure, and no
-    // "free" (the tier never names itself).
+    // domain only — deep links rot), no stale host, and no rate figure.
+    // "free requests" IS allowed: it states the CI-guarded welcome grant
+    // (pricing_claims_unit_test.py in the monorepo), not a self-naming of
+    // the tier — and it must never read as recurring.
     expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/https?:\/\//);
     expect(FREE_TIER_COMMERCE_UPSELL).not.toContain("trytako.com");
     expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(
       /\d+\s*requests?\s*(\/|per)\s*(min|minute|sec|second)/i,
     );
-    expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/\bfree\b/i);
+    expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/free\s+(?!requests)/i);
+    expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/per month|monthly|\/mo\b/i);
+  });
+
+  it("states the welcome-grant figure — up to 2,000 free requests on a new account", () => {
+    // The one number allowed here: the $14 one-time welcome grant is
+    // CI-guarded in the monorepo (pricing_claims_unit_test.py), unlike
+    // the limiter buckets, which can enforce no figure at all.
+    expect(FREE_TIER_COMMERCE_UPSELL).toContain("2,000 free requests");
+    expect(FREE_TIER_COMMERCE_UPSELL).toContain("tako.com");
   });
 });
 

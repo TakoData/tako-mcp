@@ -584,19 +584,23 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
     },
   };
 
-  it("defaults include_contents to true and preview_rows to the free inline allowance (20)", () => {
-    // 20 mirrors the backend's CSV_FREE_ROWS inline cap — the server never
-    // ships more than the account's allowance, so a larger default would
-    // promise rows that never arrive (PR #179 review, comment C1).
+  it("defaults include_contents to false (spec D11) and preview_rows to the inline cap (20)", () => {
+    // Every delivered row bills since tako#29572 — the default matches the
+    // raw v3 API (types.py include_contents=False). 20 mirrors the
+    // backend's inline row cap.
     const parsed = takoAnswer.inputSchema.parse({ query: "x" });
-    expect(parsed.include_contents).toBe(true);
+    expect(parsed.include_contents).toBe(false);
     expect(parsed.preview_rows).toBe(20);
   });
 
   it("requests include_contents on the DATA source only; web stays pinned false", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
     await takoAnswer.handler(
-      takoAnswer.inputSchema.parse({ query: "US GDP", sources: ["data", "web"] }),
+      takoAnswer.inputSchema.parse({
+        query: "US GDP",
+        sources: ["data", "web"],
+        include_contents: true,
+      }),
       CTX,
     );
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
@@ -608,8 +612,8 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
 
   it("keeps the preview_rows most-recent rows on cited cards instead of stripping them", async () => {
     // The teaser that triggers the cascade: "card exists, latest value 59.2%"
-    // with the series absent. With include_contents on (the default), the
-    // capped series must survive to the model.
+    // with the series absent. With include_contents set, the capped series
+    // must survive to the model.
     mockFetchSequence([
       jsonResponse(200, {
         answer: "Core CPI was 2.6% in Jun 2026.",
@@ -619,7 +623,11 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
       }),
     ]);
     const out = await takoAnswer.handler(
-      takoAnswer.inputSchema.parse({ query: "US core CPI", preview_rows: 40 }),
+      takoAnswer.inputSchema.parse({
+        query: "US core CPI",
+        include_contents: true,
+        preview_rows: 40,
+      }),
       CTX,
     );
     const ds = (out.cards[0]?.content as { dataset: { rows: unknown[] } }).dataset;

@@ -352,18 +352,22 @@ export const FREE_TIER_LIMIT_MESSAGE =
 /**
  * Upsell sentence appended to the limit/capacity messages — ONLY when the
  * caller passes `commerceCopyAllowed: true`, which `mcp.ts` derives from
- * `commerceCopyAllowedForUa` (an allowlist of POSITIVELY-identified
- * Anthropic clients; unknown UAs fail closed). The base messages stay
- * commerce-free because they reach ChatGPT's model (see
- * `FREE_TIER_LIMIT_MESSAGE`); Anthropic hosts have no such policy, and the
- * anonymous limit is the natural moment to say an account exists — the
- * same conversion point Exa's keyless tier uses ("add your own API key to
- * continue"). Bare domain, no deep link: deep links rot (the `/account/`
+ * the surface: commerce copy is allowed on the GENERIC surface for every
+ * client (spec D5); the chatgpt surface never reaches this path (it 401s
+ * anonymous requests before admission), and OpenAI's app guidelines ban
+ * purchase-promoting copy there anyway. The anonymous limit is the natural
+ * moment to say an account exists — the same conversion point Exa's
+ * keyless tier uses ("add your own API key to continue").
+ *
+ * "up to 2,000 free requests" is the $14 one-time welcome grant, the one
+ * figure with a CI guard behind it (`pricing_claims_unit_test.py` in the
+ * monorepo). It is ONE-TIME: never write "per month" or any recurring
+ * framing. Bare domain, no deep link: deep links rot (the `/account/`
  * path a previous version of this copy used was already stale when it was
  * removed — see `PAYMENT_REQUIRED_REMEDY_FALLBACK` in `mcp.ts`).
  */
 export const FREE_TIER_COMMERCE_UPSELL =
-  "Connecting a Tako account (tako.com) lifts these anonymous-access limits.";
+  "Sign in with your client's MCP authentication for up to 2,000 free requests on a new account, or connect with a Tako API key (tako.com).";
 
 /**
  * Response for an over-limit metered `tools/call`.

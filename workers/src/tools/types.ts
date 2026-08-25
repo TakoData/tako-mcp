@@ -332,6 +332,16 @@ export interface ToolModule<
    * false everywhere.
    */
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
+  /**
+   * Optional anonymous-input gate, consulted by `registerTool` on
+   * `tier: "free"` calls BEFORE the handler runs. Return the extra
+   * model-facing sentence when the anonymous call must be refused
+   * (answered with `authRequiredToolResult`, unmetered upstream);
+   * return `undefined` to admit the call. Exists for inputs that are
+   * fine authenticated but priced/gated anonymously — `tako_search`'s
+   * `include_contents: true` is the worked example (spec D12).
+   */
+  anonymousInputRejects?: (input: Record<string, unknown>) => string | undefined;
   handler: (input: z.infer<InputSchema>, ctx: ToolContext) => Promise<Output>;
   /**
    * Optional model-facing text renderer. When present, `mcp.ts` uses its
@@ -423,6 +433,8 @@ export interface AnyToolModule {
   annotations: ToolAnnotations;
   /** Per-surface annotation overrides — see {@link ToolModule.annotationsBySurface}. */
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
+  /** Anonymous-input gate — see {@link ToolModule.anonymousInputRejects}. */
+  anonymousInputRejects?: (input: Record<string, unknown>) => string | undefined;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;
   renderText?: (output: unknown, ctx: ToolContext) => string;
   slimStructured?: (output: unknown) => Record<string, unknown>;
