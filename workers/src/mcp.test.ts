@@ -907,9 +907,8 @@ describe("free-tier tool surface", () => {
     }
   }
 
-  it("tier 'free' registers exactly the three free tools", async () => {
+  it("tier 'free' registers exactly the free tools", async () => {
     await expect(listToolNames({ tier: "free" })).resolves.toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_search",
     ]);
@@ -925,21 +924,20 @@ describe("free-tier tool surface", () => {
           "get_credit_balance",
         ]),
       }),
-    ).resolves.toEqual(["tako_answer", "tako_available_data", "tako_search"]);
+    ).resolves.toEqual(["tako_available_data", "tako_search"]);
   });
 
   it("tier 'free' on ChatGPT clients keeps the auth-required submitted tools DISCOVERABLE", async () => {
     // ChatGPT's link-account UI is keyed off the `tools/list` descriptors
-    // (OpenAI Apps SDK auth guide), so the two submitted tools that need a
+    // (OpenAI Apps SDK auth guide), so the submitted tools that need a
     // linked account stay listed on anonymous connections — the full
-    // five-tool surface `chatgpt-app-submission.json` declares. They are
+    // surface `chatgpt-app-submission.json` declares. They are
     // listed, not runnable: the dispatch gate answers with an
     // `_meta["mcp/www_authenticate"]` challenge (tested below) instead of
     // executing on the shared free-tier account.
     await expect(
       listToolNames({ tier: "free", client: "chatgpt" }),
     ).resolves.toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
@@ -960,7 +958,6 @@ describe("free-tier tool surface", () => {
         ]),
       }),
     ).resolves.toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
@@ -970,7 +967,6 @@ describe("free-tier tool surface", () => {
 
   it("omitting tier keeps the existing default (authenticated) surface", async () => {
     await expect(listToolNames({})).resolves.toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
@@ -1851,7 +1847,11 @@ describe("stringified array arguments survive SDK input validation", () => {
       sendProgress: noopSendProgress,
       client: "unknown",
     };
-    const server = createMcpServer(ctx, { client: "unknown" });
+    // tako_answer is opt-in now — enable it the way ?tools=answer would.
+    const server = createMcpServer(ctx, {
+      client: "unknown",
+      enabledOptionalToolNames: new Set(["tako_answer"]),
+    });
     const mcpClient = new Client(
       { name: "loose-array-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },

@@ -18,6 +18,7 @@ const GRAPH_TOOLS = ["tako_graph_search", "tako_graph_related", "tako_graph_node
 // The single-tool aliases: context-heavy or rarely-needed tools kept off the
 // default surface. Same loud-failure rationale as AGENT_TOOLS.
 const SINGLE_TOOL_ALIASES: Record<string, string> = {
+  answer: "tako_answer",
   visualize: "tako_visualize",
   credits: "get_credit_balance",
 };
@@ -50,6 +51,13 @@ describe("parseEnabledOptionalToolNames", () => {
     expect([...parseEnabledOptionalToolNames("agent")].sort()).toEqual(
       [...AGENT_TOOLS].sort(),
     );
+  });
+
+  it("expands the `answer` alias to tako_answer, which is opt-in", () => {
+    expect(parseEnabledOptionalToolNames("answer")).toEqual(
+      new Set(["tako_answer"]),
+    );
+    expect(OPTIONAL_TOOL_NAMES.has("tako_answer")).toBe(true);
   });
 
   it("expands the `graph` alias to all three graph primitives", () => {

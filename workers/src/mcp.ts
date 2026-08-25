@@ -226,7 +226,7 @@ export const FREE_TIER_SERVER_INSTRUCTIONS = [
   // link-account UI (see `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES`), so
   // a toolset-count claim would be false there; what's true on every
   // client is which tools EXECUTE.
-  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. This connection is anonymous: `tako_available_data`, `tako_search`, and `tako_answer` are the tools that run here. Other tools — like `tako_contents`, which reads one source in full (an exportable card's rows, or a web page's text by url) — become available on a connection authenticated with a Tako account.",
+  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. This connection is anonymous: `tako_available_data` and `tako_search` are the tools that run here. Other tools — like `tako_contents`, which reads one source in full (an exportable card's rows, or a web page's text by url) — become available on a connection authenticated with a Tako account.",
 ].join("\n");
 
 /** The `initialize` instructions for a connection's tier. */

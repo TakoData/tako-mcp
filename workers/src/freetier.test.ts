@@ -1589,7 +1589,6 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       result: { tools: Array<{ name: string }> };
     };
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",

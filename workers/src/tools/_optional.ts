@@ -22,7 +22,7 @@
  * then narrow to the correct variant for the calling client. Users never need
  * to know the split exists — they enable `agent` and get the right tool.
  *
- * `visualize` and `credits` are single-tool aliases: these
+ * `answer`, `visualize`, and `credits` are single-tool aliases: these
  * tools are useful but rarely needed, so they are kept off the default
  * surface to save per-session context. They compose freely, e.g.
  * `?tools=visualize,credits`. Exception: `tako_visualize` stays on the
@@ -43,6 +43,10 @@ export const OPTIONAL_TOOL_ALIASES: Readonly<
   Record<string, readonly string[]>
 > = {
   agent: ["tako_agent", "tako_agent_start", "tako_agent_wait"],
+  // Opt-in per spec D1: the host model already synthesizes from
+  // tako_search results, so a prose-answer tool is double synthesis.
+  // Docs mark it "not recommended".
+  answer: ["tako_answer"],
   visualize: ["tako_visualize"],
   credits: ["get_credit_balance"],
   graph: ["tako_graph_search", "tako_graph_related", "tako_graph_node"],

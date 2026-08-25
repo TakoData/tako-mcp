@@ -385,7 +385,6 @@ describe("worker routing", () => {
     // `tako_search` is the sole owner of the chart widget on the default
     // surface (auto-renders the top card inline).
     expect(names).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
@@ -441,7 +440,7 @@ describe("worker routing", () => {
     }
   });
 
-  it("POST /mcp tools/list serves ChatGPT the five submitted tools with top-level securitySchemes", async () => {
+  it("POST /mcp tools/list serves ChatGPT the submitted tools with top-level securitySchemes", async () => {
     // ChatGPT's Apps SDK reads `securitySchemes` at the descriptor TOP
     // LEVEL (developers.openai.com/apps-sdk/build/auth). The MCP SDK
     // drops unknown descriptor fields, so `handleMcpRequest` injects the
@@ -473,11 +472,11 @@ describe("worker routing", () => {
         }>;
       };
     };
-    // The default authenticated ChatGPT surface = exactly the five tools
+    // The default authenticated ChatGPT surface = exactly the tools
     // chatgpt-app-submission.json declares (visualize is default-on for
-    // ChatGPT; the agent pair needs ?tools=agent).
+    // ChatGPT; the agent pair needs ?tools=agent; answer needs
+    // ?tools=answer).
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
@@ -531,18 +530,13 @@ describe("worker routing", () => {
     // Full family surface, identical to chatgpt.com: visualize is
     // default-on because codex is a widget client after the flip.
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
       "tako_visualize",
     ]);
     const oauth2 = { type: "oauth2", scopes: ["mcp"] };
-    const widgetOwners = new Set([
-      "tako_answer",
-      "tako_search",
-      "tako_visualize",
-    ]);
+    const widgetOwners = new Set(["tako_search", "tako_visualize"]);
     for (const t of body.result.tools) {
       // The family injection reaches codex descriptors...
       expect(t.securitySchemes, t.name).toEqual([oauth2]);
@@ -639,22 +633,20 @@ describe("worker routing", () => {
       return body.result.tools.map((t) => t.name).sort();
     };
 
-    // Anonymous desktop app: full family listing — the free-tier trio plus
-    // the two auth-gated tools that must stay listed pre-link so the host
+    // Anonymous desktop app: full family listing — the free tools plus
+    // the auth-gated tools that must stay listed pre-link so the host
     // can offer sign-in from the descriptor.
     expect(await listTools("codex-mcp-client/0.148.0-alpha.9")).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
       "tako_visualize",
     ]);
     // Same request with an unrecognized UA: the anonymous surface shrinks
-    // to the free-tier trio. This contrast is what makes the codex
+    // to the free tools. This contrast is what makes the codex
     // assertion above meaningful — the two listings differ, so a
     // classifier miss fails here instead of degrading silently.
     expect(await listTools("some-unknown-agent/1.0")).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_search",
     ]);
@@ -745,14 +737,14 @@ describe("worker routing", () => {
         }>;
       };
     };
-    // 4 retrieval tools + tako_visualize (default-on for widget clients).
-    expect(body.result.tools).toHaveLength(5);
-    // The 4 retrieval tools keep the MCP spec's open-world, read-only meaning
+    // 3 retrieval tools + tako_visualize (default-on for widget clients).
+    expect(body.result.tools).toHaveLength(4);
+    // The 3 retrieval tools keep the MCP spec's open-world, read-only meaning
     // for claude.
     const retrieval = body.result.tools.filter(
       (t) => t.name !== "tako_visualize",
     );
-    expect(retrieval).toHaveLength(4);
+    expect(retrieval).toHaveLength(3);
     for (const t of retrieval) {
       expect(t.annotations.openWorldHint, t.name).toBe(true);
       expect(t.annotations.readOnlyHint, t.name).toBe(true);
@@ -815,8 +807,8 @@ describe("worker routing", () => {
     // `tako_visualize` is opt-in for other clients but default-on for
     // widget clients (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES`) — it powers the widget.
     expect(names.has("tako_visualize")).toBe(true);
-    // 4 defaults + tako_visualize (ChatGPT default-on) + the split pair = 7.
-    expect(body.result.tools).toHaveLength(7);
+    // 3 defaults + tako_visualize (ChatGPT default-on) + the split pair = 6.
+    expect(body.result.tools).toHaveLength(6);
 
     const agentStartTool = body.result.tools.find(
       (t) => t.name === "tako_agent_start",
@@ -900,8 +892,8 @@ describe("worker routing", () => {
     // discovery tool is present.
     expect(names.has("tako_available_data")).toBe(true);
     expect(names.has("get_credit_balance")).toBe(false);
-    // 4 defaults + tako_visualize = 5.
-    expect(body.result.tools).toHaveLength(5);
+    // 3 defaults + tako_visualize = 4.
+    expect(body.result.tools).toHaveLength(4);
 
     for (const tool of body.result.tools) {
       expect(tool.annotations.destructiveHint, tool.name).toBe(false);
@@ -965,18 +957,18 @@ describe("worker routing", () => {
     // presence here says nothing about the alias. `credits` is the honest
     // check that the alias widened nothing beyond the agent.
     expect(names.has("get_credit_balance")).toBe(false);
-    // 4 defaults + tako_visualize (widget client) + tako_agent = 6.
-    expect(body.result.tools).toHaveLength(6);
+    // 3 defaults + tako_visualize (widget client) + tako_agent = 5.
+    expect(body.result.tools).toHaveLength(5);
   });
 
-  it("POST /mcp?tools=<unknown> ignores the bad value and serves the default 4 tools", async () => {
+  it("POST /mcp?tools=<unknown> ignores the bad value and serves the default 3 tools", async () => {
     // A typo (or any unrecognized alias) in `?tools=` must never break the
     // connection: unknown tokens are dropped, no optional tool is enabled, and
-    // the request layer still returns exactly the 4 defaults. This guards the
+    // the request layer still returns exactly the 3 defaults. This guards the
     // parser's "unknown token is never fatal" promise end-to-end.
     //
     // Deliberately a NON-widget UA: `tako_visualize` is default-on for
-    // chatgpt/claude, so on those clients "exactly the 4 defaults" is not the
+    // chatgpt/claude, so on those clients "exactly the 3 defaults" is not the
     // right expectation and the count would stop testing the parser.
     const res = await SELF.fetch("https://example.com/mcp?tools=nope", {
       method: "POST",
@@ -1005,7 +997,7 @@ describe("worker routing", () => {
     expect(names.has("tako_agent_wait")).toBe(false);
     expect(names.has("tako_visualize")).toBe(false);
     expect(names.has("tako_search")).toBe(true);
-    expect(body.result.tools).toHaveLength(4);
+    expect(body.result.tools).toHaveLength(3);
   });
 
   it("POST /mcp?tools=visualize adds tako_visualize without widget metadata (non-ChatGPT)", async () => {
@@ -1042,8 +1034,8 @@ describe("worker routing", () => {
     expect(names.has("tako_available_data")).toBe(true);
     expect(names.has("get_credit_balance")).toBe(false);
     expect(names.has("tako_agent")).toBe(false);
-    // 4 default tools + tako_visualize = 5.
-    expect(body.result.tools).toHaveLength(5);
+    // 3 default tools + tako_visualize = 4.
+    expect(body.result.tools).toHaveLength(4);
 
     // Widget metadata ships for ChatGPT and Claude only — the
     // unknown-client listing carries none of the three widget keys (the
@@ -1096,8 +1088,8 @@ describe("worker routing", () => {
     // the UA is claude, where it is default-on for widget clients.
     expect(names.has("tako_agent")).toBe(false);
     expect(names.has("get_credit_balance")).toBe(false);
-    // 4 defaults + tako_visualize (widget client) + the 3 graph primitives = 8.
-    expect(body.result.tools).toHaveLength(8);
+    // 3 defaults + tako_visualize (widget client) + the 3 graph primitives = 7.
+    expect(body.result.tools).toHaveLength(7);
   });
 
   it("POST /mcp?tools=visualize,credits composes multiple single-tool aliases", async () => {
@@ -1129,8 +1121,8 @@ describe("worker routing", () => {
     expect(names.has("get_credit_balance")).toBe(true);
     // Aliases not in the list stay off.
     expect(names.has("tako_agent")).toBe(false);
-    // 4 default tools + tako_visualize + get_credit_balance = 6.
-    expect(body.result.tools).toHaveLength(6);
+    // 3 default tools + tako_visualize + get_credit_balance = 5.
+    expect(body.result.tools).toHaveLength(5);
   });
 
   it("POST /mcp tools/list actually SERVES the web-snippet contract to the client", async () => {
@@ -1143,7 +1135,9 @@ describe("worker routing", () => {
     // on `webResultSchema`, which is the wire-parse guard, not the advertised
     // schema. A unit test on the zod object alone would not have caught the
     // serialization half of that.
-    const res = await SELF.fetch("https://example.com/mcp", {
+    // ?tools=answer: tako_answer is opt-in, and this test guards BOTH
+    // web-snippet descriptions.
+    const res = await SELF.fetch("https://example.com/mcp?tools=answer", {
       method: "POST",
       headers: {
         "content-type": "application/json",
