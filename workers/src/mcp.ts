@@ -32,7 +32,6 @@ import type { Env } from "./env.js";
 import type { Surface } from "./surface.js";
 import {
   checkFreeTierRateLimit,
-  FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
   freeTierCreditsToolResult,
@@ -58,6 +57,7 @@ import {
   wwwAuthenticate,
 } from "./tools/_security.js";
 import {
+  FREE_TIER_TOOL_NAMES,
   isToolOnSurface,
   toolAnnotationsForSurface,
 } from "./tools/_surface.js";
@@ -91,10 +91,6 @@ const APP_UI_MIME_TYPE = "text/html;profile=mcp-app";
  * in the Workers runtime (no eval). The @cfworker/json-schema provider ships
  * with the SDK exactly for this case.
  */
-// Re-exported so the many importers of `./mcp.js` (tests, phantom guards,
-// the free-tier suite) keep one import path for the instruction text.
-export { FREE_TIER_SERVER_INSTRUCTIONS, SERVER_INSTRUCTIONS, serverInstructionsForTier };
-
 const JSON_SCHEMA_VALIDATOR = new CfWorkerJsonSchemaValidator();
 
 /**

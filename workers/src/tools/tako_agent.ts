@@ -44,11 +44,6 @@ import type { ToolContext, ToolModule } from "./types.js";
 const POLL_INTERVAL_MS = 5_000;
 const MAX_TRANSIENT_ERRORS = 2;
 export const AGENT_POLL_BUDGET_MS = 295_000;
-// Per-call cap for a host with a ~60s tool-call ceiling. Kept at 40 (not 50)
-// so the worst case — a poll-GET that hangs the full
-// AGENT_POLL_REQUEST_TIMEOUT_MS right at the deadline — still returns in
-// ~40+15 = 55s.
-export const AGENT_WAIT_CEILING_S = 40;
 const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
 const DESCRIPTION = [

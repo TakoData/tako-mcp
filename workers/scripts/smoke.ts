@@ -92,6 +92,7 @@ import { EMBED_DATA_PREFIX } from "../src/embed_proxy.js";
 // advertising breaks this file's typecheck instead of only its post-deploy
 // run. Reading a dropped field is exactly how this file's old `card_id`
 // assert kept the deploy smoke red for 17 days after PR #210 removed it.
+import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import takoVisualize from "../src/tools/tako_visualize.js";
 
 const CANARY_QUERY = "US GDP";
@@ -301,6 +302,14 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
       include_contents: true,
     });
     ok("anonymous tako_search include_contents:true → refused (auth_required)");
+    // Both newly default in the allowlist pass, so both are NEW anonymous
+    // surface: listed (the listing is auth-invariant, spec D4) but outside
+    // FREE_TIER_TOOL_NAMES, so each must answer sign-in at dispatch. The
+    // spec's Verification names tako_graph_related by hand for this reason.
+    await authRequiredKind(6, "tako_graph_related", { node_id: "smoke" });
+    ok("anonymous tako_graph_related → sign-in instructions (auth_required)");
+    await authRequiredKind(7, "tako_credit_balance", {});
+    ok("anonymous tako_credit_balance → sign-in instructions (auth_required)");
   }
 }
 
@@ -309,10 +318,12 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
 // ---------------------------------------------------------------------------
 // Name every tool the smoke exercises: `?tools=` is an allowlist that
 // replaces the defaults (spec D1), so a default tool left out here is not
-// listed. This also smoke-tests the `?tools=` path itself.
+// listed. This also smoke-tests the `?tools=` path itself. DERIVED from the
+// registry: a hand-written list leaves a newly added tool un-smoke-tested
+// with nothing to fail.
 const transport = new StreamableHTTPClientTransport(
   new URL(
-    `${baseUrl}/mcp?tools=tako_search,tako_answer,tako_contents,tako_available_data,tako_visualize,tako_credit_balance,tako_graph_related,tako_agent`,
+    `${baseUrl}/mcp?tools=${TOOL_REGISTRY.map((t) => t.name).sort().join(",")}`,
   ),
   {
     requestInit: {

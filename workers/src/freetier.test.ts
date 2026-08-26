@@ -11,7 +11,6 @@ import {
   FREE_TIER_GLOBAL_LIMIT_MESSAGE,
   FREE_TIER_LIMIT_MESSAGE,
   FREE_TIER_TOO_LARGE_MESSAGE,
-  FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
   freeTierCreditsToolResult,
@@ -23,8 +22,10 @@ import {
   MAX_FREE_TIER_BODY_BYTES,
   resolveFreeTierConfig,
 } from "./freetier.js";
+import { FREE_TIER_TOOL_NAMES } from "./tools/_surface.js";
 import worker from "./index.js";
-import { FREE_TIER_SERVER_INSTRUCTIONS, GENERIC_SIGN_IN_HINT } from "./mcp.js";
+import { FREE_TIER_SERVER_INSTRUCTIONS } from "./instructions.js";
+import { GENERIC_SIGN_IN_HINT } from "./mcp.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
 /**

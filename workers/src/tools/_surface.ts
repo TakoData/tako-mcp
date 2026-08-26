@@ -37,6 +37,27 @@ export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The complete anonymous EXECUTABLE tool surface. The listing is
+ * auth-invariant (spec D4): every default tool stays listed on anonymous
+ * connections, and a tool outside this set — `tako_contents` — answers
+ * sign-in instructions at dispatch time (see the free-tier gate in
+ * `mcp.ts`) instead of executing on the shared account. `tako_answer` is
+ * opt-in via `?tools=answer` (spec D1) and never executes anonymously.
+ *
+ * It lives HERE, not in `freetier.ts`, because `freetier.ts` imports
+ * `TOOL_REGISTRY` — the barrel `scripts/gen-registry.ts` WRITES. A generator
+ * that statically imports its own output cannot regenerate a stale one: with
+ * a tool file deleted and its line still in `_registry.ts`, `registry:gen`
+ * dies with ERR_MODULE_NOT_FOUND before it runs, and `AGENTS.md` forbids the
+ * hand-edit that would break the tie. This module is a leaf (type-only
+ * imports), so the generator reaches the set without reaching the barrel.
+ */
+export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "tako_available_data",
+  "tako_search",
+]);
+
+/**
  * The listing on `/mcp/chatgpt` — exactly the tools submitted to OpenAI
  * (`chatgpt-app-submission.json`). Any change here is a resubmission.
  */
@@ -52,15 +73,19 @@ export const CHATGPT_TOOL_NAMES: ReadonlySet<string> = new Set([
  * The tools a request registers.
  *
  * @param requested the parsed `?tools=` allowlist, or `null` when the param
- *   was absent, empty, or named nothing recognisable (see
- *   `parseToolsParam`). Never an empty set: the surface is never empty.
+ *   was absent, empty, or named nothing recognizable (see
+ *   `parseToolsParam`). An empty set resolves to the defaults, not to an empty
+ *   listing: `new Set()` was the pre-allowlist idiom for "no opt-ins, serve the
+ *   defaults" (named `noOptIns` at four call sites), and a caller carrying that
+ *   vocabulary forward must not silently register nothing.
  */
 export function resolveToolSet(
   surface: Surface,
   requested: ReadonlySet<string> | null,
 ): ReadonlySet<string> {
   if (surface === "chatgpt") return CHATGPT_TOOL_NAMES;
-  return requested ?? GENERIC_DEFAULT_TOOL_NAMES;
+  if (requested === null || requested.size === 0) return GENERIC_DEFAULT_TOOL_NAMES;
+  return requested;
 }
 
 /** Whether one tool is registered for a request — see {@link resolveToolSet}. */

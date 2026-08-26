@@ -637,7 +637,7 @@ The Worker extracts the Bearer (or OAuth-derived) token, validates the MCP reque
 
 **v0.3.0:**
 
-- The default tool surface is **`tako_search`**, **`tako_contents`**, **`tako_available_data`** — plus **`tako_visualize`** on the ChatGPT app surface (`/mcp/chatgpt`), the host that renders its chart inline. Everything else is opt-in via `?tools=`: **`tako_answer`** (`answer`; not recommended), **`tako_agent`** (`agent`; `/mcp/chatgpt` split pair **`tako_agent_start`** / **`tako_agent_wait`**), **`tako_visualize`** (`visualize`; needed only off the ChatGPT surface), **`get_credit_balance`** (`credits`), and graph primitives **`tako_graph_search`** / **`tako_graph_related`** / **`tako_graph_node`** (`graph`).
+- The tool surface was reorganized into a small default listing plus `?tools=` opt-ins, and `?tools=` group aliases (`graph`, `credits`, `answer`, `visualize`, `agent`) were introduced. Both the aliases and several of those tools are gone — see the entry above and [`docs/TOOLS.md`](docs/TOOLS.md) for the current surface.
 - The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
 - The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
 

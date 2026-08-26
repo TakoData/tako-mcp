@@ -47,7 +47,7 @@ describe("parseToolsParam", () => {
     expect(parseToolsParam("nope,graph,credits", KNOWN)).toBeNull();
   });
 
-  it("does not recognise the old group aliases", () => {
+  it("does not recognize the old group aliases", () => {
     // `graph` and `credits` were alias tokens before spec D1; a stale URL
     // must fall back to the defaults, not silently enable something else.
     expect(parseToolsParam("graph", KNOWN)).toBeNull();

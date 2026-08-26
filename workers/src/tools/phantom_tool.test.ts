@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   FREE_TIER_SERVER_INSTRUCTIONS,
   SERVER_INSTRUCTIONS,
-} from "../mcp.js";
+} from "../instructions.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 import { isToolOnSurface, resolveToolSet } from "./_surface.js";
 import type { Surface } from "../surface.js";

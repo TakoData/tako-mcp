@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import { TOOL_REGISTRY } from "./_registry.js";
+import { TOOL_NAME_PREFIX } from "./_tools_param.js";
 
 // Closed-domain tools per the MCP spec: tako_visualize renders data the caller
 // already supplied; tako_credit_balance reads Tako's own account state. Every
@@ -50,7 +51,7 @@ describe("tool annotations", () => {
     // `?tools=` tokens are tool names with the prefix optional (spec D1);
     // one unprefixed name would need a special case in the parser.
     for (const tool of TOOL_REGISTRY) {
-      expect(tool.name.startsWith("tako_"), tool.name).toBe(true);
+      expect(tool.name.startsWith(TOOL_NAME_PREFIX), tool.name).toBe(true);
     }
   });
   it("every tool declares fixedInputs, even when empty, so TOOLS.md never guesses", () => {

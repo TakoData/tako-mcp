@@ -44,6 +44,13 @@ describe("resolveToolSet", () => {
     expect(resolveToolSet("generic", null)).toBe(GENERIC_DEFAULT_TOOL_NAMES);
   });
 
+  it("generic with an EMPTY allowlist serves the defaults, not an empty listing", () => {
+    // `new Set()` meant "no opt-ins, serve the defaults" before the allowlist
+    // (`noOptIns` at four call sites); it must not now mean "register nothing".
+    expect(resolveToolSet("generic", new Set())).toBe(GENERIC_DEFAULT_TOOL_NAMES);
+    expect(isToolOnSurface("tako_search", "generic", new Set())).toBe(true);
+  });
+
   it("generic with an allowlist serves exactly the allowlist — it replaces the defaults", () => {
     const only = new Set(["tako_agent"]);
     expect(resolveToolSet("generic", only)).toBe(only);

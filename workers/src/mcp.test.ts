@@ -14,18 +14,20 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
-import { FREE_TIER_TOOL_NAMES } from "./freetier.js";
+import { FREE_TIER_TOOL_NAMES } from "./tools/_surface.js";
+import {
+  FREE_TIER_SERVER_INSTRUCTIONS,
+  SERVER_INSTRUCTIONS,
+} from "./instructions.js";
 import {
   AUTH_INVALID_MESSAGE,
   createMcpServer,
   djangoErrorToToolResult,
-  FREE_TIER_SERVER_INSTRUCTIONS,
   GENERIC_SIGN_IN_HINT,
   logSdkValidationRejections,
   PAYMENT_REQUIRED_MESSAGE,
   PAYMENT_REQUIRED_REMEDY_FALLBACK,
   paymentRequiredToolResult,
-  SERVER_INSTRUCTIONS,
   structuredContentFor,
   withChatGptToolSecuritySchemes,
 } from "./mcp.js";
@@ -886,8 +888,9 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
   // Two listed-but-auth-required shapes, each with schema-valid arguments
   // so the call reaches the dispatch gate (the SDK validates input BEFORE
   // the gate — invalid args return -32602 instead): tako_contents is on
-  // the default generic listing (spec D6); tako_visualize joins it via
-  // ?tools=visualize.
+  // the default generic listing (spec D6); tako_visualize is opt-in. Note
+  // the allowlist below names BOTH: `?tools=visualize` alone would replace
+  // the defaults and drop tako_contents (spec D1).
   it.each([
     ["tako_contents", { url: "https://trytako.com/card/abc123" }],
     [
@@ -898,6 +901,14 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
         ],
       },
     ],
+    // Both became DEFAULT-listed in the allowlist pass, so both are new
+    // anonymous surface: listed (the listing is auth-invariant, spec D4) but
+    // outside FREE_TIER_TOOL_NAMES, so each owes the same sign-in result.
+    // Covered here rather than only in `scripts/smoke.ts`, which needs a
+    // deployed target with free-tier bindings — `wrangler dev` has none, so
+    // its anonymous block skips and the assertion never runs locally.
+    ["tako_graph_related", { node_id: "ent::anthropic::1" }],
+    ["tako_credit_balance", {}],
   ] as const)(
     "anonymous generic call to %s returns the www_authenticate challenge WITHOUT executing",
     async (name, args) => {
@@ -907,7 +918,12 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
         {
           tier: "free",
           surface: "generic",
-          requestedToolNames: new Set(["tako_visualize", "tako_contents"]),
+          requestedToolNames: new Set([
+            "tako_visualize",
+            "tako_contents",
+            "tako_graph_related",
+            "tako_credit_balance",
+          ]),
           requestOrigin: "https://mcp.example.com",
         },
         name,

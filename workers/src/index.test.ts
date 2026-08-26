@@ -745,7 +745,7 @@ describe("worker routing", () => {
 
   it("POST /mcp?tools=<unknown> ignores the bad value and serves the five defaults", async () => {
     // A typo in `?tools=` must never break the connection: unknown tokens are
-    // dropped, and a param that names nothing recognisable falls back to the
+    // dropped, and a param that names nothing recognizable falls back to the
     // defaults rather than serving an empty surface. This guards the parser's
     // "unknown token is never fatal" promise end-to-end.
     //

@@ -273,6 +273,21 @@ export interface AppUiResource {
 }
 
 /**
+ * A request field the handler sends with a constant value the caller cannot
+ * change. Declared, not inferred: `docs/TOOLS.md` renders this list so a
+ * reader sees the opinionated defaults next to the parameters, and the
+ * generator cannot recover it from a zod schema.
+ */
+export interface FixedInput {
+  /** Wire field, e.g. `sources.web.highlights`. */
+  field: string;
+  /** The constant, rendered verbatim, e.g. `true` or `"medium"`. */
+  value: string;
+  /** Why it is fixed, one sentence. */
+  note: string;
+}
+
+/**
  * The shape every tool file default-exports.
  *
  * Typical usage:
@@ -289,21 +304,6 @@ export interface AppUiResource {
  * inferred types — callers get autocomplete on `tool.name`, `tool.handler`
  * return type, etc.
  */
-/**
- * A request field the handler sends with a constant value the caller cannot
- * change. Declared, not inferred: `docs/TOOLS.md` renders this list so a
- * reader sees the opinionated defaults next to the parameters, and the
- * generator cannot recover it from a zod schema.
- */
-export interface FixedInput {
-  /** Wire field, e.g. `sources.web.highlights`. */
-  field: string;
-  /** The constant, rendered verbatim, e.g. `true` or `"medium"`. */
-  value: string;
-  /** Why it is fixed, one sentence. */
-  note: string;
-}
-
 export interface ToolModule<
   InputSchema extends z.ZodObject<z.ZodRawShape> = z.ZodObject<z.ZodRawShape>,
   Output = unknown,

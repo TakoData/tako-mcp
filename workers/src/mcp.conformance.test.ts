@@ -36,9 +36,12 @@ import type { AnyToolModule } from "./tools/types.js";
 const AUTH_HEADER = "Bearer conformance-test-token";
 
 // Every tool, so the sweep covers the whole surface rather than the default
-// subset. `?tools=` is an allowlist (spec D1), so name them all.
-const ALL_TOOLS_QUERY =
-  "?tools=tako_agent,tako_answer,tako_available_data,tako_contents,tako_credit_balance,tako_graph_related,tako_search,tako_visualize";
+// subset. `?tools=` is an allowlist (spec D1), so name them all — DERIVED
+// from the registry, because a hand-written list drops a new tool out of the
+// sweep silently: nothing fails, the coverage just disappears.
+const ALL_TOOLS_QUERY = `?tools=${TOOL_REGISTRY.map((t) => t.name)
+  .sort()
+  .join(",")}`;
 
 interface PublishedSchema {
   type?: string;
