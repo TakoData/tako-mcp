@@ -797,6 +797,7 @@ const tako_available_data = {
           verified: pair.entity === null ? undefined : verified,
           entityMetricMatches: entityMetricMatches.map((n) => n.name),
           metricList: listNames,
+          metricListCapped: !listComplete,
         }),
         matches,
         other_matches: [],

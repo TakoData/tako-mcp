@@ -623,6 +623,17 @@ describe("buildPairSummary — metric list clauses", () => {
     expect(s).toContain("NOT on");
     expect(s).toContain("1 of NVIDIA Corporation's own metrics contain \"backlog\"");
   });
+  it("a cut-off page reports the count as a floor, the same way the rendered list header does", () => {
+    // Measured on staging: Lockheed / backlog fills the 100-item page and
+    // returns a cursor. Printing "100" there claimed an exact count the
+    // renderer contradicted with "100+".
+    const s = buildPairSummary({
+      entityQuery: "Lockheed Martin", metricQuery: "backlog", pair, domainShaped: false,
+      verified: "pair", metricList: Array.from({ length: 100 }, (_v, i) => `m${i}`), metricListCapped: true,
+    });
+    expect(s).toContain("100+ of NVIDIA Corporation's own metrics contain \"backlog\"");
+  });
+
   it("pair + list of one adds nothing; pair + list of several offers the variants", () => {
     expect(buildPairSummary({ entityQuery: "Apple", metricQuery: "gross margin", pair, domainShaped: false, verified: "pair", metricList: ["Gross Margin"] })).not.toContain("own metrics contain");
     expect(buildPairSummary({ entityQuery: "Apple", metricQuery: "gross margin", pair, domainShaped: false, verified: "pair", metricList: ["Gross Margin", "Gross Margin (%)"] })).toContain("2 of NVIDIA Corporation's own metrics contain \"gross margin\"");

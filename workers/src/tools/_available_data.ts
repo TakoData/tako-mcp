@@ -674,6 +674,14 @@ export function buildPairSummary(input: {
    * repeating the names would double their token cost.
    */
   metricList?: string[];
+  /**
+   * The filtered page was cut off, so the count is a FLOOR. Measured on
+   * staging: `q="Lockheed Martin", metric="backlog"` fills the 100-item page
+   * and returns a cursor, and the prose said "100 of ... contain" while the
+   * rendered list header said "100+" — the two channels disagreed about the
+   * same number.
+   */
+  metricListCapped?: boolean;
 }): string {
   const {
     pair, domainShaped, metricConfident = true, verified, entityMetricMatches = [],
@@ -684,9 +692,10 @@ export function buildPairSummary(input: {
   const entityName = pair.entity === null ? "" : oneLine(pair.entity.name);
   // A list of ONE adds nothing to a confirmed pair — the pinned name already
   // says it. `min` is what each branch considers worth pointing at.
+  const listCount = `${list.length}${input.metricListCapped === true ? "+" : ""}`;
   const listClause = (min: number): string =>
     list.length >= min
-      ? ` ${list.length} of ${entityName}'s own metrics contain "${metricQuery}" and are listed below with their node ids.`
+      ? ` ${listCount} of ${entityName}'s own metrics contain "${metricQuery}" and are listed below with their node ids.`
       : "";
   if (pair.entity === null) {
     // A domain that resolves to nothing is a routing answer, not a dead end:

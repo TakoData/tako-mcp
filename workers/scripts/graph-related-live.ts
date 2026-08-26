@@ -49,13 +49,19 @@ for (const name of CASES) {
     continue;
   }
   for (const input of [{ node_id: nodeId }, { node_id: nodeId, relation: "metrics" }]) {
-    const raw = await rawChars(input);
-    const out = await takoGraphRelated.handler(input, ctx);
-    const text = takoGraphRelated.renderText(out, ctx);
-    const structured = JSON.stringify(out);
     const mode = "relation" in input ? "drill:metrics" : "overview";
-    console.log(
-      `${name} [${mode}] raw=${raw} text=${text.length} structured=${structured.length} groups=${out.relations?.length ?? "-"} items=${out.relation?.items.length ?? "-"}`,
-    );
+    // One slow node must not cost the whole measurement: staging times out at
+    // 15s on the widest overviews, which is itself a result worth printing.
+    try {
+      const raw = await rawChars(input);
+      const out = await takoGraphRelated.handler(input, ctx);
+      const text = takoGraphRelated.renderText(out, ctx);
+      const structured = JSON.stringify(out);
+      console.log(
+        `${name} [${mode}] raw=${raw} text=${text.length} structured=${structured.length} groups=${out.relations?.length ?? "-"} items=${out.relation?.items.length ?? "-"}`,
+      );
+    } catch (err) {
+      console.log(`${name} [${mode}] FAILED: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
