@@ -8,7 +8,15 @@ import {
   DjangoTimeoutError,
   DjangoUnauthorizedError,
 } from "../django.js";
-import { graphErrorMessage } from "./_graph.js";
+import {
+  FOCAL_ALIASES_MAX,
+  FOCAL_DESCRIPTION_MAX,
+  graphErrorMessage,
+  OVERVIEW_PREVIEW_N,
+  slimFocalNode,
+  slimNode,
+  slimRelatedResponse,
+} from "./_graph.js";
 
 describe("graphErrorMessage", () => {
   const P = { path: "/api/v1/graph/search", method: "GET" as const };
@@ -103,5 +111,84 @@ describe("graphErrorMessage", () => {
   it("non-transport error → surfaced, not masked", () => {
     const msg = graphErrorMessage(new Error("boom"), "search", undefined, TOOL);
     expect(msg).toMatch(/unexpected error — boom/);
+  });
+});
+
+const fat = (i: number) => ({
+  id: `ent::n${i}::1`,
+  type: "entity",
+  name: `Node ${i}`,
+  subtype: "Companies",
+  label: "ORG",
+  aliases: [`N${i}`, `Node-${i}`],
+  description: "x".repeat(900),
+});
+
+describe("graph slimming", () => {
+  it("slimNode keeps id, name, type, subtype, label and drops aliases and description", () => {
+    expect(slimNode(fat(1))).toEqual({
+      id: "ent::n1::1", type: "entity", name: "Node 1", subtype: "Companies", label: "ORG",
+    });
+  });
+
+  it("slimNode omits subtype and label when the wire has none (no null padding)", () => {
+    expect(slimNode({ id: "mt::x::1", type: "metric", name: "Revenue" })).toEqual({
+      id: "mt::x::1", type: "metric", name: "Revenue",
+    });
+  });
+
+  it("slimFocalNode keeps capped aliases and a truncated description", () => {
+    const n = { ...fat(1), aliases: Array.from({ length: FOCAL_ALIASES_MAX + 4 }, (_v, i) => `a${i}`) };
+    const out = slimFocalNode(n);
+    expect(out.aliases).toHaveLength(FOCAL_ALIASES_MAX);
+    expect(out.description?.length).toBe(FOCAL_DESCRIPTION_MAX + 1); // the cap plus the ellipsis
+    expect(out.description?.endsWith("…")).toBe(true);
+  });
+
+  it("slimFocalNode leaves an ordinary graph description whole", () => {
+    // Measured descriptions run ~300-450 chars; the bound is for the
+    // pathological case, not for the ordinary one.
+    const ordinary = "Z".repeat(400);
+    expect(slimFocalNode({ ...fat(1), description: ordinary }).description).toBe(ordinary);
+  });
+
+  it("slimFocalNode leaves a short description alone", () => {
+    expect(slimFocalNode({ ...fat(1), description: "Short." }).description).toBe("Short.");
+  });
+
+  it("overview: every group keeps key/kind/label/total and only the first OVERVIEW_PREVIEW_N slim items", () => {
+    const group = (key: string, n: number) => ({
+      key, kind: "related", label: key, total: n, total_capped: n > 250,
+      items: Array.from({ length: n }, (_v, i) => fat(i)),
+    });
+    const out = slimRelatedResponse({
+      node: fat(0),
+      relations: [group("rel:competes_with", 40), group("metrics", 2)],
+    });
+    expect(out.relations?.[0]?.items).toHaveLength(OVERVIEW_PREVIEW_N);
+    expect(out.relations?.[0]?.items[0]).toEqual(slimNode(fat(0)));
+    expect(out.relations?.[0]?.total).toBe(40);
+    expect(out.relations?.[1]?.items).toHaveLength(2);
+    expect(out.node.description?.endsWith("…")).toBe(true);
+    expect(out.node.aliases).toEqual(["N0", "Node-0"]);
+  });
+
+  it("drill: the whole page survives, each item slimmed, cursor kept", () => {
+    const out = slimRelatedResponse({
+      node: fat(0),
+      relation: {
+        key: "metrics", kind: "data", label: "Metrics", total: 300, total_capped: true,
+        items: Array.from({ length: 50 }, (_v, i) => fat(i)), next_cursor: "c2",
+      },
+    });
+    expect(out.relation?.items).toHaveLength(50);
+    expect(out.relation?.items[7]).not.toHaveProperty("description");
+    expect(out.relation?.next_cursor).toBe("c2");
+  });
+
+  it("passes inferred_labels through and never invents a relations array on a drill", () => {
+    const out = slimRelatedResponse({ node: fat(0), relation: null, inferred_labels: ["ORG"] });
+    expect(out.inferred_labels).toEqual(["ORG"]);
+    expect(out).not.toHaveProperty("relations");
   });
 });

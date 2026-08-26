@@ -57,6 +57,81 @@ export const graphRelatedOutputShape = {
   inferred_labels: z.array(z.string()).nullable().optional(),
 } as const;
 
+export type GraphNodeFacade = z.infer<typeof graphNodeSchema>;
+export type GraphRelationFacade = z.infer<typeof graphRelationSchema>;
+const graphRelatedFacade = z.object(graphRelatedOutputShape);
+export type GraphRelatedFacade = z.infer<typeof graphRelatedFacade>;
+
+/**
+ * Size caps for what `tako_graph_related` hands the model. Measured on prod
+ * (spec Appendix A/B, 2026-08-25): the raw overview averages 849 chars per
+ * related node because every item carries the full company description, so
+ * Anthropic PBC's overview was 83,487 chars and overflowed the MCP result
+ * cap, NVIDIA's 82,741 at limit 5. Items carry only what a follow-up call
+ * needs (the id) plus what disambiguates them (name, type, subtype, label);
+ * the focal node alone keeps aliases and a truncated description.
+ *
+ * 600 chars, not 280: the focal node is ONE record and it is the node the
+ * caller named, so its own prose is worth keeping whole — measured graph
+ * descriptions run ~300-450 chars. The bound exists only so a pathological
+ * multi-kilobyte description cannot dwarf the map it sits above.
+ */
+export const FOCAL_DESCRIPTION_MAX = 600;
+export const FOCAL_ALIASES_MAX = 10;
+/** Overview items per group. Three names tell the model what the group is; the drill pages the rest. */
+export const OVERVIEW_PREVIEW_N = 3;
+
+/** id, name, type, subtype, label — nothing else. Absent fields stay absent. */
+export function slimNode(n: GraphNodeFacade): GraphNodeFacade {
+  return {
+    id: n.id,
+    type: n.type,
+    name: n.name,
+    ...(n.subtype != null ? { subtype: n.subtype } : {}),
+    ...(n.label != null ? { label: n.label } : {}),
+  };
+}
+
+/** The focal node: slim plus capped aliases and a truncated description. */
+export function slimFocalNode(n: GraphNodeFacade): GraphNodeFacade {
+  const out = slimNode(n);
+  if (n.aliases !== undefined && n.aliases.length > 0) {
+    out.aliases = n.aliases.slice(0, FOCAL_ALIASES_MAX);
+  }
+  if (typeof n.description === "string" && n.description !== "") {
+    out.description =
+      n.description.length > FOCAL_DESCRIPTION_MAX
+        ? `${n.description.slice(0, FOCAL_DESCRIPTION_MAX)}…`
+        : n.description;
+  }
+  return out;
+}
+
+/**
+ * Overview mode keeps every group's key, kind, label, total, and
+ * total_capped, but only the first OVERVIEW_PREVIEW_N items (slimmed). Drill
+ * mode keeps the whole page, each item slimmed. `total`/`total_capped` still
+ * carry the true counts, so truncating items loses nothing the model needs.
+ */
+export function slimRelatedResponse(r: GraphRelatedFacade): GraphRelatedFacade {
+  const out: GraphRelatedFacade = { node: slimFocalNode(r.node) };
+  if (r.relation !== undefined) {
+    out.relation =
+      r.relation === null ? null : { ...r.relation, items: r.relation.items.map(slimNode) };
+  }
+  if (r.relations !== undefined) {
+    out.relations =
+      r.relations === null
+        ? null
+        : r.relations.map((g) => ({
+            ...g,
+            items: g.items.slice(0, OVERVIEW_PREVIEW_N).map(slimNode),
+          }));
+  }
+  if (r.inferred_labels !== undefined) out.inferred_labels = r.inferred_labels;
+  return out;
+}
+
 /** Which graph endpoint an error came from (drives the tailored guidance). */
 // `"node"` was a third member until `tako_graph_node.ts` was deleted. Keep
 // this union to what a caller can actually pass: a stale member keeps its

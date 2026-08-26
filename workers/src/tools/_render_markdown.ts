@@ -34,6 +34,7 @@ import { z } from "zod";
 // controls. Defined next to the summary builder that needs the same guarantee,
 // so the two channels cannot drift into flattening differently.
 import { oneLine } from "./_available_data.js";
+import type { GraphRelatedFacade } from "./_graph.js";
 import {
   autoChainShape,
   usageAdvertisedSchema,
@@ -684,6 +685,77 @@ export function renderAvailableDataMarkdown(o: AvailableDataFullOutput): string 
     blocks.push(`next_call (run verbatim):\n${fenced(JSON.stringify(o.next_call), "json")}`);
   }
 
+  return blocks.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// tako_graph_related
+// ---------------------------------------------------------------------------
+
+function nodeKind(n: {
+  type: string;
+  subtype?: string | null | undefined;
+  label?: string | null | undefined;
+}): string {
+  return [n.type, n.subtype, n.label]
+    .filter((p): p is string => typeof p === "string" && p !== "")
+    .map(oneLine)
+    .join(" · ");
+}
+
+/**
+ * The compact map of a node. Overview: one line per relation group — key,
+ * label, total, the preview names. Drill: one line per item with its id.
+ * Node names and ids are upstream content in single-line slots, so they are
+ * flattened the same way the available-data renderer flattens them.
+ */
+export function renderGraphRelatedMarkdown(o: GraphRelatedFacade): string {
+  const n = o.node;
+  const head: string[] = [`**${oneLine(n.name)}** (\`${oneLine(n.id)}\`) — ${nodeKind(n)}`];
+  if (n.aliases !== undefined && n.aliases.length > 0) {
+    head.push(`aliases: ${n.aliases.map(oneLine).join(", ")}`);
+  }
+  if (typeof n.description === "string" && n.description !== "") head.push(oneLine(n.description));
+  const blocks: string[] = [head.join("\n")];
+
+  if (o.relation !== undefined && o.relation !== null) {
+    const g = o.relation;
+    const total = `${g.total}${g.total_capped ? "+" : ""}`;
+    const more = g.next_cursor ? `; more: pass cursor "${oneLine(g.next_cursor)}"` : "";
+    const lines = g.items.map((i) => {
+      const kind = [i.subtype, i.label].filter((p): p is string => typeof p === "string" && p !== "");
+      return `- ${oneLine(i.name)} (\`${oneLine(i.id)}\`)${kind.length > 0 ? ` · ${kind.map(oneLine).join(", ")}` : ""}`;
+    });
+    blocks.push(
+      `\`${oneLine(g.key)}\` — ${oneLine(g.label)} — ${total} total, ${g.items.length} on this page${more}:\n${lines.length > 0 ? lines.join("\n") : "_none_"}`,
+    );
+  } else if (o.relations !== undefined && o.relations !== null) {
+    if (o.relations.length === 0) {
+      blocks.push("No related nodes.");
+      return blocks.join("\n\n");
+    }
+    const lines = o.relations.map((g) => {
+      const total = `${g.total}${g.total_capped ? "+" : ""}`;
+      // A group the preview shows WHOLE is answerable from the overview, so it
+      // carries its ids; a group with more behind it does not, because the
+      // drill returns every id for free and 3 ids per group across a 17-group
+      // overview costs ~1.3k chars for handles the next call supplies anyway.
+      const complete = !g.total_capped && g.total <= g.items.length;
+      const names = g.items
+        .map((i) => (complete ? `${oneLine(i.name)} (\`${oneLine(i.id)}\`)` : oneLine(i.name)))
+        .join(", ");
+      const tail = g.total > g.items.length ? ", …" : "";
+      // A cursor on an overview group is the only handle to the rest of it, so
+      // it rides the line rather than waiting for the drill to rediscover it.
+      const more = g.next_cursor
+        ? ` — more: \`relation: "${oneLine(g.key)}"\`, cursor "${oneLine(g.next_cursor)}"`
+        : "";
+      return `- \`${oneLine(g.key)}\` — ${oneLine(g.label)} — ${total}: ${names}${tail}${more}`;
+    });
+    blocks.push(
+      `Relations (pass \`relation: "<key>"\` to page one, \`q\` to filter by substring):\n${lines.join("\n")}`,
+    );
+  }
   return blocks.join("\n\n");
 }
 

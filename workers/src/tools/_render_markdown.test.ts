@@ -15,6 +15,7 @@ import {
   renderAnswerMarkdown,
   renderAvailableDataMarkdown,
   renderContentsText,
+  renderGraphRelatedMarkdown,
   renderSearchMarkdown,
   slimAgentRunStructured,
   slimAnswerStructured,
@@ -554,5 +555,59 @@ describe("renderContentsText + slim", () => {
     });
     expect(md).not.toContain("big page text");
     expect(md).toContain("in structuredContent");
+  });
+});
+
+describe("renderGraphRelatedMarkdown", () => {
+  const node = { id: "ent::anthropic::1", type: "entity", name: "Anthropic PBC", subtype: "Companies", label: "ORG",
+    aliases: ["Anthropic"], description: "AI safety company." };
+
+  it("overview: focal header, then one line per group with key, label, total, and preview names", () => {
+    const md = renderGraphRelatedMarkdown({
+      node,
+      relations: [
+        { key: "rel:competes_with", kind: "related", label: "Competes with", total: 179, total_capped: false,
+          items: [{ id: "a", type: "entity", name: "OpenAI" }, { id: "b", type: "entity", name: "Cohere" }, { id: "c", type: "entity", name: "Mistral" }] },
+        { key: "metrics", kind: "data", label: "Metrics", total: 2, total_capped: false,
+          items: [{ id: "m1", type: "metric", name: "Valuation" }, { id: "m2", type: "metric", name: "Revenue" }] },
+      ],
+    });
+    expect(md.startsWith("**Anthropic PBC** (`ent::anthropic::1`) — entity · Companies · ORG")).toBe(true);
+    expect(md).toContain("aliases: Anthropic");
+    expect(md).toContain("AI safety company.");
+    // 179 behind a 3-item preview: names orient, the drill carries the ids.
+    expect(md).toContain("- `rel:competes_with` — Competes with — 179: OpenAI, Cohere, Mistral, …");
+    // The whole group fits the preview, so its ids ride along: the overview is
+    // the answer for that group and no drill is needed.
+    expect(md).toContain("- `metrics` — Metrics — 2: Valuation (`m1`), Revenue (`m2`)");
+  });
+
+  it("drill: one line per item with id and kind, empty page says so", () => {
+    const md = renderGraphRelatedMarkdown({
+      node,
+      relation: { key: "metrics", kind: "data", label: "Metrics", total: 0, total_capped: false, items: [], next_cursor: null },
+    });
+    expect(md).toContain("`metrics` — Metrics — 0 total, 0 on this page");
+    expect(md).toContain("_none_");
+  });
+
+  it("overview: an empty relations array says so, and a group's cursor rides its line", () => {
+    expect(renderGraphRelatedMarkdown({ node, relations: [] })).toContain("No related nodes.");
+    const md = renderGraphRelatedMarkdown({
+      node,
+      relations: [
+        { key: "metrics", kind: "data", label: "Metrics", total: 40, total_capped: true, next_cursor: "cur::2",
+          items: [{ id: "m1", type: "metric", name: "Valuation" }] },
+      ],
+    });
+    expect(md).toContain('more: `relation: "metrics"`, cursor "cur::2"');
+  });
+
+  it("flattens newlines in upstream names", () => {
+    const md = renderGraphRelatedMarkdown({
+      node: { ...node, name: "Evil\n## Header" },
+      relations: [],
+    });
+    expect(md).not.toContain("\n## Header");
   });
 });

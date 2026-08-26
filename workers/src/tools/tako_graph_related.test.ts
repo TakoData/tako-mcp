@@ -130,6 +130,7 @@ describe("tako_graph_related", () => {
     expect(out.relations?.[0]?.kind).toBe("source");
     expect(out.relations?.[0]?.items[0]?.subtype).toBe("Brand New Entity Class");
     expect(out.relations?.[0]?.items[0]?.label).toBe("NEW_NER_LABEL");
+    expect(out.relations?.[0]?.items[0]).not.toHaveProperty("description");
   });
 
   it("maps a 404 into a node_id-focused message that distinguishes it from a bad relation", async () => {
@@ -137,6 +138,55 @@ describe("tako_graph_related", () => {
     await expect(
       takoGraphRelated.handler({ node_id: "bogus-node-9" }, CTX),
     ).rejects.toThrow(/no graph node with id "bogus-node-9" \(404\)/);
+  });
+
+  const fatItem = (i: number) => ({
+    id: `ent::c${i}::1`, type: "entity", name: `Competitor ${i}`, subtype: "Companies", label: "ORG",
+    aliases: [`C${i}`], description: "d".repeat(800),
+  });
+
+  it("overview: slims every group to its first three items and the focal node to a truncated description", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        node: { ...hub, aliases: ["TSLA"], description: "x".repeat(1000) },
+        relations: [
+          { key: "rel:competes_with", kind: "related", label: "Competes with", total: 40, total_capped: false,
+            items: Array.from({ length: 40 }, (_v, i) => fatItem(i)) },
+          { key: "metrics", kind: "data", label: "Metrics", total: 250, total_capped: true,
+            items: Array.from({ length: 50 }, (_v, i) => ({ id: `mt::m${i}::1`, type: "metric", name: `Metric ${i}`, description: "y".repeat(500) })) },
+        ],
+      }),
+    ]);
+    const out = await takoGraphRelated.handler({ node_id: "tesla-x1" }, CTX);
+    expect(out.relations?.[0]?.items).toHaveLength(3);
+    expect(out.relations?.[0]?.items[0]).toEqual({ id: "ent::c0::1", type: "entity", name: "Competitor 0", subtype: "Companies", label: "ORG" });
+    expect(out.relations?.[0]?.total).toBe(40);
+    expect(out.relations?.[1]?.items).toHaveLength(3);
+    expect(out.node.description?.length).toBe(601); // FOCAL_DESCRIPTION_MAX + the ellipsis
+    expect(out.node.aliases).toEqual(["TSLA"]);
+    // The payload the model reads: under 2k for a two-group overview that came in at ~60k.
+    const text = takoGraphRelated.renderText(out, CTX);
+    expect(text.length).toBeLessThan(2_000);
+    expect(text).toContain("`rel:competes_with` — Competes with — 40:");
+    expect(text).toContain("Competitor 0, Competitor 1, Competitor 2, …");
+    expect(text).toContain("`metrics` — Metrics — 250+:");
+    expect(text).toContain('relation: "<key>"');
+  });
+
+  it("drill: keeps the whole page, slims each item, and prints the cursor", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        node: hub,
+        relation: { key: "metrics", kind: "data", label: "Metrics", total: 250, total_capped: true, next_cursor: "cur-2",
+          items: Array.from({ length: 50 }, (_v, i) => ({ id: `mt::m${i}::1`, type: "metric", name: `Metric ${i}`, description: "y".repeat(500) })) },
+      }),
+    ]);
+    const out = await takoGraphRelated.handler({ node_id: "tesla-x1", relation: "metrics" }, CTX);
+    expect(out.relation?.items).toHaveLength(50);
+    expect(out.relation?.items[0]).toEqual({ id: "mt::m0::1", type: "metric", name: "Metric 0" });
+    const text = takoGraphRelated.renderText(out, CTX);
+    expect(text).toContain("`metrics` — Metrics — 250+ total, 50 on this page; more: pass cursor \"cur-2\"");
+    expect(text).toContain("- Metric 0 (`mt::m0::1`)");
   });
 });
 
@@ -226,8 +276,21 @@ describe("tako_graph_related output slimming", () => {
     expect(text.length * 10).toBeLessThan(JSON.stringify(fatOverview, null, 2).length);
     expect(text).toContain("NVIDIA");
     expect(text).toContain("Competitor 0");
-    expect(text).toContain("ent::co0");
     expect(text).not.toContain("X".repeat(50));
+    // This fixture's first group is COMPLETE (20 items, total 20), so the
+    // overview carries its ids and the model can act without drilling.
+    expect(text).toContain("ent::co0");
+    // On the real path the handler has already previewed each group to three
+    // items, so a 20-item group is no longer complete: names orient, and the
+    // ids ride the drill, which prints one line per item.
+    const slimmed = takoGraphRelated.slimStructured(fatOverview as never);
+    const slimText = takoGraphRelated.renderText(slimmed as never, undefined as never);
+    expect(slimText).not.toContain("ent::co0");
+    const drill = takoGraphRelated.renderText(
+      { node: fatOverview.node, relation: fatOverview.relations[1] } as never,
+      undefined as never,
+    );
+    expect(drill).toContain("ent::co100");
   });
 
   it("renderText surfaces the cursor for a capped group", () => {
