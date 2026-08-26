@@ -620,3 +620,25 @@ describe("renderGraphRelatedMarkdown", () => {
     expect(md).not.toContain("\n## Header");
   });
 });
+
+describe("renderAvailableDataMarkdown — lookup path with a metric list", () => {
+  it("prints the pair rows, then the entity's filtered metric list with ids, then next_call", () => {
+    const md = renderAvailableDataMarkdown({
+      found: true, verified: "resolution", query: "Nvidia", metric_query: "data center",
+      summary: "SUMMARY",
+      entity: { node_id: "ent::nvda::1", name: "NVIDIA Corporation", type: "entity" },
+      metric: { node_id: "mt::rev::1", name: "Revenues", type: "metric" },
+      entity_alternates: [], metric_alternates: [],
+      matches: [{
+        node_id: "ent::nvda::1", name: "NVIDIA Corporation", type: "entity", subtype: "Companies", label: "ORG", aliases: [],
+        filter: "data center",
+        coverage: { kind: "metrics", items: [{ name: "Total revenue - Data center", node_id: "mt::dc::1" }], names: ["Total revenue - Data center"], total: 1, truncated: false, capped: false },
+      }],
+      other_matches: [], next_call: null,
+    });
+    expect(md.startsWith("SUMMARY")).toBe(true);
+    expect(md).toContain("entity  NVIDIA Corporation  `ent::nvda::1`");
+    expect(md).toContain('**NVIDIA Corporation** (`ent::nvda::1`) — metrics containing "data center" (1):\nTotal revenue - Data center');
+    expect(md).not.toContain("next_call");
+  });
+});

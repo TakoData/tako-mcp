@@ -13,6 +13,7 @@ import {
   MAX_CANDIDATES,
   orderMetricItems,
   MAX_COVERAGE_NAMES,
+  metricListMatch,
   promotionEligible,
   topOfEachKind,
   selectCoverage,
@@ -578,5 +579,52 @@ describe("candidateMatch + buildTieSummary", () => {
     expect(s).toContain('types:"metric"');
     expect(s).toContain("re-run with `metric` set");
     expect(s).not.toMatch(/node_ids|strict/); // pin advice belongs to PR (b)
+  });
+});
+
+describe("metricListMatch", () => {
+  it("is a metrics coverage list scoped to the phrase, with ids, flagged incomplete when the page was cut", () => {
+    const m = metricListMatch(
+      { id: "ent::nvda::1", type: "entity", name: "NVIDIA Corporation", subtype: "Companies", label: "ORG" },
+      [{ id: "mt::a::1", type: "metric", name: "Total revenue - Data center" }, { id: "mt::b::1", type: "metric", name: "Data center growth" }],
+      false,
+      "data center",
+    );
+    expect(m.filter).toBe("data center");
+    expect(m.coverage).toEqual({
+      kind: "metrics",
+      items: [{ name: "Total revenue - Data center", node_id: "mt::a::1" }, { name: "Data center growth", node_id: "mt::b::1" }],
+      names: ["Total revenue - Data center", "Data center growth"],
+      total: 2, truncated: true, capped: true,
+    });
+  });
+});
+
+describe("buildPairSummary — metric list clauses", () => {
+  const pair = {
+    entity: { node_id: "e", name: "NVIDIA Corporation", type: "entity" },
+    metric: { node_id: "m", name: "Revenues", type: "metric" },
+    entity_alternates: [], metric_alternates: [],
+  };
+  it("unconfident pin + list → names the count, says nothing is pinned, and says how to get a handle", () => {
+    const s = buildPairSummary({ entityQuery: "Nvidia", metricQuery: "data center", pair, domainShaped: false, metricConfident: false, metricList: Array.from({ length: 13 }, (_v, i) => `m${i}`) });
+    expect(s).toContain("13 of NVIDIA Corporation's own metrics contain \"data center\"");
+    expect(s).toContain("nothing is pinned");
+    expect(s).toContain("Re-run with `metric` set to the exact name");
+    expect(s).not.toContain("probably NOT what you asked for");
+  });
+  it("no global metric + list → the list is the answer", () => {
+    const s = buildPairSummary({ entityQuery: "Nvidia", metricQuery: "data center", pair: { ...pair, metric: null }, domainShaped: false, metricList: ["a", "b"] });
+    expect(s).toContain("2 of NVIDIA Corporation's own metrics contain \"data center\"");
+    expect(s).not.toContain("listed below — pick one and re-run with it"); // the old drill wording
+  });
+  it("unlinked + list → the pin is dropped and the list is offered", () => {
+    const s = buildPairSummary({ entityQuery: "Lockheed Martin", metricQuery: "backlog", pair, domainShaped: false, verified: "unlinked", metricList: ["12 Month Backlog"] });
+    expect(s).toContain("NOT on");
+    expect(s).toContain("1 of NVIDIA Corporation's own metrics contain \"backlog\"");
+  });
+  it("pair + list of one adds nothing; pair + list of several offers the variants", () => {
+    expect(buildPairSummary({ entityQuery: "Apple", metricQuery: "gross margin", pair, domainShaped: false, verified: "pair", metricList: ["Gross Margin"] })).not.toContain("own metrics contain");
+    expect(buildPairSummary({ entityQuery: "Apple", metricQuery: "gross margin", pair, domainShaped: false, verified: "pair", metricList: ["Gross Margin", "Gross Margin (%)"] })).toContain("2 of NVIDIA Corporation's own metrics contain \"gross margin\"");
   });
 });

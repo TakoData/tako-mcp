@@ -541,6 +541,8 @@ interface CoverageMatchLike {
   label: string | null;
   aliases: string[];
   unavailable?: boolean | undefined;
+  /** Set when the list was filtered by the caller's `metric` phrase (lookup path). */
+  filter?: string | undefined;
   coverage: {
     kind: string;
     items: Array<{ name: string; node_id: string }>;
@@ -689,6 +691,19 @@ export function renderAvailableDataPairMarkdown(o: AvailableDataFullOutput): str
   }
   if (rows.length > 0) blocks.push(rows.join("\n"));
 
+  // The entity's own metrics containing the caller's phrase (fix 3), or the
+  // full coverage drill when nothing resolved. `filter` is what tells the two
+  // apart, so the header can say what the list is scoped to.
+  for (const m of o.matches) {
+    if (m.unavailable === true || m.coverage.names.length === 0) continue;
+    const total = `${m.coverage.total}${m.coverage.capped ? "+" : ""}`;
+    const what =
+      m.filter === undefined ? m.coverage.kind : `${m.coverage.kind} containing "${oneLine(m.filter)}"`;
+    blocks.push(
+      `**${oneLine(m.name)}** (\`${oneLine(m.node_id)}\`) — ${what} (${total}):\n${m.coverage.names.map(oneLine).join(", ")}`,
+    );
+  }
+
   if (o.next_call !== null) {
     // The embedded query is caller input — dynamic fence, same as web text.
     blocks.push(`next_call (run verbatim):\n${fenced(JSON.stringify(o.next_call), "json")}`);
@@ -697,10 +712,10 @@ export function renderAvailableDataPairMarkdown(o: AvailableDataFullOutput): str
 }
 
 export function renderAvailableDataMarkdown(o: AvailableDataFullOutput): string {
-  // The lookup path resolves a pair instead of drilling a coverage list.
-  if (o.metric_query !== undefined && o.matches.length === 0) {
-    return renderAvailableDataPairMarkdown(o);
-  }
+  // The lookup path renders the pair rows, and now its own metric list too
+  // (fix 3), so it owns every output carrying a `metric_query` — including the
+  // fall-through full drill, which used to route here.
+  if (o.metric_query !== undefined) return renderAvailableDataPairMarkdown(o);
   // Nothing plausibly matched. The handler now skips the coverage drill on this
   // path entirely, so there are no names left to print and this is belt and
   // braces rather than the thing doing the work — kept because the summary

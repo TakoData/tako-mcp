@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { metricFilter, reconcilePair } from "./_pair_confirm.js";
+import { metricFilter, metricFilters, PAIR_ENTITY_PROBES, reconcilePair } from "./_pair_confirm.js";
 
 const node = (id: string, name: string, aliases?: string[]) => ({
   id,
@@ -76,6 +76,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "gross margin",
       globalMetric: gm,
+      verbatim: [],
       scoped: [node("mt::other::1", "Revenues"), gm],
       complete: true,
     });
@@ -87,6 +88,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "gross margin",
       globalMetric: gm,
+      verbatim: [],
       scoped: [gm],
       complete: false,
     });
@@ -97,6 +99,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "backlog",
       globalMetric: node("mt::backlog::1", "Backlog"),
+      verbatim: [],
       scoped: [node("mt::revenues::2", "Revenues")],
       complete: true,
     });
@@ -112,6 +115,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "backlog",
       globalMetric: node("mt::backlog::1", "Backlog"),
+      verbatim: [],
       scoped: [node("mt::b12::2", "12 Month Backlog")],
       complete: false,
     });
@@ -126,6 +130,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "gross margin",
       globalMetric: node("mt::gross_margin::9", "Gross Margin (%)"),
+      verbatim: [],
       scoped: [node("mt::gross_margin_TWIN::4", "Gross Margin (%)")],
       complete: true,
     });
@@ -141,6 +146,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "R&D expense",
       globalMetric: opex,
+      verbatim: [],
       scoped: [opex, node("mt::rd::3", "R&D Expenses (Normalized)")],
       complete: true,
     });
@@ -154,6 +160,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "paid subscribers",
       globalMetric: node("mt::top_paid::1", "Top Paid"),
+      verbatim: [],
       scoped: [node("mt::disney::2", "Disney Core Paid Subscribers")],
       complete: true,
     });
@@ -166,6 +173,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "gross margin",
       globalMetric: null,
+      verbatim: [],
       scoped: [gm],
       complete: true,
     });
@@ -178,6 +186,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "R&D expense",
       globalMetric: node("mt::opex::1", "Operating costs and expenses"),
+      verbatim: [],
       scoped: [node("mt::rd::2", "R&D Expenses (Normalized)"), node("mt::rev::3", "Revenues")],
       complete: true,
     });
@@ -195,6 +204,7 @@ describe("reconcilePair", () => {
     const out = reconcilePair({
       metricQuery: "R&D expense",
       globalMetric: node("mt::opex::1", "Operating costs and expenses"),
+      verbatim: [],
       scoped: [
         node("mt::adv::1", "Advertising Expense (Normalized)"),
         node("mt::accr::2", "Change in Accrued Expenses"),
@@ -204,5 +214,54 @@ describe("reconcilePair", () => {
       complete: true,
     });
     expect(out.entityMetricMatches[0]?.name).toBe("R&D Expenses (Normalized)");
+  });
+});
+
+describe("metricFilters", () => {
+  it("sends the caller's phrase verbatim plus today's fallback when they differ", () => {
+    expect(metricFilters({ metricQuery: "data center revenue", resolvedName: "Revenues", confident: false }))
+      .toEqual({ verbatim: "data center revenue", fallback: "revenue" });
+    expect(metricFilters({ metricQuery: "gross margin", resolvedName: "Gross Margin (%)", confident: true }))
+      .toEqual({ verbatim: "gross margin", fallback: "Gross Margin (%)" });
+  });
+  it("collapses to one filter when the two are the same string (single-token confident case)", () => {
+    expect(metricFilters({ metricQuery: "backlog", resolvedName: "Backlog", confident: true }))
+      .toEqual({ verbatim: "backlog", fallback: null });
+    expect(metricFilters({ metricQuery: "revenue", resolvedName: "Revenues", confident: false }))
+      .toEqual({ verbatim: "revenue", fallback: null });
+  });
+  it("drops a verbatim phrase shorter than the minimum filter length", () => {
+    expect(metricFilters({ metricQuery: "gm", resolvedName: "Gross Margin", confident: true }))
+      .toEqual({ verbatim: null, fallback: "Gross Margin" });
+  });
+  it("probes two entities", () => {
+    expect(PAIR_ENTITY_PROBES).toBe(2);
+  });
+});
+
+describe("reconcilePair — metricList", () => {
+  const metric = (id: string, name: string) => ({ id, type: "metric", name });
+  it("returns the verbatim hits as the list, deduped by id, and still judges the pin off the union", () => {
+    const rev = metric("mt::rev::1", "Revenues");
+    const out = reconcilePair({
+      metricQuery: "revenue",
+      globalMetric: { ...rev, aliases: ["Revenue"] },
+      verbatim: [metric("mt::dc::1", "Total revenue - Data center"), rev],
+      scoped: [rev, metric("mt::dc::1", "Total revenue - Data center")],
+      complete: true,
+    });
+    expect(out.verified).toBe("pair");
+    expect(out.metricList.map((n) => n.id)).toEqual(["mt::dc::1", "mt::rev::1"]);
+  });
+  it("an empty verbatim list yields an empty metricList even when the fallback found near-misses", () => {
+    const out = reconcilePair({
+      metricQuery: "R&D expense",
+      globalMetric: metric("mt::opex::1", "Operating costs and expenses"),
+      verbatim: [],
+      scoped: [metric("mt::rd::1", "R&D Expenses (Normalized)")],
+      complete: true,
+    });
+    expect(out.metricList).toEqual([]);
+    expect(out.entityMetricMatches.map((n) => n.name)).toEqual(["R&D Expenses (Normalized)"]);
   });
 });

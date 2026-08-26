@@ -232,6 +232,9 @@ async function evaluate(pair: Pair): Promise<Row> {
     if (scoped !== null) {
       const r = reconcilePair({
         metricQuery: pair.metric, globalMetric: rank0,
+        // The harness measures the VERDICT, which the fallback filter alone
+        // decides; the verbatim filter buys the browse list the tool returns.
+        verbatim: [],
         scoped: scoped.items, complete: scoped.complete,
       });
       verified = r.verified;

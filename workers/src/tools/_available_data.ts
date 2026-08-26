@@ -195,6 +195,8 @@ export function candidateRef(node: GraphNode): CandidateRef {
 export interface CoverageMatch extends CandidateRef {
   /** True when the node resolved but its coverage lookup failed. */
   unavailable?: boolean;
+  /** Present on a list built by filtering the entity's metrics by the caller's phrase (lookup path, fix 3). */
+  filter?: string;
   coverage: CoverageGroup;
 }
 
@@ -370,6 +372,29 @@ export function candidateMatch(
     coverage: {
       kind, items: [], names: [], total: probe.total,
       truncated: probe.total > 0, capped: probe.capped,
+    },
+  };
+}
+
+/**
+ * The entity's own metrics that contain the caller's `metric` phrase, as a
+ * coverage list with ids. `total` is the number of hits, not the entity's
+ * metric count; `truncated`/`capped` say the filtered page was cut (a
+ * `next_cursor` came back), so "not here" is not "absent".
+ */
+export function metricListMatch(
+  node: GraphNode,
+  list: readonly GraphNode[],
+  complete: boolean,
+  filter: string,
+): CoverageMatch {
+  const items: CoverageItem[] = list.map((n) => ({ name: n.name, node_id: n.id }));
+  return {
+    ...candidateRef(node),
+    filter,
+    coverage: {
+      kind: "metrics", items, names: items.map((i) => i.name),
+      total: items.length, truncated: !complete, capped: !complete,
     },
   };
 }
@@ -643,12 +668,26 @@ export function buildPairSummary(input: {
   verified?: "pair" | "unlinked" | "resolution" | undefined;
   /** Names of the entity's own metrics that matched the filter (context on `unlinked`). */
   entityMetricMatches?: string[];
+  /**
+   * The entity's own metrics containing the caller's phrase — the browse list
+   * (fix 3). Rendered under the match; named here only by its count, because
+   * repeating the names would double their token cost.
+   */
+  metricList?: string[];
 }): string {
   const {
     pair, domainShaped, metricConfident = true, verified, entityMetricMatches = [],
   } = input;
   const entityQuery = oneLine(input.entityQuery);
   const metricQuery = oneLine(input.metricQuery);
+  const list = input.metricList ?? [];
+  const entityName = pair.entity === null ? "" : oneLine(pair.entity.name);
+  // A list of ONE adds nothing to a confirmed pair — the pinned name already
+  // says it. `min` is what each branch considers worth pointing at.
+  const listClause = (min: number): string =>
+    list.length >= min
+      ? ` ${list.length} of ${entityName}'s own metrics contain "${metricQuery}" and are listed below with their node ids.`
+      : "";
   if (pair.entity === null) {
     // A domain that resolves to nothing is a routing answer, not a dead end:
     // measured, `openai.com` and `kagi.com` have no graph node at all while
@@ -658,6 +697,12 @@ export function buildPairSummary(input: {
       : `No graph node matches "${entityQuery}". Tako may still have relevant public/web data — try tako_search directly, or rephrase the name.`;
   }
   if (pair.metric === null) {
+    // The verbatim filter's hits ARE the answer when nothing resolved
+    // globally: the caller asked what the entity has near this phrase, and
+    // this list is exactly that, with ids.
+    if (list.length > 0) {
+      return `No metric named like "${metricQuery}" resolved globally, but${listClause(1)} Re-run with \`metric\` set to the exact name you want to get a runnable next_call.`;
+    }
     // `oneLine` on the resolved name for the same reason as the queries above:
     // it is upstream content in a single-line slot, and a newline inside it
     // renders a line indistinguishable from this tool's own match lines.
@@ -675,6 +720,12 @@ export function buildPairSummary(input: {
     // Deliberately NOT phrased as a gap. The filter that produced them is a
     // recall-oriented substring match on one token, so it establishes what the
     // entity HAS near this phrase — never that it lacks the measure.
+    // The browse list is stronger evidence than the near-miss names: it is the
+    // entity's own metrics containing what the caller typed, so it replaces
+    // the "probably NOT what you asked for" wording rather than joining it.
+    if (list.length > 0) {
+      return `Resolved the entity, but no single metric confidently matches "${metricQuery}", so nothing is pinned.${listClause(1)} Re-run with \`metric\` set to the exact name you want to get a runnable next_call.`;
+    }
     const near =
       entityMetricMatches.length > 0
         ? ` The metrics ${oneLine(pair.entity.name)} itself holds nearest to "${metricQuery}": ${entityMetricMatches.map(oneLine).join(", ")}.`
@@ -690,10 +741,10 @@ export function buildPairSummary(input: {
       entityMetricMatches.length > 0
         ? ` The nearest metrics ${oneLine(pair.entity.name)} DOES have: ${entityMetricMatches.map(oneLine).join(", ")}.`
         : "";
-    return `Resolved "${entityQuery}" + "${metricQuery}", but ${oneLine(pair.metric.name)} is NOT on ${oneLine(pair.entity.name)}'s own metric list — the name fits, the graph holds no edge, so a pinned call will probably return 0 cards.${near} The next_call below therefore drops the pin. If it is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
+    return `Resolved "${entityQuery}" + "${metricQuery}", but ${oneLine(pair.metric.name)} is NOT on ${oneLine(pair.entity.name)}'s own metric list — the name fits, the graph holds no edge, so a pinned call will probably return 0 cards.${near}${listClause(1)} The next_call below therefore drops the pin. If it is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
   }
   if (verified === "pair") {
-    return `Resolved "${entityQuery}" + "${metricQuery}", and ${oneLine(pair.metric.name)} IS on ${oneLine(pair.entity.name)}'s own metric list — the strongest free confirmation available, though it still does not guarantee a chart exists. Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node.`;
+    return `Resolved "${entityQuery}" + "${metricQuery}", and ${oneLine(pair.metric.name)} IS on ${oneLine(pair.entity.name)}'s own metric list — the strongest free confirmation available, though it still does not guarantee a chart exists.${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node.`;
   }
   // The zero-card advice used to read "Tako has no card for this pair — that is
   // the definitive answer, do not rephrase and retry". Measured on staging
@@ -717,7 +768,7 @@ export function buildPairSummary(input: {
   // The run itself was driven by hand against staging and is NOT checked in, so
   // the per-handle table above is the record — treat it as the citation, not as a
   // pointer to a script. Root cause (the near-duplicate metric nodes) is KE-812.
-  return `Resolved "${entityQuery}" + "${metricQuery}". Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node. If that is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
+  return `Resolved "${entityQuery}" + "${metricQuery}".${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node. If that is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
 }
 
 /** A `q` that looks like a hostname (has a dot, no spaces). */
