@@ -547,6 +547,17 @@ export function buildLobehubPlugin(
       inputSchema: z.toJSONSchema(tool.inputSchema, { target: "draft-7" }),
     };
   });
+  // Only `version` and `tools` are regenerated. EVERYTHING ELSE — including
+  // `description` — is carried through from the committed file, so trimming
+  // the allowlist does NOT correct prose that advertises the tool you just
+  // removed. That already happened: the tools array dropped `tako_answer`
+  // while the description went on saying "Answer returns grounded prose" in
+  // the same sentence that names `cloudEndpoint`. Neither guard can catch it
+  // — 2b reads tool names from the allowlist, 2c matches tool names in text,
+  // and "Answer" is a capability word. Matching capability words means a
+  // hand-written vocabulary, which is banned for the same reason the
+  // row-pricing guard stops at `workers/src`. So: after changing
+  // LOBEHUB_TOOL_ALLOWLIST, re-read `description` by hand.
   return { ...committed, version, tools };
 }
 
