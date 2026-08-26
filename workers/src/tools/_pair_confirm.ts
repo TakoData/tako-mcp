@@ -329,13 +329,12 @@ export function reconcilePair(input: {
   const metricList = [...input.verbatim];
   const entityMetricMatches = byQueryOverlap(metricQuery, union).slice(0, ENTITY_MATCHES_SHOWN);
 
-  // Rank 0 is absent or unvetted. NOTHING about linkage is established here —
-  // there is no pinned node to check, and the filter that ran was chosen to
-  // surface near-misses rather than to confirm anything. Reporting `"unlinked"`
-  // would claim "the entity's list holds nothing matching" while
-  // `entityMetricMatches` frequently holds several (measured: Pfizer returns 20
-  // entries for `q="expense"`). The near-misses still ride along — they are the
-  // whole payload on this path.
+  // Rank 0 is absent or unvetted, so THERE IS NO PINNED NODE TO JUDGE — and
+  // `unlinked` is a verdict on the pinned node (see the PairVerdict docblock).
+  // Nothing about linkage is established here: the filter that ran was chosen
+  // to surface near-misses rather than to confirm anything, and a verdict needs
+  // a subject. `resolution` is the only honest answer. The near-misses still
+  // ride along — they are the whole payload on this path.
   if (globalMetric === null || !confidentMatch(metricQuery, globalMetric)) {
     return { verified: "resolution", entityMetricMatches, metricList };
   }

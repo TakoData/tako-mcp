@@ -698,8 +698,11 @@ export function buildPairNextCall(
   opts?: {
     /**
      * Emit the handle WITHOUT the pin. Set on an `unlinked` verdict — the
-     * entity's own metric list holds nothing matching, so the pinned form is
-     * the one we expect to return 0 cards. Measured (staging 2026-07-31, 20
+     * PINNED metric is not on the entity's own metric list, so the pinned form
+     * is the one we expect to return 0 cards. Scoped to that node, not to the
+     * list: `unlinked` ships beside a routinely non-empty
+     * `entityMetricMatches`, and dropping the pin is right precisely because
+     * the pin is the part with evidence against it. Measured (staging 2026-07-31, 20
      * handles × 3 repeats): 11 of 20 retrieved FEWER cards pinned than
      * unpinned, because `strict` is a hard filter over a graph holding
      * near-duplicate metric nodes where only one twin carries cards (KE-812).
