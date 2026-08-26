@@ -400,6 +400,11 @@ const tako_visualize = {
     // `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: true },
   },
+  fixedInputs: [
+    { field: "dark_mode", value: "true", note: "Cards render in the dark theme." },
+    { field: "width", value: "900", note: "Card width in pixels." },
+    { field: "height (when omitted)", value: "720", note: "Card height in pixels unless height is set." },
+  ],
   async handler(input, ctx): Promise<Output> {
     const body = buildVisualizeBody(input);
 

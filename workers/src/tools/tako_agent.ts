@@ -392,6 +392,10 @@ const takoAgent = {
     // See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
+  fixedInputs: [
+    { field: "effort", value: "\"medium\"", note: "The only Answer Agent effort level launched." },
+    { field: "poll interval / budget", value: "5 s / 295 s", note: "The call polls the run until it completes or the budget ends." },
+  ],
   async handler(input, ctx): Promise<AgentRun> {
     const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);
     return pollAgentRun(ctx, runId, { budgetMs: AGENT_POLL_BUDGET_MS, onTimeout: "throw" });

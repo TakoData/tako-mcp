@@ -53,4 +53,13 @@ describe("tool annotations", () => {
       expect(tool.name.startsWith("tako_"), tool.name).toBe(true);
     }
   });
+  it("every tool declares fixedInputs, even when empty, so TOOLS.md never guesses", () => {
+    for (const tool of TOOL_REGISTRY) {
+      expect(Array.isArray(tool.fixedInputs), tool.name).toBe(true);
+      for (const fixed of tool.fixedInputs ?? []) {
+        expect(fixed.field.length, `${tool.name}.${fixed.field}`).toBeGreaterThan(0);
+        expect(fixed.note.length, `${tool.name}.${fixed.field}`).toBeGreaterThan(0);
+      }
+    }
+  });
 });

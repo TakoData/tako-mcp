@@ -59,6 +59,7 @@ const tako_credit_balance = {
   // read-only and closed-world under both the MCP and Apps review
   // readings, so — uniquely among these tools — the canonical annotations
   // already serve every surface.
+  fixedInputs: [],
   async handler(_input, ctx) {
     const data = await djangoGet<Record<string, unknown>>(
       ctx.env,

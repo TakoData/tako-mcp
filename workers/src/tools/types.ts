@@ -289,6 +289,21 @@ export interface AppUiResource {
  * inferred types — callers get autocomplete on `tool.name`, `tool.handler`
  * return type, etc.
  */
+/**
+ * A request field the handler sends with a constant value the caller cannot
+ * change. Declared, not inferred: `docs/TOOLS.md` renders this list so a
+ * reader sees the opinionated defaults next to the parameters, and the
+ * generator cannot recover it from a zod schema.
+ */
+export interface FixedInput {
+  /** Wire field, e.g. `sources.web.highlights`. */
+  field: string;
+  /** The constant, rendered verbatim, e.g. `true` or `"medium"`. */
+  value: string;
+  /** Why it is fixed, one sentence. */
+  note: string;
+}
+
 export interface ToolModule<
   InputSchema extends z.ZodObject<z.ZodRawShape> = z.ZodObject<z.ZodRawShape>,
   Output = unknown,
@@ -331,6 +346,8 @@ export interface ToolModule<
    * false everywhere.
    */
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
+  /** Request fields sent with a constant value — see {@link FixedInput}. */
+  fixedInputs?: ReadonlyArray<FixedInput>;
   /**
    * Optional anonymous-input gate, consulted by `registerTool` on
    * `tier: "free"` calls BEFORE the handler runs. Return the extra
@@ -432,6 +449,8 @@ export interface AnyToolModule {
   annotations: ToolAnnotations;
   /** Per-surface annotation overrides — see {@link ToolModule.annotationsBySurface}. */
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
+  /** Request fields sent with a constant value — see {@link FixedInput}. */
+  fixedInputs?: ReadonlyArray<FixedInput>;
   /** Anonymous-input gate — see {@link ToolModule.anonymousInputRejects}. */
   anonymousInputRejects?: (input: Record<string, unknown>) => string | undefined;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;

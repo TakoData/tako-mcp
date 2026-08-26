@@ -74,6 +74,7 @@ const tako_graph_related = {
     // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
+  fixedInputs: [],
   async handler(input: Input, ctx): Promise<Output> {
     const query: Record<string, string | number | boolean> = {
       node_id: input.node_id,
