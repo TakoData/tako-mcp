@@ -23,6 +23,8 @@ import { djangoGet } from "../django.js";
 import {
   ALTERNATES_SHOWN,
   buildMatch,
+  buildTieSummary,
+  candidateMatch,
   candidateRef,
   DEFAULT_CANDIDATES,
   MAX_CANDIDATES,
@@ -42,11 +44,12 @@ import {
   PAGE_LIMIT,
   promotionEligible,
   toRef,
+  topOfEachKind,
   resolvedOnlyMatch,
   unavailableMatch,
 } from "./_available_data.js";
 import type { CoverageMatch, OtherMatch, PairResolution } from "./_available_data.js";
-import { confidentMatch, gateCandidates, sameTokens } from "./_match_gate.js";
+import { confidentMatch, gateCandidates, mentionedWhole, sameTokens } from "./_match_gate.js";
 import {
   PAIR_PROBE_LIMIT,
   PAIR_PROBE_TIMEOUT_MS,
@@ -827,7 +830,17 @@ const tako_available_data = {
       };
     }
 
-    const candidates = gate.kept.slice(0, SELECT_TOP_N);
+    // Inspect the top SELECT_TOP_N, plus the top of each kind even when it
+    // ranks lower: fix 1 needs both tops' coverage to decide whether the
+    // query names both an entity and a metric.
+    const tops = topOfEachKind(gate.kept);
+    const inspected = new Set<string>();
+    const candidates: GraphNode[] = [];
+    for (const n of [...gate.kept.slice(0, SELECT_TOP_N), tops.entity, tops.metric]) {
+      if (n === null || inspected.has(n.id)) continue;
+      inspected.add(n.id);
+      candidates.push(n);
+    }
 
     // Inspect wide, render narrow. Round 1 runs the winner-candidate's FULL
     // drill in parallel with cheap `limit=1` coverage probes of the rest, so
@@ -838,6 +851,56 @@ const tako_available_data = {
       drillMatches(candidates.slice(0, RENDER_FULL_N)),
       Promise.all(candidates.slice(RENDER_FULL_N).map((n) => coverageProbe(n))),
     ]);
+
+    // ---- Fix 1: the query names BOTH kinds -------------------------------
+    // `q="US core PCE"` resolves the company `Core` (15 metrics) AND the
+    // metric `Core PCE Price Index` (3 entities). Rendering rank 0 in full
+    // was a confident wrong answer in 7 of 28 spike cases (spec Appendix B).
+    // When `types` is omitted, both tops have coverage, and the query
+    // mentions each of them whole, return both as candidates and pick
+    // neither. The rank-0 drill that already ran is discarded — it ran in
+    // parallel, so it cost no round trip.
+    const coverageOf = (node: GraphNode): { total: number; capped: boolean } | null => {
+      const drilled = firstDrill.find((m) => m.node_id === node.id);
+      if (drilled !== undefined) {
+        return drilled.unavailable === true
+          ? null
+          : { total: drilled.coverage.total, capped: drilled.coverage.capped };
+      }
+      const pr = probes.find((p) => p.node.id === node.id);
+      return pr === undefined ? null : { total: pr.total, capped: pr.capped };
+    };
+    if (input.types === undefined && tops.entity !== null && tops.metric !== null) {
+      const e = coverageOf(tops.entity);
+      const m = coverageOf(tops.metric);
+      if (
+        e !== null && m !== null && e.total > 0 && m.total > 0 &&
+        mentionedWhole(input.q, tops.entity) && mentionedWhole(input.q, tops.metric)
+      ) {
+        const entityMatch = candidateMatch(tops.entity, e);
+        const metricMatch = candidateMatch(tops.metric, m);
+        const tieIds = new Set([entityMatch.node_id, metricMatch.node_id]);
+        const tieOthers: OtherMatch[] = [
+          ...probes
+            .filter((pr) => !tieIds.has(pr.node.id))
+            .map((pr) => ({ ...candidateRef(pr.node), coverage_total: pr.total, coverage_capped: pr.capped })),
+          ...gate.kept
+            .filter((n) => !inspected.has(n.id))
+            .concat(results.filter((n) => !gate.kept.includes(n)))
+            .map(candidateRef),
+        ];
+        return {
+          found: true,
+          verified: "coverage",
+          confident: true,
+          query: input.q,
+          summary: buildTieSummary({ query: input.q, entity: entityMatch, metric: metricMatch }),
+          matches: [entityMatch, metricMatch],
+          other_matches: tieOthers,
+          next_call: null,
+        };
+      }
+    }
 
     let matches = firstDrill;
     let rendered = candidates.slice(0, RENDER_FULL_N);
@@ -932,7 +995,7 @@ const tako_available_data = {
         .map((pr) => ({ ...candidateRef(pr.node), coverage_total: pr.total, coverage_capped: pr.capped })),
       // Never inspected: id, kind, and aliases, but no coverage count.
       ...gate.kept
-        .slice(SELECT_TOP_N)
+        .filter((n) => !inspected.has(n.id))
         .concat(results.filter((n) => !gate.kept.includes(n)))
         .map(candidateRef),
     ];

@@ -1395,3 +1395,88 @@ describe("tako_available_data — no padding an exact match (fix 5)", () => {
     expect(out.summary).not.toContain("Median Sale Price");
   });
 });
+
+describe("tako_available_data — both kinds (fix 1)", () => {
+  const core = { ...searchHit("core-co", "Core", "entity", "ORG"), subtype: "Companies" };
+  const corePce = { ...searchHit("core-pce", "Core PCE Price Index", "metric", "METRIC"), aliases: ["Core PCE"] };
+
+  it("returns the top entity AND the top metric as candidates when a bare query names both (the US core PCE shape)", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [core, corePce] }),
+      jsonResponse(200, drill("core-co", "Core", "metrics", ["Acquisitions"], 15)),
+      jsonResponse(200, drill("core-pce", "Core PCE Price Index", "entities", ["United States"], 3)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "US core PCE" }, CTX);
+    expect(fetchMock.mock.calls).toHaveLength(3); // search + rank-0 drill + one probe; no round 2
+    expect(out.found).toBe(true);
+    expect(out.verified).toBe("coverage");
+    expect(out.matches.map((m) => [m.node_id, m.type])).toEqual([["core-co", "entity"], ["core-pce", "metric"]]);
+    for (const m of out.matches) expect(m.coverage.names).toEqual([]); // neither rendered in full
+    expect(out.matches[1]).toMatchObject({ label: "METRIC", aliases: ["Core PCE"] });
+    expect(out.matches[0]?.coverage.total).toBe(15);
+    expect(out.next_call).toBeNull();
+    expect(out.summary).toContain('types:"metric"');
+    expect(out.other_matches).toEqual([]);
+  });
+
+  it("the tie reaches past SELECT_TOP_N for the top of the other kind", async () => {
+    // Four entities rank above the metric; the metric is still inspected.
+    // Their names have to pass the gate, so each one contains the whole query.
+    const ents = ["a", "b", "c", "d"].map((s) => ({
+      ...searchHit(`core-${s}`, `US Core PCE ${s.toUpperCase()}`), subtype: "Companies",
+    }));
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, { results: [core, ...ents, corePce] }),
+      jsonResponse(200, drill("core-co", "Core", "metrics", ["Acquisitions"], 15)),
+      jsonResponse(200, drill("core-a", "US Core PCE A", "metrics", [], 0)),
+      jsonResponse(200, drill("core-b", "US Core PCE B", "metrics", [], 0)),
+      jsonResponse(200, drill("core-c", "US Core PCE C", "metrics", [], 0)),
+      jsonResponse(200, drill("core-pce", "Core PCE Price Index", "entities", ["United States"], 3)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "US core PCE" }, CTX);
+    expect(fetchMock.mock.calls).toHaveLength(6); // 1 search + 1 drill + 3 probes + the metric's probe
+    expect(out.matches.map((m) => m.node_id)).toEqual(["core-co", "core-pce"]);
+    // Core D was never inspected and Core A-C were: all four are receipts.
+    expect(out.other_matches.map((o) => o.node_id)).toEqual(["core-a", "core-b", "core-c", "core-d"]);
+  });
+
+  it("does NOT call a tie when a metric merely CONTAINS the entity name (entity-prefixed KPI junk)", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        results: [
+          { ...searchHit("disney", "The Walt Disney Company"), aliases: ["Disney"] },
+          searchHit("dis-subs", "Disney Core Paid Subscribers", "metric", "METRIC"),
+        ],
+      }),
+      jsonResponse(200, drill("disney", "The Walt Disney Company", "metrics", ["Revenue"], 250, true)),
+      jsonResponse(200, drill("dis-subs", "Disney Core Paid Subscribers", "entities", ["Netflix"], 4)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Disney" }, CTX);
+    expect(out.matches.map((m) => m.node_id)).toEqual(["disney"]);
+    expect(out.matches[0]?.coverage.names).toEqual(["Revenue"]);
+    expect(out.other_matches.find((o) => o.node_id === "dis-subs")?.coverage_total).toBe(4);
+  });
+
+  it("a zero-coverage kind is not a tie: the covered kind is rendered in full", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [core, corePce] }),
+      jsonResponse(200, drill("core-co", "Core", "metrics", [], 0)),
+      jsonResponse(200, drill("core-pce", "Core PCE Price Index", "entities", ["United States"], 3)),
+      // Round 2: the promoted metric's full drill (existing promotion path).
+      jsonResponse(200, drill("core-pce", "Core PCE Price Index", "entities", ["United States", "Euro Area"], 3)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "US core PCE" }, CTX);
+    expect(out.found).toBe(true);
+    expect(out.matches.find((m) => m.node_id === "core-pce")?.coverage.names).toEqual(["United States", "Euro Area"]);
+  });
+
+  it("never calls a tie when the caller passed types", async () => {
+    mockFetchSequence([
+      jsonResponse(200, { results: [corePce] }),
+      jsonResponse(200, drill("core-pce", "Core PCE Price Index", "entities", ["United States"], 3)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "US core PCE", types: "metric" }, CTX);
+    expect(out.matches).toHaveLength(1);
+    expect(out.matches[0]?.coverage.names).toEqual(["United States"]);
+  });
+});

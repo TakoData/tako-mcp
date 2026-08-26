@@ -42,6 +42,9 @@ type GraphRelation = z.infer<typeof graphRelationSchema>;
  * queries the first plausible candidate WITH coverage sat at rank <2 in 14 of
  * them but at rank <4 in all 16. `q="Carnival"` is the case depth-2 misses:
  * ranks 0-2 are zero-coverage name variants and the real answer is at rank 3.
+ *
+ * The top of each kind is inspected too, even past this depth, so fix 1 can
+ * compare their coverage.
  */
 export const SELECT_TOP_N = 4;
 export const RENDER_FULL_N = 1;
@@ -340,6 +343,37 @@ export function unavailableMatch(node: GraphNode): CoverageMatch {
   return { ...candidateRef(node), unavailable: true, coverage: emptyGroup(coverageKindFor(node.type)) };
 }
 
+/** The first entity and the first metric in gate order — the two the tool must never silently choose between. */
+export function topOfEachKind(
+  kept: readonly GraphNode[],
+): { entity: GraphNode | null; metric: GraphNode | null } {
+  return {
+    entity: kept.find((n) => n.type === "entity") ?? null,
+    metric: kept.find((n) => n.type === "metric") ?? null,
+  };
+}
+
+/**
+ * A match rendered as a CANDIDATE: kind, coverage count, aliases, and no list.
+ * `total` is real (from the limit=1 probe or the drill), so `hasLiveCoverage`
+ * and `found` read it as data; `names` is empty, so the renderer prints no
+ * list and `buildNextCall` emits no handle. Used when the tool declines to
+ * pick between an entity and a metric (fix 1).
+ */
+export function candidateMatch(
+  node: GraphNode,
+  probe: { total: number; capped: boolean },
+): CoverageMatch {
+  const kind = coverageKindFor(node.type);
+  return {
+    ...candidateRef(node),
+    coverage: {
+      kind, items: [], names: [], total: probe.total,
+      truncated: probe.total > 0, capped: probe.capped,
+    },
+  };
+}
+
 // Counts only — the names themselves are rendered once, under each match in
 // the markdown text channel, so listing them here again would double their
 // token cost. Capped totals render as "N+" (the total is a floor).
@@ -380,6 +414,28 @@ function matchLine(m: CoverageMatch): string {
   }
   if (m.coverage.total === 0) return `${head} — ${emptyClause(m.coverage.kind)}.${tail}`;
   return `${head} — ${coverageClause(m.coverage)}.${tail}`;
+}
+
+/**
+ * The prose for a query that names both kinds. The model, not the tool,
+ * breaks the tie — it has the user's intent. No pin advice here: the caller
+ * re-runs this tool, and the re-run carries whatever handle shape is current.
+ */
+export function buildTieSummary(input: {
+  query: string;
+  entity: CoverageMatch;
+  metric: CoverageMatch;
+}): string {
+  const q = oneLine(input.query);
+  return [
+    `"${q}" names both an ENTITY and a METRIC with live data, and only you know which one you meant:`,
+    "",
+    matchLine(input.entity),
+    "",
+    matchLine(input.metric),
+    "",
+    `Re-run with types:"entity" for the entity's metric list, or types:"metric" for the entities the metric is tracked across. If you want one measure on the entity, re-run with \`metric\` set to it instead.`,
+  ].join("\n");
 }
 
 /**

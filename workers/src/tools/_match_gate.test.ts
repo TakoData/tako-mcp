@@ -7,7 +7,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { confidentMatch, gateCandidates, matchTokens, plausibleMatch } from "./_match_gate.js";
+import {
+  confidentMatch,
+  gateCandidates,
+  matchTokens,
+  mentionedWhole,
+  plausibleMatch,
+} from "./_match_gate.js";
 
 const name = (n: string, aliases?: string[]) => (aliases ? { name: n, aliases } : { name: n });
 
@@ -253,5 +259,23 @@ describe("confidentMatch", () => {
 
   it("rejects when nothing matches on any surface", () => {
     expect(confidentMatch("number of unicorns", { name: "Concentra Number Of Visits" })).toBe(false);
+  });
+});
+
+describe("mentionedWhole", () => {
+  it("true when the query contains all of a name's tokens", () => {
+    expect(mentionedWhole("US core PCE", { name: "Core" })).toBe(true);
+  });
+  it("true through an alias that the query contains whole", () => {
+    expect(mentionedWhole("US core PCE", { name: "Core PCE Price Index", aliases: ["Core PCE"] })).toBe(true);
+    expect(mentionedWhole("Disney", { name: "The Walt Disney Company", aliases: ["Disney"] })).toBe(true);
+  });
+  it("false when the candidate merely CONTAINS the query (entity-prefixed KPI junk)", () => {
+    expect(mentionedWhole("Disney", { name: "Disney Core Paid Subscribers" })).toBe(false);
+    expect(mentionedWhole("Tesla", { name: "Tesla Vehicle Deliveries" })).toBe(false);
+  });
+  it("false on empty token sets", () => {
+    expect(mentionedWhole("!!!", { name: "Core" })).toBe(false);
+    expect(mentionedWhole("Core", { name: "" })).toBe(false);
   });
 });

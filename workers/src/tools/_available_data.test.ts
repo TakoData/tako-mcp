@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildMatch,
   buildNextCall,
+  buildTieSummary,
+  candidateMatch,
   buildPairSummary,
   buildSummary,
   coverageKindFor,
@@ -12,6 +14,7 @@ import {
   orderMetricItems,
   MAX_COVERAGE_NAMES,
   promotionEligible,
+  topOfEachKind,
   selectCoverage,
   unavailableMatch,
   type CoverageMatch,
@@ -538,5 +541,42 @@ describe("promotionEligible", () => {
   });
   it("a non-exact rank 0 leaves every plausible candidate eligible (the US inflation shape)", () => {
     expect(promotionEligible("US inflation", { name: "US Savings Inflation Securities" }, { name: "United States", aliases: ["US"] })).toBe(true);
+  });
+});
+
+describe("topOfEachKind", () => {
+  it("returns the first entity and the first metric in gate order", () => {
+    const kept = [
+      { id: "e2", type: "entity", name: "Core" },
+      { id: "m1", type: "metric", name: "Core PCE Price Index" },
+      { id: "e3", type: "entity", name: "Core Labs" },
+    ];
+    expect(topOfEachKind(kept)).toEqual({ entity: kept[0], metric: kept[1] });
+    expect(topOfEachKind([kept[0]!])).toEqual({ entity: kept[0], metric: null });
+  });
+});
+
+describe("candidateMatch + buildTieSummary", () => {
+  const entity = candidateMatch(
+    { id: "e", type: "entity", name: "Core", subtype: "Companies", label: "ORG" },
+    { total: 15, capped: false },
+  );
+  const metric = candidateMatch(
+    { id: "m", type: "metric", name: "Core PCE Price Index", label: "METRIC", aliases: ["Core PCE", "PCEPILFE"] },
+    { total: 3, capped: false },
+  );
+  it("a candidate match has a real total and no list, so it counts as coverage but never renders one", () => {
+    expect(entity.coverage).toEqual({ kind: "metrics", items: [], names: [], total: 15, truncated: true, capped: false });
+    expect(hasLiveCoverage(entity)).toBe(true);
+  });
+  it("the tie summary names both, with kind and aliases, and tells the caller how to break it", () => {
+    const s = buildTieSummary({ query: "US core PCE", entity, metric });
+    expect(s).toContain('"US core PCE" names both an ENTITY and a METRIC with live data');
+    expect(s).toContain("**Core** (Companies, ORG) — 15 metrics.");
+    expect(s).toContain("**Core PCE Price Index** (METRIC) — tracked for 3 entities. — aliases: Core PCE, PCEPILFE");
+    expect(s).toContain('types:"entity"');
+    expect(s).toContain('types:"metric"');
+    expect(s).toContain("re-run with `metric` set");
+    expect(s).not.toMatch(/node_ids|strict/); // pin advice belongs to PR (b)
   });
 });
