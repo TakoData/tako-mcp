@@ -187,7 +187,7 @@ describe("isMeteredJsonRpcBody", () => {
       "tako_agent",
       "tako_answer",
       "tako_contents",
-      "get_credit_balance",
+      "tako_credit_balance",
       "no_such_tool",
     ]) {
       expect(

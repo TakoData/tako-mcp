@@ -38,18 +38,6 @@
   },
   "tools": [
     {
-      "name": "get_credit_balance",
-      "description": "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
-      "parameters": {},
-      "annotations": {
-        "title": "Tako: Get Credit Balance",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "tako_agent",
       "description": "Run Tako's Answer Agent: multi-step research returning a synthesized, cited `answer` plus chart `cards`.\n\nBest for: questions whose shape needs figuring out — cohorts (\"which companies match…\"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` returns nothing.\n\nNot for: a known value or a simple comparison — use `tako_search` (faster). This runs ~30–90s but is far more thorough.",
       "parameters": {
@@ -285,6 +273,18 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": true
+      }
+    },
+    {
+      "name": "tako_credit_balance",
+      "description": "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
+      "parameters": {},
+      "annotations": {
+        "title": "Tako: Credit Balance",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {

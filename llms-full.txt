@@ -16,7 +16,7 @@ Hosted endpoint: `https://mcp.tako.com/mcp` (Streamable HTTP). The ChatGPT app u
 - No token needed: paste the URL and sign in when the client prompts — a per-host key is minted automatically, and a new account gets up to 2,000 free requests. Anonymous connections work immediately: `tako_search` and `tako_available_data` run (rate-limited, shared capacity); `tako_contents` stays listed and answers with sign-in instructions when called.
 - CI, headless runs, and clients without an OAuth flow: pass `Authorization: Bearer <TAKO_API_KEY>` on the same URL. Get a key at tako.com/console/api-keys.
 
-Optional tools: some tools are opt-in and off by default, to keep the default surface small. Enable them by adding `?tools=` to the endpoint URL with comma-separated aliases, e.g. `https://mcp.tako.com/mcp?tools=agent,visualize`. Aliases: `answer` (`tako_answer` — not recommended: the calling model already synthesizes from search results), `agent` (Answer Agent — the single-call `tako_agent` on the generic surface, the `tako_agent_start` / `tako_agent_wait` pair on `/mcp/chatgpt`), `visualize` (`tako_visualize`; already on by default on `/mcp/chatgpt`, the surface whose host renders its chart widget inline), `credits` (`get_credit_balance`), `graph` (the low-level graph primitives `tako_graph_search` / `tako_graph_related` / `tako_graph_node` — power-user traversal beyond what `tako_available_data` covers). Only aliases are recognized (not raw tool names); unknown `?tools=` values are ignored, so a typo never breaks the connection.
+Optional tools: some tools are opt-in and off by default, to keep the default surface small. Enable them by adding `?tools=` to the endpoint URL with comma-separated aliases, e.g. `https://mcp.tako.com/mcp?tools=agent,visualize`. Aliases: `answer` (`tako_answer` — not recommended: the calling model already synthesizes from search results), `agent` (Answer Agent — the single-call `tako_agent` on the generic surface, the `tako_agent_start` / `tako_agent_wait` pair on `/mcp/chatgpt`), `visualize` (`tako_visualize`; already on by default on `/mcp/chatgpt`, the surface whose host renders its chart widget inline), `credits` (`tako_credit_balance`), `graph` (the low-level graph primitives `tako_graph_search` / `tako_graph_related` / `tako_graph_node` — power-user traversal beyond what `tako_available_data` covers). Only aliases are recognized (not raw tool names); unknown `?tools=` values are ignored, so a typo never breaks the connection.
 
 Tools are discovered at runtime via `tools/list`. There is no per-call `api_token` argument — auth is connection-level.
 
@@ -138,7 +138,7 @@ Parameters:
 - `sources` (array, optional): both by default (`["data","web"]`) — keep web enabled. Only narrow to `["data"]` once `tako_available_data` has confirmed the proprietary data exists; otherwise web is the fallback when it does not. Pass `["web"]` for open-web only. (`"tako"` is a legacy synonym for `"data"`.)
 - `thread_id` (string UUID, optional): Continue a prior agent run's thread as a follow-up; omit to start a new thread.
 
-### get_credit_balance
+### tako_credit_balance
 Opt-in tool — off by default; enable with `?tools=credits` on the endpoint URL (see Connecting). Check the connected account's API credit balance.
 
 Parameters: none.

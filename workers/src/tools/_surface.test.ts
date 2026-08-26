@@ -16,7 +16,7 @@ describe("isToolOnSurface", () => {
       "tako_answer",
       "tako_visualize",
       "tako_agent",
-      "get_credit_balance",
+      "tako_credit_balance",
       "tako_graph_search",
     ]) {
       expect(isToolOnSurface(name, "generic", none)).toBe(false);
@@ -40,7 +40,7 @@ describe("isToolOnSurface", () => {
       "tako_answer",
       "tako_agent",
       "tako_agent_start",
-      "get_credit_balance",
+      "tako_credit_balance",
       "tako_graph_search",
     ]) {
       expect(isToolOnSurface(name, "chatgpt", none)).toBe(false);

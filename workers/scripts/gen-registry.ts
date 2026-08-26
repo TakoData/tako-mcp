@@ -49,13 +49,13 @@ import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
  * or removing a tool file without updating the allowlist fails the build.
  */
 export const MCP_TOOL_ALLOWLIST = [
-  "get_credit_balance",
   "tako_agent",
   "tako_agent_start",
   "tako_agent_wait",
   "tako_answer",
   "tako_available_data",
   "tako_contents",
+  "tako_credit_balance",
   "tako_graph_node",
   "tako_graph_related",
   "tako_graph_search",

@@ -20,7 +20,7 @@ const GRAPH_TOOLS = ["tako_graph_search", "tako_graph_related", "tako_graph_node
 const SINGLE_TOOL_ALIASES: Record<string, string> = {
   answer: "tako_answer",
   visualize: "tako_visualize",
-  credits: "get_credit_balance",
+  credits: "tako_credit_balance",
 };
 
 const ALL_OPTIONAL_TOOLS = [
@@ -77,7 +77,7 @@ describe("parseEnabledOptionalToolNames", () => {
     expect(
       [...parseEnabledOptionalToolNames("agent,visualize,credits")].sort(),
     ).toEqual(
-      [...AGENT_TOOLS, "tako_visualize", "get_credit_balance"].sort(),
+      [...AGENT_TOOLS, "tako_visualize", "tako_credit_balance"].sort(),
     );
   });
 
@@ -106,7 +106,7 @@ describe("parseEnabledOptionalToolNames", () => {
     // requires its alias (`agent`, `visualize`, ...).
     expect(parseEnabledOptionalToolNames("tako_agent").size).toBe(0);
     expect(parseEnabledOptionalToolNames("tako_visualize").size).toBe(0);
-    expect(parseEnabledOptionalToolNames("get_credit_balance").size).toBe(0);
+    expect(parseEnabledOptionalToolNames("tako_credit_balance").size).toBe(0);
   });
 
   it("keeps recognized aliases and drops unknown tokens in a mixed list", () => {

@@ -62,7 +62,7 @@ tools:
       Run Tako's Answer Agent — multi-step research for complex questions;
       returns a cited answer plus chart cards. Opt-in — append ?tools=agent
       to the server URL.
-  - name: get_credit_balance
+  - name: tako_credit_balance
     description: >-
       Check the connected account's API credit balance. Opt-in — append
       ?tools=credits to the server URL.

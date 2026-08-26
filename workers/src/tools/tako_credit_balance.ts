@@ -1,5 +1,5 @@
 /**
- * `get_credit_balance` — fetch the current user's remaining Tako credits.
+ * `tako_credit_balance` — fetch the current user's remaining Tako credits.
  *
  * Wraps `GET /api/v1/credit_balance/`. Cheap + sync. Useful for Claude to
  * answer "how many credits do I have?" and to gate expensive operations
@@ -42,14 +42,14 @@ const outputSchema = z.object({
   details: detailsSchema,
 });
 
-const get_credit_balance = {
-  name: "get_credit_balance",
+const tako_credit_balance = {
+  name: "tako_credit_balance",
   description:
     "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
   inputSchema,
   outputSchema,
   annotations: {
-    title: "Tako: Get Credit Balance",
+    title: "Tako: Credit Balance",
     readOnlyHint: true,
     destructiveHint: false,
     idempotentHint: true,
@@ -75,7 +75,7 @@ const get_credit_balance = {
     // bug.
     const parsed = detailsSchema.safeParse(data);
     if (!parsed.success) {
-      logWireGuardFailure("get_credit_balance", "details", parsed.error, data);
+      logWireGuardFailure("tako_credit_balance", "details", parsed.error, data);
       throw new Error(
         "Tako credit_balance endpoint returned an unexpected shape (not a JSON object). This is likely a backend issue — retry once; if it persists, flag it to the Tako team.",
       );
@@ -84,4 +84,4 @@ const get_credit_balance = {
   },
 } satisfies ToolModule<typeof inputSchema, z.infer<typeof outputSchema>>;
 
-export default get_credit_balance;
+export default tako_credit_balance;

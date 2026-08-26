@@ -48,7 +48,7 @@ export const OPTIONAL_TOOL_ALIASES: Readonly<
   // Docs mark it "not recommended".
   answer: ["tako_answer"],
   visualize: ["tako_visualize"],
-  credits: ["get_credit_balance"],
+  credits: ["tako_credit_balance"],
   graph: ["tako_graph_search", "tako_graph_related", "tako_graph_node"],
 };
 

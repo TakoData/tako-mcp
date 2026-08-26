@@ -12,9 +12,9 @@ import { describe, expect, it } from "vitest";
 import { TOOL_REGISTRY } from "./_registry.js";
 
 // Closed-domain tools per the MCP spec: tako_visualize renders data the caller
-// already supplied; get_credit_balance reads Tako's own account state. Every
+// already supplied; tako_credit_balance reads Tako's own account state. Every
 // other tool reaches the open world (web + the live data graph).
-const CLOSED_WORLD = new Set(["tako_visualize", "get_credit_balance"]);
+const CLOSED_WORLD = new Set(["tako_visualize", "tako_credit_balance"]);
 
 describe("tool annotations", () => {
   it("every tool declares all three hints explicitly (booleans)", () => {
@@ -44,6 +44,14 @@ describe("tool annotations", () => {
       expect(tool.annotations.readOnlyHint, tool.name).toBe(
         !WRITERS.has(tool.name),
       );
+    }
+  });
+
+  it("every tool name carries the tako_ namespace prefix", () => {
+    // `?tools=` tokens are tool names with the prefix optional (spec D1);
+    // one unprefixed name would need a special case in the parser.
+    for (const tool of TOOL_REGISTRY) {
+      expect(tool.name.startsWith("tako_"), tool.name).toBe(true);
     }
   });
 });

@@ -19,7 +19,7 @@ Anonymous connections work immediately: `tako_search` and `tako_available_data` 
 ## Tools
 
 - Default: `tako_search` (data + web search; `include_contents: true` inlines each exportable card's rows, billed per 1k), `tako_available_data` (free coverage check — run it to get a metric's exact name and a node id to pin), `tako_contents` (full rows behind an `exportable: true` card, or a web page's text).
-- Opt-in via `?tools=` on the URL (comma-separated aliases): `answer` (`tako_answer` — not recommended: the calling model already synthesizes from search results), `agent` (`tako_agent`, the multi-step Answer Agent; the `/mcp/chatgpt` surface serves the split `tako_agent_start`/`tako_agent_wait` pair), `visualize` (`tako_visualize`; on by default on `/mcp/chatgpt`), `credits` (`get_credit_balance`), `graph` (the low-level graph primitives `tako_graph_search` / `tako_graph_related` / `tako_graph_node`). Example: `https://mcp.tako.com/mcp?tools=agent,visualize`. Unknown values are ignored.
+- Opt-in via `?tools=` on the URL (comma-separated aliases): `answer` (`tako_answer` — not recommended: the calling model already synthesizes from search results), `agent` (`tako_agent`, the multi-step Answer Agent; the `/mcp/chatgpt` surface serves the split `tako_agent_start`/`tako_agent_wait` pair), `visualize` (`tako_visualize`; on by default on `/mcp/chatgpt`), `credits` (`tako_credit_balance`), `graph` (the low-level graph primitives `tako_graph_search` / `tako_graph_related` / `tako_graph_node`). Example: `https://mcp.tako.com/mcp?tools=agent,visualize`. Unknown values are ignored.
 
 ## Documentation
 
