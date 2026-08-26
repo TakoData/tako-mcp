@@ -1,6 +1,6 @@
 /**
- * Shared facades + helpers for the graph primitive tools
- * (tako_graph_search / tako_graph_related / tako_graph_node).
+ * Shared facades + helpers for the graph tools (tako_graph_related and the
+ * graph/search + graph/related pipeline inside tako_available_data).
  *
  * The generated schemas (GraphNode, GraphRelatedResponse, …) are the wire
  * contract each tool safeParses against. These hand-written facades are the
@@ -99,8 +99,7 @@ export function graphErrorMessage(
   toolName?: string,
 ): string {
   // `toolName` lets a composite caller (tako_available_data) label the error
-  // with its own name; the opt-in primitives (`?tools=graph`) fall back to
-  // `tako_graph_<op>`.
+  // with its own name; `tako_graph_related` falls back to `tako_graph_<op>`.
   const tool = toolName ?? `tako_graph_${op}`;
   const idOf = ref ? `"${ref}"` : "the given id";
 

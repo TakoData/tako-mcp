@@ -21,12 +21,12 @@ const NER_LABELS = [
 ] as const;
 
 const DESCRIPTION = [
-  "Explore what a resolved graph node connects to — the map of what data Tako has for it. Free.",
+  "Explore what a graph node connects to — the map of what data Tako has for it. Free.",
   "",
-  "Best for: checking coverage after resolving a node with `tako_graph_search`.",
+  "Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.",
   "",
   'Drilling `relation: "metrics"` returns only that node\'s metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.',
-  'Filtering with `q` ("revenue") narrows to a single metric. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
+  'Filtering with `q` ("revenue") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
 ].join("\n");
 
 const inputSchema = z.object({

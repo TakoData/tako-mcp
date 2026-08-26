@@ -37,9 +37,8 @@ describe("tool annotations", () => {
     // for every surface: a call is a WRITE when it creates a durable,
     // user-addressable resource — a chart card with public URLs
     // (tako_visualize) or a queued agent run reachable later via
-    // `run_id`/`thread_id` (tako_agent, tako_agent_start). Everything else,
-    // including the run-polling tako_agent_wait, is a read.
-    const WRITERS = new Set(["tako_visualize", "tako_agent", "tako_agent_start"]);
+    // `run_id`/`thread_id` (tako_agent). Everything else is a read.
+    const WRITERS = new Set(["tako_visualize", "tako_agent"]);
     for (const tool of TOOL_REGISTRY) {
       expect(tool.annotations.readOnlyHint, tool.name).toBe(
         !WRITERS.has(tool.name),

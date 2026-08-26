@@ -199,10 +199,9 @@ describe("registry guard: top-level array inputs", () => {
    * Bump this deliberately: a new array input means wrapping it in
    * `looseArray` and raising the count in the same commit.
    */
-  it("finds all 8 known array-typed input fields", () => {
+  it("finds all 7 known array-typed input fields", () => {
     expect(found.map((f) => `${f.tool.name}.${f.field}`).sort()).toEqual([
       "tako_agent.sources",
-      "tako_agent_start.sources",
       "tako_answer.node_ids",
       "tako_answer.sources",
       "tako_contents.urls",
@@ -271,7 +270,6 @@ const REQUIRED_SIBLINGS: Record<string, Record<string, unknown>> = {
   tako_answer: { query: "q" },
   tako_search: { query: "q" },
   tako_agent: { query: "q" },
-  tako_agent_start: { query: "q" },
   tako_contents: {},
   tako_visualize: {},
 };
@@ -287,7 +285,6 @@ const VALID_JSON_TEXT: Record<string, string> = {
   "tako_search.sources": '["data","web"]',
   "tako_search.node_ids": '["node-1"]',
   "tako_agent.sources": '["data","web"]',
-  "tako_agent_start.sources": '["data","web"]',
   "tako_contents.urls": '["https://trytako.com/charts/c1"]',
   "tako_visualize.components": JSON.stringify([VALID_COMPONENT]),
 };

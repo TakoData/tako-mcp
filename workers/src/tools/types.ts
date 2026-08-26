@@ -63,8 +63,8 @@ export interface ToolContext {
    * chart-PNG prefetch on the chatgpt surface (whose widget renders
    * `embed_url` directly and never reads the baked-in image), and
    * `mcp.ts` uses it to gate which tools each surface lists — the
-   * `tako_agent_start` / `tako_agent_wait` pair is registered only on
-   * the chatgpt surface.
+   * chatgpt surface serves a fixed set (`CHATGPT_TOOL_NAMES` in
+   * `_surface.ts`) that leaves out `tako_agent` and `tako_answer`.
    *
    * NB: this is a server-instance-level value (set from the request
    * path at server creation), NOT a per-request flag.
@@ -120,8 +120,8 @@ export interface ToolAnnotations {
    * Repeating the call with the same arguments has no ADDITIONAL effect
    * on the environment: true for every retrieval tool (a repeat changes
    * nothing), false for tools that mint or dispatch something new per
-   * call (`tako_visualize` mints a new persistent card; `tako_agent` /
-   * `tako_agent_start` dispatch a new run). Required so every tool
+   * call (`tako_visualize` mints a new persistent card; `tako_agent`
+   * dispatches a new run). Required so every tool
    * declares it explicitly — OpenAI app review (2026-08-25) rejects
    * hints "not explicitly set to true or false (not null)", and
    * `annotations_complete.test.ts` pins all four hints as booleans.
@@ -323,9 +323,8 @@ export interface ToolModule<
    * same in both ecosystems ("does not modify its environment"), and the
    * write line is drawn once, for every surface: a call is a WRITE when
    * it creates a durable, user-addressable resource — an agent run
-   * reachable later via `run_id`/`thread_id` (`tako_agent`,
-   * `tako_agent_start`), a chart card with public URLs
-   * (`tako_visualize`). Those tools declare canonical
+   * reachable later via `run_id`/`thread_id` (`tako_agent`), a chart
+   * card with public URLs (`tako_visualize`). Those tools declare canonical
    * `readOnlyHint: false`. Metering side effects do NOT flip the hint:
    * every Tako tool, including pure reads, debits a credit balance, so
    * counting billing as a write would make `readOnlyHint` vacuously

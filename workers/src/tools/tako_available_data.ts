@@ -2,10 +2,9 @@
  * `tako_available_data` — the one-shot "what data does Tako have on X?" tool.
  *
  * Runs graph/search → graph/related as a single free, low-latency pipeline and
- * returns a natural-language coverage summary. It is the default discovery
- * entry point that replaces manual chaining of the low-level graph primitives
- * (tako_graph_search / tako_graph_related / tako_graph_node), which are off
- * the default surface and opt-in via `?tools=graph` (see `_optional.ts`).
+ * returns a natural-language coverage summary. It is the entry point that
+ * RESOLVES a name to a node; `tako_graph_related` is the one primitive left,
+ * for drilling into a node this tool already resolved.
  *
  * Pipeline (discovery): one graph/search, then SELECT_TOP_N candidates are
  * inspected with cheap `limit=1` coverage probes while the top one's FULL

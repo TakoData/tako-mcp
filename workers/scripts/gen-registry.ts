@@ -50,15 +50,11 @@ import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
  */
 export const MCP_TOOL_ALLOWLIST = [
   "tako_agent",
-  "tako_agent_start",
-  "tako_agent_wait",
   "tako_answer",
   "tako_available_data",
   "tako_contents",
   "tako_credit_balance",
-  "tako_graph_node",
   "tako_graph_related",
-  "tako_graph_search",
   "tako_search",
   "tako_visualize",
 ] as const;
@@ -100,8 +96,8 @@ export function assertAllToolsDescribed(
  * search/answer were missing `node_ids`/`strict`). This is the lighter
  * guard: every tool name must be mentioned (a `### <name>` section or an
  * inline `` `name` `` reference), and any tool that HAS a section must
- * mention every input param inside it. Prose-only mentions (e.g. the
- * ChatGPT-only `tako_agent_start`/`tako_agent_wait` pair) need no section.
+ * mention every input param inside it. A prose-only mention is enough for a
+ * tool with no section of its own.
  */
 export function assertLlmsFullCoverage(
   tools: ReadonlyArray<{ name: string; parameters: Record<string, unknown> }>,
@@ -300,8 +296,8 @@ const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 // The short index. Agents fetch `llms.txt` and `llms-full.txt` alike to learn
 // the tool surface, but only the long one was guarded — so the two drifted:
 // `llms.txt` went on saying `tako_visualize` was "already on by default for
-// ChatGPT" after it became default-on for Claude too, and it never mentioned
-// the ChatGPT `tako_agent_start` / `tako_agent_wait` split at all. It has no
+// ChatGPT" after it became default-on for Claude too, and it named neither of
+// the agent tools that shipped after it. It has no
 // `### <tool>` sections, so `assertLlmsFullCoverage` degrades to exactly the
 // right check for an index: every tool has to be named somewhere in it.
 const LLMS_PATH = resolve(REPO_ROOT, "llms.txt");
@@ -699,7 +695,8 @@ async function main(): Promise<void> {
     const text = readFileSync(listingPath, "utf8");
     const where = relative(REPO_ROOT, listingPath);
     for (const [name, aliases] of aliasFor) {
-      // Word-boundary, so `tako_agent` does not match `tako_agent_start`.
+      // Word-boundary, so a tool name does not match a longer name that
+      // starts with it.
       if (!new RegExp(`\\b${name}\\b`).test(text)) continue;
       if (aliases.some((alias) => text.includes(`?tools=${alias}`))) continue;
       disclosureProblems.push(

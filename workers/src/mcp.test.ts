@@ -73,7 +73,7 @@ describe("toolAnnotationsForSurface", () => {
         name,
       ).toBe(true);
     }
-    for (const name of ["tako_visualize", "tako_agent_start", "tako_agent"]) {
+    for (const name of ["tako_visualize", "tako_agent"]) {
       expect(
         toolAnnotationsForSurface(
           TOOL_REGISTRY.find((tool) => tool.name === name)!,

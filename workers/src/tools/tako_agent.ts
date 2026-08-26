@@ -6,12 +6,10 @@
  *   GET  /api/v1/agent/answer/runs/{run_id}  (poll until completed|failed)
  * Runs ~30-90s, so we poll and emit notifications/progress each iteration to
  * keep the per-call timeout fresh (hosts with resetTimeoutOnProgress). This
- * tool is therefore registered on the GENERIC surface only: the chatgpt
- * surface gets the split `tako_agent_start` / `tako_agent_wait` pair instead,
- * because ChatGPT's Apps SDK sends no progressToken and the dispatch+poll
- * path cannot survive its ~60s per-call ceiling. Registration keys on
- * `CHATGPT_EXCLUDED_TOOL_NAMES` in `_surface.ts` — on the request path, never
- * on a client sniff.
+ * is the only agent tool, and it is opt-in on the generic surface only: name
+ * `agent` in `?tools=`. It is off the chatgpt surface (`CHATGPT_TOOL_NAMES`
+ * in `_surface.ts`) because ChatGPT's Apps SDK sends no progressToken, so the
+ * dispatch+poll path cannot survive its ~60s per-call ceiling.
  *
  * PRODUCT: the public agent split (TAKO-3371) has two products — the Answer
  * Agent (cited prose + cards; this tool) and the Retrieval Agent (structured
@@ -46,10 +44,10 @@ import type { ToolContext, ToolModule } from "./types.js";
 const POLL_INTERVAL_MS = 5_000;
 const MAX_TRANSIENT_ERRORS = 2;
 export const AGENT_POLL_BUDGET_MS = 295_000;
-// ChatGPT split (tako_agent_wait) per-call cap. Kept at 40 (not 50) so the
-// worst case — a poll-GET that hangs the full AGENT_POLL_REQUEST_TIMEOUT_MS
-// right at the deadline — still returns in ~40+15 = 55s, under ChatGPT's
-// ~60s tool-call ceiling that the split exists to stay below.
+// Per-call cap for a host with a ~60s tool-call ceiling. Kept at 40 (not 50)
+// so the worst case — a poll-GET that hangs the full
+// AGENT_POLL_REQUEST_TIMEOUT_MS right at the deadline — still returns in
+// ~40+15 = 55s.
 export const AGENT_WAIT_CEILING_S = 40;
 const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -76,8 +74,7 @@ export const inputSchema = z.object({
       .describe(
         'Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako\'s data graph. ("tako" is a legacy synonym for "data".)',
       ),
-    // This schema is shared with tako_agent_start, so the label names the file
-    // it is declared in rather than every tool that registers it.
+    // The label names the file the schema is declared in.
     { field: "tako_agent.sources", commaSeparated: true },
   ),
   thread_id: z
@@ -388,10 +385,9 @@ const takoAgent = {
     // third-party state", not MCP's domain-of-interaction, so the open-world
     // retrieval flag drops on the chatgpt surface.
     //
-    // Production never reads this override: `CHATGPT_EXCLUDED_TOOL_NAMES`
-    // keeps this tool off the chatgpt surface entirely, and the split
-    // start/wait pair carries its own. Kept anyway so the tool stays correct
-    // if that exclusion is ever lifted, and because
+    // Production never reads this override: `CHATGPT_TOOL_NAMES` in
+    // `_surface.ts` keeps this tool off the chatgpt surface entirely. Kept
+    // anyway so the tool stays correct if it is ever added there, and because
     // `annotations_complete.test.ts` resolves every tool on both surfaces.
     // See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
