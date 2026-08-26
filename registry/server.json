@@ -124,7 +124,7 @@
     },
     {
       "name": "tako_available_data",
-      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nAsk it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.\n\nWorth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nKnow the measure? Split it: q=\"Carnival\", metric=\"passenger cruise days\" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q=\"Nvidia\", metric=\"data center\" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.\nWhen `q` names both an entity and a metric (\"US core PCE\" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.\nOn the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).\nEach match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. To land on exactly one metric, pin THAT node id alone with strict:true and name the entity in the query text; the call then returns that metric's card or nothing. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten (query + the metric node + strict) — run it verbatim.\nA broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.\nThis tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, retry the same query WITHOUT node_ids before concluding Tako has no data — the pin is a hard filter and the data is often held under a sibling node.",
+      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nAsk it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.\n\nWorth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nKnow the measure? Split it: q=\"Carnival\", metric=\"passenger cruise days\" — you get the entity+metric pair and a runnable next_call in ~0.6s. Only omit `metric` to browse everything an entity has.\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).\nEach match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.\nA broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.\nThis tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, Tako holds no chart for that pair: report the gap rather than rephrasing the query further.",
       "parameters": {
         "q": {
           "type": "string",
@@ -159,10 +159,6 @@
             "STOCK_TICKER",
             "WEBSITE"
           ]
-        },
-        "limit": {
-          "type": "integer",
-          "description": "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` pins, and a deeper metric node can turn a confident single answer into a two-candidate tie."
         }
       },
       "annotations": {
@@ -223,8 +219,20 @@
       }
     },
     {
+      "name": "tako_credit_balance",
+      "description": "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
+      "parameters": {},
+      "annotations": {
+        "title": "Tako: Credit Balance",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
       "name": "tako_graph_related",
-      "description": "Explore what a graph node connects to — the map of what data Tako has for it. Free.\n\nBest for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.\n\nTwo modes. Overview (`node_id` alone) is a compact map: every relation group with its `key`, `label`, `total`, and its first 3 items — a few hundred tokens, never a page. Drill (`relation: \"<key>\"`) pages that one group; each item carries `id`, `name`, `type`, `subtype`, and `label`, and only the focal node carries `aliases` and a truncated `description`.\n\nRelation keys come from the overview. The fixed keys are `metrics`, `entities`, `siblings`, `part_of`, `members`; named edges look like `rel:<phrase>`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.\n`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: \"revenue\" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.",
+      "description": "Explore what a graph node connects to — the map of what data Tako has for it. Free.\n\nBest for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.\n\nDrilling `relation: \"metrics\"` returns only that node's metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.\nFiltering with `q` (\"revenue\") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.",
       "parameters": {
         "node_id": {
           "type": "string",
@@ -233,11 +241,11 @@
         },
         "relation": {
           "type": "string",
-          "description": "Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview."
+          "description": "Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups."
         },
         "q": {
           "type": "string",
-          "description": "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group."
+          "description": "Optional case-insensitive substring filter on name+aliases (single string). For several name-variants of a metric, call the tool once per variant."
         },
         "label": {
           "type": "string",
@@ -266,7 +274,7 @@
         },
         "limit": {
           "type": "integer",
-          "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass."
+          "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items."
         }
       },
       "annotations": {
@@ -279,7 +287,7 @@
     },
     {
       "name": "tako_search",
-      "description": "Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.\n\nIt locates data. Set `include_contents: true` when you need the values themselves — it inlines each `exportable: true` card's most-recent rows (`preview_rows` caps how many; rows are billed per 1k). Left false (the default), cards still carry headline values and chart links — right for recon and fan-outs. A license-gated card carries no rows at all (headline value only, via `description`), and a web result is only a snippet, not a value.\n\nBest for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_contents`. It is cheap and fast, and built for exactly this fan-out.\n\nCoverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.\n\nEach query resolves one entity + one metric (\"Apple revenue\", \"Nvidia vs AMD gross margin\"); broad or compound queries (\"today's sports + odds\") retrieve poorly. When the question is what Tako covers, or you need a metric's exact name, run `tako_available_data` (free) instead of guessing here — then pin the METRIC node id it returns via `node_ids` with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval).\n\nData and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with chart URLs — and inline preview rows when `include_contents` is true — plus `web_results`. To read a web result in full, call `tako_contents` on its url (web urls are always fetchable; a card's full csv needs `exportable: true`).\n\nNon-exportable cards (`exportable: false`, usually license-gated) return no rows on any path: read the headline value from the card's `description` when it carries one (each such card carries a `values_hint` saying exactly this).\n\nResults arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
+      "description": "Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.\n\nIt locates data; `tako_contents` reads it. Cards carry headline values, node ids and chart links — call `tako_contents` on an `exportable: true` card's url for the rows themselves, and on a web result's url for its full page text.\n\nBest for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_contents`. It is cheap and fast, and built for exactly this fan-out.\n\nCoverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.\n\nEach query resolves one entity + one metric (\"Apple revenue\", \"Nvidia vs AMD gross margin\"); broad or compound queries (\"today's sports + odds\") retrieve poorly. When the question is what Tako covers, or you need a metric's exact name, run `tako_available_data` (free) instead of guessing here, then search on the EXACT name it returns — the canonical name is what recovers cards.\n\nData and web come back together — treat them as one result, not an either/or. Returns: `cards` with chart URLs, plus `web_results`. To read either in full, call `tako_contents` on its url (web urls are always fetchable; a card's rows need `exportable: true`).\n\nNon-exportable cards (`exportable: false`, usually license-gated) return no rows on any path: read the headline value from the card's `description` when it carries one (each such card carries a `values_hint` saying exactly this).\n\nResults arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The web results' snippets ride in structuredContent (web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
       "parameters": {
         "query": {
           "type": "string",
@@ -294,47 +302,13 @@
             "web"
           ]
         },
-        "effort": {
-          "type": "string",
-          "description": "Search effort: \"fast\" (default) or \"instant\" (fastest, serves cached embeds as-is). Omit for fast.",
-          "enum": [
-            "fast",
-            "instant"
-          ]
-        },
-        "count": {
-          "type": "integer",
-          "description": "Maximum number of results to return per source (1-20).",
-          "default": 10
-        },
-        "include_contents": {
-          "type": "boolean",
-          "description": "Set true to inline each Tako card's most-recent rows (`preview_rows` caps how many; rows are billed per 1k) — do this when you need the values themselves. Leave false (the default) for recon and fan-outs: cards still carry headline values and chart links. DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Requires a signed-in connection; anonymous calls that set this are refused with sign-in instructions.",
-          "default": false
-        },
-        "preview_rows": {
-          "type": "integer",
-          "description": "Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default 20). Lower it to trim context and spend on broad fan-outs (rows are billed per 1k). For MORE than the inline preview, call tako_contents on the card's url (max_rows up to 2,000, billed per 1k rows). Ignored when include_contents is false.",
-          "default": 20
-        },
         "country_code": {
           "type": "string",
-          "description": "ISO country code for localized results.",
-          "default": "US"
+          "description": "ISO 3166-1 alpha-2 country code for localized results. Omit it and the server uses US. Set it to localize for the user."
         },
         "locale": {
           "type": "string",
-          "description": "Locale for results.",
-          "default": "en-US"
-        },
-        "node_ids": {
-          "type": "array",
-          "description": "Graph node ids (from tako_available_data, or a card's nodes) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source."
-        },
-        "strict": {
-          "type": "boolean",
-          "description": "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
-          "default": false
+          "description": "BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. Set it to localize for the user."
         }
       },
       "annotations": {

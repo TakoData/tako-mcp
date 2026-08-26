@@ -199,13 +199,12 @@ describe("registry guard: top-level array inputs", () => {
    * Bump this deliberately: a new array input means wrapping it in
    * `looseArray` and raising the count in the same commit.
    */
-  it("finds all 7 known array-typed input fields", () => {
+  it("finds all 6 known array-typed input fields", () => {
     expect(found.map((f) => `${f.tool.name}.${f.field}`).sort()).toEqual([
       "tako_agent.sources",
       "tako_answer.node_ids",
       "tako_answer.sources",
       "tako_contents.urls",
-      "tako_search.node_ids",
       "tako_search.sources",
       "tako_visualize.components",
     ]);
@@ -283,7 +282,6 @@ const VALID_JSON_TEXT: Record<string, string> = {
   "tako_answer.sources": '["data","web"]',
   "tako_answer.node_ids": '["node-1"]',
   "tako_search.sources": '["data","web"]',
-  "tako_search.node_ids": '["node-1"]',
   "tako_agent.sources": '["data","web"]',
   "tako_contents.urls": '["https://trytako.com/charts/c1"]',
   "tako_visualize.components": JSON.stringify([VALID_COMPONENT]),
@@ -307,8 +305,11 @@ describe("shipped fields carry the right opt-ins", () => {
     expect((result.data as { urls: string[] }).urls).toEqual([url]);
   });
 
-  it("tako_search.node_ids keeps a comma-bearing id as ONE id", () => {
-    const result = shape("tako_search").safeParse({
+  // tako_search dropped node_ids in the D4 split; tako_answer still carries it,
+  // and it is the same opaque-id hazard — a split id pins two nodes that do not
+  // exist.
+  it("tako_answer.node_ids keeps a comma-bearing id as ONE id", () => {
+    const result = shape("tako_answer").safeParse({
       query: "q",
       node_ids: "weird,id",
     });

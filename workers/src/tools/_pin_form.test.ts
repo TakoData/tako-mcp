@@ -99,14 +99,24 @@ describe("advertised pin form", () => {
   it("covers the tools that actually carry pin advice today", () => {
     // Without this, the loops above pass vacuously if a refactor drops the
     // advice entirely — silence is not the same as correctness here.
-    // (`tako_contents` and the card's `values_hint` no longer advise a
-    // pin: their advice routed to `tako_answer`, which is opt-in since
-    // spec D1 — naming an unregistered tool sends the model into "tool
-    // not found".)
+    //
+    // `tako_answer` is the only tool left that both ADVISES a pin and ACCEPTS
+    // one. `tako_search` dropped out with the D4 split: it no longer takes
+    // `node_ids` / `strict`, so pin advice in its description would prescribe
+    // parameters it rejects. (`tako_contents` and the card's `values_hint`
+    // dropped out earlier, when their advice routed to `tako_answer` and answer
+    // went opt-in — naming an unregistered tool sends the model into "tool not
+    // found".)
     const advising = TOOL_REGISTRY.filter((t) => ADVISES_PINNING.test(t.description)).map(
       (t) => t.name,
     );
-    expect(advising).toContain("tako_search");
     expect(advising).toContain("tako_answer");
+    expect(advising).not.toContain("tako_search");
+    // Every tool that advises a pin must also accept one, or the advice is a
+    // phantom parameter. Derived, never hand-listed.
+    for (const name of advising) {
+      const tool = TOOL_REGISTRY.find((t) => t.name === name);
+      expect(Object.keys(tool!.inputSchema.shape), `${name} advises a pin`).toContain("node_ids");
+    }
   });
 });

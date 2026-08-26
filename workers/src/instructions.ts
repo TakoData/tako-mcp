@@ -155,16 +155,16 @@ type ToolSentence = { readonly tools: readonly string[]; readonly text: string }
 
 const AUTHENTICATED_TOOL_SENTENCES: readonly ToolSentence[] = [
   {
+    tools: ["tako_search"],
+    text: "`tako_search` retrieves the cards and web links.",
+  },
+  {
     tools: ["tako_available_data"],
     text: "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name.",
   },
   {
     tools: ["tako_contents"],
     text: "`tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.",
-  },
-  {
-    tools: ["tako_search"],
-    text: "Set `include_contents: true` on `tako_search` when you need the rows themselves.",
   },
 ];
 
@@ -223,9 +223,11 @@ const FREE_TIER_TOOL_SENTENCES: readonly ToolSentence[] = [
     text: "This connection is anonymous: `tako_available_data` and `tako_search` are the tools that run here.",
   },
   {
-    // Names `tako_search` too, via `include_contents`.
-    tools: ["tako_contents", "tako_search"],
-    text: "`tako_contents` — which reads one source in full (an exportable card's rows, or a web page's text by url) — and inline rows on search (`include_contents: true`) need a connection signed in with a Tako account.",
+    // Names `tako_contents` alone now: D4 took `include_contents` off
+    // `tako_search`, so rows are a `tako_contents` call and nothing else on the
+    // free tier gates on a second tool.
+    tools: ["tako_contents"],
+    text: "`tako_contents` — which reads one source in full (an exportable card's rows, or a web page's text by url) — needs a connection signed in with a Tako account.",
   },
 ];
 

@@ -84,6 +84,12 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * (pinned vs unpinned, by handle) and in the commit that introduced this hatch;
  * cite those rather than looking for a script to re-run.
  */
+// READER, since the D4 split: `tako_answer` ONLY. `tako_search` took no
+// `node_ids`/`strict` after D4, so its zero-card guidance stopped advising a
+// pin — advice for parameters the tool would reject. Do not reintroduce this
+// into any search guidance; the canonical NAME is that tool's recovery path.
+// `tako_search_advanced` accepts a pin, but it is opt-in and prescribes the
+// form in its own description.
 export const PINNED_RETRY =
   "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all. If that pinned call returns 0 cards, run it once more with `node_ids` removed before concluding the data is absent: `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards, so the pin itself is sometimes what empties the result";
 
@@ -780,20 +786,18 @@ export const NARROWER_WEB_ATTEMPT =
  * under skills/ and their embedded copies in README.md, each as the
  * "Empty result (zero cards)" bullet. What must stay consistent is the
  * RECIPE — free tako_available_data check → ONE retry on the exact metric
- * NAME, unpinned → stop and answer from the web results — not the phrasing;
+ * NAME → stop and answer from the web results — not the phrasing;
  * pin an invariant here rather than a quoted sentence, so a reworded skill
  * does not silently make this comment a lie. Update all four copies together.
  *
- * WHY THE SKILLS DO NOT PIN, while {@link PINNED_RETRY} here does. Not drift —
- * the same measurement under a tighter budget. `PINNED_RETRY` describes a TWO
- * step sequence (pin correctly; if that comes back empty, drop the pin), which
- * the tool guidance can afford because it is advising a caller with no fixed
- * call budget. The skills cap at 2 priced searches per question, so they have
- * exactly ONE retry to spend and have to pick an arm: measured, 11 of 20 handles
- * retrieve FEWER cards pinned than unpinned, while the canonical NAME helps 9 of
- * 15. So the skills spend their one retry on the name and skip the pin, and
- * mention pinning only for what it is good at — disambiguating a near-duplicate
- * metric once one has actually shown up. Same knowledge, one call instead of two.
+ * NOTHING HERE PINS ANY MORE, and the skills never did. This guidance used to
+ * interpolate {@link PINNED_RETRY}; after the D4 split `tako_search` takes no
+ * `node_ids` / `strict`, so a pin recipe here would prescribe parameters the
+ * tool rejects. The two arms now agree on the canonical NAME, which is also the
+ * arm the measurement favours: 11 of 20 handles retrieved FEWER cards pinned
+ * than unpinned, while the canonical name helped 9 of 15. `PINNED_RETRY` still
+ * exists for `tako_answer`, which kept both parameters — do not route it back
+ * here.
  *
  * {@link REFINE_WEB_FREELY} is deliberately NOT mirrored into those three:
  * they are data-domain skills (equity research, macro indicators, site
@@ -831,7 +835,7 @@ function buildZeroResultGuidance(
     return [
       "This search returned web results but no data cards. That is a verdict about the DATA GRAPH only: it does not cover this query, and rewording will not change that.",
       "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
-      `If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, and then ${PINNED_RETRY}.`,
+      "If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, using the EXACT canonical name it returns as the query.",
       REFINE_WEB_FREELY,
     ].join(" ");
   }
@@ -850,8 +854,8 @@ function buildZeroResultGuidance(
   }
   return [
     "No results — do NOT retry this query or rephrasings of it hoping a data card appears; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
-    "Recover in order: (1) call tako_available_data (free) with the entity to learn the exact metric names + node_ids Tako actually has;",
-    `(2) if it confirms coverage, spend your ONE remaining search on that exact name and ${PINNED_RETRY}` +
+    "Recover in order: (1) call tako_available_data (free) with the entity to learn the exact metric NAMES Tako actually has;",
+    "(2) if it confirms coverage, spend your ONE remaining search on that EXACT canonical name — the name is what recovers cards" +
       (searchedWeb(sources)
         ? ";"
         : ' (adding "web" as a fallback source on that same single retry is fine);'),

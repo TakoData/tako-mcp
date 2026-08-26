@@ -991,49 +991,28 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     },
   );
 
-  it("anonymous include_contents: true on tako_search is refused with sign-in copy, unexecuted", async () => {
-    // Spec D10/D12: anonymous connections never inline rows. The refusal
-    // names both exits and the call never reaches Django. It is also
-    // unmetered — `freetier.test.ts` covers the per-IP half by asserting
-    // `isMeteredJsonRpcBody` is false for this same body.
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+  it("anonymous tako_search executes — it has no refusable input left", async () => {
+    // The D4 split removed `include_contents`, which was the ONE input the
+    // anonymous tier refused: every row it inlined billed per 1k against the
+    // shared free-tier account.
+    // Rows now come from tako_contents, which is auth-required outright, so
+    // tako_search is unconditionally free-tier executable and the whole
+    // `anonymousInputRejects` path is unused. `freetier.test.ts` covers the
+    // metering half: with no gate declared, every anonymous tako_search meters.
+    const okFetch = vi.fn(async () =>
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r-anon" }),
+    );
+    vi.stubGlobal("fetch", okFetch);
     const result = await callTool(
       { tier: "free", requestOrigin: "https://mcp.example.com" },
       "tako_search",
-      { query: "US GDP", include_contents: true },
+      { query: "US GDP" },
       "free",
     );
-    expect(result.isError).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(
-      (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
-    ).toBe("auth_required");
-    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text).toMatch(/retry without include_contents/i);
-    // The refusal must NOT open by claiming the TOOL needs an account:
-    // tako_search runs fine anonymously, it just cannot inline billed rows.
-    // Leading with the false claim invited the model to abandon a call that
-    // would have succeeded without `include_contents`.
-    expect(text).not.toMatch(/^This tool requires a Tako account/);
-    expect(text).toMatch(/^Inline rows need a signed-in connection\./);
-    // ...and the remedy is stated once as guidance plus once as the concrete
-    // how, not three times.
-    expect(text.match(/sign in/gi)?.length ?? 0).toBeLessThanOrEqual(2);
-
-    // The same call authenticated executes normally.
-    const okFetch = vi.fn(async () =>
-      jsonResponse(200, { cards: [], web_results: [], request_id: "r1" }),
-    );
-    vi.stubGlobal("fetch", okFetch);
-    const ok = await callTool(
-      { requestOrigin: "https://mcp.example.com" },
-      "tako_search",
-      { query: "US GDP", include_contents: true },
-    );
+    expect(result.isError).not.toBe(true);
     expect(okFetch).toHaveBeenCalled();
     expect(
-      (ok._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
+      (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
     ).not.toBe("auth_required");
   });
 
@@ -1796,7 +1775,10 @@ describe("stringified array arguments survive SDK input validation", () => {
     expect(Object.keys(body.sources ?? {}).sort()).toEqual(["data", "web"]);
   });
 
-  it("tako_search serves a bare-string `sources` and a bare-string `node_ids`", async () => {
+  it("tako_search serves a bare-string `sources`", async () => {
+    // node_ids left this tool in the D4 split; `sources` is the only looseArray
+    // field it still carries, and the coercion is what keeps a host that
+    // stringifies the array off a -32602.
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "req-2" }),
     ]);
@@ -1804,16 +1786,15 @@ describe("stringified array arguments survive SDK input validation", () => {
     const result = await callTool("tako_search", {
       query: "US GDP",
       sources: "data",
-      node_ids: "node-1",
     });
 
     expect(result.isError).not.toBe(true);
     const request = fetchMock.mock.calls[0]?.[0] as Request;
     const body = (await request.clone().json()) as {
-      sources?: { data?: { node_ids?: string[] }; web?: unknown };
+      sources?: { data?: Record<string, unknown>; web?: unknown };
     };
     expect(body.sources?.web).toBeUndefined();
-    expect(body.sources?.data?.node_ids).toEqual(["node-1"]);
+    expect(body.sources?.data).toEqual({});
   });
 
   // The contract does not move: a value the array schema rejects is still

@@ -34,32 +34,31 @@ import {
 import {
   buildSearchOutput,
   hoistSourceGlossary,
-  INLINE_PREVIEW_ROW_CAP,
-  MAX_PREVIEW_ROWS,
   slimCard,
   slimWebResult,
   takoCardSchema,
   webResultSchema,
+  type SearchedSources,
   type SearchOutput,
 } from "./_search_results.js";
-import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
+import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
   "Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.",
   "",
-  "It locates data. Set `include_contents: true` when you need the values themselves — it inlines each `exportable: true` card's most-recent rows (`preview_rows` caps how many; rows are billed per 1k). Left false (the default), cards still carry headline values and chart links — right for recon and fan-outs. A license-gated card carries no rows at all (headline value only, via `description`), and a web result is only a snippet, not a value.",
+  "It locates data; `tako_contents` reads it. Cards carry headline values, node ids and chart links — call `tako_contents` on an `exportable: true` card's url for the rows themselves, and on a web result's url for its full page text.",
   "",
   "Best for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_contents`. It is cheap and fast, and built for exactly this fan-out.",
   "",
   "Coverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.",
   "",
-  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric\'s exact name, run `tako_available_data` (free) instead of guessing here — then pin the METRIC node id it returns via `node_ids` with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval).',
+  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric\'s exact name, run `tako_available_data` (free) instead of guessing here, then search on the EXACT name it returns — the canonical name is what recovers cards.',
   "",
-  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with chart URLs — and inline preview rows when `include_contents` is true — plus `web_results`. To read a web result in full, call `tako_contents` on its url (web urls are always fetchable; a card's full csv needs `exportable: true`).",
+  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` with chart URLs, plus `web_results`. To read either in full, call `tako_contents` on its url (web urls are always fetchable; a card's rows need `exportable: true`).",
   "",
   "Non-exportable cards (`exportable: false`, usually license-gated) return no rows on any path: read the headline value from the card's `description` when it carries one (each such card carries a `values_hint` saying exactly this).",
   "",
-  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
+  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The web results' snippets ride in structuredContent (web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -73,6 +72,11 @@ const inputSchema = z.object({
   // from OpenBB Copilot) get it coerced instead of a -32602. `commaSeparated` is
   // safe here and ONLY here: the item domain is a closed enum, no member of
   // which contains a comma. See _loose_array.ts.
+  //
+  // The ONE field here that keeps a default, and it is not an exception to the
+  // no-defaults rule below: the Worker READS `sources` to decide which
+  // per-source blocks to build and which zero-card guidance branch applies. It
+  // is never forwarded to the API as a value.
   sources: looseArray(
     z
       .array(z.enum(["data", "web"]))
@@ -83,56 +87,17 @@ const inputSchema = z.object({
       ),
     { field: "tako_search.sources", commaSeparated: true },
   ),
-  effort: z
-    .enum(["fast", "instant"])
-    .optional()
-    .describe(
-      'Search effort: "fast" (default) or "instant" (fastest, serves cached embeds as-is). Omit for fast.',
-    ),
-  count: z
-    .number()
-    .int()
-    .min(1)
-    .max(20)
-    .default(10)
-    .describe("Maximum number of results to return per source (1-20)."),
-  include_contents: z
-    .boolean()
-    .default(false)
-    .describe(
-      "Set true to inline each Tako card's most-recent rows (`preview_rows` caps how many; rows are billed per 1k) — do this when you need the values themselves. Leave false (the default) for recon and fan-outs: cards still carry headline values and chart links. DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Requires a signed-in connection; anonymous calls that set this are refused with sign-in instructions.",
-    ),
-  preview_rows: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_PREVIEW_ROWS)
-    .default(INLINE_PREVIEW_ROW_CAP)
-    .describe(
-      `Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}). Lower it to trim context and spend on broad fan-outs (rows are billed per 1k). For MORE than the inline preview, call tako_contents on the card's url (max_rows up to 2,000, billed per 1k rows). Ignored when include_contents is false.`,
-    ),
   country_code: z
     .string()
-    .default("US")
-    .describe("ISO country code for localized results."),
-  locale: z.string().default("en-US").describe("Locale for results."),
-  node_ids: looseArray(
-    z
-      .array(z.string())
-      .max(20)
-      .optional()
-      .describe(
-        "Graph node ids (from tako_available_data, or a card's nodes) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
-      ),
-    // No `commaSeparated`: a node id is an opaque string, so splitting one that
-    // contains a comma would silently pin two ids that do not exist.
-    { field: "tako_search.node_ids" },
-  ),
-  strict: z
-    .boolean()
-    .default(false)
+    .optional()
     .describe(
-      "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
+      "ISO 3166-1 alpha-2 country code for localized results. Omit it and the server uses US. Set it to localize for the user.",
+    ),
+  locale: z
+    .string()
+    .optional()
+    .describe(
+      "BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. Set it to localize for the user.",
     ),
 });
 
@@ -169,54 +134,101 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
   // Typed against the contract (not Record<string, …>) so a renamed/added
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
-  if (input.sources.includes("data")) {
-    const data: NonNullable<
-      NonNullable<z.input<typeof SearchRequest>["sources"]>["data"]
-    > = { count: input.count, include_contents: input.include_contents };
-    if (input.node_ids !== undefined && input.node_ids.length > 0) {
-      data.node_ids = input.node_ids;
-    }
-    if (input.strict) {
-      data.strict = true;
-    }
-    sources.data = data;
-  }
+  // Each block goes out EMPTY. The simple tool declares no defaults of its own:
+  // an omitted field is omitted from the body, so the v3 API's own default
+  // applies and every parameter description here states that default in words.
+  //
+  // This deletes two overrides the tool used to carry — `count: 10` on both
+  // sources (the API serves 5) and `snippet_max_chars: 2000` (the API serves
+  // 4000 on /v3/search). Both predate tako#29572, which made every delivered
+  // row bill per 1k, and neither had a rationale anywhere in the tree. A caller
+  // who wants them names the advanced search tool.
+  if (input.sources.includes("data")) sources.data = {};
   if (input.sources.includes("web")) {
-    // Web page text is billed per page, so it is never auto-inlined regardless
-    // of `include_contents` (which governs only the free Tako card preview).
-    // The model fetches web text on demand via tako_contents(url).
-    // snippet_max_chars 2000: an explicit cap, not the backend's per-endpoint
-    // default (4000 on /v3/search since TakoData/tako#28462). A meatier free
-    // excerpt per web result, so the model picks the right url for a priced
-    // tako_contents follow-up from a real excerpt instead of a headline —
-    // bounded, because count defaults to 10 here and the snippet rides
-    // verbatim in structuredContent, so the cap is a per-call token budget.
+    // The ONE opinionated departure from the API, and the same one Exa's
+    // web_search_exa makes: the snippet becomes the passages Exa's model selects
+    // against the query instead of the page's opening characters. The opening is
+    // usually nav chrome and press-release preamble; the excerpt exists so the
+    // model can choose which url to spend a tako_contents call on, and preamble
+    // does not support that choice.
     //
-    // highlights: the snippet becomes the passages Exa's model selects against
-    // the query instead of the page's opening characters. The opening is
-    // usually nav chrome and press-release preamble; the excerpt exists to let
-    // the model choose a url to spend tako_contents on, and preamble does not
-    // support that choice. Two consequences ride along — a page with no
-    // highlight returns `snippet: null` and keeps its slot, and one snippet
-    // may hold several non-contiguous passages joined by " … ". Both are
-    // documented to the model on `searchSlimOutputShape.web_results`, which is
-    // the ADVERTISED schema; `webResultSchema.snippet` is the wire guard and
-    // is never sent to a client, so a description there would reach nobody.
-    sources.web = {
-      count: input.count,
-      include_contents: false,
-      snippet_max_chars: 2000,
-      highlights: true,
-    };
+    // Two consequences ride along — a page with no highlight returns
+    // `snippet: null` and keeps its slot, and one snippet may hold several
+    // non-contiguous passages joined by " … ". Both are documented to the model
+    // on `searchSlimOutputShape.web_results`, which is the ADVERTISED schema;
+    // `webResultSchema.snippet` is the wire guard and is never sent to a client,
+    // so a description there would reach nobody.
+    sources.web = { highlights: true };
   }
-  const body: z.input<typeof SearchRequest> = {
-    query: input.query,
-    sources,
-    country_code: input.country_code,
-    locale: input.locale,
-  };
-  if (input.effort !== undefined) body.effort = input.effort;
+  const body: z.input<typeof SearchRequest> = { query: input.query, sources };
+  if (input.country_code !== undefined) body.country_code = input.country_code;
+  if (input.locale !== undefined) body.locale = input.locale;
   return body satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
+}
+
+/**
+ * Issue the search and shape the response.
+ *
+ * Split out of the handler so `tako_search_advanced` reuses it verbatim: both
+ * tools hit the same endpoint and return the same shape, and only the request
+ * body differs. Keeping one copy means a wire-guard or slimming fix lands on
+ * both at once.
+ *
+ * `rowCap` is the per-card inline row budget: `null` drops every row (what the
+ * simple tool passes — it never inlines), a number caps to the N most-recent.
+ */
+export async function runSearch(
+  body: z.input<typeof SearchRequest>,
+  sources: SearchedSources,
+  rowCap: number | null,
+  ctx: ToolContext,
+): Promise<SearchOutput> {
+  // v3 fast/instant is synchronous (~120s sync ceiling). No async/202,
+  // no polling. Zero matches come back as 200 with empty `cards`.
+  const data = await djangoPost<unknown>(ctx.env, ctx.token, "/api/v3/search/", body, { timeoutMs: 130_000 });
+
+  // Wire-contract guard: validate against the generated SearchResponse before
+  // mapping into the normalised MCP output shape.
+  const wireCheck = SearchResponse.safeParse(data);
+  if (!wireCheck.success) {
+    logWireGuardFailure("tako_search", "SearchResponse", wireCheck.error, data);
+    throw new Error(
+      "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
+    );
+  }
+  const wire = wireCheck.data;
+
+  const cards = z.array(takoCardSchema).safeParse(wire.cards ?? []);
+  const webResults = z.array(webResultSchema).safeParse(wire.web_results ?? []);
+  if (!cards.success || !webResults.success) {
+    logWireGuardFailure(
+      "tako_search",
+      cards.success ? "web_results" : "cards",
+      cards.success ? (webResults.success ? undefined : webResults.error) : cards.error,
+      data,
+    );
+    throw new Error(
+      "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
+    );
+  }
+  // Slim the model-facing payload, which shrinks BOTH channels the model sees
+  // (content.text + structuredContent in mcp.ts are both derived from this).
+  // Web page text is always dropped — billed per page, fetched on demand via
+  // tako_contents.
+  const { cards: slimCards, glossary } = hoistSourceGlossary(
+    cards.data.map((c) => slimCard(c, rowCap)),
+  );
+  const output = buildSearchOutput(
+    slimCards,
+    webResults.data.map(slimWebResult),
+    wire.request_id,
+    wire.usage ?? null,
+    ctx.env,
+    sources,
+  );
+  // Glossary spreads on LAST so it serializes after the data — truncating
+  // clients then drop boilerplate first.
+  return glossary === undefined ? output : { ...output, sources_glossary: glossary };
 }
 
 const tako_search = {
@@ -237,80 +249,24 @@ const tako_search = {
     // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
-  // Anonymous connections never inline rows (spec D12): every delivered
-  // row bills, and the shared free-tier account must not pay for them.
-  // Reject — never silently force false — so the model knows which of the
-  // two exits it wants.
-  anonymousInputRejects: (input) =>
-    input["include_contents"] === true
-      ? "Inline rows need a signed-in connection. Retry without include_contents to get the cards, or sign in to include rows."
-      : undefined,
+  // No `anonymousInputRejects`. It existed for one input — `include_contents:
+  // true`, which billed rows to the shared free-tier account — and that input
+  // is gone: rows come from tako_contents now. This tool has nothing left to
+  // refuse anonymously, which is the point of the split (spec D4).
   fixedInputs: [
-    { field: "sources.web.include_contents", value: "false", note: "Web page text is never inlined; call tako_contents on a url." },
-    { field: "sources.web.snippet_max_chars", value: "2000", note: "Excerpt cap per web result; the API default is 4000." },
-    { field: "sources.web.highlights", value: "true", note: "Query-relevant highlight passages per web result; the API default is false." },
-    { field: "sources.web.count", value: "= count", note: "The same count is sent to both sources." },
+    {
+      field: "sources.web.highlights",
+      value: "true",
+      note: "Query-relevant highlight passages per web result, so the excerpt supports choosing a url to fetch. The API default is false.",
+    },
   ],
   // Declared as the FULL internal shape (assignable to the slim advertised
   // Output via its loose index signature) so tests and hooks keep real types.
   async handler(input, ctx): Promise<SearchOutput> {
-    // v3 SearchRequest takes a per-source `sources` OBJECT — an index is
-    // searched iff its key is present, and `count` / `include_contents` are
-    // per-source. The old flat `source_indexes` + `output_settings.count`
-    // shape is extra="forbid" rejected (400) by the current backend.
-    const body = buildSearchBody(input);
-    // v3 fast/instant is synchronous (~120s sync ceiling). No async/202,
-    // no polling. Zero matches come back as 200 with empty `cards`.
-    const data = await djangoPost<unknown>(ctx.env, ctx.token, "/api/v3/search/", body, { timeoutMs: 130_000 });
-
-    // Wire-contract guard: validate against the generated SearchResponse before
-    // mapping into the normalised MCP output shape.
-    const wireCheck = SearchResponse.safeParse(data);
-    if (!wireCheck.success) {
-      logWireGuardFailure("tako_search", "SearchResponse", wireCheck.error, data);
-      throw new Error(
-        "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
-      );
-    }
-    const wire = wireCheck.data;
-
-    const cards = z.array(takoCardSchema).safeParse(wire.cards ?? []);
-    const webResults = z.array(webResultSchema).safeParse(wire.web_results ?? []);
-    if (!cards.success || !webResults.success) {
-      logWireGuardFailure(
-        "tako_search",
-        cards.success ? "web_results" : "cards",
-        cards.success ? (webResults.success ? undefined : webResults.error) : cards.error,
-        data,
-      );
-      throw new Error(
-        "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
-      );
-    }
-    // Slim the model-facing payload: cap each card's inline row preview to the
-    // caller's preview_rows most-recent rows when include_contents is on (drop
-    // it entirely when off), and always drop web page text (billed per page —
-    // fetch via tako_contents). This shrinks BOTH channels the model sees
-    // (content.text + structuredContent in mcp.ts are both derived from this
-    // output). Full data is a tako_contents call. The ?? guards direct handler
-    // calls that bypass the schema's default.
-    const cap = input.include_contents
-      ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
-      : null;
-    const { cards: slimCards, glossary } = hoistSourceGlossary(
-      cards.data.map((c) => slimCard(c, cap)),
-    );
-    const output = buildSearchOutput(
-      slimCards,
-      webResults.data.map(slimWebResult),
-      wire.request_id,
-      wire.usage ?? null,
-      ctx.env,
-      input.sources,
-    );
-    // Glossary spreads on LAST so it serializes after the data — truncating
-    // clients then drop boilerplate first.
-    return glossary === undefined ? output : { ...output, sources_glossary: glossary };
+    // rowCap null: the simple tool never inlines rows. Rows are a tako_contents
+    // call on an `exportable: true` card — the explicit search-then-fetch step
+    // that also lets this tool run anonymously.
+    return runSearch(buildSearchBody(input), input.sources, null, ctx);
   },
   renderText(output, _ctx) {
     void _ctx;

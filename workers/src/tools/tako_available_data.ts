@@ -112,9 +112,9 @@ const DESCRIPTION = [
   'When `q` names both an entity and a metric ("US core PCE" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.',
   "On the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).",
-  "Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. To land on exactly one metric, pin THAT node id alone with strict:true and name the entity in the query text; the call then returns that metric's card or nothing. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten (query + the metric node + strict) — run it verbatim.",
+  "Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.",
   "A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.",
-  "This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, retry the same query WITHOUT node_ids before concluding Tako has no data — the pin is a hard filter and the data is often held under a sibling node.",
+  "This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, Tako holds no chart for that pair: report the gap rather than rephrasing the query further.",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -222,7 +222,7 @@ const fullOutputSchema = z.object({
   next_call: nextCallSchema
     .nullable()
     .describe(
-      "Ready-to-run follow-up: call this tool with exactly this query, node_ids and strict. `node_ids` holds the METRIC node only — strict is an OR over pinned nodes, so adding the entity id would widen the filter back out. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null when `q` named only an entity — pass `metric` to get a handle.",
+      "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null when `q` named only an entity — pass `metric` to get a handle.",
     ),
   // Lookup path (`metric` supplied) — the resolved pair and its runners-up.
   metric_query: z.string().optional(),

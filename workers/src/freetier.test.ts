@@ -201,25 +201,18 @@ describe("isMeteredJsonRpcBody", () => {
     }
   });
 
-  it("does not meter an anonymous tako_search that carries include_contents: true", () => {
-    // Same invariant as the case above: the call cannot execute anonymously
-    // (spec D12 refuses inline rows without a signed-in connection), so it
-    // must not consume the per-IP bucket. Metering it let a model burn the
-    // whole minute on refusals — spec: "Rejected calls stay unmetered."
-    expect(
-      isMeteredJsonRpcBody({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name: "tako_search", arguments: { query: "US GDP", include_contents: true } },
-      }),
-    ).toBe(false);
-  });
-
-  it("still meters a tako_search whose include_contents is absent or false", () => {
+  it("meters every anonymous tako_search, which now has no refusable input", () => {
+    // tako_search used to declare `anonymousInputRejects` for
+    // `include_contents: true`, and a refused call stayed unmetered so a
+    // retrying model could not burn its whole minute on refusals. The D4 split
+    // removed the parameter — rows come from tako_contents, which is
+    // auth-required outright — so nothing on this tool is refused any more and
+    // every anonymous call meters, including one that still sends the old key
+    // (the schema strips it).
     for (const args of [
       { query: "US GDP" },
       { query: "US GDP", include_contents: false },
+      { query: "US GDP", include_contents: true },
     ]) {
       expect(
         isMeteredJsonRpcBody({
@@ -228,8 +221,17 @@ describe("isMeteredJsonRpcBody", () => {
           method: "tools/call",
           params: { name: "tako_search", arguments: args },
         }),
+        JSON.stringify(args),
       ).toBe(true);
     }
+  });
+
+  it("no tool declares an anonymous input gate today, so the exemption path is unused", () => {
+    // Not a claim that the hook is dead: `isMeteredJsonRpcBody` still consults
+    // it, and `exempts EVERY tool input that anonymousInputRejects refuses`
+    // below still proves the wiring. This pins the current surface so a future
+    // gate has to be added deliberately, with its unmetered-refusal case.
+    expect(TOOL_REGISTRY.filter((t) => t.anonymousInputRejects !== undefined)).toEqual([]);
   });
 
   it("exempts EVERY tool input that anonymousInputRejects refuses", () => {

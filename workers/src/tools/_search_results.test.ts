@@ -432,9 +432,13 @@ describe("buildSearchOutput — zero-card guidance", () => {
     expect(g).toMatch(/Stop only once/i);
   });
 
-  it("treats the legacy \"tako\" source alias as data", () => {
+  it("takes the DATA-verdict branch for a data-source search", () => {
+    // Was "treats the legacy tako alias as data" and keyed on /node_id/ in the
+    // guidance; the alias is gone and so is the pin recipe, so pin the branch
+    // by the verdict it is the only one to state.
     const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"]);
-    expect(out.guidance).toMatch(/node_id/);
+    expect(out.guidance).toMatch(/tako_available_data/);
+    expect(out.guidance).toMatch(/do NOT retry/i);
   });
 
   it("omits guidance when any card is present", () => {
@@ -755,14 +759,25 @@ describe("orderCardsByUsefulness — as-of presence", () => {
   });
 });
 
-describe("zero-card guidance routes back to tako_answer, not tako_contents", () => {
+describe("zero-card guidance routes to the canonical name, never to a pin", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
-  it("names tako_answer's retry and warns off tako_contents", () => {
+  it("sends the model to tako_available_data for the exact name", () => {
     for (const sources of [["data", "web"], ["data"]] as ReadonlyArray<Array<"data" | "web">>) {
       const g = buildSearchOutput([], [], "req", null, ENV, sources).guidance ?? "";
       expect(g).toContain("tako_available_data");
-      expect(g).toContain("strict:true");
+      expect(g).toMatch(/canonical name/i);
+    }
+  });
+
+  it("never advises a pin, because tako_search takes none after the D4 split", () => {
+    // This guidance used to interpolate PINNED_RETRY. Advice for `node_ids` /
+    // `strict` on a tool that rejects both is a phantom parameter, and it is
+    // invisible to phantom_tool.test.ts — that guard reads published schemas
+    // and descriptions, and this is a runtime VALUE.
+    for (const sources of [["data", "web"], ["data"], ["web"]] as ReadonlyArray<Array<"data" | "web">>) {
+      const g = buildSearchOutput([], [], "req", null, ENV, sources).guidance ?? "";
+      expect(g, `sources=${sources.join(",")}`).not.toMatch(/node_ids|strict/i);
     }
   });
 });
