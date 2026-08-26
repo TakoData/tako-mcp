@@ -397,7 +397,6 @@ describe("worker routing", () => {
     expect(names).toEqual([
       "tako_available_data",
       "tako_contents",
-      "tako_credit_balance",
       "tako_graph_related",
       "tako_search",
     ]);
@@ -418,14 +417,8 @@ describe("worker routing", () => {
       expect(
         (t as { securitySchemes?: unknown }).securitySchemes,
       ).toBeUndefined();
-      // The generic surface serves canonical MCP annotations (spec D2):
-      // retrieval is open-world per the spec's own web-search example.
-      // `tako_credit_balance` is the one closed domain in the default
-      // listing — it reads Tako's own account state (see CLOSED_WORLD in
-      // annotations.test.ts).
-      expect(t.annotations.openWorldHint, t.name).toBe(
-        t.name !== "tako_credit_balance",
-      );
+      // The generic default surface contains only open-world retrieval tools.
+      expect(t.annotations.openWorldHint, t.name).toBe(true);
     }
 
     // MCP Apps: the generic surface never declares widget metadata
@@ -676,7 +669,6 @@ describe("worker routing", () => {
     // no tool a caller could otherwise name in `?tools=`.
     expect(names.has("tako_agent")).toBe(false);
     expect(names.has("tako_answer")).toBe(false);
-    expect(names.has("tako_credit_balance")).toBe(false);
     expect(names.has("tako_search")).toBe(true);
     expect(names.has("tako_available_data")).toBe(true);
     expect(names.has("tako_contents")).toBe(true);
@@ -743,7 +735,7 @@ describe("worker routing", () => {
     ).toEqual(expected);
   });
 
-  it("POST /mcp?tools=<unknown> ignores the bad value and serves the five defaults", async () => {
+  it("POST /mcp?tools=<unknown> ignores the bad value and serves the four defaults", async () => {
     // A typo in `?tools=` must never break the connection: unknown tokens are
     // dropped, and a param that names nothing recognizable falls back to the
     // defaults rather than serving an empty surface. This guards the parser's
@@ -778,7 +770,7 @@ describe("worker routing", () => {
     expect(names.has("tako_agent")).toBe(false);
     expect(names.has("tako_visualize")).toBe(false);
     expect(names.has("tako_search")).toBe(true);
-    expect(body.result.tools).toHaveLength(5);
+    expect(body.result.tools).toHaveLength(4);
   });
 
   it("POST /mcp with visualize in the allowlist omits widget metadata (non-ChatGPT)", async () => {
@@ -816,7 +808,6 @@ describe("worker routing", () => {
     // Exactly the four names the allowlist carries — a tool it leaves out is
     // absent even when it is a default.
     expect(names.has("tako_available_data")).toBe(true);
-    expect(names.has("tako_credit_balance")).toBe(false);
     expect(names.has("tako_agent")).toBe(false);
     expect(body.result.tools).toHaveLength(4);
 

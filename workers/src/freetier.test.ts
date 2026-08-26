@@ -188,7 +188,6 @@ describe("isMeteredJsonRpcBody", () => {
       "tako_agent",
       "tako_answer",
       "tako_contents",
-      "tako_credit_balance",
       "no_such_tool",
     ]) {
       expect(
@@ -1051,7 +1050,6 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "tako_available_data",
       "tako_contents",
-      "tako_credit_balance",
       "tako_graph_related",
       "tako_search",
     ]);
@@ -1082,7 +1080,6 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "tako_available_data",
       "tako_contents",
-      "tako_credit_balance",
       "tako_graph_related",
       "tako_search",
     ]);
@@ -1678,7 +1675,6 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "tako_available_data",
       "tako_contents",
-      "tako_credit_balance",
       "tako_graph_related",
       "tako_search",
     ]);

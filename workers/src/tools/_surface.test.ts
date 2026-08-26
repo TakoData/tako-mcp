@@ -18,11 +18,10 @@ describe("surface membership sets", () => {
     }
   });
 
-  it("generic default listing is the five tools spec D3 names", () => {
+  it("generic default listing is the four tools spec D3 names", () => {
     expect([...GENERIC_DEFAULT_TOOL_NAMES].sort()).toEqual([
       "tako_available_data",
       "tako_contents",
-      "tako_credit_balance",
       "tako_graph_related",
       "tako_search",
     ]);

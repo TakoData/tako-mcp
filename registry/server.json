@@ -223,18 +223,6 @@
       }
     },
     {
-      "name": "tako_credit_balance",
-      "description": "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
-      "parameters": {},
-      "annotations": {
-        "title": "Tako: Credit Balance",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "tako_graph_related",
       "description": "Explore what a graph node connects to — the map of what data Tako has for it. Free.\n\nBest for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.\n\nDrilling `relation: \"metrics\"` returns only that node's metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.\nFiltering with `q` (\"revenue\") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.",
       "parameters": {

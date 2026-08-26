@@ -73,8 +73,6 @@ tools:
       Explore what a Tako graph node connects to — its metrics, the entities a
       metric covers, competitors, memberships, and sources. Free, and listed by
       default.
-  - name: tako_credit_balance
-    description: Check the connected account's API credit balance. Listed by default.
 examples:
   - title: Search for Charts
     description: Find existing visualizations on any topic

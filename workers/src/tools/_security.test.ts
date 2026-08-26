@@ -26,7 +26,6 @@ describe("securitySchemesForTool", () => {
       "tako_contents",
       "tako_visualize",
       "tako_agent",
-      "tako_credit_balance",
     ]) {
       expect(securitySchemesForTool(name, ANON_GENERIC)).toEqual([OAUTH2]);
     }

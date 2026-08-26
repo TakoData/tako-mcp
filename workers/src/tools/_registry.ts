@@ -16,7 +16,6 @@ import tako_agent from "./tako_agent.js";
 import tako_answer from "./tako_answer.js";
 import tako_available_data from "./tako_available_data.js";
 import tako_contents from "./tako_contents.js";
-import tako_credit_balance from "./tako_credit_balance.js";
 import tako_graph_related from "./tako_graph_related.js";
 import tako_search from "./tako_search.js";
 import tako_visualize from "./tako_visualize.js";
@@ -30,7 +29,6 @@ export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
   tako_answer as unknown as AnyToolModule,
   tako_available_data as unknown as AnyToolModule,
   tako_contents as unknown as AnyToolModule,
-  tako_credit_balance as unknown as AnyToolModule,
   tako_graph_related as unknown as AnyToolModule,
   tako_search as unknown as AnyToolModule,
   tako_visualize as unknown as AnyToolModule,

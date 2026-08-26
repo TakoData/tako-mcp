@@ -170,7 +170,7 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     new Set(["tako_agent"]),
     new Set(["tako_search"]),
     new Set(["tako_search", "tako_contents"]),
-    new Set(["tako_visualize", "tako_credit_balance"]),
+    new Set(["tako_visualize", "tako_graph_related"]),
     new Set(["tako_search", "tako_available_data", "tako_contents"]),
   ];
 
