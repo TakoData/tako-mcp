@@ -17,6 +17,8 @@
  *   ... "Lockheed Martin" "backlog"        (one ad-hoc pair)
  *   ... --base https://staging.tako.com
  *   ... --json                             (structuredContent only)
+ *   ... --discovery                        (the `q`-only cases: fixes 1, 4, 5, 6)
+ *   ... --discovery "US core PCE"          (one ad-hoc discovery query)
  */
 import type { Env } from "../src/env.js";
 import type { ToolContext } from "../src/tools/types.js";
@@ -29,6 +31,7 @@ const flag = (name: string): string | undefined => {
 };
 const BASE = flag("--base") ?? "https://tako.com";
 const JSON_ONLY = args.includes("--json");
+const DISCOVERY = args.includes("--discovery");
 const positional = args.filter((a) => !a.startsWith("--") && a !== BASE);
 
 const TOKEN = process.env["TAKO_API_TOKEN"];
@@ -54,6 +57,22 @@ const DEFAULT_CASES: Array<[string, string]> = [
   ["Pfizer", "R&D expense"],
   ["Boeing", "aircraft deliveries"],
   ["Netflix", "paid subscribers"],
+  // The lookup-path fixes: the browse filter (fix 3) and the stub-over-real
+  // entity binding (fix 2).
+  ["Nvidia", "data center"],
+  ["Duolingo", "daily active users"],
+  ["Lakers", "points per game"],
+  ["Nigeria", "fertility rate"],
+  ["Bhutan", "GDP"],
+  ["Crocs", "revenue"],
+];
+
+// The 7 confidently-wrong discovery cases from the 2026-08-25 spike (spec
+// Appendix B), plus the stub and padding shapes. `q` only, no `metric`.
+const DISCOVERY_CASES: string[] = [
+  "US core PCE", "S&P 500", "2028 presidential election", "Polymarket",
+  "Brent crude", "natural gas storage", "obesity rate",
+  "Duolingo", "Crocs", "Jerome Powell", "LeBron James", "Carnival", "Denver", "Austin",
 ];
 
 const cases: Array<[string, string]> =
@@ -61,7 +80,42 @@ const cases: Array<[string, string]> =
     ? [[positional[0] as string, positional[1] as string]]
     : DEFAULT_CASES;
 
+/**
+ * The discovery path, one line per case: what the tool now answers for a `q`
+ * that named the wrong thing on prod. Read `matches` against the spec's
+ * "wrong" column — two matches means the tie fired (fix 1), one with a kind
+ * tag means the model can break the tie itself (fix 6).
+ */
+async function discovery(): Promise<void> {
+  const queries = positional.length > 0 ? positional : DISCOVERY_CASES;
+  for (const q of queries) {
+    const started = Date.now();
+    let out: Awaited<ReturnType<typeof takoAvailableData.handler>>;
+    try {
+      out = await takoAvailableData.handler({ q }, ctx);
+    } catch (err) {
+      console.error(`${q}: THREW ${String(err)}`);
+      continue;
+    }
+    const ms = Date.now() - started;
+    const text = takoAvailableData.renderText?.(out, ctx) ?? "";
+    const shown = out.matches
+      .map((m) => {
+        const kind = [m.subtype, m.label].filter((x) => x !== null && x !== "").join(", ");
+        return `${m.name} (${kind}) ${m.type} ${m.coverage.total}${m.coverage.capped ? "+" : ""}`;
+      })
+      .join(" | ");
+    console.log(
+      `${q}\n  found=${out.found} verified=${out.verified ?? "-"} candidates=${out.other_matches.length} text=${text.length} (${ms}ms)\n  ${shown}`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
+  if (DISCOVERY) {
+    await discovery();
+    return;
+  }
   for (const [q, metric] of cases) {
     const started = Date.now();
     let out: Awaited<ReturnType<typeof takoAvailableData.handler>>;
