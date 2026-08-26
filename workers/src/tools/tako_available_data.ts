@@ -110,7 +110,7 @@ const DESCRIPTION = [
   'Know the measure? Split it: q="Carnival", metric="passenger cruise days" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q="Nvidia", metric="data center" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.',
   "One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.",
   'When `q` names both an entity and a metric ("US core PCE" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.',
-  "`found: true` means a match has live data coverage — never that a name merely resolved. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.",
+  "On the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).",
   "Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. To land on exactly one metric, pin THAT node id alone with strict:true and name the entity in the query text; the call then returns that metric's card or nothing. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten (query + the metric node + strict) — run it verbatim.",
   "A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.",
@@ -170,6 +170,9 @@ const coverageMatchSchema = z.object({
   label: z.string().nullable(),
   aliases: z.array(z.string()),
   unavailable: z.boolean().optional(),
+  // Set by `metricListMatch` when the list was scoped by the caller's `metric`
+  // phrase; the pair renderer reads it to say what the list is filtered to.
+  filter: z.string().optional(),
   coverage: coverageGroupSchema,
 });
 
@@ -181,7 +184,7 @@ const coverageMatchSchema = z.object({
 // don't pay for the full name lists twice.
 const fullOutputSchema = z.object({
   found: z.boolean().describe(
-    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): both halves RESOLVED to confident graph nodes — read `verified` for what was actually checked. Either way, running `next_call` is what confirms retrievable data exists — and 0 cards from it is NOT conclusive on its own: retry without `node_ids` first, since the pin is a hard filter over a graph that holds near-duplicate metric nodes.",
+    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): the resolved entity HOLDS something matching — the pinned metric is on its own metric list (`verified: pair`), or its metrics contain the caller's phrase. Both names resolving isn't enough: `unlinked` with no matching list yields false. A metric that resolved nowhere globally still yields true when the entity's own list carries the phrase. Read `verified` for what was actually checked. Either way, running `next_call` is what confirms retrievable data exists — and 0 cards from it is NOT conclusive on its own: retry without `node_ids` first, since the pin is a hard filter over a graph that holds near-duplicate metric nodes.",
   ),
   verified: z
     .enum(["coverage", "pair", "unlinked", "resolution"])
@@ -442,11 +445,54 @@ const tako_available_data = {
       }
     };
 
+    /**
+     * The entity's WHOLE metric count, with no `q` on the wire.
+     *
+     * A FILTERED `total` CANNOT DECIDE COVERAGE. The pair probes all send a
+     * substring filter, and `GraphRelationPage.total` carries no contract
+     * about what a filter does to it: `openapi/sdk.yaml` documents "totals do
+     * not change" only for `label` — and says so precisely because `label` is
+     * "a boost, not a filter" — while `total_capped` tells the caller to
+     * "narrow with `q` to reach the tail", which reads as `q` narrowing the
+     * count. So a filtered `total: 0` may mean "this entity holds nothing" or
+     * "this phrase matched nothing", and those pick different entities.
+     * The same ambiguity sits on `relation: null`, which `pairProbe` maps to
+     * zero. Ask the question unfiltered, and only where the answer decides
+     * something: whether to hand the pair to a DIFFERENT entity.
+     *
+     * `null` on failure, never 0 — a probe that produced no evidence must not
+     * authorise the rebind. Same rule as `pairProbe`, opposite of
+     * `coverageProbe`, whose zero only ever costs a receipt line.
+     */
+    const unfilteredMetricTotal = async (nodeId: string): Promise<number | null> => {
+      try {
+        const raw = await djangoGet<unknown>(
+          ctx.env, ctx.token, "/api/v1/graph/related",
+          { query: { node_id: nodeId, relation: "metrics", limit: 1 }, timeoutMs: PAIR_PROBE_TIMEOUT_MS },
+        );
+        const parsed = relatedShape.safeParse(raw);
+        if (!parsed.success) {
+          logWireGuardFailure("tako_available_data", "bind-verify", parsed.error, raw);
+          return null;
+        }
+        // No filter was sent, so `relation: null` really is "no metrics group".
+        return parsed.data.relation?.total ?? 0;
+      } catch (err) {
+        console.warn(
+          `[tako] bind verify failed tool=tako_available_data node=${nodeId} (kept rank 0):`,
+          err,
+        );
+        return null;
+      }
+    };
+
     // The PAIR-CONFIRMATION probe: does this entity actually hold this metric?
     //
-    // ONE `graph/related` call, scoped to the entity, narrowed by ONE substring
-    // filter (see `metricFilter` — a second variant was measured to change no
-    // verdicts and was removed). Returns `null` — NOT an empty list — when the
+    // UP TO TWO `graph/related` calls per entity, scoped to it, each narrowed
+    // by one substring filter: the VERDICT filter (`metricFilter`) and the
+    // caller's VERBATIM phrase, which buys the browse list. `metricFilters`
+    // collapses them to one call when the two strings agree.
+    // Returns `null` — NOT an empty list — when the
     // probe could not run or failed, because the two mean opposite things: an
     // empty list is evidence ("the entity's list holds nothing matching"),
     // `null` is the absence of evidence, and collapsing them would let an
@@ -700,14 +746,21 @@ const tako_available_data = {
       const totalOf = (p: Probed): number =>
         Math.max(p.verbatim?.total ?? 0, p.fallback?.total ?? 0);
       const first = probed[0];
-      const bound: Probed | null =
-        first === undefined
-          ? null
-          : known(first) && totalOf(first) === 0
-            ? (probed
-                .slice(1)
-                .find((p) => known(p) && totalOf(p) > 0 && promotionEligible(input.q, first.node, p.node)) ?? first)
-            : first;
+      let bound: Probed | null = first ?? null;
+      if (first !== undefined && known(first) && totalOf(first) === 0) {
+        const promotable = probed
+          .slice(1)
+          .find((p) => known(p) && totalOf(p) > 0 && promotionEligible(input.q, first.node, p.node));
+        if (promotable !== undefined) {
+          // CONFIRM THE ZERO BEFORE ACTING ON IT. `totalOf` reads a FILTERED
+          // page, so its zero may mean "the phrase matched nothing" rather
+          // than "the entity holds nothing" — see `unfilteredMetricTotal`.
+          // One extra round trip, and only here: this is the branch that hands
+          // the caller a different company. Anything but a confirmed zero
+          // keeps rank 0.
+          bound = (await unfilteredMetricTotal(first.node.id)) === 0 ? promotable : first;
+        }
+      }
       const entities: ResolvedRef[] =
         bound === null
           ? []
@@ -806,6 +859,11 @@ const tako_available_data = {
         // pinned-vs-unpinned table (see buildPairSummary) says the unpinned form
         // frequently lands — so spend the caller's one priced call on the form
         // that works instead of on the one we expect to fail.
+        //
+        // The `pair.metric !== null` half is DEFENSIVE, not load-bearing:
+        // `buildPairNextCall` already returns null on a null metric. It states
+        // the precondition where the reader can see it, next to a `found` that
+        // can now be true with no metric at all.
         next_call:
           pair.metric !== null && pinnedConfident
             ? buildPairNextCall(metricQuery, pair, { unpinned: verified === "unlinked" })
@@ -922,9 +980,20 @@ const tako_available_data = {
         const metricMatch = candidateMatch(tops.metric, m);
         const tieIds = new Set([entityMatch.node_id, metricMatch.node_id]);
         const tieOthers: OtherMatch[] = [
-          ...probes
-            .filter((pr) => !tieIds.has(pr.node.id))
-            .map((pr) => ({ ...candidateRef(pr.node), coverage_total: pr.total, coverage_capped: pr.capped })),
+          // Sourced from `candidates`, NOT `probes`. `probes` omits
+          // `candidates[0]`, which is covered today only because rank 0 is
+          // always one of the two kind-tops — and that holds only while
+          // `type` has exactly two values. `graphNodeSchema.type` is
+          // deliberately `z.string()` so a new enum value survives the facade,
+          // and such a node at rank 0 would vanish from BOTH channels.
+          ...candidates
+            .filter((n) => !tieIds.has(n.id))
+            .map((n) => {
+              const c = coverageOf(n);
+              return c === null
+                ? candidateRef(n)
+                : { ...candidateRef(n), coverage_total: c.total, coverage_capped: c.capped };
+            }),
           ...gate.kept
             .filter((n) => !inspected.has(n.id))
             .concat(results.filter((n) => !gate.kept.includes(n)))
@@ -935,7 +1004,12 @@ const tako_available_data = {
           verified: "coverage",
           confident: true,
           query: input.q,
-          summary: buildTieSummary({ query: input.q, entity: entityMatch, metric: metricMatch }),
+          summary: buildTieSummary({
+            query: input.q,
+            entity: entityMatch,
+            metric: metricMatch,
+            otherMatches: tieOthers,
+          }),
           matches: [entityMatch, metricMatch],
           other_matches: tieOthers,
           next_call: null,
@@ -1013,6 +1087,10 @@ const tako_available_data = {
         rendered = [best.node];
         demoted.push(
           ...firstDrill.map((m) => {
+            // `unavailable` is DISCARDED, not carried: the `rank0Known` guard
+            // on this branch already proves it is never true here, and
+            // OtherMatch has no slot for it. `void` is what keeps the
+            // destructure from tripping noUnusedLocals.
             const { coverage, unavailable, ...ref } = m;
             void unavailable;
             return { ...ref, coverage_total: coverage.total, coverage_capped: coverage.capped };

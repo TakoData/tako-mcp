@@ -113,8 +113,10 @@ const MIN_PREFIX_CHARS = 3;
 export const ENTITY_MATCHES_SHOWN = 3;
 
 /**
- * THE substring filter to send as `graph/related`'s `q` — exactly one, so the
- * probe is one round trip.
+ * THE VERDICT filter to send as `graph/related`'s `q` — the one whose hits
+ * decide `pair` vs `unlinked`. It is no longer the only filter on the wire:
+ * `metricFilters` also sends the caller's verbatim phrase, which buys the
+ * browse LIST and never a verdict.
  *
  * `q` is a case-insensitive SUBSTRING filter on name+aliases — a stricter,
  * different test from the token containment used everywhere else in this tool.
@@ -135,9 +137,12 @@ export const ENTITY_MATCHES_SHOWN = 3;
  *   `"R&D expense"` matches nothing on Pfizer while `"expense"` surfaces its
  *   real R&D metrics.
  *
- * A SECOND variant was implemented and measured (24 pairs, prod, 2026-08-04):
- * it changed the verdict on 0 of them, adding only extra near-miss entries, at
- * the cost of a second `graph/related` on every probed call. Removed.
+ * A SECOND VERDICT variant was implemented and measured (24 pairs, prod,
+ * 2026-08-04): it changed the verdict on 0 of them, adding only extra
+ * near-miss entries, at the cost of a second `graph/related` on every probed
+ * call. Removed, and that still holds — the second filter this module now
+ * sends is the caller's VERBATIM phrase, and it buys the list, not a verdict.
+ * See `metricFilters`, which collapses the two to one call when they agree.
  */
 export function metricFilter(input: {
   metricQuery: string;
@@ -313,7 +318,9 @@ export function reconcilePair(input: {
     seen.add(n.id);
     union.push(n);
   }
-  const metricList = input.verbatim.filter((n, i, arr) => arr.findIndex((m) => m.id === n.id) === i);
+  // One `graph/related` page cannot repeat an id, so this needs no dedupe of
+  // its own — the union above dedupes because it MERGES two pages.
+  const metricList = [...input.verbatim];
   const entityMetricMatches = byQueryOverlap(metricQuery, union).slice(0, ENTITY_MATCHES_SHOWN);
 
   // Rank 0 is absent or unvetted. NOTHING about linkage is established here —

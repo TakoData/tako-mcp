@@ -96,7 +96,15 @@ export const FOCAL_ALIASES_MAX = 10;
 /** Overview items per group. Three names tell the model what the group is; the drill pages the rest. */
 export const OVERVIEW_PREVIEW_N = 3;
 
-/** id, name, type, subtype, label — nothing else. Absent fields stay absent. */
+/**
+ * id, name, type, subtype, label — nothing else. Absent fields stay absent.
+ *
+ * `!= null`, not `!== undefined`: a wire `subtype: null` is DROPPED rather
+ * than echoed, which the predecessor `slimRelatedItem` kept. Both forms
+ * satisfy `graphNodeSchema` (`.nullable().optional()`), and omitting is what
+ * keeps a null from costing bytes in every item of a 250-item page. Pinned by
+ * the "no null padding" test.
+ */
 export function slimNode(n: GraphNodeFacade): GraphNodeFacade {
   return {
     id: n.id,

@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import { FIXED_RELATION_KEYS } from "./_graph.js";
+import {
+  FIXED_RELATION_KEYS,
+  graphNodeSchema,
+  graphRelatedOutputShape,
+  graphRelationSchema,
+} from "./_graph.js";
+import { TOOL_REGISTRY } from "./_registry.js";
 import takoGraphRelated from "./tako_graph_related.js";
 import {
   jsonResponse,
@@ -172,6 +178,43 @@ describe("tako_graph_related", () => {
     expect(text).toContain("Competitor 0, Competitor 1, Competitor 2, …");
     expect(text).toContain("`metrics` — Metrics — 250+:");
     expect(text).toContain('relation: "<key>"');
+  });
+
+  it("overview stays LINEAR in group count — the two-group bound above does not cover a wide node", async () => {
+    // Spec explore 2 named "under 2k" for Anthropic's 17-group overview. That
+    // target is met only up to ~10 groups: measured here, the rendered text is
+    // ~750 chars of focal node and instructions plus ~125 per group, so 17
+    // groups is ~2.8k from an ~840k wire payload — a 99.7% cut, and over the
+    // number the spec quoted.
+    //
+    // The SLOPE is the bound worth guarding. An absolute ceiling needs
+    // retuning every time a node's group count changes; a field added to every
+    // group line is what actually turns a wide node back into an overflow, and
+    // only the per-group cost catches that at any width.
+    const overview = (groups: number) => ({
+      node: {
+        id: "anthropic-1", type: "entity", name: "Anthropic PBC", subtype: "Companies",
+        label: "ORG", aliases: ["Anthropic"], description: "z".repeat(1_200),
+      },
+      relations: Array.from({ length: groups }, (_v, g) => ({
+        key: g === 0 ? "metrics" : `rel:relation_number_${g}`,
+        kind: "related", label: `Relation Group ${g}`,
+        total: 50, total_capped: g % 2 === 0, next_cursor: g % 3 === 0 ? "cur" : null,
+        items: Array.from({ length: 50 }, (_w, i) => ({
+          id: `ent::g${g}i${i}::1`, type: "entity", name: `Group ${g} Node ${i}`,
+          subtype: "Companies", label: "ORG", aliases: ["AL"], description: "x".repeat(850),
+        })),
+      })),
+    });
+    const render = async (groups: number): Promise<number> => {
+      mockFetchSequence([jsonResponse(200, overview(groups))]);
+      const out = await takoGraphRelated.handler({ node_id: "anthropic-1" }, CTX);
+      return takoGraphRelated.renderText(out, CTX).length;
+    };
+    const two = await render(2);
+    const wide = await render(17);
+    expect(wide).toBeLessThan(3_500); // measured 2,843
+    expect((wide - two) / 15).toBeLessThan(200); // measured ~123 per group
   });
 
   it("drill: keeps the whole page, slims each item, and prints the cursor", async () => {
@@ -385,14 +428,21 @@ describe("tako_graph_related description is derived from the API's own relation 
       expect(takoGraphRelated.description, key).toContain(`\`${key}\``);
     }
     // Any other backticked single-word key in the description would be a phantom
-    // relation the model tries and gets empty items for. Tool names are the one
-    // other thing the description backticks, so they are named here.
+    // relation the model tries and gets empty items for.
+    //
+    // The allowed set is DERIVED, not written down: the fixed keys, this tool's
+    // own parameter names, the response field names, and the registered tool
+    // names. A hand-written list fails on the next description edit that
+    // backticks a legitimate word, and fails with a message about phantom
+    // relations — sending the reader after a bug that isn't there.
     const bare = [...takoGraphRelated.description.matchAll(/`([a-z_]+)`/g)].map((m) => m[1] as string);
-    const known = new Set([
+    const known = new Set<string>([
       ...FIXED_RELATION_KEYS,
-      "node_id", "relation", "q", "cursor", "limit",
-      "key", "label", "total", "id", "name", "type", "subtype", "aliases", "description",
-      "tako_available_data", "tako_search",
+      ...Object.keys(takoGraphRelated.inputSchema.shape),
+      ...Object.keys(graphNodeSchema.shape),
+      ...Object.keys(graphRelationSchema.shape),
+      ...Object.keys(graphRelatedOutputShape),
+      ...TOOL_REGISTRY.map((t) => t.name),
     ]);
     expect(bare.filter((k) => !known.has(k))).toEqual([]);
   });

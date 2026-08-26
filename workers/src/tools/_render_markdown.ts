@@ -447,7 +447,7 @@ export const availableDataSlimOutputShape = z.looseObject({
   found: z
     .boolean()
     .describe(
-      "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): both halves resolved and the pinned metric passed the name test — read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that.",
+      "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): the resolved entity HOLDS something matching — the pinned metric is on its own metric list, or its metrics contain your phrase. Both names resolving isn't enough: a checked list with nothing matching reads false. A metric that resolved nowhere globally still reads true when the entity's own list carries the phrase. Read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that.",
     ),
   verified: z
     .enum(["coverage", "pair", "unlinked", "resolution"])
@@ -699,8 +699,21 @@ export function renderAvailableDataPairMarkdown(o: AvailableDataFullOutput): str
     const total = `${m.coverage.total}${m.coverage.capped ? "+" : ""}`;
     const what =
       m.filter === undefined ? m.coverage.kind : `${m.coverage.kind} containing "${oneLine(m.filter)}"`;
+    // A CUT LIST MUST SAY SO, or a name past the cap reads as absent. This
+    // loop renders the lookup path's fall-through drill, which is the same
+    // full paginated one the discovery renderer warns about (capped at
+    // MAX_COVERAGE_NAMES / MAX_COVERAGE_PAGES) — it lost the warning when the
+    // route widened from `matches.length === 0` to every `metric_query`.
+    // A filtered list cannot name the remainder: its `total` counts the hits,
+    // and a page that came back with a cursor never said how many matched.
+    const more =
+      m.coverage.total > m.coverage.names.length
+        ? ` …and ${m.coverage.total - m.coverage.names.length} more not shown (treat a name you don't see as unconfirmed, not absent).`
+        : m.coverage.truncated
+          ? " …this list was cut, so treat a name you don't see as unconfirmed, not absent."
+          : "";
     blocks.push(
-      `**${oneLine(m.name)}** (\`${oneLine(m.node_id)}\`) — ${what} (${total}):\n${m.coverage.names.map(oneLine).join(", ")}`,
+      `**${oneLine(m.name)}** (\`${oneLine(m.node_id)}\`) — ${what} (${total}):\n${m.coverage.names.map(oneLine).join(", ")}${more}`,
     );
   }
 

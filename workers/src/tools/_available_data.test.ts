@@ -573,8 +573,11 @@ describe("candidateMatch + buildTieSummary", () => {
   it("the tie summary names both, with kind and aliases, and tells the caller how to break it", () => {
     const s = buildTieSummary({ query: "US core PCE", entity, metric });
     expect(s).toContain('"US core PCE" names both an ENTITY and a METRIC with live data');
-    expect(s).toContain("**Core** (Companies, ORG) — 15 metrics.");
-    expect(s).toContain("**Core PCE Price Index** (METRIC) — tracked for 3 entities. — aliases: Core PCE, PCEPILFE");
+    // Both lines carry their node id, because the renderer's per-match block
+    // skips a match with empty `names` and would otherwise leave the tie with
+    // no handle to re-run against.
+    expect(s).toContain("**Core** (Companies, ORG) — 15 metrics. (`e`)");
+    expect(s).toContain("**Core PCE Price Index** (METRIC) — tracked for 3 entities. (`m`) — aliases: Core PCE, PCEPILFE");
     expect(s).toContain('types:"entity"');
     expect(s).toContain('types:"metric"');
     expect(s).toContain("re-run with `metric` set");

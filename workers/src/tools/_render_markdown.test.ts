@@ -640,5 +640,38 @@ describe("renderAvailableDataMarkdown — lookup path with a metric list", () =>
     expect(md).toContain("entity  NVIDIA Corporation  `ent::nvda::1`");
     expect(md).toContain('**NVIDIA Corporation** (`ent::nvda::1`) — metrics containing "data center" (1):\nTotal revenue - Data center');
     expect(md).not.toContain("next_call");
+    // A COMPLETE list carries no warning — the clause has to stay earned.
+    expect(md).not.toContain("unconfirmed");
+  });
+
+  // The lookup route owns every `metric_query`, including the fall-through
+  // FULL drill. Without the warning a name past MAX_COVERAGE_NAMES reads as
+  // absent, which is the one reading this tool must never invite.
+  const withCoverage = (filter: string | undefined, coverage: object) => ({
+    found: true, verified: "coverage", query: "q", metric_query: "quantum flux",
+    summary: "SUMMARY", other_matches: [], next_call: null,
+    matches: [{
+      node_id: "ent::crocs::1", name: "Crocs, Inc.", type: "entity",
+      subtype: "Companies", label: "ORG", aliases: [],
+      ...(filter === undefined ? {} : { filter }),
+      coverage: { kind: "metrics", items: [], names: ["Revenues", "Gross Margin"], ...coverage },
+    }],
+  });
+
+  it("counts the remainder when the fall-through drill was capped", () => {
+    const md = renderAvailableDataMarkdown(
+      withCoverage(undefined, { total: 400, truncated: true, capped: true }) as never,
+    );
+    expect(md).toContain(
+      "…and 398 more not shown (treat a name you don't see as unconfirmed, not absent).",
+    );
+  });
+
+  it("warns without a count when a FILTERED page was cut — `total` counts the hits, not the remainder", () => {
+    const md = renderAvailableDataMarkdown(
+      withCoverage("backlog", { total: 2, truncated: true, capped: true }) as never,
+    );
+    expect(md).toContain("…this list was cut, so treat a name you don't see as unconfirmed, not absent.");
+    expect(md).not.toContain("more not shown");
   });
 });

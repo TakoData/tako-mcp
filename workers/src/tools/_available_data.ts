@@ -104,6 +104,14 @@ export const MAX_COVERAGE_PAGES = 4;
  * budget on receipts nobody reads. The rest are listed with id, kind, and
  * aliases so the model can switch or explore them without another call: this
  * is the residual job of the deleted graph search tool.
+ *
+ * `limit` does NOT widen the probe fan-out — `SELECT_TOP_N` plus the two
+ * kind-tops caps the discovery path at ~6 inspected nodes whatever `limit`
+ * says. The LOOKUP path spends its own budget and is the one that grew:
+ * PAIR_ENTITY_PROBES entities x up to 2 filters, plus one unfiltered verify
+ * when the binding is about to move. That is bounded, but it was never
+ * measured end to end against the figure above — do that before raising
+ * either cap.
  */
 export const MAX_CANDIDATES = 20;
 export const DEFAULT_CANDIDATES = 10;
@@ -431,9 +439,16 @@ function emptyClause(kind: CoverageKind): string {
     : "resolved, but Tako holds no metrics for it yet";
 }
 
-function matchLine(m: CoverageMatch): string {
+/**
+ * `showId` places the node id where the receipt lines put it — after the
+ * coverage clause, before the aliases. Off by default so the rendered matches
+ * keep printing theirs in the renderer's per-match block; the tie summary
+ * turns it on, because that block skips a match with empty `names`.
+ */
+function matchLine(m: CoverageMatch, showId = false): string {
   const head = `**${oneLine(m.name)}**${kindTag(m)}`;
-  const tail = aliasTag(m.aliases);
+  const id = showId ? ` (\`${oneLine(m.node_id)}\`)` : "";
+  const tail = `${id}${aliasTag(m.aliases)}`;
   if (m.unavailable) {
     return `${head} — resolved, but Tako couldn't load its coverage right now (temporary); retry.${tail}`;
   }
@@ -442,22 +457,77 @@ function matchLine(m: CoverageMatch): string {
 }
 
 /**
+ * The receipt blocks for candidates the tool resolved but did not render in
+ * full. SHARED, because a summary that omits them strands the ids: the tie
+ * summary rendered no candidate lines and no node ids at all, so the model was
+ * told to "re-run with types" with nothing to re-run against, while
+ * `structuredContent.candidates` carried every id.
+ */
+function candidateBlocks(otherMatches: readonly OtherMatch[]): string[] {
+  const blocks: string[] = [];
+  // Candidates we probed get a one-line receipt carrying their node id and
+  // coverage count — enough to switch to one without re-running this tool, and
+  // ~110 chars instead of the ~8.3k a second full coverage list costs.
+  const probed = otherMatches.filter((o) => o.coverage_total !== undefined);
+  if (probed.length > 0) {
+    const lines = probed.map((o) => {
+      const count = o.coverage_total ?? 0;
+      // The noun follows the node's OWN coverage direction — a metric node's
+      // coverage is the ENTITIES tracking it, not metrics. Hardcoding "metrics"
+      // mislabelled every metric-node receipt (`Inflation Rate — 63+ metrics`),
+      // which reads as a nonsense claim about the graph's shape.
+      const kind = coverageKindFor(o.type);
+      const noun =
+        kind === "metrics" ? plural(count, "metric", "metrics") : plural(count, "entity", "entities");
+      // "+" means "the server stopped counting, this is a floor" — the same
+      // meaning it carries in `countStr` for a rendered match. It used to print
+      // on every non-zero total, which claimed a floor for counts the server
+      // reported exactly (`Inflation Rate — 63+ entities` for exactly 63).
+      const floor = o.coverage_capped === true ? "+" : "";
+      return `- ${oneLine(o.name)}${kindTag(o)} — ${count}${floor} ${noun} (\`${oneLine(o.node_id)}\`)${aliasTag(o.aliases)}`;
+    });
+    blocks.push(
+      "",
+      `Also resolved (not listed in full — re-run with the one you want, or pass its node_id to tako_graph_related):\n${lines.join("\n")}`,
+    );
+  }
+  // Never inspected. Every one is listed — with its id, kind, and aliases — so
+  // the model can switch to one or explore it without a second resolve call.
+  // Flattened, like every other slot that echoes an upstream name.
+  const unprobed = otherMatches.filter((o) => o.coverage_total === undefined);
+  if (unprobed.length > 0) {
+    const lines = unprobed.map(
+      (o) => `- ${oneLine(o.name)}${kindTag(o)} (\`${oneLine(o.node_id)}\`)${aliasTag(o.aliases)}`,
+    );
+    blocks.push("", `Also matched (not coverage-checked):\n${lines.join("\n")}`);
+  }
+  return blocks;
+}
+
+/**
  * The prose for a query that names both kinds. The model, not the tool,
  * breaks the tie — it has the user's intent. No pin advice here: the caller
  * re-runs this tool, and the re-run carries whatever handle shape is current.
+ *
+ * The two tie lines carry their node ids INLINE. `candidateMatch` gives them
+ * empty `names`, so the renderer's per-match block — the slot that normally
+ * prints the id — skips them, and the tie answer shipped with no handle for
+ * either node the model is being asked to choose between.
  */
 export function buildTieSummary(input: {
   query: string;
   entity: CoverageMatch;
   metric: CoverageMatch;
+  otherMatches?: readonly OtherMatch[];
 }): string {
   const q = oneLine(input.query);
   return [
     `"${q}" names both an ENTITY and a METRIC with live data, and only you know which one you meant:`,
     "",
-    matchLine(input.entity),
+    matchLine(input.entity, true),
     "",
-    matchLine(input.metric),
+    matchLine(input.metric, true),
+    ...candidateBlocks(input.otherMatches ?? []),
     "",
     `Re-run with types:"entity" for the entity's metric list, or types:"metric" for the entities the metric is tracked across. If you want one measure on the entity, re-run with \`metric\` set to it instead.`,
   ].join("\n");
@@ -834,44 +904,7 @@ export function buildSummary(input: {
   }
   const lines = matches.map((m) => matchLine(m));
 
-  const blocks: string[] = [header, "", lines.join("\n\n")];
-
-  // Candidates we probed get a one-line receipt carrying their node id and
-  // coverage count — enough to switch to one without re-running this tool, and
-  // ~110 chars instead of the ~8.3k a second full coverage list costs.
-  const probed = otherMatches.filter((o) => o.coverage_total !== undefined);
-  if (probed.length > 0) {
-    const lines = probed.map((o) => {
-      const count = o.coverage_total ?? 0;
-      // The noun follows the node's OWN coverage direction — a metric node's
-      // coverage is the ENTITIES tracking it, not metrics. Hardcoding "metrics"
-      // mislabelled every metric-node receipt (`Inflation Rate — 63+ metrics`),
-      // which reads as a nonsense claim about the graph's shape.
-      const kind = coverageKindFor(o.type);
-      const noun =
-        kind === "metrics" ? plural(count, "metric", "metrics") : plural(count, "entity", "entities");
-      // "+" means "the server stopped counting, this is a floor" — the same
-      // meaning it carries in `countStr` for a rendered match. It used to print
-      // on every non-zero total, which claimed a floor for counts the server
-      // reported exactly (`Inflation Rate — 63+ entities` for exactly 63).
-      const floor = o.coverage_capped === true ? "+" : "";
-      return `- ${oneLine(o.name)}${kindTag(o)} — ${count}${floor} ${noun} (\`${oneLine(o.node_id)}\`)${aliasTag(o.aliases)}`;
-    });
-    blocks.push(
-      "",
-      `Also resolved (not listed in full — re-run with the one you want, or pass its node_id to tako_graph_related):\n${lines.join("\n")}`,
-    );
-  }
-  // Never inspected. Every one is listed — with its id, kind, and aliases — so
-  // the model can switch to one or explore it without a second resolve call.
-  // Flattened, like every other slot that echoes an upstream name.
-  const unprobed = otherMatches.filter((o) => o.coverage_total === undefined);
-  if (unprobed.length > 0) {
-    const lines = unprobed.map(
-      (o) => `- ${oneLine(o.name)}${kindTag(o)} (\`${oneLine(o.node_id)}\`)${aliasTag(o.aliases)}`,
-    );
-    blocks.push("", `Also matched (not coverage-checked):\n${lines.join("\n")}`);
-  }
+  const blocks: string[] = [header, "", lines.join("\n\n"), ...candidateBlocks(otherMatches)];
 
   // Mirror the tool's next_call gate: advertise the ready-made handle only
   // when one is actually emitted; otherwise steer to composing a precise

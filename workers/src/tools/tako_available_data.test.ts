@@ -1465,6 +1465,15 @@ describe("tako_available_data — both kinds (fix 1)", () => {
     expect(out.matches.map((m) => m.node_id)).toEqual(["core-co", "core-pce"]);
     // Core D was never inspected and Core A-C were: all four are receipts.
     expect(out.other_matches.map((o) => o.node_id)).toEqual(["core-a", "core-b", "core-c", "core-d"]);
+    // EVERY id reaches the TEXT channel, not just structuredContent. The tie
+    // tells the model to re-run, and a re-run needs a handle: the two tied
+    // nodes carry theirs inline (the renderer's per-match block skips them,
+    // because `candidateMatch` leaves `names` empty), and the receipts carry
+    // theirs in the shared "Also resolved" / "Also matched" blocks.
+    const text = takoAvailableData.renderText?.(out, CTX) ?? "";
+    for (const id of ["core-co", "core-pce", "core-a", "core-b", "core-c", "core-d"]) {
+      expect(text).toContain(`\`${id}\``);
+    }
   });
 
   it("does NOT call a tie when a metric merely CONTAINS the entity name (entity-prefixed KPI junk)", async () => {
@@ -1562,6 +1571,8 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
       jsonResponse(200, { node: { id: "ent::duo-stub::1", type: "entity", name: "Duolingo" }, relation: null }),
       // Entity 1: one filter, holds the metric, 10 metrics total.
       jsonResponse(200, page([["mt::dau::1", "Daily Active Users"], ["mt::dau2::1", "Daily Active Users - Paid"]], 10)),
+      // The bind verify: rank 0 unfiltered, confirming the stub really is empty.
+      jsonResponse(200, { node: { id: "ent::duo-stub::1", type: "entity", name: "Duolingo" }, relation: null }),
     ]);
     const out = await takoAvailableData.handler({ q: "Duolingo", metric: "daily active users" }, CTX);
     expect(out.entity?.node_id).toBe("ent::duo::1");
@@ -1570,6 +1581,34 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
     expect(out.found).toBe(true);
     expect(out.next_call?.query).toBe("Duolingo, Inc. daily active users");
     expect(out.matches[0]?.coverage.items.map((i) => i.node_id)).toEqual(["mt::dau::1", "mt::dau2::1"]);
+  });
+
+  it("does NOT rebind when rank 0's filtered zero is only a phrase miss — the unfiltered probe finds metrics", async () => {
+    // The failure this guards: `total` on a FILTERED page carries no contract
+    // (sdk.yaml documents "totals do not change" for `label` ONLY, and
+    // `total_capped` says to "narrow with q to reach the tail"). If a filtered
+    // `total: 0` were trusted, a phrase that simply misses on the real company
+    // would hand the pair to a same-named node that happened to match.
+    mockFetchSequence([
+      jsonResponse(200, {
+        results: [
+          { ...searchHit("ent::duo::1", "Duolingo, Inc."), subtype: "Companies" },
+          { ...searchHit("ent::duo-stub::1", "Duolingo", "entity", "PRODUCT"), subtype: "AI Gateway Entity" },
+        ],
+      }),
+      jsonResponse(200, { results: [searchHit("mt::dau::1", "Daily Active Users", "metric", "METRIC")] }),
+      ...detection(),
+      // Rank 0: the phrase matches nothing, and the server reports total 0 for
+      // the FILTERED page — the ambiguous shape.
+      jsonResponse(200, page([], 0)),
+      // Rank 1 matches, so a promotion is on the table.
+      jsonResponse(200, page([["mt::dau::1", "Daily Active Users"]], 4)),
+      // The verify: rank 0 UNFILTERED holds 250 metrics, so its zero was a
+      // phrase miss and the rebind must not happen.
+      jsonResponse(200, page([["mt::other::1", "Streak Length"]], 250)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Duolingo", metric: "daily active users" }, CTX);
+    expect(out.entity?.node_id).toBe("ent::duo::1");
   });
 
   it("keeps rank 0 when its probes failed (unavailable is not zero) even if the alternate has data", async () => {

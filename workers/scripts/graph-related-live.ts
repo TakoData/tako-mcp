@@ -18,7 +18,11 @@ import takoGraphRelated from "../src/tools/tako_graph_related.js";
 const args = process.argv.slice(2);
 const baseIdx = args.indexOf("--base");
 const BASE = baseIdx >= 0 ? (args[baseIdx + 1] ?? "https://tako.com") : "https://tako.com";
-const names = args.filter((a, i) => !a.startsWith("--") && i !== baseIdx + 1);
+// `indexOf` returns -1 when `--base` is absent, so a bare `baseIdx + 1` is 0
+// and silently drops the FIRST name — the exact form this file's usage block
+// documents (`... "Anthropic" "NVIDIA"` measured only NVIDIA).
+const baseValueIdx = baseIdx >= 0 ? baseIdx + 1 : -1;
+const names = args.filter((a, i) => !a.startsWith("--") && i !== baseValueIdx);
 const TOKEN = process.env["TAKO_API_TOKEN"];
 if (TOKEN === undefined || TOKEN === "") {
   console.error("TAKO_API_TOKEN is required.");
