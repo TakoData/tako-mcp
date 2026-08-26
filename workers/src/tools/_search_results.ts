@@ -97,10 +97,22 @@ export const PINNED_RETRY =
  * it was restated in two places and both drifted back to the broken variant
  * (every node id on the card, no `strict`) — the one measured to misfire.
  *
- * DECLARED HERE, above `takoCardSchema`, deliberately: the `values_hint` field
- * description interpolates it, and that schema is built at module evaluation
- * time. Declared after the schema it would be in its temporal dead zone, and
- * importing this module would throw ReferenceError on load.
+ * NO PRODUCTION READER TODAY. `values_hint` used to interpolate it — that is
+ * why it is declared above `takoCardSchema` — but that field's routing was
+ * rewritten when `tako_answer` moved behind `?tools=answer`, and nothing else
+ * picked the wording up. Its two remaining consumers are
+ * `_pin_form.test.ts`, which guards the wording against drift, and
+ * `gen-registry.ts`, whose failure message tells an author to reuse it by
+ * name. Kept for that second reason: the constant is the canonical phrasing
+ * for the card-in-hand case, and a descriptor that needs it should
+ * interpolate this rather than restate the form — which is exactly how the
+ * broken variant got in twice before. Delete it only together with that
+ * guidance message.
+ *
+ * Keep the declaration ABOVE `takoCardSchema` if a descriptor does start
+ * interpolating it again: that schema is built at module evaluation time, so
+ * a later declaration would sit in its temporal dead zone and importing this
+ * module would throw ReferenceError on load.
  */
 export const PINNED_FROM_CARD =
   "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card, or omitting strict, does not steer retrieval";
@@ -144,7 +156,7 @@ export const takoCardSchema = z
       .string()
       .optional()
       .describe(
-        `Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — headline in \`description\` when the card carries one, specific figures via tako_answer, where you ${PINNED_FROM_CARD}.`,
+        "Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — the headline in `description` when the card carries one; the rows themselves cannot be exported on any path.",
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
@@ -199,16 +211,21 @@ export const webResultSchema = z
 export type WebResult = z.infer<typeof webResultSchema>;
 
 // The DEFAULT most-recent-rows cap for the inline card preview, matched to
-// the backend's free inline allowance: search/answer inline at most
-// CSV_FREE_ROWS = 20 rows per card server-side (tako_inline_cap_for; a
-// larger legacy cap exists only for entitled enterprise accounts), so this
-// is the honest ceiling of what actually arrives — the MCP can only cap
-// DOWN what the backend shipped, never raise it. Rows beyond 20 are the
-// priced product: a separate tako_contents call (max_rows up to 2,000; the
-// first 20 stay free there too). `preview_rows` above the allowance is
-// therefore inert today; the input keeps the wider 1..MAX_PREVIEW_ROWS
-// range so a future backend row-count knob can light it up without an
-// input-surface change.
+// the backend's own inline cap: search/answer inline at most 20 rows per
+// card server-side (tako_inline_cap_for; a larger legacy cap exists only for
+// entitled enterprise accounts), so this is the honest ceiling of what
+// actually arrives — the MCP can only cap DOWN what the backend shipped,
+// never raise it.
+//
+// EVERY delivered row is billed, per 1k — tako#29572 (2026-08-21) removed the
+// row allowance entirely. No descriptor may describe any row here as costless:
+// the copy that survived that change billed silently for four days. For more
+// rows, a separate tako_contents call (max_rows up to 2,000, billed the same
+// way).
+//
+// `preview_rows` above this cap is therefore inert today; the input keeps the
+// wider 1..MAX_PREVIEW_ROWS range so a future backend row-count knob can
+// light it up without an input-surface change.
 export const INLINE_PREVIEW_ROW_CAP = 20;
 export const MAX_PREVIEW_ROWS = 250;
 
@@ -474,42 +491,22 @@ export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
   );
 };
 
-// Routing hint for a non-exportable (exportable:false) card. Such cards carry
-// no rows on any surface — specific figures come from tako_answer — so the
-// hint makes that routing per-card and deterministic instead of a
-// tool-description recall exercise. Wording stays NEUTRAL ("not exportable",
-// not "license-gated"): the backend's export_safe() also fails closed on
-// blank/unresolvable source names and config-alignment errors, and narrating
-// those as a licensing decision would keep real bugs from being reported.
-// The "headline value is in description" clause is asserted only when the
-// card actually carries a description — an unverified pointer is worse than
-// none.
+// Hint for a non-exportable (exportable:false) card. Such cards carry no
+// rows on any path — `tako_answer` (opt-in since spec D1) is off the
+// default surface, so the hint no longer routes there; naming a tool the
+// connection has not registered sends the model into "tool not found".
+// Wording stays NEUTRAL ("not exportable", not "license-gated"): the
+// backend's export_safe() also fails closed on blank/unresolvable source
+// names and config-alignment errors, and narrating those as a licensing
+// decision would keep real bugs from being reported. The "headline value
+// is in description" clause is asserted only when the card actually
+// carries a description — an unverified pointer is worse than none.
 function valuesHint(card: TakoCard): string {
-  // Pin the METRIC node ALONE, with strict. This used to emit every node id on
-  // the card — entity AND metric — and never mentioned `strict`, which is the
-  // one combination measured to do nothing: at the default `strict:false` a pin
-  // does not steer retrieval at all, and under `strict:true` the entity id
-  // re-admits every other card for that entity (strict is an OR over pinned
-  // nodes), which once turned "no such card" into a plausible-looking WRONG
-  // metric. Same correction already applied to next_call and the zero-card
-  // guidance; this hint was the last place still advising the broken form.
-  //
-  // `type` is the wire's own discriminator; the `mt::` id prefix is a fallback
-  // for cards whose nodes arrive untyped. With neither, no pin is advised —
-  // silence beats steering the model into the variant that misfires.
-  const nodes = card.nodes ?? [];
-  const metricIds = nodes
-    .filter((n) => n.type === "metric" || n.id.startsWith("mt::"))
-    .map((n) => n.id);
-  const pin =
-    metricIds.length > 0
-      ? ` with node_ids ${JSON.stringify(metricIds)} pinned and strict:true`
-      : "";
   const headline =
     typeof card.description === "string" && card.description.trim() !== ""
-      ? "headline value is in description; "
+      ? "; headline value is in description"
       : "";
-  return `rows not exportable; ${headline}for specific figures call tako_answer${pin}`;
+  return `rows not exportable${headline}`;
 }
 
 // Only paragraph-length strings are worth hoisting — moving a short label

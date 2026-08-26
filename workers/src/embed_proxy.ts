@@ -90,15 +90,13 @@
  * the constants and the response headers below for what that rules out.
  */
 import {
+  EMBED_PROXY_PREFIX,
   type Env,
   resolvePublicBase,
   resolvePublicCdnBase,
   resolveWidgetOrigin,
 } from "./env.js";
 import { freeTierRateLimitKey } from "./freetier.js";
-
-/** Route prefix. The pub_id is the single trailing path segment. */
-export const EMBED_PROXY_PREFIX = "/embed-html/";
 
 /**
  * Route prefix for the CDN asset passthrough. Everything after it is the

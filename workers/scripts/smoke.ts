@@ -5,6 +5,15 @@
  * Hits a deployed Worker and walks the MCP protocol end-to-end:
  *
  *   1. `GET /health`           → expect HTTP 200 with body "ok"
+ *   1b. Surface split           → anonymous /mcp/chatgpt 401s with a
+ *                                 www-authenticate challenge; authenticated
+ *                                 /mcp/chatgpt lists the submitted surface
+ *                                 (securitySchemes + boolean idempotentHint);
+ *                                 anonymous /mcp serves the auth-invariant
+ *                                 listing and refuses tako_contents /
+ *                                 include_contents:true with sign-in copy
+ *                                 (soft-skipped when the target has no
+ *                                 free-tier bindings, e.g. local wrangler dev)
  *   2. MCP `initialize`        → handshake completes
  *   3. MCP `tools/list`        → connects with `?tools=agent,visualize,credits,graph`
  *                                 (those tools are opt-in — see `_optional.ts`);
@@ -150,14 +159,150 @@ if (healthBody !== "ok") {
 ok(`/health → 200 "ok"`);
 
 // ---------------------------------------------------------------------------
+// 1b. Surface split (spec 2026-08-25): /mcp is the generic surface with an
+//     anonymous tier; /mcp/chatgpt requires OAuth. Raw JSON-RPC over fetch —
+//     the SDK client is reserved for the authenticated walk below.
+// ---------------------------------------------------------------------------
+const JSON_RPC_HEADERS = {
+  "content-type": "application/json",
+  accept: "application/json, text/event-stream",
+};
+const rpc = (id: number, method: string, params: Record<string, unknown>) =>
+  JSON.stringify({ jsonrpc: "2.0", id, method, params });
+
+// (b) Anonymous /mcp/chatgpt → 401 challenge (never the free tier).
+{
+  const res = await fetch(`${baseUrl}/mcp/chatgpt`, {
+    method: "POST",
+    headers: JSON_RPC_HEADERS,
+    body: rpc(1, "tools/list", {}),
+  });
+  assert(
+    res.status === 401,
+    `anonymous POST /mcp/chatgpt expected 401, got ${res.status}`,
+  );
+  const challenge = res.headers.get("www-authenticate") ?? "";
+  assert(
+    challenge.includes("resource_metadata="),
+    `/mcp/chatgpt 401 lacks a www-authenticate resource_metadata challenge (got ${JSON.stringify(challenge)})`,
+  );
+  ok("anonymous /mcp/chatgpt → 401 with www-authenticate challenge");
+}
+
+// (c) Authenticated /mcp/chatgpt lists the submitted surface with top-level
+//     securitySchemes and explicit boolean idempotentHint on every tool.
+{
+  const res = await fetch(`${baseUrl}/mcp/chatgpt`, {
+    method: "POST",
+    headers: { ...JSON_RPC_HEADERS, authorization: `Bearer ${apiToken}` },
+    body: rpc(2, "tools/list", {}),
+  });
+  assert(res.status === 200, `authenticated /mcp/chatgpt tools/list → ${res.status}`);
+  const body = (await res.json()) as {
+    result?: {
+      tools?: Array<{
+        name: string;
+        securitySchemes?: unknown;
+        annotations?: { idempotentHint?: unknown };
+      }>;
+    };
+  };
+  const tools = body.result?.tools ?? [];
+  const names = tools.map((t) => t.name).sort();
+  assert(
+    names.includes("tako_visualize"),
+    `/mcp/chatgpt listing lacks tako_visualize (got: ${names.join(", ")})`,
+  );
+  assert(
+    !names.includes("tako_answer"),
+    "/mcp/chatgpt listing includes tako_answer — it is ?tools=answer opt-in",
+  );
+  for (const t of tools) {
+    assert(
+      Array.isArray(t.securitySchemes),
+      `/mcp/chatgpt descriptor ${t.name} lacks top-level securitySchemes`,
+    );
+    assert(
+      typeof t.annotations?.idempotentHint === "boolean",
+      `/mcp/chatgpt descriptor ${t.name} lacks a boolean idempotentHint`,
+    );
+  }
+  ok(
+    `authenticated /mcp/chatgpt → ${names.length} tools (${names.join(", ")}), securitySchemes + idempotentHint on all`,
+  );
+}
+
+// (a, d, e) Anonymous generic surface. Environments without the free-tier
+// bindings (e.g. a bare local `wrangler dev` with no FREE_TIER_API_KEY
+// secret) 401 anonymous requests by design — soft-skip there so the smoke
+// stays runnable locally.
+{
+  const listRes = await fetch(`${baseUrl}/mcp`, {
+    method: "POST",
+    headers: JSON_RPC_HEADERS,
+    body: rpc(3, "tools/list", {}),
+  });
+  if (listRes.status === 401) {
+    console.warn(
+      "⚠ anonymous /mcp → 401 (free-tier bindings not configured on this target); skipping anonymous-surface asserts",
+    );
+  } else {
+    assert(listRes.status === 200, `anonymous /mcp tools/list → ${listRes.status}`);
+    const body = (await listRes.json()) as {
+      result?: { tools?: Array<{ name: string }> };
+    };
+    const names = (body.result?.tools ?? []).map((t) => t.name).sort();
+    const expected = ["tako_available_data", "tako_contents", "tako_search"];
+    assert(
+      JSON.stringify(names) === JSON.stringify(expected),
+      `anonymous /mcp listing is [${names.join(", ")}], expected [${expected.join(", ")}]`,
+    );
+    ok(`anonymous /mcp → auth-invariant listing (${names.join(", ")})`);
+
+    const authRequiredKind = async (
+      id: number,
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<void> => {
+      const res = await fetch(`${baseUrl}/mcp`, {
+        method: "POST",
+        headers: JSON_RPC_HEADERS,
+        body: rpc(id, "tools/call", { name, arguments: args }),
+      });
+      assert(res.status === 200, `anonymous ${name} call → HTTP ${res.status}`);
+      const body = (await res.json()) as {
+        result?: {
+          isError?: boolean;
+          _meta?: Record<string, { kind?: string }>;
+        };
+      };
+      assert(
+        body.result?.isError === true &&
+          body.result._meta?.["tako/error"]?.kind === "auth_required",
+        `anonymous ${name} call expected the auth_required tool error, got ${JSON.stringify(body).slice(0, 300)}`,
+      );
+    };
+    await authRequiredKind(4, "tako_contents", {
+      url: "https://trytako.com/card/smoke",
+    });
+    ok("anonymous tako_contents → sign-in instructions (auth_required)");
+    await authRequiredKind(5, "tako_search", {
+      query: "US GDP",
+      include_contents: true,
+    });
+    ok("anonymous tako_search include_contents:true → refused (auth_required)");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 2-5. MCP protocol via the SDK client
 // ---------------------------------------------------------------------------
 // Opt in to the optional tools the smoke exercises (see `_optional.ts`):
-// `agent` for the agent-presence assert, `visualize` and `credits` for the
-// tool calls below, `graph` for the primitives' presence assert. This also
-// smoke-tests the `?tools=` opt-in path itself.
+// `agent` for the agent-presence assert, `answer`, `visualize` and
+// `credits` for the tool calls below, `graph` for the primitives' presence
+// assert. This also smoke-tests the `?tools=` opt-in path itself.
 const transport = new StreamableHTTPClientTransport(
-  new URL(`${baseUrl}/mcp?tools=agent,visualize,credits,graph`),
+  new URL(`${baseUrl}/mcp?tools=agent,answer,visualize,credits,graph`),
   {
     requestInit: {
       headers: { authorization: `Bearer ${apiToken}` },
@@ -202,38 +347,66 @@ try {
   assert(hasAgent, `expected an agent tool in tools/list (got: ${toolNames.join(", ")})`);
   ok("agent tool present");
 
-  // ----- MCP Apps wiring on tako_search ----------------------------------
-  // The widget bundle must be advertised two ways: the tool listing carries
-  // `_meta.ui.resourceUri`, and `resources/list` exposes a resource at that
-  // URI with the MCP Apps mimeType. Without both, MCP Apps clients
-  // (claude.ai, ChatGPT) silently fall back to the static-image path and
-  // we lose the interactive embed. Soft-warn if either is missing rather
-  // than failing — the smoke is still useful for the search/answer paths
-  // even if the widget piece broke in this deploy.
+  // ----- MCP Apps wiring per surface --------------------------------------
+  // The generic surface (/mcp, this client) must NOT declare widget
+  // metadata — it ships the portable inline PNG instead (spec D14/D15).
+  // The chatgpt surface's widget wiring is asserted below via raw fetch:
+  // `_meta` carries the ui:// URI, and `resources/list` exposes a resource
+  // at that URI with the MCP Apps mimeType.
   const searchTool = tools.find((t) => t.name === "tako_search");
   assert(searchTool, "tako_search missing from tools/list");
-  const widgetUri = (searchTool?._meta as { ui?: { resourceUri?: string } } | undefined)?.ui
-    ?.resourceUri;
-  if (typeof widgetUri !== "string" || !widgetUri.startsWith("ui://")) {
-    console.warn(
-      `[warn] tako_search._meta.ui.resourceUri missing or not a ui:// URI ` +
-        `(got: ${JSON.stringify(widgetUri)}) — inline chart render may be broken`,
+  const genericWidgetUri = (
+    searchTool?._meta as { ui?: { resourceUri?: string } } | undefined
+  )?.ui?.resourceUri;
+  assert(
+    genericWidgetUri === undefined,
+    `generic /mcp listing declares widget metadata (${JSON.stringify(genericWidgetUri)}) — the widget belongs to /mcp/chatgpt only`,
+  );
+  ok("generic /mcp → no widget metadata (inline PNG path)");
+  {
+    const listRes = await fetch(`${baseUrl}/mcp/chatgpt`, {
+      method: "POST",
+      headers: { ...JSON_RPC_HEADERS, authorization: `Bearer ${apiToken}` },
+      body: rpc(6, "tools/list", {}),
+    });
+    const listBody = (await listRes.json()) as {
+      result?: {
+        tools?: Array<{ name: string; _meta?: { ui?: { resourceUri?: string } } }>;
+      };
+    };
+    const chatgptSearch = (listBody.result?.tools ?? []).find(
+      (t) => t.name === "tako_search",
     );
-  } else {
-    const { resources } = await client.listResources();
-    const widget = resources.find((r) => r.uri === widgetUri);
-    if (!widget) {
+    const widgetUri = chatgptSearch?._meta?.ui?.resourceUri;
+    if (typeof widgetUri !== "string" || !widgetUri.startsWith("ui://")) {
       console.warn(
-        `[warn] resources/list does not include ${widgetUri} ` +
-          `(got: ${resources.map((r) => r.uri).join(", ") || "<none>"})`,
-      );
-    } else if (widget.mimeType !== "text/html;profile=mcp-app") {
-      console.warn(
-        `[warn] widget ${widgetUri} mimeType is ${JSON.stringify(widget.mimeType)} ` +
-          `(expected "text/html;profile=mcp-app")`,
+        `[warn] /mcp/chatgpt tako_search._meta.ui.resourceUri missing or not a ui:// URI ` +
+          `(got: ${JSON.stringify(widgetUri)}) — inline chart render may be broken`,
       );
     } else {
-      ok(`tako_search → MCP Apps widget at ${widgetUri} (${widget.mimeType})`);
+      const resRes = await fetch(`${baseUrl}/mcp/chatgpt`, {
+        method: "POST",
+        headers: { ...JSON_RPC_HEADERS, authorization: `Bearer ${apiToken}` },
+        body: rpc(7, "resources/list", {}),
+      });
+      const resBody = (await resRes.json()) as {
+        result?: { resources?: Array<{ uri: string; mimeType?: string }> };
+      };
+      const widget = (resBody.result?.resources ?? []).find(
+        (r) => r.uri === widgetUri,
+      );
+      if (!widget) {
+        console.warn(
+          `[warn] /mcp/chatgpt resources/list does not include ${widgetUri}`,
+        );
+      } else if (widget.mimeType !== "text/html;profile=mcp-app") {
+        console.warn(
+          `[warn] widget ${widgetUri} mimeType is ${JSON.stringify(widget.mimeType)} ` +
+            `(expected "text/html;profile=mcp-app")`,
+        );
+      } else {
+        ok(`/mcp/chatgpt → MCP Apps widget at ${widgetUri} (${widget.mimeType})`);
+      }
     }
   }
 

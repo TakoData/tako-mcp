@@ -15,19 +15,19 @@
  * Alias → the tool names it enables.
  *
  * `agent` spans all three agent tool files: the single-call `tako_agent`
- * (Claude / unknown clients) and the `tako_agent_start` / `tako_agent_wait`
- * split pair (the ChatGPT family — chatgpt.com and the desktop app's codex
- * runtime). The alias enables the *feature*; the per-client filters in
- * `_surface.ts` (`CHATGPT_ONLY_TOOL_NAMES` / `CHATGPT_EXCLUDED_TOOL_NAMES`)
- * then narrow to the correct variant for the calling client. Users never need
- * to know the split exists — they enable `agent` and get the right tool.
+ * (the generic surface) and the `tako_agent_start` / `tako_agent_wait` split
+ * pair (the chatgpt surface, whose host sends no progressToken). The alias
+ * enables the *feature*; the per-surface filters in `_surface.ts`
+ * (`CHATGPT_ONLY_TOOL_NAMES` / `CHATGPT_EXCLUDED_TOOL_NAMES`) then narrow to
+ * the correct variant for the serving surface. Users never need to know the
+ * split exists — they enable `agent` and get the right tool.
  *
- * `visualize` and `credits` are single-tool aliases: these
+ * `answer`, `visualize`, and `credits` are single-tool aliases: these
  * tools are useful but rarely needed, so they are kept off the default
  * surface to save per-session context. They compose freely, e.g.
  * `?tools=visualize,credits`. Exception: `tako_visualize` stays on the
- * default surface for widget clients (it powers the chart widget) — see
- * `WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES` in `_surface.ts`.
+ * default chatgpt surface (it powers the chart widget) — see
+ * `CHATGPT_DEFAULT_ON_TOOL_NAMES` in `_surface.ts`.
  *
  * `graph` enables the three low-level graph primitives (search / related /
  * node). `tako_available_data` covers the common discovery path in one call,
@@ -43,6 +43,10 @@ export const OPTIONAL_TOOL_ALIASES: Readonly<
   Record<string, readonly string[]>
 > = {
   agent: ["tako_agent", "tako_agent_start", "tako_agent_wait"],
+  // Opt-in per spec D1: the host model already synthesizes from
+  // tako_search results, so a prose-answer tool is double synthesis.
+  // Docs mark it "not recommended".
+  answer: ["tako_answer"],
   visualize: ["tako_visualize"],
   credits: ["get_credit_balance"],
   graph: ["tako_graph_search", "tako_graph_related", "tako_graph_node"],
@@ -80,6 +84,15 @@ export function parseEnabledOptionalToolNames(
   for (const rawToken of param.split(",")) {
     const token = rawToken.trim().toLowerCase();
     if (token === "") continue;
+    // `Object.hasOwn` before the lookup: the table is an object literal, so
+    // `?tools=constructor` and `?tools=__proto__` resolve inherited
+    // `Object.prototype` values, the `undefined` check below passes them
+    // through, and `for…of` throws `TypeError: toolNames is not iterable`.
+    // On the anonymous path `handleMcpRequest` calls this before its outer
+    // `try`, so that throw returned a bare 500 with no JSON-RPC body.
+    // `noUncheckedIndexedAccess` types the lookup `readonly string[] |
+    // undefined`, which is why the check below looked sufficient to `tsc`.
+    if (!Object.hasOwn(OPTIONAL_TOOL_ALIASES, token)) continue;
     const toolNames = OPTIONAL_TOOL_ALIASES[token];
     if (toolNames === undefined) continue;
     for (const name of toolNames) enabled.add(name);

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { TOOL_REGISTRY } from "./tools/_registry.js";
 
 import wranglerRaw from "../wrangler.jsonc?raw";
 import type { Env, RateLimit } from "./env.js";
@@ -23,7 +24,7 @@ import {
   resolveFreeTierConfig,
 } from "./freetier.js";
 import worker from "./index.js";
-import { FREE_TIER_SERVER_INSTRUCTIONS } from "./mcp.js";
+import { FREE_TIER_SERVER_INSTRUCTIONS, GENERIC_SIGN_IN_HINT } from "./mcp.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
 /**
@@ -33,11 +34,11 @@ import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
  * base message added to `freetier.ts` is covered by adding one line here.
  *
  * Deliberately NOT in this list: `FREE_TIER_COMMERCE_UPSELL`, which exists
- * to violate the account-copy ban — on positively-identified Anthropic
- * clients only. Its own describe ("commerce-gated upsell") proves it is
+ * to violate the account-copy ban — on the GENERIC surface only, for every
+ * client on it. Its own describe ("commerce-gated upsell") proves it is
  * absent by default from every producer and holds it to the hygiene rules
  * that are not commerce-specific; `docs/chatgpt-app-review.md` §1 records
- * the client gate for reviewers.
+ * the surface gate for reviewers.
  */
 const ALL_FREE_TIER_MESSAGES = [
   FREE_TIER_LIMIT_MESSAGE,
@@ -90,13 +91,12 @@ const TOOLS_CALL_BODY = {
   jsonrpc: "2.0",
   id: 1,
   method: "tools/call",
-  params: { name: "tako_answer", arguments: { query: "US GDP" } },
+  params: { name: "tako_search", arguments: { query: "US GDP" } },
 };
 
 describe("FREE_TIER_TOOL_NAMES", () => {
-  it("is exactly the three approved free tools", () => {
+  it("is exactly search and available_data (spec D1/D6)", () => {
     expect([...FREE_TIER_TOOL_NAMES].sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_search",
     ]);
@@ -179,8 +179,17 @@ describe("isMeteredJsonRpcBody", () => {
     }
   });
 
-  it("does not meter a tools/call for a hidden tool (returns 'tool not found' without spend)", () => {
-    for (const name of ["tako_agent", "get_credit_balance", "no_such_tool"]) {
+  it("does not meter a tools/call for a non-executable tool (answered without spend)", () => {
+    // tako_answer is opt-in (spec D1) and tako_contents is listed but
+    // auth-required (spec D6): neither executes anonymously, so neither
+    // consumes the per-IP bucket.
+    for (const name of [
+      "tako_agent",
+      "tako_answer",
+      "tako_contents",
+      "get_credit_balance",
+      "no_such_tool",
+    ]) {
       expect(
         isMeteredJsonRpcBody({
           jsonrpc: "2.0",
@@ -190,6 +199,90 @@ describe("isMeteredJsonRpcBody", () => {
         }),
       ).toBe(false);
     }
+  });
+
+  it("does not meter an anonymous tako_search that carries include_contents: true", () => {
+    // Same invariant as the case above: the call cannot execute anonymously
+    // (spec D12 refuses inline rows without a signed-in connection), so it
+    // must not consume the per-IP bucket. Metering it let a model burn the
+    // whole minute on refusals — spec: "Rejected calls stay unmetered."
+    expect(
+      isMeteredJsonRpcBody({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "tako_search", arguments: { query: "US GDP", include_contents: true } },
+      }),
+    ).toBe(false);
+  });
+
+  it("still meters a tako_search whose include_contents is absent or false", () => {
+    for (const args of [
+      { query: "US GDP" },
+      { query: "US GDP", include_contents: false },
+    ]) {
+      expect(
+        isMeteredJsonRpcBody({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "tako_search", arguments: args },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("exempts EVERY tool input that anonymousInputRejects refuses", () => {
+    // `isMeteredJsonRpcBody` reads each tool's own `anonymousInputRejects`,
+    // so this test is a cross-check, not the thing holding a duplication.
+    //
+    // Walk tools WITHOUT the hook too, and require them metered. That is the
+    // case an earlier revision got wrong: it inlined "`include_contents` is
+    // true" and exempted the input for every free tool, so anonymous
+    // `tako_available_data` — which strips the key and declares no gate —
+    // ran four Django round-trips with no per-IP hit. Skipping the
+    // hookless tools is what let that ship.
+    const probes: Record<string, unknown>[] = [
+      { include_contents: true },
+      { include_contents: false },
+      {},
+    ];
+    let covered = 0;
+    for (const tool of TOOL_REGISTRY) {
+      if (!FREE_TIER_TOOL_NAMES.has(tool.name)) continue; // never metered anyway
+      if (tool.anonymousInputRejects === undefined) {
+        // No gate means nothing is refused, so every input must be metered.
+        for (const args of probes) {
+          expect(
+            isMeteredJsonRpcBody({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: { name: tool.name, arguments: args },
+            }),
+            `${tool.name} declares no anonymousInputRejects, so ${JSON.stringify(args)} must be metered`,
+          ).toBe(true);
+          covered++;
+        }
+        continue;
+      }
+      for (const args of probes) {
+        const refused = tool.anonymousInputRejects(args) !== undefined;
+        const metered = isMeteredJsonRpcBody({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: tool.name, arguments: args },
+        });
+        expect(
+          metered,
+          `${tool.name} with ${JSON.stringify(args)}: refused=${refused} must imply metered=false`,
+        ).toBe(!refused);
+        covered++;
+      }
+    }
+    // Guard against the loop passing vacuously if the hook is ever renamed.
+    expect(covered).toBeGreaterThan(0);
   });
 
   it("does not meter a tools/call with missing or malformed params", () => {
@@ -435,7 +528,7 @@ describe("checkFreeTierRateLimit", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         ...TOOLS_CALL_BODY,
-        params: { name: "tako_answer", arguments: { query: bigQuery } },
+        params: { name: "tako_search", arguments: { query: bigQuery } },
       }),
     });
     await expect(checkFreeTierRateLimit(req, config)).resolves.toEqual({
@@ -804,13 +897,12 @@ describe("wrangler.jsonc ↔ message drift", () => {
 });
 
 describe("commerce-gated upsell (FREE_TIER_COMMERCE_UPSELL)", () => {
-  // The base messages above stay commerce-free because they reach ChatGPT's
-  // model. On connections POSITIVELY identified as Anthropic clients
-  // (`commerceCopyAllowedForUa` in mcp.ts — the same allowlist that gates
-  // the authenticated 402 remedy), the anonymous limit moment is the one
-  // place a caller can be told that an account lifts the limits — the same
-  // conversion point Exa's keyless tier uses. The flag defaults to false,
-  // so every producer fails closed.
+  // The base messages above stay commerce-free. On the generic surface
+  // (`commerceCopyAllowed = surface === "generic"` in mcp.ts — the same
+  // gate as the authenticated 402 remedy), the anonymous limit moment is
+  // the one place a caller can be told that an account lifts the limits —
+  // the same conversion point Exa's keyless tier uses. The flag defaults
+  // to false, so every producer fails closed.
 
   it("is absent from every producer by default (fails closed)", async () => {
     const limited = (await freeTierLimitResponse(1).json()) as {
@@ -855,14 +947,25 @@ describe("commerce-gated upsell (FREE_TIER_COMMERCE_UPSELL)", () => {
   it("obeys the hygiene rules that are not commerce-specific", () => {
     // It exists to name the account path, so the commerce-word ban does not
     // apply — but the other message rules still do: no scheme URL (bare
-    // domain only — deep links rot), no stale host, no rate figure, and no
-    // "free" (the tier never names itself).
+    // domain only — deep links rot), no stale host, and no rate figure.
+    // "free requests" IS allowed: it states the CI-guarded welcome grant
+    // (pricing_claims_unit_test.py in the monorepo), not a self-naming of
+    // the tier — and it must never read as recurring.
     expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/https?:\/\//);
     expect(FREE_TIER_COMMERCE_UPSELL).not.toContain("trytako.com");
     expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(
       /\d+\s*requests?\s*(\/|per)\s*(min|minute|sec|second)/i,
     );
-    expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/\bfree\b/i);
+    expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/free\s+(?!requests)/i);
+    expect(FREE_TIER_COMMERCE_UPSELL).not.toMatch(/per month|monthly|\/mo\b/i);
+  });
+
+  it("states the welcome-grant figure — up to 2,000 free requests on a new account", () => {
+    // The one number allowed here: the $14 one-time welcome grant is
+    // CI-guarded in the monorepo (pricing_claims_unit_test.py), unlike
+    // the limiter buckets, which can enforce no figure at all.
+    expect(FREE_TIER_COMMERCE_UPSELL).toContain("2,000 free requests");
+    expect(FREE_TIER_COMMERCE_UPSELL).toContain("tako.com");
   });
 });
 
@@ -906,11 +1009,11 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     },
   };
   const TOOLS_LIST_BODY = { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} };
-  const ANSWER_CALL_BODY = {
+  const SEARCH_CALL_BODY = {
     jsonrpc: "2.0",
     id: 3,
     method: "tools/call",
-    params: { name: "tako_answer", arguments: { query: "US GDP" } },
+    params: { name: "tako_search", arguments: { query: "US GDP" } },
   };
 
   afterEach(() => {
@@ -934,7 +1037,10 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(globalLimiter.keys).toEqual(["global"]);
   });
 
-  it("anonymous tools/list shows exactly the three free tools, unmetered per-IP", async () => {
+  it("anonymous tools/list shows the auth-invariant default surface, unmetered per-IP", async () => {
+    // Spec D4: the listing never changes with auth state. tako_contents
+    // is listed anonymously — the dispatch gate (not the listing) is what
+    // answers sign-in instructions when it is called.
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(post(TOOLS_LIST_BODY), freeEnv(limiter));
     expect(res.status).toBe(200);
@@ -942,18 +1048,19 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       result: { tools: Array<{ name: string }> };
     };
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
+      "tako_contents",
       "tako_search",
     ]);
     expect(limiter.keys).toEqual([]);
   });
 
-  it("anonymous ChatGPT tools/list shows the five submitted tools with top-level securitySchemes", async () => {
-    // The ChatGPT link-account flow requires the two auth-required
-    // submitted tools to stay LISTED anonymously, and the Apps SDK reads
-    // securitySchemes at the descriptor TOP LEVEL (injected by
-    // withChatGptToolSecuritySchemes — the MCP SDK drops unknown fields).
+  it("a ChatGPT UA on /mcp gets the same anonymous listing — the UA changes nothing", async () => {
+    // The UA classifier is gone (spec D2). No top-level securitySchemes
+    // injection on the generic surface either — that adapter serves only
+    // /mcp/chatgpt (asserted in index.test.ts); per-tool schemes still
+    // ride the reverse-DNS `_meta` key, where the two free tools
+    // advertise noauth on an anonymous connection.
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(
       post(TOOLS_LIST_BODY, { "user-agent": "ChatGPT/1.0" }),
@@ -964,26 +1071,24 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       result: {
         tools: Array<{
           name: string;
-          securitySchemes?: Array<{ type: string; scopes?: string[] }>;
+          securitySchemes?: unknown;
+          _meta?: Record<string, unknown>;
         }>;
       };
     };
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
-      "tako_visualize",
     ]);
     const oauth2 = { type: "oauth2", scopes: ["mcp"] };
-    const byName = new Map(
-      body.result.tools.map((t) => [t.name, t.securitySchemes]),
-    );
-    for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
-      expect(byName.get(name), name).toEqual([{ type: "noauth" }, oauth2]);
-    }
-    for (const name of ["tako_contents", "tako_visualize"]) {
-      expect(byName.get(name), name).toEqual([oauth2]);
+    for (const t of body.result.tools) {
+      expect(t.securitySchemes, t.name).toBeUndefined();
+      expect(t._meta?.["com.tako/securitySchemes"], t.name).toEqual(
+        FREE_TIER_TOOL_NAMES.has(t.name)
+          ? [{ type: "noauth" }, oauth2]
+          : [oauth2],
+      );
     }
     expect(limiter.keys).toEqual([]);
   });
@@ -1031,7 +1136,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
 
   it("anonymous tools/call forwards the TRIMMED FREE_TIER_API_KEY to Django and meters the IP", async () => {
     const limiter = fakeLimiter(true);
-    // tako_answer POSTs /api/v1/answer/ once; the handler's response
+    // tako_search POSTs its search endpoint once; the handler's response
     // handling is irrelevant here — the assertion is the outgoing header.
     const fetchMock = mockFetchSequence([
       new Response(JSON.stringify({}), {
@@ -1043,7 +1148,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     (env as { FREE_TIER_API_KEY?: string }).FREE_TIER_API_KEY =
       "free-tier-secret-key\n";
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
+      post(SEARCH_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
       env,
     );
     expect(res.status).toBe(200);
@@ -1056,7 +1161,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
   it("an over-limit anonymous tools/call gets a 200 TOOL ERROR the model can read", async () => {
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
+      post(SEARCH_CALL_BODY, { "cf-connecting-ip": "203.0.113.7" }),
       freeEnv(limiter),
     );
     // Not a 429: the SDK client throws on non-2xx, so the message would
@@ -1066,9 +1171,13 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       id: number;
       result: { content: Array<{ type: string; text: string }>; isError: boolean };
     };
-    expect(body.id).toBe(ANSWER_CALL_BODY.id);
+    expect(body.id).toBe(SEARCH_CALL_BODY.id);
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]?.text).toBe(FREE_TIER_LIMIT_MESSAGE);
+    // Commerce copy is allowed for everyone on /mcp (spec D5): the limit
+    // message carries the account upsell for every client.
+    expect(body.result.content[0]?.text).toBe(
+      `${FREE_TIER_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
   });
 
   it("a non-tools/call request over the per-colo ceiling gets the capacity 429", async () => {
@@ -1079,14 +1188,16 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     );
     expect(res.status).toBe(429);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
+    expect(body.error.message).toBe(
+      `${FREE_TIER_GLOBAL_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
     expect(limiter.keys).toEqual([]);
   });
 
   it("a tools/call over the per-colo ceiling gets a 200 TOOL ERROR the model can read", async () => {
     const limiter = fakeLimiter(true);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY),
+      post(SEARCH_CALL_BODY),
       freeEnv(limiter, fakeLimiter(false)),
     );
     expect(res.status).toBe(200);
@@ -1094,16 +1205,18 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       id: number;
       result: { content: Array<{ text: string }>; isError: boolean };
     };
-    expect(body.id).toBe(ANSWER_CALL_BODY.id);
+    expect(body.id).toBe(SEARCH_CALL_BODY.id);
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]?.text).toBe(FREE_TIER_GLOBAL_LIMIT_MESSAGE);
+    expect(body.result.content[0]?.text).toBe(
+      `${FREE_TIER_GLOBAL_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
     expect(limiter.keys).toEqual([]);
   });
 
   it("an oversized anonymous body gets a 413 without reaching Django", async () => {
     const fetchMock = mockFetchSequence([]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, {
+      post(SEARCH_CALL_BODY, {
         "content-length": String(MAX_FREE_TIER_BODY_BYTES + 1),
       }),
       freeEnv(fakeLimiter(true)),
@@ -1117,7 +1230,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     const fetchMock = mockFetchSequence([]);
     const res = await worker.fetch(
       post([
-        ANSWER_CALL_BODY,
+        SEARCH_CALL_BODY,
         {
           jsonrpc: "2.0",
           id: 7,
@@ -1169,62 +1282,14 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("anonymous call to a gated tool on claude.ai names the Connect step", async () => {
-    const res = await worker.fetch(
-      post(
-        {
-          jsonrpc: "2.0",
-          id: 9,
-          method: "tools/call",
-          params: { name: "tako_contents", arguments: { urls: ["https://x.com"] } },
-        },
-        { "user-agent": "Claude-User/1.0" },
-      ),
-      freeEnv(fakeLimiter(true)),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      result: { content: Array<{ text: string }>; isError: boolean };
-    };
-    expect(body.result.isError).toBe(true);
-    const text = body.result.content[0]?.text ?? "";
-    expect(text).toContain("This tool requires a Tako account.");
-    expect(text).toContain("Settings → Connectors");
-  });
-
-  it("anonymous call to a gated tool on Claude Code names the API-key step", async () => {
-    const res = await worker.fetch(
-      post(
-        {
-          jsonrpc: "2.0",
-          id: 10,
-          method: "tools/call",
-          params: { name: "tako_contents", arguments: { urls: ["https://x.com"] } },
-        },
-        { "user-agent": "claude-code/2.1.220 (sdk-cli)" },
-      ),
-      freeEnv(fakeLimiter(true)),
-    );
-    const body = (await res.json()) as {
-      result: { content: Array<{ text: string }> };
-    };
-    const text = body.result.content[0]?.text ?? "";
-    expect(text).toContain("Tako API key");
-    expect(text).toContain("Claude Code");
-  });
-
-  it("anonymous gated-tool text on ChatGPT and unknown UAs is unchanged", async () => {
-    for (const userAgent of ["ChatGPT/1.0", "python-httpx/0.27"]) {
-      // `tako_contents`, not `tako_visualize`: `tako_visualize` is opt-in
-      // (`OPTIONAL_TOOL_NAMES`) and default-on only for widget clients
-      // (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES` — chatgpt/claude/codex), so
-      // it is off the AUTHENTICATED surface for `python-httpx`'s "unknown"
-      // client and the pre-dispatch gate never answers for it, regardless
-      // of any sign-in hint — an unrelated surface gap, not something this
-      // task's hint logic controls. `tako_contents` is unconditionally on
-      // every client's authenticated surface, so it exercises the same
-      // "byte-identical when the client is not positively identified"
-      // path this test is actually about.
+  it("anonymous call to a gated tool gets one generic sign-in hint, regardless of UA", async () => {
+    // Spec D17: one sentence for every client — the per-UA hint variants
+    // died with the User-Agent classifier.
+    for (const userAgent of [
+      "claude-code/2.1.220 (sdk-cli)",
+      "ChatGPT/1.0",
+      "python-httpx/0.27",
+    ]) {
       const res = await worker.fetch(
         post(
           {
@@ -1241,7 +1306,8 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
         result: { content: Array<{ text: string }> };
       };
       expect(body.result.content[0]?.text).toBe(
-        "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.",
+        "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue. " +
+          GENERIC_SIGN_IN_HINT,
       );
     }
   });
@@ -1338,13 +1404,15 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
         headers: { "content-type": "application/json" },
       }),
     ]);
-    const res = await worker.fetch(post(ANSWER_CALL_BODY), freeEnv(limiter));
+    const res = await worker.fetch(post(SEARCH_CALL_BODY), freeEnv(limiter));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       result: { content: Array<{ text: string }>; isError: boolean };
     };
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]?.text).toBe(FREE_TIER_CREDITS_MESSAGE);
+    expect(body.result.content[0]?.text).toBe(
+      `${FREE_TIER_CREDITS_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+    );
   });
 
   it("a 4xx body merely CONTAINING 'PAYMENT_REQUIRED' text is not mistaken for credit exhaustion", async () => {
@@ -1357,7 +1425,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
         { status: 403, headers: { "content-type": "application/json" } },
       ),
     ]);
-    const res = await worker.fetch(post(ANSWER_CALL_BODY), freeEnv(limiter));
+    const res = await worker.fetch(post(SEARCH_CALL_BODY), freeEnv(limiter));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       result: { content: Array<{ text: string }>; isError: boolean };
@@ -1401,7 +1469,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     // fell through as the raw "Django returned 402 for POST …".
     mockFetchSequence([SUBSCRIPTION_402()]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, {
+      post(SEARCH_CALL_BODY, {
         authorization: "Bearer real-user-token",
         "user-agent": "claude-mcp-client/1.0",
       }),
@@ -1426,13 +1494,12 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result._meta["tako/error"]?.status).toBe(402);
   });
 
-  it("authenticated credit exhaustion on Claude Code (unknown McpClientKind) still gets the remedy", async () => {
-    // Claude Code deliberately buckets as "unknown" for widget routing;
-    // the commerce gate keys on the UA allowlist instead, so the flagship
-    // raw-Bearer client is not stranded with OpenAI's crawlers.
+  it("authenticated credit exhaustion on Claude Code gets the remedy like every /mcp client", async () => {
+    // The commerce gate keys on the surface, not the UA, so the flagship
+    // raw-Bearer client gets the same remedy as any other /mcp caller.
     mockFetchSequence([PAYG_402()]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, {
+      post(SEARCH_CALL_BODY, {
         authorization: "Bearer real-user-token",
         "user-agent": "claude-code/2.1.220 (sdk-cli)",
       }),
@@ -1449,18 +1516,15 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(text).toContain("Add credits to continue.");
   });
 
-  it("authenticated credit exhaustion on ChatGPT-family and UNRECOGNIZED clients carries no remedy copy", async () => {
-    // OpenAI's commerce policy forbids promoting purchases through an
-    // app, and Django's remedies name plan upgrades and credit purchases
-    // — exactly that copy. Unrecognized UAs fail closed for the same
-    // reason `annotationClientFamily` buckets unknown with chatgpt: an
-    // OpenAI reviewer/crawler — or a ChatGPT UA `detectMcpClient` hasn't
-    // learned yet (the desktop app's `codex-mcp-client` UA was exactly
-    // that once) — lands there. The factual cause stays on every client.
+  it("authenticated credit exhaustion on /mcp carries the remedy for every UA — and /mcp/chatgpt never does", async () => {
+    // Commerce copy keys on the surface now (spec D5): the generic
+    // surface carries Django's remedy for every client, and the chatgpt
+    // surface — where OpenAI's commerce policy forbids purchase-promoting
+    // copy — keeps the factual cause only.
     for (const userAgent of ["openai-mcp/1.0", "python-httpx/0.27"]) {
       mockFetchSequence([SUBSCRIPTION_402()]);
       const res = await worker.fetch(
-        post(ANSWER_CALL_BODY, {
+        post(SEARCH_CALL_BODY, {
           authorization: "Bearer real-user-token",
           "user-agent": userAgent,
         }),
@@ -1473,10 +1537,32 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       expect(body.result.isError).toBe(true);
       const text = body.result.content[0]?.text ?? "";
       expect(text).toContain("out of credits");
-      expect(text).not.toContain("tako.com");
-      expect(text).not.toMatch(/https?:\/\//);
-      expect(text).not.toMatch(/upgrade|add credits/i);
+      expect(text).toContain("Upgrade your plan for more credits.");
     }
+
+    mockFetchSequence([SUBSCRIPTION_402()]);
+    const chatgptRes = await worker.fetch(
+      new Request("https://example.com/mcp/chatgpt", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: "Bearer real-user-token",
+        },
+        body: JSON.stringify(SEARCH_CALL_BODY),
+      }),
+      freeEnv(fakeLimiter(true)),
+    );
+    expect(chatgptRes.status).toBe(200);
+    const chatgptBody = (await chatgptRes.json()) as {
+      result: { content: Array<{ text: string }>; isError: boolean };
+    };
+    expect(chatgptBody.result.isError).toBe(true);
+    const chatgptText = chatgptBody.result.content[0]?.text ?? "";
+    expect(chatgptText).toContain("out of credits");
+    expect(chatgptText).not.toContain("tako.com");
+    expect(chatgptText).not.toMatch(/https?:\/\//);
+    expect(chatgptText).not.toMatch(/upgrade|add credits/i);
   });
 
   it("anonymous rate limit on a claude client carries the account upsell", async () => {
@@ -1484,7 +1570,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     // account lifts the limits — the same conversion moment Exa's keyless
     // tier uses ("add your own API key to continue").
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, {
+      post(SEARCH_CALL_BODY, {
         "user-agent": "claude-code/2.1.220 (sdk-cli)",
         "cf-connecting-ip": "203.0.113.9",
       }),
@@ -1500,20 +1586,23 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     );
   });
 
-  it("anonymous rate limit on ChatGPT-family and unrecognized clients stays neutral", async () => {
-    // Same fail-closed rule as the authenticated 402 remedy: commerce copy
-    // reaching ChatGPT's model violates OpenAI policy, and an unrecognized
-    // UA could be an OpenAI reviewer or crawler.
+  it("anonymous rate limit carries the account upsell for every UA on /mcp", async () => {
+    // Commerce copy keys on the surface (spec D5), and the free tier
+    // serves /mcp only — so the upsell reaches every client here. The
+    // chatgpt surface never reaches this path (it 401s anonymous
+    // requests before admission).
     for (const userAgent of ["ChatGPT/1.0", "python-httpx/0.27"]) {
       const res = await worker.fetch(
-        post(ANSWER_CALL_BODY, { "user-agent": userAgent }),
+        post(SEARCH_CALL_BODY, { "user-agent": userAgent }),
         freeEnv(fakeLimiter(false)),
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
         result: { content: Array<{ text: string }> };
       };
-      expect(body.result.content[0]?.text).toBe(FREE_TIER_LIMIT_MESSAGE);
+      expect(body.result.content[0]?.text).toBe(
+        `${FREE_TIER_LIMIT_MESSAGE} ${FREE_TIER_COMMERCE_UPSELL}`,
+      );
     }
   });
 
@@ -1523,7 +1612,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     // that connecting an account is the way past shared capacity.
     mockFetchSequence([SUBSCRIPTION_402()]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY, { "user-agent": "claude-mcp-client/1.0" }),
+      post(SEARCH_CALL_BODY, { "user-agent": "claude-mcp-client/1.0" }),
       freeEnv(fakeLimiter(true)),
     );
     expect(res.status).toBe(200);
@@ -1583,7 +1672,6 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       result: { tools: Array<{ name: string }> };
     };
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
-      "tako_answer",
       "tako_available_data",
       "tako_contents",
       "tako_search",
@@ -1601,7 +1689,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
       }),
     ]);
     const res = await worker.fetch(
-      post(ANSWER_CALL_BODY),
+      post(SEARCH_CALL_BODY),
       freeEnv(throwingLimiter(), throwingLimiter()),
     );
     expect(res.status).toBe(200);

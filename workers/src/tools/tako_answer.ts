@@ -4,7 +4,6 @@ import { djangoPost } from "../django.js";
 import { AnswerRequest, AnswerResponse } from "../generated/schemas.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
-import { isChatGptFamilyClient } from "./_surface.js";
 import {
   answerSlimOutputShape,
   renderAnswerMarkdown,
@@ -49,15 +48,15 @@ import {
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "START HERE for any question that wants a value, figure, or finding: ask one specific data question, get one synthesized answer grounded in the data or web tako cites.",
+  "One synthesized, citation-backed answer to one specific data question, grounded in the data or web tako cites. This connection opted in with `?tools=answer`: `tako_search` is the default retrieval tool, and a model that synthesizes well from search results does not need this one.",
   "",
-  "It is the only tool whose single response can finish the job: it reads the cited pages internally, inlines the cited cards' rows, and returns a coverage verdict. Retrieval hands back captions and links you must then chase, and every extra round trip re-sends the whole conversation.",
+  "What it adds over retrieval: it reads the cited web pages internally, so their content shapes the answer without a second call, and it returns a coverage verdict. Rows are NOT included unless you set include_contents: true.",
   "",
   "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.",
   "",
-  "Reach past it only for a different job: `tako_search` for breadth recon (it locates data, it does not carry values), `tako_available_data` when the question is what Tako covers, the Answer Agent for open-ended research.",
+  "Reach past it for a different job: `tako_search` for breadth, and for values too — it takes the same `include_contents: true`; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.",
   "",
-  "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Cited cards inline their recent rows (see include_contents/preview_rows), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
+  "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
   "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.",
 ].join("\n");
@@ -81,16 +80,21 @@ const inputSchema = z.object({
       .describe('Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)'),
     { field: "tako_answer.sources", commaSeparated: true },
   ),
-  // The prose `answer` alone proved an unreliable payload in agent traces: it
-  // sometimes carries the series and sometimes only teases it ("latest value
-  // 59.2%"), and a teased agent escalates into a costly multi-wave retry
-  // cascade. Inlining the cited cards' recent rows by default makes the first
-  // response dense, converting those cascades into single-call runs.
+  // Defaults to FALSE even though agent traces argue the other way: the prose
+  // `answer` alone is an unreliable payload — it sometimes carries the series
+  // and sometimes only teases it ("latest value 59.2%") — and a teased agent
+  // escalates into a multi-wave retry cascade that inlined rows would have
+  // collapsed into one call. Density lost the trade to metering: tako#29572
+  // removed the row allowance, so inlining bills per 1k, and a caller who
+  // never asked for rows must not be charged for them. The anonymous tier
+  // never reaches this flag at all: `tako_answer` is not in
+  // `FREE_TIER_TOOL_NAMES`, so an anonymous call is answered with sign-in
+  // guidance before its input is read.
   include_contents: z
     .boolean()
-    .default(true)
+    .default(false)
     .describe(
-      "Inline each cited data card's recent rows alongside the answer (default true; preview_rows sets how many) — the values arrive with the prose, no follow-up fetch. Set false — prose + citations only — for broad fan-outs or when coverage is unconfirmed (no prior tako_available_data check). DATA cards only; cited web pages are never auto-inlined (billed per page — use tako_contents).",
+      "Set true to inline each cited data card's recent rows alongside the answer (`preview_rows` caps how many; rows are billed per 1k) — the values arrive with the prose, no follow-up fetch. Leave false (the default) for prose + citations only. DATA cards only; cited web pages are never auto-inlined (billed per page — use tako_contents).",
     ),
   preview_rows: z
     .number()
@@ -99,7 +103,7 @@ const inputSchema = z.object({
     .max(MAX_PREVIEW_ROWS)
     .default(INLINE_PREVIEW_ROW_CAP)
     .describe(
-      `Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). For more rows, call tako_contents on the card's url (priced beyond the first ${INLINE_PREVIEW_ROW_CAP}). Ignored when include_contents is false.`,
+      `Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}; rows are billed per 1k). For more rows, call tako_contents on the card's url (max_rows up to 2,000, billed per 1k rows). Ignored when include_contents is false.`,
     ),
   country_code: z
     .string()
@@ -193,7 +197,7 @@ export function buildAnswerBody(input: Input): z.input<typeof AnswerRequest> {
   if (input.sources.includes("data") || input.sources.includes("tako")) {
     const data: NonNullable<
       NonNullable<z.input<typeof AnswerRequest>["sources"]>["data"]
-    > = { include_contents: input.include_contents ?? true };
+    > = { include_contents: input.include_contents ?? false };
     if (input.node_ids !== undefined && input.node_ids.length > 0) {
       data.node_ids = input.node_ids;
     }
@@ -267,12 +271,13 @@ const takoAnswer = {
     title: "Tako: Answer",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
-  annotationsByClient: {
+  annotationsBySurface: {
     // Apps review reads `openWorldHint` as "publishes/mutates public or
     // third-party state", not MCP's domain-of-interaction — retrieval is
-    // closed-world there. See `annotationsByClient` in types.ts.
+    // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
   // Declared as the FULL internal shape (assignable to the slim advertised
@@ -387,12 +392,23 @@ const takoAnswer = {
   // there; the only reason it is duplicated rather than shared is that the
   // hooks are per-tool fields on `ToolModule`.
   async extraMeta(output, ctx) {
-    // The ChatGPT family renders `embed_url` in an iframe and never reads
-    // the baked PNG, but still needs the aspect ratio to size that iframe —
-    // dimensions only there (a 64-byte ranged read instead of a ~170 KB
-    // render).
+    // `bakeImage` is FALSE on every call today: `extraMeta` runs only when a
+    // widget is live (`ui !== undefined` in mcp.ts), and only the chatgpt
+    // surface serves one — so `ctx.surface !== "chatgpt"` cannot be true here.
+    // The expression stays because it is what the claude.ai widget fast-follow
+    // needs (gated on anthropics/claude-ai-mcp#753 and #40): a widget on the
+    // generic surface reads the baked PNG rather than an iframe, so it wants
+    // `bakeImage: true`, and this already says so. On the generic surface the
+    // inline PNG comes from `extraContentBlocks` instead, which mcp.ts runs on
+    // the opposite condition (`ui === undefined`).
+    //
+    // What the reachable branch does: ChatGPT's widget renders `embed_url` in
+    // an iframe and never reads the baked PNG, but it cannot measure that
+    // cross-origin iframe, so without the card's real aspect ratio the iframe
+    // falls back to a fixed height and leaves empty bands under a wide chart.
+    // Dimensions only — a 64-byte ranged read instead of a ~170 KB render.
     return buildChartExtraMeta(output.image_url, {
-      bakeImage: !isChatGptFamilyClient(ctx.client),
+      bakeImage: ctx.surface !== "chatgpt",
       env: ctx.env,
       origin: ctx.origin,
       pubId: output.pub_id,

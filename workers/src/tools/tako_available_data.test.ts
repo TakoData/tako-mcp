@@ -13,7 +13,7 @@ import {
 
 const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 const CTX: ToolContext = {
-  token: "sk-test", env: ENV, sendProgress: noopSendProgress, client: "claude",
+  token: "sk-test", env: ENV, sendProgress: noopSendProgress, surface: "generic",
 };
 
 const searchHit = (id: string, name: string, type = "entity", label = "ORG") => ({
@@ -667,7 +667,7 @@ describe("tako_available_data — lookup path", () => {
     expect(out.metric).toEqual({ node_id: "mt::gross_margin::9", name: "Gross Margin (%)", type: "metric" });
     // The metric node alone — adding the entity id would widen strict back out.
     expect(out.next_call).toEqual({
-      tool: "tako_answer",
+      tool: "tako_search",
       query: "NVIDIA Corporation gross margin",
       node_ids: ["mt::gross_margin::9"],
       strict: true,
@@ -775,7 +775,7 @@ describe("tako_available_data — lookup path, live-caught regressions", () => {
 
   it("emits NO next_call when the entity did not resolve (would contradict the routing)", async () => {
     // openai.com has no graph node; the summary routes to tako_search, so a
-    // tako_answer handle alongside it was a contradiction.
+    // pinned handle alongside it was a contradiction.
     mockFetchSequence([
       jsonResponse(200, { results: [] }),
       jsonResponse(200, { results: [searchHit("mt::visits::1", "Visits", "metric", "METRIC")] }),
@@ -1125,7 +1125,7 @@ describe("tako_available_data — pair confirmation", () => {
     expect(out.verified).toBe("pair");
     expect(out.found).toBe(true);
     expect(out.next_call).toEqual({
-      tool: "tako_answer",
+      tool: "tako_search",
       query: "Novo Nordisk A/S revenue",
       node_ids: ["mt::revenues::1"],
       strict: true,
@@ -1167,7 +1167,7 @@ describe("tako_available_data — pair confirmation", () => {
       { q: "Shopify", metric: "gross merchandise volume" }, CTX,
     );
     expect(out.next_call).toEqual({
-      tool: "tako_answer",
+      tool: "tako_search",
       query: "Shopify Inc. gross merchandise volume",
       node_ids: [],
       strict: false,
@@ -1287,7 +1287,7 @@ describe("tako_available_data — pair confirmation", () => {
     expect(out.verified).toBe("resolution");
     expect(out.found).toBe(true);
     expect(out.next_call).toEqual({
-      tool: "tako_answer",
+      tool: "tako_search",
       query: "NVIDIA Corporation gross margin",
       node_ids: ["mt::gm::9"],
       strict: true,

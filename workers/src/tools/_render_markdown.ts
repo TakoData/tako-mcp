@@ -482,11 +482,11 @@ export const availableDataSlimOutputShape = z.looseObject({
       }),
     )
     .describe(
-      "The resolved matches and their coverage, each entry carrying the node id to pin. To fetch a specific metric precisely: call tako_search or tako_answer with node_ids=[<the metric's node_id>] AND strict:true — an entity-only pin without strict does not steer retrieval.",
+      "The resolved matches and their coverage, each entry carrying the node id to pin. To fetch a specific metric precisely: call tako_search with node_ids=[<the metric's node_id>] AND strict:true — an entity-only pin without strict does not steer retrieval.",
     ),
   next_call: z
     .object({
-      tool: z.enum(["tako_search", "tako_answer"]),
+      tool: z.enum(["tako_search"]),
       query: z.string(),
       node_ids: z.array(z.string()),
       strict: z.boolean(),
@@ -542,7 +542,7 @@ export interface AvailableDataFullOutput {
   summary: string;
   matches: CoverageMatchLike[];
   other_matches: Array<{ name: string; type: string }>;
-  next_call: { tool: "tako_search" | "tako_answer"; query: string; node_ids: string[]; strict: boolean } | null;
+  next_call: { tool: "tako_search"; query: string; node_ids: string[]; strict: boolean } | null;
   /** False when the gate failed open — the matches are low-confidence. */
   confident?: boolean | undefined;
   metric_query?: string | undefined;

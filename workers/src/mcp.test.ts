@@ -16,13 +16,11 @@ import {
 import type { Env } from "./env.js";
 import { FREE_TIER_TOOL_NAMES } from "./freetier.js";
 import {
-  anonymousSignInHint,
   AUTH_INVALID_MESSAGE,
-  commerceCopyAllowedForUa,
   createMcpServer,
-  detectMcpClient,
   djangoErrorToToolResult,
   FREE_TIER_SERVER_INSTRUCTIONS,
+  GENERIC_SIGN_IN_HINT,
   logSdkValidationRejections,
   PAYMENT_REQUIRED_MESSAGE,
   PAYMENT_REQUIRED_REMEDY_FALLBACK,
@@ -31,69 +29,28 @@ import {
   structuredContentFor,
   withChatGptToolSecuritySchemes,
 } from "./mcp.js";
+import type { Surface } from "./surface.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
-import { toolAnnotationsForClient } from "./tools/_surface.js";
+import { toolAnnotationsForSurface } from "./tools/_surface.js";
 import {
   jsonResponse,
   mockFetchSequence,
   noopSendProgress,
 } from "./tools/__test_helpers.js";
-import type { McpClientKind, ToolContext } from "./tools/types.js";
+import type { ToolContext } from "./tools/types.js";
 
-describe("detectMcpClient", () => {
-  it("maps OpenAI-family user agents to chatgpt", () => {
-    // Apps SDK / ChatGPT connector families.
-    expect(detectMcpClient("ChatGPT/1.0 (+https://chatgpt.com)")).toBe(
-      "chatgpt",
-    );
-    expect(detectMcpClient("openai-mcp/1.0")).toBe("chatgpt");
-    // OpenAI's published crawler/agent UAs contain neither "chatgpt" nor
-    // "openai" in the product token — matched explicitly so OpenAI review
-    // tooling sees the descriptors chatgpt-app-submission.json declares.
-    expect(detectMcpClient("GPTBot/1.2")).toBe("chatgpt");
-    expect(detectMcpClient("OAI-SearchBot/1.0")).toBe("chatgpt");
-  });
-
-  it("maps claude/anthropic UAs to claude and everything else to unknown", () => {
-    expect(detectMcpClient("claude-mcp-client/1.0")).toBe("claude");
-    expect(detectMcpClient(null)).toBe("unknown");
-    expect(detectMcpClient("")).toBe("unknown");
-    expect(detectMcpClient("curl/8.4.0")).toBe("unknown");
-  });
-
-  it("maps the ChatGPT desktop app's runtime to codex", () => {
-    // The merged desktop app (Chat/Work threads, Codex tasks, and the
-    // headless CLI) all connect through one client — verified live
-    // 2026-08-13 on 0.147.0-alpha.6.6 and 0.148.0-alpha.9.
-    expect(detectMcpClient("codex-mcp-client/0.148.0-alpha.9")).toBe("codex");
-    // The codex check must beat the broad `openai` substring match, so a
-    // future OpenAI-branded rename keeps codex-specific widget handling.
-    expect(detectMcpClient("openai-codex/1.0")).toBe("codex");
-  });
-});
-
-describe("toolAnnotationsForClient", () => {
-  it("preserves the canonical MCP annotations for claude", () => {
+describe("toolAnnotationsForSurface", () => {
+  it("preserves the canonical MCP annotations on the generic surface", () => {
     for (const tool of TOOL_REGISTRY) {
-      expect(toolAnnotationsForClient(tool, "claude")).toEqual(tool.annotations);
-    }
-  });
-
-  it("resolves unknown clients to the ChatGPT override family", () => {
-    // An OpenAI reviewer or crawler with an unrecognized UA lands on
-    // `unknown` — it must see the same labels chatgpt-app-submission.json
-    // declares, never canonical labels that contradict it (see
-    // `annotationClientFamily` in tools/_surface.ts).
-    for (const tool of TOOL_REGISTRY) {
-      expect(toolAnnotationsForClient(tool, "unknown")).toEqual(
-        toolAnnotationsForClient(tool, "chatgpt"),
+      expect(toolAnnotationsForSurface(tool, "generic")).toEqual(
+        tool.annotations,
       );
     }
   });
 
-  it("uses OpenAI Apps review semantics for ChatGPT descriptors", () => {
+  it("uses OpenAI Apps review semantics for chatgpt descriptors", () => {
     for (const tool of TOOL_REGISTRY) {
-      const annotations = toolAnnotationsForClient(tool, "chatgpt");
+      const annotations = toolAnnotationsForSurface(tool, "chatgpt");
       expect(annotations.destructiveHint, tool.name).toBe(false);
       // `tako_visualize` mints a publicly reachable card URL — the one
       // tool Apps review reads as publishing state (`openWorldHint:
@@ -109,32 +66,22 @@ describe("toolAnnotationsForClient", () => {
       "tako_contents",
     ]) {
       expect(
-        toolAnnotationsForClient(
+        toolAnnotationsForSurface(
           TOOL_REGISTRY.find((tool) => tool.name === name)!,
           "chatgpt",
         ).readOnlyHint,
         name,
       ).toBe(true);
     }
-    expect(
-      toolAnnotationsForClient(
-        TOOL_REGISTRY.find((tool) => tool.name === "tako_visualize")!,
-        "chatgpt",
-      ).readOnlyHint,
-    ).toBe(false);
-
-    expect(
-      toolAnnotationsForClient(
-        TOOL_REGISTRY.find((tool) => tool.name === "tako_agent_start")!,
-        "chatgpt",
-      ).readOnlyHint,
-    ).toBe(false);
-    expect(
-      toolAnnotationsForClient(
-        TOOL_REGISTRY.find((tool) => tool.name === "tako_agent")!,
-        "chatgpt",
-      ).readOnlyHint,
-    ).toBe(false);
+    for (const name of ["tako_visualize", "tako_agent_start", "tako_agent"]) {
+      expect(
+        toolAnnotationsForSurface(
+          TOOL_REGISTRY.find((tool) => tool.name === name)!,
+          "chatgpt",
+        ).readOnlyHint,
+        name,
+      ).toBe(false);
+    }
   });
 });
 
@@ -455,22 +402,23 @@ describe("extractErrorDetail", () => {
  *     implements MCP Apps.
  *   - `inlinePngFallbackSuppressed` — skip the `extraContentBlocks`
  *     PNG image content block. Attaching the widget (`ui !== undefined`)
- *     already suppresses this hook for ChatGPT and Claude, so only
- *     unknown clients render `image` content blocks in-chat.
+ *     already suppresses this hook, and only the chatgpt surface attaches
+ *     one — so the GENERIC surface is what renders `image` content blocks
+ *     in-chat, for every client on it.
  *
  * Exercised end-to-end over an in-memory MCP transport: real server,
  * real tool registration, real `tools/call` — only the upstream
  * Django/PNG `fetch` is stubbed.
  */
-describe("chart render gates per client", () => {
+describe("chart render gates per surface", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
-  function makeCtx(client: McpClientKind): ToolContext {
+  function makeCtx(surface: Surface): ToolContext {
     return {
       token: "sk-test",
       env: ENV,
       sendProgress: noopSendProgress,
-      client,
+      surface,
     };
   }
 
@@ -510,13 +458,13 @@ describe("chart render gates per client", () => {
    * an in-memory transport, and return the raw tool result.
    */
   async function callSearch(
-    client: McpClientKind,
+    surface: Surface,
   ): Promise<{
     content: ContentBlock[];
     structuredContent?: Record<string, unknown>;
     _meta?: Record<string, unknown>;
   }> {
-    const server = createMcpServer(makeCtx(client), { client });
+    const server = createMcpServer(makeCtx(surface), { surface });
     // The test runtime stubs `ajv` (see vitest.config.ts) — the SDK
     // Client must get the same Workers-safe validator the server uses.
     const mcpClient = new Client(
@@ -558,56 +506,17 @@ describe("chart render gates per client", () => {
     });
   }
 
-  it("claude client: MCP Apps widget ships inline, no image content block", async () => {
-    // Call 1: v3 search. Call 2: chart PNG — now fetched by `extraMeta`
-    // (baked `_meta.image_data_url` for the widget's image branch)
-    // instead of `extraContentBlocks`. Still exactly two fetches.
-    mockFetchSequence([searchResponse(), realPngResponse()]);
-
-    const result = await callSearch("claude");
-
-    // Widget replaces the PNG content block on claude — MCP Apps inline
-    // cards render in the chat body; image blocks stay collapsed in the
-    // tool-call expander (the bug this change fixes).
-    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
-    const meta = result._meta as
-      | { ui?: { resourceUri?: string }; image_data_url?: string }
-      | undefined;
-    expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/tako\/embed\/chart/);
-    expect(meta?.image_data_url).toMatch(/^data:image\/png;base64,/);
-  });
-
-  it("claude client: PNG fetch failure degrades gracefully (widget _meta stays, no image_data_url)", async () => {
-    // Call 1: v3 search succeeds. Call 2: PNG fetch fails (500).
-    mockFetchSequence([
-      searchResponse(),
-      new Response("error", { status: 500 }),
-    ]);
-
-    const result = await callSearch("claude");
-
-    // Graceful degradation: the tool call still resolves, the widget
-    // metadata is still attached (claude stays on the static URI), and
-    // `image_data_url` is simply absent — no throw, no partial data.
-    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
-    const meta = result._meta as
-      | { ui?: { resourceUri?: string }; image_data_url?: string }
-      | undefined;
-    expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/tako\/embed\/chart/);
-    expect(meta?.image_data_url).toBeUndefined();
-  });
-
-  it("unknown client: chart ships as an inline image content block (no widget metadata)", async () => {
-    // Unknown clients are the long tail of MCP hosts (Cursor, Windsurf,
-    // Gemini CLI, LibreChat, …). Almost none of them implement the MCP
-    // Apps widget spec, but virtually all render `image` content
-    // blocks — so they're the one bucket that still gets the PNG
-    // fallback (Claude now gets the widget's image branch instead, see
-    // the "claude client" test above).
+  it("generic surface: chart ships as an inline image content block (no widget metadata)", async () => {
+    // The generic surface serves the long tail of MCP hosts (Cursor,
+    // Windsurf, Gemini CLI, LibreChat, claude.ai, Claude Code, …).
+    // Almost none of them implement the MCP Apps widget spec, but
+    // virtually all render `image` content blocks — so the generic
+    // surface ships the portable PNG (spec D14/D15; the claude.ai widget
+    // is a fast-follow gated on anthropics/claude-ai-mcp#753 and #40).
     // Call 1: v3 search. Call 2: chart PNG for the image content block.
     mockFetchSequence([searchResponse(), pngResponse()]);
 
-    const result = await callSearch("unknown");
+    const result = await callSearch("generic");
 
     const imageBlocks = result.content.filter((b) => b.type === "image");
     expect(imageBlocks).toHaveLength(1);
@@ -617,49 +526,41 @@ describe("chart render gates per client", () => {
     ).toBeUndefined();
   });
 
-  it.each(["chatgpt", "codex"] as const)(
-    "%s client: widget metadata ships, no image block, dimensions-only PNG read",
-    async (client) => {
-      // Codex mirrors chatgpt exactly since the flip (PR #240): widget
-      // `_meta`, no image content block, and a RANGED dimensions read
-      // instead of the full PNG bake. ACCEPTED-COST RECORD (validated
-      // live 2026-08-14, PR #239 body): a flag-off desktop app and the
-      // headless Codex CLI share this UA and lose the inline PNG this
-      // result used to carry (measured 2026-08-13: [text] only vs
-      // [text, image] for unknown).
-      //
-      // The earlier shape of this test queued ONE response and relied on
-      // `mockFetchSequence`'s queue-exhaustion throw to pin "no PNG
-      // prefetch" — but the top card carries an `image_url`, so
-      // `extraMeta` DOES fetch (the ranged `fetchPngDimensions`), and the
-      // throw was swallowed by that helper's catch and again by mcp.ts's
-      // `extraMeta` catch: a revert to the full-bake path stayed green
-      // (round-3 review finding on PR #239). Now the second fetch is
-      // queued and asserted: exactly two calls, and the PNG one carries a
-      // Range header — a full `fetchImageDataUrlAndDims` bake reads the
-      // whole body and sends none.
-      const fetchMock = mockFetchSequence([
-        searchResponse(),
-        new Response(new Uint8Array(64), {
-          status: 206,
-          headers: { "content-type": "image/png" },
-        }),
-      ]);
+  it("chatgpt surface: widget metadata ships, no image block, dimensions-only PNG read", async () => {
+    // Widget `_meta`, no image content block, and a RANGED dimensions
+    // read instead of the full PNG bake.
+    //
+    // An earlier shape of this test queued ONE response and relied on
+    // `mockFetchSequence`'s queue-exhaustion throw to pin "no PNG
+    // prefetch" — but the top card carries an `image_url`, so
+    // `extraMeta` DOES fetch (the ranged `fetchPngDimensions`), and the
+    // throw was swallowed by that helper's catch and again by mcp.ts's
+    // `extraMeta` catch: a revert to the full-bake path stayed green
+    // (round-3 review finding on PR #239). So the second fetch is
+    // queued and asserted: exactly two calls, and the PNG one carries a
+    // Range header — a full `fetchImageDataUrlAndDims` bake reads the
+    // whole body and sends none.
+    const fetchMock = mockFetchSequence([
+      searchResponse(),
+      new Response(new Uint8Array(64), {
+        status: 206,
+        headers: { "content-type": "image/png" },
+      }),
+    ]);
 
-      const result = await callSearch(client);
+    const result = await callSearch("chatgpt");
 
-      expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
-      expect(
-        (result._meta as { ui?: unknown } | undefined)?.ui,
-      ).toBeDefined();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      const pngRequest = new Request(...(fetchMock.mock.calls[1] as [RequestInfo, RequestInit?]));
-      expect(pngRequest.url).toContain("/api/v1/image/");
-      expect(pngRequest.headers.get("range")).not.toBeNull();
-    },
-  );
+    expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
+    expect(
+      (result._meta as { ui?: unknown } | undefined)?.ui,
+    ).toBeDefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const pngRequest = new Request(...(fetchMock.mock.calls[1] as [RequestInfo, RequestInit?]));
+    expect(pngRequest.url).toContain("/api/v1/image/");
+    expect(pngRequest.headers.get("range")).not.toBeNull();
+  });
 
-  it("claude client: no image block when the search returns zero cards", async () => {
+  it("generic surface: no image block when the search returns zero cards", async () => {
     // Empty result → no top card → no image_url → `extraMeta`'s PNG
     // prefetch must not fire (queue holds only the search response; an
     // unexpected second fetch would throw loudly) and no image content
@@ -668,7 +569,7 @@ describe("chart render gates per client", () => {
       jsonResponse(200, { cards: [], web_results: [], request_id: "req-2" }),
     ]);
 
-    const result = await callSearch("claude");
+    const result = await callSearch("generic");
 
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
     // The zero-result guidance must survive the SDK round trip: it is
@@ -695,19 +596,26 @@ describe("chart render gates per client", () => {
       jsonResponse(200, { cards: [], web_results: [], request_id: "req-3" }),
     ]);
 
-    const result = await callSearch("claude");
+    const result = await callSearch("generic");
 
     const meta = result._meta as Record<string, unknown> | undefined;
     expect(meta?.ui).toBeUndefined();
     expect(meta?.["ui/resourceUri"]).toBeUndefined();
   });
 
-  it("a chart-bearing result still points at its baked per-chart widget", async () => {
+  it("a chart-bearing result still points at its baked per-chart widget (chatgpt)", async () => {
     // The other side of the same branch: declining to reference a resource on
     // an empty result must not cost the populated one its per-pub_id URI.
-    mockFetchSequence([searchResponse(), realPngResponse()]);
+    // (Two fetches: search + the ranged dimensions read.)
+    mockFetchSequence([
+      searchResponse(),
+      new Response(new Uint8Array(64), {
+        status: 206,
+        headers: { "content-type": "image/png" },
+      }),
+    ]);
 
-    const result = await callSearch("claude");
+    const result = await callSearch("chatgpt");
 
     const meta = result._meta as
       | { ui?: { resourceUri?: string }; "ui/resourceUri"?: string }
@@ -717,29 +625,33 @@ describe("chart render gates per client", () => {
   });
 
   /**
-   * The full client × has-chart matrix for the resource reference, because the
-   * fix is per-RESULT and the surfaces it touches are per-CLIENT. Every cell is
-   * asserted, so a change that helps one client at another's expense fails
-   * here rather than in someone's chat window.
+   * The full surface × has-chart matrix for the resource reference. Every
+   * cell is asserted, so a change that helps one surface at the other's
+   * expense fails here rather than in someone's chat window.
    *
    *                 chart          no chart
-   *   claude        per-pub_id     absent
    *   chatgpt       per-pub_id     absent
-   *   unknown       absent         absent   ← never had a widget; PNG block instead
+   *   generic       absent         absent   ← no widget; PNG block instead
    *
-   * The `unknown` row is the load-bearing one for "nothing else regressed":
-   * those clients never reach the resolver at all (`widgetSuppressed` leaves
-   * `ui` undefined in `registerTool`), so the branch cannot touch the long tail
-   * of MCP hosts even in principle.
+   * The `generic` row is the load-bearing one for "nothing else
+   * regressed": that surface never reaches the resolver at all
+   * (`widgetSuppressed` leaves `ui` undefined in `registerTool`), so the
+   * branch cannot touch the long tail of MCP hosts even in principle.
    */
-  it("references a widget per client and per result, and never for unknown clients", async () => {
+  it("references a widget per surface and per result, and never on generic", async () => {
     const uiOf = (result: { _meta?: Record<string, unknown> }) =>
       (result._meta as { ui?: { resourceUri?: string } } | undefined)?.ui
         ?.resourceUri;
 
-    // chatgpt, chart present: keeps its reference. (One fetch only — ChatGPT
-    // skips the PNG bake, and a second would throw.)
-    mockFetchSequence([searchResponse()]);
+    // chatgpt, chart present: keeps its reference. (Two fetches: search +
+    // the ranged dimensions read.)
+    mockFetchSequence([
+      searchResponse(),
+      new Response(new Uint8Array(64), {
+        status: 206,
+        headers: { "content-type": "image/png" },
+      }),
+    ]);
     expect(uiOf(await callSearch("chatgpt"))).toBe("ui://tako/embed/chart/c1");
 
     // chatgpt, no chart: no reference. The registration `_meta` still carries
@@ -750,55 +662,25 @@ describe("chart render gates per client", () => {
     ]);
     expect(uiOf(await callSearch("chatgpt"))).toBeUndefined();
 
-    // unknown, chart present: no widget reference ever, and the PNG content
+    // generic, chart present: no widget reference ever, and the PNG content
     // block instead — the portable path, untouched by this branch.
     mockFetchSequence([searchResponse(), pngResponse()]);
-    const unknownWithChart = await callSearch("unknown");
-    expect(uiOf(unknownWithChart)).toBeUndefined();
+    const genericWithChart = await callSearch("generic");
+    expect(uiOf(genericWithChart)).toBeUndefined();
     expect(
-      unknownWithChart.content.filter((b) => b.type === "image"),
+      genericWithChart.content.filter((b) => b.type === "image"),
     ).toHaveLength(1);
 
-    // unknown, no chart: no reference, no image block, and no second fetch
+    // generic, no chart: no reference, no image block, and no second fetch
     // (no image_url to fetch) — nothing to render and nothing attempted.
     mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "req-5" }),
     ]);
-    const unknownEmpty = await callSearch("unknown");
-    expect(uiOf(unknownEmpty)).toBeUndefined();
-    expect(unknownEmpty.content.filter((b) => b.type === "image")).toHaveLength(
+    const genericEmpty = await callSearch("generic");
+    expect(uiOf(genericEmpty)).toBeUndefined();
+    expect(genericEmpty.content.filter((b) => b.type === "image")).toHaveLength(
       0,
     );
-  });
-});
-
-describe("detectMcpClient", () => {
-  // The "claude" bucket is widget-ONLY: it suppresses the inline PNG
-  // content block. Every UA asserted into it must belong to a surface
-  // that actually renders MCP Apps widgets (claude.ai / Claude Desktop
-  // custom connectors — server-to-server from Anthropic's backend as
-  // `Claude-User`). UAs are real observed strings, not invented ones.
-  it("buckets the claude.ai/Desktop connector UAs as claude", () => {
-    expect(detectMcpClient("Claude-User")).toBe("claude");
-    expect(detectMcpClient("claude-mcp-client/1.0")).toBe("claude");
-    expect(detectMcpClient("Anthropic/1.0")).toBe("claude");
-  });
-
-  it("keeps Claude Code (and the Agent SDK it powers) on the PNG path", () => {
-    // Observed UA of claude-code 2.1.220's streamable-HTTP MCP client.
-    // A terminal, not an MCP Apps host: bucketing it "claude" would ship
-    // widget _meta it can't render AND drop the PNG block — no chart.
-    expect(detectMcpClient("claude-code/2.1.220 (sdk-cli)")).toBe("unknown");
-  });
-
-  it("buckets ChatGPT UAs as chatgpt and everything else as unknown", () => {
-    expect(detectMcpClient("ChatGPT/1.0 (+https://chatgpt.com)")).toBe(
-      "chatgpt",
-    );
-    expect(detectMcpClient("openai-mcp/1.0")).toBe("chatgpt");
-    expect(detectMcpClient("python-httpx/0.27")).toBe("unknown");
-    expect(detectMcpClient(null)).toBe("unknown");
-    expect(detectMcpClient("")).toBe("unknown");
   });
 });
 
@@ -814,9 +696,9 @@ describe("server instructions", () => {
       token: "sk-test",
       env: { DJANGO_BASE_URL: "https://staging.trytako.com" },
       sendProgress: noopSendProgress,
-      client: "unknown",
+      surface: "generic",
     };
-    const server = createMcpServer(ctx);
+    const server = createMcpServer(ctx, { surface: "generic" });
     const mcpClient = new Client(
       { name: "instructions-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -853,10 +735,10 @@ describe("server instructions", () => {
       token: "free-tier-key",
       env: { DJANGO_BASE_URL: "https://staging.trytako.com" },
       sendProgress: noopSendProgress,
-      client: "unknown",
+      surface: "generic",
       tier: "free",
     };
-    const server = createMcpServer(ctx, { tier: "free" });
+    const server = createMcpServer(ctx, { surface: "generic", tier: "free" });
     const mcpClient = new Client(
       { name: "instructions-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -882,14 +764,17 @@ describe("free-tier tool surface", () => {
     token: "free-tier-key",
     env: { DJANGO_BASE_URL: "http://localhost:8000" } as Env,
     sendProgress: noopSendProgress,
-    client: "unknown",
+    surface: "generic",
   };
 
   /** List tool names over an in-memory transport for the given options. */
   async function listToolNames(
-    options: Parameters<typeof createMcpServer>[1],
+    options: Partial<Parameters<typeof createMcpServer>[1]>,
   ): Promise<string[]> {
-    const server = createMcpServer(ctx, options);
+    const server = createMcpServer(ctx, {
+      ...options,
+      surface: options?.surface ?? "generic",
+    });
     const mcpClient = new Client(
       { name: "tier-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -907,73 +792,38 @@ describe("free-tier tool surface", () => {
     }
   }
 
-  it("tier 'free' registers exactly the three free tools", async () => {
-    await expect(listToolNames({ tier: "free" })).resolves.toEqual([
-      "tako_answer",
-      "tako_available_data",
-      "tako_search",
-    ]);
-  });
-
-  it("tier 'free' wins over ?tools= opt-ins — the anonymous surface cannot widen", async () => {
-    await expect(
-      listToolNames({
-        tier: "free",
-        enabledOptionalToolNames: new Set([
-          "tako_agent",
-          "tako_visualize",
-          "get_credit_balance",
-        ]),
-      }),
-    ).resolves.toEqual(["tako_answer", "tako_available_data", "tako_search"]);
-  });
-
-  it("tier 'free' on ChatGPT clients keeps the auth-required submitted tools DISCOVERABLE", async () => {
-    // ChatGPT's link-account UI is keyed off the `tools/list` descriptors
-    // (OpenAI Apps SDK auth guide), so the two submitted tools that need a
-    // linked account stay listed on anonymous connections — the full
-    // five-tool surface `chatgpt-app-submission.json` declares. They are
-    // listed, not runnable: the dispatch gate answers with an
-    // `_meta["mcp/www_authenticate"]` challenge (tested below) instead of
+  it("the LISTING is auth-invariant: tier 'free' lists the same default surface (spec D4)", async () => {
+    // tako_contents is LISTED anonymously — not runnable: the dispatch
+    // gate answers with sign-in instructions (tested below) instead of
     // executing on the shared free-tier account.
-    await expect(
-      listToolNames({ tier: "free", client: "chatgpt" }),
-    ).resolves.toEqual([
-      "tako_answer",
+    const expected = ["tako_available_data", "tako_contents", "tako_search"];
+    await expect(listToolNames({ tier: "free" })).resolves.toEqual(expected);
+    await expect(listToolNames({})).resolves.toEqual(expected);
+  });
+
+  it("?tools= opt-ins list identically on both tiers — execution, not listing, is what the tier gates", async () => {
+    const optIns = new Set(["tako_agent", "tako_visualize"]);
+    const expected = [
+      "tako_agent",
       "tako_available_data",
       "tako_contents",
       "tako_search",
       "tako_visualize",
-    ]);
+    ];
+    await expect(
+      listToolNames({ tier: "free", enabledOptionalToolNames: optIns }),
+    ).resolves.toEqual(expected);
+    await expect(
+      listToolNames({ enabledOptionalToolNames: optIns }),
+    ).resolves.toEqual(expected);
   });
 
-  it("tier 'free' on ChatGPT cannot widen past the submitted surface via ?tools=", async () => {
-    await expect(
-      listToolNames({
-        tier: "free",
-        client: "chatgpt",
-        enabledOptionalToolNames: new Set([
-          "tako_agent_start",
-          "tako_agent_wait",
-          "get_credit_balance",
-          "tako_graph_search",
-        ]),
-      }),
-    ).resolves.toEqual([
-      "tako_answer",
+  it("the chatgpt surface adds tako_visualize by default", async () => {
+    await expect(listToolNames({ surface: "chatgpt" })).resolves.toEqual([
       "tako_available_data",
       "tako_contents",
       "tako_search",
       "tako_visualize",
-    ]);
-  });
-
-  it("omitting tier keeps the existing default (authenticated) surface", async () => {
-    await expect(listToolNames({})).resolves.toEqual([
-      "tako_answer",
-      "tako_available_data",
-      "tako_contents",
-      "tako_search",
     ]);
   });
 });
@@ -990,7 +840,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
    * transport, returning the raw tool result.
    */
   async function callTool(
-    options: Parameters<typeof createMcpServer>[1],
+    options: Partial<Parameters<typeof createMcpServer>[1]>,
     name: string,
     args: Record<string, unknown>,
     tier?: "free" | "authenticated",
@@ -999,10 +849,13 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
       token: "sk-test",
       env: { DJANGO_BASE_URL: "https://staging.trytako.com" } as Env,
       sendProgress: noopSendProgress,
-      client: options?.client ?? "unknown",
+      surface: options?.surface ?? "generic",
       ...(tier !== undefined ? { tier } : {}),
     };
-    const server = createMcpServer(ctx, options);
+    const server = createMcpServer(ctx, {
+      ...options,
+      surface: options?.surface ?? "generic",
+    });
     const mcpClient = new Client(
       { name: "auth-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -1027,9 +880,11 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     vi.restoreAllMocks();
   });
 
-  // Both members of CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES, each with
-  // schema-valid arguments so the call reaches the dispatch gate (the SDK
-  // validates input BEFORE the gate — invalid args return -32602 instead).
+  // Two listed-but-auth-required shapes, each with schema-valid arguments
+  // so the call reaches the dispatch gate (the SDK validates input BEFORE
+  // the gate — invalid args return -32602 instead): tako_contents is on
+  // the default generic listing (spec D6); tako_visualize joins it via
+  // ?tools=visualize.
   it.each([
     ["tako_contents", { url: "https://trytako.com/card/abc123" }],
     [
@@ -1041,14 +896,15 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
       },
     ],
   ] as const)(
-    "anonymous ChatGPT call to %s returns the www_authenticate challenge WITHOUT executing",
+    "anonymous generic call to %s returns the www_authenticate challenge WITHOUT executing",
     async (name, args) => {
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);
       const result = await callTool(
         {
           tier: "free",
-          client: "chatgpt",
+          surface: "generic",
+          enabledOptionalToolNames: new Set(["tako_visualize"]),
           requestOrigin: "https://mcp.example.com",
         },
         name,
@@ -1059,6 +915,10 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
       // The handler must never run on the shared free-tier account: no
       // Django call, no spend, no data exposure.
       expect(fetchMock).not.toHaveBeenCalled();
+      // The model-visible text carries the generic sign-in hint (spec
+      // D17) — one sentence, every client.
+      const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+      expect(text.endsWith(GENERIC_SIGN_IN_HINT)).toBe(true);
       const challenges = result._meta?.["mcp/www_authenticate"] as string[];
       expect(challenges).toHaveLength(1);
       expect(challenges[0]).toContain('error="insufficient_scope"');
@@ -1069,6 +929,52 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     },
   );
 
+  it("anonymous include_contents: true on tako_search is refused with sign-in copy, unexecuted", async () => {
+    // Spec D10/D12: anonymous connections never inline rows. The refusal
+    // names both exits and the call never reaches Django. It is also
+    // unmetered — `freetier.test.ts` covers the per-IP half by asserting
+    // `isMeteredJsonRpcBody` is false for this same body.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await callTool(
+      { tier: "free", requestOrigin: "https://mcp.example.com" },
+      "tako_search",
+      { query: "US GDP", include_contents: true },
+      "free",
+    );
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      (result._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
+    ).toBe("auth_required");
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toMatch(/retry without include_contents/i);
+    // The refusal must NOT open by claiming the TOOL needs an account:
+    // tako_search runs fine anonymously, it just cannot inline billed rows.
+    // Leading with the false claim invited the model to abandon a call that
+    // would have succeeded without `include_contents`.
+    expect(text).not.toMatch(/^This tool requires a Tako account/);
+    expect(text).toMatch(/^Inline rows need a signed-in connection\./);
+    // ...and the remedy is stated once as guidance plus once as the concrete
+    // how, not three times.
+    expect(text.match(/sign in/gi)?.length ?? 0).toBeLessThanOrEqual(2);
+
+    // The same call authenticated executes normally.
+    const okFetch = vi.fn(async () =>
+      jsonResponse(200, { cards: [], web_results: [], request_id: "r1" }),
+    );
+    vi.stubGlobal("fetch", okFetch);
+    const ok = await callTool(
+      { requestOrigin: "https://mcp.example.com" },
+      "tako_search",
+      { query: "US GDP", include_contents: true },
+    );
+    expect(okFetch).toHaveBeenCalled();
+    expect(
+      (ok._meta?.["tako/error"] as { kind?: string } | undefined)?.kind,
+    ).not.toBe("auth_required");
+  });
+
   it("a tier set ONLY on ToolContext still engages the dispatch gate (fail-closed default)", async () => {
     // Regression guard for the gate's input resolution: a future call
     // site that declares the tier on ctx but forgets options.tier must
@@ -1077,7 +983,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const result = await callTool(
-      { client: "chatgpt", requestOrigin: "https://mcp.example.com" },
+      { requestOrigin: "https://mcp.example.com" },
       "tako_contents",
       { url: "https://trytako.com/card/abc123" },
       "free", // ctx.tier only — options.tier deliberately omitted
@@ -1089,7 +995,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     ).toHaveLength(1);
   });
 
-  it("authenticated ChatGPT calls to auth-required tools execute without a challenge", async () => {
+  it("authenticated calls to auth-required tools execute without a challenge", async () => {
     // Regression guard for the dispatch gate's complement: a linked
     // (authenticated) connection must reach the real handler — a gate
     // keyed on the wrong tier source would block paying users on the two
@@ -1101,7 +1007,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const result = await callTool(
-      { client: "chatgpt", requestOrigin: "https://mcp.example.com" },
+      { requestOrigin: "https://mcp.example.com" },
       "tako_contents",
       { url: "https://trytako.com/card/abc123" },
     );
@@ -1109,13 +1015,13 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     expect(result._meta?.["mcp/www_authenticate"]).toBeUndefined();
   });
 
-  it("anonymous ChatGPT calls to free tools still execute (no challenge)", async () => {
+  it("anonymous calls to free tools still execute (no challenge)", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse(200, { cards: [], web_results: [], request_id: "r1" }),
     );
     vi.stubGlobal("fetch", fetchMock);
     const result = await callTool(
-      { tier: "free", client: "chatgpt" },
+      { tier: "free" },
       "tako_search",
       { query: "US GDP" },
       "free",
@@ -1124,20 +1030,18 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     expect(result._meta?.["mcp/www_authenticate"]).toBeUndefined();
   });
 
-  it.each(["chatgpt", "codex"] as const)(
-    "a Django 401 on %s attaches the reauth challenge to the mapped error",
-    async (client) => {
-      // Parameterized over the ChatGPT family: the desktop app's
-      // link-account re-auth flow keys on the same
-      // `_meta["mcp/www_authenticate"]` field (isChatGptFamilyClient gate
-      // in registerTool). A revert of that gate to `=== "chatgpt"` would
-      // pass a chatgpt-only version of this test.
+  it.each(["chatgpt", "generic"] as const)(
+    "a Django 401 on the %s surface attaches the reauth challenge to the mapped error",
+    async (surface) => {
+      // Parameterized over both surfaces: the challenge ships on EVERY
+      // authenticated connection (OAuth-capable hosts key their re-link
+      // UI on it; others ignore unknown `_meta`).
       vi.stubGlobal(
         "fetch",
         vi.fn(async () => jsonResponse(401, { detail: "Invalid API key." })),
       );
       const result = await callTool(
-        { client, requestOrigin: "https://mcp.example.com" },
+        { surface, requestOrigin: "https://mcp.example.com" },
         "tako_search",
         { query: "US GDP" },
       );
@@ -1167,7 +1071,6 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     const result = await callTool(
       {
         tier: "free",
-        client: "chatgpt",
         requestOrigin: "https://mcp.example.com",
       },
       "tako_search",
@@ -1188,13 +1091,13 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     expect(text).not.toMatch(/sign in|session|re-?authoriz/i);
   });
 
-  it("a Django 401 on an authenticated claude client gets the recovery message and re-auth challenge", async () => {
+  it("a Django 401 on an authenticated generic connection gets the recovery message and re-auth challenge", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => jsonResponse(401, { detail: "Invalid API key." })),
     );
     const result = await callTool(
-      { client: "claude", requestOrigin: "https://mcp.example.com" },
+      { requestOrigin: "https://mcp.example.com" },
       "tako_search",
       { query: "US GDP" },
     );
@@ -1218,12 +1121,12 @@ describe("withChatGptToolSecuritySchemes", () => {
     const res = new Response("event: message\ndata: {}\n\n", {
       headers: { "content-type": "text/event-stream" },
     });
-    expect(await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt")).toBe(res);
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
   });
 
   it("returns the original response when the body is not valid JSON (body stays readable)", async () => {
     const res = new Response("{not json", { headers: JSON_CT });
-    const out = await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt");
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
     expect(out).toBe(res);
     // The adapter reads a clone — the original body must not be consumed.
     await expect(out.text()).resolves.toBe("{not json");
@@ -1234,7 +1137,7 @@ describe("withChatGptToolSecuritySchemes", () => {
       JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
       { headers: JSON_CT },
     );
-    expect(await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt")).toBe(res);
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
   });
 
   it("rewrites tools/list, drops the stale content-length, and keeps status", async () => {
@@ -1247,16 +1150,17 @@ describe("withChatGptToolSecuritySchemes", () => {
       status: 200,
       headers: { ...JSON_CT, "content-length": String(body.length) },
     });
-    const out = await withChatGptToolSecuritySchemes(res, "free", "chatgpt");
+    const out = await withChatGptToolSecuritySchemes(res, "free");
     expect(out).not.toBe(res);
     expect(out.status).toBe(200);
     expect(out.headers.get("content-length")).toBeNull();
     const json = (await out.json()) as {
       result: { tools: Array<{ securitySchemes?: unknown }> };
     };
-    // Anonymous (free) listing: the free tool advertises noauth + oauth2.
+    // The chatgpt surface never advertises noauth — it 401s anonymous
+    // requests before any listing exists (tier "free" is unreachable
+    // there; this pins the metadata to match the enforcement).
     expect(json.result.tools[0]?.securitySchemes).toEqual([
-      { type: "noauth" },
       { type: "oauth2", scopes: ["mcp"] },
     ]);
   });
@@ -1268,7 +1172,7 @@ describe("withChatGptToolSecuritySchemes", () => {
       result: { tools: [{ name: "tako_search" }] },
     });
     const res = new Response(body, { headers: JSON_CT });
-    const out = await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt");
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
     const json = (await out.json()) as {
       result: { tools: Array<{ securitySchemes?: unknown }> };
     };
@@ -1530,8 +1434,8 @@ describe("paymentRequiredToolResult", () => {
   it("omits ALL remedy copy when commerce copy is not allowed", () => {
     // OpenAI's commerce policy forbids promoting purchases through an
     // app, and Django's remedies name plan upgrades and credit purchases
-    // — exactly that copy. `commerceCopyAllowedForUa` fails closed, so
-    // ChatGPT-family AND unrecognized clients land here.
+    // — exactly that copy. Commerce copy keys on the surface, and the
+    // chatgpt surface passes `false` here.
     for (const body of [SUBSCRIPTION_402_BODY, PAYG_402_BODY]) {
       const text = paymentRequiredToolResult(err402(body), false).content[0]
         ?.text;
@@ -1543,81 +1447,15 @@ describe("paymentRequiredToolResult", () => {
   });
 });
 
-describe("commerceCopyAllowedForUa", () => {
-  it("allows only positively-identified Anthropic clients", () => {
-    // claude.ai / Claude Desktop connectors.
-    expect(commerceCopyAllowedForUa("claude-mcp-client/1.0")).toBe(true);
-    expect(commerceCopyAllowedForUa("Anthropic/1.0")).toBe(true);
-    // Claude Code buckets as "unknown" in McpClientKind (widget routing —
-    // a terminal renders no widget) but is unambiguously Anthropic for
-    // commerce copy; keying on `client === "claude"` alone would strand
-    // the flagship raw-Bearer client with OpenAI's crawlers.
-    expect(commerceCopyAllowedForUa("claude-code/2.1.220 (sdk-cli)")).toBe(
-      true,
-    );
-  });
-
-  it("fails closed for OpenAI-family, unknown, and absent UAs", () => {
-    for (const ua of [
-      "ChatGPT/1.0 (+https://chatgpt.com)",
-      "openai-mcp/1.0",
-      "codex-mcp-client/0.148.0-alpha.9",
-      "GPTBot/1.2",
-      "python-httpx/0.27",
-      "",
-      null,
-    ]) {
-      expect(commerceCopyAllowedForUa(ua)).toBe(false);
-    }
-  });
-});
-
-describe("anonymousSignInHint", () => {
-  // Table-driven over every UA family (review finding): the e2e tests pin
-  // ChatGPT and python-httpx through worker.fetch, but codex is the branch
-  // that matters most — it is ChatGPT-FAMILY, so a hint leaking there is
-  // the exact policy failure the fail-closed design exists to prevent, and
-  // `detectMcpClient`'s match ordering is the only thing stopping it.
-  it("names the in-place OAuth step (API key as fallback) for Claude Code", () => {
-    const hint = anonymousSignInHint("claude-code/2.1.220 (sdk-cli)");
-    expect(hint).toContain("Claude Code");
-    expect(hint).toContain("/mcp");
-    expect(hint).toContain("Tako API key");
-  });
-
-  it("names the connector Connect step for claude.ai / Claude Desktop", () => {
-    for (const ua of ["Claude-User/1.0", "claude-mcp-client/1.0", "Anthropic/1.0"]) {
-      const hint = anonymousSignInHint(ua);
-      expect(hint).toContain("Settings → Connectors");
-    }
-  });
-
-  it("returns undefined for ChatGPT-family, codex, unknown, and absent UAs", () => {
-    for (const ua of [
-      "ChatGPT/1.0 (+https://chatgpt.com)",
-      "openai-mcp/1.0",
-      "codex-mcp-client/0.148.0-alpha.9",
-      "GPTBot/1.2",
-      "OAI-SearchBot/1.0",
-      "python-httpx/0.27",
-      "",
-      null,
-    ]) {
-      expect(anonymousSignInHint(ua)).toBeUndefined();
-    }
-  });
-});
-
 describe("SERVER_INSTRUCTIONS", () => {
-  it("names every tool an agent must choose between", () => {
-    for (const tool of [
-      "tako_search",
-      "tako_answer",
-      "tako_available_data",
-      "tako_contents",
-    ]) {
+  it("names every DEFAULT-surface tool an agent must choose between — and no opt-in tool", () => {
+    for (const tool of ["tako_search", "tako_available_data", "tako_contents"]) {
       expect(SERVER_INSTRUCTIONS).toContain(tool);
     }
+    // The "and no opt-in tool" half is NOT asserted here. Naming one name by
+    // hand is the defect `tools/phantom_tool.test.ts` exists to remove; it
+    // derives the allowed set from the resolved toolset and covers both
+    // instruction strings on both surfaces.
   });
 
   it("the free-tier variant shares the cross-tool guidance and differs only in the last paragraph", () => {
@@ -1635,12 +1473,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     // call), plus `tako_contents` as the unlock teaser — paired with the
     // pre-dispatch gate in `handleMcpRequest`, which answers a call to it
     // with sign-in guidance rather than "tool not found".
-    for (const tool of [
-      "tako_search",
-      "tako_answer",
-      "tako_available_data",
-      "tako_contents",
-    ]) {
+    for (const tool of ["tako_search", "tako_available_data", "tako_contents"]) {
       expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain(tool);
     }
     expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain("anonymous");
@@ -1738,11 +1571,9 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect({ obliges, denies }).not.toEqual({ obliges: true, denies: true });
   });
 
-  // `tako_answer` (specific figure) and `tako_search` (breadth) are different
-  // jobs, not a ranked pipeline — an ordering invites the model to chain them.
-  it("presents answer and search as a choice, not a sequence", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/different jobs/i);
-  });
+  // `tako_answer` is opt-in (spec D1) — the answer-vs-search routing
+  // paragraph left with it. The instructions must not reference the
+  // opt-in tool at all (see "names every DEFAULT-surface tool" above).
 
   // Inverted deliberately. The pin form USED to be asserted here, and the
   // A/B retired it: pinning happened on 12% of runs with the server-level copy
@@ -1772,11 +1603,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     }
   });
 
-  // The one line with a measured behavioural effect, so it is pinned verbatim
-  // rather than by paraphrase.
-  it("keeps the answer-vs-search split in its measured phrasing", () => {
-    expect(SERVER_INSTRUCTIONS).toContain("pick one, don't chain them");
-  });
+
 
   // `tako_available_data` answers coverage questions in its own right, not
   // only as a gate in front of the priced tools: "what does Tako have on X"
@@ -1849,9 +1676,13 @@ describe("stringified array arguments survive SDK input validation", () => {
       token: "sk-test",
       env: ENV,
       sendProgress: noopSendProgress,
-      client: "unknown",
+      surface: "generic",
     };
-    const server = createMcpServer(ctx, { client: "unknown" });
+    // tako_answer is opt-in now — enable it the way ?tools=answer would.
+    const server = createMcpServer(ctx, {
+      surface: "generic",
+      enabledOptionalToolNames: new Set(["tako_answer"]),
+    });
     const mcpClient = new Client(
       { name: "loose-array-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },

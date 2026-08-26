@@ -9,6 +9,21 @@ answers are the same next time somebody is asked.
 Everything below was verified against **production**, not assumed. Where a claim has a test
 behind it, the test is named.
 
+## What the submission file does NOT carry
+
+**The MCP URL lives only in OpenAI's portal.** `chatgpt-app-submission.json` follows
+OpenAI's `chatgpt-app-submission.v1.json` schema, which has no URL field, and
+`assertChatgptSubmissionParity` reads only its `tools` object. So nothing in this repo
+records or checks which endpoint the app points at. Set it by hand at resubmission:
+
+- **MCP URL:** `https://mcp.tako.com/mcp/chatgpt` (not `/mcp` — that is the generic
+  surface, which serves the anonymous tier and no widget).
+- **Auth:** OAuth only. The `noauth` scheme is gone from this surface; an anonymous
+  request gets 401 + `WWW-Authenticate`.
+
+`app_info.description` is unchecked too. Keep it to what the four submitted tools actually
+do — it claimed "citation-backed answers" after `tako_answer` left the submitted set.
+
 ---
 
 ## 1. No commerce, no upsells in model-visible text
@@ -18,9 +33,9 @@ credits. Existing paid-account functionality is fine; advertising it is not.
 
 Four anonymous-tier messages used to end with "get an API key at
 `https://tako.com/account/` …". Each is delivered as tool-result *text*, so each reached the
-model and could be relayed to the user. As delivered to ChatGPT-family and every
-unrecognized client, all four are pure capacity/retry statements with no link, no
-pricing, and no mention of accounts or upgrades (`workers/src/freetier.ts`):
+model and could be relayed to the user. All four are now pure capacity/retry statements
+with no link, no pricing, and no mention of accounts or upgrades — for every client, on
+every surface (`workers/src/freetier.ts`):
 
 | Constant | Now reads |
 | --- | --- |
@@ -32,17 +47,17 @@ pricing, and no mention of accounts or upgrades (`workers/src/freetier.ts`):
 Enforced by `freetier.test.ts` → "no user-facing message promotes an account, a purchase,
 or an upgrade", which bans URLs and account/pricing/upgrade wording across every BASE
 message the module can emit (`ALL_FREE_TIER_MESSAGES` — a new base message is covered by
-adding one line there). One suffix is deliberately outside that ban and gated per client
-instead:
+adding one line there). One suffix is deliberately outside that ban, gated by SURFACE (the
+request path) and never by the client's User-Agent:
 
-- `FREE_TIER_COMMERCE_UPSELL` (`workers/src/freetier.ts`) — "Connecting a Tako account
-  (tako.com) lifts these anonymous-access limits." Appended to the two rate-limit
-  messages and the shared-capacity message ONLY when the caller passes
-  `commerceCopyAllowedForUa` (positively-identified Anthropic clients; fails CLOSED, so
-  ChatGPT-family and every unrecognized UA — reviewers, crawlers, not-yet-classified
-  ChatGPT clients — get the byte-identical base text). Enforced by `freetier.test.ts` →
-  the "commerce-gated upsell" describe (default-off for every producer) and the
-  ChatGPT/unknown e2e byte-identity cases.
+- `FREE_TIER_COMMERCE_UPSELL` (`workers/src/freetier.ts`) — "Sign in with your client's
+  MCP authentication for up to 2,000 free requests on a new account, or connect with a
+  Tako API key (tako.com)." Appended to the two rate-limit messages and the
+  shared-capacity message on the GENERIC surface (`/mcp`) only. The ChatGPT app surface
+  (`/mcp/chatgpt`) never carries it — and never reaches those messages, because it serves
+  no anonymous tier (anonymous requests 401 before admission). Enforced by
+  `freetier.test.ts` → the "commerce-gated upsell" describe (default-off for every
+  producer) and the `/mcp/chatgpt` 401 case in `index.test.ts`.
 
 Two more model-visible strings live OUTSIDE `freetier.ts` and are likewise gated per
 client instead of banned outright (`workers/src/mcp.ts`):
@@ -56,11 +71,11 @@ client instead of banned outright (`workers/src/mcp.ts`):
 - `PAYMENT_REQUIRED_MESSAGE` (+ remedy splice) — an AUTHENTICATED caller's own account out
   of credits (Django 402). Every client gets the factual cause-only message. The remedy
   sentence (spliced from Django's own 402 body — "Upgrade your plan…" / "Add credits…") is
-  commerce copy, so it appears ONLY for positively-identified Anthropic clients:
-  `commerceCopyAllowedForUa` fails CLOSED, sending ChatGPT-family and every unrecognized
-  UA (reviewers, crawlers, not-yet-classified ChatGPT clients) the cause-only text.
-  Enforced by `mcp.test.ts` → "omits ALL remedy copy when commerce copy is not allowed"
-  and the ChatGPT/unknown e2e case in `freetier.test.ts`.
+  commerce copy, so it appears ONLY on the generic surface (`/mcp`): the ChatGPT app
+  surface (`/mcp/chatgpt`) gets the cause-only text, keyed on the request PATH — no
+  User-Agent classification is involved, so a reviewer or crawler cannot land on the
+  wrong side of it. Enforced by `mcp.test.ts` → "omits ALL remedy copy when commerce
+  copy is not allowed" and the `/mcp` vs `/mcp/chatgpt` 402 case in `freetier.test.ts`.
 
 Paid functionality itself is untouched: an authenticated connection behaves exactly as
 before, and `get_credit_balance` (opt-in only, not on the ChatGPT surface) still answers

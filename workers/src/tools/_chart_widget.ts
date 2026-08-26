@@ -33,13 +33,13 @@
  * original inline chart-rendering implementation.
  */
 import {
+  EMBED_PROXY_PREFIX,
   type Env,
   resolvePublicApiBase,
   resolvePublicBase,
   resolvePublicCdnBase,
   resolveWidgetOrigin,
 } from "../env.js";
-import { EMBED_PROXY_PREFIX } from "../embed_proxy.js";
 import type {
   AppUiResource,
   ToolContext,
@@ -2942,8 +2942,9 @@ function parsePngDimensions(
  * transfer.
  *
  * That cost is on the critical path of every ChatGPT chart call, and is NOT
- * behind `PUBLIC_CDN_URL`: this replaced an unconditional
- * `if (ctx.client === "chatgpt") return undefined;`. Deliberate — ChatGPT
+ * behind `PUBLIC_CDN_URL`: this replaced an unconditional early return that
+ * keyed on the User-Agent classifier's `ctx.client` field (deleted — the
+ * per-request surface is `ctx.surface` now). Deliberate — ChatGPT
  * renders `embed_url` in a cross-origin iframe it cannot measure, so without
  * the card's true aspect its frame falls back to a fixed height and leaves the
  * empty band under a wide chart that this branch exists to remove.

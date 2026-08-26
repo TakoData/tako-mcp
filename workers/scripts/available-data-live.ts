@@ -43,7 +43,7 @@ const ctx: ToolContext = {
   sendProgress: async () => {
     /* no-op: no MCP transport here */
   },
-  client: "claude",
+  surface: "generic",
 };
 
 // The cases that make the difference visible: one clean confirmation, the

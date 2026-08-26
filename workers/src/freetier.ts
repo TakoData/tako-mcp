@@ -5,10 +5,9 @@
  * free-tier bindings are configured, the Worker serves it as a rate-limited
  * anonymous request instead of a 401: a shared free-tier Tako API key is
  * forwarded to Django, the EXECUTABLE toolset shrinks to
- * `FREE_TIER_TOOL_NAMES` (ChatGPT clients additionally LIST — but cannot
- * run — the auth-required submitted tools, see
- * `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`),
- * and requests are limited by two buckets:
+ * `FREE_TIER_TOOL_NAMES` (the LISTING is unchanged — a listed
+ * auth-required tool answers sign-in instructions at dispatch, see the
+ * free-tier gate in `mcp.ts`), and requests are limited by two buckets:
  *
  * - A constant-key bucket hit by every anonymous request regardless of
  *   method — PER-COLO BURST SHAPING, not a true global ceiling:
@@ -18,15 +17,17 @@
  *   maximize that fan-out. It still bounds per-colo floods — including
  *   the otherwise-unmetered handshake methods, which need no credential
  *   at all. The genuinely GLOBAL ceiling is Django's Redis-backed
- *   per-user throttles on the free-tier account (search and answer at
- *   720/min per user, graph at 180/min + 10,000/day per user — see
- *   `app/backend/api/throttling/policy.py` in the monorepo), which every
- *   anonymous request lands on because they all authenticate as the one
- *   `FREE_TIER_API_KEY` user.
- * - A PER-IP bucket (fairness layer) counting only `tools/call`s that
- *   name one of the three free tools — the only requests that spend Tako
- *   credits. Calls to hidden tools return "tool not found" without
- *   burning the caller's per-IP quota (they still count per-colo).
+ *   per-user throttles on the free-tier account, which every anonymous
+ *   request lands on because they all authenticate as the one
+ *   `FREE_TIER_API_KEY` user. Read the live numbers from
+ *   `app/backend/api/throttling/policy.py` in the monorepo rather than from
+ *   here: a copy of that table went stale the moment `tako_answer` moved
+ *   behind `?tools=answer` (it named answer, which no anonymous connection
+ *   can reach, and omitted `tako_available_data`, which every one can).
+ * - A PER-IP bucket (fairness layer) counting only `tools/call`s that name
+ *   `tako_search` or `tako_available_data` — the only requests that spend
+ *   Tako credits. A call to any other tool spends none and does not burn the
+ *   caller's per-IP quota (it still counts per-colo).
  *   Per-IP keying alone means little for hosted hosts (shared egress
  *   IPs), which is why the platform-wide bound lives in Django.
  *
@@ -50,24 +51,22 @@
  */
 
 import type { Env, RateLimit } from "./env.js";
+import { TOOL_REGISTRY } from "./tools/_registry.js";
 
 /** Which surface a connection gets — see `createMcpServer`'s tier gate. */
 export type Tier = "free" | "authenticated";
 
 /**
- * The complete anonymous EXECUTABLE tool surface. On most clients
- * everything else is hidden (not listed, not callable) rather than
- * listed-but-erroring — tools that error on call waste agent turns. The
- * one exception is ChatGPT, whose link-account UI requires the two
- * auth-required submitted tools to stay LISTED on anonymous connections
- * (`CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`);
- * those answer an `_meta["mcp/www_authenticate"]` challenge at dispatch
- * (see the free-tier gate in `mcp.ts`) and never execute anonymously.
+ * The complete anonymous EXECUTABLE tool surface. The listing is
+ * auth-invariant (spec D4): every default tool stays listed on anonymous
+ * connections, and a tool outside this set — `tako_contents` — answers
+ * sign-in instructions at dispatch time (see the free-tier gate in
+ * `mcp.ts`) instead of executing on the shared account. `tako_answer` is
+ * opt-in via `?tools=answer` (spec D1) and never executes anonymously.
  */
 export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
   "tako_available_data",
   "tako_search",
-  "tako_answer",
 ]);
 
 /**
@@ -114,16 +113,16 @@ export function resolveFreeTierConfig(env: Env): FreeTierConfig | null {
 /**
  * Should this JSON-RPC body count against the free-tier PER-IP limit?
  *
- * Only a `tools/call` naming one of the three free tools is metered — the
- * only request shape that spends the shared account's Tako credits.
- * Handshake and discovery methods (`initialize`, `tools/list`,
+ * Only a `tools/call` naming `tako_search` or `tako_available_data` is
+ * metered — the only request shape that spends the shared account's Tako
+ * credits. Handshake and discovery methods (`initialize`, `tools/list`,
  * notifications, pings) must stay unmetered or clients would burn quota
- * just connecting, and a `tools/call` for a non-free tool spends no
- * credit either — on most clients it returns "tool not found"; on
- * ChatGPT the listed-but-gated tools (`tako_contents`, `tako_visualize`)
- * return an auth challenge from the dispatch gate in `mcp.ts` without
- * ever reaching Django — so a confused client retrying it must not burn
- * its whole minute. Both stay bounded by the global ceiling, which
+ * just connecting, and a `tools/call` for any other tool spends no credit
+ * either: the listing is auth-invariant on every surface (spec D4), so a
+ * listed auth-required tool like `tako_contents` answers the
+ * `authRequiredToolResult` sign-in result from the dispatch gate in `mcp.ts`
+ * without ever reaching Django, and an unlisted name gets the SDK's genuine
+ * tool-not-found. Neither should burn a confused client's whole minute. Both stay bounded by the global ceiling, which
  * counts every anonymous request before this decision is made. Array bodies never
  * reach here — `checkFreeTierRateLimit` rejects batches before the
  * metering decision. Anything unparseable / non-object is unmetered: it
@@ -136,8 +135,46 @@ export function isMeteredJsonRpcBody(body: unknown): boolean {
   if (method !== "tools/call") return false;
   if (typeof params !== "object" || params === null) return false;
   const name = (params as { name?: unknown }).name;
-  return typeof name === "string" && FREE_TIER_TOOL_NAMES.has(name);
+  if (typeof name !== "string" || !FREE_TIER_TOOL_NAMES.has(name)) return false;
+  // A free tool can still carry an input the anonymous tier REFUSES
+  // (`tako_search`'s `include_contents: true` inlines billed rows — spec
+  // D12). `registerTool` answers those with `authRequiredToolResult`
+  // without touching Django, so metering them would let one retrying model
+  // spend its whole minute on refusals. Spec: "Rejected calls stay
+  // unmetered."
+  //
+  // The verdict is READ FROM THE TOOL, never re-derived here. The tool's
+  // `anonymousInputRejects` is the same function the dispatch gate in
+  // `mcp.ts` consults, so the two cannot disagree about what gets refused.
+  // An earlier revision inlined "`include_contents` is true" instead, which
+  // exempted the input for EVERY free tool: `tako_available_data` ignores
+  // the key (its `z.object` strips it) and declares no gate, so an anonymous
+  // caller got its four Django round-trips with no per-IP hit just by adding
+  // a key the tool never reads.
+  const args = (params as { arguments?: unknown }).arguments;
+  const tool = TOOL_REGISTRY.find((candidate) => candidate.name === name);
+  if (tool?.anonymousInputRejects !== undefined) {
+    const input =
+      typeof args === "object" && args !== null
+        ? (args as Record<string, unknown>)
+        : {};
+    if (tool.anonymousInputRejects(input) !== undefined) return false;
+  }
+  return true;
 }
+
+/**
+ * Importing `TOOL_REGISTRY` here makes `freetier.ts` reach every tool module,
+ * so this file sits one edge away from a cycle. Keep `env.ts` the only home
+ * for constants the tool modules need out of a request-path module — see
+ * `EMBED_PROXY_PREFIX` there. `_chart_widget.ts` used to take that prefix
+ * from `embed_proxy.ts`, which imports `freeTierRateLimitKey` from here, and
+ * that closed `freetier → _registry → _chart_widget → embed_proxy →
+ * freetier`. The failure is not a load error: `HTTP_URL_REGEX` arrives
+ * `undefined` at `_search_results.ts`, zod accepts it, and the first parse
+ * throws `Cannot set properties of undefined (setting 'lastIndex')` from a
+ * handler. `tsc` and every schema-only test stay green.
+ */
 
 /** A JSON-RPC request id — what `freeTierLimitResponse` echoes back. */
 export type JsonRpcRequestId = string | number | null;
@@ -346,8 +383,8 @@ async function hitPerIpLimiter(
  * (see `freeTierLimitResponse`). Paid-account functionality itself is
  * allowed — advertising it here is not. A caller who wants their own key
  * finds it the same way every other Tako API user does, on tako.com.
- * The one exception is `FREE_TIER_COMMERCE_UPSELL` below, appended only on
- * connections positively identified as Anthropic clients.
+ * The one exception is `FREE_TIER_COMMERCE_UPSELL` below, appended per
+ * SURFACE — see its own docblock for the rule; do not restate it here.
  */
 export const FREE_TIER_LIMIT_MESSAGE =
   "Rate limit reached for anonymous access. Try again in a minute.";
@@ -355,18 +392,22 @@ export const FREE_TIER_LIMIT_MESSAGE =
 /**
  * Upsell sentence appended to the limit/capacity messages — ONLY when the
  * caller passes `commerceCopyAllowed: true`, which `mcp.ts` derives from
- * `commerceCopyAllowedForUa` (an allowlist of POSITIVELY-identified
- * Anthropic clients; unknown UAs fail closed). The base messages stay
- * commerce-free because they reach ChatGPT's model (see
- * `FREE_TIER_LIMIT_MESSAGE`); Anthropic hosts have no such policy, and the
- * anonymous limit is the natural moment to say an account exists — the
- * same conversion point Exa's keyless tier uses ("add your own API key to
- * continue"). Bare domain, no deep link: deep links rot (the `/account/`
+ * the surface: commerce copy is allowed on the GENERIC surface for every
+ * client (spec D5); the chatgpt surface never reaches this path (it 401s
+ * anonymous requests before admission), and OpenAI's app guidelines ban
+ * purchase-promoting copy there anyway. The anonymous limit is the natural
+ * moment to say an account exists — the same conversion point Exa's
+ * keyless tier uses ("add your own API key to continue").
+ *
+ * "up to 2,000 free requests" is the $14 one-time welcome grant, the one
+ * figure with a CI guard behind it (`pricing_claims_unit_test.py` in the
+ * monorepo). It is ONE-TIME: never write "per month" or any recurring
+ * framing. Bare domain, no deep link: deep links rot (the `/account/`
  * path a previous version of this copy used was already stale when it was
  * removed — see `PAYMENT_REQUIRED_REMEDY_FALLBACK` in `mcp.ts`).
  */
 export const FREE_TIER_COMMERCE_UPSELL =
-  "Connecting a Tako account (tako.com) lifts these anonymous-access limits.";
+  "Sign in with your client's MCP authentication for up to 2,000 free requests on a new account, or connect with a Tako API key (tako.com).";
 
 /**
  * Response for an over-limit metered `tools/call`.
@@ -385,9 +426,9 @@ export const FREE_TIER_COMMERCE_UPSELL =
  * (`code: -32000`, distinct from `-32001` auth failures) with a
  * `Retry-After` matching the limiter window.
  *
- * `commerceCopyAllowed` (from `commerceCopyAllowedForUa` in `mcp.ts`)
- * appends `FREE_TIER_COMMERCE_UPSELL`; defaults false so every caller
- * fails closed.
+ * `commerceCopyAllowed` (`surface === "generic"` in `mcp.ts`) appends
+ * `FREE_TIER_COMMERCE_UPSELL`; defaults false so every caller fails
+ * closed.
  */
 export function freeTierLimitResponse(
   requestId: JsonRpcRequestId,

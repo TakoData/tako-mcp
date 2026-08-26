@@ -8,13 +8,13 @@ whether a figure exists before spending a priced search or answer.
 
 Scope matters here: this probes the **proprietary data graph only**, not Tako's web search.
 A miss means the figure is not available as a typed series with a named provider. It does
-not mean Tako cannot answer the question, because `tako_search` and `tako_answer` search the
-full web in the same call by default.
+not mean Tako cannot answer the question, because `tako_search` searches the full web in
+the same call by default.
 
 Report:
 
 - Whether Tako has it, and the **exact metric names** it reports as covered. Those names
-  are what a follow-up `tako_search` or `tako_answer` should use verbatim.
+  are what a follow-up `tako_search` should use verbatim.
 - The `node_id` worth pinning, if one came back.
 - The ready-to-run `next_call`, if the tool returned one.
 

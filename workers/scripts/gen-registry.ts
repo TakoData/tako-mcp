@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
+import { OPTIONAL_TOOL_ALIASES } from "../src/tools/_optional.js";
 import {
   pinAdvisingSentences,
   pinFormProblem,
@@ -29,9 +30,9 @@ import {
 } from "../src/tools/_pin_form_rules.js";
 import {
   isToolOnSurface,
-  toolAnnotationsForClient,
-  WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES,
+  toolAnnotationsForSurface,
 } from "../src/tools/_surface.js";
+import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 
 // ---------------------------------------------------------------------------
@@ -70,7 +71,6 @@ export const MCP_TOOL_ALLOWLIST = [
  * cannot drift; the CHOICE of tools is editorial and lives here.
  */
 export const LOBEHUB_TOOL_ALLOWLIST = [
-  "tako_answer",
   "tako_available_data",
   "tako_contents",
   "tako_search",
@@ -195,39 +195,21 @@ export function assertPinFormInDocs(
 }
 
 /**
- * Assert that `chatgpt-app-submission.json` matches the runtime ChatGPT
- * descriptors. The submission file is hand-maintained (its justifications
- * and test cases cannot be generated), so this validates instead of
- * emitting: the declared tool set must equal ChatGPT's default
- * AUTHENTICATED tool surface, and each tool's annotation hints must equal
- * what `toolAnnotationsForClient(tool, "chatgpt")` actually serves.
- * Without this, an edit to a tool's annotations (canonical or
- * `annotationsByClient`) would leave the submitted app metadata claiming
- * something production no longer serves.
- *
- * The anonymous free-tier ChatGPT surface is asserted separately as an
- * EQUALITY: the ChatGPT link-account flow requires auth-only tools to
- * stay listed pre-auth (`CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in
- * `tools/_surface.ts`), so the anonymous ChatGPT listing must match the
- * declared tools exactly — growing past the submission and shrinking
- * below it are both errors. `tako_contents` / `tako_visualize` only
- * EXECUTE on an OAuth-linked connection, which is what the submission's
- * test cases assume.
- *
- * Transitive consequence (deliberate, worth stating): because BOTH the
- * authenticated ChatGPT surface and the anonymous ChatGPT surface must
- * equal the declared tools, the two surfaces are necessarily IDENTICAL —
- * every submitted ChatGPT tool is visible pre-auth. That is the current
- * product intent (OpenAI's link-account UI needs pre-auth listing). A
- * future ChatGPT tool that should stay HIDDEN until sign-in cannot exist
- * under this check; supporting one means relaxing the anonymous-side
- * equality back to "anonymous ⊆ declared" plus an explicit allowlist of
- * intentionally-hidden-pre-auth names — do that deliberately, not by
- * listing the tool anonymously to silence the error.
+ * Assert that `chatgpt-app-submission.json` matches the runtime chatgpt
+ * SURFACE (`https://mcp.tako.com/mcp/chatgpt`). The submission file is
+ * hand-maintained (its justifications and test cases cannot be
+ * generated), so this validates instead of emitting: the declared tool
+ * set must equal the chatgpt surface's default tool set (the surface is
+ * OAuth-only — no anonymous state exists there, spec D9), and each
+ * tool's annotation hints must equal what
+ * `toolAnnotationsForSurface(tool, "chatgpt")` actually serves. Without
+ * this, an edit to a tool's annotations (canonical or
+ * `annotationsBySurface`) would leave the submitted app metadata
+ * claiming something production no longer serves.
  */
 export function assertChatgptSubmissionParity(
   tools: ReadonlyArray<
-    Pick<ToolModule, "name" | "annotations" | "annotationsByClient">
+    Pick<ToolModule, "name" | "annotations" | "annotationsBySurface">
   >,
   submissionJson: string,
 ): void {
@@ -241,99 +223,36 @@ export function assertChatgptSubmissionParity(
   }
   const declaredTools = submission.tools;
 
-  // The submission covers the DEFAULT production MCP URL over an
-  // AUTHENTICATED (OAuth-linked) connection: no `?tools=` opt-ins, client
-  // detected as chatgpt, tier "authenticated".
+  // The submission covers the chatgpt surface's default listing: no
+  // `?tools=` opt-ins, OAuth-linked (the only state the surface serves).
   const noOptIns: ReadonlySet<string> = new Set();
   const expected = new Map(
     tools
-      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns, "authenticated"))
-      .map((t) => [t.name, toolAnnotationsForClient(t, "chatgpt")]),
+      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns))
+      .map((t) => [t.name, toolAnnotationsForSurface(t, "chatgpt")]),
   );
 
   const problems: string[] = [];
   const declaredNames = new Set(Object.keys(declaredTools));
   for (const name of expected.keys()) {
     if (!declaredNames.has(name)) {
-      problems.push(`missing tool "${name}" (on ChatGPT's default surface)`);
+      problems.push(`missing tool "${name}" (on the chatgpt surface)`);
     }
   }
   for (const name of declaredNames) {
     if (!expected.has(name)) {
-      problems.push(`extra tool "${name}" (not on ChatGPT's default surface)`);
+      problems.push(`extra tool "${name}" (not on the chatgpt surface)`);
     }
   }
 
-  // The anonymous ChatGPT surface must EQUAL the declared tools, both
-  // directions. Outgrowing the submission would show OpenAI review
-  // tooling an undeclared tool; SHRINKING below it (e.g. deleting a name
-  // from CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES) would remove a
-  // submitted tool from the pre-link listing and silently break its
-  // link-account affordance — the exact regression the discoverability
-  // change exists to prevent (PR #183 review).
-  const freeChatgptSurface = new Set(
-    tools
-      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns, "free"))
-      .map((t) => t.name),
-  );
-  for (const name of freeChatgptSurface) {
-    if (!declaredNames.has(name)) {
-      problems.push(
-        `tool "${name}" is on the anonymous free-tier ChatGPT surface but not declared in the submission`,
-      );
-    }
-  }
-  for (const name of declaredNames) {
-    if (!freeChatgptSurface.has(name)) {
-      problems.push(
-        `tool "${name}" is declared in the submission but missing from the anonymous free-tier ChatGPT surface (link-account UI needs it listed pre-auth) — fix by restoring the name in CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES / FREE_TIER_TOOL_NAMES (workers/src/tools/_surface.ts, workers/src/freetier.ts), NOT by editing the submission`,
-      );
-    }
-  }
-
-  // The submission covers the ChatGPT PRODUCT, and the product has two MCP
-  // transports: chatgpt.com's connector AND the desktop app (detected as
-  // "codex"). Every surface equality above is asserted against "chatgpt"
-  // only, so without this block a revert of codex's FAMILY membership
-  // (dropping it from `isChatGptFamilyClient`) would leave `registry:check`
-  // green while the desktop app lists a DIFFERENT tool set than the
-  // submission declares — review finding on PR #239.
-  //
-  // Deliberately compared MODULO the widget-default-on names: this check
-  // runs as a DEPLOY GATE (workers-deploy.yml), and the widget flip's only
-  // rollback lever is removing `codex` from `isWidgetClient` (there is no
-  // widget kill switch in `Env`). That one-line revert drops the
-  // default-on `tako_visualize` from codex while chatgpt keeps it — a raw
-  // surface equality here would fail the gate and BLOCK the rollback
-  // deploy, telling the operator to undo their rollback (round-3 review
-  // finding on PR #239). So the gate asserts only what the FAMILY
-  // predicate feeds; codex's widget membership is pinned in the test
-  // suites instead (_surface.test.ts membership table, index.test.ts,
-  // mcp.test.ts), which fail loudly without holding a deploy hostage.
-  for (const tier of ["authenticated", "free"] as const) {
-    const familySurface = (client: "chatgpt" | "codex"): string[] =>
-      tools
-        .filter(
-          (t) =>
-            !WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES.has(t.name) &&
-            isToolOnSurface(t.name, client, noOptIns, tier),
-        )
-        .map((t) => t.name)
-        .sort();
-    const chatgptSurface = familySurface("chatgpt");
-    const codexSurface = familySurface("codex");
-    if (JSON.stringify(codexSurface) !== JSON.stringify(chatgptSurface)) {
-      problems.push(
-        `codex (ChatGPT desktop app) ${tier} surface [${codexSurface.join(
-          ", ",
-        )}] diverges from chatgpt's [${chatgptSurface.join(
-          ", ",
-        )}] (widget-default-on names excluded) — the submission describes the ChatGPT product, which includes the desktop app; restore family membership in workers/src/tools/_surface.ts`,
-      );
-    }
-  }
-
-  const HINT_KEYS = ["readOnlyHint", "openWorldHint", "destructiveHint"] as const;
+  // All FOUR MCP hints: OpenAI review (2026-08-25) rejects hints "not
+  // explicitly set to true or false (not null)".
+  const HINT_KEYS = [
+    "readOnlyHint",
+    "openWorldHint",
+    "destructiveHint",
+    "idempotentHint",
+  ] as const;
   for (const [name, resolved] of expected) {
     const declared = declaredTools[name];
     if (declared === undefined) continue;
@@ -353,7 +272,7 @@ export function assertChatgptSubmissionParity(
     throw new Error(
       `chatgpt-app-submission.json drift — submitted app metadata out of sync with runtime ChatGPT descriptors:\n  ${problems.join(
         "\n  ",
-      )}\nEach problem line names its remediation; for annotation/tool-set drift, update chatgpt-app-submission.json to match the runtime surface (toolAnnotationsForClient(tool, "chatgpt")); for a shrunken anonymous surface, restore the tool-set constants in workers/src.`,
+      )}\nEach problem line names its remediation; for annotation/tool-set drift, update chatgpt-app-submission.json to match the runtime surface (toolAnnotationsForSurface(tool, "chatgpt")).`,
     );
   }
 }
@@ -369,6 +288,13 @@ const TOOLS_DIR = resolve(WORKERS_DIR, "src", "tools");
 const METADATA_PATH = resolve(REPO_ROOT, "registry", "metadata.json");
 const REGISTRY_PATH = resolve(REPO_ROOT, "registry", "server.json");
 const LOBEHUB_PATH = resolve(REPO_ROOT, "registry", "lhm.plugin.json");
+
+/**
+ * The surface `lhm.plugin.json`'s `cloudEndpoint` resolves to. Change the
+ * endpoint's path and change this with it — the reachability guard below is
+ * only as correct as this pairing.
+ */
+const LOBEHUB_SURFACE: Surface = "generic";
 const BARREL_PATH = resolve(TOOLS_DIR, "_registry.ts");
 const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 // The short index. Agents fetch `llms.txt` and `llms-full.txt` alike to learn
@@ -393,6 +319,19 @@ const SKILL_PATHS = [
   resolve(REPO_ROOT, "skills", "tako-web-traffic", "SKILL.md"),
 ];
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
+/**
+ * Hand-written distribution listings. Neither is generated, so both drifted
+ * silently when four tools moved behind `?tools=` and the UA classifier was
+ * deleted: `smithery.yaml` advertised all four against a bare `/mcp`, and
+ * `agent.json` still claimed `tako_visualize` was "on by default for ChatGPT
+ * and Claude" — true only under the classifier. Enumerated here for the
+ * opt-in-disclosure guard for the same reason `SKILL_PATHS` is: close the gap
+ * by enumeration rather than waiting for the next survivor.
+ */
+const LISTING_PATHS = [
+  resolve(REPO_ROOT, "registry", "smithery.yaml"),
+  resolve(REPO_ROOT, "agent.json"),
+];
 
 // Filename conventions for the tools/ directory. A tool module is any `.ts`
 // file that does NOT match one of the following:
@@ -608,6 +547,17 @@ export function buildLobehubPlugin(
       inputSchema: z.toJSONSchema(tool.inputSchema, { target: "draft-7" }),
     };
   });
+  // Only `version` and `tools` are regenerated. EVERYTHING ELSE — including
+  // `description` — is carried through from the committed file, so trimming
+  // the allowlist does NOT correct prose that advertises the tool you just
+  // removed. That already happened: the tools array dropped `tako_answer`
+  // while the description went on saying "Answer returns grounded prose" in
+  // the same sentence that names `cloudEndpoint`. Neither guard can catch it
+  // — 2b reads tool names from the allowlist, 2c matches tool names in text,
+  // and "Answer" is a capability word. Matching capability words means a
+  // hand-written vocabulary, which is banned for the same reason the
+  // row-pricing guard stops at `workers/src`. So: after changing
+  // LOBEHUB_TOOL_ALLOWLIST, re-read `description` by hand.
   return { ...committed, version, tools };
 }
 
@@ -700,6 +650,68 @@ async function main(): Promise<void> {
     if (missing.length > 0) parts.push(`allowlist entries with no tool file: ${missing.join(", ")}`);
     throw new Error(
       `MCP_TOOL_ALLOWLIST mismatch — update the allowlist in gen-registry.ts.\n  ${parts.join("\n  ")}`,
+    );
+  }
+
+  // 2b. LobeHub reachability: the listing advertises its tools against a bare
+  //     `cloudEndpoint` with no `?tools=`, so every name in it must be
+  //     registered by DEFAULT on that endpoint's surface. `tako_answer` sat
+  //     here after moving behind `?tools=answer`, which promised LobeHub
+  //     installs a tool the server never registers — the SDK answers "tool
+  //     not found" and the listing is the only thing that said otherwise.
+  //     `--check` diffs the generated JSON against the committed JSON, so it
+  //     cannot see this: both sides agree, and both are wrong.
+  const lobehubUnreachable = LOBEHUB_TOOL_ALLOWLIST.filter(
+    (name) => !isToolOnSurface(name, LOBEHUB_SURFACE, new Set<string>()),
+  );
+  if (lobehubUnreachable.length > 0) {
+    throw new Error(
+      `LOBEHUB_TOOL_ALLOWLIST advertises tools that ${LOBEHUB_SURFACE} does not register by default: ` +
+        `${lobehubUnreachable.join(", ")}\n  ` +
+        `A LobeHub install connects to lhm.plugin.json's cloudEndpoint with no \`?tools=\`, so an ` +
+        `opt-in tool listed here resolves to the SDK's "tool not found". Drop it from the allowlist, ` +
+        `or make it default-on for that surface.`,
+    );
+  }
+
+  // 2c. Opt-in disclosure: a hand-written listing may name an opt-in tool, but
+  //     it must also name the `?tools=` alias that turns it on. Otherwise a
+  //     reader installs against the listing's own URL and the tool is not
+  //     there. Derived from OPTIONAL_TOOL_ALIASES, so a tool moving surface
+  //     fails here instead of drifting.
+  //
+  //     KEYED ON TOOL NAMES, so it only sees a listing that names them.
+  //     `smithery.yaml` names all six and is fully covered; `agent.json`
+  //     describes capabilities in prose ("Create an embeddable Tako
+  //     chart/card") and names exactly one tool, so this guard checked one
+  //     entry there. A prose claim about a default — which is what actually
+  //     went stale in `agent.json`, "on by default for ChatGPT and Claude" —
+  //     is NOT caught. Adding a tool name to that file brings it in scope;
+  //     nothing brings the prose in scope short of generating the file.
+  const aliasFor = new Map<string, string[]>();
+  for (const [alias, names] of Object.entries(OPTIONAL_TOOL_ALIASES)) {
+    for (const name of names) {
+      aliasFor.set(name, [...(aliasFor.get(name) ?? []), alias]);
+    }
+  }
+  const disclosureProblems: string[] = [];
+  for (const listingPath of LISTING_PATHS) {
+    const text = readFileSync(listingPath, "utf8");
+    const where = relative(REPO_ROOT, listingPath);
+    for (const [name, aliases] of aliasFor) {
+      // Word-boundary, so `tako_agent` does not match `tako_agent_start`.
+      if (!new RegExp(`\\b${name}\\b`).test(text)) continue;
+      if (aliases.some((alias) => text.includes(`?tools=${alias}`))) continue;
+      disclosureProblems.push(
+        `${where} names ${name} without naming ?tools=${aliases.join(" or ?tools=")}`,
+      );
+    }
+  }
+  if (disclosureProblems.length > 0) {
+    throw new Error(
+      `listing drift — a distribution listing advertises an opt-in tool without its opt-in form:\n  ${disclosureProblems.join(
+        "\n  ",
+      )}\nAdd the \`?tools=\` form to that tool's entry, or remove the tool from the listing.`,
     );
   }
 

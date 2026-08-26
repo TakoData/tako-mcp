@@ -25,7 +25,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
-  client: "claude",
+  surface: "generic",
 };
 
 // Full thin_viz/create wire fixture matching the backend's actual response.
@@ -358,16 +358,15 @@ describe("tako_visualize input schema", () => {
 // --- Contract guard tests (A7) ---
 
 describe("tako_visualize chart prefetch, exactly like tako_search", () => {
-  it.each(["chatgpt", "codex"] as const)(
-    "sends %s dimensions only, never the whole PNG",
-    async (client) => {
-      // Third of the three `bakeImage: !isChatGptFamilyClient(ctx.client)`
-      // gates named in the staged-rollout checklist (search, answer,
-      // visualize). Search's gate is pinned in mcp.test.ts and answer's in
-      // tako_answer.test.ts; without this one, a per-tool revert here
-      // would bake the full PNG into every desktop-app visualize call —
-      // paying the render latency for a payload the widget discards —
-      // while the suite stayed green.
+  it.each(["chatgpt"] as const)(
+    "sends the %s surface dimensions only, never the whole PNG",
+    async (surface) => {
+      // Third of the three `bakeImage: ctx.surface !== "chatgpt"` gates
+      // (search, answer, visualize). Search's gate is pinned in
+      // mcp.test.ts and answer's in tako_answer.test.ts; without this one,
+      // a per-tool revert here would bake the full PNG into every
+      // chatgpt-surface visualize call — paying the render latency for a
+      // payload the widget discards — while the suite stayed green.
       const seen: { url: string; range: string | null }[] = [];
       vi.spyOn(globalThis, "fetch").mockImplementation((async (
         input: RequestInfo | URL,
@@ -388,7 +387,7 @@ describe("tako_visualize chart prefetch, exactly like tako_search", () => {
           image_url: "https://x.test/api/v1/image/card_abc123/",
           pub_id: "card_abc123",
         } as never,
-        { ...CTX, client } as never,
+        { ...CTX, surface } as never,
       );
       expect(seen).toHaveLength(1);
       expect(seen[0]!.range).not.toBeNull();

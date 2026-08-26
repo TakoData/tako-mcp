@@ -5,7 +5,7 @@ import { djangoPost, djangoGet } from "../django.js";
 import tool, { AGENT_POLL_BUDGET_MS, AGENT_WAIT_CEILING_S, buildAgentBody, pollAgentRun } from "./tako_agent.js";
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
 
-const ctx = { token: "t", env: {} as never, client: "claude" as const, sendProgress: vi.fn() };
+const ctx = { token: "t", env: {} as never, surface: "generic" as const, sendProgress: vi.fn() };
 
 afterEach(() => {
   vi.useRealTimers();

@@ -127,7 +127,7 @@ const resolvedRefSchema = z.object({
 });
 
 const nextCallSchema = z.object({
-  tool: z.enum(["tako_search", "tako_answer"]),
+  tool: z.enum(["tako_search"]),
   query: z.string(),
   node_ids: z.array(z.string()),
   strict: z.boolean(),
@@ -216,12 +216,13 @@ const tako_available_data = {
     title: "Tako: Available Data",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
-  annotationsByClient: {
+  annotationsBySurface: {
     // Apps review reads `openWorldHint` as "publishes/mutates public or
     // third-party state", not MCP's domain-of-interaction — retrieval is
-    // closed-world there. See `annotationsByClient` in types.ts.
+    // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
   // Declared as the FULL internal shape (assignable to the slim advertised

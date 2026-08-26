@@ -2,16 +2,17 @@
  * `tako_agent_start` — kick off a Tako Answer Agent run asynchronously and
  * return a `run_id` immediately.
  *
- * Registered ONLY on clients that don't honor MCP
- * `notifications/progress` for tool-call timeout extension (currently:
- * ChatGPT). On those clients the single-tool `tako_agent` path can't
- * survive the host's per-call timeout (~60 s), so we fall back to a
+ * Registered ONLY on the chatgpt surface (`CHATGPT_ONLY_TOOL_NAMES` in
+ * `_surface.ts`) — the request path decides, never a client sniff.
+ *
+ * Why that surface: ChatGPT's Apps SDK sends no `progressToken`, so the
+ * single-tool `tako_agent` path has no way to reset the host's ~60s per-call
+ * timeout and cannot survive a ~30-90s run. This pair replaces it with a
  * non-blocking kickoff plus a separate `tako_agent_wait` poll tool.
  *
- * On Claude.ai (which sends a `progressToken` and resets timeouts on
- * progress events), this tool is NOT registered — the single `tako_agent`
- * tool handles the full dispatch+poll in one call. See `_surface.ts`'s
- * `CHATGPT_ONLY_TOOL_NAMES` set.
+ * The generic surface keeps the single `tako_agent` instead: a host that
+ * sends a `progressToken` and honors `resetTimeoutOnProgress` handles the
+ * full dispatch+poll in one call, which is the better shape when available.
  *
  * Wire path: POSTs to `/api/v1/agent/answer/runs` with `effort: "medium"`
  * (Tako's Answer Agent). Backend responds immediately with
@@ -40,7 +41,7 @@ const tako_agent_start = {
   description: [
     "Start a Tako Answer Agent run; returns a `run_id` immediately (the agent runs ~30–90s server-side).",
     "",
-    "Best for: open-ended questions that need figuring out — cohorts, ranking or filtering, multi-step reasoning. For a known value use `tako_search` / `tako_answer`.",
+    "Best for: open-ended questions that need figuring out — cohorts, ranking or filtering, multi-step reasoning. For a known value use `tako_search`.",
     "",
     "Workflow: tell the user it's starting, then call `tako_agent_wait` with the `run_id`; repeat until `status` is `completed` or `failed`.",
   ].join("\n"),
@@ -53,13 +54,15 @@ const tako_agent_start = {
     // `run_id`/`thread_id`. Non-destructive: it only ever adds runs.
     readOnlyHint: false,
     destructiveHint: false,
+    // idempotentHint false: each call dispatches a new agent run.
+    idempotentHint: false,
     openWorldHint: true,
   },
-  annotationsByClient: {
+  annotationsBySurface: {
     // Apps review reads `openWorldHint` as "publishes/mutates public or
-    // third-party state", not MCP's domain-of-interaction, so the
-    // open-world retrieval flag drops for the ChatGPT family. See
-    // `annotationsByClient` in types.ts.
+    // third-party state", not MCP's domain-of-interaction, so the open-world
+    // retrieval flag drops on the chatgpt surface. See
+    // `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<Output> {

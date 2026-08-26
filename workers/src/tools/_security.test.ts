@@ -9,25 +9,20 @@ import {
 
 describe("securitySchemesForTool", () => {
   const OAUTH2 = { type: "oauth2", scopes: ["mcp"] };
-  const ANON_CHATGPT = { client: "chatgpt", tier: "free" } as const;
+  const ANON_GENERIC = { surface: "generic", tier: "free" } as const;
 
-  it("advertises noauth + oauth2 for the free tools on an ANONYMOUS ChatGPT-family listing", () => {
-    // Parameterized over the family: the desktop app (codex) reads the
-    // same Apps SDK metadata as chatgpt.com. A revert of the
-    // isChatGptFamilyClient call in securitySchemesForTool would pass a
-    // chatgpt-only version of this test.
-    for (const client of ["chatgpt", "codex"] as const) {
-      for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
-        expect(securitySchemesForTool(name, { client, tier: "free" })).toEqual([
-          { type: "noauth" },
-          OAUTH2,
-        ]);
-      }
+  it("advertises noauth + oauth2 for the free tools on an ANONYMOUS generic listing", () => {
+    for (const name of ["tako_search", "tako_available_data"]) {
+      expect(securitySchemesForTool(name, ANON_GENERIC)).toEqual([
+        { type: "noauth" },
+        OAUTH2,
+      ]);
     }
   });
 
   it("advertises oauth2 only for auth-required tools, even anonymously", () => {
     for (const name of [
+      "tako_answer",
       "tako_contents",
       "tako_visualize",
       "tako_agent",
@@ -36,24 +31,24 @@ describe("securitySchemesForTool", () => {
       "get_credit_balance",
       "tako_graph_search",
     ]) {
-      expect(securitySchemesForTool(name, ANON_CHATGPT)).toEqual([OAUTH2]);
+      expect(securitySchemesForTool(name, ANON_GENERIC)).toEqual([OAUTH2]);
     }
   });
 
   it("never advertises noauth on AUTHENTICATED connections (the caller is already linked)", () => {
     for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
       expect(
-        securitySchemesForTool(name, { client: "chatgpt", tier: "authenticated" }),
+        securitySchemesForTool(name, { surface: "chatgpt", tier: "authenticated" }),
       ).toEqual([OAUTH2]);
     }
   });
 
-  it("keeps non-family clients on the pre-existing oauth2-only constant", () => {
-    // codex is deliberately NOT in this loop — it is ChatGPT family and
-    // takes the noauth+oauth2 branch above.
-    for (const client of ["claude", "unknown"] as const) {
+  it("never advertises noauth on the chatgpt surface — it 401s anonymous requests before listing", () => {
+    // tier "free" can never be SERVED on /mcp/chatgpt (handleMcpRequest
+    // 401s first); this pins the metadata to match the enforcement.
+    for (const surface of ["chatgpt"] as const) {
       for (const tier of ["free", "authenticated"] as const) {
-        expect(securitySchemesForTool("tako_search", { client, tier })).toEqual([
+        expect(securitySchemesForTool("tako_search", { surface, tier })).toEqual([
           OAUTH2,
         ]);
       }
@@ -114,9 +109,14 @@ describe("authRequiredToolResult", () => {
 });
 
 describe("withToolSecuritySchemes", () => {
-  // Production's only caller context: ChatGPT client; anonymous tier so
-  // the free/gated scheme split is visible in the assertions.
-  const ANON_LIST_CTX = { client: "chatgpt", tier: "free" } as const;
+  // Production's only caller context. `mcp.ts` runs this transformer solely
+  // when `surface === "chatgpt"` (see `withChatGptToolSecuritySchemes`), so a
+  // `generic` fixture here would assert a wire shape production cannot
+  // produce — `securitySchemesForTool` emits `noauth` only on
+  // generic + free, which never reaches this function. That per-tool split is
+  // covered in the `securitySchemesForTool` describe above, where it IS
+  // reachable; this block tests the transformer.
+  const ANON_LIST_CTX = { surface: "chatgpt", tier: "free" } as const;
   const listResponse = () => ({
     jsonrpc: "2.0",
     id: 2,
@@ -128,17 +128,23 @@ describe("withToolSecuritySchemes", () => {
     },
   });
 
-  it("adds a top-level securitySchemes to every tool descriptor", () => {
+  it("attaches each descriptor the schemes securitySchemesForTool resolves", () => {
     const body = listResponse();
-    const out = withToolSecuritySchemes(body, ANON_LIST_CTX) as typeof body & {
-      result: { tools: Array<{ securitySchemes?: unknown }> };
+    const out = withToolSecuritySchemes(body, ANON_LIST_CTX) as {
+      result: { tools: Array<{ name: string; securitySchemes?: unknown }> };
     };
-    expect(out.result.tools[0]?.securitySchemes).toEqual([
-      { type: "noauth" },
-      { type: "oauth2", scopes: ["mcp"] },
-    ]);
-    expect(out.result.tools[1]?.securitySchemes).toEqual([
-      { type: "oauth2", scopes: ["mcp"] },
+    // Derived, not hardcoded: this asserts the transformer DELEGATES rather
+    // than re-deriving the scheme list, so the two can never disagree.
+    for (const tool of out.result.tools) {
+      expect(tool.securitySchemes, tool.name).toEqual(
+        securitySchemesForTool(tool.name, ANON_LIST_CTX),
+      );
+    }
+    // On the chatgpt surface every tool is OAuth-only — no `noauth` anywhere,
+    // which is the property OpenAI's review requires of the submitted surface.
+    expect(out.result.tools.map((t) => t.securitySchemes)).toEqual([
+      [{ type: "oauth2", scopes: ["mcp"] }],
+      [{ type: "oauth2", scopes: ["mcp"] }],
     ]);
   });
 

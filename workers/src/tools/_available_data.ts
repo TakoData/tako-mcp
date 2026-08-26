@@ -355,7 +355,14 @@ function matchLine(m: CoverageMatch): string {
  * `Unearned Revenues`). The entity rides in the query TEXT instead.
  */
 export interface NextCall {
-  tool: "tako_search" | "tako_answer";
+  /**
+   * Always `tako_search`. Kept as a field (not dropped) because it rides in
+   * the advertised `structuredContent.next_call`, but narrowed to a single
+   * literal so the compiler refuses a handle naming a tool the default
+   * surface does not register — `tako_answer` is `?tools=answer` opt-in, and
+   * a handle labelled "run verbatim" that names it is a dead end.
+   */
+  tool: "tako_search";
   query: string;
   node_ids: string[];
   strict: boolean;
@@ -463,12 +470,14 @@ export const toRef = (n: { id: string; name: string; type: string }): ResolvedRe
 });
 
 /**
- * The runnable handle for a resolved pair: `tako_answer` with the METRIC node
+ * The runnable handle for a resolved pair: `tako_search` with the METRIC node
  * pinned and `strict: true`, the entity named in the query text.
  *
- * `tako_answer` rather than `tako_search` because the lookup path answers a
- * specific question ("what is X's Y?") and answer returns the synthesised
- * value alongside its cited cards. Null when no metric resolved — a handle
+ * `tako_search`, NOT `tako_answer`: answer moved behind `?tools=answer`, so it
+ * is registered on neither default surface. This handle reaches the model as
+ * "next_call (run verbatim)", so a name that is not on the surface resolves to
+ * the SDK's bare "tool not found" — the discovery path's handle already names
+ * tako_search, and the two now agree. Null when no metric resolved: a handle
  * pointing at a metric we could not find would spend a priced call on a guess.
  */
 export function buildPairNextCall(
@@ -498,10 +507,10 @@ export function buildPairNextCall(
   // `strict` without a pin steers nothing (measured), so the unpinned form
   // drops both together rather than leaving a flag that does no work.
   if (opts?.unpinned === true) {
-    return { tool: "tako_answer", query: `${subject} ${metricQuery}`, node_ids: [], strict: false };
+    return { tool: "tako_search", query: `${subject} ${metricQuery}`, node_ids: [], strict: false };
   }
   return {
-    tool: "tako_answer",
+    tool: "tako_search",
     query: `${subject} ${metricQuery}`,
     node_ids: [pair.metric.node_id],
     strict: true,
@@ -706,7 +715,7 @@ export function buildSummary(input: {
   } else if (example) {
     blocks.push(
       "",
-      `The exact names are listed under each match above. Pick the one you actually need and pull it with tako_search or tako_answer as entity + metric (e.g. "${example.query}"). To land on exactly that metric, pin ITS node id ALONE from structuredContent.matches[].coverage.items[] with strict:true — adding the entity's node id widens the filter back out.`,
+      `The exact names are listed under each match above. Pick the one you actually need and pull it with tako_search as entity + metric (e.g. "${example.query}"). To land on exactly that metric, pin ITS node id ALONE from structuredContent.matches[].coverage.items[] with strict:true — adding the entity's node id widens the filter back out.`,
     );
   }
 

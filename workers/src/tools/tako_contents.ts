@@ -12,8 +12,10 @@
  * search/answer set `content` via the lenient supports_data_export() while
  * this endpoint gates on the stricter export_safe(), so a content-bearing
  * card can still 403 (the handler maps that to a self-correcting message).
- * A Tako card CSV is capped at a 20-row free default in BOTH modes;
- * `max_rows` raises that up to a 2000-row ceiling — there is no uncapped export.
+ * A Tako card CSV is capped at a 20-row default in BOTH modes; `max_rows`
+ * raises that up to a 2000-row ceiling — there is no uncapped export. Every
+ * row delivered is billed per 1k; tako#29572 (2026-08-21) removed the row
+ * allowance, so no copy here may describe a row as costless.
  * `mode` controls only delivery, not the row count: "inline" (default) returns
  * the (capped) content in the response body — total_rows/truncated report the
  * true size — so the model can read it directly; "url" returns a short-lived
@@ -37,13 +39,13 @@ import {
 import type { ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Fetch the real content behind result URLs (1-10 per call) from tako_search or tako_answer — the rows behind a Tako card, or a web page's full text.",
+  "Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.",
   "",
-  "Best for: getting the full data to compute over or quote after `tako_search` / `tako_answer` — a search result carries only a preview and a chart, not its rows.",
+  "Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline (and, with include_contents: true, a rows preview), not the full series.",
   "",
-  "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Get their figures from `tako_answer` instead: pin the card's METRIC node_id with strict:true and state the period you need in the query (e.g. \"...for FY2023-FY2025\"), which is what turns a headline number into a series. Call this tool only on `exportable: true` cards; even then a rare card 403s — bounce to tako_answer the same way, do not retry here.",
+  "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.",
   "",
-  "Web URLs always work — so this is also the fallback path when tako_search / tako_answer surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
+  "Web URLs always work — so this is also the fallback path when tako_search surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
 ].join("\n");
 
 // Curate the input from the contract explicitly: `.pick` only the fields we
@@ -147,7 +149,7 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
     .lte(2000)
     .optional()
     .describe(
-      "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (use max_chars).",
+      "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the 20-row default; raise up to 2,000 to export more. Rows are billed per 1,000 delivered. Ignored for web URLs (use max_chars).",
     ),
   // Web-text character cap, passed through to the wire. The backend default is
   // the FULL page text (up to 1M chars ≈ 250k tokens — observed in the wild and
@@ -232,8 +234,9 @@ const itemSchema = z.object({
   // Present only when the fetched URL differs from the requested one (redirect).
   source_url: z.string().optional(),
   // USD actually charged for this artifact. Web text is metered per page; a
-  // Tako-card CSV bills a per-export baseline plus a per-1,000-row rate on rows
-  // beyond the free 20-row allowance. Surfaced so the agent can report the cost.
+  // Tako-card CSV bills a per-1,000-row rate on every row delivered (the free
+  // row allowance was removed in tako#29572, 2026-08-21). Surfaced so the
+  // agent can report the cost.
   cost: z.number(),
 });
 
@@ -474,12 +477,13 @@ const takoContents = {
     title: "Tako: Fetch Contents",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
-  annotationsByClient: {
+  annotationsBySurface: {
     // Apps review reads `openWorldHint` as "publishes/mutates public or
     // third-party state", not MCP's domain-of-interaction — retrieval is
-    // closed-world there. See `annotationsByClient` in types.ts.
+    // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<Output> {

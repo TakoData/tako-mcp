@@ -45,11 +45,18 @@ keying means little for hosted MCP hosts (claude.ai, ChatGPT, and
 similar egress from a handful of platform IPs); it's a fairness layer.
 The **genuinely global ceiling is Django's Redis-backed per-user
 throttling on the free-tier account** — every anonymous request
-authenticates as that one user, landing on `_SEARCH_USER` (720/min,
-`/api/v3/search/`), `_DRF_USER` (720/min, `/api/v1/answer/`), and
-`_GRAPH_TIER` (180/min + 10,000/day, `/api/v1/graph/*`) in
-`app/backend/api/throttling/policy.py`. Note none of these weighs tool
-cost: the worst case is that many `tako_answer` calls.
+authenticates as that one user. Anonymous traffic can only reach two
+tools, so it lands on two policies: `tako_search` on `/api/v3/search/`
+and `tako_available_data` on `/api/v1/graph/*`.
+
+**Read the live numbers from `app/backend/api/throttling/policy.py` in the
+monorepo, not from here.** The table that used to sit in this paragraph
+went stale the moment `tako_answer` moved behind `?tools=answer`: it named
+`_DRF_USER` (`/api/v1/answer/`), an endpoint no anonymous connection can
+reach, because `tako_answer` is opt-in AND absent from
+`FREE_TIER_TOOL_NAMES`. `freetier.ts` carries the same pointer for the
+same reason. Note no policy weighs tool cost: the worst case is that many
+`tako_search` calls.
 
 ### Measured behaviour
 
@@ -102,27 +109,26 @@ measurement of **sessions per minute per colo until handshakes fail**, not
 just admitted-call counts, which cannot see a rejected handshake at all.
 
 Per-call cost is bounded by the tool schemas: the anonymous toolset cannot
-select the expensive `deep` tier. `tako_answer` does not expose `effort` and
-`tako_search` constrains it to `["fast", "instant"]`.
+select the expensive `deep` tier (`tako_search` constrains `effort` to
+`["fast", "instant"]`), and anonymous calls never inline billed rows
+(`include_contents: true` is refused before the handler runs).
 
-Behavior when active:
+Behavior when active (the free tier serves `/mcp` only — `/mcp/chatgpt`
+401s anonymous requests before admission):
 
-- Anonymous connections can EXECUTE exactly three tools:
-  `tako_available_data`, `tako_search`, `tako_answer`. What is LISTED is
-  User-Agent-dependent: most clients see only those three (everything
-  else hidden), but ChatGPT-family UAs also see `tako_contents` and
-  `tako_visualize` — listed so ChatGPT can offer its per-tool
-  link-account UI, and blocked at dispatch with an
-  `_meta["mcp/www_authenticate"]` challenge instead of executing (see
-  `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`).
+- Anonymous connections can EXECUTE exactly two tools:
+  `tako_available_data` and `tako_search` (`FREE_TIER_TOOL_NAMES`). The
+  LISTING is auth-invariant — the same three default tools as an
+  authenticated connection — so `tako_contents` is listed anonymously
+  and answers sign-in instructions plus an `_meta["mcp/www_authenticate"]`
+  challenge at dispatch instead of executing.
 - Every anonymous request counts against the global ceiling; the per-IP
-  bucket counts only `tools/call`s naming one of the three free tools
+  bucket counts only `tools/call`s naming one of the two free tools
   (the only requests that spend Tako credits). A `tools/call` for any
-  other tool burns no per-IP quota: on most clients it returns "tool not
-  found", and on ChatGPT the two listed-but-gated tools return the
-  sign-in challenge without ever reaching Django;
-  `initialize` / `tools/list` never burn it. IPv4 clients are keyed by
-  address, IPv6 by /64 prefix.
+  other tool burns no per-IP quota: a listed tool answers the sign-in
+  result without ever reaching Django, an unlisted one gets "tool not
+  found"; `initialize` / `tools/list` never burn it. IPv4 clients are
+  keyed by address, IPv6 by /64 prefix.
 - An over-limit `tools/call` (either bucket) returns **HTTP 200 with a
   JSON-RPC tool result** (`isError: true`) carrying a neutral
   capacity/retry message — deliberately not a 429, which MCP SDK clients
@@ -132,17 +138,16 @@ Behavior when active:
 - If the shared account itself runs out of Tako credits (Django 402),
   the tool result carries the same style of capacity message instead of
   the raw billing error.
-- As delivered to ChatGPT-family and unrecognized clients, none of these
-  messages links to an account page, quotes a price, or suggests getting
-  an API key, and a guard test in `freetier.test.ts` keeps it that way:
-  they ship as model-visible text, and OpenAI's commerce policy forbids
-  promoting digital services or credits from an app. On positively
-  identified Anthropic clients ONLY (`commerceCopyAllowedForUa`, fails
-  closed), the limit/capacity messages append `FREE_TIER_COMMERCE_UPSELL`
-  — "Connecting a Tako account (tako.com) lifts these anonymous-access
-  limits." — where no such policy applies. Callers who want their own key
-  get one at https://tako.com/console/api-keys — documented here and on
-  tako.com, never in ChatGPT-visible tool text.
+- The BASE messages link to no account page, quote no price, and suggest
+  no API key, and a guard test in `freetier.test.ts` keeps it that way.
+  Commerce copy keys on the SURFACE: on `/mcp` (the only surface that
+  serves the free tier) the limit/capacity messages append
+  `FREE_TIER_COMMERCE_UPSELL` — "Sign in with your client's MCP
+  authentication for up to 2,000 free requests on a new account, or
+  connect with a Tako API key (tako.com)." — for every client. The
+  chatgpt surface never carries commerce copy (OpenAI's app guidelines
+  ban purchase-promoting text in model-visible output); it never reaches
+  these messages anyway, since it 401s anonymous requests.
 - Each per-IP-metered request logs one line:
   `[free-tier] ip=<key> allowed|limited`.
 - JSON-RPC batch requests (array bodies) are rejected outright with an
@@ -225,17 +230,16 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
    ```bash
    wrangler secret put FREE_TIER_API_KEY --env staging   # paste the API key
    ```
-5. **Verify on staging:** connect an MCP client to
-   `mcp.staging.tako.com/mcp` with no auth. The expected `tools/list`
-   count depends on the User-Agent: with a non-ChatGPT UA (or none)
-   expect exactly the three free tools; with a ChatGPT UA (e.g.
-   `curl -A "ChatGPT/1.0"`) expect five — the three free tools plus
-   `tako_contents` / `tako_visualize`, whose top-level descriptors carry
-   `securitySchemes` and whose anonymous `tools/call` returns an
-   `_meta["mcp/www_authenticate"]` challenge, not results. A
-   `tako_search` call should return real results either way, and the
-   ChatGPT listing should log `[mcp] tools/list securitySchemes
-   injected` in `wrangler tail`. Do NOT expect a specific call to be rate limited — see
+5. **Verify on staging:** run `SMOKE_BASE_URL=https://mcp.staging.tako.com
+   TAKO_SMOKE_API_TOKEN=... npm run smoke` — it asserts the whole surface
+   split: anonymous `/mcp` lists `tako_available_data`, `tako_contents`,
+   `tako_search` (the User-Agent changes nothing); anonymous `tako_contents`
+   and `tako_search` with `include_contents: true` return the
+   `auth_required` tool error, not results; anonymous `/mcp/chatgpt` is a
+   401 with a `www-authenticate` challenge; an authenticated
+   `/mcp/chatgpt` listing carries top-level `securitySchemes` and logs
+   `[mcp] tools/list securitySchemes injected` in `wrangler tail`. Do NOT
+   expect a specific call to be rate limited — see
    "Measured behaviour". To confirm the limiter is wired at all, send a
    sustained burst (a few hundred metered calls at concurrency 8) and check
    that rejections appear.
@@ -326,14 +330,14 @@ for abuse protection, not billing.
 whether to run their OAuth sign-in flow based on getting a 401 from the
 *first* request to `/mcp`. With anonymous access active, that first request
 succeeds anonymously instead — so any newly added connector on such a
-host starts out running against the shared free-tier account (3
+host starts out running against the shared free-tier account (2
 runnable tools, shared quota) rather than prompting the user to sign in
 for their own account. Users must explicitly connect/re-authenticate to
-get off the anonymous tier. ChatGPT is the exception: its Apps SDK keys
-sign-in on per-tool `securitySchemes` plus tool-level
-`_meta["mcp/www_authenticate"]` challenges (both served since PR #183),
-so ChatGPT users DO get a link-account affordance on the gated tools —
-claude.ai and similar hosts still land silently on the anonymous tier.
+get off the anonymous tier. The ChatGPT app is the exception by
+construction: it connects to `/mcp/chatgpt`, which serves no anonymous
+tier at all, so its first request 401s and the Apps SDK runs OAuth —
+claude.ai and similar hosts on `/mcp` still land silently on the
+anonymous tier.
 Consciously accept this onboarding asymmetry before setting
 `FREE_TIER_API_KEY` in production.
 

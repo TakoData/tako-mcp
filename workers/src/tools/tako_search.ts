@@ -26,7 +26,6 @@ import {
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
-import { isChatGptFamilyClient } from "./_surface.js";
 import {
   renderSearchMarkdown,
   searchSlimOutputShape,
@@ -37,7 +36,6 @@ import {
   hoistSourceGlossary,
   INLINE_PREVIEW_ROW_CAP,
   MAX_PREVIEW_ROWS,
-  PINNED_FROM_CARD,
   slimCard,
   slimWebResult,
   takoCardSchema,
@@ -49,17 +47,17 @@ import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.",
   "",
-  `It locates data — and for \`exportable: true\` cards it also includes a free 20-row preview by default (\`include_contents\`) — but a license-gated card carries no rows at all (headline value only, via \`description\`), and a web result is only a snippet, not a value. For a plain "what is X", \`tako_answer\` is the better-suited tool: one written figure beats parsing a preview table yourself, and reaching here first for that costs an extra round trip that re-sends the whole conversation. To ask it about a card you already have, ${PINNED_FROM_CARD}.`,
+  "It locates data. Set `include_contents: true` when you need the values themselves — it inlines each `exportable: true` card's most-recent rows (`preview_rows` caps how many; rows are billed per 1k). Left false (the default), cards still carry headline values and chart links — right for recon and fan-outs. A license-gated card carries no rows at all (headline value only, via `description`), and a web result is only a snippet, not a value.",
   "",
-  "Best for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_answer` or `tako_contents`. It is cheap and fast, and built for exactly this fan-out.",
+  "Best for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_contents`. It is cheap and fast, and built for exactly this fan-out.",
   "",
   "Coverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.",
   "",
-  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric\'s exact name, run `tako_available_data` (free) instead of guessing here.',
+  'Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today\'s sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric\'s exact name, run `tako_available_data` (free) instead of guessing here — then pin the METRIC node id it returns via `node_ids` with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval).',
   "",
-  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with preview rows and chart URLs, plus `web_results`. To read a web result in full, call `tako_contents` on its url (web urls are always fetchable; a card's full csv needs `exportable: true`).",
+  "Data and web come back together — treat them as one result, not an either/or. Returns: `cards` (up to `count`) with chart URLs — and inline preview rows when `include_contents` is true — plus `web_results`. To read a web result in full, call `tako_contents` on its url (web urls are always fetchable; a card's full csv needs `exportable: true`).",
   "",
-  `Non-exportable cards (\`exportable: false\`, usually license-gated) return no rows: read the headline value from the card's \`description\` when it carries one, or get specific figures via \`tako_answer\` — ${PINNED_FROM_CARD} (each such card carries a \`values_hint\` saying exactly this).`,
+  "Non-exportable cards (`exportable: false`, usually license-gated) return no rows on any path: read the headline value from the card's `description` when it carries one (each such card carries a `values_hint` saying exactly this).",
   "",
   "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The cards' actual rows and the web results' snippets ride in structuredContent (cards[].content, web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
 ].join("\n");
@@ -100,9 +98,9 @@ const inputSchema = z.object({
     .describe("Maximum number of results to return per source (1-20)."),
   include_contents: z
     .boolean()
-    .default(true)
+    .default(false)
     .describe(
-      `Inline each Tako card's data preview (default true; preview_rows sets how many rows). Set false — pointers-only, no rows — for large parallel fan-outs or when coverage is unconfirmed (no prior tako_available_data check). DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Full export is a separate tako_contents call, only for cards marked \`exportable: true\`.`,
+      "Set true to inline each Tako card's most-recent rows (`preview_rows` caps how many; rows are billed per 1k) — do this when you need the values themselves. Leave false (the default) for recon and fan-outs: cards still carry headline values and chart links. DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Requires a signed-in connection; anonymous calls that set this are refused with sign-in instructions.",
     ),
   preview_rows: z
     .number()
@@ -111,7 +109,7 @@ const inputSchema = z.object({
     .max(MAX_PREVIEW_ROWS)
     .default(INLINE_PREVIEW_ROW_CAP)
     .describe(
-      `Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}, the free inline allowance the server ships; values above your account's allowance have no effect). Lower it to trim context on broad fan-outs. For MORE than ${INLINE_PREVIEW_ROW_CAP} rows, call tako_contents on the card's url (max_rows up to 2,000 — first ${INLINE_PREVIEW_ROW_CAP} free, priced beyond). Ignored when include_contents is false.`,
+      `Cap on the rows of each card's data inlined when include_contents is true — always the N MOST-RECENT rows (default ${INLINE_PREVIEW_ROW_CAP}). Lower it to trim context and spend on broad fan-outs (rows are billed per 1k). For MORE than the inline preview, call tako_contents on the card's url (max_rows up to 2,000, billed per 1k rows). Ignored when include_contents is false.`,
     ),
   country_code: z
     .string()
@@ -230,14 +228,23 @@ const tako_search = {
     title: "Tako: Search",
     readOnlyHint: true,
     destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
-  annotationsByClient: {
+  annotationsBySurface: {
     // Apps review reads `openWorldHint` as "publishes/mutates public or
     // third-party state", not MCP's domain-of-interaction — retrieval is
-    // closed-world there. See `annotationsByClient` in types.ts.
+    // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
+  // Anonymous connections never inline rows (spec D12): every delivered
+  // row bills, and the shared free-tier account must not pay for them.
+  // Reject — never silently force false — so the model knows which of the
+  // two exits it wants.
+  anonymousInputRejects: (input) =>
+    input["include_contents"] === true
+      ? "Inline rows need a signed-in connection. Retry without include_contents to get the cards, or sign in to include rows."
+      : undefined,
   // Declared as the FULL internal shape (assignable to the slim advertised
   // Output via its loose index signature) so tests and hooks keep real types.
   async handler(input, ctx): Promise<SearchOutput> {
@@ -312,17 +319,23 @@ const tako_search = {
     // true in `_chart_widget.ts`), which renders `embed_url` directly
     // and never reads `image_data_url` from `_meta`. Without this
     // gate we pay the full chart-render latency
-    // (`PNG_FETCH_TIMEOUT_MS` = 8s upper bound) on every ChatGPT
-    // tool call just to populate a field the host throws away.
-    // The ChatGPT family (chatgpt.com AND the desktop app) gets DIMENSIONS
-    // ONLY (a 64-byte ranged read): their widget renders `embed_url` in an
-    // iframe and never reads the baked PNG, but it cannot measure that
-    // cross-origin iframe's content, so without the card's real aspect
-    // ratio the iframe falls back to a fixed height and leaves empty bands
-    // under a wide chart. Claude gets the full baked image — there the
-    // PNG *is* the chart.
+    // `bakeImage` is FALSE on every call today: `extraMeta` runs only when a
+    // widget is live (`ui !== undefined` in mcp.ts), and only the chatgpt
+    // surface serves one — so `ctx.surface !== "chatgpt"` cannot be true here.
+    // The expression stays because it is what the claude.ai widget fast-follow
+    // needs (gated on anthropics/claude-ai-mcp#753 and #40): a widget on the
+    // generic surface reads the baked PNG rather than an iframe, so it wants
+    // `bakeImage: true`, and this already says so. On the generic surface the
+    // inline PNG comes from `extraContentBlocks` instead, which mcp.ts runs on
+    // the opposite condition (`ui === undefined`).
+    //
+    // What the reachable branch does: ChatGPT's widget renders `embed_url` in
+    // an iframe and never reads the baked PNG, but it cannot measure that
+    // cross-origin iframe, so without the card's real aspect ratio the iframe
+    // falls back to a fixed height and leaves empty bands under a wide chart.
+    // Dimensions only — a 64-byte ranged read instead of a ~170 KB render.
     return buildChartExtraMeta(output.image_url, {
-      bakeImage: !isChatGptFamilyClient(ctx.client),
+      bakeImage: ctx.surface !== "chatgpt",
       env: ctx.env,
       origin: ctx.origin,
       pubId: output.pub_id,

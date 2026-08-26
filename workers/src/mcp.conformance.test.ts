@@ -37,7 +37,7 @@ const AUTH_HEADER = "Bearer conformance-test-token";
 
 // Every optional tool, so the sweep covers the whole surface rather than the
 // default subset (see `_optional.ts`).
-const ALL_TOOLS_QUERY = "?tools=agent,visualize,credits,graph";
+const ALL_TOOLS_QUERY = "?tools=agent,answer,visualize,credits,graph";
 
 interface PublishedSchema {
   type?: string;

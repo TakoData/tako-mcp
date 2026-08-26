@@ -41,7 +41,7 @@ const CTX: ToolContext = {
   token: "sk-test",
   env: ENV,
   sendProgress: noopSendProgress,
-  client: "claude",
+  surface: "generic",
 };
 
 // Defaults the handler expects post-zod parse (the MCP framework applies
@@ -136,10 +136,20 @@ describe("tako_search input schema", () => {
     if (parsed.success) expect(parsed.data.sources).toEqual(["data", "web"]);
   });
 
-  it("defaults include_contents to true (search is data-first)", () => {
+  it("defaults include_contents to false (spec D11 — matches the raw v3 API)", () => {
     const parsed = tako_search.inputSchema.safeParse({ query: "x" });
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.include_contents).toBe(true);
+    if (parsed.success) expect(parsed.data.include_contents).toBe(false);
+  });
+
+  it("anonymousInputRejects refuses include_contents: true with both exits, admits everything else", () => {
+    const reason = tako_search.anonymousInputRejects?.({ include_contents: true });
+    expect(reason).toMatch(/retry without include_contents/i);
+    expect(reason).toMatch(/sign in/i);
+    expect(tako_search.anonymousInputRejects?.({})).toBeUndefined();
+    expect(
+      tako_search.anonymousInputRejects?.({ include_contents: false }),
+    ).toBeUndefined();
   });
 
   it("accepts the legacy \"tako\" synonym in the sources enum", () => {

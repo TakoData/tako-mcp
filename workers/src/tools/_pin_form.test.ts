@@ -96,23 +96,17 @@ describe("advertised pin form", () => {
     }
   });
 
-  it("covers the field descriptions that actually carry pin advice today", () => {
-    // Same vacuous-pass guard as the registry loop below.
-    const shape = (takoCardSchema as unknown as { shape: Record<string, unknown> }).shape;
-    const hint = z.toJSONSchema(shape.values_hint as z.ZodType, { io: "output" }) as {
-      description?: string;
-    };
-    expect(hint.description ?? "").toMatch(ADVISES_PINNING);
-  });
-
   it("covers the tools that actually carry pin advice today", () => {
     // Without this, the loops above pass vacuously if a refactor drops the
     // advice entirely — silence is not the same as correctness here.
+    // (`tako_contents` and the card's `values_hint` no longer advise a
+    // pin: their advice routed to `tako_answer`, which is opt-in since
+    // spec D1 — naming an unregistered tool sends the model into "tool
+    // not found".)
     const advising = TOOL_REGISTRY.filter((t) => ADVISES_PINNING.test(t.description)).map(
       (t) => t.name,
     );
     expect(advising).toContain("tako_search");
     expect(advising).toContain("tako_answer");
-    expect(advising).toContain("tako_contents");
   });
 });

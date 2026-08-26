@@ -36,7 +36,7 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 
 - **Framework**: `@modelcontextprotocol/sdk` with `StreamableHTTPServerTransport`
 - **Runtime**: Cloudflare Workers (TypeScript, `nodejs_compat` flag)
-- **Endpoint**: `POST /mcp` (single-route streamable HTTP), plus `GET /health`
+- **Endpoints**: two path-selected MCP surfaces — `POST /mcp` (generic, anonymous tier allowed) and `POST /mcp/chatgpt` (OAuth-only, the surface submitted to OpenAI) — plus `GET /health`. The request path picks the surface; nothing reads the client User-Agent (`workers/src/surface.ts`).
 - **Auth**: `Authorization: Bearer <TAKO_API_TOKEN>` extracted at request boundary, forwarded to Django as `X-API-Key`; OAuth 2.1 flow for Claude.ai / ChatGPT
 - **Tool registry**: auto-generated from `workers/src/tools/*.ts` via `workers/scripts/gen-registry.ts`; outputs `workers/src/tools/_registry.ts` + `registry/server.json` in lockstep (CI checks for drift)
 - **CI**: `.github/workflows/workers-ci.yml` (typecheck + tests on PRs), `workers-deploy.yml` (staging on push to `main`; production on published GitHub Release, gated by the `production` environment; manual `workflow_dispatch` for either env), `workers-smoke.yml` (auto-smoke after successful staging deploys)
@@ -45,7 +45,9 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 
 | File | Purpose |
 |------|---------|
-| `workers/src/index.ts` | Worker entrypoint — routes `/health` and `/mcp` POST |
+| `workers/src/index.ts` | Worker entrypoint — resolves the MCP surface from the request path, routes `/health` |
+| `workers/src/surface.ts` | `MCP_PATHS` + `surfaceForPath` — the only thing that decides which surface a request gets |
+| `workers/src/tools/_surface.ts` | Per-surface tool membership (`isToolOnSurface`) and annotation overrides |
 | `workers/src/mcp.ts` | MCP server wrapper, tool dispatch, `djangoErrorToToolResult` |
 | `workers/src/django.ts` | Typed HTTP client with `DjangoError` hierarchy |
 | `workers/src/auth.ts` | Bearer token extraction |
@@ -60,12 +62,14 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 
 Source of truth: `workers/src/tools/*.ts`. Tools are discovered at runtime via the MCP `tools/list` handshake.
 
-1. `tako_search` — Fast retrieval of a **list of structured cards** (top renders as an inline chart); `effort: fast | instant`, `count` up to 20/source. Reach for it when you want data *outputs* to work with, or when fanning out queries in parallel to gather lots of results.
-2. `tako_answer` — Get **one** synthesized, citation-backed prose answer (arbiter over data + web) to a specific data question; ground in `["data"]`, `["web"]`, or both. Use when you want a direct written answer in a single call rather than a list of cards.
-3. `tako_contents` — Fetch underlying content (CSV or text) behind a result URL
-4. `tako_available_data` — Find **what proprietary, structured data exists** on an entity or metric, and confirm a specific figure exists (and its exact name) before spending a priced `tako_search` / `tako_answer`. Summarizes the available metrics in one free call. Each match carries a `node_id` to pin into a follow-up `tako_search` / `tako_answer`.
-5. `tako_agent` — Answer Agent for multi-step data questions (on ChatGPT split into `tako_agent_start` / `tako_agent_wait`). **Opt-in** — off by default; enabled per-connection via `?tools=agent` (see `workers/src/tools/_optional.ts`).
-6. `tako_visualize` — Create an embeddable chart/card from your own structured data. **Opt-in** — `?tools=visualize`; stays default-on for ChatGPT and Claude, the hosts that render its chart widget inline (see `WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES` and `isWidgetClient` in `workers/src/tools/_surface.ts`).
+Two path-selected surfaces, no User-Agent sniffing (`workers/src/surface.ts`): `/mcp` is the generic surface every client shares (anonymous tier allowed; charts as inline PNG); `/mcp/chatgpt` is the OAuth-only surface submitted to OpenAI's app directory (MCP Apps widget, top-level `securitySchemes`, Apps-review annotation overrides via `annotationsBySurface`). Membership per surface: `workers/src/tools/_surface.ts`. The tool LISTING never varies by auth state; anonymous EXECUTION is gated at dispatch in `mcp.ts` to `FREE_TIER_TOOL_NAMES` (`tako_search`, `tako_available_data`), and `include_contents: true` is refused anonymously.
+
+1. `tako_search` — Fast retrieval of a **list of structured cards** (top renders as an inline chart); `effort: fast | instant`, `count` up to 20/source; `include_contents: true` (default false) inlines each exportable card's most-recent rows, billed per 1k. Reach for it when you want data *outputs* to work with, or when fanning out queries in parallel to gather lots of results.
+2. `tako_contents` — Fetch underlying content (CSV or text) behind a result URL. Requires a signed-in connection.
+3. `tako_available_data` — Find **what proprietary, structured data exists** on an entity or metric, and confirm a specific figure exists (and its exact name) before spending a priced `tako_search`. Summarizes the available metrics in one free call. Each match carries a `node_id` to pin into a follow-up `tako_search`.
+4. `tako_answer` — Get **one** synthesized, citation-backed prose answer to a specific data question. **Opt-in** — `?tools=answer`, and not recommended: the host model already synthesizes from search results.
+5. `tako_agent` — Answer Agent for multi-step data questions (on `/mcp/chatgpt` split into `tako_agent_start` / `tako_agent_wait`). **Opt-in** — off by default; enabled per-connection via `?tools=agent` (see `workers/src/tools/_optional.ts`).
+6. `tako_visualize` — Create an embeddable chart/card from your own structured data. **Opt-in** — `?tools=visualize`; default-on on `/mcp/chatgpt` only (see `CHATGPT_DEFAULT_ON_TOOL_NAMES` in `workers/src/tools/_surface.ts`).
 7. `get_credit_balance` — Current credit balance. **Opt-in** — `?tools=credits`.
 8. `tako_graph_search` / `tako_graph_related` / `tako_graph_node` — Low-level graph primitives behind `tako_available_data`, for power users who need traversal relations (siblings, members, `rel:*` edges), in-relation `q` filtering, cursor paging, or full node detail. **Opt-in** — `?tools=graph` enables all three.
 
@@ -75,7 +79,8 @@ Source of truth: `workers/src/tools/*.ts`. Tools are discovered at runtime via t
 
 | Path | Method | Description |
 |------|--------|-------------|
-| `/mcp` | POST | MCP JSON-RPC over streamable HTTP |
+| `/mcp` | POST | MCP JSON-RPC over streamable HTTP — the generic surface every client shares |
+| `/mcp/chatgpt` | POST | Same protocol, ChatGPT app surface. OAuth required: an anonymous request gets 401 + `WWW-Authenticate`, never the free tier |
 | `/health` | GET | Simple `200 ok` |
 
 ## Code Conventions

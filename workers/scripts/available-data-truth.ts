@@ -23,7 +23,7 @@ if (TOKEN === undefined || TOKEN === "") { console.error("TAKO_API_TOKEN require
 const headers = { Authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
 const ctx: ToolContext = {
   token: TOKEN, env: { DJANGO_BASE_URL: BASE } as Env,
-  sendProgress: async () => {}, client: "claude",
+  sendProgress: async () => {}, surface: "generic",
 };
 
 async function cards(query: string, ids: string[], strict: boolean) {

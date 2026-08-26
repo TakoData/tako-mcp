@@ -18,8 +18,7 @@
  * fixed key list from its config and the `tools/list` handler rebuilds each
  * descriptor from fixed fields, so unknown top-level fields are dropped
  * (verified against 1.29.0 and 1.30.0). `mcp.ts` therefore injects the
- * field into the already-buffered JSON response for ChatGPT-FAMILY
- * clients (chatgpt.com and the desktop app's codex runtime) via
+ * field into the already-buffered JSON response on the chatgpt surface via
  * {@link withToolSecuritySchemes} — a post-serialization adapter, not an
  * SDK fork.
  *
@@ -27,8 +26,7 @@
  * `gen-registry.ts` (it is NOT a `ToolModule`).
  */
 import { FREE_TIER_TOOL_NAMES, type Tier } from "../freetier.js";
-import { isChatGptFamilyClient } from "./_surface.js";
-import type { McpClientKind } from "./types.js";
+import type { Surface } from "../surface.js";
 
 /** OAuth scope every Worker-issued access token carries — see `oauth/`. */
 export const OAUTH_TOOL_SCOPE = "mcp";
@@ -42,11 +40,11 @@ export type SecurityScheme =
   | { type: "oauth2"; scopes: string[] };
 
 /**
- * Connection facts the scheme derivation needs: which client family is
+ * Connection facts the scheme derivation needs: which path surface is
  * listing, and which tier the connection actually runs at.
  */
 export interface SecuritySchemeContext {
-  client: McpClientKind;
+  surface: Surface;
   tier: Tier;
 }
 
@@ -54,17 +52,17 @@ export interface SecuritySchemeContext {
  * Security schemes for a tool, scoped to the CONNECTION rather than
  * declared statically:
  *
- * - `noauth` + `oauth2` — only on an ANONYMOUS (`tier: "free"`) ChatGPT
- *   listing, and only for tools anonymous connections may EXECUTE
- *   (`FREE_TIER_TOOL_NAMES`). That is the pre-link state where ChatGPT
- *   needs to know it can call without an account; deriving from the same
- *   set that gates execution keeps the advertised schemes and the
- *   enforced behavior from drifting.
- * - `oauth2` only — everything else: auth-required tools, authenticated
- *   connections (the caller is already linked; advertising `noauth`
- *   there could invite a host to route a linked user's calls onto the
- *   shared free-tier account), and non-ChatGPT clients (which keep the
- *   pre-existing constant value).
+ * - `noauth` + `oauth2` — only on an ANONYMOUS (`tier: "free"`) listing
+ *   on the GENERIC surface (the only surface that serves the free tier —
+ *   /mcp/chatgpt 401s anonymous requests before any listing exists), and
+ *   only for tools anonymous connections may EXECUTE
+ *   (`FREE_TIER_TOOL_NAMES`). Deriving from the same set that gates
+ *   execution keeps the advertised schemes and the enforced behavior
+ *   from drifting.
+ * - `oauth2` only — everything else: auth-required tools and
+ *   authenticated connections (the caller is already linked; advertising
+ *   `noauth` there could invite a host to route a linked user's calls
+ *   onto the shared free-tier account).
  *
  * The free-tier kill switch (`wrangler secret delete FREE_TIER_API_KEY`)
  * stays complete for free: without the bindings, anonymous requests 401
@@ -80,7 +78,7 @@ export function securitySchemesForTool(
     type: "oauth2",
     scopes: [OAUTH_TOOL_SCOPE],
   };
-  return isChatGptFamilyClient(ctx.client) &&
+  return ctx.surface === "generic" &&
     ctx.tier === "free" &&
     FREE_TIER_TOOL_NAMES.has(name)
     ? [{ type: "noauth" }, oauth2]
@@ -143,29 +141,39 @@ export function wwwAuthenticate(
 export function authRequiredToolResult(
   origin: string | undefined,
   recoveryHint?: string,
+  /**
+   * Replaces the default lead sentence.
+   *
+   * The default asserts THE TOOL needs an account. That is false when a FREE
+   * tool refuses one INPUT: an anonymous `tako_search` runs fine, it just
+   * cannot inline billed rows, so leading with "this tool requires a Tako
+   * account" tells the model the opposite of what happened and invites it to
+   * abandon a call that would succeed without `include_contents`. Google
+   * style: what happened, then why, then what to do — the caller that knows
+   * the real what-happened passes it here.
+   */
+  lead?: string,
 ): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;
   isError: true;
 } {
   const base =
+    lead ??
     "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.";
   return {
     content: [
       {
         type: "text",
-        // Both remedies, because this text now reaches every client (the
+        // Both remedies, because this text reaches every client (the
         // pre-dispatch gate in `mcp.ts` answers anonymous calls to gated
-        // tools on all clients, not just ChatGPT): hosts with a linking
-        // UI (ChatGPT; OAuth-capable clients like claude.ai and Claude
-        // Code) sign in, config-file clients (Cursor et al.) connect with
-        // an API key. "Sign in" alone told a config-file user to do
-        // something their host has no flow for. `recoveryHint` (from
-        // `anonymousSignInHint` in mcp.ts) appends the CLIENT-SPECIFIC
-        // step where the client is positively identified — absent for
-        // ChatGPT (its link-account UI acts on the `_meta` challenge
-        // instead) and for unknown UAs (fails closed; could be OpenAI's
-        // review crawler).
+        // tools on the generic surface): hosts with a linking UI
+        // (OAuth-capable clients like claude.ai and Claude Code) sign
+        // in, config-file clients (Cursor et al.) connect with an API
+        // key. "Sign in" alone told a config-file user to do something
+        // their host has no flow for. `recoveryHint` (the
+        // GENERIC_SIGN_IN_HINT in mcp.ts, or a tool's own rejection
+        // reason) appends after the base text.
         text: recoveryHint === undefined ? base : `${base} ${recoveryHint}`,
       },
     ],

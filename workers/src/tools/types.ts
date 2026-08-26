@@ -18,30 +18,7 @@ import type { z } from "zod";
 
 import type { Env } from "../env.js";
 import type { Tier } from "../freetier.js";
-
-/**
- * Calling-client kind detected from the request's User-Agent. Used by
- * tools and `mcp.ts` to gate behavior that's known to differ across
- * MCP host implementations (e.g., routing the MCP Apps chart widget
- * to ChatGPT and Claude — interactive iframe on ChatGPT, static image
- * branch on Claude, since claude.ai's host-side CSP ignores declared
- * `frameDomains` — while unknown clients fall back to an inline PNG;
- * the kickoff/wait deep-search flow on ChatGPT, whose Apps SDK doesn't
- * honor `notifications/progress` for timeout extension). Detection is
- * best-effort by UA substring match — when we can't classify,
- * `"unknown"` keeps the default (PNG) behavior.
- *
- * `"codex"` is the merged ChatGPT desktop app (its Codex runtime connects
- * as `codex-mcp-client/<version>`, one shared MCP client for desktop
- * Chat/Work threads, Codex tasks, and the headless CLI). It is the
- * ChatGPT product family for tool-surface purposes (see
- * `isChatGptFamilyClient` in `_surface.ts`) AND a widget client — its
- * widget sandbox is a custom `codex-sandbox://` scheme origin, which
- * tako.com's `frame-ancestors` admits since TakoData/tako#29218; on a
- * backend without that header the card iframe is blocked and the app
- * shows a grey tile (see `isWidgetClient` in `_surface.ts`).
- */
-export type McpClientKind = "claude" | "chatgpt" | "codex" | "unknown";
+import type { Surface } from "../surface.js";
 
 /**
  * Execution context handed to every tool `handler`. Built in `mcp.ts` once
@@ -78,25 +55,21 @@ export interface ToolContext {
     opts?: { total?: number; message?: string },
   ) => Promise<void>;
   /**
-   * Detected client kind for the current request — see
-   * {@link McpClientKind}. Tools that need to vary behavior across
-   * known host quirks read this; everyone else can ignore it.
+   * The path-selected surface serving the current request — see
+   * `surface.ts`. Tools that need to vary presentation across the two
+   * surfaces read this; everyone else can ignore it.
    *
-   * For example, `tako_search` reads it in `extraMeta` to skip the
-   * chart-PNG prefetch on `"chatgpt"` clients (whose widget renders
+   * For example, the chart tools read it in `extraMeta` to skip the
+   * chart-PNG prefetch on the chatgpt surface (whose widget renders
    * `embed_url` directly and never reads the baked-in image), and
-   * `mcp.ts` uses it to gate which tools each host sees — the
-   * `tako_agent_start` / `tako_agent_wait` pair is registered only
-   * for the ChatGPT family (`isChatGptFamilyClient`: chatgpt.com and
-   * the desktop app's codex runtime).
+   * `mcp.ts` uses it to gate which tools each surface lists — the
+   * `tako_agent_start` / `tako_agent_wait` pair is registered only on
+   * the chatgpt surface.
    *
-   * NB: this is a server-instance-level value (set from User-Agent
-   * detection at server creation), NOT a per-request flag. Don't
-   * confuse it with the per-request "did this call include a
-   * progressToken" signal — Claude.ai sometimes omits the token on
-   * specific calls even though it generally supports progress.
+   * NB: this is a server-instance-level value (set from the request
+   * path at server creation), NOT a per-request flag.
    */
-  client: McpClientKind;
+  surface: Surface;
   /**
    * Connection tier — `"free"` for anonymous (no `Authorization` header)
    * requests served on the shared free-tier account, `"authenticated"`
@@ -143,6 +116,17 @@ export interface ToolAnnotations {
   readOnlyHint: boolean;
   /** Tool can delete or irrecoverably change state. */
   destructiveHint: boolean;
+  /**
+   * Repeating the call with the same arguments has no ADDITIONAL effect
+   * on the environment: true for every retrieval tool (a repeat changes
+   * nothing), false for tools that mint or dispatch something new per
+   * call (`tako_visualize` mints a new persistent card; `tako_agent` /
+   * `tako_agent_start` dispatch a new run). Required so every tool
+   * declares it explicitly — OpenAI app review (2026-08-25) rejects
+   * hints "not explicitly set to true or false (not null)", and
+   * `annotations_complete.test.ts` pins all four hints as booleans.
+   */
+  idempotentHint: boolean;
   /**
    * MCP spec: the tool may interact with an "open world" of external
    * entities; false means its domain of interaction is closed. Per the spec's
@@ -313,43 +297,19 @@ export interface ToolModule<
   name: string;
   /**
    * Prompt-facing description — "Use this when the user asks about …".
-   * This is the default text every client sees in `tools/list` unless
-   * overridden by {@link descriptionByClient} for that client.
+   * One text, every surface: per-client description overrides were
+   * deleted with the User-Agent classifier (spec D2).
    */
   description: string;
-  /**
-   * Optional per-client description overrides, resolved by ANNOTATION
-   * FAMILY, not raw detected kind: `claude` clients read the `claude`
-   * entry; everything else — chatgpt, codex, AND `unknown` — reads the
-   * `chatgpt` entry (see `annotationClientFamily` in `_surface.ts` for
-   * why `unknown` resolves chatgpt: an OpenAI reviewer or crawler whose
-   * UA the classifier misses must never see text that contradicts
-   * `chatgpt-app-submission.json`). Falls back to {@link description}
-   * when no entry exists. Use this when a tool's instructions diverge
-   * meaningfully by host (e.g. claude.ai auto-renders charts inline
-   * with server-side escalation while ChatGPT must redirect to the Tako
-   * agent on empty results) — sending each model only the directive it
-   * can act on is more reliable than asking it to self-identify and
-   * filter from a single description with conditional clauses.
-   *
-   * The key type is the two FAMILY names, not `McpClientKind`: a
-   * `codex:`/`unknown:` entry could never be resolved, so allowing the
-   * keys would only create dead config that still typechecks.
-   */
-  descriptionByClient?: Partial<Record<"claude" | "chatgpt", string>>;
   inputSchema: InputSchema;
   outputSchema?: z.ZodType<Output>;
   annotations: ToolAnnotations;
   /**
-   * Optional per-client annotation overrides, merged over
-   * {@link annotations} — the same resolution shape as
-   * {@link descriptionByClient} (see `toolAnnotationsForClient` in
-   * `_surface.ts`). The canonical `annotations` follow the MCP spec's
-   * readings; they are what `claude` clients and the generated registry
-   * see. `chatgpt` AND `unknown` clients resolve the `chatgpt` override
-   * family (see `annotationClientFamily` in `_surface.ts`), so OpenAI
-   * review tooling with an unrecognized UA can never see labels that
-   * contradict `chatgpt-app-submission.json`.
+   * Optional per-surface annotation overrides, merged over
+   * {@link annotations} on the chatgpt surface (see
+   * `toolAnnotationsForSurface` in `_surface.ts`). The canonical
+   * `annotations` follow the MCP spec's readings; they are what the
+   * generic surface and the generated registry see.
    *
    * Exists because OpenAI's ChatGPT Apps review reads `openWorldHint`
    * differently from the MCP protocol. MCP: domain of interaction (web
@@ -359,9 +319,9 @@ export interface ToolModule<
    * closed-world under Apps review, and `tako_visualize` (mints public
    * chart URLs) is the reverse.
    *
-   * `readOnlyHint` needs NO per-client override — its meaning is the
+   * `readOnlyHint` needs NO per-surface override — its meaning is the
    * same in both ecosystems ("does not modify its environment"), and the
-   * write line is drawn once, for every client: a call is a WRITE when
+   * write line is drawn once, for every surface: a call is a WRITE when
    * it creates a durable, user-addressable resource — an agent run
    * reachable later via `run_id`/`thread_id` (`tako_agent`,
    * `tako_agent_start`), a chart card with public URLs
@@ -371,9 +331,17 @@ export interface ToolModule<
    * counting billing as a write would make `readOnlyHint` vacuously
    * false everywhere.
    */
-  annotationsByClient?: Partial<
-    Record<"claude" | "chatgpt", Partial<ToolAnnotations>>
-  >;
+  annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
+  /**
+   * Optional anonymous-input gate, consulted by `registerTool` on
+   * `tier: "free"` calls BEFORE the handler runs. Return the extra
+   * model-facing sentence when the anonymous call must be refused
+   * (answered with `authRequiredToolResult`, unmetered upstream);
+   * return `undefined` to admit the call. Exists for inputs that are
+   * fine authenticated but priced/gated anonymously — `tako_search`'s
+   * `include_contents: true` is the worked example (spec D12).
+   */
+  anonymousInputRejects?: (input: Record<string, unknown>) => string | undefined;
   handler: (input: z.infer<InputSchema>, ctx: ToolContext) => Promise<Output>;
   /**
    * Optional model-facing text renderer. When present, `mcp.ts` uses its
@@ -460,14 +428,13 @@ export interface ToolModule<
 export interface AnyToolModule {
   name: string;
   description: string;
-  descriptionByClient?: Partial<Record<"claude" | "chatgpt", string>>;
   inputSchema: z.ZodObject<z.ZodRawShape>;
   outputSchema?: z.ZodType<unknown>;
   annotations: ToolAnnotations;
-  /** Per-client annotation overrides — see {@link ToolModule.annotationsByClient}. */
-  annotationsByClient?: Partial<
-    Record<"claude" | "chatgpt", Partial<ToolAnnotations>>
-  >;
+  /** Per-surface annotation overrides — see {@link ToolModule.annotationsBySurface}. */
+  annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
+  /** Anonymous-input gate — see {@link ToolModule.anonymousInputRejects}. */
+  anonymousInputRejects?: (input: Record<string, unknown>) => string | undefined;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;
   renderText?: (output: unknown, ctx: ToolContext) => string;
   slimStructured?: (output: unknown) => Record<string, unknown>;
