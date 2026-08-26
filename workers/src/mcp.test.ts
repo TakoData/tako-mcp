@@ -1452,9 +1452,10 @@ describe("SERVER_INSTRUCTIONS", () => {
     for (const tool of ["tako_search", "tako_available_data", "tako_contents"]) {
       expect(SERVER_INSTRUCTIONS).toContain(tool);
     }
-    // tako_answer is opt-in (spec D1): naming it here would route models
-    // to a tool the default connection has not registered.
-    expect(SERVER_INSTRUCTIONS).not.toContain("tako_answer");
+    // The "and no opt-in tool" half is NOT asserted here. Naming one name by
+    // hand is the defect `tools/phantom_tool.test.ts` exists to remove; it
+    // derives the allowed set from the resolved toolset and covers both
+    // instruction strings on both surfaces.
   });
 
   it("the free-tier variant shares the cross-tool guidance and differs only in the last paragraph", () => {

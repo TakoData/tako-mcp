@@ -8,6 +8,23 @@
  */
 
 /**
+ * Route prefix for the embed-HTML proxy. The pub_id is the single trailing
+ * path segment.
+ *
+ * Lives HERE, not in `embed_proxy.ts`, to keep the module graph acyclic.
+ * `_chart_widget.ts` needs the prefix to build embed URLs, and
+ * `embed_proxy.ts` imports `freeTierRateLimitKey` from `freetier.ts` — so
+ * declaring it there puts a `_chart_widget → embed_proxy → freetier` path in
+ * the graph. The moment anything makes `freetier.ts` reach the tool registry
+ * that path closes into a cycle, `HTTP_URL_REGEX` (`_chart_widget.ts`)
+ * arrives `undefined` at `_search_results.ts`, and zod throws
+ * `Cannot set properties of undefined (setting 'lastIndex')` on the first
+ * parse — not at import, so `tsc` and every schema-only test stay green.
+ * `env.ts` imports nothing, so a constant placed here cannot repeat that.
+ */
+export const EMBED_PROXY_PREFIX = "/embed-html/";
+
+/**
  * Structural type of Cloudflare's Workers rate-limiting binding
  * (`ratelimits` entries in `wrangler.jsonc` — NOT `unsafe.bindings`, which
  * produces a binding that satisfies this interface but never counts).

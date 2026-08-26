@@ -51,6 +51,7 @@
  */
 
 import type { Env, RateLimit } from "./env.js";
+import { TOOL_REGISTRY } from "./tools/_registry.js";
 
 /** Which surface a connection gets — see `createMcpServer`'s tier gate. */
 export type Tier = "free" | "authenticated";
@@ -142,36 +143,37 @@ export function isMeteredJsonRpcBody(body: unknown): boolean {
   // spend its whole minute on refusals. Spec: "Rejected calls stay
   // unmetered."
   //
-  // The verdict is READ FROM THE TOOL, never re-derived here: the tool's
-  // `anonymousInputRejects` is the same function `registerTool` consults,
-  // so the two can never disagree about what gets refused, and a second
-  // tool that grows a rejecting input is covered with no edit here.
+  // The verdict is READ FROM THE TOOL, never re-derived here. The tool's
+  // `anonymousInputRejects` is the same function the dispatch gate in
+  // `mcp.ts` consults, so the two cannot disagree about what gets refused.
+  // An earlier revision inlined "`include_contents` is true" instead, which
+  // exempted the input for EVERY free tool: `tako_available_data` ignores
+  // the key (its `z.object` strips it) and declares no gate, so an anonymous
+  // caller got its four Django round-trips with no per-IP hit just by adding
+  // a key the tool never reads.
   const args = (params as { arguments?: unknown }).arguments;
-  if (
-    typeof args === "object" &&
-    args !== null &&
-    (args as { include_contents?: unknown }).include_contents === true
-  ) {
-    return false;
+  const tool = TOOL_REGISTRY.find((candidate) => candidate.name === name);
+  if (tool?.anonymousInputRejects !== undefined) {
+    const input =
+      typeof args === "object" && args !== null
+        ? (args as Record<string, unknown>)
+        : {};
+    if (tool.anonymousInputRejects(input) !== undefined) return false;
   }
   return true;
 }
 
 /**
- * The inputs above are the free tools' `anonymousInputRejects` verdicts,
- * INLINED rather than read from `TOOL_REGISTRY`.
- *
- * Importing the registry here is what you would reach for, and it breaks the
- * build: `freetier.ts` becomes the graph's entry point, which reorders tool
- * module init and trips a latent cycle
- * (`_render_markdown` → `_search_results` → `_chart_widget` →
- * `_render_markdown`, TDZ on `usageAdvertisedSchema`). Tests load fine and
- * `tsc` stays green, so the failure only shows up at runtime.
- *
- * The duplication is therefore held by a test, not by this comment:
- * `freetier.test.ts` walks every tool carrying `anonymousInputRejects` and
- * asserts the input it refuses is exempt here. Add a rejecting input to any
- * tool and that test fails until this predicate matches.
+ * Importing `TOOL_REGISTRY` here makes `freetier.ts` reach every tool module,
+ * so this file sits one edge away from a cycle. Keep `env.ts` the only home
+ * for constants the tool modules need out of a request-path module — see
+ * `EMBED_PROXY_PREFIX` there. `_chart_widget.ts` used to take that prefix
+ * from `embed_proxy.ts`, which imports `freeTierRateLimitKey` from here, and
+ * that closed `freetier → _registry → _chart_widget → embed_proxy →
+ * freetier`. The failure is not a load error: `HTTP_URL_REGEX` arrives
+ * `undefined` at `_search_results.ts`, zod accepts it, and the first parse
+ * throws `Cannot set properties of undefined (setting 'lastIndex')` from a
+ * handler. `tsc` and every schema-only test stay green.
  */
 
 /** A JSON-RPC request id — what `freeTierLimitResponse` echoes back. */
@@ -381,8 +383,8 @@ async function hitPerIpLimiter(
  * (see `freeTierLimitResponse`). Paid-account functionality itself is
  * allowed — advertising it here is not. A caller who wants their own key
  * finds it the same way every other Tako API user does, on tako.com.
- * The one exception is `FREE_TIER_COMMERCE_UPSELL` below, appended only on
- * connections positively identified as Anthropic clients.
+ * The one exception is `FREE_TIER_COMMERCE_UPSELL` below, appended per
+ * SURFACE — see its own docblock for the rule; do not restate it here.
  */
 export const FREE_TIER_LIMIT_MESSAGE =
   "Rate limit reached for anonymous access. Try again in a minute.";

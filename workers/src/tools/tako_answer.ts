@@ -48,13 +48,13 @@ import {
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "START HERE for any question that wants a value, figure, or finding: ask one specific data question, get one synthesized answer grounded in the data or web tako cites.",
+  "One synthesized, citation-backed answer to one specific data question, grounded in the data or web tako cites. This connection opted in with `?tools=answer`: `tako_search` is the default retrieval tool, and a model that synthesizes well from search results does not need this one.",
   "",
-  "It is the only tool whose single response can finish the job: it reads the cited pages internally, inlines the cited cards' rows, and returns a coverage verdict. Retrieval hands back captions and links you must then chase, and every extra round trip re-sends the whole conversation.",
+  "What it adds over retrieval: it reads the cited web pages internally, so their content shapes the answer without a second call, and it returns a coverage verdict. Rows are NOT included unless you set include_contents: true.",
   "",
   "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.",
   "",
-  "Reach past it only for a different job: `tako_search` for breadth recon (it locates data, it does not carry values), `tako_available_data` when the question is what Tako covers, the Answer Agent for open-ended research.",
+  "Reach past it for a different job: `tako_search` for breadth, and for values too — it takes the same `include_contents: true`; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.",
   "",
   "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
@@ -80,11 +80,16 @@ const inputSchema = z.object({
       .describe('Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)'),
     { field: "tako_answer.sources", commaSeparated: true },
   ),
-  // The prose `answer` alone proved an unreliable payload in agent traces: it
-  // sometimes carries the series and sometimes only teases it ("latest value
-  // 59.2%"), and a teased agent escalates into a costly multi-wave retry
-  // cascade. Inlining the cited cards' recent rows by default makes the first
-  // response dense, converting those cascades into single-call runs.
+  // Defaults to FALSE even though agent traces argue the other way: the prose
+  // `answer` alone is an unreliable payload — it sometimes carries the series
+  // and sometimes only teases it ("latest value 59.2%") — and a teased agent
+  // escalates into a multi-wave retry cascade that inlined rows would have
+  // collapsed into one call. Density lost the trade to metering: tako#29572
+  // removed the row allowance, so inlining bills per 1k, and a caller who
+  // never asked for rows must not be charged for them. The anonymous tier
+  // never reaches this flag at all: `tako_answer` is not in
+  // `FREE_TIER_TOOL_NAMES`, so an anonymous call is answered with sign-in
+  // guidance before its input is read.
   include_contents: z
     .boolean()
     .default(false)

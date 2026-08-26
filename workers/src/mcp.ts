@@ -1452,11 +1452,13 @@ export function paymentRequiredRemedy(body: string | undefined): string {
  * out-of-credits guidance. The free tier never reaches this — its 402s map
  * to `freeTierCreditsToolResult` first (see the catch in `registerTool`).
  *
- * `commerceCopyAllowed` (true on the generic surface only) gates the remedy
- * sentence: Django's own remedies name plan upgrades and credit purchases,
- * which is exactly the copy OpenAI's commerce policy bans from an app —
- * so ChatGPT-family and unrecognized clients get the cause-only message,
- * and positively-identified Anthropic clients get the backend's remedy.
+ * `commerceCopyAllowed` gates the remedy sentence: Django's own remedies name
+ * plan upgrades and credit purchases, which is exactly the copy OpenAI's
+ * commerce policy bans from an app. The SURFACE decides, not the client —
+ * `createMcpServer` sets `surface === "generic"`, so every client on `/mcp`
+ * gets the backend's remedy and every client on `/mcp/chatgpt` gets the
+ * cause-only message. A per-client carve-out used to live here; nothing
+ * reads the User-Agent any more (spec D2).
  */
 export function paymentRequiredToolResult(
   err: DjangoHttpError,

@@ -33,13 +33,13 @@
  * original inline chart-rendering implementation.
  */
 import {
+  EMBED_PROXY_PREFIX,
   type Env,
   resolvePublicApiBase,
   resolvePublicBase,
   resolvePublicCdnBase,
   resolveWidgetOrigin,
 } from "../env.js";
-import { EMBED_PROXY_PREFIX } from "../embed_proxy.js";
 import type {
   AppUiResource,
   ToolContext,

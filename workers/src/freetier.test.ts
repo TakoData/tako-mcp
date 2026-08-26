@@ -34,11 +34,11 @@ import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
  * base message added to `freetier.ts` is covered by adding one line here.
  *
  * Deliberately NOT in this list: `FREE_TIER_COMMERCE_UPSELL`, which exists
- * to violate the account-copy ban — on positively-identified Anthropic
- * clients only. Its own describe ("commerce-gated upsell") proves it is
+ * to violate the account-copy ban — on the GENERIC surface only, for every
+ * client on it. Its own describe ("commerce-gated upsell") proves it is
  * absent by default from every producer and holds it to the hygiene rules
  * that are not commerce-specific; `docs/chatgpt-app-review.md` §1 records
- * the client gate for reviewers.
+ * the surface gate for reviewers.
  */
 const ALL_FREE_TIER_MESSAGES = [
   FREE_TIER_LIMIT_MESSAGE,
@@ -233,13 +233,15 @@ describe("isMeteredJsonRpcBody", () => {
   });
 
   it("exempts EVERY tool input that anonymousInputRejects refuses", () => {
-    // `isMeteredJsonRpcBody` inlines the refusal conditions instead of
-    // reading TOOL_REGISTRY — importing the registry from freetier.ts makes
-    // it the module graph's entry point and trips a latent init cycle
-    // (_render_markdown -> _search_results -> _chart_widget, TDZ on
-    // usageAdvertisedSchema). This test is what keeps the two in step: it
-    // asks each tool's own gate which inputs it refuses, then asserts the
-    // metering predicate exempts them. A new rejecting input fails here.
+    // `isMeteredJsonRpcBody` reads each tool's own `anonymousInputRejects`,
+    // so this test is a cross-check, not the thing holding a duplication.
+    //
+    // Walk tools WITHOUT the hook too, and require them metered. That is the
+    // case an earlier revision got wrong: it inlined "`include_contents` is
+    // true" and exempted the input for every free tool, so anonymous
+    // `tako_available_data` — which strips the key and declares no gate —
+    // ran four Django round-trips with no per-IP hit. Skipping the
+    // hookless tools is what let that ship.
     const probes: Record<string, unknown>[] = [
       { include_contents: true },
       { include_contents: false },
@@ -247,8 +249,23 @@ describe("isMeteredJsonRpcBody", () => {
     ];
     let covered = 0;
     for (const tool of TOOL_REGISTRY) {
-      if (tool.anonymousInputRejects === undefined) continue;
       if (!FREE_TIER_TOOL_NAMES.has(tool.name)) continue; // never metered anyway
+      if (tool.anonymousInputRejects === undefined) {
+        // No gate means nothing is refused, so every input must be metered.
+        for (const args of probes) {
+          expect(
+            isMeteredJsonRpcBody({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: { name: tool.name, arguments: args },
+            }),
+            `${tool.name} declares no anonymousInputRejects, so ${JSON.stringify(args)} must be metered`,
+          ).toBe(true);
+          covered++;
+        }
+        continue;
+      }
       for (const args of probes) {
         const refused = tool.anonymousInputRejects(args) !== undefined;
         const metered = isMeteredJsonRpcBody({

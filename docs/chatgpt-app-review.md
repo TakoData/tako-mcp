@@ -33,9 +33,9 @@ credits. Existing paid-account functionality is fine; advertising it is not.
 
 Four anonymous-tier messages used to end with "get an API key at
 `https://tako.com/account/` …". Each is delivered as tool-result *text*, so each reached the
-model and could be relayed to the user. As delivered to ChatGPT-family and every
-unrecognized client, all four are pure capacity/retry statements with no link, no
-pricing, and no mention of accounts or upgrades (`workers/src/freetier.ts`):
+model and could be relayed to the user. All four are now pure capacity/retry statements
+with no link, no pricing, and no mention of accounts or upgrades — for every client, on
+every surface (`workers/src/freetier.ts`):
 
 | Constant | Now reads |
 | --- | --- |
@@ -47,8 +47,8 @@ pricing, and no mention of accounts or upgrades (`workers/src/freetier.ts`):
 Enforced by `freetier.test.ts` → "no user-facing message promotes an account, a purchase,
 or an upgrade", which bans URLs and account/pricing/upgrade wording across every BASE
 message the module can emit (`ALL_FREE_TIER_MESSAGES` — a new base message is covered by
-adding one line there). One suffix is deliberately outside that ban and gated per client
-instead:
+adding one line there). One suffix is deliberately outside that ban, gated by SURFACE (the
+request path) and never by the client's User-Agent:
 
 - `FREE_TIER_COMMERCE_UPSELL` (`workers/src/freetier.ts`) — "Sign in with your client's
   MCP authentication for up to 2,000 free requests on a new account, or connect with a

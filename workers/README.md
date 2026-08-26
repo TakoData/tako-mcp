@@ -45,11 +45,18 @@ keying means little for hosted MCP hosts (claude.ai, ChatGPT, and
 similar egress from a handful of platform IPs); it's a fairness layer.
 The **genuinely global ceiling is Django's Redis-backed per-user
 throttling on the free-tier account** — every anonymous request
-authenticates as that one user, landing on `_SEARCH_USER` (720/min,
-`/api/v3/search/`), `_DRF_USER` (720/min, `/api/v1/answer/`), and
-`_GRAPH_TIER` (180/min + 10,000/day, `/api/v1/graph/*`) in
-`app/backend/api/throttling/policy.py`. Note none of these weighs tool
-cost: the worst case is that many `tako_search` calls.
+authenticates as that one user. Anonymous traffic can only reach two
+tools, so it lands on two policies: `tako_search` on `/api/v3/search/`
+and `tako_available_data` on `/api/v1/graph/*`.
+
+**Read the live numbers from `app/backend/api/throttling/policy.py` in the
+monorepo, not from here.** The table that used to sit in this paragraph
+went stale the moment `tako_answer` moved behind `?tools=answer`: it named
+`_DRF_USER` (`/api/v1/answer/`), an endpoint no anonymous connection can
+reach, because `tako_answer` is opt-in AND absent from
+`FREE_TIER_TOOL_NAMES`. `freetier.ts` carries the same pointer for the
+same reason. Note no policy weighs tool cost: the worst case is that many
+`tako_search` calls.
 
 ### Measured behaviour
 

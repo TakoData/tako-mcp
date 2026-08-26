@@ -114,4 +114,34 @@ describe("parseEnabledOptionalToolNames", () => {
       [...AGENT_TOOLS].sort(),
     );
   });
+
+  // The alias table is an object literal, so every `Object.prototype` key is
+  // reachable by a `?tools=` token that survives `toLowerCase()`. Before the
+  // `Object.hasOwn` guard, `?tools=constructor` and `?tools=__proto__` each
+  // resolved an inherited value, slipped past the `undefined` check, and threw
+  // `TypeError: toolNames is not iterable` — on the anonymous path that lands
+  // before `handleMcpRequest`'s outer `try`, so an unauthenticated request
+  // got a bare 500 instead of a JSON-RPC error.
+  //
+  // The token list is DERIVED, not written out: only `constructor` and
+  // `__proto__` are lowercase-stable today (`toString` mangles to `tostring`,
+  // which no prototype has), but a runtime or `lib` change that adds another
+  // must fail here rather than in production.
+  const prototypeTokens = Object.getOwnPropertyNames(Object.prototype).map(
+    (key) => key.toLowerCase(),
+  );
+
+  it.each(prototypeTokens)(
+    "treats the Object.prototype key %s as an unknown token",
+    (token) => {
+      expect(() => parseEnabledOptionalToolNames(token)).not.toThrow();
+      expect(parseEnabledOptionalToolNames(token).size).toBe(0);
+    },
+  );
+
+  it("still parses a real alias when a prototype key rides along", () => {
+    expect(
+      [...parseEnabledOptionalToolNames("constructor,agent,__proto__")].sort(),
+    ).toEqual([...AGENT_TOOLS].sort());
+  });
 });

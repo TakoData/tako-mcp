@@ -22,6 +22,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC = path.join(import.meta.dirname, "..", "src");
+const REPO_ROOT = path.join(SRC, "..", "..");
 
 /**
  * `src/generated/` is excluded: it is regenerated from `openapi/sdk.yaml` by
@@ -46,9 +47,20 @@ function sourceFiles(dir: string): string[] {
 // "free" is legitimate about a CALL (`tako_available_data` is a free call) and
 // about the welcome grant ("2,000 free requests"). It is never legitimate about
 // a ROW. Match only when a row word sits close by, in either order.
+//
+// NO `\n` in the gap, because the text is FLATTENED before matching. Matching a
+// single physical line missed the shape this guard exists to catch: comments
+// here wrap near 76 columns, so "returns the first 20 rows\n * free of charge"
+// put the two words on different lines and the guard saw neither half. A
+// sentence is the unit a reader reads; a line is an artifact of wrapping.
+// The gap stays at 40 characters. Widening it to catch more turned
+// `llms.txt`'s correct "rows, billed per 1k), `tako_available_data` (free
+// coverage check" — 41 characters, and "free" modifying a CALL — into a
+// failure. No threshold separates that from a real violation, because what
+// "free" modifies is not a distance.
 const ROW_WORD = String.raw`(?:rows?|csv)`;
 const NEAR_FREE = new RegExp(
-  String.raw`(?:\bfree\b[^.\n]{0,40}?${ROW_WORD}|${ROW_WORD}[^.\n]{0,40}?\bfree\b)`,
+  String.raw`(?:\bfree\b[^.]{0,40}?${ROW_WORD}|${ROW_WORD}[^.]{0,40}?\bfree\b)`,
   "i",
 );
 
@@ -57,21 +69,60 @@ const NEAR_FREE = new RegExp(
  * a phrase allowlist would go stale the first time someone rewords.
  *
  * 1. `free-tier` / `free tier` names the anonymous TIER, not a row price.
- * 2. A line citing `tako#29572` is documenting the removal itself, which is
- *    exactly the sentence that has to stay sayable. Requiring the citation is
- *    also the convention worth enforcing: describe the removal, cite it.
+ * 2. A sentence citing `tako#29572` is documenting the removal itself, which
+ *    is exactly the sentence that has to stay sayable. Requiring the citation
+ *    is also the convention worth enforcing: describe the removal, cite it.
  */
 const TIER_NAME = /\bfree[-\s]tier\b/gi;
 const CITES_REMOVAL = /tako#29572/;
 
 /**
- * `context` is the matched line plus its neighbours: a wrapped comment puts
- * the citation on the next physical line ("(the free" / "row allowance was
- * removed in tako#29572"), and a per-line check would call that a violation.
+ * The text to test for the line at `lines[0]`, with a wrapped comment joined
+ * into the sentence a human reads.
+ *
+ * A comment line is joined to the comment lines that FOLLOW it — `*` or `//`
+ * as the first non-space characters, a syntax rule rather than a guess. A code
+ * line is tested alone.
+ *
+ * Both halves of that matter, and each was learned from a false failure.
+ * Testing a single physical line missed the shape this guard exists to catch:
+ * comments here wrap near 76 columns, so "returns the first 20 rows\n * free of
+ * charge" split the claim across lines and neither half matched. Joining every
+ * neighbour instead fused things that are not one sentence — a `source_url:
+ * z.string()` line with the citation-bearing comment below it, and two
+ * separate README bullets ("inlines the rows" / "free and fast").
  */
-function offendingText(line: string, context: string): boolean {
-  if (CITES_REMOVAL.test(context)) return false;
-  return NEAR_FREE.test(line.replace(TIER_NAME, "anonymous-tier"));
+const COMMENT_LINE = /^\s*(?:\*|\/\/)/;
+
+function readableClaim(lines: readonly string[]): string {
+  const first = lines[0] ?? "";
+  if (!COMMENT_LINE.test(first)) return first;
+  const parts = [first.trim()];
+  for (const line of lines.slice(1)) {
+    if (!COMMENT_LINE.test(line)) break;
+    parts.push(line.replace(COMMENT_LINE, "").trim());
+  }
+  return parts.join(" ");
+}
+
+/**
+ * The citation exemption is scoped to the SENTENCE carrying the claim, not to
+ * a line window. A ±2-line exemption let any free-row claim within two lines
+ * of a `tako#29572` mention through untouched — a hole in the direction that
+ * matters, since the sentence describing the removal is exactly the neighbour
+ * a reseeded claim would sit beside.
+ */
+function offendingText(contextLines: readonly string[]): boolean {
+  const claim = readableClaim(contextLines).replace(
+    TIER_NAME,
+    "anonymous-tier",
+  );
+  for (const sentence of claim.split(/(?<=[.!?])\s+/)) {
+    if (!NEAR_FREE.test(sentence)) continue;
+    if (CITES_REMOVAL.test(sentence)) continue;
+    return true;
+  }
+  return false;
 }
 
 describe("no copy calls a delivered row free", () => {
@@ -83,7 +134,7 @@ describe("no copy calls a delivered row free", () => {
   });
 
   for (const file of files) {
-    const rel = path.relative(path.join(SRC, ".."), file);
+    const rel = path.relative(REPO_ROOT, file);
     it(`${rel} does not call a row free`, () => {
       const offending = fs
         .readFileSync(file, "utf8")
@@ -91,9 +142,12 @@ describe("no copy calls a delivered row free", () => {
         .map((line, i, all) => ({
           line,
           n: i + 1,
-          context: all.slice(Math.max(0, i - 2), i + 3).join("\n"),
+          // The matched line plus the two after it: a wrapped claim continues
+          // FORWARD, and looking back re-tests lines already tested as their
+          // own starting point.
+          context: all.slice(i, i + 3),
         }))
-        .filter(({ line, context }) => offendingText(line, context))
+        .filter(({ context }) => offendingText(context))
         .map(({ line, n }) => `${rel}:${n}: ${line.trim()}`);
       expect(
         offending,

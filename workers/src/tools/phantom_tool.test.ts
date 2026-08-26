@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import {
+  FREE_TIER_SERVER_INSTRUCTIONS,
+  SERVER_INSTRUCTIONS,
+} from "../mcp.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 import { OPTIONAL_TOOL_ALIASES } from "./_optional.js";
 import { isToolOnSurface } from "./_surface.js";
@@ -117,5 +121,52 @@ describe("no opt-in tool names a tool its own alias does not enable", () => {
         expect(offSurface, `${tool.name} (${surface}, opt-in) names unreachable tools`).toEqual([]);
       });
     }
+  }
+});
+
+/**
+ * The `initialize` instructions are the widest phantom surface in the repo and
+ * the only one not published by a tool: `mcp.ts` returns one string per TIER,
+ * never per surface, and the host puts it in the model's system prompt. So a
+ * tool name here is read by every connection on every surface, including the
+ * connections that do not register it.
+ *
+ * That is not hypothetical. `mcp.ts` carries a comment recording that this
+ * string "used to carry a second half about `tako_answer`" and telling the
+ * next author "do not restore it while answer is opt-in" — a rule held by
+ * prose, whose only test was a hand-written `not.toContain("tako_answer")`.
+ * One name, checked by hand, in the file this suite exists to replace.
+ *
+ * The allowed set is the INTERSECTION of the default listings, not either
+ * surface's own: one string serves both, so a name has to be reachable on
+ * both to be safe. That is strictly tighter than the per-tool checks above —
+ * `tako_visualize` is default-on for chatgpt and off for generic, so naming
+ * it here would be a phantom for every `/mcp` client.
+ */
+describe("server instructions name no tool a connection may not have", () => {
+  const surfaces = ["generic", "chatgpt"] as const satisfies Surface[];
+  const noOptIns: ReadonlySet<string> = new Set();
+  const universal = [...ALL_TOOL_NAMES].filter((name) =>
+    surfaces.every((surface) => isToolOnSurface(name, surface, noOptIns)),
+  );
+
+  it("the cross-surface default set is non-empty", () => {
+    // Without this the filters below pass vacuously if surface membership
+    // ever returns nothing.
+    expect(universal.length).toBeGreaterThan(0);
+  });
+
+  for (const [label, text] of [
+    ["SERVER_INSTRUCTIONS", SERVER_INSTRUCTIONS],
+    ["FREE_TIER_SERVER_INSTRUCTIONS", FREE_TIER_SERVER_INSTRUCTIONS],
+  ] as const) {
+    it(`${label} names only tools every surface registers by default`, () => {
+      // `ownName` is empty: instructions belong to no tool, so every name in
+      // them is foreign and none gets the self-reference exemption.
+      const unreachable = foreignToolNamesIn(text, "").filter(
+        (name) => !universal.includes(name),
+      );
+      expect(unreachable, `${label} names unreachable tools`).toEqual([]);
+    });
   }
 });

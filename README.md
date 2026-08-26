@@ -307,7 +307,8 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 
 The param rides on the connection URL, so how you set it depends on your client:
 
-- **Claude.ai, Claude Desktop, ChatGPT (connectors):** include it in the URL you paste when adding the connector — e.g. `https://mcp.tako.com/mcp?tools=agent`. OAuth is unaffected (the server canonicalizes the resource, query string included).
+- **Claude.ai, Claude Desktop (connectors):** include it in the URL you paste when adding the connector — e.g. `https://mcp.tako.com/mcp?tools=agent`. OAuth is unaffected (the server canonicalizes the resource, query string included).
+- **ChatGPT (connectors):** put it on the app surface, not the generic one — `https://mcp.tako.com/mcp/chatgpt?tools=agent`. The alias resolves to a different tool per surface, and only `/mcp/chatgpt` serves the `tako_agent_start` / `tako_agent_wait` pair. `/mcp?tools=agent` gives ChatGPT the single-call `tako_agent`, which cannot reset the host's ~60s per-call timeout and so cannot finish a 30–90s run.
 - **Config-file clients (Cursor, Windsurf, VS Code, …) and `claude mcp add`:** put it on the URL in your config:
 
 ```bash

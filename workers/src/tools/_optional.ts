@@ -84,6 +84,15 @@ export function parseEnabledOptionalToolNames(
   for (const rawToken of param.split(",")) {
     const token = rawToken.trim().toLowerCase();
     if (token === "") continue;
+    // `Object.hasOwn` before the lookup: the table is an object literal, so
+    // `?tools=constructor` and `?tools=__proto__` resolve inherited
+    // `Object.prototype` values, the `undefined` check below passes them
+    // through, and `for…of` throws `TypeError: toolNames is not iterable`.
+    // On the anonymous path `handleMcpRequest` calls this before its outer
+    // `try`, so that throw returned a bare 500 with no JSON-RPC body.
+    // `noUncheckedIndexedAccess` types the lookup `readonly string[] |
+    // undefined`, which is why the check below looked sufficient to `tsc`.
+    if (!Object.hasOwn(OPTIONAL_TOOL_ALIASES, token)) continue;
     const toolNames = OPTIONAL_TOOL_ALIASES[token];
     if (toolNames === undefined) continue;
     for (const name of toolNames) enabled.add(name);
