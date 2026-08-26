@@ -436,7 +436,7 @@ const resolvedRefShape = z.object({
 
 const coverageItemShape = z.object({
   name: z.string(),
-  node_id: z.string().describe("Pin this in a follow-up's node_ids WITH strict:true."),
+  node_id: z.string().describe("Graph node id. Hand it to tako_graph_related to explore what else the graph holds on this node."),
 });
 
 /** Advertised (slim) structuredContent shape for tako_available_data: the
@@ -491,7 +491,7 @@ export const availableDataSlimOutputShape = z.looseObject({
       }),
     )
     .describe(
-      "The resolved matches and their coverage, each entry carrying the node id to pin. To fetch a specific metric precisely: call tako_search with node_ids=[<the metric's node_id>] AND strict:true — an entity-only pin without strict does not steer retrieval.",
+      "The resolved matches and their coverage, each entry carrying its canonical name and graph node id. To fetch a specific metric, call tako_search with the EXACT canonical name as the query — the canonical name is what recovers cards. A node id is for traversal via tako_graph_related.",
     ),
   // Optional in the ADVERTISED shape, always present in the emitted value —
   // the same rule `items_truncated` follows: the handler's FULL output carries
@@ -515,12 +515,10 @@ export const availableDataSlimOutputShape = z.looseObject({
     .object({
       tool: z.enum(["tako_search"]),
       query: z.string(),
-      node_ids: z.array(z.string()),
-      strict: z.boolean(),
     })
     .nullable()
     .describe(
-      "Ready-to-run follow-up: call this tool with exactly this query, node_ids and strict. node_ids holds the METRIC node only — strict is an OR over pinned nodes, so adding the entity id widens the filter back out. Null when no metric resolved.",
+      "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Null when no metric resolved.",
     ),
   // Lookup path (`metric` supplied): the resolved pair. Optional because the
   // discovery path returns `matches` instead.
@@ -529,7 +527,7 @@ export const availableDataSlimOutputShape = z.looseObject({
   metric: resolvedRefShape
     .nullable()
     .optional()
-    .describe("The metric whose node_id belongs in the follow-up's node_ids."),
+    .describe("The resolved metric, by its canonical graph name — the name the follow-up query uses."),
   entity_alternates: z.array(resolvedRefShape).optional(),
   metric_alternates: z
     .array(resolvedRefShape)
@@ -583,7 +581,7 @@ export interface AvailableDataFullOutput {
     coverage_total?: number | undefined;
     coverage_capped?: boolean | undefined;
   }>;
-  next_call: { tool: "tako_search"; query: string; node_ids: string[]; strict: boolean } | null;
+  next_call: { tool: "tako_search"; query: string } | null;
   /** False when the gate failed open — the matches are low-confidence. */
   confident?: boolean | undefined;
   metric_query?: string | undefined;

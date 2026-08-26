@@ -359,12 +359,13 @@ describe("buildSummary", () => {
   // node_ids carries the METRIC node and strict is set: measured on staging,
   // an entity pin at the default strict:false does not steer retrieval at all,
   // while the metric node WITH strict returns exactly that metric's card.
-  it("buildNextCall: pins the METRIC node with strict; null when no match has coverage", () => {
+  it("buildNextCall: names both halves canonically, no pin; null when no match has coverage", () => {
+    // The handle carries a query and nothing else. tako_search takes no
+    // node_ids / strict after the D4 split, so a pin here would be rejected by
+    // the very tool the handle names.
     expect(buildNextCall([appleMatch])).toEqual({
       tool: "tako_search",
       query: "Apple Inc. Revenue",
-      node_ids: ["metrics-0"], // the Revenue metric, NOT ent apple-inc
-      strict: true,
     });
     // A metric-first match: the metric IS the match, its coverage lists entities.
     // A metric match queries the METRIC ALONE. Pairing it with
@@ -375,8 +376,6 @@ describe("buildSummary", () => {
     expect(buildNextCall([inflationMatch])).toEqual({
       tool: "tako_search",
       query: "Inflation Rate",
-      node_ids: ["inflation-rate"],
-      strict: true,
     });
     const bare = buildMatch(entityNode({ name: "Tesla", label: "" }), group("metrics", [], 0));
     // Skips the coverage-less match, lands on the one with names.

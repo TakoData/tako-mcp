@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import { MAX_COVERAGE_NAMES, MAX_COVERAGE_PAGES, PAGE_LIMIT } from "./_available_data.js";
+import takoSearch from "./tako_search.js";
 import takoAvailableData from "./tako_available_data.js";
 import {
   jsonResponse,
@@ -252,7 +253,9 @@ describe("tako_available_data", () => {
     // Only ONE full coverage list is rendered — the whole point of
     // RENDER_FULL_N is not paying ~8.3k twice.
     expect(out.matches).toHaveLength(1);
-    expect(out.next_call?.node_ids).not.toContain("us-savings");
+    // next_call carries no node ids at all now; what matters is that the
+    // demoted candidate does not become the handle's subject.
+    expect(out.next_call?.query ?? "").not.toContain("us-savings");
   });
 
   it("leaves a well-covered rank 0 alone even when a probe out-covers it", async () => {
@@ -561,10 +564,11 @@ describe("tako_available_data", () => {
     const out = await takoAvailableData.handler({ q: "apple" }, CTX);
     expect(out.next_call).toEqual({
       tool: "tako_search",
-      query: "Apple Inc. Revenue",
-      node_ids: ["metrics-0"], // the METRIC node, not the entity's
-      strict: true,
+      query: "Apple Inc. Revenue", // both halves canonical; no pin — see below
     });
+    // Whatever the handle says, tako_search must accept it verbatim. A handle
+    // labelled "run verbatim" that the tool rejects is worse than no handle.
+    expect(takoSearch.inputSchema.safeParse(out.next_call).success).toBe(true);
     expect(out.summary).toContain("next_call");
   });
 
@@ -627,7 +631,7 @@ describe("tako_available_data", () => {
 // destroy entity resolution ("Pfizer R&D expense" returns no Pfizer at all).
 
 describe("tako_available_data — lookup path", () => {
-  it("resolves the pair and pins the METRIC node with strict:true", async () => {
+  it("resolves the pair and names both halves canonically in the handle", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { results: [searchHit("ent::nvidia::1", "NVIDIA Corporation")] }),
       jsonResponse(200, { results: [searchHit("mt::gross_margin::9", "Gross Margin (%)", "metric", "METRIC")] }),
@@ -669,16 +673,21 @@ describe("tako_available_data — lookup path", () => {
 
     expect(out.entity).toEqual({ node_id: "ent::nvidia::1", name: "NVIDIA Corporation", type: "entity" });
     expect(out.metric).toEqual({ node_id: "mt::gross_margin::9", name: "Gross Margin (%)", type: "metric" });
-    // The metric node alone — adding the entity id would widen strict back out.
+    // BOTH halves are the graph's canonical names — "Gross Margin (%)", not the
+    // caller's "gross margin". The pin used to carry the precision; with
+    // tako_search taking none, the canonical name is the only steering signal
+    // left, and it is the one the measurement favours (the name recovered cards
+    // on 9 of 15 pairs; a pin lost them on 11 of 20).
     expect(out.next_call).toEqual({
       tool: "tako_search",
-      query: "NVIDIA Corporation gross margin",
-      node_ids: ["mt::gross_margin::9"],
-      strict: true,
+      query: "NVIDIA Corporation Gross Margin (%)",
     });
     // The verbatim filter's hit comes back as the entity's own filtered list.
     expect(out.matches[0]).toMatchObject({ node_id: "ent::nvidia::1", filter: "gross margin" });
     expect(out.matches[0]?.coverage.names).toEqual(["Gross Margin (%)"]);
+    // `matches` is no longer empty here (PR 267 returns the filtered list), but
+    // the handle must still be one tako_search accepts verbatim.
+    expect(takoSearch.inputSchema.safeParse(out.next_call).success).toBe(true);
   });
 
   it("carries alternates so a wrong top-1 is visible and self-correctable", async () => {
@@ -890,7 +899,8 @@ describe("tako_available_data — metric confidence is judged on what is shown",
     const out = await takoAvailableData.handler({ q: "Chevron", metric: "capex" }, CTX);
     expect(out.metric?.name).toBe("Capital Expenditure");
     expect(out.found).toBe(true);
-    expect(out.next_call?.node_ids).toEqual(["mt::a::1"]);
+    // The handle names the RESOLVED metric, not the caller's "capex".
+    expect(out.next_call?.query).toContain("Capital Expenditure");
   });
 
   it("WITHHOLDS the handle when rank 0 is unvetted, even if an alternate passes", async () => {
@@ -987,7 +997,7 @@ describe("tako_available_data — exact metric name promotion", () => {
       { q: "United States", metric: "CPI Inflation Rate (Seasonally Adjusted)" }, CTX,
     );
     expect(out.metric?.name).toBe("CPI Inflation Rate (Seasonally Adjusted)");
-    expect(out.next_call?.node_ids).toEqual(["mt::d::4"]);
+    expect(out.next_call?.query).toContain("CPI Inflation Rate (Seasonally Adjusted)");
   });
 
   it("is a no-op when no candidate matches exactly (the ordinary shapes)", async () => {
@@ -1112,7 +1122,7 @@ describe("tako_available_data — pair confirmation", () => {
     jsonResponse(200, { results: [searchHit("mt::m::u", "Quiet Metric", "metric", "METRIC")] }),
   ];
 
-  it("confident + on the entity's list → verified:pair, handle stays PINNED", async () => {
+  it("confident + on the entity's list → verified:pair, handle uses canonical names", async () => {
     mockFetchSequence([
       jsonResponse(200, { results: [searchHit("ent::novo::1", "Novo Nordisk A/S")] }),
       jsonResponse(200, {
@@ -1132,11 +1142,10 @@ describe("tako_available_data — pair confirmation", () => {
     const out = await takoAvailableData.handler({ q: "Novo Nordisk", metric: "revenue" }, CTX);
     expect(out.verified).toBe("pair");
     expect(out.found).toBe(true);
+    // Both halves canonical: "Revenues", not the caller's "revenue".
     expect(out.next_call).toEqual({
       tool: "tako_search",
-      query: "Novo Nordisk A/S revenue",
-      node_ids: ["mt::revenues::1"],
-      strict: true,
+      query: "Novo Nordisk A/S Revenues",
     });
     expect(out.summary).toContain("IS on");
   });
@@ -1160,7 +1169,7 @@ describe("tako_available_data — pair confirmation", () => {
     expect(out.summary).toContain("NOT on");
   });
 
-  it("unlinked DROPS THE PIN rather than withholding the handle", async () => {
+  it("unlinked still emits a handle rather than withholding it", async () => {
     // Two signals now say the pinned form will miss, and 11 of 20 measured
     // handles retrieved more cards unpinned — so spend the caller's one priced
     // call on the form that works.
@@ -1175,11 +1184,12 @@ describe("tako_available_data — pair confirmation", () => {
     const out = await takoAvailableData.handler(
       { q: "Shopify", metric: "gross merchandise volume" }, CTX,
     );
+    // An unlinked verdict no longer needs its own unpinned shape — no path
+    // pins, so both arms produce the same handle. What unlinked still changes
+    // is the SUMMARY, asserted separately.
     expect(out.next_call).toEqual({
       tool: "tako_search",
-      query: "Shopify Inc. gross merchandise volume",
-      node_ids: [],
-      strict: false,
+      query: "Shopify Inc. Gross Merchandise Volume",
     });
   });
 
@@ -1269,8 +1279,8 @@ describe("tako_available_data — pair confirmation", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
     expect(out.verified).toBe("resolution");
-    // Today's behaviour exactly: the pin stays.
-    expect(out.next_call?.node_ids).toEqual(["mt::backlog::1"]);
+    // The handle still resolves, and names the graph's metric.
+    expect(out.next_call?.query).toContain("Backlog");
     expect(out.summary).not.toContain("NOT on");
   });
 
@@ -1312,9 +1322,7 @@ describe("tako_available_data — pair confirmation", () => {
     expect(out.found).toBe(true);
     expect(out.next_call).toEqual({
       tool: "tako_search",
-      query: "NVIDIA Corporation gross margin",
-      node_ids: ["mt::gm::9"],
-      strict: true,
+      query: "NVIDIA Corporation Gross Margin (%)",
     });
   });
 

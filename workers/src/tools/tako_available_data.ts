@@ -151,11 +151,12 @@ const resolvedRefSchema = z.object({
   type: z.string(),
 });
 
+// Mirrors `NextCall` in _available_data.ts. No node_ids / strict: tako_search
+// takes neither after the D4 split, and a handle labelled "run verbatim" that
+// the named tool rejects is worse than no handle at all.
 const nextCallSchema = z.object({
   tool: z.enum(["tako_search"]),
   query: z.string(),
-  node_ids: z.array(z.string()),
-  strict: z.boolean(),
 });
 
 const coverageGroupSchema = z.object({
@@ -871,20 +872,16 @@ const tako_available_data = {
         }),
         matches,
         other_matches: [],
-        // UNLINKED DROPS THE PIN, it does not withhold the handle. Two
-        // independent signals now say a pinned call will miss, and the measured
-        // pinned-vs-unpinned table (see buildPairSummary) says the unpinned form
-        // frequently lands — so spend the caller's one priced call on the form
-        // that works instead of on the one we expect to fail.
+        // No pinned/unpinned fork any more: the handle never pins, so an
+        // `unlinked` verdict and a confirmed pair produce the same shape. What
+        // `unlinked` still changes is the SUMMARY, which tells the model the
+        // graph holds no edge between the two halves.
         //
         // The `pair.metric !== null` half is DEFENSIVE, not load-bearing:
         // `buildPairNextCall` already returns null on a null metric. It states
         // the precondition where the reader can see it, next to a `found` that
         // can now be true with no metric at all.
-        next_call:
-          pair.metric !== null && pinnedConfident
-            ? buildPairNextCall(metricQuery, pair, { unpinned: verified === "unlinked" })
-            : null,
+        next_call: pair.metric !== null && pinnedConfident ? buildPairNextCall(pair) : null,
         entity: pair.entity,
         metric: pair.metric,
         entity_alternates: pair.entity_alternates,

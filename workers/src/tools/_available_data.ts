@@ -564,9 +564,17 @@ export interface NextCall {
    * a handle labelled "run verbatim" that names it is a dead end.
    */
   tool: "tako_search";
+  /**
+   * The EXACT canonical name of each half, which is what recovers cards.
+   *
+   * No pin rides along. `tako_search` takes no `node_ids` / `strict` after the
+   * D4 split, so a handle carrying them would be rejected by the very tool it
+   * names — and the measurement says the name is the better arm anyway: a pin
+   * returned FEWER cards than the same query unpinned on 11 of 20 pairs
+   * (staging 2026-07-31), because the graph holds near-duplicate metric nodes
+   * where only one twin carries cards.
+   */
   query: string;
-  node_ids: string[];
-  strict: boolean;
 }
 
 // A coverage list at or under this size is treated as unambiguous enough for
@@ -582,28 +590,22 @@ function exampleSearch(matches: CoverageMatch[]): NextCall | null {
   const m = matches.find((x) => !x.unavailable && x.coverage.items.length > 0);
   if (!m) return null;
   const first = m.coverage.items[0] as CoverageItem;
-  // Which node is the METRIC depends on what resolved. An entity match's
-  // coverage lists metrics (so the metric is the coverage entry); a metric
-  // match's coverage lists entities (so the metric is the match itself).
-  // Pinning the metric — never the entity — is what makes `strict` precise.
+  // An entity match's coverage lists metrics; a metric match's lists entities.
+  // Both name sources are the graph's own canonical strings, which is what the
+  // handle is for now that no pin rides along.
   const entityMatch = m.coverage.kind === "metrics";
   if (entityMatch) {
     // Both halves come from the SAME match — the entity and one of its own
     // metrics — so the pairing is real.
-    return {
-      tool: "tako_search",
-      query: `${m.name} ${first.name}`,
-      node_ids: [first.node_id],
-      strict: true,
-    };
+    return { tool: "tako_search", query: `${m.name} ${first.name}` };
   }
   // METRIC match: the caller named the measure. Do NOT pair it with
   // coverage.items[0] — a metric's entity list is frequently generic rather
   // than a list of real trackers (`Passenger Cruise Days` lists NVIDIA, Apple,
   // Amazon and Microsoft), which produced "NVIDIA Corporation Passenger Cruise
-  // Days" as something to run verbatim. Query the metric alone and let the pin
-  // do the narrowing; the caller can add an entity themselves.
-  return { tool: "tako_search", query: m.name, node_ids: [m.node_id], strict: true };
+  // Days" as something to run verbatim. Query the metric alone; the caller can
+  // add an entity themselves.
+  return { tool: "tako_search", query: m.name };
 }
 
 /**
@@ -692,44 +694,26 @@ export const toRef = (n: { id: string; name: string; type: string }): ResolvedRe
  * Null when no metric resolved: a handle pointing at a metric we could not
  * find would spend a priced call on a guess.
  */
-export function buildPairNextCall(
-  metricQuery: string,
-  pair: PairResolution,
-  opts?: {
-    /**
-     * Emit the handle WITHOUT the pin. Set on an `unlinked` verdict — the
-     * PINNED metric is not on the entity's own metric list, so the pinned form
-     * is the one we expect to return 0 cards. Scoped to that node, not to the
-     * list: `unlinked` ships beside a routinely non-empty
-     * `entityMetricMatches`, and dropping the pin is right precisely because
-     * the pin is the part with evidence against it. Measured (staging 2026-07-31, 20
-     * handles × 3 repeats): 11 of 20 retrieved FEWER cards pinned than
-     * unpinned, because `strict` is a hard filter over a graph holding
-     * near-duplicate metric nodes where only one twin carries cards (KE-812).
-     * On `unlinked` we skip straight to the form that works rather than
-     * spending the caller's priced call on the one two signals say will miss.
-     */
-    unpinned?: boolean;
-  },
-): NextCall | null {
+export function buildPairNextCall(pair: PairResolution): NextCall | null {
   // No entity → the summary is routing the caller elsewhere (a bare-domain
   // tako_search); a handle here would contradict it.
   if (pair.metric === null || pair.entity === null) return null;
-  // The RESOLVED entity name, not the caller's `q`: it is the canonical form
-  // the graph knows ("Carnival Corporation Ltd." for `q="Carnival"`), which is
-  // what makes the query text line up with the pinned metric node.
-  const subject = pair.entity.name;
-  // `strict` without a pin steers nothing (measured), so the unpinned form
-  // drops both together rather than leaving a flag that does no work.
-  if (opts?.unpinned === true) {
-    return { tool: "tako_search", query: `${subject} ${metricQuery}`, node_ids: [], strict: false };
-  }
-  return {
-    tool: "tako_search",
-    query: `${subject} ${metricQuery}`,
-    node_ids: [pair.metric.node_id],
-    strict: true,
-  };
+  // BOTH halves are the graph's RESOLVED names, never the caller's `q` or
+  // `metric` strings: "Carnival Corporation Ltd." for q="Carnival", "Gross
+  // Margin (%)" for metric="gross margin".
+  //
+  // The metric half used to be the caller's phrase, because the pinned node
+  // carried the precision. With tako_search taking no pin, the canonical name
+  // is the ONLY steering signal left — and it is the arm the measurement
+  // favours: the canonical name recovered cards on 9 of 15 pairs, while a pin
+  // returned FEWER cards than the same query unpinned on 11 of 20 (staging
+  // 2026-07-31, 20 handles × 3 repeats, KE-812) because the graph holds
+  // near-duplicate metric nodes where only one twin carries cards.
+  //
+  // That measurement is also why there is no longer an `unpinned` variant for
+  // the `unlinked` verdict: with no pin on any path, both arms collapsed into
+  // this one.
+  return { tool: "tako_search", query: `${pair.entity.name} ${pair.metric.name}` };
 }
 
 /**

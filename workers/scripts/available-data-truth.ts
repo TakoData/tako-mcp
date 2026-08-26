@@ -73,11 +73,21 @@ async function main(): Promise<void> {
   for (const [q, metric] of PAIRS) {
     const out = await takoAvailableData.handler({ q, metric }, ctx);
     const nc = out.next_call;
-    const emitted = nc === null ? "none" : nc.node_ids.length > 0 ? "pinned" : "unpinned";
+    // next_call carries no pin since the D4 split, so the handle is always the
+    // unpinned form. This script still exercises the PINNED arm — it is what
+    // measured the 11-of-20 result — by taking the metric node from the
+    // resolved pair and calling /api/v3/search directly, which still accepts
+    // node_ids even though tako_search no longer exposes them.
+    const pinId = out.metric?.node_id ?? null;
+    const emitted = nc === null ? "none" : "unpinned";
     let handleCards = 0; let titles: string[] = [];
     if (nc !== null) {
-      const got = await cards(nc.query, nc.node_ids, nc.strict);
+      const got = await cards(nc.query, [], false);
       handleCards = got.n; titles = got.titles;
+      if (pinId !== null) {
+        const pinned = await cards(nc.query, [pinId], true);
+        console.log(`         pinned arm: cards=${pinned.n}  ${pinned.titles.slice(0, 1)[0] ?? ""}`);
+      }
     }
     rows.push({ q, metric, verified: String(out.verified), found: out.found,
       pinName: out.metric?.name ?? null, emitted, handleCards, titles });
