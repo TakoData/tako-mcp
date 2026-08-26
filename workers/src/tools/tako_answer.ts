@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { djangoPost } from "../django.js";
-import { AnswerResponse, SearchRequest } from "../generated/schemas.js";
+import { AnswerRequest, AnswerResponse } from "../generated/schemas.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import { isChatGptFamilyClient } from "./_surface.js";
@@ -171,20 +171,28 @@ const outputSchema = answerSlimOutputShape;
 type Output = z.infer<typeof outputSchema>;
 
 /**
- * Reshape the flat MCP input into the backend's nested SearchRequest body.
+ * Reshape the flat MCP input into the backend's nested AnswerRequest body.
  * Exported for the contract-guard test.
  *
- * The `satisfies z.input<typeof SearchRequest>` annotation is the build-time
+ * The `satisfies z.input<typeof AnswerRequest>` annotation is the build-time
  * guard: if the backend request contract changes (new required field, renamed
  * key, changed enum) this line fails to compile — the intended signal.
+ *
+ * It has to name the component `/api/v1/answer` actually takes, and nothing
+ * checks that it does. It pointed at `SearchRequest` from TakoData/tako#29604
+ * until this was found by hand: that PR did not rename the component, it SPLIT
+ * one — `/v1/answer` moved to a new `AnswerRequest` while `SearchRequest`
+ * stayed valid for `/v3/search`. The old name kept compiling, against the
+ * wrong endpoint's contract. A split is the case a `satisfies` cannot catch,
+ * so re-check the name by hand whenever a sync PR adds a request component.
  */
-export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
+export function buildAnswerBody(input: Input): z.input<typeof AnswerRequest> {
   // Typed against the contract (not Record<string, …>) so a renamed/added
   // `Sources` key or a new required per-source sub-field breaks compilation here.
-  const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
+  const sources: NonNullable<z.input<typeof AnswerRequest>["sources"]> = {};
   if (input.sources.includes("data") || input.sources.includes("tako")) {
     const data: NonNullable<
-      NonNullable<z.input<typeof SearchRequest>["sources"]>["data"]
+      NonNullable<z.input<typeof AnswerRequest>["sources"]>["data"]
     > = { include_contents: input.include_contents ?? true };
     if (input.node_ids !== undefined && input.node_ids.length > 0) {
       data.node_ids = input.node_ids;
@@ -222,7 +230,7 @@ export function buildAnswerBody(input: Input): z.input<typeof SearchRequest> {
     sources,
     country_code: input.country_code,
     locale: input.locale,
-  } satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
+  } satisfies z.input<typeof AnswerRequest>; // ← build-time guard: backend request drift breaks here
 }
 
 /**
@@ -270,7 +278,7 @@ const takoAnswer = {
   // Declared as the FULL internal shape (assignable to the slim advertised
   // Output via its loose index signature) so tests and hooks keep real types.
   async handler(input, ctx): Promise<AnswerFullOutput> {
-    // GA /api/v1/answer takes the v3 SearchRequest shape: top-level `query`
+    // GA /api/v1/answer takes the AnswerRequest shape: top-level `query`
     // + a per-source `sources` OBJECT (an index is searched iff its key is
     // present; include_contents is per-source). The old flat `source_indexes`
     // is extra="forbid" rejected (400). Answer runs the fast pipeline +
