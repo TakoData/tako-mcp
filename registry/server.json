@@ -320,6 +320,49 @@
       }
     },
     {
+      "name": "tako_search_advanced",
+      "description": "Full control over the v3 search request: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.\n\nUse `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.\n\nNothing is sent unless you set it, so an omitted field takes the server default named in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.\n\nTo land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out, and a pin at the default `strict: false` does not steer retrieval. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool.",
+          "required": true
+        },
+        "effort": {
+          "type": "string",
+          "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier.",
+          "enum": [
+            "fast",
+            "instant",
+            "deep"
+          ]
+        },
+        "country_code": {
+          "type": "string",
+          "description": "ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US."
+        },
+        "locale": {
+          "type": "string",
+          "description": "BCP-47 locale tag for language and formatting. Omit it and the server uses en-US."
+        },
+        "data": {
+          "type": "object",
+          "description": "Tako data (card) source settings. Include this key — even as an empty object — to search the data graph."
+        },
+        "web": {
+          "type": "object",
+          "description": "Web source settings. Include this key — even as an empty object — to search the web."
+        }
+      },
+      "annotations": {
+        "title": "Tako: Search (advanced)",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
       "name": "tako_visualize",
       "description": "Create a PUBLIC, PERSISTENT Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. The data you supply is sent to and stored by Tako, the card does not expire, and anyone with the returned link can view it without signing in. Confirm the user wants a public chart before calling.\n\nNEVER put sensitive data in `components`: no passwords, API keys or tokens, payment-card or bank details, health information, government identifiers (SSN, passport, driver's licence), precise home addresses, or anyone's personal data they have not agreed to publish. Aggregate or anonymize first, or decline.\n\nAuto-renders inline; returns `webpage_url` / `embed_url`.\n\nInput: one or more `components`, each `{component_type, config}`. `config` is typed per `component_type` — `header`, `categorical_bar`, `generic_timeseries`, `table`, `financial_boxes`, and `pie` carry their required fields inline; other types accept a documented passthrough config. `component_variant` is optional and rarely needed.\n\nExample — a titled bar chart is two components:\n{\"components\": [{\"component_type\": \"header\", \"config\": {\"title\": \"Revenue\"}}, {\"component_type\": \"categorical_bar\", \"config\": {\"datasets\": [{\"label\": \"Sales\", \"units\": \"USD\", \"data\": [{\"x\": \"NA\", \"y\": 500}, {\"x\": \"EU\", \"y\": 300}]}]}}]}\n\nTip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.",
       "parameters": {

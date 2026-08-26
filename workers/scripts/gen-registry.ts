@@ -62,6 +62,7 @@ export const MCP_TOOL_ALLOWLIST = [
   "tako_contents",
   "tako_graph_related",
   "tako_search",
+  "tako_search_advanced",
   "tako_visualize",
 ] as const;
 
@@ -472,7 +473,7 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     "",
     "## Choosing tools with `?tools=`",
     "",
-    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
+    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming `tako_search`, so a listing without it gives the model a call it cannot run. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
     "",
   );
 

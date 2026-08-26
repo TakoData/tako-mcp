@@ -114,9 +114,16 @@ describe("advertised pin form", () => {
     expect(advising).not.toContain("tako_search");
     // Every tool that advises a pin must also accept one, or the advice is a
     // phantom parameter. Derived, never hand-listed.
+    //
+    // Checked against the PUBLISHED JSON Schema, not the top-level zod shape:
+    // tako_search_advanced carries node_ids nested inside its `data` source
+    // block, mirroring the API, and a shape-key check called that a phantom.
     for (const name of advising) {
       const tool = TOOL_REGISTRY.find((t) => t.name === name);
-      expect(Object.keys(tool!.inputSchema.shape), `${name} advises a pin`).toContain("node_ids");
+      const published = JSON.stringify(
+        z.toJSONSchema(tool!.inputSchema, { io: "input" }),
+      );
+      expect(published.includes('"node_ids"'), `${name} advises a pin it does not accept`).toBe(true);
     }
   });
 });
