@@ -284,9 +284,12 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
   it("?tools=search,contents keeps its own sentences and drops the others", () => {
     const resolved = resolveToolSet("generic", new Set(["tako_search", "tako_contents"]));
     const text = serverInstructionsForTier("authenticated", resolved);
-    // Kept: both sentences whose tools are entirely inside the allowlist.
+    // Kept: both sentences whose tools are entirely inside the allowlist. The
+    // tako_search sentence is "retrieves the cards and web links" since D4 —
+    // it used to be "set `include_contents: true`", a parameter the tool no
+    // longer takes.
     expect(text).toContain("`tako_contents` reads one source in full");
-    expect(text).toContain("`include_contents: true` on `tako_search`");
+    expect(text).toContain("`tako_search` retrieves the cards and web links");
     // Dropped: the one sentence naming a tool the allowlist leaves out.
     expect(text).not.toContain("tako_available_data");
     // And the shared routing paragraph is never a casualty of filtering.

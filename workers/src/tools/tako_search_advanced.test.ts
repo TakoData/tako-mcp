@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { Env } from "../env.js";
-import { FREE_TIER_TOOL_NAMES } from "../freetier.js";
 import { jsonResponse, mockFetchSequence, noopSendProgress } from "./__test_helpers.js";
-import { CHATGPT_TOOL_NAMES, GENERIC_DEFAULT_TOOL_NAMES } from "./_surface.js";
+import {
+  CHATGPT_TOOL_NAMES,
+  FREE_TIER_TOOL_NAMES,
+  GENERIC_DEFAULT_TOOL_NAMES,
+} from "./_surface.js";
 import tako_search_advanced, { buildAdvancedSearchBody } from "./tako_search_advanced.js";
 import tako_search from "./tako_search.js";
 import type { ToolContext } from "./types.js";

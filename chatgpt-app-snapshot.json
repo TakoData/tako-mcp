@@ -1,25 +1,25 @@
 {
-  "note": "OpenAI snapshots tool names, descriptions, and input schemas at submission and does not update them live. registry:check fails when a reviewed tool drifts from this file. Resubmit the app, then run: npm run registry:gen -- --accept-chatgpt-snapshot",
+  "note": "The description and input schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot",
   "tools": {
     "tako_available_data": {
       "description_sha256": "8a479254a68c3b1246a44b7fc5f6c77850ce9ed51454581e968aac6c51f67bc8",
-      "input_schema_sha256": "2b27f18b9f9e05939c2f1328a0a70044861c8aa8ec0f9bf2e2586f1c809d5f15"
+      "input_schema_sha256": "922002d8511ce6b635a6ef0cc9f94c0f6ed493a89d145be8159d5ced1210f37d"
     },
     "tako_contents": {
       "description_sha256": "e17f146f6496cd733529490cc88cc369baf93a6faa7656740c1fb77c10ea6bc3",
-      "input_schema_sha256": "334ef2ff439403fb69c1f967d1567520c7c590b378cadb67325e2bf12705e1cf"
+      "input_schema_sha256": "acc4eaf3865a5ea3886437dd813f11c153ef92b6264a900f5abe890d0e771b0e"
     },
     "tako_graph_related": {
       "description_sha256": "dceaf7dee6698955612e98f9c2ddf41134b7e7077b6e641b325d7cd69195b4d7",
-      "input_schema_sha256": "426e664a9be4e919020f6159f3c35416f71b1b16d93d8bdc969e6730917afb0d"
+      "input_schema_sha256": "4335dd68ddc5a86c1141ae108133001968f2036398e1c59b49d32edc0e5bc081"
     },
     "tako_search": {
       "description_sha256": "0e6db5617a5c7276a445b9269cb4c4eb7e3f283842df7021afef16ddb82f74ea",
-      "input_schema_sha256": "adb6a5c39718de328ad863863a86418122e4a539f4649623e7b8867030999fd4"
+      "input_schema_sha256": "b9cbe0426008c26be4aa818c8b0b4f8f57e1c54363abddb15b907ff9297bf19e"
     },
     "tako_visualize": {
       "description_sha256": "4ea2f9ed87390bb7598d2e86147f3f4cc76f6b4d6302eef1626bda0609139ece",
-      "input_schema_sha256": "2398580499e21c2e446edead3a947c9cd45ab6833e0fdecc454cc53d74c6dc9f"
+      "input_schema_sha256": "10041193cae0bf3bcae12592d331e3a269887e4636e55ad792c649db1a97d8ad"
     }
   }
 }
