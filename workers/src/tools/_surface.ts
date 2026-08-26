@@ -1,109 +1,112 @@
 /**
  * Per-surface tool membership and annotation resolution.
  *
- * The request PATH decides the surface (`surface.ts`): `/mcp` is the
- * generic surface every client shares; `/mcp/chatgpt` is the OAuth-required
- * surface submitted to OpenAI's app directory. Nothing here reads the
- * client User-Agent (spec D2) and nothing here varies by tier — the tool
- * LISTING is auth-invariant (spec D4); anonymous EXECUTION is gated at
- * dispatch time in `mcp.ts`, keyed on `FREE_TIER_TOOL_NAMES`.
+ * The request PATH decides the surface (`surface.ts`); the `?tools=` query
+ * param (parsed by `_tools_param.ts`) can replace the generic surface's
+ * default listing with an allowlist (spec D1). The chatgpt surface is FIXED
+ * (spec D2): OpenAI snapshots the tool list at submission, so nothing may
+ * add to or remove from it per request — the param is ignored there.
  *
- * `mcp.ts` uses {@link isToolOnSurface} to decide which tools to register
- * for a request, and {@link toolAnnotationsForSurface} to resolve the
- * annotations that surface sees. `scripts/gen-registry.ts` runs the same
- * two functions to validate that `chatgpt-app-submission.json` describes
- * exactly the tools (and annotations) ChatGPT receives from
- * `https://mcp.tako.com/mcp/chatgpt` — sharing one module is what keeps
- * the hand-maintained submission metadata from drifting.
+ * Nothing here varies by tier: the LISTING is auth-invariant (spec D4 of the
+ * surface-split design); anonymous EXECUTION is gated at dispatch in
+ * `mcp.ts`, keyed on `FREE_TIER_TOOL_NAMES`.
+ *
+ * `mcp.ts` registers exactly `resolveToolSet(surface, requested)`.
+ * `scripts/gen-registry.ts` calls the same function to validate
+ * `chatgpt-app-submission.json` and to emit `docs/TOOLS.md`, so the
+ * submission, the docs, and the runtime cannot drift apart.
  *
  * The leading underscore keeps this file out of the tool-module scan in
  * `gen-registry.ts` (it is NOT a `ToolModule`).
  */
 import type { Surface } from "../surface.js";
-import { OPTIONAL_TOOL_NAMES } from "./_optional.js";
 import type { AnyToolModule, ToolAnnotations } from "./types.js";
 
 /**
- * Tools that appear ONLY on the chatgpt surface.
+ * Default listing on `/mcp` (spec D3). Search + fetch + the free coverage
+ * tool, plus graph exploration and the balance lookup. Everything else
+ * (`tako_answer`, `tako_agent`, `tako_visualize`) is reachable only by
+ * naming it in `?tools=`.
  *
- * ChatGPT's Apps SDK doesn't send a progressToken, so the single-tool
- * `tako_agent` dispatch+poll path (which emits progress to keep the
- * per-call timeout fresh) can't survive ChatGPT's ~60 s ceiling. The
- * split pair `tako_agent_start` / `tako_agent_wait` is used instead.
- *
- * Hosting them only on the surface that needs them keeps the generic
- * surface minimal (no risk of an agent there accidentally choosing the
- * slower split flow over the single-call path) and keeps the registry
- * codegen unchanged (registry/server.json still lists everything for
- * discovery; the runtime just filters per request).
+ * `tako_credit_balance` looks like the odd one out — its own description tells
+ * the model not to call it preemptively — so do NOT demote it to an opt-in
+ * without reading this. `.claude-plugin/plugin.json` pins
+ * `https://mcp.tako.com/mcp` with NO query string and the plugin's URL is not
+ * user-editable, so `?tools=credit_balance` is not a home a plugin user can
+ * reach: opt-in means no Claude Code plugin user can ever check a balance. It
+ * costs 394 chars of descriptor (275 description + 119 schema) against this
+ * set's 15,912 — 2.5%, and 15x less than `tako_search`. Restraint copy on a
+ * listed tool is the copy doing its job, not an argument for hiding it.
  */
-export const CHATGPT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "tako_agent_start",
-  "tako_agent_wait",
+export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "tako_search",
+  "tako_available_data",
+  "tako_contents",
+  "tako_graph_related",
+  "tako_credit_balance",
 ]);
 
 /**
- * Tools registered on every surface EXCEPT chatgpt. The dispatch+poll
- * `tako_agent` relies on `notifications/progress` for timeout extension —
- * ChatGPT doesn't support that mechanism, so the chatgpt surface routes
- * to the split pair instead.
+ * The complete anonymous EXECUTABLE tool surface. The listing is
+ * auth-invariant (spec D4): every default tool stays listed on anonymous
+ * connections, and a default tool outside this set answers sign-in
+ * instructions at dispatch time (see the free-tier gate in `mcp.ts`) instead
+ * of executing on the shared account. That is THREE of the five defaults —
+ * `tako_contents`, `tako_graph_related` and `tako_credit_balance` — so an
+ * anonymous connection lists five tools and only two of them run. `tako_answer`
+ * is opt-in via `?tools=answer` (spec D1) and never executes anonymously.
+ *
+ * It lives HERE, not in `freetier.ts`, because `freetier.ts` imports
+ * `TOOL_REGISTRY` — the barrel `scripts/gen-registry.ts` WRITES. A generator
+ * that statically imports its own output cannot regenerate a stale one: with
+ * a tool file deleted and its line still in `_registry.ts`, `registry:gen`
+ * dies with ERR_MODULE_NOT_FOUND before it runs, and `AGENTS.md` forbids the
+ * hand-edit that would break the tie. This module is a leaf (type-only
+ * imports), so the generator reaches the set without reaching the barrel.
  */
-export const CHATGPT_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "tako_agent",
+export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "tako_available_data",
+  "tako_search",
 ]);
 
 /**
- * Optional tools that stay on the DEFAULT chatgpt surface (spec D16).
- *
- * `tako_visualize` turns data the agent already has into a Tako card and
- * auto-chains it into the same `ui://tako/embed/chart` widget bundle
- * `tako_search` uses. Hiding it behind `?tools=` on the one surface whose
- * host renders that widget inline means the tool whose entire output is a
- * chart would be missing from exactly the place the chart renders.
- *
- * The generic surface keeps it opt-in (`?tools=visualize`): there the
- * payoff is a shareable embed URL rather than an inline chart, which is
- * worth the ~3.5k tokens of standing schema (a 20-member discriminated
- * union — by far the largest descriptor on the surface) only when asked
- * for.
+ * The listing on `/mcp/chatgpt` — exactly the tools submitted to OpenAI
+ * (`chatgpt-app-submission.json`). Any change here is a resubmission.
  */
-export const CHATGPT_DEFAULT_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
+export const CHATGPT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "tako_search",
+  "tako_available_data",
+  "tako_contents",
   "tako_visualize",
+  "tako_graph_related",
 ]);
 
 /**
- * Whether a tool is registered for a request. Three gates, in order:
+ * The tools a request registers.
  *
- * 1. Opt-in gate: optional tools (see `OPTIONAL_TOOL_ALIASES` in
- *    `_optional.ts`) are excluded from the default surface and registered
- *    only when enabled via the `tools` query param — except the tools the
- *    chatgpt surface keeps by default
- *    ({@link CHATGPT_DEFAULT_ON_TOOL_NAMES}).
- * 2. ChatGPT-only tools are hidden from every other surface.
- * 3. ChatGPT-excluded tools are hidden from the chatgpt surface.
- *
- * Deliberately NO tier gate: the listing is auth-invariant (spec D4).
- * What an anonymous connection can EXECUTE is `FREE_TIER_TOOL_NAMES`,
- * enforced at dispatch time in `mcp.ts` — a listed tool outside that set
- * (e.g. `tako_contents`) answers sign-in instructions instead of running.
+ * @param requested the parsed `?tools=` allowlist, or `null` when the param
+ *   was absent, empty, or named nothing recognizable (see
+ *   `parseToolsParam`). An empty set resolves to the defaults, not to an empty
+ *   listing: `new Set()` was the pre-allowlist idiom for "no opt-ins, serve the
+ *   defaults" (named `noOptIns` at four call sites), and a caller carrying that
+ *   vocabulary forward must not silently register nothing.
  */
+export function resolveToolSet(
+  surface: Surface,
+  requested: ReadonlySet<string> | null,
+): ReadonlySet<string> {
+  if (surface === "chatgpt") return CHATGPT_TOOL_NAMES;
+  if (requested === null || requested.size === 0) return GENERIC_DEFAULT_TOOL_NAMES;
+  return requested;
+}
+
+/** Whether one tool is registered for a request — see {@link resolveToolSet}. */
 export function isToolOnSurface(
   name: string,
   surface: Surface,
-  enabledOptionalToolNames: ReadonlySet<string>,
+  requested: ReadonlySet<string> | null,
 ): boolean {
-  if (
-    OPTIONAL_TOOL_NAMES.has(name) &&
-    !enabledOptionalToolNames.has(name) &&
-    !(surface === "chatgpt" && CHATGPT_DEFAULT_ON_TOOL_NAMES.has(name))
-  ) {
-    return false;
-  }
-  if (CHATGPT_ONLY_TOOL_NAMES.has(name) && surface !== "chatgpt") return false;
-  if (CHATGPT_EXCLUDED_TOOL_NAMES.has(name) && surface === "chatgpt") {
-    return false;
-  }
-  return true;
+  return resolveToolSet(surface, requested).has(name);
 }
 
 /**

@@ -688,7 +688,7 @@ export function renderAvailableDataMarkdown(o: AvailableDataFullOutput): string 
 }
 
 // ---------------------------------------------------------------------------
-// tako_agent / tako_agent_wait
+// tako_agent
 // ---------------------------------------------------------------------------
 
 /** Advertised (slim) structuredContent shape for agent runs: lifecycle fields

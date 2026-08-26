@@ -477,6 +477,28 @@ describe("tako_search widget + contract guard", () => {
     expect(body.sources?.web).toMatchObject({ highlights: true });
   });
 
+  it("sends exactly what fixedInputs declares, so TOOLS.md cannot publish a stale constant", () => {
+    // `fixedInputs` is a hand-written declaration that `docs/TOOLS.md` renders
+    // verbatim, and nothing links it to `buildSearchBody`. The handler literal
+    // is already pinned by the body tests above, so a retune breaks those and
+    // gets fixed there — leaving this declaration stale and the published doc
+    // asserting a value the server no longer sends. Derived from the
+    // declaration rather than restating the constants a fourth time.
+    const body = buildSearchBody(
+      tako_search.inputSchema.parse({ query: "US GDP", sources: ["data", "web"] }),
+    );
+    // A value starting with "=" names another input (`= count`), not a constant.
+    const constants = tako_search.fixedInputs.filter((f) => !f.value.startsWith("="));
+    expect(constants.length).toBeGreaterThan(0);
+    for (const { field, value } of constants) {
+      const actual = field.split(".").reduce<unknown>(
+        (o, key) => (o as Record<string, unknown> | undefined)?.[key],
+        body as unknown,
+      );
+      expect(actual, field).toEqual(JSON.parse(value));
+    }
+  });
+
   it("keeps a web body with highlights valid against the backend contract", () => {
     // sources.web is extra="forbid" server-side, so an unknown key is a 400 on
     // every web search rather than a degraded one. This is the guard that the

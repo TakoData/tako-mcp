@@ -1,11 +1,17 @@
 import { describe, it, expect } from "vitest";
+import { z } from "zod";
+
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
+import type { ToolModule } from "../src/tools/types.js";
 import {
   assertAllToolsDescribed,
+  assertChatgptSnapshot,
   assertChatgptSubmissionParity,
   assertLlmsFullCoverage,
   assertPinFormInDocs,
+  buildChatgptSnapshot,
   buildLobehubPlugin,
+  buildToolsDoc,
   LOBEHUB_TOOL_ALLOWLIST,
   MCP_TOOL_ALLOWLIST,
 } from "./gen-registry.js";
@@ -94,11 +100,12 @@ describe("assertLlmsFullCoverage", () => {
   });
 
   it("only matches whole `### name` headings, not prefixes", () => {
-    // A `### tako_agent` section must not satisfy `tako_agent_start`.
+    // A `### tako_agent` section must not satisfy a longer name that starts
+    // with it.
     const doc = "### tako_agent\nParameters:\n- `query`\n";
     expect(() =>
-      assertLlmsFullCoverage([tool("tako_agent_start", "query")], doc),
-    ).toThrow(/tako_agent_start.*never mentioned/);
+      assertLlmsFullCoverage([tool("tako_agent_deluxe", "query")], doc),
+    ).toThrow(/tako_agent_deluxe.*never mentioned/);
   });
 });
 
@@ -220,9 +227,10 @@ describe("assertPinFormInDocs", () => {
 });
 
 describe("assertChatgptSubmissionParity", () => {
-  // Fixture tool on the chatgpt surface's default listing: not optional,
-  // not chatgpt-only/excluded — so the only gates it exercises are the
-  // ones under test here.
+  // The fixtures name REAL chatgpt-surface tools: membership is a fixed name
+  // set now (`CHATGPT_TOOL_NAMES`, spec D2), so a made-up name is simply off
+  // the surface and would exercise none of the gates under test.
+  const ON_SURFACE = "tako_search";
   const tool = (
     name: string,
     overrides?: { chatgpt?: { openWorldHint?: boolean; readOnlyHint?: boolean } },
@@ -242,9 +250,9 @@ describe("assertChatgptSubmissionParity", () => {
   ) => JSON.stringify({ tools });
 
   it("passes when the declared tools and hints match the runtime descriptors", () => {
-    const tools = [tool("tako_x", { chatgpt: { openWorldHint: false } })];
+    const tools = [tool(ON_SURFACE, { chatgpt: { openWorldHint: false } })];
     const declared = submission({
-      tako_x: {
+      [ON_SURFACE]: {
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -257,15 +265,15 @@ describe("assertChatgptSubmissionParity", () => {
   });
 
   it("throws when the top-level tools object is missing", () => {
-    expect(() => assertChatgptSubmissionParity([tool("tako_x")], "{}")).toThrow(
-      /missing top-level "tools"/,
-    );
+    expect(() =>
+      assertChatgptSubmissionParity([tool(ON_SURFACE)], "{}"),
+    ).toThrow(/missing top-level "tools"/);
   });
 
   it("fails on a surface tool the submission does not declare", () => {
     expect(() =>
-      assertChatgptSubmissionParity([tool("tako_x")], submission({})),
-    ).toThrow(/missing tool "tako_x"/);
+      assertChatgptSubmissionParity([tool(ON_SURFACE)], submission({})),
+    ).toThrow(new RegExp(`missing tool "${ON_SURFACE}"`));
   });
 
   it("fails on a declared tool that is not on the chatgpt surface", () => {
@@ -278,9 +286,9 @@ describe("assertChatgptSubmissionParity", () => {
   });
 
   it("fails on a hint mismatch with a per-tool, per-hint message", () => {
-    const t = tool("tako_x", { chatgpt: { openWorldHint: false } });
+    const t = tool(ON_SURFACE, { chatgpt: { openWorldHint: false } });
     const declared = submission({
-      tako_x: {
+      [ON_SURFACE]: {
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -290,13 +298,15 @@ describe("assertChatgptSubmissionParity", () => {
       },
     });
     expect(() => assertChatgptSubmissionParity([t], declared)).toThrow(
-      /tool "tako_x" openWorldHint: submission declares true, runtime serves false/,
+      new RegExp(
+        `tool "${ON_SURFACE}" openWorldHint: submission declares true, runtime serves false`,
+      ),
     );
   });
 
   it("fails on a missing idempotentHint — OpenAI review requires all four hints explicit", () => {
     const declared = submission({
-      tako_x: {
+      [ON_SURFACE]: {
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -304,12 +314,132 @@ describe("assertChatgptSubmissionParity", () => {
         },
       },
     });
-    expect(() => assertChatgptSubmissionParity([tool("tako_x")], declared)).toThrow(
-      /tool "tako_x" idempotentHint: submission declares undefined, runtime serves true/,
+    expect(() =>
+      assertChatgptSubmissionParity([tool(ON_SURFACE)], declared),
+    ).toThrow(
+      new RegExp(
+        `tool "${ON_SURFACE}" idempotentHint: submission declares undefined, runtime serves true`,
+      ),
     );
   });
 
   // NOTE: parity against the REAL registry + committed submission file is
   // asserted by `npm run registry:check` (CI), not here — this suite runs
   // in the Workers pool, which has no filesystem.
+});
+
+describe("assertChatgptSnapshot", () => {
+  const search = {
+    name: "tako_search",
+    description: "Search.",
+    inputSchema: z.object({ query: z.string() }),
+  };
+  const others = [
+    { name: "tako_available_data", description: "a", inputSchema: z.object({ q: z.string() }) },
+    { name: "tako_contents", description: "c", inputSchema: z.object({ urls: z.array(z.string()) }) },
+    { name: "tako_visualize", description: "v", inputSchema: z.object({ components: z.array(z.any()) }) },
+    { name: "tako_graph_related", description: "g", inputSchema: z.object({ node_id: z.string() }) },
+  ];
+
+  it("passes when the live descriptions and schemas match the snapshot", () => {
+    const snapshot = buildChatgptSnapshot([search, ...others]);
+    expect(() => assertChatgptSnapshot([search, ...others], snapshot)).not.toThrow();
+  });
+
+  it("fails when a reviewed tool's description changes", () => {
+    const snapshot = buildChatgptSnapshot([search, ...others]);
+    const edited = { ...search, description: "Search, now with more words." };
+    expect(() => assertChatgptSnapshot([edited, ...others], snapshot)).toThrow(
+      /tako_search.*description.*resubmit/is,
+    );
+  });
+
+  it("fails when a reviewed tool's input schema changes", () => {
+    const snapshot = buildChatgptSnapshot([search, ...others]);
+    const edited = { ...search, inputSchema: z.object({ query: z.string(), count: z.number() }) };
+    expect(() => assertChatgptSnapshot([edited, ...others], snapshot)).toThrow(/input_schema/);
+  });
+
+  it("ignores tools that are not on the chatgpt surface", () => {
+    const snapshot = buildChatgptSnapshot([search, ...others]);
+    const agent = { name: "tako_agent", description: "x", inputSchema: z.object({}) };
+    expect(() => assertChatgptSnapshot([search, ...others, agent], snapshot)).not.toThrow();
+  });
+});
+
+describe("buildToolsDoc", () => {
+  const search = {
+    name: "tako_search",
+    description: "Search the graph.\n\nSecond paragraph.",
+    inputSchema: z.object({
+      query: z.string().describe("Natural-language query."),
+      count: z.number().int().min(1).max(20).optional().describe("Max results."),
+    }),
+    annotations: { title: "Tako: Search", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotationsBySurface: { chatgpt: { openWorldHint: false } },
+    fixedInputs: [{ field: "sources.web.highlights", value: "true", note: "Highlights on." }],
+    handler: async () => ({}),
+  };
+  const agent = {
+    name: "tako_agent",
+    description: "Run the agent.",
+    inputSchema: z.object({ query: z.string() }),
+    annotations: { title: "Tako: Answer Agent", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    fixedInputs: [],
+    handler: async () => ({}),
+  };
+  const modules = [search, agent] as unknown as ToolModule[];
+  const doc = buildToolsDoc({
+    modules,
+    registryTools: modules.map((m) => ({
+      name: m.name,
+      description: m.description,
+      parameters: m.name === "tako_search"
+        ? { query: { type: "string", description: "Natural-language query.", required: true }, count: { type: "integer", description: "Max results." } }
+        : { query: { type: "string", required: true } },
+      annotations: m.annotations,
+    })),
+    instructions: { authenticated: "AUTH TEXT", anonymous: "ANON TEXT" },
+    freeTierToolNames: new Set(["tako_search"]),
+  });
+
+  // No version in the banner, deliberately: release-please bumps
+  // `registry/metadata.json` but does not track this doc, so an embedded
+  // version would leave the committed file stale and fail `registry:check`
+  // on release-please's own PR. `registry/server.json` and
+  // `registry/lhm.plugin.json` carry the version because registries consume
+  // them as published artifacts; a doc that regenerates from HEAD does not.
+  it("opens with the generated-file banner and no version", () => {
+    expect(doc.startsWith("<!-- GENERATED by workers/scripts/gen-registry.ts")).toBe(true);
+    expect(doc).not.toMatch(/tako-mcp \d+\.\d+\.\d+/);
+  });
+
+  it("renders the description verbatim under the tool heading", () => {
+    expect(doc).toContain("### tako_search");
+    expect(doc).toContain("Search the graph.\n\nSecond paragraph.");
+  });
+
+  it("renders a parameter row per input with required and description", () => {
+    expect(doc).toMatch(/\| `query` \| string \| yes \| .*Natural-language query\./);
+    expect(doc).toMatch(/\| `count` \| integer \| no \| .*Max results\./);
+  });
+
+  it("renders per-surface annotations and the fixed inputs", () => {
+    expect(doc).toContain("openWorldHint: true");   // generic
+    expect(doc).toContain("openWorldHint: false");  // chatgpt override
+    expect(doc).toContain("`sources.web.highlights` = `true`");
+  });
+
+  it("lists membership per surface and the tools= tokens", () => {
+    expect(doc).toContain("## `/mcp`");
+    expect(doc).toContain("## `/mcp/chatgpt`");
+    expect(doc).toContain("`?tools=`");
+    // Path-qualified: anonymous connections exist only on `/mcp`.
+    expect(doc).toContain("Runs anonymously (on `/mcp`): yes"); // tako_search is free-tier
+  });
+
+  it("includes both instruction variants verbatim", () => {
+    expect(doc).toContain("AUTH TEXT");
+    expect(doc).toContain("ANON TEXT");
+  });
 });

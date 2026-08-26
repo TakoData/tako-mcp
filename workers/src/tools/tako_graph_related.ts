@@ -11,7 +11,12 @@
 import { z } from "zod";
 
 import { djangoGet } from "../django.js";
-import { graphErrorMessage, graphRelatedOutputShape } from "./_graph.js";
+import {
+  graphErrorMessage,
+  graphNodeSchema,
+  graphRelationSchema,
+  graphRelatedOutputShape,
+} from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
 import type { ToolModule } from "./types.js";
 
@@ -21,12 +26,12 @@ const NER_LABELS = [
 ] as const;
 
 const DESCRIPTION = [
-  "Explore what a resolved graph node connects to — the map of what data Tako has for it. Free.",
+  "Explore what a graph node connects to — the map of what data Tako has for it. Free.",
   "",
-  "Best for: checking coverage after resolving a node with `tako_graph_search`.",
+  "Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.",
   "",
   'Drilling `relation: "metrics"` returns only that node\'s metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.',
-  'Filtering with `q` ("revenue") narrows to a single metric. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
+  'Filtering with `q` ("revenue") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
 ].join("\n");
 
 const inputSchema = z.object({
@@ -46,15 +51,79 @@ const inputSchema = z.object({
   cursor: z.string().min(1).optional().describe(
     "Pagination cursor (for a single drilled relation; intended for single-q use).",
   ),
+  // Measured against production, not inferred: `?node_id=…&limit=3` and
+  // `&limit=100` return byte-identical overviews (82,741 chars for NVIDIA, 16
+  // groups, every group capped at 10 items). `limit` is INERT in overview mode
+  // — the server caps each group at 10 — so a caller that raises it to widen
+  // the coverage map gets nothing and pays a round trip. The backend's own
+  // OpenAPI description has the same gap; this one states the restriction
+  // because the model reads it.
   limit: z.number().int().min(1).max(100).optional().describe(
-    "Page size (default 50, max 100).",
+    "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items.",
   ),
 });
 
 type Input = z.infer<typeof inputSchema>;
 
 const outputSchema = z.object(graphRelatedOutputShape);
+type GraphNode = z.infer<typeof graphNodeSchema>;
+type GraphRelation = z.infer<typeof graphRelationSchema>;
 type Output = z.infer<typeof outputSchema>;
+
+/**
+ * The payload the MCP layer must not forward whole. `graph/related` returns
+ * the FULL node record for every related item, and the description dominates:
+ * the Nvidia overview measures 82,741 chars at `limit: 5` — ~849 chars per
+ * item — and Anthropic PBC's 83,487 overflowed the MCP result cap outright.
+ * A default-listed tool cannot spend that, and it would spend it TWICE:
+ * `mcp.ts` builds the text channel from `JSON.stringify(output)` when no
+ * `renderText` exists, then emits the same object as `structuredContent`.
+ *
+ * Dropping `description` and `aliases` from related items is what makes an
+ * overview ~2k instead of ~83k. Both are `.optional()` on `graphNodeSchema`,
+ * so the slim still conforms to the advertised outputSchema — the reason the
+ * design could promise the reduction with "schema unchanged". The top-level
+ * `node` keeps its description: it is one record, and it is the node the
+ * caller named. For a related item's own detail, call the tool again on its
+ * id, or `tako_search` for its values.
+ */
+function slimRelatedItem(item: GraphNode): GraphNode {
+  const slim: GraphNode = { id: item.id, type: item.type, name: item.name };
+  if (item.subtype !== undefined) slim.subtype = item.subtype;
+  if (item.label !== undefined) slim.label = item.label;
+  return slim;
+}
+
+function slimRelationGroup(group: GraphRelation): GraphRelation {
+  return { ...group, items: group.items.map(slimRelatedItem) };
+}
+
+/** Markdown index of the slim shape — one line per related item. */
+function renderRelatedMarkdown(output: Output): string {
+  const lines: string[] = [];
+  const node = output.node;
+  lines.push(`**${node.name}** (${node.subtype ?? node.type}) — \`${node.id}\``);
+  if (node.description) lines.push("", node.description);
+
+  const groups = output.relation ? [output.relation] : (output.relations ?? []);
+  if (groups.length === 0) {
+    lines.push("", "No related nodes.");
+    return lines.join("\n");
+  }
+  for (const group of groups) {
+    const shown = group.items.length;
+    const count = group.total_capped ? `${shown} of ${group.total}+` : `${shown} of ${group.total}`;
+    lines.push("", `### ${group.label} (\`${group.key}\`, ${group.kind}) — ${count}`);
+    for (const item of group.items) {
+      const qualifier = item.subtype ?? item.type;
+      lines.push(`- ${item.name} — \`${item.id}\` (${qualifier})`);
+    }
+    if (group.next_cursor) {
+      lines.push(`_More: call again with \`relation: "${group.key}"\` and \`cursor: "${group.next_cursor}"\`._`);
+    }
+  }
+  return lines.join("\n");
+}
 
 const tako_graph_related = {
   name: "tako_graph_related",
@@ -74,6 +143,7 @@ const tako_graph_related = {
     // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
+  fixedInputs: [],
   async handler(input: Input, ctx): Promise<Output> {
     const query: Record<string, string | number | boolean> = {
       node_id: input.node_id,
@@ -95,7 +165,7 @@ const tako_graph_related = {
       // Log before wrapping: the plain-Error wrap drops the DjangoError
       // envelope, so this is the only server-side record of the failure.
       console.error("[tako] tool error tool=tako_graph_related stage=graph/related:", err);
-      throw new Error(graphErrorMessage(err, "related", input.node_id));
+      throw new Error(graphErrorMessage(err, "related", input.node_id, "tako_graph_related"));
     }
     // Validate against the LOOSE advertised facade, NOT the generated schema.
     // The generated GraphRelatedResponse enforces a strict RelationKind enum
@@ -112,6 +182,17 @@ const tako_graph_related = {
       );
     }
     return parsed.data;
+  },
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderRelatedMarkdown(output);
+  },
+  slimStructured(output) {
+    const slim: Record<string, unknown> = { node: output.node };
+    if (output.relations != null) slim.relations = output.relations.map(slimRelationGroup);
+    if (output.relation != null) slim.relation = slimRelationGroup(output.relation);
+    if (output.inferred_labels != null) slim.inferred_labels = output.inferred_labels;
+    return slim;
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

@@ -10,11 +10,12 @@
 import { describe, expect, it } from "vitest";
 
 import { TOOL_REGISTRY } from "./_registry.js";
+import { TOOL_NAME_PREFIX } from "./_tools_param.js";
 
 // Closed-domain tools per the MCP spec: tako_visualize renders data the caller
-// already supplied; get_credit_balance reads Tako's own account state. Every
+// already supplied; tako_credit_balance reads Tako's own account state. Every
 // other tool reaches the open world (web + the live data graph).
-const CLOSED_WORLD = new Set(["tako_visualize", "get_credit_balance"]);
+const CLOSED_WORLD = new Set(["tako_visualize", "tako_credit_balance"]);
 
 describe("tool annotations", () => {
   it("every tool declares all three hints explicitly (booleans)", () => {
@@ -37,13 +38,29 @@ describe("tool annotations", () => {
     // for every surface: a call is a WRITE when it creates a durable,
     // user-addressable resource — a chart card with public URLs
     // (tako_visualize) or a queued agent run reachable later via
-    // `run_id`/`thread_id` (tako_agent, tako_agent_start). Everything else,
-    // including the run-polling tako_agent_wait, is a read.
-    const WRITERS = new Set(["tako_visualize", "tako_agent", "tako_agent_start"]);
+    // `run_id`/`thread_id` (tako_agent). Everything else is a read.
+    const WRITERS = new Set(["tako_visualize", "tako_agent"]);
     for (const tool of TOOL_REGISTRY) {
       expect(tool.annotations.readOnlyHint, tool.name).toBe(
         !WRITERS.has(tool.name),
       );
+    }
+  });
+
+  it("every tool name carries the tako_ namespace prefix", () => {
+    // `?tools=` tokens are tool names with the prefix optional (spec D1);
+    // one unprefixed name would need a special case in the parser.
+    for (const tool of TOOL_REGISTRY) {
+      expect(tool.name.startsWith(TOOL_NAME_PREFIX), tool.name).toBe(true);
+    }
+  });
+  it("every tool declares fixedInputs, even when empty, so TOOLS.md never guesses", () => {
+    for (const tool of TOOL_REGISTRY) {
+      expect(Array.isArray(tool.fixedInputs), tool.name).toBe(true);
+      for (const fixed of tool.fixedInputs ?? []) {
+        expect(fixed.field.length, `${tool.name}.${fixed.field}`).toBeGreaterThan(0);
+        expect(fixed.note.length, `${tool.name}.${fixed.field}`).toBeGreaterThan(0);
+      }
     }
   });
 });

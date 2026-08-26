@@ -280,6 +280,11 @@ const takoAnswer = {
     // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
+  fixedInputs: [
+    { field: "sources.web.include_contents", value: "false", note: "Web page text is never inlined; call tako_contents on a url." },
+    { field: "sources.web.snippet_max_chars", value: "2000", note: "Excerpt cap per web result; the API default on /v1/answer is 1000." },
+    { field: "sources.web.highlights", value: "true", note: "Query-relevant highlight passages per web result; the API default is false." },
+  ],
   // Declared as the FULL internal shape (assignable to the slim advertised
   // Output via its loose index signature) so tests and hooks keep real types.
   async handler(input, ctx): Promise<AnswerFullOutput> {

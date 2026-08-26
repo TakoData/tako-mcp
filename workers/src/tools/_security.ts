@@ -25,7 +25,8 @@
  * The leading underscore keeps this file out of the tool-module scan in
  * `gen-registry.ts` (it is NOT a `ToolModule`).
  */
-import { FREE_TIER_TOOL_NAMES, type Tier } from "../freetier.js";
+import { type Tier } from "../freetier.js";
+import { FREE_TIER_TOOL_NAMES } from "./_surface.js";
 import type { Surface } from "../surface.js";
 
 /** OAuth scope every Worker-issued access token carries — see `oauth/`. */

@@ -486,6 +486,10 @@ const takoContents = {
     // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
+  fixedInputs: [
+    { field: "max_chars (when omitted)", value: "min(100000, 250000 / batch size)", note: "Per-url character cap for inline web text; 1,000,000 when query is set; omitted in url mode." },
+    { field: "query", value: "(stripped from the request)", note: "Passage extraction runs in the Worker; the API has no such field." },
+  ],
   async handler(input, ctx): Promise<Output> {
     const targets = input.urls ?? (input.url !== undefined ? [input.url] : []);
     if (targets.length === 0) {

@@ -63,8 +63,8 @@ export interface ToolContext {
    * chart-PNG prefetch on the chatgpt surface (whose widget renders
    * `embed_url` directly and never reads the baked-in image), and
    * `mcp.ts` uses it to gate which tools each surface lists — the
-   * `tako_agent_start` / `tako_agent_wait` pair is registered only on
-   * the chatgpt surface.
+   * chatgpt surface serves a fixed set (`CHATGPT_TOOL_NAMES` in
+   * `_surface.ts`) that leaves out `tako_agent` and `tako_answer`.
    *
    * NB: this is a server-instance-level value (set from the request
    * path at server creation), NOT a per-request flag.
@@ -120,8 +120,8 @@ export interface ToolAnnotations {
    * Repeating the call with the same arguments has no ADDITIONAL effect
    * on the environment: true for every retrieval tool (a repeat changes
    * nothing), false for tools that mint or dispatch something new per
-   * call (`tako_visualize` mints a new persistent card; `tako_agent` /
-   * `tako_agent_start` dispatch a new run). Required so every tool
+   * call (`tako_visualize` mints a new persistent card; `tako_agent`
+   * dispatches a new run). Required so every tool
    * declares it explicitly — OpenAI app review (2026-08-25) rejects
    * hints "not explicitly set to true or false (not null)", and
    * `annotations_complete.test.ts` pins all four hints as booleans.
@@ -273,6 +273,38 @@ export interface AppUiResource {
 }
 
 /**
+ * A request field the handler sends with a constant value the caller cannot
+ * change. Declared, not inferred: `docs/TOOLS.md` renders this list so a
+ * reader sees the opinionated defaults next to the parameters, and the
+ * generator cannot recover it from a zod schema.
+ */
+export interface FixedInput {
+  /** Wire field, e.g. `sources.web.highlights`. */
+  field: string;
+  /** The constant, rendered verbatim, e.g. `true` or `"medium"`. */
+  value: string;
+  /** Why it is fixed, one sentence. */
+  note: string;
+  /**
+   * Whether the constant rides the wire. `"worker"` rows never reach the
+   * request body — they are Worker-side loop settings and chart-URL render
+   * params — so `docs/TOOLS.md` renders them under their own heading instead
+   * of "Fixed request inputs (the caller cannot change these)", which sent
+   * readers looking for `poll interval` and `width` in the request body.
+   *
+   * Renaming the field does NOT move the row: the generator emits that
+   * heading for every non-empty `fixedInputs` (`gen-registry.ts`), so a
+   * longer name published the same wrong claim under a longer label. Only
+   * this discriminator moves it.
+   *
+   * Defaults to `"request"`, which is also what `fixed_inputs_drift.test.ts`
+   * checks against the real body builders — a row marked `"worker"` is
+   * exempt there, and the two rules are cross-checked so a mislabel fails.
+   */
+  scope?: "request" | "worker";
+}
+
+/**
  * The shape every tool file default-exports.
  *
  * Typical usage:
@@ -323,15 +355,16 @@ export interface ToolModule<
    * same in both ecosystems ("does not modify its environment"), and the
    * write line is drawn once, for every surface: a call is a WRITE when
    * it creates a durable, user-addressable resource — an agent run
-   * reachable later via `run_id`/`thread_id` (`tako_agent`,
-   * `tako_agent_start`), a chart card with public URLs
-   * (`tako_visualize`). Those tools declare canonical
+   * reachable later via `run_id`/`thread_id` (`tako_agent`), a chart
+   * card with public URLs (`tako_visualize`). Those tools declare canonical
    * `readOnlyHint: false`. Metering side effects do NOT flip the hint:
    * every Tako tool, including pure reads, debits a credit balance, so
    * counting billing as a write would make `readOnlyHint` vacuously
    * false everywhere.
    */
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
+  /** Request fields sent with a constant value — see {@link FixedInput}. */
+  fixedInputs?: ReadonlyArray<FixedInput>;
   /**
    * Optional anonymous-input gate, consulted by `registerTool` on
    * `tier: "free"` calls BEFORE the handler runs. Return the extra
@@ -433,6 +466,8 @@ export interface AnyToolModule {
   annotations: ToolAnnotations;
   /** Per-surface annotation overrides — see {@link ToolModule.annotationsBySurface}. */
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
+  /** Request fields sent with a constant value — see {@link FixedInput}. */
+  fixedInputs?: ReadonlyArray<FixedInput>;
   /** Anonymous-input gate — see {@link ToolModule.anonymousInputRejects}. */
   anonymousInputRejects?: (input: Record<string, unknown>) => string | undefined;
   handler: (input: unknown, ctx: ToolContext) => Promise<unknown>;

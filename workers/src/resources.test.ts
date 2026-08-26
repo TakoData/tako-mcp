@@ -4,7 +4,8 @@ import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validatio
 import { describe, expect, it } from "vitest";
 
 import type { Env } from "./env.js";
-import { createMcpServer, SERVER_INSTRUCTIONS } from "./mcp.js";
+import { SERVER_INSTRUCTIONS } from "./instructions.js";
+import { createMcpServer } from "./mcp.js";
 import {
   DOC_MIME_TYPE,
   DOC_RESOURCE_URIS,
@@ -267,5 +268,18 @@ describe("documentation resources", () => {
 
   it("the freshness claim has one definition", () => {
     expect(guideText()).toContain(FRESHNESS);
+  });
+
+  it("the guide describes ?tools= as narrowing, not unlocking", () => {
+    // `?tools=` became an allowlist that REPLACES the default listing (#263).
+    // The guide still said it "unlocks further tools", which is now backwards --
+    // exactly the prose-goes-stale-when-code-changes failure this document is
+    // most exposed to, since nothing type-checks a sentence.
+    const text = guideText();
+    expect(text).toContain("REPLACES");
+    // The old claim, not the bare word -- the corrected sentence says "does not
+    // unlock extras", which is the point.
+    expect(text).not.toContain("unlock through");
+    expect(text).not.toContain("Further tools unlock");
   });
 });

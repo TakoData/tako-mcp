@@ -16,22 +16,29 @@
  * on every PR so a stale registry or barrel fails the build.
  */
 
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
-import { OPTIONAL_TOOL_ALIASES } from "../src/tools/_optional.js";
 import {
   pinAdvisingSentences,
   pinFormProblem,
   PLURAL_UNQUALIFIED,
 } from "../src/tools/_pin_form_rules.js";
 import {
+  FREE_TIER_SERVER_INSTRUCTIONS,
+  SERVER_INSTRUCTIONS,
+} from "../src/instructions.js";
+import {
+  FREE_TIER_TOOL_NAMES,
   isToolOnSurface,
+  resolveToolSet,
   toolAnnotationsForSurface,
 } from "../src/tools/_surface.js";
+import { TOOL_NAME_PREFIX } from "../src/tools/_tools_param.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 
@@ -49,16 +56,12 @@ import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
  * or removing a tool file without updating the allowlist fails the build.
  */
 export const MCP_TOOL_ALLOWLIST = [
-  "get_credit_balance",
   "tako_agent",
-  "tako_agent_start",
-  "tako_agent_wait",
   "tako_answer",
   "tako_available_data",
   "tako_contents",
-  "tako_graph_node",
+  "tako_credit_balance",
   "tako_graph_related",
-  "tako_graph_search",
   "tako_search",
   "tako_visualize",
 ] as const;
@@ -100,8 +103,8 @@ export function assertAllToolsDescribed(
  * search/answer were missing `node_ids`/`strict`). This is the lighter
  * guard: every tool name must be mentioned (a `### <name>` section or an
  * inline `` `name` `` reference), and any tool that HAS a section must
- * mention every input param inside it. Prose-only mentions (e.g. the
- * ChatGPT-only `tako_agent_start`/`tako_agent_wait` pair) need no section.
+ * mention every input param inside it. A prose-only mention is enough for a
+ * tool with no section of its own.
  */
 export function assertLlmsFullCoverage(
   tools: ReadonlyArray<{ name: string; parameters: Record<string, unknown> }>,
@@ -223,12 +226,11 @@ export function assertChatgptSubmissionParity(
   }
   const declaredTools = submission.tools;
 
-  // The submission covers the chatgpt surface's default listing: no
-  // `?tools=` opt-ins, OAuth-linked (the only state the surface serves).
-  const noOptIns: ReadonlySet<string> = new Set();
+  // The submission covers the chatgpt surface, which is FIXED (spec D2):
+  // `?tools=` is ignored there, so `null` is the only allowlist that exists.
   const expected = new Map(
     tools
-      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns))
+      .filter((t) => isToolOnSurface(t.name, "chatgpt", null))
       .map((t) => [t.name, toolAnnotationsForSurface(t, "chatgpt")]),
   );
 
@@ -300,8 +302,8 @@ const LLMS_FULL_PATH = resolve(REPO_ROOT, "llms-full.txt");
 // The short index. Agents fetch `llms.txt` and `llms-full.txt` alike to learn
 // the tool surface, but only the long one was guarded — so the two drifted:
 // `llms.txt` went on saying `tako_visualize` was "already on by default for
-// ChatGPT" after it became default-on for Claude too, and it never mentioned
-// the ChatGPT `tako_agent_start` / `tako_agent_wait` split at all. It has no
+// ChatGPT" after it became default-on for Claude too, and it named neither of
+// the agent tools that shipped after it. It has no
 // `### <tool>` sections, so `assertLlmsFullCoverage` degrades to exactly the
 // right check for an index: every tool has to be named somewhere in it.
 const LLMS_PATH = resolve(REPO_ROOT, "llms.txt");
@@ -319,6 +321,8 @@ const SKILL_PATHS = [
   resolve(REPO_ROOT, "skills", "tako-web-traffic", "SKILL.md"),
 ];
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
+const SNAPSHOT_PATH = resolve(REPO_ROOT, "chatgpt-app-snapshot.json");
+const TOOLS_DOC_PATH = resolve(REPO_ROOT, "docs", "TOOLS.md");
 /**
  * Hand-written distribution listings. Neither is generated, so both drifted
  * silently when four tools moved behind `?tools=` and the UA classifier was
@@ -332,6 +336,37 @@ const LISTING_PATHS = [
   resolve(REPO_ROOT, "registry", "smithery.yaml"),
   resolve(REPO_ROOT, "agent.json"),
 ];
+
+/**
+ * Every file `registry:check` READS, repo-relative, for
+ * `scripts/ci_paths.test.ts`.
+ *
+ * `workers-ci.yml`'s rule is that every file a guard reads must be a trigger
+ * path, or an edit to that file runs no CI and the guard is silently skipped.
+ * The rule failed three times while it was maintained by hand: `skills/**` and
+ * `.claude-plugin/**` (a skill with unparseable frontmatter shipped),
+ * `README.md`, then `chatgpt-app-snapshot.json` / `docs/TOOLS.md` /
+ * `agent.json`. This list is what makes it checkable — add a read here in the
+ * same commit that adds the `readFileSync`, and CI names the missing trigger
+ * path instead of skipping itself.
+ *
+ * Outputs count as inputs: the drift comparisons at the end of `--check` read
+ * the committed copy of every artifact the generator writes.
+ */
+export const GUARD_INPUT_PATHS: readonly string[] = [
+  METADATA_PATH,
+  REGISTRY_PATH,
+  LOBEHUB_PATH,
+  BARREL_PATH,
+  SUBMISSION_PATH,
+  SNAPSHOT_PATH,
+  TOOLS_DOC_PATH,
+  LLMS_FULL_PATH,
+  LLMS_PATH,
+  README_PATH,
+  ...SKILL_PATHS,
+  ...LISTING_PATHS,
+].map((absolute) => relative(REPO_ROOT, absolute).split(sep).join("/"));
 
 // Filename conventions for the tools/ directory. A tool module is any `.ts`
 // file that does NOT match one of the following:
@@ -360,6 +395,173 @@ interface RegistryTool {
   description: string;
   parameters: Record<string, ParameterSpec>;
   annotations: ToolAnnotations;
+}
+
+// ---------------------------------------------------------------------------
+// docs/TOOLS.md — the tool reference, rendered from the same objects that
+// serve tools/list, so a human reads exactly what the model reads.
+// ---------------------------------------------------------------------------
+
+export interface ToolsDocInput {
+  modules: ReadonlyArray<ToolModule>;
+  registryTools: ReadonlyArray<RegistryTool>;
+  instructions: { authenticated: string; anonymous: string };
+  freeTierToolNames: ReadonlySet<string>;
+}
+
+/**
+ * The `?tools=` set an opt-in tool needs to be USABLE: every default tool its
+ * own published text names, plus itself.
+ *
+ * `?tools=` replaces the default listing (spec D1), so `?tools=answer` lists
+ * `tako_answer` alone — and `tako_answer`'s description tells the model to
+ * "Run `tako_available_data` first when unsure the data exists" and to call
+ * `tako_contents` on a cited url. A caller who installs against that URL gets
+ * a model instructed to call two tools that answer the SDK's bare "tool not
+ * found". `docs/TOOLS.md` states the rule ("include the defaults you rely on")
+ * and the hand-written distribution listings were the files that broke it.
+ *
+ * DERIVED from the descriptions, not hand-listed, because that is the thing
+ * that drifts: reword a description to stop naming `tako_contents` and the
+ * requirement disappears on its own.
+ */
+function minimumToolsFor(
+  tool: ToolModule,
+  modules: ReadonlyArray<ToolModule>,
+): ReadonlySet<string> {
+  const defaults = resolveToolSet("generic", null);
+  const published = [
+    tool.description,
+    JSON.stringify(z.toJSONSchema(tool.inputSchema, { io: "input" })),
+  ].join(" ");
+  const needed = new Set<string>([tool.name]);
+  for (const other of modules) {
+    if (other.name === tool.name || !defaults.has(other.name)) continue;
+    if (new RegExp(`\\b${other.name}\\b`).test(published)) needed.add(other.name);
+  }
+  return needed;
+}
+
+/** `?tools=` token for a tool name — the `tako_` prefix is optional (spec D1). */
+function toolsToken(name: string): string {
+  return name.startsWith(TOOL_NAME_PREFIX) ? name.slice(TOOL_NAME_PREFIX.length) : name;
+}
+
+const SURFACE_PATHS: ReadonlyArray<{ surface: Surface; path: string; title: string }> = [
+  { surface: "generic", path: "/mcp", title: "the generic surface, every client" },
+  { surface: "chatgpt", path: "/mcp/chatgpt", title: "the ChatGPT app surface, OAuth only" },
+];
+
+function mdCell(text: string): string {
+  return text.replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function renderAnnotations(a: ToolAnnotations): string {
+  return `title: ${a.title}; readOnlyHint: ${a.readOnlyHint}; destructiveHint: ${a.destructiveHint}; idempotentHint: ${a.idempotentHint}; openWorldHint: ${a.openWorldHint}`;
+}
+
+export function buildToolsDoc(input: ToolsDocInput): string {
+  const byName = new Map(input.registryTools.map((t) => [t.name, t]));
+  const modules = [...input.modules].sort((a, b) => a.name.localeCompare(b.name));
+  const out: string[] = [];
+  out.push(
+    `<!-- GENERATED by workers/scripts/gen-registry.ts from workers/src/tools/*.ts. Do not edit; run npm run registry:gen in workers/. -->`,
+    "",
+    "# Tako MCP tools",
+    "",
+    "This page is rendered from the same objects the server publishes on `tools/list`. Every description, parameter description, and annotation below is byte-for-byte what the model reads. Host-level `_meta` (security schemes, widget bindings) is not shown.",
+    "",
+    "## Choosing tools with `?tools=`",
+    "",
+    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
+    "",
+  );
+
+  for (const { surface, path, title } of SURFACE_PATHS) {
+    const listed = resolveToolSet(surface, null);
+    out.push(`## \`${path}\` — ${title}`, "");
+    out.push("Default listing:", "");
+    for (const m of modules) if (listed.has(m.name)) out.push(`- \`${m.name}\``);
+    const optIn = modules.filter((m) => !listed.has(m.name));
+    if (surface === "generic" && optIn.length > 0) {
+      out.push("", "Opt-in (name them in `?tools=`):", "");
+      // Defaults + the tool, NOT the bare token. A bare `?tools=agent` is a
+      // one-tool surface whose own description names `tako_search` with
+      // nothing to call — the exact failure the "include the defaults you
+      // rely on" warning six lines above exists to prevent, and this list is
+      // the thing a reader copies.
+      for (const m of optIn) {
+        const value = [...modules.filter((x) => listed.has(x.name)).map((x) => x.name), m.name]
+          .map(toolsToken)
+          .join(",");
+        out.push(`- \`${m.name}\` — \`?tools=${value}\``);
+      }
+    }
+    out.push("", "Server instructions (authenticated):", "", "```text", input.instructions.authenticated, "```", "");
+    if (surface === "generic") {
+      out.push("Server instructions (anonymous):", "", "```text", input.instructions.anonymous, "```", "");
+    }
+  }
+
+  out.push("## Tools", "");
+  for (const m of modules) {
+    const reg = byName.get(m.name);
+    if (reg === undefined) throw new Error(`buildToolsDoc: no registry entry for ${m.name}`);
+    out.push(`### ${m.name}`, "");
+    out.push(`**${m.annotations.title}**`, "");
+    const surfaces = SURFACE_PATHS.filter((s) => isToolOnSurface(m.name, s.surface, null)).map((s) => `\`${s.path}\``);
+    out.push(`- Listed by default on: ${surfaces.length > 0 ? surfaces.join(", ") : "none (opt-in on `/mcp`)"}`);
+    // Qualified with the path: anonymous connections exist only on `/mcp`.
+    // `/mcp/chatgpt` is OAuth-only and 401s before admission, so an
+    // unqualified "Runs anonymously: yes" reads as a claim about a surface
+    // that has no anonymous tier.
+    out.push(
+      `- Runs anonymously (on \`/mcp\`): ${input.freeTierToolNames.has(m.name) ? "yes" : "no (answers with sign-in instructions)"}`,
+      "",
+    );
+    out.push("Description:", "", m.description, "");
+    out.push("Parameters:", "");
+    const params = Object.entries(reg.parameters);
+    if (params.length === 0) {
+      out.push("_none_", "");
+    } else {
+      out.push("| Name | Type | Required | Default | Description |", "|---|---|---|---|---|");
+      for (const [name, spec] of params) {
+        const type = spec.enum ? `${spec.type} (${spec.enum.map((v) => JSON.stringify(v)).join(" \\| ")})` : spec.type;
+        const def = spec.default === undefined ? "" : `\`${JSON.stringify(spec.default)}\``;
+        out.push(`| \`${name}\` | ${mdCell(type)} | ${spec.required ? "yes" : "no"} | ${def} | ${mdCell(spec.description ?? "")} |`);
+      }
+      out.push("");
+    }
+    // Two sections, because one heading made a false claim about half the
+    // rows: the Worker's poll loop and the chart-URL render params never reach
+    // a request body, and publishing them under "Fixed request inputs" sent
+    // readers hunting for `width` and `poll interval` in the request. Relabeling
+    // the fields did not help — this heading is emitted for every non-empty
+    // `fixedInputs`, so the wrong claim just got a longer label. `scope` on
+    // the row is what moves it.
+    const fixed = m.fixedInputs ?? [];
+    const requestRows = fixed.filter((f) => (f.scope ?? "request") === "request");
+    const workerRows = fixed.filter((f) => f.scope === "worker");
+    out.push("Fixed request inputs (the caller cannot change these):", "");
+    if (requestRows.length === 0) out.push("_none_", "");
+    else {
+      for (const f of requestRows) out.push(`- \`${f.field}\` = \`${f.value}\` — ${f.note}`);
+      out.push("");
+    }
+    if (workerRows.length > 0) {
+      out.push("Fixed worker-side settings (not request fields):", "");
+      for (const f of workerRows) out.push(`- \`${f.field}\` = \`${f.value}\` — ${f.note}`);
+      out.push("");
+    }
+    out.push("Annotations:", "");
+    for (const { surface, path } of SURFACE_PATHS) {
+      out.push(`- \`${path}\`: ${renderAnnotations(toolAnnotationsForSurface(m, surface))}`);
+    }
+    out.push("", "<details><summary>Published input schema (JSON Schema)</summary>", "", "```json",
+      JSON.stringify(z.toJSONSchema(m.inputSchema, { io: "input" }), null, 2), "```", "</details>", "");
+  }
+  return out.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +717,95 @@ function serializeJson(obj: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// ChatGPT snapshot: description + input schema of every reviewed tool
+// ---------------------------------------------------------------------------
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+/** JSON with object keys sorted at every depth — see the hash site below. */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+interface ChatgptSnapshot {
+  note: string;
+  tools: Record<string, { description_sha256: string; input_schema_sha256: string }>;
+}
+
+const SNAPSHOT_NOTE =
+  "The description and input schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
+
+/** The snapshot for the tools on the fixed chatgpt surface, serialized. */
+export function buildChatgptSnapshot(
+  tools: ReadonlyArray<Pick<ToolModule, "name" | "description" | "inputSchema">>,
+): string {
+  const snapshot: ChatgptSnapshot = { note: SNAPSHOT_NOTE, tools: {} };
+  for (const tool of tools) {
+    if (!isToolOnSurface(tool.name, "chatgpt", null)) continue;
+    snapshot.tools[tool.name] = {
+      description_sha256: sha256(tool.description),
+      // Key-SORTED before hashing: `z.toJSONSchema` emits keys in whatever
+      // order the zod version happens to build them, so hashing the raw
+      // stringify makes a zod upgrade flip all five digests at once and
+      // report "input_schema changed since the accepted snapshot" — a
+      // resubmission order for text nobody edited. Sorting makes the digest
+      // depend on the schema's content, which is what OpenAI reviewed.
+      input_schema_sha256: sha256(stableStringify(z.toJSONSchema(tool.inputSchema, { io: "input" }))),
+    };
+  }
+  return serializeJson(snapshot);
+}
+
+/**
+ * Fail when a tool on the chatgpt surface no longer matches the accepted
+ * snapshot. `assertChatgptSubmissionParity` guards the tool SET and the
+ * annotations; this guards the two things OpenAI's snapshot also carries
+ * and that check cannot see — the description and the input schema.
+ */
+export function assertChatgptSnapshot(
+  tools: ReadonlyArray<Pick<ToolModule, "name" | "description" | "inputSchema">>,
+  snapshotJson: string,
+): void {
+  const accepted = JSON.parse(snapshotJson) as ChatgptSnapshot;
+  const live = JSON.parse(buildChatgptSnapshot(tools)) as ChatgptSnapshot;
+  const problems: string[] = [];
+  for (const [name, hashes] of Object.entries(live.tools)) {
+    const was = accepted.tools[name];
+    if (was === undefined) {
+      problems.push(`tool "${name}" is on the chatgpt surface but not in the snapshot`);
+      continue;
+    }
+    if (was.description_sha256 !== hashes.description_sha256) {
+      problems.push(`tool "${name}" description changed since the accepted snapshot`);
+    }
+    if (was.input_schema_sha256 !== hashes.input_schema_sha256) {
+      problems.push(`tool "${name}" input_schema changed since the accepted snapshot`);
+    }
+  }
+  for (const name of Object.keys(accepted.tools)) {
+    if (!(name in live.tools)) {
+      problems.push(`tool "${name}" is in the snapshot but no longer on the chatgpt surface`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `chatgpt-app-snapshot.json drift — a reviewed ChatGPT tool changed:\n  ${problems.join(
+        "\n  ",
+      )}\nOpenAI's copy is fixed at whatever was last SUBMITTED, so a change here reaches ChatGPT users only at the next resubmission. If the change is intended, accept it: npm run registry:gen -- --accept-chatgpt-snapshot — and make sure the app is resubmitted before this text is relied on. Do NOT resubmit just to clear this check: an intermediate PR may deliberately change a reviewed tool ahead of one later submission.`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // LobeHub plugin descriptor
 // ---------------------------------------------------------------------------
 
@@ -625,6 +916,7 @@ function buildBarrel(modules: LoadedModule[]): string {
 
 async function main(): Promise<void> {
   const checkMode = process.argv.includes("--check");
+  const acceptSnapshot = process.argv.includes("--accept-chatgpt-snapshot");
 
   const metadata = JSON.parse(readFileSync(METADATA_PATH, "utf8")) as Record<
     string,
@@ -662,7 +954,7 @@ async function main(): Promise<void> {
   //     `--check` diffs the generated JSON against the committed JSON, so it
   //     cannot see this: both sides agree, and both are wrong.
   const lobehubUnreachable = LOBEHUB_TOOL_ALLOWLIST.filter(
-    (name) => !isToolOnSurface(name, LOBEHUB_SURFACE, new Set<string>()),
+    (name) => !isToolOnSurface(name, LOBEHUB_SURFACE, null),
   );
   if (lobehubUnreachable.length > 0) {
     throw new Error(
@@ -675,36 +967,93 @@ async function main(): Promise<void> {
   }
 
   // 2c. Opt-in disclosure: a hand-written listing may name an opt-in tool, but
-  //     it must also name the `?tools=` alias that turns it on. Otherwise a
+  //     it must also name the `?tools=` form that turns it on. Otherwise a
   //     reader installs against the listing's own URL and the tool is not
-  //     there. Derived from OPTIONAL_TOOL_ALIASES, so a tool moving surface
-  //     fails here instead of drifting.
+  //     there. The opt-in set is derived from the generic surface's default
+  //     listing, so a tool moving surface fails here instead of drifting.
   //
   //     KEYED ON TOOL NAMES, so it only sees a listing that names them.
-  //     `smithery.yaml` names all six and is fully covered; `agent.json`
+  //     `smithery.yaml` names every tool and is fully covered; `agent.json`
   //     describes capabilities in prose ("Create an embeddable Tako
-  //     chart/card") and names exactly one tool, so this guard checked one
-  //     entry there. A prose claim about a default — which is what actually
-  //     went stale in `agent.json`, "on by default for ChatGPT and Claude" —
-  //     is NOT caught. Adding a tool name to that file brings it in scope;
-  //     nothing brings the prose in scope short of generating the file.
-  const aliasFor = new Map<string, string[]>();
-  for (const [alias, names] of Object.entries(OPTIONAL_TOOL_ALIASES)) {
-    for (const name of names) {
-      aliasFor.set(name, [...(aliasFor.get(name) ?? []), alias]);
-    }
-  }
+  //     chart/card") and names one tool per entry. A prose claim about a
+  //     default — which is what actually went stale in `agent.json`, "on by
+  //     default for ChatGPT and Claude" — is NOT caught. Adding a tool name to
+  //     that file brings it in scope; nothing brings the prose in scope short
+  //     of generating the file.
+  //
+  //     `?tools=` is an allowlist of tool NAMES (spec D1), with the `tako_`
+  //     prefix optional, so both forms count as disclosure.
+  const genericDefaults = resolveToolSet("generic", null);
+  const optInNames = modules
+    .map((m) => m.tool.name)
+    .filter((name) => !genericDefaults.has(name));
   const disclosureProblems: string[] = [];
   for (const listingPath of LISTING_PATHS) {
     const text = readFileSync(listingPath, "utf8");
     const where = relative(REPO_ROOT, listingPath);
-    for (const [name, aliases] of aliasFor) {
-      // Word-boundary, so `tako_agent` does not match `tako_agent_start`.
-      if (!new RegExp(`\\b${name}\\b`).test(text)) continue;
-      if (aliases.some((alias) => text.includes(`?tools=${alias}`))) continue;
-      disclosureProblems.push(
-        `${where} names ${name} without naming ?tools=${aliases.join(" or ?tools=")}`,
+    for (const name of optInNames) {
+      const token = toolsToken(name);
+      // Word-boundary, so a tool name does not match a longer name that
+      // starts with it.
+      const nameMentioned = new RegExp(`\\b${name}\\b`).test(text);
+      // Every `?tools=` value in the file that names this tool.
+      // Comma is NOT excluded — it separates tokens, so excluding it would
+      // truncate `?tools=search,answer` to `search` and report a false gap.
+      // A trailing sentence period is trimmed instead.
+      const values = [...text.matchAll(/\?tools=([^\s`"')]+)/g)]
+        .map((m) => (m[1] ?? "").replace(/[.,;:]+$/, ""))
+        .filter((value) =>
+          value.split(",").some((raw) => {
+            const t = raw.trim().toLowerCase();
+            return t === name || t === token;
+          }),
+        );
+      // An entry can advertise a tool by TOKEN alone (`?tools=visualize`,
+      // never spelling `tako_visualize`), so the token counts as advertising
+      // it. Keying only on the full name let two agent.json entries publish a
+      // one-tool URL unchecked.
+      if (!nameMentioned && values.length === 0) continue;
+      if (values.length === 0) {
+        disclosureProblems.push(
+          `${where} names ${name} without naming ?tools=${token}`,
+        );
+        continue;
+      }
+      // ADEQUACY, not mere presence, on EVERY value: each must list every
+      // default tool this tool's own description names, or a reader who copies
+      // that URL gets a model told to call something unregistered.
+      //
+      // Every value, not at-least-one. The old rule let one adequate URL vouch
+      // for the whole file, so a second capability card carrying a bare
+      // `?tools=answer` was never checked — and a bare token is the WORST case,
+      // not a benign one: it is a one-tool connection whose lone tool names
+      // absent siblings. The carve-out existed because the listings wrote the
+      // token explainer as a `?tools=` string too, which the guard cannot tell
+      // apart from a URL by its value. The listings now write the bare token as
+      // a token (`add the \`answer\` token to the ?tools= allowlist`), so every
+      // remaining `?tools=` string in a listing IS a copyable URL and there is
+      // nothing left to exempt. Restore an explainer to `?tools=X` form and
+      // this fails, which is the intended pressure.
+      const required = minimumToolsFor(
+        modules.find((m) => m.tool.name === name)!.tool,
+        modules.map((m) => m.tool),
       );
+      const isAdequate = (value: string): boolean => {
+        const listedTokens = new Set(
+          value.split(",").map((raw) => toolsToken(raw.trim().toLowerCase())),
+        );
+        return [...required].every((needed) => listedTokens.has(toolsToken(needed)));
+      };
+      const inadequate = values.filter((value) => !isAdequate(value));
+      if (inadequate.length > 0) {
+        const want = [...required].map(toolsToken).join(",");
+        disclosureProblems.push(
+          `${where} discloses ${name} via an INADEQUATE ?tools= value ` +
+            `(${inadequate.join(" | ")}) — ${name}'s own description names default tools ` +
+            `the value omits, so a reader who copies it gets "tool not found". ` +
+            `Minimum: ?tools=${want}`,
+        );
+      }
     }
   }
   if (disclosureProblems.length > 0) {
@@ -753,6 +1102,21 @@ async function main(): Promise<void> {
     readFileSync(SUBMISSION_PATH, "utf8"),
   );
 
+  // 4b. ChatGPT description/schema snapshot: OpenAI serves the text it
+  //     reviewed, so editing a listed tool's description or input schema
+  //     silently desynchronizes the app from this server until a
+  //     resubmission. The parity check above cannot see either field.
+  const liveSnapshot = buildChatgptSnapshot(modules.map((m) => m.tool));
+  if (acceptSnapshot && !checkMode) {
+    writeFileSync(SNAPSHOT_PATH, liveSnapshot);
+    console.log(`wrote ${SNAPSHOT_PATH} (accepted the current chatgpt surface)`);
+  } else {
+    assertChatgptSnapshot(
+      modules.map((m) => m.tool),
+      readFileSync(SNAPSHOT_PATH, "utf8"),
+    );
+  }
+
   const registry = buildRegistry(metadata, registryTools);
   const registryJson = serializeJson(registry);
   const barrel = buildBarrel(modules);
@@ -762,6 +1126,15 @@ async function main(): Promise<void> {
   const lobehubJson = serializeJson(
     buildLobehubPlugin(committedLobehub, String(metadata.version), modules),
   );
+  const toolsDoc = buildToolsDoc({
+    modules: modules.map((m) => m.tool),
+    registryTools,
+    instructions: {
+      authenticated: SERVER_INSTRUCTIONS,
+      anonymous: FREE_TIER_SERVER_INSTRUCTIONS,
+    },
+    freeTierToolNames: FREE_TIER_TOOL_NAMES,
+  });
 
   if (checkMode) {
     const committedRegistry = readFileSync(REGISTRY_PATH, "utf8");
@@ -785,6 +1158,17 @@ async function main(): Promise<void> {
       );
       drift = true;
     }
+    // A missing file counts as drift: the doc is generated, so its absence is
+    // the same failure as a stale copy.
+    const committedToolsDoc = existsSync(TOOLS_DOC_PATH)
+      ? readFileSync(TOOLS_DOC_PATH, "utf8")
+      : "";
+    if (committedToolsDoc !== toolsDoc) {
+      console.error(
+        `[registry:check] drift: ${TOOLS_DOC_PATH} does not match generator output`,
+      );
+      drift = true;
+    }
     if (drift) {
       console.error(
         "Run `npm run registry:gen` in workers/ and commit the changes.",
@@ -798,9 +1182,11 @@ async function main(): Promise<void> {
   writeFileSync(REGISTRY_PATH, registryJson);
   writeFileSync(BARREL_PATH, barrel);
   writeFileSync(LOBEHUB_PATH, lobehubJson);
+  writeFileSync(TOOLS_DOC_PATH, toolsDoc);
   console.log(`wrote ${REGISTRY_PATH}`);
   console.log(`wrote ${BARREL_PATH}`);
   console.log(`wrote ${LOBEHUB_PATH}`);
+  console.log(`wrote ${TOOLS_DOC_PATH}`);
   console.log(`(${modules.length} tools)`);
 }
 

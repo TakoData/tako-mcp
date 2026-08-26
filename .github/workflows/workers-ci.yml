@@ -6,20 +6,39 @@ on:
   # every trigger path is guarded, which is the weaker reading and lets a gap
   # through.)
   #
-  # What reads what: `registry:check` reads `chatgpt-app-submission.json`,
-  # `llms-full.txt`, `llms.txt` and `README.md` (see `gen-registry.ts` —
-  # `assertChatgptSubmissionParity`, `assertLlmsFullCoverage`,
-  # `assertPinFormInDocs`); `scripts/skills.test.ts` reads `skills/**`,
-  # `.claude-plugin/**`, `version.txt`, and `README.md` again (the SKILL.md
-  # frontmatter must match the README's copy-paste blocks byte for byte);
+  # This list is no longer maintained by hand alone: `scripts/ci_paths.test.ts`
+  # parses the `paths:` blocks below and fails if any file a guard READS is not
+  # matched by some pattern. `GUARD_INPUT_PATHS` in `gen-registry.ts` is the
+  # read-set it checks against. Add a guard input there and CI tells you to add
+  # the trigger path here.
+  #
+  # What reads what: `registry:check` reads `registry/metadata.json`,
+  # `registry/smithery.yaml`, `agent.json`, `llms-full.txt`, `llms.txt`,
+  # `README.md`, `skills/**`, `chatgpt-app-submission.json`,
+  # `chatgpt-app-snapshot.json`, `registry/lhm.plugin.json`,
+  # `registry/server.json`, `workers/src/tools/_registry.ts` and
+  # `docs/TOOLS.md` (see `gen-registry.ts` — `assertChatgptSubmissionParity`,
+  # `assertChatgptSnapshot`, `assertLlmsFullCoverage`, `assertPinFormInDocs`,
+  # the `2c` disclosure check, and the drift comparisons);
+  # `scripts/skills.test.ts` reads `skills/**`, `.claude-plugin/**`,
+  # `version.txt`, and `README.md` again (the SKILL.md frontmatter must match
+  # the README's copy-paste blocks byte for byte);
   # `scripts/gemini-extension.test.ts` reads `gemini-extension.json`,
-  # `commands/**`, `docs/gemini/**`, and `version.txt`.
+  # `commands/**`, `docs/gemini/**`, and `version.txt`;
+  # `scripts/ci_paths.test.ts` reads THIS FILE, which is why it is listed
+  # below — a check that cannot see its own input is a check you can delete
+  # in a PR that runs nothing.
   #
   # `skills/**` and `.claude-plugin/**` were missing here, and that is how a
   # skill with unparseable YAML frontmatter shipped: the edit that broke it
   # touched no triggering path, so CI never ran on the PR at all. `README.md`
   # was missing for the same reason and is now the input to two guards, so a
-  # README-only PR must run them.
+  # README-only PR must run them. Then `chatgpt-app-snapshot.json`,
+  # `docs/TOOLS.md` and `agent.json` were missing — a snapshot-digest-only PR,
+  # which is exactly how you would silence the ChatGPT drift guard, ran no CI.
+  # Three recurrences is why the check above exists. The fourth was the check
+  # itself: it read this file without listing it, so deleting a path here ran
+  # no `typecheck-and-test` and the check never objected.
   push:
     branches: [main]
     paths:
@@ -31,10 +50,14 @@ on:
       - 'commands/**'
       - 'docs/gemini/**'
       - 'chatgpt-app-submission.json'
+      - 'chatgpt-app-snapshot.json'
+      - 'agent.json'
+      - 'docs/TOOLS.md'
       - 'llms-full.txt'
       - 'llms.txt'
       - 'README.md'
       - 'version.txt'
+      - '.github/workflows/workers-ci.yml'
   pull_request:
     paths:
       - 'workers/**'
@@ -45,10 +68,14 @@ on:
       - 'commands/**'
       - 'docs/gemini/**'
       - 'chatgpt-app-submission.json'
+      - 'chatgpt-app-snapshot.json'
+      - 'agent.json'
+      - 'docs/TOOLS.md'
       - 'llms-full.txt'
       - 'llms.txt'
       - 'README.md'
       - 'version.txt'
+      - '.github/workflows/workers-ci.yml'
   workflow_dispatch:
 
 concurrency:

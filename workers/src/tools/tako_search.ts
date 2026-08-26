@@ -245,6 +245,12 @@ const tako_search = {
     input["include_contents"] === true
       ? "Inline rows need a signed-in connection. Retry without include_contents to get the cards, or sign in to include rows."
       : undefined,
+  fixedInputs: [
+    { field: "sources.web.include_contents", value: "false", note: "Web page text is never inlined; call tako_contents on a url." },
+    { field: "sources.web.snippet_max_chars", value: "2000", note: "Excerpt cap per web result; the API default is 4000." },
+    { field: "sources.web.highlights", value: "true", note: "Query-relevant highlight passages per web result; the API default is false." },
+    { field: "sources.web.count", value: "= count", note: "The same count is sent to both sources." },
+  ],
   // Declared as the FULL internal shape (assignable to the slim advertised
   // Output via its loose index signature) so tests and hooks keep real types.
   async handler(input, ctx): Promise<SearchOutput> {

@@ -31,7 +31,8 @@ because the same call already searched the web for it.
 | Full rows, or a web page's text | `tako_contents` | A card's CSV, or any URL's extracted text (pass `query` for just the matching passages). Needs a signed-in connection |
 
 `tako_search` hands you the evidence; you write the conclusion. (`tako_answer`, a prose-answer
-tool, is opt-in via `?tools=answer` and not recommended: your model already synthesizes.)
+tool, is opt-in — name `answer` in the `?tools=` allowlist — and not recommended: your
+model already synthesizes.)
 
 ## Rules that decide whether retrieval works
 

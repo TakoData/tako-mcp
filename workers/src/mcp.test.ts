@@ -14,18 +14,20 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
-import { FREE_TIER_TOOL_NAMES } from "./freetier.js";
+import { FREE_TIER_TOOL_NAMES, resolveToolSet } from "./tools/_surface.js";
+import {
+  FREE_TIER_SERVER_INSTRUCTIONS,
+  SERVER_INSTRUCTIONS,
+} from "./instructions.js";
 import {
   AUTH_INVALID_MESSAGE,
   createMcpServer,
   djangoErrorToToolResult,
-  FREE_TIER_SERVER_INSTRUCTIONS,
   GENERIC_SIGN_IN_HINT,
   logSdkValidationRejections,
   PAYMENT_REQUIRED_MESSAGE,
   PAYMENT_REQUIRED_REMEDY_FALLBACK,
   paymentRequiredToolResult,
-  SERVER_INSTRUCTIONS,
   structuredContentFor,
   withChatGptToolSecuritySchemes,
 } from "./mcp.js";
@@ -73,7 +75,7 @@ describe("toolAnnotationsForSurface", () => {
         name,
       ).toBe(true);
     }
-    for (const name of ["tako_visualize", "tako_agent_start", "tako_agent"]) {
+    for (const name of ["tako_visualize", "tako_agent"]) {
       expect(
         toolAnnotationsForSurface(
           TOOL_REGISTRY.find((tool) => tool.name === name)!,
@@ -757,6 +759,52 @@ describe("server instructions", () => {
       await server.close();
     }
   });
+
+  // AT THE CALLER, deliberately. `phantom_tool.test.ts` calls
+  // `serverInstructionsForTier(tier, resolved)` directly, so it proves the
+  // FUNCTION filters — it says nothing about whether `createMcpServer` passes
+  // the resolved set in. Delete the `resolveToolSet(...)` argument in `mcp.ts`
+  // and every other test in this repo still passes, because both instruction
+  // cases above build a default-listing server. This one drives the real
+  // constructor with a `?tools=` allowlist and reads the string back off the
+  // client, which is the only path a host actually sees.
+  it("a ?tools= connection gets instructions filtered to what it registers", async () => {
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" },
+      sendProgress: noopSendProgress,
+      surface: "generic",
+    };
+    const requestedToolNames = new Set(["tako_agent"]);
+    const server = createMcpServer(ctx, { surface: "generic", requestedToolNames });
+    const mcpClient = new Client(
+      { name: "instructions-allowlist-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      const instructions = mcpClient.getInstructions();
+      expect(instructions).toBeDefined();
+      const registered = resolveToolSet("generic", requestedToolNames);
+      // Every tool the served string names must be one this connection can
+      // call. `?tools=agent` registers exactly `tako_agent`, so the three
+      // tools the default instructions name must all be gone.
+      for (const name of TOOL_REGISTRY.map((t) => t.name)) {
+        if (registered.has(name)) continue;
+        expect(instructions, `instructions name ${name}, which ?tools=agent does not register`)
+          .not.toContain(name);
+      }
+      // Filtered, not emptied — the routing guidance that makes a host reach
+      // for Tako at all lives in the shared paragraph and must survive.
+      expect(instructions).toContain("proprietary live-data graph");
+      expect(instructions).not.toBe(SERVER_INSTRUCTIONS);
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  });
 });
 
 describe("free-tier tool surface", () => {
@@ -796,32 +844,35 @@ describe("free-tier tool surface", () => {
     // tako_contents is LISTED anonymously — not runnable: the dispatch
     // gate answers with sign-in instructions (tested below) instead of
     // executing on the shared free-tier account.
-    const expected = ["tako_available_data", "tako_contents", "tako_search"];
+    const expected = [
+      "tako_available_data",
+      "tako_contents",
+      "tako_credit_balance",
+      "tako_graph_related",
+      "tako_search",
+    ];
     await expect(listToolNames({ tier: "free" })).resolves.toEqual(expected);
     await expect(listToolNames({})).resolves.toEqual(expected);
   });
 
-  it("?tools= opt-ins list identically on both tiers — execution, not listing, is what the tier gates", async () => {
+  it("a ?tools= allowlist lists identically on both tiers — execution, not listing, is what the tier gates", async () => {
+    // The allowlist REPLACES the defaults (spec D1), so the listing is
+    // exactly what it names.
     const optIns = new Set(["tako_agent", "tako_visualize"]);
-    const expected = [
-      "tako_agent",
-      "tako_available_data",
-      "tako_contents",
-      "tako_search",
-      "tako_visualize",
-    ];
+    const expected = ["tako_agent", "tako_visualize"];
     await expect(
-      listToolNames({ tier: "free", enabledOptionalToolNames: optIns }),
+      listToolNames({ tier: "free", requestedToolNames: optIns }),
     ).resolves.toEqual(expected);
     await expect(
-      listToolNames({ enabledOptionalToolNames: optIns }),
+      listToolNames({ requestedToolNames: optIns }),
     ).resolves.toEqual(expected);
   });
 
-  it("the chatgpt surface adds tako_visualize by default", async () => {
+  it("the chatgpt surface serves the fixed five-tool set", async () => {
     await expect(listToolNames({ surface: "chatgpt" })).resolves.toEqual([
       "tako_available_data",
       "tako_contents",
+      "tako_graph_related",
       "tako_search",
       "tako_visualize",
     ]);
@@ -883,8 +934,9 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
   // Two listed-but-auth-required shapes, each with schema-valid arguments
   // so the call reaches the dispatch gate (the SDK validates input BEFORE
   // the gate — invalid args return -32602 instead): tako_contents is on
-  // the default generic listing (spec D6); tako_visualize joins it via
-  // ?tools=visualize.
+  // the default generic listing (spec D6); tako_visualize is opt-in. Note
+  // the allowlist below names BOTH: `?tools=visualize` alone would replace
+  // the defaults and drop tako_contents (spec D1).
   it.each([
     ["tako_contents", { url: "https://trytako.com/card/abc123" }],
     [
@@ -895,6 +947,14 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
         ],
       },
     ],
+    // Both became DEFAULT-listed in the allowlist pass, so both are new
+    // anonymous surface: listed (the listing is auth-invariant, spec D4) but
+    // outside FREE_TIER_TOOL_NAMES, so each owes the same sign-in result.
+    // Covered here rather than only in `scripts/smoke.ts`, which needs a
+    // deployed target with free-tier bindings — `wrangler dev` has none, so
+    // its anonymous block skips and the assertion never runs locally.
+    ["tako_graph_related", { node_id: "ent::anthropic::1" }],
+    ["tako_credit_balance", {}],
   ] as const)(
     "anonymous generic call to %s returns the www_authenticate challenge WITHOUT executing",
     async (name, args) => {
@@ -904,7 +964,12 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
         {
           tier: "free",
           surface: "generic",
-          enabledOptionalToolNames: new Set(["tako_visualize"]),
+          requestedToolNames: new Set([
+            "tako_visualize",
+            "tako_contents",
+            "tako_graph_related",
+            "tako_credit_balance",
+          ]),
           requestOrigin: "https://mcp.example.com",
         },
         name,
@@ -1678,10 +1743,17 @@ describe("stringified array arguments survive SDK input validation", () => {
       sendProgress: noopSendProgress,
       surface: "generic",
     };
-    // tako_answer is opt-in now — enable it the way ?tools=answer would.
+    // tako_answer is opt-in — list it the way ?tools=search,answer would;
+    // the allowlist replaces the defaults, so name every tool called here.
     const server = createMcpServer(ctx, {
       surface: "generic",
-      enabledOptionalToolNames: new Set(["tako_answer"]),
+      requestedToolNames: new Set([
+        "tako_answer",
+        "tako_search",
+        "tako_contents",
+        "tako_agent",
+        "tako_visualize",
+      ]),
     });
     const mcpClient = new Client(
       { name: "loose-array-test", version: "0.0.0" },

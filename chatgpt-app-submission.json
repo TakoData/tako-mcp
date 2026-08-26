@@ -63,6 +63,20 @@
         "destructive_justification": "Creates a new card but does not delete, overwrite, revoke access, or perform irreversible transactions.",
         "idempotent_justification": "Each call mints a new persistent chart card with its own public URL; repeating the call creates another card."
       }
+    },
+    "tako_graph_related": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Reads the related nodes of one Tako data-graph node (its metrics, covered entities, competitors, memberships, sources) without modifying any record.",
+        "open_world_justification": "Does not publish content or change any external or third-party system; it reads Tako's own graph.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions.",
+        "idempotent_justification": "Repeating the same lookup returns the same related nodes and changes nothing; no additional effect on any state."
+      }
     }
   },
   "test_cases": [
@@ -104,6 +118,14 @@
       "file_attachment_urls": null,
       "tools_triggered": "tako_visualize",
       "expected_output": "Creates and displays a regional sales bar chart and provides a link to open the resulting Tako card.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Explore a company's competitors and coverage through the data graph.",
+      "user_prompt": "Using Tako's data graph, which companies does NVIDIA compete with, and what metrics does Tako track for it?",
+      "file_attachment_urls": null,
+      "tools_triggered": "tako_graph_related",
+      "expected_output": "Resolves NVIDIA with tako_available_data, then lists its competitors (rel:competes_with) and tracked metrics from tako_graph_related, naming the relation and counts.",
       "expected_output_url": null
     }
   ],

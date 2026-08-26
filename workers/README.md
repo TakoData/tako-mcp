@@ -118,10 +118,11 @@ Behavior when active (the free tier serves `/mcp` only — `/mcp/chatgpt`
 
 - Anonymous connections can EXECUTE exactly two tools:
   `tako_available_data` and `tako_search` (`FREE_TIER_TOOL_NAMES`). The
-  LISTING is auth-invariant — the same three default tools as an
-  authenticated connection — so `tako_contents` is listed anonymously
-  and answers sign-in instructions plus an `_meta["mcp/www_authenticate"]`
-  challenge at dispatch instead of executing.
+  LISTING is auth-invariant — the same five default tools as an
+  authenticated connection — so `tako_contents`, `tako_graph_related` and
+  `tako_credit_balance` are all listed anonymously and answer sign-in
+  instructions plus an `_meta["mcp/www_authenticate"]` challenge at
+  dispatch instead of executing.
 - Every anonymous request counts against the global ceiling; the per-IP
   bucket counts only `tools/call`s naming one of the two free tools
   (the only requests that spend Tako credits). A `tools/call` for any
@@ -210,7 +211,7 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
    spend.
 
    **Do not read the balance from the legacy `credit_balance` endpoint.**
-   `GET /api/v1/credit_balance/` — and therefore the `get_credit_balance`
+   `GET /api/v1/credit_balance/` — and therefore the `tako_credit_balance`
    MCP tool — reads the legacy Metronome/Redis ledger via
    `BillingServiceSingleton.get_remaining_credit_balance`, NOT
    `ApiCreditAccount.balance_cents`. It reported $0.00 for an account that

@@ -52,22 +52,10 @@
 
 import type { Env, RateLimit } from "./env.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import { FREE_TIER_TOOL_NAMES } from "./tools/_surface.js";
 
 /** Which surface a connection gets — see `createMcpServer`'s tier gate. */
 export type Tier = "free" | "authenticated";
-
-/**
- * The complete anonymous EXECUTABLE tool surface. The listing is
- * auth-invariant (spec D4): every default tool stays listed on anonymous
- * connections, and a tool outside this set — `tako_contents` — answers
- * sign-in instructions at dispatch time (see the free-tier gate in
- * `mcp.ts`) instead of executing on the shared account. `tako_answer` is
- * opt-in via `?tools=answer` (spec D1) and never executes anonymously.
- */
-export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "tako_available_data",
-  "tako_search",
-]);
 
 /**
  * Upper bound on an anonymous request body. The body peek below buffers a

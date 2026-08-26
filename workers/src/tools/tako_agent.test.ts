@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../django.js", () => ({ djangoPost: vi.fn(), djangoGet: vi.fn() }));
 import { djangoPost, djangoGet } from "../django.js";
-import tool, { AGENT_POLL_BUDGET_MS, AGENT_WAIT_CEILING_S, buildAgentBody, pollAgentRun } from "./tako_agent.js";
+import tool, { AGENT_POLL_BUDGET_MS, buildAgentBody, pollAgentRun } from "./tako_agent.js";
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
 
 const ctx = { token: "t", env: {} as never, surface: "generic" as const, sendProgress: vi.fn() };
@@ -119,7 +119,10 @@ describe("tako_agent", () => {
     // Always return "running"
     vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_4", status: "running" });
 
-    const budgetMs = AGENT_WAIT_CEILING_S * 1000;
+    // A literal, not a shared constant: the only caller of `onTimeout:
+    // "return"` was the deleted tako_agent_wait, so no production budget
+    // corresponds to this path any more.
+    const budgetMs = 40_000;
     const pollPromise = pollAgentRun(ctx, "run_4", {
       budgetMs,
       onTimeout: "return",
