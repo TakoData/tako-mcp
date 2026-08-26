@@ -66,13 +66,14 @@ paths:
         omit sources that cannot provide usable text. This endpoint returns 3 web
         results when you omit sources.web.count. The effort level also selects the
         synthesis model: ''instant'' answers with the fastest model, and ''fast''
-        (the default) and ''deep'' answer with a stronger one.'
+        (the default) and ''deep'' answer with a stronger one. Pass output_schema
+        on effort ''fast'' or ''deep'' to also receive structured output.'
       operationId: answer
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SearchRequest'
+              $ref: '#/components/schemas/AnswerRequest'
         required: true
       responses:
         '200':
@@ -1487,6 +1488,88 @@ components:
         to AgentStreamEnvelope; the only difference is the terminal agent_result
 
         block carries AnswerAgentResult (top-level citations, no web_results).'
+    AnswerRequest:
+      properties:
+        query:
+          type: string
+          minLength: 1
+          pattern: \S
+          title: Query
+          description: Natural language search query.
+          examples:
+          - Intel vs Nvidia headcount since 2013
+        effort:
+          $ref: '#/components/schemas/SearchEffortLevel'
+          description: 'Search effort level: ''fast'' (default), ''instant'', or ''deep''.'
+          default: fast
+        sources:
+          $ref: '#/components/schemas/Sources'
+          description: Per-source settings. The search includes an index only if its
+            key is present. Defaults to {data:{}, web:{}} (data and web, count 5 each).
+            Tako accepts the legacy key 'tako' as a synonym for 'data'.
+        location:
+          anyOf:
+          - $ref: '#/components/schemas/GeoLocation'
+          - type: 'null'
+          description: Optional coordinates of the end user. Resolves the location
+            for implicit-location queries (for example, weather). An explicit location
+            in the query overrides these coordinates.
+        country_code:
+          type: string
+          title: Country Code
+          description: ISO 3166-1 alpha-2 country code for localization.
+          default: US
+        locale:
+          type: string
+          title: Locale
+          description: BCP-47 locale tag for language and formatting.
+          default: en-US
+        timezone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Timezone
+          description: IANA timezone (for example, 'America/New_York').
+        output_settings:
+          anyOf:
+          - $ref: '#/components/schemas/OutputSettings'
+          - type: 'null'
+          description: Settings that control the response shape.
+        include_related:
+          anyOf:
+          - type: integer
+            maximum: 20
+            minimum: 1
+          - type: 'null'
+          title: Include Related
+          description: 'Applies to POST /v3/search only. Return follow-up query suggestions
+            in `related`. Omit this field to disable them. The value sets the maximum
+            number of suggestions, from 1 to 20. POST /v1/answer accepts this field
+            but ignores it: the answer response has no `related` field.'
+        output_schema:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Output Schema
+          description: 'JSON Schema for structured output. Tako fills it from the
+            same evidence it uses to write `answer`, and returns it in `structured_output`.
+            Requires effort ''fast'' or ''deep''; on ''instant'' the request returns
+            400. Supported subset: the object, array, string, number, integer, and
+            boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties:
+            false`. A type may be nullable as `["number", "null"]`, which is how you
+            let Tako signal ''no evidence'' rather than filling a zero. `title`, `examples`,
+            `format`, and `default` are accepted and ignored — they constrain nothing.
+            Caps: 16KB total, depth 5, 64 properties, 512 characters per description.
+            Violations return 400. If Tako can''t fill the schema, `structured_output`
+            is absent and `structured_output_error` says why — the answer and the
+            cards still return.'
+      additionalProperties: false
+      type: object
+      required:
+      - query
+      title: AnswerRequest
+      description: Request for POST /api/v1/answer.
     AnswerResponse:
       properties:
         answer:
@@ -1512,6 +1595,20 @@ components:
           anyOf:
           - $ref: '#/components/schemas/Usage'
           - type: 'null'
+        structured_output:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Structured Output
+          description: Your output_schema, filled. Absent when the request carried
+            no output_schema, or when Tako couldn't fill it — check structured_output_error.
+        structured_output_error:
+          anyOf:
+          - $ref: '#/components/schemas/AnswerStructuredOutputError'
+          - type: 'null'
+          description: Why structured_output is absent. Present only on a structured
+            request that failed.
       type: object
       required:
       - answer
@@ -1521,6 +1618,31 @@ components:
         the
 
         retrieval behind it.'
+    AnswerStructuredOutputError:
+      properties:
+        code:
+          $ref: '#/components/schemas/AnswerStructuredOutputErrorCode'
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - code
+      - message
+      title: AnswerStructuredOutputError
+      description: Why structured_output is absent. The answer and the cards still
+        return.
+    AnswerStructuredOutputErrorCode:
+      type: string
+      enum:
+      - arbiter_failed
+      - validation_failed
+      - internal_error
+      title: AnswerStructuredOutputErrorCode
+      description: 'Why Tako couldn''t return structured output. Values are a public
+        wire
+
+        contract — never rename.'
     BaseAPIError:
       properties:
         error_message:
@@ -2158,7 +2280,7 @@ components:
           title: Include Contents
           description: Inline this source's underlying data directly in the response.
             For the Tako data source, that is serialized card data (see content_format).
-            For web results, that is the extracted text.
+            For web results, that is the page text.
           default: false
         mode:
           $ref: '#/components/schemas/ContentsDeliveryMode'
@@ -2905,7 +3027,9 @@ components:
 
         source, on every row returned. Web text bills at the standard Contents
 
-        rate.
+        rate on POST /v1/contents; web text inlined on a search or answer response
+
+        is free.
 
 
         The meaning of `cost` depends on the surface. On `/contents` responses,
@@ -2922,15 +3046,26 @@ components:
 
         floor) unless Tako inlined rows for the card, in which case it is what this
 
-        response billed for the card. The
+        response billed for the card. The billed cards sum to
 
-        billed cards sum to `usage.data.cost_usd`, never to
+        `usage.data.cost_usd`, never to `usage.total_cost_usd` (which always adds
 
-        `usage.total_cost_usd` (which always adds the flat per-request compute
+        the flat per-request compute rate).
 
-        rate), and only when no web contents were inlined, because every web fetch
 
-        charge lands in that same `data` field.
+        On a search or answer WEB result, `cost` is always a prospective
+
+        `/v1/contents` quote and NEVER a charge -- including when Tako inlined the
+
+        page text, because inlined web text is free, so the card rule above does not
+
+        carry over. That quote arrives on `cost` alone: `export_pricing` is null for
+
+        web text, so zeroing `cost` on an inlined result would leave a caller no way
+
+        to price a later fetch. A response whose only inlined contents were web text
+
+        therefore reports `usage.data` as null -- nothing was billed for data.
 
 
         `export_pricing` carries the `/contents` export rate, so a caller can
@@ -4304,9 +4439,10 @@ components:
         include_contents:
           type: boolean
           title: Include Contents
-          description: Inline this source's underlying data directly in the response.
-            For the Tako data source, that is serialized card data (see content_format).
-            For web results, that is the extracted text.
+          description: 'Inline the page text of each web result in the response. Tako
+            returns it free of charge, on a best-effort basis: if a page''s text isn''t
+            available at search time, content.data is null. To fetch a page directly,
+            use POST /api/v1/contents.'
           default: false
         category:
           anyOf:
@@ -4347,12 +4483,12 @@ components:
           title: Highlights
           description: 'Return query-relevant highlight passages as each web result''s
             snippet, instead of the opening text of the page. Highlights usually carry
-            the answer-bearing sentences, and stay within snippet_max_chars. Tako
-            requests no page text when this field is true, so a page with no highlight
-            returns snippet: null. The snippet can also hold more than one passage
-            from different parts of the page, joined by '' … ''. Read the snippet
-            as a whole. Do not cut the snippet to a fixed length. Do not quote the
-            snippet as one continuous sentence. Default false.'
+            the answer-bearing sentences, and stay within snippet_max_chars. Unless
+            you also set include_contents, Tako requests no page text, so a page with
+            no highlight returns snippet: null. The snippet can also hold more than
+            one passage from different parts of the page, joined by '' … ''. Read
+            the snippet as a whole. Do not cut the snippet to a fixed length. Do not
+            quote the snippet as one continuous sentence. Default false.'
           default: false
         article_content_max_chars:
           type: integer
