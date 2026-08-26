@@ -38,18 +38,6 @@
   },
   "tools": [
     {
-      "name": "get_credit_balance",
-      "description": "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
-      "parameters": {},
-      "annotations": {
-        "title": "Tako: Get Credit Balance",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "tako_agent",
       "description": "Run Tako's Answer Agent: multi-step research returning a synthesized, cited `answer` plus chart `cards`.\n\nBest for: questions whose shape needs figuring out — cohorts (\"which companies match…\"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` returns nothing.\n\nNot for: a known value or a simple comparison — use `tako_search` (faster). This runs ~30–90s but is far more thorough.",
       "parameters": {
@@ -76,59 +64,6 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": true
-      }
-    },
-    {
-      "name": "tako_agent_start",
-      "description": "Start a Tako Answer Agent run; returns a `run_id` immediately (the agent runs ~30–90s server-side).\n\nBest for: open-ended questions that need figuring out — cohorts, ranking or filtering, multi-step reasoning. For a known value use `tako_search`.\n\nWorkflow: tell the user it's starting, then call `tako_agent_wait` with the `run_id`; repeat until `status` is `completed` or `failed`.",
-      "parameters": {
-        "query": {
-          "type": "string",
-          "description": "The deep/analytical question for the agent to work through.",
-          "required": true
-        },
-        "sources": {
-          "type": "array",
-          "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph. (\"tako\" is a legacy synonym for \"data\".)",
-          "default": [
-            "data",
-            "web"
-          ]
-        },
-        "thread_id": {
-          "type": "string",
-          "description": "Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread."
-        }
-      },
-      "annotations": {
-        "title": "Tako: Start Agent Run",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": true
-      }
-    },
-    {
-      "name": "tako_agent_wait",
-      "description": "Poll an agent run from `tako_agent_start`. Blocks until `status` is `completed` or `failed`, or until `max_wait_seconds` (default 40s).\n\nIf `timed_out` is true, call this tool again with the same `run_id` — don't reply to the user mid-poll. Cap the chain at ~12 calls (~10 min), then tell the user it's taking long and offer to retry.\n\nOn `completed`: the result holds the synthesized `answer` and `cards`.",
-      "parameters": {
-        "run_id": {
-          "type": "string",
-          "description": "Run ID returned from `tako_agent_start`.",
-          "required": true
-        },
-        "max_wait_seconds": {
-          "type": "integer",
-          "description": "How long this single call may block waiting for a terminal status. Capped at 40 s so the call always returns before the MCP client's tool-call timeout fires. If the run isn't done yet (`timed_out: true`), call this tool again with the same run_id — agent runs typically take 30–90 s, expect to chain a few calls.",
-          "default": 40
-        }
-      },
-      "annotations": {
-        "title": "Tako: Wait for Agent Run",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
         "openWorldHint": true
       }
     },
@@ -288,26 +223,20 @@
       }
     },
     {
-      "name": "tako_graph_node",
-      "description": "Get full detail for one graph-node `id`: name, aliases, subtype, label, description. Use it when you hold a bare node id — e.g. from a `tako_search` card's `nodes` (only id/name/type) — and need aliases or subtype to ground a query. Free and fast.",
-      "parameters": {
-        "id": {
-          "type": "string",
-          "description": "Opaque public node id (as returned by graph search/related or on a card's nodes).",
-          "required": true
-        }
-      },
+      "name": "tako_credit_balance",
+      "description": "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
+      "parameters": {},
       "annotations": {
-        "title": "Tako: Graph Node",
+        "title": "Tako: Credit Balance",
         "readOnlyHint": true,
         "destructiveHint": false,
         "idempotentHint": true,
-        "openWorldHint": true
+        "openWorldHint": false
       }
     },
     {
       "name": "tako_graph_related",
-      "description": "Explore what a resolved graph node connects to — the map of what data Tako has for it. Free.\n\nBest for: checking coverage after resolving a node with `tako_graph_search`.\n\nDrilling `relation: \"metrics\"` returns only that node's metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.\nFiltering with `q` (\"revenue\") narrows to a single metric. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.",
+      "description": "Explore what a graph node connects to — the map of what data Tako has for it. Free.\n\nBest for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.\n\nDrilling `relation: \"metrics\"` returns only that node's metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.\nFiltering with `q` (\"revenue\") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.",
       "parameters": {
         "node_id": {
           "type": "string",
@@ -349,62 +278,11 @@
         },
         "limit": {
           "type": "integer",
-          "description": "Page size (default 50, max 100)."
+          "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items."
         }
       },
       "annotations": {
         "title": "Tako: Graph Related",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": true
-      }
-    },
-    {
-      "name": "tako_graph_search",
-      "description": "Resolve a name to Tako data-graph node ids — to see what Tako has, and to pin one into `tako_search`. Free and fast.\n\nBest for: grounding a query, or checking whether Tako covers an entity or metric.\n\nPin the METRIC node id ALONE, with `strict: true`, and name the entity in the query text — pinning an entity id, or pinning without strict, does not steer retrieval.\n\nTips:\nOne kind per call — a thing (`types: \"entity\"`) or a measure (`types: \"metric\"`), not both.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.\nTo see an entity's data, resolve it here, then call `tako_graph_related` on its id.",
-      "parameters": {
-        "q": {
-          "type": "string",
-          "description": "Search text (min 2 chars).",
-          "required": true
-        },
-        "types": {
-          "type": "string",
-          "description": "Resolve a \"thing\" (\"entity\") or a \"measure\" (\"metric\"). Omit to search both.",
-          "enum": [
-            "entity",
-            "metric"
-          ]
-        },
-        "label": {
-          "type": "string",
-          "description": "NER label to prefer (boost, not a filter). PREFER supplying this when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...); omit only when unsure, and infer_label will guess from q.",
-          "enum": [
-            "PERSON",
-            "ORG",
-            "GPE",
-            "LOC",
-            "PRODUCT",
-            "EVENT",
-            "LANGUAGE",
-            "MONEY",
-            "METRIC",
-            "STOCK_TICKER",
-            "WEBSITE"
-          ]
-        },
-        "infer_label": {
-          "type": "boolean",
-          "description": "Auto-detect labels from q (default true server-side). Set false to disable."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Max results (default 20, max 50)."
-        }
-      },
-      "annotations": {
-        "title": "Tako: Graph Search",
         "readOnlyHint": true,
         "destructiveHint": false,
         "idempotentHint": true,

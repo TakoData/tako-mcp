@@ -4,10 +4,10 @@ import { z } from "zod";
 import {
   FREE_TIER_SERVER_INSTRUCTIONS,
   SERVER_INSTRUCTIONS,
-} from "../mcp.js";
+  serverInstructionsForTier,
+} from "../instructions.js";
 import { TOOL_REGISTRY } from "./_registry.js";
-import { OPTIONAL_TOOL_ALIASES } from "./_optional.js";
-import { isToolOnSurface } from "./_surface.js";
+import { isToolOnSurface, resolveToolSet } from "./_surface.js";
 import type { Surface } from "../surface.js";
 
 /**
@@ -55,8 +55,8 @@ function foreignToolNamesIn(text: string, ownName: string): string[] {
   const found = new Set<string>();
   for (const name of ALL_TOOL_NAMES) {
     if (name === ownName) continue;
-    // Word-boundary match: `tako_agent` must not match inside
-    // `tako_agent_start`.
+    // Word-boundary match, so one tool name does not match inside a longer
+    // name that starts with it.
     if (new RegExp(`\\b${name}\\b`).test(text)) found.add(name);
   }
   return [...found].sort();
@@ -66,9 +66,8 @@ describe("no listed tool names a tool that is off its surface", () => {
   // The DEFAULT listing on each surface: no `?tools=` opt-ins. This is what
   // every connection sees unless the operator opted in by hand.
   for (const surface of ["generic", "chatgpt"] as const satisfies Surface[]) {
-    const noOptIns: ReadonlySet<string> = new Set();
     const listed = TOOL_REGISTRY.filter((t) =>
-      isToolOnSurface(t.name, surface, noOptIns),
+      isToolOnSurface(t.name, surface, null),
     );
 
     it(`${surface} default listing is non-empty`, () => {
@@ -82,45 +81,31 @@ describe("no listed tool names a tool that is off its surface", () => {
         const offSurface = foreignToolNamesIn(
           publishedText(tool),
           tool.name,
-        ).filter((name) => !isToolOnSurface(name, surface, noOptIns));
+        ).filter((name) => !isToolOnSurface(name, surface, null));
         expect(offSurface, `${tool.name} (${surface}) names off-surface tools`).toEqual([]);
       });
     }
   }
 });
 
-/**
- * The tools a single `?tools=<alias>` registers, for every alias naming
- * `toolName`. Keyed on the ALIAS, not the tool: `?tools=graph` turns on all
- * three graph primitives together, so a graph tool naming its own sibling is
- * correct, not a phantom. Reading the aliases from `OPTIONAL_TOOL_ALIASES`
- * keeps that grouping in one place.
- */
-function enabledByOwnAliases(toolName: string): ReadonlySet<string> {
-  const enabled = new Set<string>();
-  for (const names of Object.values(OPTIONAL_TOOL_ALIASES)) {
-    if (names.includes(toolName)) for (const n of names) enabled.add(n);
-  }
-  return enabled;
-}
-
-describe("no opt-in tool names a tool its own alias does not enable", () => {
-  // An opt-in tool is read by a connection that enabled ITS alias and
-  // nothing else. `?tools=graph` must not produce descriptions pointing at
-  // `tako_answer`, which only `?tools=answer` registers.
-  for (const surface of ["generic", "chatgpt"] as const satisfies Surface[]) {
-    for (const tool of TOOL_REGISTRY) {
-      if (isToolOnSurface(tool.name, surface, new Set())) continue; // default-listed; covered above
-      const ownAlias = enabledByOwnAliases(tool.name);
-      if (!isToolOnSurface(tool.name, surface, ownAlias)) continue; // not on this surface at all
-      it(`${tool.name} on ${surface} names only tools reachable alongside it`, () => {
-        const offSurface = foreignToolNamesIn(
-          publishedText(tool),
-          tool.name,
-        ).filter((name) => !isToolOnSurface(name, surface, ownAlias));
-        expect(offSurface, `${tool.name} (${surface}, opt-in) names unreachable tools`).toEqual([]);
-      });
-    }
+describe("no opt-in tool names a tool outside the defaults plus itself", () => {
+  // `?tools=` is an allowlist that REPLACES the defaults (spec D1), so a
+  // caller who lists only `tako_agent` gets a description that names
+  // `tako_search` with nothing to call — an accepted consequence of the
+  // caller's own choice, documented in docs/TOOLS.md. What this guard
+  // forbids is an opt-in tool naming ANOTHER opt-in tool: no allowlist a
+  // reader would expect to write (defaults + this one tool) reaches it.
+  const surface: Surface = "generic"; // chatgpt has no opt-ins: its set is fixed
+  const defaults = resolveToolSet(surface, null);
+  for (const tool of TOOL_REGISTRY) {
+    if (defaults.has(tool.name)) continue; // default-listed; covered above
+    const reachable = new Set([...defaults, tool.name]);
+    it(`${tool.name} (opt-in) names only default tools or itself`, () => {
+      const offSurface = foreignToolNamesIn(publishedText(tool), tool.name).filter(
+        (name) => !reachable.has(name),
+      );
+      expect(offSurface, `${tool.name} (opt-in) names unreachable tools`).toEqual([]);
+    });
   }
 });
 
@@ -145,9 +130,8 @@ describe("no opt-in tool names a tool its own alias does not enable", () => {
  */
 describe("server instructions name no tool a connection may not have", () => {
   const surfaces = ["generic", "chatgpt"] as const satisfies Surface[];
-  const noOptIns: ReadonlySet<string> = new Set();
   const universal = [...ALL_TOOL_NAMES].filter((name) =>
-    surfaces.every((surface) => isToolOnSurface(name, surface, noOptIns)),
+    surfaces.every((surface) => isToolOnSurface(name, surface, null)),
   );
 
   it("the cross-surface default set is non-empty", () => {
@@ -169,4 +153,78 @@ describe("server instructions name no tool a connection may not have", () => {
       expect(unreachable, `${label} names unreachable tools`).toEqual([]);
     });
   }
+});
+
+/**
+ * The block above pins the UNFILTERED constants against the cross-surface
+ * default set, which passes only because `tako_search`,
+ * `tako_available_data` and `tako_contents` are default on both surfaces.
+ * It says nothing about `?tools=`, and `?tools=` REPLACES the default listing
+ * (spec D1) — so `?tools=agent` used to serve a system prompt naming three
+ * tools the connection had not registered. This block is the derived guard:
+ * for any allowlist, every tool the instructions name must be in the set the
+ * request actually registers.
+ */
+describe("server instructions name no tool outside the resolved ?tools= set", () => {
+  const allowlists: ReadonlySet<string>[] = [
+    new Set(["tako_agent"]),
+    new Set(["tako_search"]),
+    new Set(["tako_search", "tako_contents"]),
+    new Set(["tako_visualize", "tako_credit_balance"]),
+    new Set(["tako_search", "tako_available_data", "tako_contents"]),
+  ];
+
+  for (const requested of allowlists) {
+    const label = [...requested].join(",");
+    for (const tier of ["authenticated", "free"] as const) {
+      it(`?tools=${label} (${tier}) names only what it registers`, () => {
+        const resolved = resolveToolSet("generic", requested);
+        const text = serverInstructionsForTier(tier, resolved);
+        const named = foreignToolNamesIn(text, "");
+        const phantom = named.filter((name) => !resolved.has(name));
+        expect(phantom, `instructions for ?tools=${label}`).toEqual([]);
+      });
+    }
+  }
+
+  it("a single-tool allowlist that names no instruction tool keeps the shared paragraph", () => {
+    // The fallback must stay non-empty: an empty `instructions` would drop
+    // the routing guidance that makes hosts reach for Tako at all.
+    const text = serverInstructionsForTier(
+      "authenticated",
+      resolveToolSet("generic", new Set(["tako_agent"])),
+    );
+    expect(foreignToolNamesIn(text, "")).toEqual([]);
+    expect(text).toContain("proprietary live-data graph");
+  });
+
+  // POSITIVE, because every case above asserts only an ABSENCE. Over-filtering
+  // a partial allowlist is invisible to them: make `assembleInstructions` drop
+  // one extra sentence whenever any sentence is dropped and all of them still
+  // pass, because the result still names no phantom. The `unfiltered` case
+  // below catches only wholesale over-filtering of the DEFAULT set. This pins
+  // the half nothing else does — what a partial allowlist KEEPS.
+  it("?tools=search,contents keeps its own sentences and drops the others", () => {
+    const resolved = resolveToolSet("generic", new Set(["tako_search", "tako_contents"]));
+    const text = serverInstructionsForTier("authenticated", resolved);
+    // Kept: both sentences whose tools are entirely inside the allowlist.
+    expect(text).toContain("`tako_contents` reads one source in full");
+    expect(text).toContain("`include_contents: true` on `tako_search`");
+    // Dropped: the one sentence naming a tool the allowlist leaves out.
+    expect(text).not.toContain("tako_available_data");
+    // And the shared routing paragraph is never a casualty of filtering.
+    expect(text).toContain("proprietary live-data graph");
+  });
+
+  it("the default listing still names all three, unfiltered", () => {
+    // Guards the other direction: over-filtering would silently strip
+    // guidance from every default connection.
+    const resolved = resolveToolSet("generic", null);
+    expect(serverInstructionsForTier("authenticated", resolved)).toBe(
+      SERVER_INSTRUCTIONS,
+    );
+    expect(serverInstructionsForTier("free", resolved)).toBe(
+      FREE_TIER_SERVER_INSTRUCTIONS,
+    );
+  });
 });

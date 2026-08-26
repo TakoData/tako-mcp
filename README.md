@@ -148,7 +148,7 @@ That installs the MCP connection, Tako's bundled [research skills](#agent-skills
 
 To unlock the full toolset and your own account limits, authenticate once: run `/mcp auth tako` inside Gemini CLI. A browser opens to sign you in with your Tako account, and a per-host API key is minted for you automatically (visible and revocable at [tako.com/console/api-keys](https://tako.com/console/api-keys)).
 
-**Manual config**: if you'd rather not install the extension, or you want to pin a [`?tools=` surface](#available-tools), add to `~/.gemini/settings.json` (authenticate later with `/mcp auth tako`):
+**Manual config**: if you'd rather not install the extension, or you want to pin a [`?tools=` allowlist](#available-tools), add to `~/.gemini/settings.json` (authenticate later with `/mcp auth tako`):
 
 ```json
 {
@@ -240,7 +240,7 @@ The consumer chat hosts don't accept Bearer tokens. `claude_desktop_config.json`
 3. Paste `https://mcp.tako.com/mcp/chatgpt` and click **Connect**
 4. Complete the Tako sign-in flow; the connector is then listed and ready
 
-The `/mcp/chatgpt` surface is OAuth-only and tuned for ChatGPT (interactive chart widget, the split agent pair behind `?tools=agent`). The generic `/mcp` URL also works there — you get chart images instead of the interactive widget.
+The `/mcp/chatgpt` surface is OAuth-only and tuned for ChatGPT (interactive chart widget, a fixed five-tool listing; `?tools=` is ignored there). The generic `/mcp` URL also works there — you get chart images instead of the interactive widget.
 
 ![ChatGPT connector connected](docs/images/chatgpt-tako-connected.png)
 
@@ -283,42 +283,39 @@ A key connects exactly like OAuth — same tools, same account limits. Rotating 
 
 ## Available Tools
 
-**Enabled by default:**
+The full reference — every description and parameter exactly as the model sees them, per surface — is generated into [`docs/TOOLS.md`](docs/TOOLS.md). Summary:
 
-| Tool | Description |
-| ---- | ----------- |
-| `tako_search` | **Pull the data to work with.** Fast search over Tako's curated graph and the live web. Cards carry headline values and chart links; set `include_contents: true` to inline each exportable card's most-recent rows (billed per 1k rows; `preview_rows` caps how many). Top result renders inline as a chart (an interactive MCP Apps widget on the ChatGPT app, a chart image elsewhere) with an **Open in Tako** link. Choose `sources` (`data`, `web`, or both) and `effort` (`fast` / `instant`). Parallelize broad questions into narrow single entity+metric searches for far better retrieval. |
-| `tako_available_data` | **Discover what proprietary, structured data exists** on an entity or metric in one call — and a cheap accuracy check to confirm a figure exists before spending a priced search. Returns the coverage names, a `node_id` to pin, and — when the target is unambiguous — a ready-to-run `next_call` (search query + pinned nodes) to fetch the confirmed series. Free and fast. |
-| `tako_contents` | Fetch the content behind result URLs (1-10 per call, batched): a Tako card returns a CSV (billed per 1k rows), any other URL returns the page's extracted text — pass `query` to get just the matching passages of a long page. Cards must be marked `exportable: true` (web URLs are exempt). Requires a signed-in connection. |
+**Listed by default on `/mcp`:**
 
-**Anonymous connections (no credentials):** the tool list is the same as above — the list never changes with auth state. `tako_search` and `tako_available_data` run anonymously (rate-limited, on shared capacity); `tako_contents` — and `include_contents: true` on search — answer with sign-in instructions instead of running. Sign in (or connect with an API key) for your own account limits.
+| Tool | What it's for |
+| ---- | ------------- |
+| `tako_search` | **Pull the data to work with.** Fast search over Tako's curated graph and the live web. Cards carry headline values and chart links; set `include_contents: true` to inline each exportable card's most-recent rows (billed per 1k rows; `preview_rows` caps how many). The top result renders inline as a chart with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
+| `tako_available_data` | **Find what structured data exists** on an entity or metric in one free call — the exact metric name, a `node_id` to pin, and a ready-to-run `next_call`. |
+| `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows (billed per 1k rows) or a web page's text — pass `query` for just the matching passages. Requires a signed-in connection. |
+| `tako_graph_related` | Explore a graph node: its metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. Free. |
+| `tako_credit_balance` | The connected account's credit balance. |
+
+**Anonymous connections (no credentials):** the tool list is the same — it never changes with auth state. `tako_search` and `tako_available_data` run anonymously (rate-limited, on shared capacity); the others answer with sign-in instructions.
 
 On connect, the server also advertises [MCP server instructions](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle#initialization) that hosts like Claude.ai, Claude Desktop, and Claude Code place in the model's system prompt. They steer data and metric questions to `tako_search` ahead of the host's built-in web search, and note that `tako_search` covers the live web too, so one call can stand in for a separate web search on mixed questions. Built-in web search remains the fallback for queries outside Tako's coverage.
 
-**Opt-in** — off by default to keep the tool surface small. Enable per-connection via the `?tools=` query parameter (comma-separated aliases):
+**Opt-in on `/mcp`** — name them in `?tools=`:
 
-| Alias | Tool(s) | What it's for |
-| ---- | ---- | ----------- |
-| `answer` | `tako_answer` | One synthesized, citation-backed prose answer per question. **Not recommended** — your model already synthesizes from `tako_search` results, so a prose-answer tool is double synthesis; use search |
-| `agent` | `tako_agent` (`/mcp/chatgpt`: `tako_agent_start` / `tako_agent_wait`) | Tako's **Answer Agent** — opinionated, multi-step research (~30–90s) across many retrievals, returning a synthesized answer plus chart cards |
-| `visualize` | `tako_visualize` | Author an embeddable chart/card from your own typed `components` (timeseries, bar, table, financial boxes…). **On by default on the ChatGPT app surface** (`/mcp/chatgpt`) — the host that renders the chart widget inline; everywhere else opt in for the embed URL |
-| `credits` | `get_credit_balance` | Check the connected account's API credit balance |
-| `graph` | `tako_graph_search` / `tako_graph_related` / `tako_graph_node` | Low-level graph primitives behind `tako_available_data`: traversal relations, `q` filtering, cursor paging, full node detail |
+| Tool | Token | What it's for |
+| ---- | ----- | ------------- |
+| `tako_answer` | `answer` | One synthesized, citation-backed prose answer. **Not recommended** — your model already synthesizes from `tako_search` results. |
+| `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research (~30–90s) across many retrievals, returning a synthesized answer plus chart cards. |
+| `tako_visualize` | `visualize` | Author an embeddable chart/card from your own typed `components` (timeseries, bar, table, financial boxes…). On by default on `/mcp/chatgpt`, the host that renders the widget inline. |
 
-The param rides on the connection URL, so how you set it depends on your client:
-
-- **Claude.ai, Claude Desktop (connectors):** include it in the URL you paste when adding the connector — e.g. `https://mcp.tako.com/mcp?tools=agent`. OAuth is unaffected (the server canonicalizes the resource, query string included).
-- **ChatGPT (connectors):** put it on the app surface, not the generic one — `https://mcp.tako.com/mcp/chatgpt?tools=agent`. The alias resolves to a different tool per surface, and only `/mcp/chatgpt` serves the `tako_agent_start` / `tako_agent_wait` pair. `/mcp?tools=agent` gives ChatGPT the single-call `tako_agent`, which cannot reset the host's ~60s per-call timeout and so cannot finish a 30–90s run.
-- **Config-file clients (Cursor, Windsurf, VS Code, …) and `claude mcp add`:** put it on the URL in your config:
+**`?tools=` is an allowlist that replaces the defaults.** `?tools=search,contents` lists exactly those two; `?tools=agent` lists only `tako_agent`. Tokens are tool names with the `tako_` prefix optional. Unknown tokens are ignored, and a param that names nothing yields the defaults, so a typo never breaks the connection. Include the defaults you rely on:
 
 ```bash
-# Aliases compose as a comma-separated list on the MCP URL
-claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=agent,visualize"
+claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=search,available_data,contents,graph_related,agent"
 ```
 
-- **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). For opt-in tools in Claude Code — `answer`, `agent`, `visualize`, `credits`, `graph` — add the server yourself with `claude mcp add` and the `?tools=` param as above, and keep only one Tako connection active so you don't get two copies of every tool (the plugin's bundled skills keep working regardless of which connection serves the tools).
-
-Only alias names are recognized; unknown values are ignored, so a typo never breaks the connection. Omit the parameter for the default surface.
+- **Claude.ai, Claude Desktop, ChatGPT developer-mode connectors:** put the param on the URL you paste. OAuth is unaffected (the server canonicalizes the resource, query string included).
+- **Claude Code plugin:** the plugin pins the default surface (its URL isn't user-editable). For a different set, add the server yourself with `claude mcp add` as above, and keep only one Tako connection active so you don't get two copies of every tool.
+- **`/mcp/chatgpt` ignores `?tools=`**: its listing is fixed at submission — `tako_search`, `tako_available_data`, `tako_contents`, `tako_visualize`, `tako_graph_related`.
 
 <details>
 <summary><b>Getting values vs. getting pointers</b></summary>
@@ -634,9 +631,14 @@ The Worker extracts the Bearer (or OAuth-derived) token, validates the MCP reque
 - **Health check:** `GET /health` returns a simple `ok`.
 
 <details>
-<summary><b>Breaking changes (v0.3.0)</b></summary>
+<summary><b>Breaking changes</b></summary>
 
-- The default tool surface is **`tako_search`**, **`tako_contents`**, **`tako_available_data`** — plus **`tako_visualize`** on the ChatGPT app surface (`/mcp/chatgpt`), the host that renders its chart inline. Everything else is opt-in via `?tools=`: **`tako_answer`** (`answer`; not recommended), **`tako_agent`** (`agent`; `/mcp/chatgpt` split pair **`tako_agent_start`** / **`tako_agent_wait`**), **`tako_visualize`** (`visualize`; needed only off the ChatGPT surface), **`get_credit_balance`** (`credits`), and graph primitives **`tako_graph_search`** / **`tako_graph_related`** / **`tako_graph_node`** (`graph`).
+- **`?tools=` now replaces the default listing instead of adding to it** (tokens are tool names, e.g. `?tools=search,contents,agent`). `tako_graph_search`, `tako_graph_node`, `tako_agent_start`, and `tako_agent_wait` were removed; `get_credit_balance` is now `tako_credit_balance`; `tako_graph_related` and `tako_credit_balance` are listed by default. See [`docs/TOOLS.md`](docs/TOOLS.md).
+- **The ChatGPT app surface no longer serves the Answer Agent in any form.** `https://mcp.tako.com/mcp/chatgpt?tools=agent` was the documented way to reach it; that URL now serves the fixed five-tool listing, because `?tools=` is ignored on `/mcp/chatgpt`. `https://mcp.tako.com/mcp?tools=search,available_data,agent` registers `tako_agent` for a ChatGPT developer-mode connector, but ChatGPT's ~60 s per-call ceiling cannot hold a 30–90 s run, so treat it as unsupported rather than a replacement. The agent returns to ChatGPT as reviewed app functionality, not as a hidden opt-in.
+
+**v0.3.0:**
+
+- The tool surface was reorganized into a small default listing plus `?tools=` opt-ins, and `?tools=` group aliases (`graph`, `credits`, `answer`, `visualize`, `agent`) were introduced. Both the aliases and several of those tools are gone — see the entry above and [`docs/TOOLS.md`](docs/TOOLS.md) for the current surface.
 - The chart-image (`get_chart_image`), interactive-chart (`open_chart_ui`), chart-creation (`create_chart`), and report tools (`create_report`, `get_report`, `list_reports`, `export_report`) were removed.
 - The self-hosted Python server (`pip install tako-mcp` / Docker) was removed in favor of the hosted Cloudflare Worker.
 

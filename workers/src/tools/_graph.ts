@@ -1,6 +1,6 @@
 /**
- * Shared facades + helpers for the graph primitive tools
- * (tako_graph_search / tako_graph_related / tako_graph_node).
+ * Shared facades + helpers for the graph tools (tako_graph_related and the
+ * graph/search + graph/related pipeline inside tako_available_data).
  *
  * The generated schemas (GraphNode, GraphRelatedResponse, …) are the wire
  * contract each tool safeParses against. These hand-written facades are the
@@ -58,7 +58,13 @@ export const graphRelatedOutputShape = {
 } as const;
 
 /** Which graph endpoint an error came from (drives the tailored guidance). */
-export type GraphOp = "search" | "related" | "node";
+// `"node"` was a third member until `tako_graph_node.ts` was deleted. Keep
+// this union to what a caller can actually pass: a stale member keeps its
+// error arms alive and reachable-looking, and those arms build the tool name
+// as `tako_graph_${op}` — naming a tool no surface registers, which
+// `phantom_tool.test.ts` cannot see because it scans descriptions and
+// schemas, not error text.
+export type GraphOp = "search" | "related";
 
 // The public NER labels graph/search accepts (mirrors NerLabel in the generated
 // schema and the tako-graph-agent skill). Listed in the 400 hint so the agent
@@ -66,22 +72,19 @@ export type GraphOp = "search" | "related" | "node";
 const NER_LABEL_LIST =
   "PERSON, ORG, GPE, LOC, PRODUCT, EVENT, LANGUAGE, MONEY, METRIC, STOCK_TICKER, WEBSITE";
 
-const NODE_ID_HINT =
-  "Node ids come from tako_available_data results or a tako_search card's `nodes` — never a plain name; resolve the name first.";
-
 /**
  * Translate a transport/HTTP error from a `/v1/graph/*` call into an
  * agent-facing message that points at the fix, instead of leaking a raw
  * "Django returned 400 for GET …".
  *
  * Grounded ONLY in the documented graph contract (`openapi/sdk.yaml`:
- * search → 400/503, related → 400/404/503, node → 404/503) and the
+ * search → 400/503, related → 400/404/503) and the
  * live-verified behaviours recorded in the tako-graph-agent skill:
  *   - 401 → key missing/invalid, or a key used against the wrong environment
  *     (a prod key is rejected on staging and vice-versa).
  *   - 400 → a bad parameter; on search that is almost always an off-enum
  *     `label` or a bad `types`.
- *   - 404 (related/node) → the NODE ID does not resolve. NB an unknown
+ *   - 404 (related) → the NODE ID does not resolve. NB an unknown
  *     `relation` KEY is NOT a 404 — it returns 200 with empty items, so a 404
  *     always means the node id, never the relation.
  *   - 429 → rate limit (~180 req/min); back off and retry.
@@ -89,19 +92,22 @@ const NODE_ID_HINT =
  *   - 403 → observed as a Cloudflare/edge block on direct probes; not a query
  *     problem, so it is surfaced as an infra issue, not a "fix your input".
  *
- * `ref` is the node id (related/node) echoed back so the agent sees what failed.
+ * `ref` is the node id (related) echoed back so the agent sees what failed.
  * Non-transport errors are passed through unmasked.
  */
 export function graphErrorMessage(
   err: unknown,
   op: GraphOp,
-  ref?: string,
-  toolName?: string,
+  ref: string | undefined,
+  // REQUIRED, and deliberately not defaulted. This used to fall back to
+  // `tako_graph_${op}`, which synthesized `tako_graph_search` — a name no
+  // surface registers since `tako_graph_search.ts` was deleted. It stayed
+  // latent only because the one `op: "search"` caller happens to pass a name,
+  // and `phantom_tool.test.ts` cannot catch it: that guard scans descriptions
+  // and schemas, not error text. A required argument fails the build instead.
+  toolName: string,
 ): string {
-  // `toolName` lets a composite caller (tako_available_data) label the error
-  // with its own name; the opt-in primitives (`?tools=graph`) fall back to
-  // `tako_graph_<op>`.
-  const tool = toolName ?? `tako_graph_${op}`;
+  const tool = toolName;
   const idOf = ref ? `"${ref}"` : "the given id";
 
   if (err instanceof DjangoUnauthorizedError) {
@@ -110,21 +116,27 @@ export function graphErrorMessage(
 
   if (err instanceof DjangoBadRequestError) {
     const detail = err.body ? ` Backend detail: ${err.body.slice(0, 200)}` : "";
-    if (op === "search") {
-      return `${tool}: invalid request (400). Most often a bad \`label\` — valid values are ${NER_LABEL_LIST}; omit \`label\` to let inference run. \`types\` must be "entity" or "metric" (resolve one kind per call).${detail}`;
+    // A switch with a `never` default, not an if-chain with a generic tail.
+    // The tail that used to sit here went dead the moment `"node"` left
+    // `GraphOp`, and nothing said so — an if-chain over a union is invisible
+    // to the compiler in both directions. This way a new member fails to
+    // build here rather than silently reaching the model as a 400 with no
+    // guidance, which is the one shape this function exists to prevent.
+    switch (op) {
+      case "search":
+        return `${tool}: invalid request (400). Most often a bad \`label\` — valid values are ${NER_LABEL_LIST}; omit \`label\` to let inference run. \`types\` must be "entity" or "metric" (resolve one kind per call).${detail}`;
+      case "related":
+        return `${tool}: invalid request (400). Confirm \`node_id\` is an id from a graph result (not a name); to filter use \`q\`, to page a group use a valid \`relation\` key (metrics, entities, siblings, part_of, members, or rel:<phrase>).${detail}`;
+      default: {
+        const exhaustive: never = op;
+        throw new Error(`unhandled GraphOp: ${String(exhaustive)}`);
+      }
     }
-    if (op === "related") {
-      return `${tool}: invalid request (400). Confirm \`node_id\` is an id from a graph result (not a name); to filter use \`q\`, to page a group use a valid \`relation\` key (metrics, entities, siblings, part_of, members, or rel:<phrase>).${detail}`;
-    }
-    return `${tool}: invalid node id (400) for ${idOf}. ${NODE_ID_HINT}${detail}`;
   }
 
   if (err instanceof DjangoNotFoundError) {
     if (op === "related") {
       return `${tool}: no graph node with id ${idOf} (404). Resolve the entity/metric with tako_available_data first and pass the \`id\` it returns. (An unknown \`relation\` is NOT a 404 — it returns empty items, so this means the node id itself.)`;
-    }
-    if (op === "node") {
-      return `${tool}: no graph node with id ${idOf} (404). ${NODE_ID_HINT}`;
     }
     return `${tool}: not found (404).`;
   }

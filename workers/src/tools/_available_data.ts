@@ -477,8 +477,19 @@ export const toRef = (n: { id: string; name: string; type: string }): ResolvedRe
  * is registered on neither default surface. This handle reaches the model as
  * "next_call (run verbatim)", so a name that is not on the surface resolves to
  * the SDK's bare "tool not found" — the discovery path's handle already names
- * tako_search, and the two now agree. Null when no metric resolved: a handle
- * pointing at a metric we could not find would spend a priced call on a guess.
+ * tako_search, and the two now agree.
+ *
+ * `tako_search` is itself off-surface on one connection shape, and that is
+ * ACCEPTED, not overlooked: `?tools=` is an allowlist that REPLACES the
+ * defaults (spec D1), so a hand-written `?tools=available_data` lists this
+ * tool without its own follow-up target. Both default listings carry both
+ * tools, so no connection reaches that state without a caller narrowing it
+ * deliberately against the warning in `docs/TOOLS.md`. See the accepted-
+ * consequence note in `phantom_tool.test.ts`. Do not "fix" it by naming a
+ * different tool here — every alternative is opt-in and strictly worse.
+ *
+ * Null when no metric resolved: a handle pointing at a metric we could not
+ * find would spend a priced call on a guess.
  */
 export function buildPairNextCall(
   metricQuery: string,

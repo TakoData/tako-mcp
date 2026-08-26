@@ -11,7 +11,6 @@ import {
   FREE_TIER_GLOBAL_LIMIT_MESSAGE,
   FREE_TIER_LIMIT_MESSAGE,
   FREE_TIER_TOO_LARGE_MESSAGE,
-  FREE_TIER_TOOL_NAMES,
   type FreeTierConfig,
   freeTierBatchResponse,
   freeTierCreditsToolResult,
@@ -23,8 +22,10 @@ import {
   MAX_FREE_TIER_BODY_BYTES,
   resolveFreeTierConfig,
 } from "./freetier.js";
+import { FREE_TIER_TOOL_NAMES } from "./tools/_surface.js";
 import worker from "./index.js";
-import { FREE_TIER_SERVER_INSTRUCTIONS, GENERIC_SIGN_IN_HINT } from "./mcp.js";
+import { FREE_TIER_SERVER_INSTRUCTIONS } from "./instructions.js";
+import { GENERIC_SIGN_IN_HINT } from "./mcp.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
 /**
@@ -187,7 +188,7 @@ describe("isMeteredJsonRpcBody", () => {
       "tako_agent",
       "tako_answer",
       "tako_contents",
-      "get_credit_balance",
+      "tako_credit_balance",
       "no_such_tool",
     ]) {
       expect(
@@ -1050,6 +1051,8 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "tako_available_data",
       "tako_contents",
+      "tako_credit_balance",
+      "tako_graph_related",
       "tako_search",
     ]);
     expect(limiter.keys).toEqual([]);
@@ -1079,6 +1082,8 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "tako_available_data",
       "tako_contents",
+      "tako_credit_balance",
+      "tako_graph_related",
       "tako_search",
     ]);
     const oauth2 = { type: "oauth2", scopes: ["mcp"] };
@@ -1333,11 +1338,10 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
   });
 
   it("an anonymous call to an opt-in tool NOT enabled on this connection gets tool-not-found, not sign-in", async () => {
-    // `tako_agent` is `?tools=agent` opt-in: signing in on THIS URL (no
-    // opt-in) would still be "tool not found", so promising auth would
+    // `tako_agent` is opt-in: it is not named in `?tools=` on THIS URL, so
+    // signing in would still be "tool not found" and promising auth would
     // just move the dead end one sign-in later. The gate checks the
-    // AUTHENTICATED surface for the same client + opt-ins before
-    // answering.
+    // AUTHENTICATED surface for the same allowlist before answering.
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(
       post({
@@ -1674,6 +1678,8 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "tako_available_data",
       "tako_contents",
+      "tako_credit_balance",
+      "tako_graph_related",
       "tako_search",
     ]);
     expect(limiter.keys).toEqual([]);

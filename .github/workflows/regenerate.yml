@@ -65,7 +65,20 @@ jobs:
         run: |
           git config user.name "tako-bot"
           git config user.email "bot@tako.com"
-          git add workers/src/generated/schemas.ts workers/src/tools/_registry.ts registry/server.json
+          # Must list EVERY artifact `registry:gen` writes, minus the snapshot.
+          # The `Verify` step above cannot catch an omission: it runs
+          # `registry:check` against the UNCOMMITTED tree, so a file the
+          # generator rewrote but nobody staged looks correct there and ships
+          # stale. `predeploy:staging` re-runs the same check on a clean
+          # checkout, so the omission surfaces as a blocked deploy instead of a
+          # red sync PR. Current outputs: registry/server.json,
+          # registry/lhm.plugin.json, workers/src/tools/_registry.ts and
+          # docs/TOOLS.md (see the writeFileSync block in gen-registry.ts).
+          # `chatgpt-app-snapshot.json` is deliberately NOT staged — it changes
+          # only under `--accept`, which a bot must never do to a
+          # reviewed-surface digest.
+          git add workers/src/generated/schemas.ts workers/src/tools/_registry.ts \
+            registry/server.json registry/lhm.plugin.json docs/TOOLS.md
           if ! git diff --cached --quiet; then
             git commit -m "chore: regenerate schemas + registry from synced spec"
             git push origin "HEAD:$HEAD_REF"

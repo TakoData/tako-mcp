@@ -2,10 +2,9 @@
  * `tako_available_data` — the one-shot "what data does Tako have on X?" tool.
  *
  * Runs graph/search → graph/related as a single free, low-latency pipeline and
- * returns a natural-language coverage summary. It is the default discovery
- * entry point that replaces manual chaining of the low-level graph primitives
- * (tako_graph_search / tako_graph_related / tako_graph_node), which are off
- * the default surface and opt-in via `?tools=graph` (see `_optional.ts`).
+ * returns a natural-language coverage summary. It is the entry point that
+ * RESOLVES a name to a node; `tako_graph_related` is the one primitive left,
+ * for drilling into a node this tool already resolved.
  *
  * Pipeline (discovery): one graph/search, then SELECT_TOP_N candidates are
  * inspected with cheap `limit=1` coverage probes while the top one's FULL
@@ -225,6 +224,26 @@ const tako_available_data = {
     // closed-world there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
+  fixedInputs: [
+    {
+      field: "graph/search limit",
+      value: "10",
+      // Derived, not restated: the previous hand-written copy of these numbers
+      // claimed four full drills where the handler does one drill plus three
+      // limit=1 probes, and `docs/TOOLS.md` published the wrong figure verbatim.
+      // `fixedInputs` is read off the imported module (`gen-registry.ts:536`),
+      // so retuning either constant regenerates the doc instead of drifting it.
+      note:
+        `Candidates fetched per lookup (the API default is 20); the top ${SELECT_TOP_N} that ` +
+        `survive the match gate are inspected — ${RENDER_FULL_N} drilled in full, ` +
+        `${SELECT_TOP_N - RENDER_FULL_N} by a limit=1 probe. A shell rank-0 costs one more drill.`,
+    },
+    {
+      field: "graph/related limit",
+      value: "100",
+      note: "Coverage page size for the drill; paging stops at 250 names or 4 pages. The cheap per-candidate coverage probes send limit=1 instead.",
+    },
+  ],
   // Declared as the FULL internal shape (assignable to the slim advertised
   // Output via its loose index signature) so tests and hooks keep real types.
   async handler(input: Input, ctx): Promise<FullOutput> {

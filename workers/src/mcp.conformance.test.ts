@@ -35,9 +35,13 @@ import type { AnyToolModule } from "./tools/types.js";
 
 const AUTH_HEADER = "Bearer conformance-test-token";
 
-// Every optional tool, so the sweep covers the whole surface rather than the
-// default subset (see `_optional.ts`).
-const ALL_TOOLS_QUERY = "?tools=agent,answer,visualize,credits,graph";
+// Every tool, so the sweep covers the whole surface rather than the default
+// subset. `?tools=` is an allowlist (spec D1), so name them all — DERIVED
+// from the registry, because a hand-written list drops a new tool out of the
+// sweep silently: nothing fails, the coverage just disappears.
+const ALL_TOOLS_QUERY = `?tools=${TOOL_REGISTRY.map((t) => t.name)
+  .sort()
+  .join(",")}`;
 
 interface PublishedSchema {
   type?: string;
