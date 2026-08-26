@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { TOOL_REGISTRY } from "./tools/_registry.js";
 
 import wranglerRaw from "../wrangler.jsonc?raw";
 import type { Env, RateLimit } from "./env.js";
@@ -198,6 +199,73 @@ describe("isMeteredJsonRpcBody", () => {
         }),
       ).toBe(false);
     }
+  });
+
+  it("does not meter an anonymous tako_search that carries include_contents: true", () => {
+    // Same invariant as the case above: the call cannot execute anonymously
+    // (spec D12 refuses inline rows without a signed-in connection), so it
+    // must not consume the per-IP bucket. Metering it let a model burn the
+    // whole minute on refusals — spec: "Rejected calls stay unmetered."
+    expect(
+      isMeteredJsonRpcBody({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "tako_search", arguments: { query: "US GDP", include_contents: true } },
+      }),
+    ).toBe(false);
+  });
+
+  it("still meters a tako_search whose include_contents is absent or false", () => {
+    for (const args of [
+      { query: "US GDP" },
+      { query: "US GDP", include_contents: false },
+    ]) {
+      expect(
+        isMeteredJsonRpcBody({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "tako_search", arguments: args },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("exempts EVERY tool input that anonymousInputRejects refuses", () => {
+    // `isMeteredJsonRpcBody` inlines the refusal conditions instead of
+    // reading TOOL_REGISTRY — importing the registry from freetier.ts makes
+    // it the module graph's entry point and trips a latent init cycle
+    // (_render_markdown -> _search_results -> _chart_widget, TDZ on
+    // usageAdvertisedSchema). This test is what keeps the two in step: it
+    // asks each tool's own gate which inputs it refuses, then asserts the
+    // metering predicate exempts them. A new rejecting input fails here.
+    const probes: Record<string, unknown>[] = [
+      { include_contents: true },
+      { include_contents: false },
+      {},
+    ];
+    let covered = 0;
+    for (const tool of TOOL_REGISTRY) {
+      if (tool.anonymousInputRejects === undefined) continue;
+      if (!FREE_TIER_TOOL_NAMES.has(tool.name)) continue; // never metered anyway
+      for (const args of probes) {
+        const refused = tool.anonymousInputRejects(args) !== undefined;
+        const metered = isMeteredJsonRpcBody({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: tool.name, arguments: args },
+        });
+        expect(
+          metered,
+          `${tool.name} with ${JSON.stringify(args)}: refused=${refused} must imply metered=false`,
+        ).toBe(!refused);
+        covered++;
+      }
+    }
+    // Guard against the loop passing vacuously if the hook is ever renamed.
+    expect(covered).toBeGreaterThan(0);
   });
 
   it("does not meter a tools/call with missing or malformed params", () => {

@@ -2,10 +2,9 @@
  * `tako_agent_wait` — poll a Tako agent run to completion and return the
  * result. Companion to `tako_agent_start`.
  *
- * Registered ONLY on clients that don't honor MCP
- * `notifications/progress` for tool-call timeout extension (currently:
- * ChatGPT). See `_surface.ts`'s `CHATGPT_ONLY_TOOL_NAMES` set and
- * `tako_agent_start` for the full rationale.
+ * Registered ONLY on the chatgpt surface (`CHATGPT_ONLY_TOOL_NAMES` in
+ * `_surface.ts`) — the request path decides, never a client sniff. See
+ * `tako_agent_start` for why that surface needs a split pair at all.
  *
  * Internally calls `pollAgentRun`, which polls
  * `GET /api/v1/agent/answer/runs/{run_id}` (Tako's Answer Agent) with a 5 s

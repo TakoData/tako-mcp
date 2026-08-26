@@ -120,13 +120,19 @@ export const SERVER_VERSION = "0.22.2"; // x-release-please-version
  *      read — which is how these instructions came to contradict every
  *      tool description on the surface.
  *
- *   3. `tako_answer` and `tako_search` are a CHOICE, not a ranking — the
- *      "pick one, don't chain them" phrasing, which is the only line here
- *      with a measured behavioural effect, so keep it verbatim rather than
- *      paraphrased. `tako_available_data` answers coverage questions in its
- *      own right too, not merely as a gate in front of the priced tools:
- *      "what does Tako have on X" is worth asking on its own, and the answer
- *      shapes which metric is worth asking for at all.
+ *   3. `tako_available_data` answers coverage questions in its own right,
+ *      not merely as a gate in front of the priced tools: "what does Tako
+ *      have on X" is worth asking on its own, and the answer shapes which
+ *      metric is worth asking for at all.
+ *
+ *      This item used to carry a second half about `tako_answer` and
+ *      `tako_search` being "a CHOICE, not a ranking", and told the next
+ *      author to keep its "pick one, don't chain them" phrasing verbatim
+ *      because it was the only line here with a measured behavioural effect.
+ *      That line is GONE: `tako_answer` moved behind `?tools=answer`, so
+ *      naming it in instructions every connection reads would point the
+ *      model at an unregistered tool. Do not restore it while answer is
+ *      opt-in.
  *
  * FRAMED AS SUBSTITUTION, not precedence. The opener used to say "reach for
  * Tako BEFORE a generic web search", which concedes that a generic web search
@@ -280,10 +286,17 @@ export function createMcpServer(
     requestOrigin?: string;
     /**
      * Path-selected surface this server instance serves (see
-     * `surface.ts`). Defaults to `"generic"` — the right surface for
-     * tests and non-HTTP callers.
+     * `surface.ts`).
+     *
+     * REQUIRED, and deliberately without a default. It decides
+     * `commerceCopyAllowed` below, so a `?? "generic"` default meant a
+     * caller that omitted it emitted billing and upsell copy — the text
+     * OpenAI's app guidelines ban from model-visible output. The code this
+     * replaced was explicit about failing closed
+     * (`commerceCopyAllowed: options.commerceCopyAllowed ?? false`); keeping
+     * the surface mandatory is how that property survives the rewrite.
      */
-    surface?: Surface;
+    surface: Surface;
     /**
      * Opt-in tool names the caller enabled for this request via the `tools`
      * query param (resolved by `parseEnabledOptionalToolNames`). Tools in
@@ -305,7 +318,7 @@ export function createMcpServer(
      * callers that set neither still get the authenticated full surface.
      */
     tier?: Tier;
-  } = {},
+  },
 ): McpServer {
   // Hosts (Claude.ai connector cards, ChatGPT app directory, etc.) pick
   // one entry per the spec's matching rules: theme first, then size.
@@ -402,7 +415,7 @@ export function createMcpServer(
   // `tools/_surface.ts`, shared with `gen-registry.ts` so the
   // `chatgpt-app-submission.json` parity check validates the exact
   // surface this loop registers.
-  const surface = options.surface ?? "generic";
+  const surface = options.surface;
   // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
   // Empty by default → the default surface excludes every optional tool.
   const enabledOptionalToolNames =
@@ -437,8 +450,10 @@ export function createMcpServer(
   }
 
   // Resources parity for server instances that registered NO widget
-  // resource (unknown clients only — ChatGPT and Claude both register
-  // it, and the fallback below only fires when neither did). The SDK
+  // resource. Only the chatgpt surface registers one (`widgetSuppressed`
+  // above), so this is the COMMON path now — every generic connection takes
+  // it — rather than the unknown-client edge case it was under the deleted
+  // User-Agent classifier. The SDK
   // only wires the `resources` capability and its request handlers on
   // the first `registerResource` call — without this block,
   // `resources/list` / `resources/read` answer JSON-RPC -32601 on
@@ -976,19 +991,23 @@ function registerTool(
       }
       // Anonymous-input gate: a free tool can still carry an input shape
       // that needs a signed-in connection — `include_contents: true`
-      // inlines billed rows (spec D12). Refused calls are unmetered
-      // upstream: the reject runs before the handler touches Django.
+      // inlines billed rows (spec D12). Refused calls are unmetered: the
+      // reject runs before the handler touches Django, and
+      // `isMeteredJsonRpcBody` reads THIS SAME hook so the per-IP limiter
+      // does not charge for a call that never runs.
       if (callCtx.tier === "free" && tool.anonymousInputRejects !== undefined) {
         const reason = tool.anonymousInputRejects(
           input as Record<string, unknown>,
         );
         if (reason !== undefined) {
           console.log(`[mcp] anonymous input rejected tool=${tool.name}`);
+          // `reason` is the LEAD, not a suffix: this tool executes fine
+          // anonymously, so the default "this tool requires a Tako account"
+          // opener would be false and would state the remedy a third time.
           return authRequiredToolResult(
             options.origin,
-            options.signInHint === undefined
-              ? reason
-              : `${reason} ${options.signInHint}`,
+            options.signInHint,
+            reason,
           );
         }
       }
@@ -1141,23 +1160,23 @@ function registerTool(
       // context" guard.
       //
       // Gated on `ui !== undefined` — the inverse of `extraContentBlocks`
-      // above. When the widget is suppressed (unknown clients), no
-      // widget will consume `_meta`, so running this hook would
-      // inflate the JSON-RPC response with a ~330 KB unused data URL.
+      // above. Where no widget is live, nothing would consume `_meta`, so
+      // running this hook would inflate the JSON-RPC response with a
+      // ~330 KB unused data URL.
       //
-      // This hook now fires for both widget clients, but each does
-      // something different with it: ChatGPT's `extraMeta`
-      // implementations bail early on `ctx.client === "chatgpt"` (its
-      // iframe widget loads `embed_url` directly and never reads the
-      // baked image), while Claude's do not — `image_data_url` is
-      // Claude's PRIMARY chart data path. The server declares the same
-      // `csp.frameDomains` for both clients, but claude.ai's host-side
-      // sandbox currently restricts third-party iframes regardless of
-      // that declaration, pending Claude's own MCP Apps security
-      // review, so the bundle's runtime `window.openai` feature
-      // detection picks the image branch there instead of embedding
-      // `embed_url` in an `<iframe>`; it reads this baked
-      // `_meta.image_data_url` and paints the PNG directly.
+      // `ui` is set only when `!widgetSuppressed`, and `widgetSuppressed` is
+      // `surface !== "chatgpt"` — so TODAY this hook fires on the chatgpt
+      // surface alone, and `ctx.surface` inside every `extraMeta` is always
+      // `"chatgpt"`. That is why the tools' `bakeImage: ctx.surface !==
+      // "chatgpt"` always resolves false: ChatGPT's widget loads `embed_url`
+      // in an iframe and needs the aspect ratio, not the bytes. Those
+      // expressions are kept, not simplified, because the claude.ai widget
+      // fast-follow (anthropics/claude-ai-mcp#753, #40) puts a widget on the
+      // generic surface, and a widget there reads `_meta.image_data_url`
+      // directly — the bundle's runtime `window.openai` feature detection
+      // picks the image branch where it cannot embed a third-party iframe.
+      // When that lands, this hook starts firing with `surface === "generic"`
+      // and `bakeImage` becomes true with no edit to the tools.
       let resultMeta: Record<string, unknown> | undefined;
       if (tool.extraMeta !== undefined && ui !== undefined) {
         try {
@@ -1801,7 +1820,7 @@ export async function handleMcpRequest(
       // fields — see `tools/_security.ts`). The generic surface gets the
       // SDK's response untouched.
       return surface === "chatgpt"
-        ? await withChatGptToolSecuritySchemes(response, tier, surface)
+        ? await withChatGptToolSecuritySchemes(response, tier)
         : response;
     } finally {
       // TODO(Phase 2): revisit this unconditional close.
@@ -1859,10 +1878,12 @@ export async function handleMcpRequest(
 export async function withChatGptToolSecuritySchemes(
   response: Response,
   tier: Tier,
-  // The serving surface, threaded through so the scheme derivation and
-  // the log line below stay consistent with the caller's gate.
-  surface: Surface,
 ): Promise<Response> {
+  // Not a parameter: the only caller is gated on `surface === "chatgpt"`, and
+  // the function's name commits it to that surface, so threading the value in
+  // only let a caller pass one that contradicts the name. The old parameter
+  // was justified by a codex-vs-chatgpt client split that no longer exists.
+  const surface: Surface = "chatgpt";
   try {
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) return response;

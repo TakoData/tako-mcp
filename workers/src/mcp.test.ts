@@ -402,8 +402,9 @@ describe("extractErrorDetail", () => {
  *     implements MCP Apps.
  *   - `inlinePngFallbackSuppressed` — skip the `extraContentBlocks`
  *     PNG image content block. Attaching the widget (`ui !== undefined`)
- *     already suppresses this hook for ChatGPT and Claude, so only
- *     unknown clients render `image` content blocks in-chat.
+ *     already suppresses this hook, and only the chatgpt surface attaches
+ *     one — so the GENERIC surface is what renders `image` content blocks
+ *     in-chat, for every client on it.
  *
  * Exercised end-to-end over an in-memory MCP transport: real server,
  * real tool registration, real `tools/call` — only the upstream
@@ -697,7 +698,7 @@ describe("server instructions", () => {
       sendProgress: noopSendProgress,
       surface: "generic",
     };
-    const server = createMcpServer(ctx);
+    const server = createMcpServer(ctx, { surface: "generic" });
     const mcpClient = new Client(
       { name: "instructions-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -737,7 +738,7 @@ describe("server instructions", () => {
       surface: "generic",
       tier: "free",
     };
-    const server = createMcpServer(ctx, { tier: "free" });
+    const server = createMcpServer(ctx, { surface: "generic", tier: "free" });
     const mcpClient = new Client(
       { name: "instructions-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -768,9 +769,12 @@ describe("free-tier tool surface", () => {
 
   /** List tool names over an in-memory transport for the given options. */
   async function listToolNames(
-    options: Parameters<typeof createMcpServer>[1],
+    options: Partial<Parameters<typeof createMcpServer>[1]>,
   ): Promise<string[]> {
-    const server = createMcpServer(ctx, options);
+    const server = createMcpServer(ctx, {
+      ...options,
+      surface: options?.surface ?? "generic",
+    });
     const mcpClient = new Client(
       { name: "tier-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -836,7 +840,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
    * transport, returning the raw tool result.
    */
   async function callTool(
-    options: Parameters<typeof createMcpServer>[1],
+    options: Partial<Parameters<typeof createMcpServer>[1]>,
     name: string,
     args: Record<string, unknown>,
     tier?: "free" | "authenticated",
@@ -848,7 +852,10 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
       surface: options?.surface ?? "generic",
       ...(tier !== undefined ? { tier } : {}),
     };
-    const server = createMcpServer(ctx, options);
+    const server = createMcpServer(ctx, {
+      ...options,
+      surface: options?.surface ?? "generic",
+    });
     const mcpClient = new Client(
       { name: "auth-test", version: "0.0.0" },
       { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
@@ -924,8 +931,9 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
 
   it("anonymous include_contents: true on tako_search is refused with sign-in copy, unexecuted", async () => {
     // Spec D10/D12: anonymous connections never inline rows. The refusal
-    // names both exits and the call never reaches Django (unmetered
-    // upstream — the reject happens before the handler).
+    // names both exits and the call never reaches Django. It is also
+    // unmetered — `freetier.test.ts` covers the per-IP half by asserting
+    // `isMeteredJsonRpcBody` is false for this same body.
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const result = await callTool(
@@ -941,6 +949,15 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     ).toBe("auth_required");
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text).toMatch(/retry without include_contents/i);
+    // The refusal must NOT open by claiming the TOOL needs an account:
+    // tako_search runs fine anonymously, it just cannot inline billed rows.
+    // Leading with the false claim invited the model to abandon a call that
+    // would have succeeded without `include_contents`.
+    expect(text).not.toMatch(/^This tool requires a Tako account/);
+    expect(text).toMatch(/^Inline rows need a signed-in connection\./);
+    // ...and the remedy is stated once as guidance plus once as the concrete
+    // how, not three times.
+    expect(text.match(/sign in/gi)?.length ?? 0).toBeLessThanOrEqual(2);
 
     // The same call authenticated executes normally.
     const okFetch = vi.fn(async () =>
@@ -1104,12 +1121,12 @@ describe("withChatGptToolSecuritySchemes", () => {
     const res = new Response("event: message\ndata: {}\n\n", {
       headers: { "content-type": "text/event-stream" },
     });
-    expect(await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt")).toBe(res);
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
   });
 
   it("returns the original response when the body is not valid JSON (body stays readable)", async () => {
     const res = new Response("{not json", { headers: JSON_CT });
-    const out = await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt");
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
     expect(out).toBe(res);
     // The adapter reads a clone — the original body must not be consumed.
     await expect(out.text()).resolves.toBe("{not json");
@@ -1120,7 +1137,7 @@ describe("withChatGptToolSecuritySchemes", () => {
       JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
       { headers: JSON_CT },
     );
-    expect(await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt")).toBe(res);
+    expect(await withChatGptToolSecuritySchemes(res, "authenticated")).toBe(res);
   });
 
   it("rewrites tools/list, drops the stale content-length, and keeps status", async () => {
@@ -1133,7 +1150,7 @@ describe("withChatGptToolSecuritySchemes", () => {
       status: 200,
       headers: { ...JSON_CT, "content-length": String(body.length) },
     });
-    const out = await withChatGptToolSecuritySchemes(res, "free", "chatgpt");
+    const out = await withChatGptToolSecuritySchemes(res, "free");
     expect(out).not.toBe(res);
     expect(out.status).toBe(200);
     expect(out.headers.get("content-length")).toBeNull();
@@ -1155,7 +1172,7 @@ describe("withChatGptToolSecuritySchemes", () => {
       result: { tools: [{ name: "tako_search" }] },
     });
     const res = new Response(body, { headers: JSON_CT });
-    const out = await withChatGptToolSecuritySchemes(res, "authenticated", "chatgpt");
+    const out = await withChatGptToolSecuritySchemes(res, "authenticated");
     const json = (await out.json()) as {
       result: { tools: Array<{ securitySchemes?: unknown }> };
     };
@@ -1662,6 +1679,7 @@ describe("stringified array arguments survive SDK input validation", () => {
     };
     // tako_answer is opt-in now — enable it the way ?tools=answer would.
     const server = createMcpServer(ctx, {
+      surface: "generic",
       enabledOptionalToolNames: new Set(["tako_answer"]),
     });
     const mcpClient = new Client(

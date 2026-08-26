@@ -387,10 +387,21 @@ const takoAnswer = {
   // there; the only reason it is duplicated rather than shared is that the
   // hooks are per-tool fields on `ToolModule`.
   async extraMeta(output, ctx) {
-    // The ChatGPT family renders `embed_url` in an iframe and never reads
-    // the baked PNG, but still needs the aspect ratio to size that iframe —
-    // dimensions only there (a 64-byte ranged read instead of a ~170 KB
-    // render).
+    // `bakeImage` is FALSE on every call today: `extraMeta` runs only when a
+    // widget is live (`ui !== undefined` in mcp.ts), and only the chatgpt
+    // surface serves one — so `ctx.surface !== "chatgpt"` cannot be true here.
+    // The expression stays because it is what the claude.ai widget fast-follow
+    // needs (gated on anthropics/claude-ai-mcp#753 and #40): a widget on the
+    // generic surface reads the baked PNG rather than an iframe, so it wants
+    // `bakeImage: true`, and this already says so. On the generic surface the
+    // inline PNG comes from `extraContentBlocks` instead, which mcp.ts runs on
+    // the opposite condition (`ui === undefined`).
+    //
+    // What the reachable branch does: ChatGPT's widget renders `embed_url` in
+    // an iframe and never reads the baked PNG, but it cannot measure that
+    // cross-origin iframe, so without the card's real aspect ratio the iframe
+    // falls back to a fixed height and leaves empty bands under a wide chart.
+    // Dimensions only — a 64-byte ranged read instead of a ~170 KB render.
     return buildChartExtraMeta(output.image_url, {
       bakeImage: ctx.surface !== "chatgpt",
       env: ctx.env,

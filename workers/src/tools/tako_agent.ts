@@ -5,9 +5,13 @@
  *   POST /api/v1/agent/answer/runs           (dispatch; returns { run_id, status })
  *   GET  /api/v1/agent/answer/runs/{run_id}  (poll until completed|failed)
  * Runs ~30-90s, so we poll and emit notifications/progress each iteration to
- * keep the per-call timeout fresh (clients with resetTimeoutOnProgress). For
- * ChatGPT (no progress support) a split tako_agent_start/tako_agent_wait pair
- * is registered instead (see mcp.ts).
+ * keep the per-call timeout fresh (hosts with resetTimeoutOnProgress). This
+ * tool is therefore registered on the GENERIC surface only: the chatgpt
+ * surface gets the split `tako_agent_start` / `tako_agent_wait` pair instead,
+ * because ChatGPT's Apps SDK sends no progressToken and the dispatch+poll
+ * path cannot survive its ~60s per-call ceiling. Registration keys on
+ * `CHATGPT_EXCLUDED_TOOL_NAMES` in `_surface.ts` — on the request path, never
+ * on a client sniff.
  *
  * PRODUCT: the public agent split (TAKO-3371) has two products — the Answer
  * Agent (cited prose + cards; this tool) and the Retrieval Agent (structured
@@ -52,9 +56,9 @@ const AGENT_POLL_REQUEST_TIMEOUT_MS = 15_000;
 const DESCRIPTION = [
   "Run Tako's Answer Agent: multi-step research returning a synthesized, cited `answer` plus chart `cards`.",
   "",
-  'Best for: questions whose shape needs figuring out — cohorts ("which companies match…"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` / `tako_answer` return nothing.',
+  'Best for: questions whose shape needs figuring out — cohorts ("which companies match…"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` returns nothing.',
   "",
-  "Not for: a known value or a simple comparison — use `tako_search` or `tako_answer` (faster). This runs ~30–90s but is far more thorough.",
+  "Not for: a known value or a simple comparison — use `tako_search` (faster). This runs ~30–90s but is far more thorough.",
 ].join("\n");
 
 export const inputSchema = z.object({
@@ -381,10 +385,15 @@ const takoAgent = {
   },
   annotationsBySurface: {
     // Apps review reads `openWorldHint` as "publishes/mutates public or
-    // third-party state", not MCP's domain-of-interaction, so the
-    // open-world retrieval flag drops for the ChatGPT family. Override
-    // kept even though ChatGPT receives the split start/wait pair instead
-    // of this tool. See `annotationsBySurface` in types.ts.
+    // third-party state", not MCP's domain-of-interaction, so the open-world
+    // retrieval flag drops on the chatgpt surface.
+    //
+    // Production never reads this override: `CHATGPT_EXCLUDED_TOOL_NAMES`
+    // keeps this tool off the chatgpt surface entirely, and the split
+    // start/wait pair carries its own. Kept anyway so the tool stays correct
+    // if that exclusion is ever lifted, and because
+    // `annotations_complete.test.ts` resolves every tool on both surfaces.
+    // See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
   async handler(input, ctx): Promise<AgentRun> {

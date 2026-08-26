@@ -820,9 +820,11 @@ describe("worker routing", () => {
     // the request layer still returns exactly the 3 defaults. This guards the
     // parser's "unknown token is never fatal" promise end-to-end.
     //
-    // Deliberately a NON-widget UA: `tako_visualize` is default-on for
-    // chatgpt/claude, so on those clients "exactly the 3 defaults" is not the
-    // right expectation and the count would stop testing the parser.
+    // Deliberately `/mcp`, the generic surface: `tako_visualize` is default-on
+    // on `/mcp/chatgpt`, so against that path "exactly the 3 defaults" is not
+    // the right expectation and the count would stop testing the parser. The
+    // request carries no UA-shaped setup because nothing reads the UA — the
+    // path alone picks the surface.
     const res = await SELF.fetch("https://example.com/mcp?tools=nope", {
       method: "POST",
       headers: {

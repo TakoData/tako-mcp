@@ -4,7 +4,7 @@
   "app_info": {
     "display_name": "Tako",
     "subtitle": "Search live data and charts",
-    "description": "Tako helps users find current data and metrics from proprietary datasets and the live web, get citation-backed answers, retrieve underlying result content, check available data coverage, and create shareable public chart links from user-provided structured data.",
+    "description": "Tako helps users find current data and metrics from proprietary datasets and the live web as citation-backed charts, retrieve the underlying result content, check available data coverage, and create shareable public chart links from user-provided structured data.",
     "category": "PRODUCTIVITY"
   },
   "tools": {

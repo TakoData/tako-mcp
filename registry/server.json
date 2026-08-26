@@ -51,7 +51,7 @@
     },
     {
       "name": "tako_agent",
-      "description": "Run Tako's Answer Agent: multi-step research returning a synthesized, cited `answer` plus chart `cards`.\n\nBest for: questions whose shape needs figuring out — cohorts (\"which companies match…\"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` / `tako_answer` return nothing.\n\nNot for: a known value or a simple comparison — use `tako_search` or `tako_answer` (faster). This runs ~30–90s but is far more thorough.",
+      "description": "Run Tako's Answer Agent: multi-step research returning a synthesized, cited `answer` plus chart `cards`.\n\nBest for: questions whose shape needs figuring out — cohorts (\"which companies match…\"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` returns nothing.\n\nNot for: a known value or a simple comparison — use `tako_search` (faster). This runs ~30–90s but is far more thorough.",
       "parameters": {
         "query": {
           "type": "string",
@@ -81,7 +81,7 @@
     },
     {
       "name": "tako_agent_start",
-      "description": "Start a Tako Answer Agent run; returns a `run_id` immediately (the agent runs ~30–90s server-side).\n\nBest for: open-ended questions that need figuring out — cohorts, ranking or filtering, multi-step reasoning. For a known value use `tako_search` / `tako_answer`.\n\nWorkflow: tell the user it's starting, then call `tako_agent_wait` with the `run_id`; repeat until `status` is `completed` or `failed`.",
+      "description": "Start a Tako Answer Agent run; returns a `run_id` immediately (the agent runs ~30–90s server-side).\n\nBest for: open-ended questions that need figuring out — cohorts, ranking or filtering, multi-step reasoning. For a known value use `tako_search`.\n\nWorkflow: tell the user it's starting, then call `tako_agent_wait` with the `run_id`; repeat until `status` is `completed` or `failed`.",
       "parameters": {
         "query": {
           "type": "string",
@@ -362,7 +362,7 @@
     },
     {
       "name": "tako_graph_search",
-      "description": "Resolve a name to Tako data-graph node ids — to see what Tako has, and to pin one into `tako_search` / `tako_answer`. Free and fast.\n\nBest for: grounding a query, or checking whether Tako covers an entity or metric.\n\nPin the METRIC node id ALONE, with `strict: true`, and name the entity in the query text — pinning an entity id, or pinning without strict, does not steer retrieval.\n\nTips:\nOne kind per call — a thing (`types: \"entity\"`) or a measure (`types: \"metric\"`), not both.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.\nTo see an entity's data, resolve it here, then call `tako_graph_related` on its id.",
+      "description": "Resolve a name to Tako data-graph node ids — to see what Tako has, and to pin one into `tako_search`. Free and fast.\n\nBest for: grounding a query, or checking whether Tako covers an entity or metric.\n\nPin the METRIC node id ALONE, with `strict: true`, and name the entity in the query text — pinning an entity id, or pinning without strict, does not steer retrieval.\n\nTips:\nOne kind per call — a thing (`types: \"entity\"`) or a measure (`types: \"metric\"`), not both.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON) — a strong disambiguation boost.\nTo see an entity's data, resolve it here, then call `tako_graph_related` on its id.",
       "parameters": {
         "q": {
           "type": "string",

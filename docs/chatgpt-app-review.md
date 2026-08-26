@@ -9,6 +9,21 @@ answers are the same next time somebody is asked.
 Everything below was verified against **production**, not assumed. Where a claim has a test
 behind it, the test is named.
 
+## What the submission file does NOT carry
+
+**The MCP URL lives only in OpenAI's portal.** `chatgpt-app-submission.json` follows
+OpenAI's `chatgpt-app-submission.v1.json` schema, which has no URL field, and
+`assertChatgptSubmissionParity` reads only its `tools` object. So nothing in this repo
+records or checks which endpoint the app points at. Set it by hand at resubmission:
+
+- **MCP URL:** `https://mcp.tako.com/mcp/chatgpt` (not `/mcp` — that is the generic
+  surface, which serves the anonymous tier and no widget).
+- **Auth:** OAuth only. The `noauth` scheme is gone from this surface; an anonymous
+  request gets 401 + `WWW-Authenticate`.
+
+`app_info.description` is unchecked too. Keep it to what the four submitted tools actually
+do — it claimed "citation-backed answers" after `tako_answer` left the submitted set.
+
 ---
 
 ## 1. No commerce, no upsells in model-visible text

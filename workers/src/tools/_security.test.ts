@@ -109,9 +109,14 @@ describe("authRequiredToolResult", () => {
 });
 
 describe("withToolSecuritySchemes", () => {
-  // Production's only caller context: ChatGPT client; anonymous tier so
-  // the free/gated scheme split is visible in the assertions.
-  const ANON_LIST_CTX = { surface: "generic", tier: "free" } as const;
+  // Production's only caller context. `mcp.ts` runs this transformer solely
+  // when `surface === "chatgpt"` (see `withChatGptToolSecuritySchemes`), so a
+  // `generic` fixture here would assert a wire shape production cannot
+  // produce — `securitySchemesForTool` emits `noauth` only on
+  // generic + free, which never reaches this function. That per-tool split is
+  // covered in the `securitySchemesForTool` describe above, where it IS
+  // reachable; this block tests the transformer.
+  const ANON_LIST_CTX = { surface: "chatgpt", tier: "free" } as const;
   const listResponse = () => ({
     jsonrpc: "2.0",
     id: 2,
@@ -123,17 +128,23 @@ describe("withToolSecuritySchemes", () => {
     },
   });
 
-  it("adds a top-level securitySchemes to every tool descriptor", () => {
+  it("attaches each descriptor the schemes securitySchemesForTool resolves", () => {
     const body = listResponse();
-    const out = withToolSecuritySchemes(body, ANON_LIST_CTX) as typeof body & {
-      result: { tools: Array<{ securitySchemes?: unknown }> };
+    const out = withToolSecuritySchemes(body, ANON_LIST_CTX) as {
+      result: { tools: Array<{ name: string; securitySchemes?: unknown }> };
     };
-    expect(out.result.tools[0]?.securitySchemes).toEqual([
-      { type: "noauth" },
-      { type: "oauth2", scopes: ["mcp"] },
-    ]);
-    expect(out.result.tools[1]?.securitySchemes).toEqual([
-      { type: "oauth2", scopes: ["mcp"] },
+    // Derived, not hardcoded: this asserts the transformer DELEGATES rather
+    // than re-deriving the scheme list, so the two can never disagree.
+    for (const tool of out.result.tools) {
+      expect(tool.securitySchemes, tool.name).toEqual(
+        securitySchemesForTool(tool.name, ANON_LIST_CTX),
+      );
+    }
+    // On the chatgpt surface every tool is OAuth-only — no `noauth` anywhere,
+    // which is the property OpenAI's review requires of the submitted surface.
+    expect(out.result.tools.map((t) => t.securitySchemes)).toEqual([
+      [{ type: "oauth2", scopes: ["mcp"] }],
+      [{ type: "oauth2", scopes: ["mcp"] }],
     ]);
   });
 

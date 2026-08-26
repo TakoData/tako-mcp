@@ -12,8 +12,10 @@
  * search/answer set `content` via the lenient supports_data_export() while
  * this endpoint gates on the stricter export_safe(), so a content-bearing
  * card can still 403 (the handler maps that to a self-correcting message).
- * A Tako card CSV is capped at a 20-row free default in BOTH modes;
- * `max_rows` raises that up to a 2000-row ceiling — there is no uncapped export.
+ * A Tako card CSV is capped at a 20-row default in BOTH modes; `max_rows`
+ * raises that up to a 2000-row ceiling — there is no uncapped export. Every
+ * row delivered is billed per 1k; tako#29572 (2026-08-21) removed the row
+ * allowance, so no copy here may describe a row as costless.
  * `mode` controls only delivery, not the row count: "inline" (default) returns
  * the (capped) content in the response body — total_rows/truncated report the
  * true size — so the model can read it directly; "url" returns a short-lived

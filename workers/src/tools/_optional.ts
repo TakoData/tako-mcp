@@ -15,12 +15,12 @@
  * Alias → the tool names it enables.
  *
  * `agent` spans all three agent tool files: the single-call `tako_agent`
- * (Claude / unknown clients) and the `tako_agent_start` / `tako_agent_wait`
- * split pair (the ChatGPT family — chatgpt.com and the desktop app's codex
- * runtime). The alias enables the *feature*; the per-client filters in
- * `_surface.ts` (`CHATGPT_ONLY_TOOL_NAMES` / `CHATGPT_EXCLUDED_TOOL_NAMES`)
- * then narrow to the correct variant for the calling client. Users never need
- * to know the split exists — they enable `agent` and get the right tool.
+ * (the generic surface) and the `tako_agent_start` / `tako_agent_wait` split
+ * pair (the chatgpt surface, whose host sends no progressToken). The alias
+ * enables the *feature*; the per-surface filters in `_surface.ts`
+ * (`CHATGPT_ONLY_TOOL_NAMES` / `CHATGPT_EXCLUDED_TOOL_NAMES`) then narrow to
+ * the correct variant for the serving surface. Users never need to know the
+ * split exists — they enable `agent` and get the right tool.
  *
  * `answer`, `visualize`, and `credits` are single-tool aliases: these
  * tools are useful but rarely needed, so they are kept off the default

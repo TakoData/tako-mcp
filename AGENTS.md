@@ -36,7 +36,7 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 
 - **Framework**: `@modelcontextprotocol/sdk` with `StreamableHTTPServerTransport`
 - **Runtime**: Cloudflare Workers (TypeScript, `nodejs_compat` flag)
-- **Endpoint**: `POST /mcp` (single-route streamable HTTP), plus `GET /health`
+- **Endpoints**: two path-selected MCP surfaces — `POST /mcp` (generic, anonymous tier allowed) and `POST /mcp/chatgpt` (OAuth-only, the surface submitted to OpenAI) — plus `GET /health`. The request path picks the surface; nothing reads the client User-Agent (`workers/src/surface.ts`).
 - **Auth**: `Authorization: Bearer <TAKO_API_TOKEN>` extracted at request boundary, forwarded to Django as `X-API-Key`; OAuth 2.1 flow for Claude.ai / ChatGPT
 - **Tool registry**: auto-generated from `workers/src/tools/*.ts` via `workers/scripts/gen-registry.ts`; outputs `workers/src/tools/_registry.ts` + `registry/server.json` in lockstep (CI checks for drift)
 - **CI**: `.github/workflows/workers-ci.yml` (typecheck + tests on PRs), `workers-deploy.yml` (staging on push to `main`; production on published GitHub Release, gated by the `production` environment; manual `workflow_dispatch` for either env), `workers-smoke.yml` (auto-smoke after successful staging deploys)
@@ -45,7 +45,9 @@ SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smo
 
 | File | Purpose |
 |------|---------|
-| `workers/src/index.ts` | Worker entrypoint — routes `/health` and `/mcp` POST |
+| `workers/src/index.ts` | Worker entrypoint — resolves the MCP surface from the request path, routes `/health` |
+| `workers/src/surface.ts` | `MCP_PATHS` + `surfaceForPath` — the only thing that decides which surface a request gets |
+| `workers/src/tools/_surface.ts` | Per-surface tool membership (`isToolOnSurface`) and annotation overrides |
 | `workers/src/mcp.ts` | MCP server wrapper, tool dispatch, `djangoErrorToToolResult` |
 | `workers/src/django.ts` | Typed HTTP client with `DjangoError` hierarchy |
 | `workers/src/auth.ts` | Bearer token extraction |
@@ -77,7 +79,8 @@ Two path-selected surfaces, no User-Agent sniffing (`workers/src/surface.ts`): `
 
 | Path | Method | Description |
 |------|--------|-------------|
-| `/mcp` | POST | MCP JSON-RPC over streamable HTTP |
+| `/mcp` | POST | MCP JSON-RPC over streamable HTTP — the generic surface every client shares |
+| `/mcp/chatgpt` | POST | Same protocol, ChatGPT app surface. OAuth required: an anonymous request gets 401 + `WWW-Authenticate`, never the free tier |
 | `/health` | GET | Simple `200 ok` |
 
 ## Code Conventions

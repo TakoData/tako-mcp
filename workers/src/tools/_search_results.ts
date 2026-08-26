@@ -97,10 +97,22 @@ export const PINNED_RETRY =
  * it was restated in two places and both drifted back to the broken variant
  * (every node id on the card, no `strict`) — the one measured to misfire.
  *
- * DECLARED HERE, above `takoCardSchema`, deliberately: the `values_hint` field
- * description interpolates it, and that schema is built at module evaluation
- * time. Declared after the schema it would be in its temporal dead zone, and
- * importing this module would throw ReferenceError on load.
+ * NO PRODUCTION READER TODAY. `values_hint` used to interpolate it — that is
+ * why it is declared above `takoCardSchema` — but that field's routing was
+ * rewritten when `tako_answer` moved behind `?tools=answer`, and nothing else
+ * picked the wording up. Its two remaining consumers are
+ * `_pin_form.test.ts`, which guards the wording against drift, and
+ * `gen-registry.ts`, whose failure message tells an author to reuse it by
+ * name. Kept for that second reason: the constant is the canonical phrasing
+ * for the card-in-hand case, and a descriptor that needs it should
+ * interpolate this rather than restate the form — which is exactly how the
+ * broken variant got in twice before. Delete it only together with that
+ * guidance message.
+ *
+ * Keep the declaration ABOVE `takoCardSchema` if a descriptor does start
+ * interpolating it again: that schema is built at module evaluation time, so
+ * a later declaration would sit in its temporal dead zone and importing this
+ * module would throw ReferenceError on load.
  */
 export const PINNED_FROM_CARD =
   "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card, or omitting strict, does not steer retrieval";
@@ -199,16 +211,21 @@ export const webResultSchema = z
 export type WebResult = z.infer<typeof webResultSchema>;
 
 // The DEFAULT most-recent-rows cap for the inline card preview, matched to
-// the backend's free inline allowance: search/answer inline at most
-// CSV_FREE_ROWS = 20 rows per card server-side (tako_inline_cap_for; a
-// larger legacy cap exists only for entitled enterprise accounts), so this
-// is the honest ceiling of what actually arrives — the MCP can only cap
-// DOWN what the backend shipped, never raise it. Rows beyond 20 are the
-// priced product: a separate tako_contents call (max_rows up to 2,000; the
-// first 20 stay free there too). `preview_rows` above the allowance is
-// therefore inert today; the input keeps the wider 1..MAX_PREVIEW_ROWS
-// range so a future backend row-count knob can light it up without an
-// input-surface change.
+// the backend's own inline cap: search/answer inline at most 20 rows per
+// card server-side (tako_inline_cap_for; a larger legacy cap exists only for
+// entitled enterprise accounts), so this is the honest ceiling of what
+// actually arrives — the MCP can only cap DOWN what the backend shipped,
+// never raise it.
+//
+// EVERY delivered row is billed, per 1k — tako#29572 (2026-08-21) removed the
+// row allowance entirely. No descriptor may describe any row here as costless:
+// the copy that survived that change billed silently for four days. For more
+// rows, a separate tako_contents call (max_rows up to 2,000, billed the same
+// way).
+//
+// `preview_rows` above this cap is therefore inert today; the input keeps the
+// wider 1..MAX_PREVIEW_ROWS range so a future backend row-count knob can
+// light it up without an input-surface change.
 export const INLINE_PREVIEW_ROW_CAP = 20;
 export const MAX_PREVIEW_ROWS = 250;
 

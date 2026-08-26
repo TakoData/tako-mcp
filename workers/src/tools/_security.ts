@@ -18,8 +18,7 @@
  * fixed key list from its config and the `tools/list` handler rebuilds each
  * descriptor from fixed fields, so unknown top-level fields are dropped
  * (verified against 1.29.0 and 1.30.0). `mcp.ts` therefore injects the
- * field into the already-buffered JSON response for ChatGPT-FAMILY
- * clients (chatgpt.com and the desktop app's codex runtime) via
+ * field into the already-buffered JSON response on the chatgpt surface via
  * {@link withToolSecuritySchemes} — a post-serialization adapter, not an
  * SDK fork.
  *
@@ -142,12 +141,25 @@ export function wwwAuthenticate(
 export function authRequiredToolResult(
   origin: string | undefined,
   recoveryHint?: string,
+  /**
+   * Replaces the default lead sentence.
+   *
+   * The default asserts THE TOOL needs an account. That is false when a FREE
+   * tool refuses one INPUT: an anonymous `tako_search` runs fine, it just
+   * cannot inline billed rows, so leading with "this tool requires a Tako
+   * account" tells the model the opposite of what happened and invites it to
+   * abandon a call that would succeed without `include_contents`. Google
+   * style: what happened, then why, then what to do — the caller that knows
+   * the real what-happened passes it here.
+   */
+  lead?: string,
 ): {
   content: Array<{ type: "text"; text: string }>;
   _meta: Record<string, unknown>;
   isError: true;
 } {
   const base =
+    lead ??
     "This tool requires a Tako account. Sign in with Tako, or connect with a Tako API key, to continue.";
   return {
     content: [

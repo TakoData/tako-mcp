@@ -13,7 +13,20 @@ export const MCP_PATHS: ReadonlyMap<string, Surface> = new Map([
   ["/mcp/chatgpt", "chatgpt"],
 ]);
 
-/** Exact-match resolution; null means "not an MCP endpoint". */
+/**
+ * Resolve a request path to its surface; null means "not an MCP endpoint".
+ *
+ * A trailing slash is insignificant, so `/mcp/` and `/mcp/chatgpt/` resolve
+ * the same as the bare forms. This matters because the README tells people to
+ * hand-paste `https://mcp.tako.com/mcp/chatgpt` into a connector dialog, and a
+ * stray slash there used to 404 with nothing to diagnose. It also matches
+ * `canonicalizeResource` in `oauth/resource.ts`, which already strips the
+ * trailing slash before comparing a token audience — the two now agree about
+ * what names this server.
+ */
 export function surfaceForPath(pathname: string): Surface | null {
-  return MCP_PATHS.get(pathname) ?? null;
+  const exact = pathname.replace(/\/+$/, "");
+  // `"/"` collapses to `""`, which is in no map entry — the root is not an
+  // MCP endpoint and must not become one.
+  return MCP_PATHS.get(exact) ?? null;
 }

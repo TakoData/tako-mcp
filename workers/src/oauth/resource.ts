@@ -24,8 +24,10 @@ export function serverResource(req: Request): string {
 
 /**
  * The set of resource identifiers that name THIS server for a given origin:
- * the bare origin and the `/mcp` endpoint. Kept as a helper so `/authorize`,
- * `/token`, and `/mcp` all decide "is this our resource?" identically.
+ * the bare origin, the `/mcp` endpoint, and the `/mcp/chatgpt` surface. Kept
+ * as a helper so `/authorize`, `/token`, and both MCP paths decide "is this
+ * our resource?" identically — one function, so widening the set can never
+ * reach one caller and miss another.
  */
 export function isServerResource(canonical: string, origin: string): boolean {
   return (

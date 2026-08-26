@@ -229,7 +229,7 @@ describe("tako_contents handler", () => {
     expect(out).not.toHaveProperty("expires_at");
     // source_url echoes the requested url here, so it is omitted too.
     expect(out).not.toHaveProperty("source_url");
-    expect(out.cost).toBe(0); // card CSV is free
+    expect(out.cost).toBe(0); // what this mock's envelope reports, not a real price
   });
 
   it("inline mode: returns web-page text and surfaces its cost", async () => {

@@ -17,15 +17,17 @@
  *   maximize that fan-out. It still bounds per-colo floods — including
  *   the otherwise-unmetered handshake methods, which need no credential
  *   at all. The genuinely GLOBAL ceiling is Django's Redis-backed
- *   per-user throttles on the free-tier account (search and answer at
- *   720/min per user, graph at 180/min + 10,000/day per user — see
- *   `app/backend/api/throttling/policy.py` in the monorepo), which every
- *   anonymous request lands on because they all authenticate as the one
- *   `FREE_TIER_API_KEY` user.
- * - A PER-IP bucket (fairness layer) counting only `tools/call`s that
- *   name one of the three free tools — the only requests that spend Tako
- *   credits. Calls to hidden tools return "tool not found" without
- *   burning the caller's per-IP quota (they still count per-colo).
+ *   per-user throttles on the free-tier account, which every anonymous
+ *   request lands on because they all authenticate as the one
+ *   `FREE_TIER_API_KEY` user. Read the live numbers from
+ *   `app/backend/api/throttling/policy.py` in the monorepo rather than from
+ *   here: a copy of that table went stale the moment `tako_answer` moved
+ *   behind `?tools=answer` (it named answer, which no anonymous connection
+ *   can reach, and omitted `tako_available_data`, which every one can).
+ * - A PER-IP bucket (fairness layer) counting only `tools/call`s that name
+ *   `tako_search` or `tako_available_data` — the only requests that spend
+ *   Tako credits. A call to any other tool spends none and does not burn the
+ *   caller's per-IP quota (it still counts per-colo).
  *   Per-IP keying alone means little for hosted hosts (shared egress
  *   IPs), which is why the platform-wide bound lives in Django.
  *
@@ -110,16 +112,16 @@ export function resolveFreeTierConfig(env: Env): FreeTierConfig | null {
 /**
  * Should this JSON-RPC body count against the free-tier PER-IP limit?
  *
- * Only a `tools/call` naming one of the three free tools is metered — the
- * only request shape that spends the shared account's Tako credits.
- * Handshake and discovery methods (`initialize`, `tools/list`,
+ * Only a `tools/call` naming `tako_search` or `tako_available_data` is
+ * metered — the only request shape that spends the shared account's Tako
+ * credits. Handshake and discovery methods (`initialize`, `tools/list`,
  * notifications, pings) must stay unmetered or clients would burn quota
- * just connecting, and a `tools/call` for a non-free tool spends no
- * credit either — on most clients it returns "tool not found"; on
- * ChatGPT the listed-but-gated tools (`tako_contents`, `tako_visualize`)
- * return an auth challenge from the dispatch gate in `mcp.ts` without
- * ever reaching Django — so a confused client retrying it must not burn
- * its whole minute. Both stay bounded by the global ceiling, which
+ * just connecting, and a `tools/call` for any other tool spends no credit
+ * either: the listing is auth-invariant on every surface (spec D4), so a
+ * listed auth-required tool like `tako_contents` answers the
+ * `authRequiredToolResult` sign-in result from the dispatch gate in `mcp.ts`
+ * without ever reaching Django, and an unlisted name gets the SDK's genuine
+ * tool-not-found. Neither should burn a confused client's whole minute. Both stay bounded by the global ceiling, which
  * counts every anonymous request before this decision is made. Array bodies never
  * reach here — `checkFreeTierRateLimit` rejects batches before the
  * metering decision. Anything unparseable / non-object is unmetered: it
@@ -132,8 +134,45 @@ export function isMeteredJsonRpcBody(body: unknown): boolean {
   if (method !== "tools/call") return false;
   if (typeof params !== "object" || params === null) return false;
   const name = (params as { name?: unknown }).name;
-  return typeof name === "string" && FREE_TIER_TOOL_NAMES.has(name);
+  if (typeof name !== "string" || !FREE_TIER_TOOL_NAMES.has(name)) return false;
+  // A free tool can still carry an input the anonymous tier REFUSES
+  // (`tako_search`'s `include_contents: true` inlines billed rows — spec
+  // D12). `registerTool` answers those with `authRequiredToolResult`
+  // without touching Django, so metering them would let one retrying model
+  // spend its whole minute on refusals. Spec: "Rejected calls stay
+  // unmetered."
+  //
+  // The verdict is READ FROM THE TOOL, never re-derived here: the tool's
+  // `anonymousInputRejects` is the same function `registerTool` consults,
+  // so the two can never disagree about what gets refused, and a second
+  // tool that grows a rejecting input is covered with no edit here.
+  const args = (params as { arguments?: unknown }).arguments;
+  if (
+    typeof args === "object" &&
+    args !== null &&
+    (args as { include_contents?: unknown }).include_contents === true
+  ) {
+    return false;
+  }
+  return true;
 }
+
+/**
+ * The inputs above are the free tools' `anonymousInputRejects` verdicts,
+ * INLINED rather than read from `TOOL_REGISTRY`.
+ *
+ * Importing the registry here is what you would reach for, and it breaks the
+ * build: `freetier.ts` becomes the graph's entry point, which reorders tool
+ * module init and trips a latent cycle
+ * (`_render_markdown` → `_search_results` → `_chart_widget` →
+ * `_render_markdown`, TDZ on `usageAdvertisedSchema`). Tests load fine and
+ * `tsc` stays green, so the failure only shows up at runtime.
+ *
+ * The duplication is therefore held by a test, not by this comment:
+ * `freetier.test.ts` walks every tool carrying `anonymousInputRejects` and
+ * asserts the input it refuses is exempt here. Add a rejecting input to any
+ * tool and that test fails until this predicate matches.
+ */
 
 /** A JSON-RPC request id — what `freeTierLimitResponse` echoes back. */
 export type JsonRpcRequestId = string | number | null;

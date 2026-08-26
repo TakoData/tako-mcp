@@ -127,7 +127,7 @@ const resolvedRefSchema = z.object({
 });
 
 const nextCallSchema = z.object({
-  tool: z.enum(["tako_search", "tako_answer"]),
+  tool: z.enum(["tako_search"]),
   query: z.string(),
   node_ids: z.array(z.string()),
   strict: z.boolean(),
