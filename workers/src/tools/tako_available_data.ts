@@ -9,7 +9,11 @@
  * Pipeline (discovery): one graph/search, then SELECT_TOP_N candidates are
  * inspected with cheap `limit=1` coverage probes while the top one's FULL
  * paginated drill runs in parallel; only RENDER_FULL_N of them is rendered in
- * full. The drill is type-aware: an entity node → its
+ * full — unless the query names both an entity and a metric, when both come
+ * back as candidates and neither is rendered (fix 1). The lookup path probes
+ * the top two gated entities and binds the pair to the one with data; the
+ * caller's `metric` phrase is also sent as the API's substring filter and the
+ * hits come back as a list. The drill is type-aware: an entity node → its
  * `metrics` (the data Tako holds); a metric node → the `entities` it is tracked
  * across (its coverage). Drilling `relation=metrics` on a metric node returns
  * empty, so the split avoids a false "no data" answer. No LLM call — the prose
@@ -103,8 +107,10 @@ const DESCRIPTION = [
   "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
   "",
   "Tips:",
-  'Know the measure? Split it: q="Carnival", metric="passenger cruise days" — you get the entity+metric pair and a runnable next_call in ~0.6s. Only omit `metric` to browse everything an entity has.',
+  'Know the measure? Split it: q="Carnival", metric="passenger cruise days" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q="Nvidia", metric="data center" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.',
   "One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.",
+  'When `q` names both an entity and a metric ("US core PCE" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.',
+  "`found: true` means a match has live data coverage — never that a name merely resolved. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).",
   "Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. To land on exactly one metric, pin THAT node id alone with strict:true and name the entity in the query text; the call then returns that metric's card or nothing. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten (query + the metric node + strict) — run it verbatim.",
   "A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.",
