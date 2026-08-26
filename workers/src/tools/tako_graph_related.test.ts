@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
+import { FIXED_RELATION_KEYS } from "./_graph.js";
 import takoGraphRelated from "./tako_graph_related.js";
 import {
   jsonResponse,
@@ -366,5 +367,37 @@ describe("tako_graph_related output slimming", () => {
       undefined as never,
     );
     expect(text).toContain("No related nodes.");
+  });
+});
+
+describe("tako_graph_related description is derived from the API's own relation contract", () => {
+  it("FIXED_RELATION_KEYS is read from the generated schema, not hand-written", () => {
+    // Guards the parser: an OpenAPI rewording that breaks the regex must fail
+    // loudly here rather than silently emptying the description.
+    expect(FIXED_RELATION_KEYS.length).toBeGreaterThanOrEqual(5);
+    expect(FIXED_RELATION_KEYS).toContain("metrics");
+    expect(FIXED_RELATION_KEYS).toContain("members");
+    expect(FIXED_RELATION_KEYS).not.toContain("rel:<phrase>"); // the placeholder form is not a key
+  });
+
+  it("names every fixed key the API emits and no other bare key", () => {
+    for (const key of FIXED_RELATION_KEYS) {
+      expect(takoGraphRelated.description, key).toContain(`\`${key}\``);
+    }
+    // Any other backticked single-word key in the description would be a phantom
+    // relation the model tries and gets empty items for. Tool names are the one
+    // other thing the description backticks, so they are named here.
+    const bare = [...takoGraphRelated.description.matchAll(/`([a-z_]+)`/g)].map((m) => m[1] as string);
+    const known = new Set([
+      ...FIXED_RELATION_KEYS,
+      "node_id", "relation", "q", "cursor", "limit",
+      "key", "label", "total", "id", "name", "type", "subtype", "aliases", "description",
+      "tako_available_data", "tako_search",
+    ]);
+    expect(bare.filter((k) => !known.has(k))).toEqual([]);
+  });
+
+  it("says plainly that q is a substring match", () => {
+    expect(takoGraphRelated.description).toMatch(/`q` is a case-insensitive SUBSTRING match/);
   });
 });

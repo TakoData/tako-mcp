@@ -10,8 +10,8 @@
       "input_schema_sha256": "6b6acd2e70d27dd5e5e95707d9ead6b60c888cb0383b766e011c237964509103"
     },
     "tako_graph_related": {
-      "description_sha256": "dceaf7dee6698955612e98f9c2ddf41134b7e7077b6e641b325d7cd69195b4d7",
-      "input_schema_sha256": "4335dd68ddc5a86c1141ae108133001968f2036398e1c59b49d32edc0e5bc081"
+      "description_sha256": "1b738aea6d836b6820fedb6cd7d903d3fc596095627da5d738d678508e2c10f2",
+      "input_schema_sha256": "6cbc7a3a4d5a1b27f03e1f91f4b718c6bfbe4d1f97c9c71ffc41cf068c9caa2a"
     },
     "tako_search": {
       "description_sha256": "94564f3f722c27591cff2b1f858bd1feeb1ac54bcf820fcf03f9fed2a81eebb7",

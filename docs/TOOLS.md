@@ -464,18 +464,20 @@ Description:
 
 Explore what a graph node connects to — the map of what data Tako has for it. Free.
 
-Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.
+Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.
 
-Drilling `relation: "metrics"` returns only that node's metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.
-Filtering with `q` ("revenue") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.
+Two modes. Overview (`node_id` alone) is a compact map: every relation group with its `key`, `label`, `total`, and its first three items — a few hundred tokens, never a page. Drill (`relation: "<key>"`) pages that one group; each item carries `id`, `name`, `type`, `subtype`, and `label`, and only the focal node carries `aliases` and a truncated `description`.
+
+Relation keys come from the overview. The fixed keys are `metrics`, `entities`, `siblings`, `part_of`, `members`; named edges look like `rel:<phrase>`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.
+`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: "revenue" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `node_id` | string | yes |  | Opaque public id of the node to explore. |
-| `relation` | string | no |  | Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups. |
-| `q` | string | no |  | Optional case-insensitive substring filter on name+aliases (single string). For several name-variants of a metric, call the tool once per variant. |
+| `relation` | string | no |  | Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview. |
+| `q` | string | no |  | Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group. |
 | `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | Prefer related nodes with this NER label (boost, not a filter). |
 | `infer_label` | boolean | no |  | Auto-detect labels from q (default true server-side, only when q is set). |
 | `cursor` | string | no |  | Pagination cursor (for a single drilled relation; intended for single-q use). |
@@ -503,12 +505,12 @@ Annotations:
       "description": "Opaque public id of the node to explore."
     },
     "relation": {
-      "description": "Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups.",
+      "description": "Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview.",
       "type": "string",
       "minLength": 1
     },
     "q": {
-      "description": "Optional case-insensitive substring filter on name+aliases (single string). For several name-variants of a metric, call the tool once per variant.",
+      "description": "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group.",
       "type": "string",
       "minLength": 1
     },

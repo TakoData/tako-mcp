@@ -13,7 +13,12 @@
 import { z } from "zod";
 
 import { djangoGet } from "../django.js";
-import { graphErrorMessage, graphRelatedOutputShape, slimRelatedResponse } from "./_graph.js";
+import {
+  FIXED_RELATION_KEYS,
+  graphErrorMessage,
+  graphRelatedOutputShape,
+  slimRelatedResponse,
+} from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
 import { renderGraphRelatedMarkdown } from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
@@ -26,19 +31,21 @@ const NER_LABELS = [
 const DESCRIPTION = [
   "Explore what a graph node connects to — the map of what data Tako has for it. Free.",
   "",
-  "Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.",
+  "Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.",
   "",
-  'Drilling `relation: "metrics"` returns only that node\'s metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.',
-  'Filtering with `q` ("revenue") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
+  `Two modes. Overview (\`node_id\` alone) is a compact map: every relation group with its \`key\`, \`label\`, \`total\`, and its first three items — a few hundred tokens, never a page. Drill (\`relation: "<key>"\`) pages that one group; each item carries \`id\`, \`name\`, \`type\`, \`subtype\`, and \`label\`, and only the focal node carries \`aliases\` and a truncated \`description\`.`,
+  "",
+  `Relation keys come from the overview. The fixed keys are ${FIXED_RELATION_KEYS.map((k) => `\`${k}\``).join(", ")}; named edges look like \`rel:<phrase>\`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.`,
+  '`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: "revenue" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
 ].join("\n");
 
 const inputSchema = z.object({
   node_id: z.string().min(1).describe("Opaque public id of the node to explore."),
   relation: z.string().min(1).optional().describe(
-    "Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups.",
+    `Relation key to page, taken from the overview: ${FIXED_RELATION_KEYS.join(", ")}, or rel:<phrase>. Omit for the overview.`,
   ),
   q: z.string().min(1).optional().describe(
-    "Optional case-insensitive substring filter on name+aliases (single string). For several name-variants of a metric, call the tool once per variant.",
+    "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group.",
   ),
   label: z.enum(NER_LABELS).optional().describe(
     "Prefer related nodes with this NER label (boost, not a filter).",

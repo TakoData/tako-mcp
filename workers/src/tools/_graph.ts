@@ -18,6 +18,21 @@ import {
   DjangoTimeoutError,
   DjangoUnauthorizedError,
 } from "../django.js";
+import { GraphRelation } from "../generated/schemas.js";
+
+/**
+ * The relation keys the API documents as fixed, read from the generated wire
+ * schema so the tool description and the 400 hint can't drift from the
+ * contract. The description text is
+ * "Stable pagination handle. Fixed keys: metrics, entities, siblings, part_of,
+ * members. Named relations: rel:<phrase>." — `tako_graph_related.test.ts`
+ * fails if the parse ever comes back short.
+ */
+export const FIXED_RELATION_KEYS: readonly string[] = (() => {
+  const text = GraphRelation.shape.key.description ?? "";
+  const m = /Fixed keys: ([^.]+)\./.exec(text);
+  return m === null ? [] : (m[1] as string).split(",").map((k) => k.trim()).filter((k) => k !== "");
+})();
 
 /** Advertised graph-node facade. type/subtype/label are stringified enums on
  *  the wire; the facade keeps them as loose strings so a new enum value never
@@ -201,7 +216,7 @@ export function graphErrorMessage(
       case "search":
         return `${tool}: invalid request (400). Most often a bad \`label\` — valid values are ${NER_LABEL_LIST}; omit \`label\` to let inference run. \`types\` must be "entity" or "metric" (resolve one kind per call).${detail}`;
       case "related":
-        return `${tool}: invalid request (400). Confirm \`node_id\` is an id from a graph result (not a name); to filter use \`q\`, to page a group use a valid \`relation\` key (metrics, entities, siblings, part_of, members, or rel:<phrase>).${detail}`;
+        return `${tool}: invalid request (400). Confirm \`node_id\` is an id from a graph result (not a name); to filter use \`q\`, to page a group use a valid \`relation\` key (${FIXED_RELATION_KEYS.join(", ")}, or rel:<phrase>).${detail}`;
       default: {
         const exhaustive: never = op;
         throw new Error(`unhandled GraphOp: ${String(exhaustive)}`);
