@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Env } from "./env.js";
 import worker from "./index.js";
 import { SERVER_VERSION } from "./mcp.js";
+import { DOC_RESOURCES } from "./resources.js";
 
 // Valid RFC 6750 b64token — any non-empty ASCII token works for these tests
 // because `extractBearer` only validates shape, not value. Django's the one
@@ -1178,14 +1179,16 @@ describe("worker routing", () => {
     expect(item.text).toContain("tako-embed");
   });
 
-  it("POST /mcp resources/list returns an empty list (not -32601) on the generic surface", async () => {
-    // The chart widget resource registers on the chatgpt surface only
-    // (see `widgetSuppressed` in mcp.ts) — so no `registerResource` call
-    // ever happens on a generic server instance — and without this the
-    // SDK would never advertise the `resources` capability, turning
-    // `resources/list` into a hard -32601 for capability-probing clients
-    // (Smithery's scan, some hosts). Mirror of the prompts/list
-    // guarantee below.
+  it("POST /mcp resources/list returns the doc resources (not -32601, not empty) on the generic surface", async () => {
+    // The chart widget registers on the chatgpt surface only (see
+    // `widgetSuppressed` in mcp.ts), so a generic instance reaches
+    // `resources/list` with no widget registered — the common path, not an edge
+    // case. That was answered first with -32601, then with a hand-wired `[]`,
+    // and an advertised capability returning nothing is what an external
+    // readiness audit scored as a failure. `registerDocResources` now runs on
+    // every instance, so the list carries real, readable documentation. Mirror
+    // of the prompts/list guarantee below, except that prompts genuinely has
+    // nothing to offer and this does.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -1206,13 +1209,18 @@ describe("worker routing", () => {
       error?: { code: number };
     };
     expect(body.error).toBeUndefined();
-    expect(body.result?.resources).toEqual([]);
+    const uris = (body.result?.resources ?? []).map(
+      (resource) => (resource as { uri: string }).uri,
+    );
+    expect(uris).toEqual(DOC_RESOURCES.map((doc) => doc.uri));
   });
 
-  it("POST /mcp resources/list stays empty for claude UAs too — the UA changes nothing", async () => {
-    // The UA classifier is gone (spec D2): a claude UA on /mcp gets the
-    // same generic surface as everyone else, so no widget resource is
-    // registered. claude.ai's widget path is a fast-follow gated on
+  it("POST /mcp resources/list is UA-independent — a claude UA gets the same list", async () => {
+    // The UA classifier is gone (spec D2): a claude UA on /mcp gets the same
+    // generic surface as everyone else, so no WIDGET resource is registered.
+    // The assertion used to be `[]`; it is now the doc resources, which
+    // register on every surface. The property under test is unchanged — the UA
+    // buys nothing extra. claude.ai's widget path is a fast-follow gated on
     // anthropics/claude-ai-mcp#753 and #40.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
@@ -1235,7 +1243,11 @@ describe("worker routing", () => {
       error?: { code: number };
     };
     expect(body.error).toBeUndefined();
-    expect(body.result?.resources).toEqual([]);
+    const uris = (body.result?.resources ?? []).map(
+      (resource) => (resource as { uri: string }).uri,
+    );
+    expect(uris).toEqual(DOC_RESOURCES.map((doc) => doc.uri));
+    expect(uris.some((uri) => uri.startsWith("ui://"))).toBe(false);
   });
 
   it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {

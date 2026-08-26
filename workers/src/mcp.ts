@@ -4,14 +4,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 // `./validation/cfworker`, unlike the other server subpaths which do ship
 // `.js` entries. Adding the extension here breaks module resolution.
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
-import {
-  ErrorCode,
-  ListPromptsRequestSchema,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { ListPromptsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   BearerAuthError,
@@ -43,6 +36,7 @@ import {
   type Tier,
 } from "./freetier.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
+import { registerDocResources } from "./resources.js";
 import { logToolRequestId } from "./tools/_log.js";
 import { parseEnabledOptionalToolNames } from "./tools/_optional.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
@@ -410,6 +404,16 @@ export function createMcpServer(
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
 
+  // Documentation resources, registered on EVERY instance before the tool loop.
+  // Two jobs: they make `resources/list` non-empty on every surface that
+  // registers no widget — which is now every surface except chatgpt, so the
+  // common path — and registering any resource is what wires the SDK's
+  // resources/* request handlers at all, the reason the hand-rolled empty-list
+  // fallback used to be needed below. An advertised capability that answers with
+  // nothing reads as broken to capability-probing clients and to MCP directory
+  // audits, which is what an external readiness audit scored it as.
+  registerDocResources(server, registeredResourceUris);
+
   // Which tools appear on which surface — and the ChatGPT-only /
   // ChatGPT-excluded / ChatGPT-default-on membership sets — live in
   // `tools/_surface.ts`, shared with `gen-registry.ts` so the
@@ -449,34 +453,15 @@ export function createMcpServer(
     });
   }
 
-  // Resources parity for server instances that registered NO widget
-  // resource. Only the chatgpt surface registers one (`widgetSuppressed`
-  // above), so this is the COMMON path now — every generic connection takes
-  // it — rather than the unknown-client edge case it was under the deleted
-  // User-Agent classifier. The SDK
-  // only wires the `resources` capability and its request handlers on
-  // the first `registerResource` call — without this block,
-  // `resources/list` / `resources/read` answer JSON-RPC -32601 on
-  // unknown-client instances, which capability-probing clients (Smithery's
-  // scan, some hosts) surface as a failure. Same rationale as the empty
-  // `prompts` registration above: an empty list is the spec-clean answer.
-  // `resources/read` still errors (there is nothing to read) but with the
-  // spec's "resource not found" shape instead of "method not found".
-  if (registeredResourceUris.size === 0) {
-    server.server.registerCapabilities({ resources: {} });
-    server.server.setRequestHandler(ListResourcesRequestSchema, () => ({
-      resources: [],
-    }));
-    server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
-      resourceTemplates: [],
-    }));
-    server.server.setRequestHandler(ReadResourceRequestSchema, (request) => {
-      throw new McpError(
-        ErrorCode.InvalidParams,
-        `Resource ${request.params.uri} not found`,
-      );
-    });
-  }
+  // The empty-list fallback that used to sit here is gone. It existed because an
+  // instance that registered no widget answered `resources/list` with JSON-RPC
+  // -32601, and traded that hard error for a polite `[]`. Only the chatgpt
+  // surface registers a widget, so that was the path almost every connection
+  // took. `registerDocResources` above now runs unconditionally, so the SDK has
+  // wired resources/list, resources/templates/list and resources/read by this
+  // point on every surface — and the list it answers with is non-empty, which
+  // the empty fallback never was. `resources.test.ts` asserts that per surface
+  // and per tier.
 
   return server;
 }
