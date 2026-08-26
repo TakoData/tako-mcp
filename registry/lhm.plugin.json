@@ -61,7 +61,7 @@
             ]
           },
           "limit": {
-            "description": "How many candidate nodes to resolve for `q` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list.",
+            "description": "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` pins, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
             "type": "integer",
             "minimum": 1,
             "maximum": 20

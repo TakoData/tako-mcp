@@ -400,7 +400,7 @@ describe("buildSummary", () => {
     expect(buildNextCall([small])?.query).toBe("X Corp A");
   });
 
-  it("keeps the preview constants positive and the candidate window at the endpoint's cap", () => {
+  it("keeps the preview constants positive and the candidate window at our own ceiling, not the endpoint's 50", () => {
     expect(MAX_COVERAGE_NAMES).toBeGreaterThan(0);
     expect(MAX_CANDIDATES).toBe(20);
     expect(DEFAULT_CANDIDATES).toBe(10);

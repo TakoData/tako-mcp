@@ -63,8 +63,14 @@ type GraphNode = z.infer<typeof graphNodeSchema>;
  * and collapsing "checked, no edge" with "never checked" would repeat the
  * mistake one level down.
  *
- *   "pair"       the metric is on the entity's own metric list
- *   "unlinked"   the probe RAN and the entity's list holds nothing matching
+ *   "pair"       the PINNED metric is on the entity's own metric list
+ *   "unlinked"   the probe RAN, saw the list WHOLE, and the PINNED metric was
+ *                not on it. Scoped to that one node on purpose: the same probe
+ *                returns `entityMetricMatches`, which is routinely non-empty on
+ *                an `unlinked` verdict (Pfizer holds 20 entries for
+ *                `q="expense"` while the pinned node is on none of them). Read
+ *                as "the list holds nothing matching", it would contradict the
+ *                near-misses shipped beside it.
  *   "resolution" no pair evidence: probe skipped, timed out, or errored
  *
  * `"resolution"` covers both probe-failed and probe-skipped because the

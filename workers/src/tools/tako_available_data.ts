@@ -130,8 +130,16 @@ const inputSchema = z.object({
   label: z.enum(NER_LABELS).optional().describe(
     "NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`.",
   ),
+  // `limit` is NOT a display knob. It sizes every `graph/search` this tool
+  // runs, including the `metric` probe, and two later steps scan the whole
+  // widened list rather than its head: `exactIdx` promotes an exact-name metric
+  // to rank 0 (so `limit` decides which metric `next_call` pins), and
+  // `topOfEachKind` can surface a metric that only appears deep in the list
+  // (so `limit` decides whether the same `q` answers confidently or returns a
+  // tie with `next_call: null`). A caller raising it to "see more options" is
+  // entitled to know it can get a different answer, not just a longer one.
   limit: z.number().int().min(1).max(MAX_CANDIDATES).optional().describe(
-    "How many candidate nodes to resolve for `q` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list.",
+    "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` pins, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
   ),
 });
 
@@ -190,7 +198,7 @@ const fullOutputSchema = z.object({
     .enum(["coverage", "pair", "unlinked", "resolution"])
     .optional()
     .describe(
-      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled (discovery path). `pair`: the metric is on the entity's own metric list — the strongest free evidence available. `unlinked`: the entity's list was checked and holds nothing matching, so a PINNED call will probably return 0 cards; the emitted next_call drops the pin. `resolution`: no pair evidence — the check was skipped or failed, so treat it exactly as before. None of these means a chart exists.",
+      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled (discovery path). `pair`: the metric is on the entity's own metric list — the strongest free evidence available. `unlinked`: the entity's list was checked and the PINNED metric is not on it, so a pinned call will probably return 0 cards; the emitted next_call drops the pin. It is a verdict on that one node, not on the list: `unlinked` with `found: true` means your `metric` phrase did match entries, just not the pinned one, and `coverage` names them. `resolution`: no pair evidence — the check was skipped or failed, so treat it exactly as before. None of these means a chart exists.",
     ),
   query: z.string(),
   summary: z.string(),
@@ -541,8 +549,17 @@ const tako_available_data = {
         return {
           items: page.items,
           complete: (page.next_cursor ?? null) === null,
-          // `total` ignores `q` (measured), so it is the entity's whole metric
-          // count — fix 2's coverage evidence, for free.
+          // MEASURED, NOT CONTRACTED. On prod today `relation.total` ignores
+          // `q` (Lockheed reports 250/capped with and without `q=Backlog`), so
+          // this is the entity's whole metric count and fix 2's coverage
+          // evidence comes free with the filtered page. But `openapi/sdk.yaml`
+          // promises nothing about what a filter does to `total` (see
+          // `unfilteredMetricTotal`, which exists for exactly that gap), so a
+          // reader must not build on this the way they would build on a
+          // documented field. Where the reading decides something expensive —
+          // handing the pair to a DIFFERENT entity — the code asks again
+          // unfiltered instead of trusting it. TAKO-4336 stays open on the
+          // contract.
           total: page.total,
           capped: page.total_capped,
         };

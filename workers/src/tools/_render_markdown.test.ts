@@ -369,10 +369,54 @@ describe("renderAvailableDataMarkdown + slim", () => {
       { name: "Revenue", node_id: "mt_rev" },
       { name: "Gross Margin", node_id: "mt_gm" },
     ]);
-    expect(coverage.items_truncated).toBe(false);
+    // TRUE, and it used to be false. This fixture carries `total: 187` beside
+    // two items, and the text channel prints "…and 185 more not shown" — the
+    // flag was derived from the slice alone (`2 > 5`), so the one field a
+    // structured-only reader has for "is this the whole list" said yes while
+    // 185 entries were missing. Same defect the tie path showed with
+    // `items: []` beside `total: 15`.
+    expect(coverage.items_truncated).toBe(true);
     // The name list stays a text-channel job; the structured channel does not
     // re-ship it.
     expect(coverage).not.toHaveProperty("names");
+  });
+
+  // The tie path builds its matches with `candidateMatch`, which emits
+  // `items: []` beside a real `total` — it never drilled a list. Deriving the
+  // flag from the slice made that `0 > 5` → false, so the one field a
+  // structured-only reader has for "is this the whole list" said yes next to
+  // `total: 15, truncated: true`, and the tie path's text channel carries no
+  // name list either.
+  it("flags a tie-path match, whose coverage was counted but never listed, as truncated", () => {
+    const tie = {
+      ...output,
+      matches: [
+        {
+          ...output.matches[0]!,
+          coverage: { kind: "metrics" as const, items: [], names: [], total: 15, truncated: true, capped: false },
+        },
+      ],
+    };
+    const coverage = (slimAvailableDataStructured(tie).matches as Array<Record<string, unknown>>)[0]
+      ?.coverage as Record<string, unknown>;
+    expect(coverage.items).toEqual([]);
+    expect(coverage.items_truncated).toBe(true);
+  });
+
+  // Both paths emit `metric_query` and both can emit `metric: null`, so without
+  // `filter` a structured reader cannot tell `total: 13` meaning "13 metrics
+  // matching your phrase" from `total: 13` meaning "13 metrics in all". The
+  // text channel prints `metrics containing "data center" (13)`; this is the
+  // machine channel's half of that.
+  it("carries the browse filter into structuredContent, and omits it when none ran", () => {
+    const filtered = {
+      ...output,
+      matches: [{ ...output.matches[0]!, filter: "data center" }],
+    };
+    const m = (slimAvailableDataStructured(filtered).matches as Array<Record<string, unknown>>)[0];
+    expect(m?.filter).toBe("data center");
+    const unfiltered = (slimAvailableDataStructured(output).matches as Array<Record<string, unknown>>)[0];
+    expect(unfiltered).not.toHaveProperty("filter");
   });
 
   it("caps structured coverage items and flags the cut", () => {
@@ -618,6 +662,25 @@ describe("renderGraphRelatedMarkdown", () => {
       relations: [],
     });
     expect(md).not.toContain("\n## Header");
+  });
+
+  // Both keys are `.nullable()` in the facade AND in `openapi/sdk.yaml`, and a
+  // `relation: null` drill is not hypothetical — `tako_available_data` reads it
+  // as a real zero-coverage answer. With no arm for it the renderer emitted the
+  // focal header ALONE: a name and an id, and nothing about the group the
+  // caller asked for, which reads as a truncated result rather than an answer.
+  it("says something on a null relation and a null relations, never just the header", () => {
+    const drilled = renderGraphRelatedMarkdown({ node, relation: null });
+    expect(drilled).toContain("**Anthropic PBC**");
+    expect(drilled).toContain("That relation has no items for this node.");
+    // The distinction the key would carry, stated without it: an unknown key
+    // and a genuinely empty group are the same response on the wire.
+    expect(drilled).toContain("An unknown relation key is NOT an error");
+
+    // A null relations map is the overview's version of `relations: []`.
+    expect(renderGraphRelatedMarkdown({ node, relations: null })).toContain("No related nodes.");
+    // Neither key present at all — the shape both are optional in.
+    expect(renderGraphRelatedMarkdown({ node })).toContain("No related nodes.");
   });
 });
 

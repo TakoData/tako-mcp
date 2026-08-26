@@ -290,7 +290,7 @@ Parameters:
 | `metric` | string | no |  | The measure you want, when you already know it — e.g. "gross margin", "passenger cruise days", "capex". Supplying it is the FAST path: the tool resolves the entity+metric pair directly and hands back a runnable next_call, instead of listing every metric the entity has. Omit it only to browse what exists. |
 | `types` | string ("entity" \\| "metric") | no |  | Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both. |
 | `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`. |
-| `limit` | integer | no |  | How many candidate nodes to resolve for `q` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list. |
+| `limit` | integer | no |  | How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` pins, and a deeper metric node can turn a confident single answer into a two-candidate tie. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -345,7 +345,7 @@ Annotations:
       ]
     },
     "limit": {
-      "description": "How many candidate nodes to resolve for `q` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list.",
+      "description": "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` pins, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
       "type": "integer",
       "minimum": 1,
       "maximum": 20
@@ -475,7 +475,7 @@ Explore what a graph node connects to — the map of what data Tako has for it. 
 
 Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.
 
-Two modes. Overview (`node_id` alone) is a compact map: every relation group with its `key`, `label`, `total`, and its first three items — a few hundred tokens, never a page. Drill (`relation: "<key>"`) pages that one group; each item carries `id`, `name`, `type`, `subtype`, and `label`, and only the focal node carries `aliases` and a truncated `description`.
+Two modes. Overview (`node_id` alone) is a compact map: every relation group with its `key`, `label`, `total`, and its first 3 items — a few hundred tokens, never a page. Drill (`relation: "<key>"`) pages that one group; each item carries `id`, `name`, `type`, `subtype`, and `label`, and only the focal node carries `aliases` and a truncated `description`.
 
 Relation keys come from the overview. The fixed keys are `metrics`, `entities`, `siblings`, `part_of`, `members`; named edges look like `rel:<phrase>`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.
 `q` is a case-insensitive SUBSTRING match on names and aliases, not a search: "revenue" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.
@@ -490,7 +490,7 @@ Parameters:
 | `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | Prefer related nodes with this NER label (boost, not a filter). |
 | `infer_label` | boolean | no |  | Auto-detect labels from q (default true server-side, only when q is set). |
 | `cursor` | string | no |  | Pagination cursor (for a single drilled relation; intended for single-q use). |
-| `limit` | integer | no |  | Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items. |
+| `limit` | integer | no |  | Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -550,7 +550,7 @@ Annotations:
       "minLength": 1
     },
     "limit": {
-      "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items.",
+      "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass.",
       "type": "integer",
       "minimum": 1,
       "maximum": 100

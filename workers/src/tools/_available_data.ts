@@ -98,7 +98,13 @@ export const MAX_COVERAGE_NAMES = 250;
 export const MAX_COVERAGE_PAGES = 4;
 /**
  * How many candidates `graph/search` returns, and so how many the tool lists.
- * The default is today's fixed request; the cap is the endpoint's own maximum.
+ * The default is today's fixed request. The cap is OURS, not the endpoint's:
+ * `openapi/sdk.yaml` documents `limit` as "default 20, max 50", so 20 is where
+ * the endpoint STARTS, and a caller could ask for 50. 20 is chosen instead
+ * because rank 20 is already past where a name match means anything, and
+ * because `limit` reaches the metric probe too (see the `limit` description in
+ * `tako_available_data.ts`) — a 50-wide window can promote a rank-40 exact
+ * name into the pin.
  * Only SELECT_TOP_N (plus the top of each kind) are coverage-checked — a
  * `graph/related` probe per candidate at 20 would spend the ~180 req/min
  * budget on receipts nobody reads. The rest are listed with id, kind, and

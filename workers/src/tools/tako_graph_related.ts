@@ -17,6 +17,7 @@ import {
   FIXED_RELATION_KEYS,
   graphErrorMessage,
   graphRelatedOutputShape,
+  OVERVIEW_PREVIEW_N,
   slimRelatedResponse,
 } from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
@@ -33,7 +34,7 @@ const DESCRIPTION = [
   "",
   "Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.",
   "",
-  `Two modes. Overview (\`node_id\` alone) is a compact map: every relation group with its \`key\`, \`label\`, \`total\`, and its first three items — a few hundred tokens, never a page. Drill (\`relation: "<key>"\`) pages that one group; each item carries \`id\`, \`name\`, \`type\`, \`subtype\`, and \`label\`, and only the focal node carries \`aliases\` and a truncated \`description\`.`,
+  `Two modes. Overview (\`node_id\` alone) is a compact map: every relation group with its \`key\`, \`label\`, \`total\`, and its first ${String(OVERVIEW_PREVIEW_N)} items — a few hundred tokens, never a page. Drill (\`relation: "<key>"\`) pages that one group; each item carries \`id\`, \`name\`, \`type\`, \`subtype\`, and \`label\`, and only the focal node carries \`aliases\` and a truncated \`description\`.`,
   "",
   `Relation keys come from the overview. The fixed keys are ${FIXED_RELATION_KEYS.map((k) => `\`${k}\``).join(", ")}; named edges look like \`rel:<phrase>\`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.`,
   '`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: "revenue" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
@@ -56,15 +57,19 @@ const inputSchema = z.object({
   cursor: z.string().min(1).optional().describe(
     "Pagination cursor (for a single drilled relation; intended for single-q use).",
   ),
-  // Measured against production, not inferred: `?node_id=…&limit=3` and
+  // `limit` is INERT in overview mode, and the description must say so or a
+  // caller pays a round trip to widen a map that never widens. Two independent
+  // caps stack: measured against production, `?node_id=…&limit=3` and
   // `&limit=100` return byte-identical overviews (82,741 chars for NVIDIA, 16
-  // groups, every group capped at 10 items). `limit` is INERT in overview mode
-  // — the server caps each group at 10 — so a caller that raises it to widen
-  // the coverage map gets nothing and pays a round trip. The backend's own
-  // OpenAPI description has the same gap; this one states the restriction
-  // because the model reads it.
+  // groups, every group capped at 10 items) — and on top of that
+  // `slimRelatedResponse` slices every group to OVERVIEW_PREVIEW_N before
+  // either channel sees it. The describe() interpolates that constant rather
+  // than restating it: the tool's own cap is the one a caller actually
+  // observes, and the DESCRIPTION string ships in the same `tools/list`
+  // payload, so a hand-written number here contradicts that one the moment
+  // the constant moves.
   limit: z.number().int().min(1).max(100).optional().describe(
-    "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items.",
+    `Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first ${String(OVERVIEW_PREVIEW_N)} items no matter what you pass.`,
   ),
 });
 

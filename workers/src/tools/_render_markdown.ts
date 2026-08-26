@@ -453,7 +453,7 @@ export const availableDataSlimOutputShape = z.looseObject({
     .enum(["coverage", "pair", "unlinked", "resolution"])
     .optional()
     .describe(
-      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and holds nothing matching, so a pinned call will probably return 0 cards; the emitted next_call therefore drops the pin. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
+      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and the PINNED metric is not on it, so pinning it would probably return 0 cards; the emitted next_call therefore drops the pin. It says nothing about the rest of the list — `unlinked` and `found: true` sit together whenever your `metric` phrase matched entries the pinned node is not one of, and `coverage` then names them. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
     ),
   query: z.string(),
   matches: z
@@ -465,6 +465,12 @@ export const availableDataSlimOutputShape = z.looseObject({
         subtype: z.string().nullable().optional(),
         label: z.string().nullable().optional(),
         unavailable: z.boolean().optional(),
+        filter: z
+          .string()
+          .optional()
+          .describe(
+            "The `metric` phrase this match's coverage was filtered by. Present means `coverage.total` counts only the entries matching it, not the entity's whole list — without it a structured-only reader cannot tell `total: 13` meaning \"13 hits for your phrase\" from `total: 13` meaning \"13 metrics in all\". The text channel distinguishes them; this is how the machine channel does.",
+          ),
         coverage: z.looseObject({
           kind: z.string(),
           total: z.number(),
@@ -479,7 +485,7 @@ export const availableDataSlimOutputShape = z.looseObject({
             .boolean()
             .optional()
             .describe(
-              "More coverage entries exist than are listed here — the full NAME list is in the text channel.",
+              "More coverage entries exist than are listed here, so treat an entry you do not see as unconfirmed, not absent. The text channel carries every name that was fetched, and says so when that list was cut too.",
             ),
         }),
       }),
@@ -610,12 +616,26 @@ export function slimAvailableDataStructured(
       ...(m.subtype === undefined ? {} : { subtype: m.subtype }),
       ...(m.label === undefined ? {} : { label: m.label }),
       ...(m.unavailable === true ? { unavailable: true } : {}),
+      // What `coverage.total` COUNTS, without which it is unreadable: 13 hits
+      // for the caller's phrase and 13 metrics in all serialize identically.
+      // The text channel says `metrics containing "data center" (13)`; this is
+      // the machine channel's half of that sentence.
+      ...(m.filter === undefined ? {} : { filter: m.filter }),
       coverage: {
         kind: m.coverage.kind,
         total: m.coverage.total,
         truncated: m.coverage.truncated,
         items: m.coverage.items.slice(0, STRUCTURED_COVERAGE_ITEMS),
-        items_truncated: m.coverage.items.length > STRUCTURED_COVERAGE_ITEMS,
+        // `total`, not the slice. Deriving this from `items.length` alone read
+        // FALSE on the tie path, whose matches carry `items: []` beside a real
+        // `total` — so `0 > 5` told a structured reader the empty list was the
+        // whole list, next to `total: 15, truncated: true`. Keep the slice
+        // clause too: it is the only one that fires when `total` undercounts
+        // the entries (a filtered count, a capped page), and this flag must
+        // never read false while entries were dropped.
+        items_truncated:
+          m.coverage.items.length > STRUCTURED_COVERAGE_ITEMS ||
+          m.coverage.total > Math.min(m.coverage.items.length, STRUCTURED_COVERAGE_ITEMS),
       },
     })),
     // The wide candidate list reaches the machine channel too: a
@@ -827,6 +847,21 @@ export function renderGraphRelatedMarkdown(o: GraphRelatedFacade): string {
     blocks.push(
       `Relations (pass \`relation: "<key>"\` to page one, \`q\` to filter by substring):\n${lines.join("\n")}`,
     );
+  } else if (o.relation === null) {
+    // A drill that came back `relation: null` — spec-legal, and
+    // `tako_available_data` already reads it as a real "zero coverage", so it
+    // reaches the model. Without this arm the response was the focal-node
+    // header ALONE: a name and an id, and not one word about the group the
+    // caller asked for, which reads as a truncated result rather than an
+    // answer. The renderer cannot name the key (renderText sees the output,
+    // not the input), so it states the two things the key would not add.
+    blocks.push(
+      "That relation has no items for this node. An unknown relation key is NOT an error — it returns empty the same way — so re-read the overview (`node_id` alone) for the keys this node actually has.",
+    );
+  } else {
+    // `relations: null`, or neither key present. Same reading as `relations:
+    // []`, and the same sentence the renderer this replaced emitted.
+    blocks.push("No related nodes.");
   }
   return blocks.join("\n\n");
 }
