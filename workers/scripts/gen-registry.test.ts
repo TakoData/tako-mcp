@@ -220,9 +220,10 @@ describe("assertPinFormInDocs", () => {
 });
 
 describe("assertChatgptSubmissionParity", () => {
-  // Fixture tool on the chatgpt surface's default listing: not optional,
-  // not chatgpt-only/excluded — so the only gates it exercises are the
-  // ones under test here.
+  // The fixtures name REAL chatgpt-surface tools: membership is a fixed name
+  // set now (`CHATGPT_TOOL_NAMES`, spec D2), so a made-up name is simply off
+  // the surface and would exercise none of the gates under test.
+  const ON_SURFACE = "tako_search";
   const tool = (
     name: string,
     overrides?: { chatgpt?: { openWorldHint?: boolean; readOnlyHint?: boolean } },
@@ -242,9 +243,9 @@ describe("assertChatgptSubmissionParity", () => {
   ) => JSON.stringify({ tools });
 
   it("passes when the declared tools and hints match the runtime descriptors", () => {
-    const tools = [tool("tako_x", { chatgpt: { openWorldHint: false } })];
+    const tools = [tool(ON_SURFACE, { chatgpt: { openWorldHint: false } })];
     const declared = submission({
-      tako_x: {
+      [ON_SURFACE]: {
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -257,15 +258,15 @@ describe("assertChatgptSubmissionParity", () => {
   });
 
   it("throws when the top-level tools object is missing", () => {
-    expect(() => assertChatgptSubmissionParity([tool("tako_x")], "{}")).toThrow(
-      /missing top-level "tools"/,
-    );
+    expect(() =>
+      assertChatgptSubmissionParity([tool(ON_SURFACE)], "{}"),
+    ).toThrow(/missing top-level "tools"/);
   });
 
   it("fails on a surface tool the submission does not declare", () => {
     expect(() =>
-      assertChatgptSubmissionParity([tool("tako_x")], submission({})),
-    ).toThrow(/missing tool "tako_x"/);
+      assertChatgptSubmissionParity([tool(ON_SURFACE)], submission({})),
+    ).toThrow(new RegExp(`missing tool "${ON_SURFACE}"`));
   });
 
   it("fails on a declared tool that is not on the chatgpt surface", () => {
@@ -278,9 +279,9 @@ describe("assertChatgptSubmissionParity", () => {
   });
 
   it("fails on a hint mismatch with a per-tool, per-hint message", () => {
-    const t = tool("tako_x", { chatgpt: { openWorldHint: false } });
+    const t = tool(ON_SURFACE, { chatgpt: { openWorldHint: false } });
     const declared = submission({
-      tako_x: {
+      [ON_SURFACE]: {
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -290,13 +291,15 @@ describe("assertChatgptSubmissionParity", () => {
       },
     });
     expect(() => assertChatgptSubmissionParity([t], declared)).toThrow(
-      /tool "tako_x" openWorldHint: submission declares true, runtime serves false/,
+      new RegExp(
+        `tool "${ON_SURFACE}" openWorldHint: submission declares true, runtime serves false`,
+      ),
     );
   });
 
   it("fails on a missing idempotentHint — OpenAI review requires all four hints explicit", () => {
     const declared = submission({
-      tako_x: {
+      [ON_SURFACE]: {
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -304,8 +307,12 @@ describe("assertChatgptSubmissionParity", () => {
         },
       },
     });
-    expect(() => assertChatgptSubmissionParity([tool("tako_x")], declared)).toThrow(
-      /tool "tako_x" idempotentHint: submission declares undefined, runtime serves true/,
+    expect(() =>
+      assertChatgptSubmissionParity([tool(ON_SURFACE)], declared),
+    ).toThrow(
+      new RegExp(
+        `tool "${ON_SURFACE}" idempotentHint: submission declares undefined, runtime serves true`,
+      ),
     );
   });
 

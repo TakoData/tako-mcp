@@ -35,9 +35,10 @@ import type { AnyToolModule } from "./tools/types.js";
 
 const AUTH_HEADER = "Bearer conformance-test-token";
 
-// Every optional tool, so the sweep covers the whole surface rather than the
-// default subset (see `_optional.ts`).
-const ALL_TOOLS_QUERY = "?tools=agent,answer,visualize,credits,graph";
+// Every tool, so the sweep covers the whole surface rather than the default
+// subset. `?tools=` is an allowlist (spec D1), so name them all.
+const ALL_TOOLS_QUERY =
+  "?tools=tako_agent,tako_answer,tako_available_data,tako_contents,tako_credit_balance,tako_graph_related,tako_search,tako_visualize";
 
 interface PublishedSchema {
   type?: string;

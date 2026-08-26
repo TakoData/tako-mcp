@@ -796,32 +796,35 @@ describe("free-tier tool surface", () => {
     // tako_contents is LISTED anonymously — not runnable: the dispatch
     // gate answers with sign-in instructions (tested below) instead of
     // executing on the shared free-tier account.
-    const expected = ["tako_available_data", "tako_contents", "tako_search"];
+    const expected = [
+      "tako_available_data",
+      "tako_contents",
+      "tako_credit_balance",
+      "tako_graph_related",
+      "tako_search",
+    ];
     await expect(listToolNames({ tier: "free" })).resolves.toEqual(expected);
     await expect(listToolNames({})).resolves.toEqual(expected);
   });
 
-  it("?tools= opt-ins list identically on both tiers — execution, not listing, is what the tier gates", async () => {
+  it("a ?tools= allowlist lists identically on both tiers — execution, not listing, is what the tier gates", async () => {
+    // The allowlist REPLACES the defaults (spec D1), so the listing is
+    // exactly what it names.
     const optIns = new Set(["tako_agent", "tako_visualize"]);
-    const expected = [
-      "tako_agent",
-      "tako_available_data",
-      "tako_contents",
-      "tako_search",
-      "tako_visualize",
-    ];
+    const expected = ["tako_agent", "tako_visualize"];
     await expect(
-      listToolNames({ tier: "free", enabledOptionalToolNames: optIns }),
+      listToolNames({ tier: "free", requestedToolNames: optIns }),
     ).resolves.toEqual(expected);
     await expect(
-      listToolNames({ enabledOptionalToolNames: optIns }),
+      listToolNames({ requestedToolNames: optIns }),
     ).resolves.toEqual(expected);
   });
 
-  it("the chatgpt surface adds tako_visualize by default", async () => {
+  it("the chatgpt surface serves the fixed five-tool set", async () => {
     await expect(listToolNames({ surface: "chatgpt" })).resolves.toEqual([
       "tako_available_data",
       "tako_contents",
+      "tako_graph_related",
       "tako_search",
       "tako_visualize",
     ]);
@@ -904,7 +907,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
         {
           tier: "free",
           surface: "generic",
-          enabledOptionalToolNames: new Set(["tako_visualize"]),
+          requestedToolNames: new Set(["tako_visualize", "tako_contents"]),
           requestOrigin: "https://mcp.example.com",
         },
         name,
@@ -1678,10 +1681,17 @@ describe("stringified array arguments survive SDK input validation", () => {
       sendProgress: noopSendProgress,
       surface: "generic",
     };
-    // tako_answer is opt-in now — enable it the way ?tools=answer would.
+    // tako_answer is opt-in — list it the way ?tools=search,answer would;
+    // the allowlist replaces the defaults, so name every tool called here.
     const server = createMcpServer(ctx, {
       surface: "generic",
-      enabledOptionalToolNames: new Set(["tako_answer"]),
+      requestedToolNames: new Set([
+        "tako_answer",
+        "tako_search",
+        "tako_contents",
+        "tako_agent",
+        "tako_visualize",
+      ]),
     });
     const mcpClient = new Client(
       { name: "loose-array-test", version: "0.0.0" },
