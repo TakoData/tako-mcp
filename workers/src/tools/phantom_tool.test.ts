@@ -6,8 +6,7 @@ import {
   SERVER_INSTRUCTIONS,
 } from "../mcp.js";
 import { TOOL_REGISTRY } from "./_registry.js";
-import { OPTIONAL_TOOL_ALIASES } from "./_optional.js";
-import { isToolOnSurface } from "./_surface.js";
+import { isToolOnSurface, resolveToolSet } from "./_surface.js";
 import type { Surface } from "../surface.js";
 
 /**
@@ -55,8 +54,8 @@ function foreignToolNamesIn(text: string, ownName: string): string[] {
   const found = new Set<string>();
   for (const name of ALL_TOOL_NAMES) {
     if (name === ownName) continue;
-    // Word-boundary match: `tako_agent` must not match inside
-    // `tako_agent_start`.
+    // Word-boundary match, so one tool name does not match inside a longer
+    // name that starts with it.
     if (new RegExp(`\\b${name}\\b`).test(text)) found.add(name);
   }
   return [...found].sort();
@@ -66,9 +65,8 @@ describe("no listed tool names a tool that is off its surface", () => {
   // The DEFAULT listing on each surface: no `?tools=` opt-ins. This is what
   // every connection sees unless the operator opted in by hand.
   for (const surface of ["generic", "chatgpt"] as const satisfies Surface[]) {
-    const noOptIns: ReadonlySet<string> = new Set();
     const listed = TOOL_REGISTRY.filter((t) =>
-      isToolOnSurface(t.name, surface, noOptIns),
+      isToolOnSurface(t.name, surface, null),
     );
 
     it(`${surface} default listing is non-empty`, () => {
@@ -82,45 +80,31 @@ describe("no listed tool names a tool that is off its surface", () => {
         const offSurface = foreignToolNamesIn(
           publishedText(tool),
           tool.name,
-        ).filter((name) => !isToolOnSurface(name, surface, noOptIns));
+        ).filter((name) => !isToolOnSurface(name, surface, null));
         expect(offSurface, `${tool.name} (${surface}) names off-surface tools`).toEqual([]);
       });
     }
   }
 });
 
-/**
- * The tools a single `?tools=<alias>` registers, for every alias naming
- * `toolName`. Keyed on the ALIAS, not the tool: `?tools=graph` turns on all
- * three graph primitives together, so a graph tool naming its own sibling is
- * correct, not a phantom. Reading the aliases from `OPTIONAL_TOOL_ALIASES`
- * keeps that grouping in one place.
- */
-function enabledByOwnAliases(toolName: string): ReadonlySet<string> {
-  const enabled = new Set<string>();
-  for (const names of Object.values(OPTIONAL_TOOL_ALIASES)) {
-    if (names.includes(toolName)) for (const n of names) enabled.add(n);
-  }
-  return enabled;
-}
-
-describe("no opt-in tool names a tool its own alias does not enable", () => {
-  // An opt-in tool is read by a connection that enabled ITS alias and
-  // nothing else. `?tools=graph` must not produce descriptions pointing at
-  // `tako_answer`, which only `?tools=answer` registers.
-  for (const surface of ["generic", "chatgpt"] as const satisfies Surface[]) {
-    for (const tool of TOOL_REGISTRY) {
-      if (isToolOnSurface(tool.name, surface, new Set())) continue; // default-listed; covered above
-      const ownAlias = enabledByOwnAliases(tool.name);
-      if (!isToolOnSurface(tool.name, surface, ownAlias)) continue; // not on this surface at all
-      it(`${tool.name} on ${surface} names only tools reachable alongside it`, () => {
-        const offSurface = foreignToolNamesIn(
-          publishedText(tool),
-          tool.name,
-        ).filter((name) => !isToolOnSurface(name, surface, ownAlias));
-        expect(offSurface, `${tool.name} (${surface}, opt-in) names unreachable tools`).toEqual([]);
-      });
-    }
+describe("no opt-in tool names a tool outside the defaults plus itself", () => {
+  // `?tools=` is an allowlist that REPLACES the defaults (spec D1), so a
+  // caller who lists only `tako_agent` gets a description that names
+  // `tako_search` with nothing to call — an accepted consequence of the
+  // caller's own choice, documented in docs/TOOLS.md. What this guard
+  // forbids is an opt-in tool naming ANOTHER opt-in tool: no allowlist a
+  // reader would expect to write (defaults + this one tool) reaches it.
+  const surface: Surface = "generic"; // chatgpt has no opt-ins: its set is fixed
+  const defaults = resolveToolSet(surface, null);
+  for (const tool of TOOL_REGISTRY) {
+    if (defaults.has(tool.name)) continue; // default-listed; covered above
+    const reachable = new Set([...defaults, tool.name]);
+    it(`${tool.name} (opt-in) names only default tools or itself`, () => {
+      const offSurface = foreignToolNamesIn(publishedText(tool), tool.name).filter(
+        (name) => !reachable.has(name),
+      );
+      expect(offSurface, `${tool.name} (opt-in) names unreachable tools`).toEqual([]);
+    });
   }
 });
 
@@ -145,9 +129,8 @@ describe("no opt-in tool names a tool its own alias does not enable", () => {
  */
 describe("server instructions name no tool a connection may not have", () => {
   const surfaces = ["generic", "chatgpt"] as const satisfies Surface[];
-  const noOptIns: ReadonlySet<string> = new Set();
   const universal = [...ALL_TOOL_NAMES].filter((name) =>
-    surfaces.every((surface) => isToolOnSurface(name, surface, noOptIns)),
+    surfaces.every((surface) => isToolOnSurface(name, surface, null)),
   );
 
   it("the cross-surface default set is non-empty", () => {

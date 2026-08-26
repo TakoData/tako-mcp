@@ -44,7 +44,7 @@ import {
 } from "./freetier.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { logToolRequestId } from "./tools/_log.js";
-import { parseEnabledOptionalToolNames } from "./tools/_optional.js";
+import { parseToolsParam } from "./tools/_tools_param.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import {
   authRequiredToolResult,
@@ -129,10 +129,10 @@ export const SERVER_VERSION = "0.22.2"; // x-release-please-version
  *      `tako_search` being "a CHOICE, not a ranking", and told the next
  *      author to keep its "pick one, don't chain them" phrasing verbatim
  *      because it was the only line here with a measured behavioural effect.
- *      That line is GONE: `tako_answer` moved behind `?tools=answer`, so
- *      naming it in instructions every connection reads would point the
- *      model at an unregistered tool. Do not restore it while answer is
- *      opt-in.
+ *      That line is GONE: `tako_answer` is opt-in — a caller reaches it
+ *      only by naming it in `?tools=` — so naming it in instructions every
+ *      connection reads would point the model at an unregistered tool. Do
+ *      not restore it while answer is opt-in.
  *
  * FRAMED AS SUBSTITUTION, not precedence. The opener used to say "reach for
  * Tako BEFORE a generic web search", which concedes that a generic web search
@@ -298,13 +298,12 @@ export function createMcpServer(
      */
     surface: Surface;
     /**
-     * Opt-in tool names the caller enabled for this request via the `tools`
-     * query param (resolved by `parseEnabledOptionalToolNames`). Tools in
-     * `OPTIONAL_TOOL_NAMES` are excluded from the default surface and
-     * registered only when their name appears here. Omitted → nothing opted
-     * in (the default surface), which is what tests and non-HTTP callers want.
+     * The `?tools=` allowlist for this request, as parsed by
+     * `parseToolsParam` (spec D1): the tool names to register INSTEAD of
+     * the generic default listing. `null` or omitted → the defaults.
+     * Ignored on the chatgpt surface, whose listing is fixed (spec D2).
      */
-    enabledOptionalToolNames?: Set<string>;
+    requestedToolNames?: ReadonlySet<string> | null;
     /**
      * Connection tier. `"free"` (anonymous, no Authorization header)
      * restricts the EXECUTABLE toolset to `FREE_TIER_TOOL_NAMES`. The
@@ -410,25 +409,17 @@ export function createMcpServer(
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
 
-  // Which tools appear on which surface — and the ChatGPT-only /
-  // ChatGPT-excluded / ChatGPT-default-on membership sets — live in
-  // `tools/_surface.ts`, shared with `gen-registry.ts` so the
-  // `chatgpt-app-submission.json` parity check validates the exact
-  // surface this loop registers.
+  // Which tools appear on which surface lives in `tools/_surface.ts`,
+  // shared with `gen-registry.ts` so the `chatgpt-app-submission.json`
+  // parity check and `docs/TOOLS.md` describe the exact set this loop
+  // registers.
   const surface = options.surface;
-  // Opt-in tools enabled for this request via `?tools=` (see `_optional.ts`).
-  // Empty by default → the default surface excludes every optional tool.
-  const enabledOptionalToolNames =
-    options.enabledOptionalToolNames ?? new Set<string>();
+  const requestedToolNames = options.requestedToolNames ?? null;
 
   for (const tool of TOOL_REGISTRY) {
-    // Surface membership (opt-in gate + per-surface filters) is decided
-    // by `isToolOnSurface` in `tools/_surface.ts` — shared with the
-    // codegen parity check so `chatgpt-app-submission.json` can't drift
-    // from what this loop actually registers. Deliberately tier-blind:
-    // the listing is auth-invariant (spec D4); anonymous execution is
-    // gated at dispatch in `registerTool`.
-    if (!isToolOnSurface(tool.name, surface, enabledOptionalToolNames)) {
+    // Deliberately tier-blind: the listing is auth-invariant (spec D4);
+    // anonymous execution is gated at dispatch in `registerTool`.
+    if (!isToolOnSurface(tool.name, surface, requestedToolNames)) {
       continue;
     }
     registerTool(server, tool, ctx, {
@@ -1550,10 +1541,10 @@ const REGISTRY_TOOL_NAMES: ReadonlySet<string> = new Set(
  * - only names the registry KNOWS (a typo'd name falls through to the
  *   SDK's genuine unknown-tool error — claiming a nonexistent tool needs
  *   auth would send the caller on a pointless sign-in);
- * - only names on THIS connection's surface (same `?tools=` opt-ins) —
- *   the sign-in promise must be true. `tako_agent` without
- *   `?tools=agent` would still be "tool not found" after signing in, so
- *   promising auth there just moves the dead end one sign-in later;
+ * - only names on THIS connection's surface (the same `?tools=` allowlist) —
+ *   the sign-in promise must be true. `tako_agent` on a connection that did
+ *   not list it in `?tools=` would still be "tool not found" after signing
+ *   in, so promising auth there just moves the dead end one sign-in later;
  *   those fall through to the SDK's accurate not-found.
  * - only well-formed ids (without one, no valid result can be addressed;
  *   the SDK rejects the shape itself).
@@ -1571,7 +1562,7 @@ export function freeTierHiddenToolResponse(
   body: unknown,
   origin: string,
   surface: Surface,
-  enabledOptionalToolNames: ReadonlySet<string>,
+  requestedToolNames: ReadonlySet<string> | null,
   signInHint?: string,
 ): Response | null {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -1590,7 +1581,7 @@ export function freeTierHiddenToolResponse(
   if (typeof name !== "string") return null;
   if (FREE_TIER_TOOL_NAMES.has(name)) return null;
   if (!REGISTRY_TOOL_NAMES.has(name)) return null;
-  if (!isToolOnSurface(name, surface, enabledOptionalToolNames)) {
+  if (!isToolOnSurface(name, surface, requestedToolNames)) {
     return null;
   }
   if (typeof id !== "string" && typeof id !== "number") return null;
@@ -1701,8 +1692,9 @@ export async function handleMcpRequest(
           meterResult.body,
           origin,
           surface,
-          parseEnabledOptionalToolNames(
+          parseToolsParam(
             new URL(request.url).searchParams.get("tools"),
+            REGISTRY_TOOL_NAMES,
           ),
           GENERIC_SIGN_IN_HINT,
         );
@@ -1772,16 +1764,19 @@ export async function handleMcpRequest(
         (userAgent ?? "(absent)").slice(0, 200),
       )}`,
     );
-    // Opt-in tools: the agent is off by default and enabled per-connection
-    // via `?tools=agent` (see `_optional.ts`). Parsing is tolerant — unknown
-    // tokens are ignored, never fatal. Log the raw value and resolved set so
-    // `wrangler tail` shows what a given connector asked for.
+    // `?tools=` is an allowlist that replaces the default listing on the
+    // generic surface (spec D1) and is ignored on the chatgpt surface,
+    // whose listing is fixed (spec D2). Parsing is tolerant — unknown
+    // tokens are dropped, never fatal. Log the raw value and the resolved
+    // set so `wrangler tail` shows what a given connector asked for.
     const rawToolsParam = url.searchParams.get("tools");
-    const enabledOptionalToolNames = parseEnabledOptionalToolNames(rawToolsParam);
+    const requestedToolNames = parseToolsParam(rawToolsParam, REGISTRY_TOOL_NAMES);
     if (rawToolsParam !== null) {
       console.log(
-        `[mcp] tools param=${JSON.stringify(rawToolsParam)} enabled=${
-          [...enabledOptionalToolNames].join(",") || "(none)"
+        `[mcp] tools param=${JSON.stringify(rawToolsParam)} surface=${surface} resolved=${
+          surface === "chatgpt"
+            ? "(ignored: fixed surface)"
+            : [...(requestedToolNames ?? [])].join(",") || "(defaults)"
         }`,
       );
     }
@@ -1789,7 +1784,7 @@ export async function handleMcpRequest(
       iconsBaseUrl: requestOrigin,
       requestOrigin,
       surface,
-      enabledOptionalToolNames,
+      requestedToolNames,
       tier,
     });
     // Omitting `sessionIdGenerator` puts the transport in stateless mode — no

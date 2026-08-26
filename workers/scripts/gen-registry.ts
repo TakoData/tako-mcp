@@ -22,7 +22,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
-import { OPTIONAL_TOOL_ALIASES } from "../src/tools/_optional.js";
 import {
   pinAdvisingSentences,
   pinFormProblem,
@@ -30,8 +29,10 @@ import {
 } from "../src/tools/_pin_form_rules.js";
 import {
   isToolOnSurface,
+  resolveToolSet,
   toolAnnotationsForSurface,
 } from "../src/tools/_surface.js";
+import { TOOL_NAME_PREFIX } from "../src/tools/_tools_param.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 
@@ -219,12 +220,11 @@ export function assertChatgptSubmissionParity(
   }
   const declaredTools = submission.tools;
 
-  // The submission covers the chatgpt surface's default listing: no
-  // `?tools=` opt-ins, OAuth-linked (the only state the surface serves).
-  const noOptIns: ReadonlySet<string> = new Set();
+  // The submission covers the chatgpt surface, which is FIXED (spec D2):
+  // `?tools=` is ignored there, so `null` is the only allowlist that exists.
   const expected = new Map(
     tools
-      .filter((t) => isToolOnSurface(t.name, "chatgpt", noOptIns))
+      .filter((t) => isToolOnSurface(t.name, "chatgpt", null))
       .map((t) => [t.name, toolAnnotationsForSurface(t, "chatgpt")]),
   );
 
@@ -658,7 +658,7 @@ async function main(): Promise<void> {
   //     `--check` diffs the generated JSON against the committed JSON, so it
   //     cannot see this: both sides agree, and both are wrong.
   const lobehubUnreachable = LOBEHUB_TOOL_ALLOWLIST.filter(
-    (name) => !isToolOnSurface(name, LOBEHUB_SURFACE, new Set<string>()),
+    (name) => !isToolOnSurface(name, LOBEHUB_SURFACE, null),
   );
   if (lobehubUnreachable.length > 0) {
     throw new Error(
@@ -671,36 +671,40 @@ async function main(): Promise<void> {
   }
 
   // 2c. Opt-in disclosure: a hand-written listing may name an opt-in tool, but
-  //     it must also name the `?tools=` alias that turns it on. Otherwise a
+  //     it must also name the `?tools=` form that turns it on. Otherwise a
   //     reader installs against the listing's own URL and the tool is not
-  //     there. Derived from OPTIONAL_TOOL_ALIASES, so a tool moving surface
-  //     fails here instead of drifting.
+  //     there. The opt-in set is derived from the generic surface's default
+  //     listing, so a tool moving surface fails here instead of drifting.
   //
   //     KEYED ON TOOL NAMES, so it only sees a listing that names them.
-  //     `smithery.yaml` names all six and is fully covered; `agent.json`
+  //     `smithery.yaml` names every tool and is fully covered; `agent.json`
   //     describes capabilities in prose ("Create an embeddable Tako
-  //     chart/card") and names exactly one tool, so this guard checked one
-  //     entry there. A prose claim about a default — which is what actually
-  //     went stale in `agent.json`, "on by default for ChatGPT and Claude" —
-  //     is NOT caught. Adding a tool name to that file brings it in scope;
-  //     nothing brings the prose in scope short of generating the file.
-  const aliasFor = new Map<string, string[]>();
-  for (const [alias, names] of Object.entries(OPTIONAL_TOOL_ALIASES)) {
-    for (const name of names) {
-      aliasFor.set(name, [...(aliasFor.get(name) ?? []), alias]);
-    }
-  }
+  //     chart/card") and names one tool per entry. A prose claim about a
+  //     default — which is what actually went stale in `agent.json`, "on by
+  //     default for ChatGPT and Claude" — is NOT caught. Adding a tool name to
+  //     that file brings it in scope; nothing brings the prose in scope short
+  //     of generating the file.
+  //
+  //     `?tools=` is an allowlist of tool NAMES (spec D1), with the `tako_`
+  //     prefix optional, so both forms count as disclosure.
+  const genericDefaults = resolveToolSet("generic", null);
+  const optInNames = modules
+    .map((m) => m.tool.name)
+    .filter((name) => !genericDefaults.has(name));
   const disclosureProblems: string[] = [];
   for (const listingPath of LISTING_PATHS) {
     const text = readFileSync(listingPath, "utf8");
     const where = relative(REPO_ROOT, listingPath);
-    for (const [name, aliases] of aliasFor) {
+    for (const name of optInNames) {
       // Word-boundary, so a tool name does not match a longer name that
       // starts with it.
       if (!new RegExp(`\\b${name}\\b`).test(text)) continue;
-      if (aliases.some((alias) => text.includes(`?tools=${alias}`))) continue;
+      const token = name.slice(TOOL_NAME_PREFIX.length);
+      if (new RegExp(`\\?tools=[^\\s\`"']*\\b(${name}|${token})\\b`).test(text)) {
+        continue;
+      }
       disclosureProblems.push(
-        `${where} names ${name} without naming ?tools=${aliases.join(" or ?tools=")}`,
+        `${where} names ${name} without naming ?tools=${token}`,
       );
     }
   }
