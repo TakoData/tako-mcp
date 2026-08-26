@@ -1,6 +1,25 @@
 # Tako
 
-> Tako is a data intelligence platform. The Tako MCP server lets AI agents search a proprietary, continuously-updated knowledge base of 100K+ curated charts (latest reported quarter, same-day market prices, official releases as they publish), get grounded answers, explore Tako's data graph, fetch underlying source content, and run a multi-step Answer Agent.
+> Tako is a data intelligence platform. The Tako MCP server lets AI agents search a proprietary, continuously-updated knowledge base of 100K+ curated charts (latest reported quarter, same-day market prices, official releases as they publish) together with the live web, discover data coverage, fetch underlying rows or page text, and optionally visualize data or run a multi-step Answer Agent.
+
+## Install (agent instructions)
+
+Connect an MCP client to `https://mcp.tako.com/mcp` (Streamable HTTP). No token is needed: paste the URL and sign in when the client prompts — a per-host key is minted automatically, and a new account gets up to 2,000 free requests. One command per major client:
+
+- Claude Code (plugin, includes research skills): `claude plugin marketplace add TakoData/tako-mcp && claude plugin install tako@tako`
+- Claude Code (plain): `claude mcp add tako --transport http https://mcp.tako.com/mcp` (then `/mcp` → tako → Authenticate)
+- Gemini CLI: `gemini extensions install https://github.com/TakoData/tako-mcp` (then `/mcp auth tako`)
+- Cursor / Windsurf / VS Code / OpenCode: add `{"type": "http", "url": "https://mcp.tako.com/mcp"}` to the client's MCP config and sign in when prompted
+- Codex CLI / Zed: bridge with `npx -y mcp-remote https://mcp.tako.com/mcp`
+- ChatGPT: install the Tako app from the app directory, or hand-add `https://mcp.tako.com/mcp/chatgpt` as a custom connector (that surface is OAuth-only)
+- CI / headless / Roo Code / Warp: send `Authorization: Bearer <TAKO_API_KEY>` on the same URL (keys: tako.com/console/api-keys)
+
+Anonymous connections work immediately: `tako_search` and `tako_available_data` run (rate-limited, shared capacity); `tako_contents` stays listed and answers with sign-in instructions when called, as does `include_contents: true` on search.
+
+## Tools
+
+- Default: `tako_search` (data + web search; `include_contents: true` inlines each exportable card's rows, billed per 1k), `tako_available_data` (free coverage check — run it to get a metric's exact name and a node id to pin), `tako_contents` (full rows behind an `exportable: true` card, or a web page's text).
+- Opt-in via `?tools=` on the URL (comma-separated aliases): `answer` (`tako_answer` — not recommended: the calling model already synthesizes from search results), `agent` (`tako_agent`, the multi-step Answer Agent; the `/mcp/chatgpt` surface serves the split `tako_agent_start`/`tako_agent_wait` pair), `visualize` (`tako_visualize`; on by default on `/mcp/chatgpt`), `credits` (`get_credit_balance`), `graph` (the low-level graph primitives `tako_graph_search` / `tako_graph_related` / `tako_graph_node`). Example: `https://mcp.tako.com/mcp?tools=agent,visualize`. Unknown values are ignored.
 
 ## Documentation
 
@@ -8,20 +27,3 @@
 - [API Reference](https://tako.com/docs/): Full REST API documentation
 - [Chart Gallery](https://tako.com/gallery): Browse example charts and visualizations
 - [OpenAPI Spec](https://tako.com/openapi.yaml): Machine-readable API specification
-
-## Quick Start
-
-Connect your MCP client to `https://mcp.tako.com/mcp`. No credentials are required to start: an anonymous connection gets the free tier (`tako_search`, `tako_answer`, `tako_available_data`; 10 requests/min per IP). Calling a tool that authentication would unlock (e.g. `tako_contents`) returns account guidance instead of "tool not found"; on ChatGPT those tools stay listed and the same response triggers its sign-in flow. For the full toolset and your own limits, authenticate with `Authorization: Bearer <TAKO_API_TOKEN>` (config-file clients) or the server's OAuth flow (Claude Code plugin, Claude.ai, ChatGPT).
-
-Some tools are opt-in — off by default to keep the tool surface small. Enable them via `?tools=` on the URL (comma-separated aliases): `agent` (Answer Agent), `visualize` (chart authoring; already on by default for ChatGPT and Claude), `credits` (credit balance), `graph` (low-level graph primitives). Example: `https://mcp.tako.com/mcp?tools=agent,visualize`.
-
-## Capabilities
-
-- `tako_search` — fast, direct retrieval of a data point as structured cards (each with a free row preview; the top card auto-renders inline as a chart (interactive widget on ChatGPT, chart image on other hosts)), from Tako's curated data and the live web. Built to fan out: fire many narrow one-entity+one-metric queries in parallel rather than one broad query. Replaces a generic web search for data lookups.
-- `tako_answer` — ask one specific, self-contained data question and get one synthesized answer grounded in the cards it cites. Use `tako_search` when you want the data itself, or for broad/multi-part questions. The top cited card auto-renders inline as a chart, the same as `tako_search`.
-- `tako_available_data` — find what proprietary, structured data exists on any entity or metric, as a natural-language summary. Best for a "what structured data is there on X?" question, and a cheap accuracy check to confirm a specific figure exists (and its exact name) before spending a priced `tako_search` / `tako_answer`. Each match carries a `node_id` you can pin to ground the follow-up. Free and fast.
-- `tako_contents` — fetch the full rows (CSV/JSON) behind a Tako card, or the extracted text behind a web result — the step after search when you need the real data. Call it only on cards marked `exportable: true` (web URLs always work).
-- `tako_visualize` — create an embeddable chart/card from your own structured data (opt-in, enable with `?tools=visualize`; on by default for ChatGPT and Claude).
-- `tako_agent` — run a multi-step Answer Agent for open-ended, figure-it-out questions (opt-in, enable with `?tools=agent`; on ChatGPT the server splits this into the `tako_agent_start` / `tako_agent_wait` pair).
-- `get_credit_balance` — check API credit balance (opt-in, enable with `?tools=credits`).
-- `tako_graph_search` / `tako_graph_related` / `tako_graph_node` — low-level graph primitives for power users: traversal relations (siblings, members, `rel:*` edges), in-relation filtering, cursor paging, and full node detail — beyond what `tako_available_data` covers (opt-in, enable with `?tools=graph`).
