@@ -40,6 +40,7 @@ import {
   MAX_COVERAGE_NAMES,
   MAX_COVERAGE_PAGES,
   PAGE_LIMIT,
+  promotionEligible,
   toRef,
   resolvedOnlyMatch,
   unavailableMatch,
@@ -868,10 +869,14 @@ const tako_available_data = {
       0,
       ...firstDrill.filter(hasLiveCoverage).map((m) => m.coverage.total),
     );
-    const best = probes.reduce<(typeof probes)[number] | undefined>(
-      (b, pr) => (pr.total > (b?.total ?? 0) ? pr : b),
-      undefined,
-    );
+    const rank0Node = candidates[0] as GraphNode;
+    const best = probes
+      // Fix 5: an exact match is only ever displaced by a same-named node.
+      .filter((pr) => promotionEligible(input.q, rank0Node, pr.node))
+      .reduce<(typeof probes)[number] | undefined>(
+        (b, pr) => (pr.total > (b?.total ?? 0) ? pr : b),
+        undefined,
+      );
     if (
       rank0Known &&
       best !== undefined &&

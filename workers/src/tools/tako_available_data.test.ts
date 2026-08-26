@@ -1370,3 +1370,28 @@ describe("tako_available_data — candidate metadata and limit (fix 6)", () => {
     expect(() => takoAvailableData.inputSchema.parse({ q: "apple", limit: 0 })).toThrow();
   });
 });
+
+describe("tako_available_data — no padding an exact match (fix 5)", () => {
+  it("does not pad an exact, data-less match with an unrelated name (the Jerome Powell shape)", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, {
+        results: [
+          { ...searchHit("powell", "Jerome Powell", "entity", "PERSON"), subtype: "People" },
+          // The alias is what let this through the gate on prod: {jerome} is
+          // inside {jerome, powell}, so the city is a plausible candidate.
+          { ...searchHit("jerome-id", "Jerome, ID", "entity", "GPE"), subtype: "Cities", aliases: ["Jerome"] },
+        ],
+      }),
+      jsonResponse(200, drill("powell", "Jerome Powell", "metrics", [], 0)),
+      jsonResponse(200, drill("jerome-id", "Jerome, ID", "metrics", ["Median Sale Price"], 12)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "Jerome Powell" }, CTX);
+    expect(fetchMock.mock.calls).toHaveLength(3); // no round-2 drill of Jerome, ID
+    expect(out.found).toBe(false);
+    expect(out.matches.map((m) => m.node_id)).toEqual(["powell"]);
+    expect(out.summary).toContain("resolved, but Tako holds no metrics for it yet");
+    // Still visible as a one-line receipt with its count, for a caller who meant it.
+    expect(out.other_matches.find((o) => o.node_id === "jerome-id")?.coverage_total).toBe(12);
+    expect(out.summary).not.toContain("Median Sale Price");
+  });
+});

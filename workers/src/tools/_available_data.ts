@@ -21,6 +21,8 @@
 import type { z } from "zod";
 
 import type { graphNodeSchema, graphRelationSchema } from "./_graph.js";
+import { sameTokens } from "./_match_gate.js";
+import type { MatchCandidate } from "./_match_gate.js";
 
 type GraphNode = z.infer<typeof graphNodeSchema>;
 type GraphRelation = z.infer<typeof graphRelationSchema>;
@@ -286,6 +288,36 @@ export function buildMatch(node: GraphNode, group: GraphRelation | null | undefi
  */
 export function hasLiveCoverage(m: CoverageMatch): boolean {
   return !m.unavailable && m.coverage.total > 0;
+}
+
+/**
+ * May `candidate` be promoted over a rank 0 that has no coverage?
+ *
+ * Coverage promotion exists for same-named stubs: `Carnival, Inc.` (0) hides
+ * `Carnival Corporation Ltd.` (250), `Duolingo` PRODUCT (0) hides
+ * `Duolingo, Inc.` (10). It was never meant to swap subjects, and it did:
+ * measured on prod (spec Appendix B, 2026-08-25) `q="Jerome Powell"` padded a
+ * data-less exact match with 4k chars of `Jerome, ID` housing metrics, and
+ * `LeBron James` got `James Outman`. Both passed the gate on one shared token.
+ *
+ * The rule: when the query is an EXACT token match for rank 0 (its name or an
+ * alias), the query is fully accounted for, so only a node that is itself
+ * same-named with rank 0 may take its place. When the query is not exact —
+ * `US inflation` against `US Savings Inflation Securities` — every plausible
+ * candidate stays eligible, which is the measured-correct `United States`
+ * promotion. Same token sets the gate uses, no new constants.
+ */
+export function promotionEligible(
+  query: string,
+  rank0: MatchCandidate,
+  candidate: MatchCandidate,
+): boolean {
+  const surfaces = (c: MatchCandidate): string[] =>
+    [c.name, ...(c.aliases ?? [])].filter((s): s is string => typeof s === "string" && s !== "");
+  const exact = surfaces(rank0).some((s) => sameTokens(query, s));
+  if (!exact) return true;
+  const rank0Surfaces = surfaces(rank0);
+  return surfaces(candidate).some((c) => rank0Surfaces.some((r) => sameTokens(r, c)));
 }
 
 /**

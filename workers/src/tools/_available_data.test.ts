@@ -11,6 +11,7 @@ import {
   MAX_CANDIDATES,
   orderMetricItems,
   MAX_COVERAGE_NAMES,
+  promotionEligible,
   selectCoverage,
   unavailableMatch,
   type CoverageMatch,
@@ -522,3 +523,20 @@ describe("summaries flatten echoed input", () => {
 // isolates per-node failures so "one bad node never sinks the whole answer" —
 // this asserts the same philosophy for the metric probe, which has a graceful
 // fallback (the coverage drill) already built for exactly this shape.
+
+describe("promotionEligible", () => {
+  const powell = { name: "Jerome Powell", aliases: ["Jay Powell"] };
+  it("an exact match admits only a same-named node", () => {
+    expect(promotionEligible("Jerome Powell", powell, { name: "Jerome, ID" })).toBe(false);
+    expect(promotionEligible("LeBron James", { name: "LeBron James" }, { name: "James Outman" })).toBe(false);
+    expect(promotionEligible("Carnival", { name: "Carnival, Inc." }, { name: "Carnival Corporation Ltd." })).toBe(true);
+    expect(promotionEligible("Duolingo", { name: "Duolingo" }, { name: "Duolingo, Inc." })).toBe(true);
+  });
+  it("an exact match via alias counts, on either side", () => {
+    expect(promotionEligible("Jay Powell", powell, { name: "Jerome, ID" })).toBe(false);
+    expect(promotionEligible("SpaceX", { name: "SpaceX" }, { name: "Space Exploration Technologies Corp.", aliases: ["SpaceX"] })).toBe(true);
+  });
+  it("a non-exact rank 0 leaves every plausible candidate eligible (the US inflation shape)", () => {
+    expect(promotionEligible("US inflation", { name: "US Savings Inflation Securities" }, { name: "United States", aliases: ["US"] })).toBe(true);
+  });
+});
