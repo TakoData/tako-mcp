@@ -236,6 +236,67 @@ describe("tako_graph_related output slimming", () => {
     expect(text).toContain('relation: "metrics"');
   });
 
+  // The `N of M` / `N of M+` marker is the ONLY thing telling the model whether
+  // a group is complete. Without it a 10-of-40 page reads as the whole set and
+  // the model stops drilling — a silent wrong answer, not a visible failure.
+  // `cur::2` and `relation: "metrics"` (asserted above) survive its removal.
+  it("renderText marks each group complete or truncated", () => {
+    const text = takoGraphRelated.renderText(fatOverview as never, undefined as never);
+    // Complete: 20 shown of 20 total, not capped — no trailing `+`.
+    expect(text).toContain("20 of 20");
+    expect(text).not.toContain("20 of 20+");
+    // Truncated: 10 shown of a capped 40, so the total carries the `+`.
+    expect(text).toContain("10 of 40+");
+  });
+
+  // THE DRILL, which every fixture above skips. `relations` is the overview;
+  // `relation` (singular) is the paginated drill at `limit: 100` of full node
+  // records — the largest response this tool returns, and the one the slimming
+  // exists for. Both hooks branch on it (`slimStructured` and
+  // `renderRelatedMarkdown`), and neither branch ran in any test.
+  const fatDrill = {
+    node: { id: "ent::nvda", type: "entity", name: "NVIDIA", description: "Y".repeat(400) },
+    relation: {
+      key: "metrics", kind: "data", label: "Metrics",
+      items: Array.from({ length: 100 }, (_, i) => fatItem(200 + i)),
+      total: 250, total_capped: true, next_cursor: "cur::9",
+    },
+  };
+
+  it("slimStructured slims the drilled relation, not just the overview", () => {
+    const slim = takoGraphRelated.slimStructured(fatDrill as never) as {
+      relation: {
+        key: string; total: number; total_capped: boolean; next_cursor: string | null;
+        items: Record<string, unknown>[];
+      };
+      relations?: unknown;
+    };
+    // The overview key must not appear — the branches are exclusive.
+    expect(slim.relations).toBeUndefined();
+    expect(slim.relation.items).toHaveLength(100);
+    for (const item of slim.relation.items) {
+      expect(item).not.toHaveProperty("description");
+      expect(item).not.toHaveProperty("aliases");
+      expect(item.id).toBeTruthy();
+    }
+    // Paging metadata survives, or the caller cannot fetch page 2.
+    expect(slim.relation).toMatchObject({
+      key: "metrics", total: 250, total_capped: true, next_cursor: "cur::9",
+    });
+    expect(takoGraphRelated.outputSchema.safeParse(slim).success).toBe(true);
+  });
+
+  it("renderText renders the drilled relation and cuts it hardest", () => {
+    const text = takoGraphRelated.renderText(fatDrill as never, undefined as never);
+    expect(text).toContain("Metrics");
+    expect(text).toContain("100 of 250+");
+    expect(text).toContain("cur::9");
+    expect(text).toContain("ent::co200");
+    expect(text).not.toContain("X".repeat(50));
+    // 100 items x ~849 chars is the worst case the slimming was added for.
+    expect(text.length * 10).toBeLessThan(JSON.stringify(fatDrill, null, 2).length);
+  });
+
   it("renderText handles an empty overview", () => {
     const text = takoGraphRelated.renderText(
       { node: { id: "n1", type: "entity", name: "Nobody" }, relations: [] } as never,

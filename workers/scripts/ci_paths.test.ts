@@ -15,6 +15,12 @@
  * This test is the rule as code. `GUARD_INPUT_PATHS` (exported from
  * `gen-registry.ts`) is the generator's own read-set, so a new `readFileSync`
  * there surfaces here rather than in a post-mortem.
+ *
+ * The fourth recurrence was this file. It reads the workflow without listing
+ * it, so deleting a `paths:` entry matched no trigger, ran no
+ * `typecheck-and-test`, and this test never objected — a check that cannot see
+ * its own input is a check you can delete in a PR that runs nothing. The
+ * workflow is in `OTHER_GUARD_INPUTS` below for that reason.
  */
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -41,6 +47,7 @@ const OTHER_GUARD_INPUTS: readonly string[] = [
   "gemini-extension.json", // scripts/gemini-extension.test.ts
   "commands/answer.md",
   "docs/gemini/GEMINI.md",
+  ".github/workflows/workers-ci.yml", // this file, via WORKFLOW below
 ];
 
 /** True when a GitHub `paths:` pattern matches a repo-relative file. */

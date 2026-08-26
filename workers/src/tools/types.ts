@@ -285,6 +285,23 @@ export interface FixedInput {
   value: string;
   /** Why it is fixed, one sentence. */
   note: string;
+  /**
+   * Whether the constant rides the wire. `"worker"` rows never reach the
+   * request body — they are Worker-side loop settings and chart-URL render
+   * params — so `docs/TOOLS.md` renders them under their own heading instead
+   * of "Fixed request inputs (the caller cannot change these)", which sent
+   * readers looking for `poll interval` and `width` in the request body.
+   *
+   * Renaming the field does NOT move the row: the generator emits that
+   * heading for every non-empty `fixedInputs` (`gen-registry.ts`), so a
+   * longer name published the same wrong claim under a longer label. Only
+   * this discriminator moves it.
+   *
+   * Defaults to `"request"`, which is also what `fixed_inputs_drift.test.ts`
+   * checks against the real body builders — a row marked `"worker"` is
+   * exempt there, and the two rules are cross-checked so a mislabel fails.
+   */
+  scope?: "request" | "worker";
 }
 
 /**

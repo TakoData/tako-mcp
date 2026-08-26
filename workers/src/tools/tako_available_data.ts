@@ -228,7 +228,15 @@ const tako_available_data = {
     {
       field: "graph/search limit",
       value: "10",
-      note: "Candidates fetched per lookup (the API default is 20); the top 4 that survive the match gate are drilled.",
+      // Derived, not restated: the previous hand-written copy of these numbers
+      // claimed four full drills where the handler does one drill plus three
+      // limit=1 probes, and `docs/TOOLS.md` published the wrong figure verbatim.
+      // `fixedInputs` is read off the imported module (`gen-registry.ts:536`),
+      // so retuning either constant regenerates the doc instead of drifting it.
+      note:
+        `Candidates fetched per lookup (the API default is 20); the top ${SELECT_TOP_N} that ` +
+        `survive the match gate are inspected — ${RENDER_FULL_N} drilled in full, ` +
+        `${SELECT_TOP_N - RENDER_FULL_N} by a limit=1 probe. A shell rank-0 costs one more drill.`,
     },
     {
       field: "graph/related limit",

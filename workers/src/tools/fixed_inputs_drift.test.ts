@@ -12,11 +12,13 @@
  * second copy of the constants:
  *
  *  - The checkable rows are COMPUTED from the declaration, not listed. A row
- *    is checkable when its value parses as JSON (so `= count`, `5 s / 295 s`
- *    and `min(100000, 250000 / batch size)` are out) and its field reduces to
- *    a dotted path (so `graph/search limit` and `poll interval / budget` are
- *    out — those name endpoint query params and Worker loop constants, not
- *    request fields).
+ *    is checkable when it is request-scoped, its value parses as JSON (so
+ *    `= count`, `5 s / 295 s` and `min(100000, 250000 / batch size)` are out)
+ *    and its field reduces to a dotted path (so `graph/search limit` and
+ *    `poll interval / budget` are out — those name endpoint query params and
+ *    Worker loop constants, not request fields). `scope: "worker"` is the
+ *    explicit half of that and `scope agrees with the wire-path heuristic`
+ *    below asserts the two never disagree.
  *  - `every tool with a checkable row is covered here` asserts the map below
  *    is COMPLETE. Add a checkable row to a tool that has no entry and this
  *    file fails, rather than silently skipping it.
@@ -38,7 +40,11 @@ import tako_agent, { buildAgentBody } from "./tako_agent.js";
 import tako_answer, { buildAnswerBody } from "./tako_answer.js";
 import tako_search, { buildSearchBody } from "./tako_search.js";
 
-type FixedInput = { readonly field: string; readonly value: string };
+type FixedInput = {
+  readonly field: string;
+  readonly value: string;
+  readonly scope?: "request" | "worker";
+};
 
 /** The field as a wire path, or null when the row does not name one. */
 function wirePath(field: string): string[] | null {
@@ -57,7 +63,9 @@ function jsonValue(value: string): { ok: true; parsed: unknown } | { ok: false }
 }
 
 function checkableRows(fixedInputs: readonly FixedInput[]): FixedInput[] {
-  return fixedInputs.filter((f) => wirePath(f.field) !== null && jsonValue(f.value).ok);
+  return fixedInputs.filter(
+    (f) => (f.scope ?? "request") === "request" && wirePath(f.field) !== null && jsonValue(f.value).ok,
+  );
 }
 
 const CASES: ReadonlyArray<{
@@ -114,6 +122,34 @@ describe("fixedInputs matches what the handler sends", () => {
       });
     }
   }
+
+  // `scope` decides which section `docs/TOOLS.md` renders a row under, and the
+  // wire-path/JSON heuristic decides whether this file checks it. They are two
+  // spellings of one question, so a disagreement means the doc is publishing a
+  // Worker constant as a request field, or this file is skipping a real one.
+  // Neither is visible from the row itself, which is why it is asserted.
+  it("scope agrees with the wire-path heuristic on every row", () => {
+    const disagreeing: string[] = [];
+    for (const tool of TOOL_REGISTRY) {
+      for (const row of (tool.fixedInputs ?? []) as readonly FixedInput[]) {
+        const declaredRequest = (row.scope ?? "request") === "request";
+        const looksLikeWire = wirePath(row.field) !== null && jsonValue(row.value).ok;
+        // A request-scoped row need not be checkable — `effort` is a request
+        // field whose value is a JSON string, and `graph/search limit` names an
+        // endpoint query param. Only the reverse is a defect: a row that IS
+        // wire-shaped but marked `"worker"` skips the drift check silently.
+        if (!declaredRequest && looksLikeWire) {
+          disagreeing.push(`${tool.name}.${row.field}`);
+        }
+      }
+    }
+    expect(
+      disagreeing,
+      'marked scope: "worker" but the field and value are wire-shaped — ' +
+        "either it is a request field (drop the scope) or the field names a " +
+        "Worker setting and should not read as a dotted path",
+    ).toEqual([]);
+  });
 
   it("every tool with a checkable row is covered here", () => {
     const covered = new Set(CASES.map((c) => c.name));

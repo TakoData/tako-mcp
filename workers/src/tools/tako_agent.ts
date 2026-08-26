@@ -389,12 +389,19 @@ const takoAgent = {
   },
   fixedInputs: [
     { field: "effort", value: "\"medium\"", note: "The only Answer Agent effort level launched." },
-    // NOT a request field — `POLL_INTERVAL_MS` and `AGENT_POLL_BUDGET_MS` never
-    // reach the wire; they drive the Worker's own poll loop. Named for where
-    // they live so `docs/TOOLS.md` stops publishing them under "Fixed request
-    // inputs (the caller cannot change these)", which sent readers looking for
-    // them in the request body. Same relabel as `tako_visualize`'s chart-url rows.
-    { field: "worker poll interval / budget", value: "5 s / 295 s", note: "The call polls the run until it completes or the budget ends." },
+    // `scope: "worker"` is what keeps this out of the request-inputs section —
+    // `POLL_INTERVAL_MS` and `AGENT_POLL_BUDGET_MS` never reach the wire; they
+    // drive the Worker's own poll loop. An earlier attempt relabelled the field
+    // instead, which changed nothing: the generator emits that heading for every
+    // non-empty `fixedInputs`, so the doc kept the false claim under a longer
+    // name. Value derived, not restated, so retuning either constant regenerates
+    // the doc rather than leaving it publishing a number the loop stopped using.
+    {
+      field: "poll interval / budget",
+      value: `${POLL_INTERVAL_MS / 1000} s / ${AGENT_POLL_BUDGET_MS / 1000} s`,
+      note: "The call polls the run until it completes or the budget ends.",
+      scope: "worker",
+    },
   ],
   async handler(input, ctx): Promise<AgentRun> {
     const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);

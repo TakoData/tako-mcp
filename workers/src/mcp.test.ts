@@ -14,7 +14,7 @@ import {
   extractErrorDetail,
 } from "./django.js";
 import type { Env } from "./env.js";
-import { FREE_TIER_TOOL_NAMES } from "./tools/_surface.js";
+import { FREE_TIER_TOOL_NAMES, resolveToolSet } from "./tools/_surface.js";
 import {
   FREE_TIER_SERVER_INSTRUCTIONS,
   SERVER_INSTRUCTIONS,
@@ -754,6 +754,52 @@ describe("server instructions", () => {
       expect(instructions).toBe(FREE_TIER_SERVER_INSTRUCTIONS);
       expect(instructions).toContain("anonymous");
       expect(instructions).toContain("Tako account");
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  });
+
+  // AT THE CALLER, deliberately. `phantom_tool.test.ts` calls
+  // `serverInstructionsForTier(tier, resolved)` directly, so it proves the
+  // FUNCTION filters — it says nothing about whether `createMcpServer` passes
+  // the resolved set in. Delete the `resolveToolSet(...)` argument in `mcp.ts`
+  // and every other test in this repo still passes, because both instruction
+  // cases above build a default-listing server. This one drives the real
+  // constructor with a `?tools=` allowlist and reads the string back off the
+  // client, which is the only path a host actually sees.
+  it("a ?tools= connection gets instructions filtered to what it registers", async () => {
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" },
+      sendProgress: noopSendProgress,
+      surface: "generic",
+    };
+    const requestedToolNames = new Set(["tako_agent"]);
+    const server = createMcpServer(ctx, { surface: "generic", requestedToolNames });
+    const mcpClient = new Client(
+      { name: "instructions-allowlist-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      const instructions = mcpClient.getInstructions();
+      expect(instructions).toBeDefined();
+      const registered = resolveToolSet("generic", requestedToolNames);
+      // Every tool the served string names must be one this connection can
+      // call. `?tools=agent` registers exactly `tako_agent`, so the three
+      // tools the default instructions name must all be gone.
+      for (const name of TOOL_REGISTRY.map((t) => t.name)) {
+        if (registered.has(name)) continue;
+        expect(instructions, `instructions name ${name}, which ?tools=agent does not register`)
+          .not.toContain(name);
+      }
+      // Filtered, not emptied — the routing guidance that makes a host reach
+      // for Tako at all lives in the shared paragraph and must survive.
+      expect(instructions).toContain("proprietary live-data graph");
+      expect(instructions).not.toBe(SERVER_INSTRUCTIONS);
     } finally {
       await mcpClient.close();
       await server.close();

@@ -48,8 +48,8 @@ tools:
   - name: tako_answer
     description: >-
       Get a synthesized, citation-backed answer from Tako and/or the web.
-      Opt-in — append ?tools=answer to the server URL, an allowlist that
-      replaces the default listing, so name the other tools you want too
+      Opt-in — add the `answer` token to the server URL's ?tools= allowlist,
+      which replaces the default listing, so name the other tools you want too
       (?tools=search,available_data,contents,answer). Most hosts should prefer tako_search and
       synthesize the answer themselves.
   - name: tako_contents
@@ -57,16 +57,17 @@ tools:
   - name: tako_visualize
     description: >-
       Create an embeddable chart/card from your own structured data. Opt-in —
-      append ?tools=visualize to the server URL, an allowlist that replaces
-      the default listing, so name the other tools you want too
+      add the `visualize` token to the server URL's ?tools= allowlist, which
+      replaces the default listing, so name the other tools you want too
       (?tools=search,contents,visualize). Already on by default at
       https://mcp.tako.com/mcp/chatgpt, which serves the chart widget.
   - name: tako_agent
     description: >-
       Run Tako's Answer Agent — multi-step research for complex questions;
-      returns a cited answer plus chart cards. Opt-in — append ?tools=agent
-      to the server URL, an allowlist that replaces the default listing, so
-      name the other tools you want too (?tools=search,available_data,agent).
+      returns a cited answer plus chart cards. Opt-in — add the `agent` token
+      to the server URL's ?tools= allowlist, which replaces the default
+      listing, so name the other tools you want too
+      (?tools=search,available_data,agent).
   - name: tako_graph_related
     description: >-
       Explore what a Tako graph node connects to — its metrics, the entities a
@@ -81,10 +82,10 @@ examples:
       {"query": "US GDP growth rate"}
   - title: Answer a Data Question
     description: >-
-      Get a synthesized answer with supporting chart cards. Needs
-      ?tools=answer on the server URL — and because that is an allowlist
-      replacing the default listing, name the other tools you want too
-      (?tools=search,available_data,contents,answer). Without it, tako_search returns the
+      Get a synthesized answer with supporting chart cards. Needs the
+      `answer` token on the server URL's ?tools= allowlist — and because that
+      allowlist replaces the default listing, name the other tools you want
+      too (?tools=search,available_data,contents,answer). Without it, tako_search returns the
       same data for your model to synthesize.
     input: |
       {"query": "How have US mortgage rates moved over the past year?"}

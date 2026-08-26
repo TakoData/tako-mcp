@@ -533,11 +533,25 @@ export function buildToolsDoc(input: ToolsDocInput): string {
       }
       out.push("");
     }
+    // Two sections, because one heading made a false claim about half the
+    // rows: the Worker's poll loop and the chart-URL render params never reach
+    // a request body, and publishing them under "Fixed request inputs" sent
+    // readers hunting for `width` and `poll interval` in the request. Relabeling
+    // the fields did not help — this heading is emitted for every non-empty
+    // `fixedInputs`, so the wrong claim just got a longer label. `scope` on
+    // the row is what moves it.
     const fixed = m.fixedInputs ?? [];
+    const requestRows = fixed.filter((f) => (f.scope ?? "request") === "request");
+    const workerRows = fixed.filter((f) => f.scope === "worker");
     out.push("Fixed request inputs (the caller cannot change these):", "");
-    if (fixed.length === 0) out.push("_none_", "");
+    if (requestRows.length === 0) out.push("_none_", "");
     else {
-      for (const f of fixed) out.push(`- \`${f.field}\` = \`${f.value}\` — ${f.note}`);
+      for (const f of requestRows) out.push(`- \`${f.field}\` = \`${f.value}\` — ${f.note}`);
+      out.push("");
+    }
+    if (workerRows.length > 0) {
+      out.push("Fixed worker-side settings (not request fields):", "");
+      for (const f of workerRows) out.push(`- \`${f.field}\` = \`${f.value}\` — ${f.note}`);
       out.push("");
     }
     out.push("Annotations:", "");
@@ -1005,26 +1019,37 @@ async function main(): Promise<void> {
         );
         continue;
       }
-      // ADEQUACY, not mere presence: at least one of those values must list
-      // every default tool this tool's own description names, or a reader who
-      // copies the URL gets a model told to call something unregistered.
-      // At-least-one so a bare "append ?tools=answer" explaining the token
-      // stays legal alongside a full example.
+      // ADEQUACY, not mere presence, on EVERY value: each must list every
+      // default tool this tool's own description names, or a reader who copies
+      // that URL gets a model told to call something unregistered.
+      //
+      // Every value, not at-least-one. The old rule let one adequate URL vouch
+      // for the whole file, so a second capability card carrying a bare
+      // `?tools=answer` was never checked — and a bare token is the WORST case,
+      // not a benign one: it is a one-tool connection whose lone tool names
+      // absent siblings. The carve-out existed because the listings wrote the
+      // token explainer as a `?tools=` string too, which the guard cannot tell
+      // apart from a URL by its value. The listings now write the bare token as
+      // a token (`add the \`answer\` token to the ?tools= allowlist`), so every
+      // remaining `?tools=` string in a listing IS a copyable URL and there is
+      // nothing left to exempt. Restore an explainer to `?tools=X` form and
+      // this fails, which is the intended pressure.
       const required = minimumToolsFor(
         modules.find((m) => m.tool.name === name)!.tool,
         modules.map((m) => m.tool),
       );
-      const adequate = values.some((value) => {
+      const isAdequate = (value: string): boolean => {
         const listedTokens = new Set(
           value.split(",").map((raw) => toolsToken(raw.trim().toLowerCase())),
         );
         return [...required].every((needed) => listedTokens.has(toolsToken(needed)));
-      });
-      if (!adequate) {
+      };
+      const inadequate = values.filter((value) => !isAdequate(value));
+      if (inadequate.length > 0) {
         const want = [...required].map(toolsToken).join(",");
         disclosureProblems.push(
-          `${where} discloses ${name} only via an INADEQUATE ?tools= value ` +
-            `(${values.join(" | ")}) — ${name}'s own description names default tools ` +
+          `${where} discloses ${name} via an INADEQUATE ?tools= value ` +
+            `(${inadequate.join(" | ")}) — ${name}'s own description names default tools ` +
             `the value omits, so a reader who copies it gets "tool not found". ` +
             `Minimum: ?tools=${want}`,
         );

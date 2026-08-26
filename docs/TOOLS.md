@@ -86,7 +86,10 @@ Parameters:
 Fixed request inputs (the caller cannot change these):
 
 - `effort` = `"medium"` — The only Answer Agent effort level launched.
-- `worker poll interval / budget` = `5 s / 295 s` — The call polls the run until it completes or the budget ends.
+
+Fixed worker-side settings (not request fields):
+
+- `poll interval / budget` = `5 s / 295 s` — The call polls the run until it completes or the budget ends.
 
 Annotations:
 
@@ -289,7 +292,7 @@ Parameters:
 
 Fixed request inputs (the caller cannot change these):
 
-- `graph/search limit` = `10` — Candidates fetched per lookup (the API default is 20); the top 4 that survive the match gate are drilled.
+- `graph/search limit` = `10` — Candidates fetched per lookup (the API default is 20); the top 4 that survive the match gate are inspected — 1 drilled in full, 3 by a limit=1 probe. A shell rank-0 costs one more drill.
 - `graph/related limit` = `100` — Coverage page size for the drill; paging stops at 250 names or 4 pages. The cheap per-candidate coverage probes send limit=1 instead.
 
 Annotations:
@@ -512,7 +515,7 @@ Parameters:
 | `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | Prefer related nodes with this NER label (boost, not a filter). |
 | `infer_label` | boolean | no |  | Auto-detect labels from q (default true server-side, only when q is set). |
 | `cursor` | string | no |  | Pagination cursor (for a single drilled relation; intended for single-q use). |
-| `limit` | integer | no |  | Page size (default 50, max 100). |
+| `limit` | integer | no |  | Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -572,7 +575,7 @@ Annotations:
       "minLength": 1
     },
     "limit": {
-      "description": "Page size (default 50, max 100).",
+      "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items.",
       "type": "integer",
       "minimum": 1,
       "maximum": 100
@@ -758,6 +761,10 @@ Parameters:
 | `normalize_currencies` | string | no |  | Target ISO 4217 currency code (e.g. 'USD'). Converts recognized currency-denominated datasets to this currency using historical rates. |
 
 Fixed request inputs (the caller cannot change these):
+
+_none_
+
+Fixed worker-side settings (not request fields):
 
 - `chart url dark_mode` = `true` — Cards render in the dark theme.
 - `chart url width` = `900` — Card width in pixels.

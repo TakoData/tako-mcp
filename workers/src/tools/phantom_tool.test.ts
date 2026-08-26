@@ -198,6 +198,24 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     expect(text).toContain("proprietary live-data graph");
   });
 
+  // POSITIVE, because every case above asserts only an ABSENCE. Over-filtering
+  // a partial allowlist is invisible to them: make `assembleInstructions` drop
+  // one extra sentence whenever any sentence is dropped and all of them still
+  // pass, because the result still names no phantom. The `unfiltered` case
+  // below catches only wholesale over-filtering of the DEFAULT set. This pins
+  // the half nothing else does — what a partial allowlist KEEPS.
+  it("?tools=search,contents keeps its own sentences and drops the others", () => {
+    const resolved = resolveToolSet("generic", new Set(["tako_search", "tako_contents"]));
+    const text = serverInstructionsForTier("authenticated", resolved);
+    // Kept: both sentences whose tools are entirely inside the allowlist.
+    expect(text).toContain("`tako_contents` reads one source in full");
+    expect(text).toContain("`include_contents: true` on `tako_search`");
+    // Dropped: the one sentence naming a tool the allowlist leaves out.
+    expect(text).not.toContain("tako_available_data");
+    // And the shared routing paragraph is never a casualty of filtering.
+    expect(text).toContain("proprietary live-data graph");
+  });
+
   it("the default listing still names all three, unfiltered", () => {
     // Guards the other direction: over-filtering would silently strip
     // guidance from every default connection.

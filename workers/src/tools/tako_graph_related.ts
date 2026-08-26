@@ -51,8 +51,15 @@ const inputSchema = z.object({
   cursor: z.string().min(1).optional().describe(
     "Pagination cursor (for a single drilled relation; intended for single-q use).",
   ),
+  // Measured against production, not inferred: `?node_id=…&limit=3` and
+  // `&limit=100` return byte-identical overviews (82,741 chars for NVIDIA, 16
+  // groups, every group capped at 10 items). `limit` is INERT in overview mode
+  // — the server caps each group at 10 — so a caller that raises it to widen
+  // the coverage map gets nothing and pays a round trip. The backend's own
+  // OpenAPI description has the same gap; this one states the restriction
+  // because the model reads it.
   limit: z.number().int().min(1).max(100).optional().describe(
-    "Page size (default 50, max 100).",
+    "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items.",
   ),
 });
 
@@ -158,7 +165,7 @@ const tako_graph_related = {
       // Log before wrapping: the plain-Error wrap drops the DjangoError
       // envelope, so this is the only server-side record of the failure.
       console.error("[tako] tool error tool=tako_graph_related stage=graph/related:", err);
-      throw new Error(graphErrorMessage(err, "related", input.node_id));
+      throw new Error(graphErrorMessage(err, "related", input.node_id, "tako_graph_related"));
     }
     // Validate against the LOOSE advertised facade, NOT the generated schema.
     // The generated GraphRelatedResponse enforces a strict RelationKind enum
