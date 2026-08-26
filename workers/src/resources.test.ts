@@ -4,10 +4,17 @@ import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validatio
 import { describe, expect, it } from "vitest";
 
 import type { Env } from "./env.js";
-import { createMcpServer } from "./mcp.js";
-import { DOC_MIME_TYPE, DOC_RESOURCES } from "./resources.js";
+import { createMcpServer, SERVER_INSTRUCTIONS } from "./mcp.js";
+import {
+  DOC_MIME_TYPE,
+  DOC_RESOURCE_URIS,
+  docResources,
+  registerDocResources,
+} from "./resources.js";
+import type { Tier } from "./freetier.js";
 import type { Surface } from "./surface.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import { DOMAINS, FRESHNESS } from "./vocabulary.js";
 import type { ToolContext } from "./tools/types.js";
 
 const ctx: ToolContext = {
@@ -47,9 +54,21 @@ async function withClient<T>(
 // non-ChatGPT client lands on.
 const SURFACES: Surface[] = ["generic", "chatgpt"];
 
-function guideText(): string {
+function guideText(
+  surface: Surface = "generic",
+  tier: Tier = "authenticated",
+): string {
   return String(
-    DOC_RESOURCES.find((d) => d.uri === "tako://guide/tools")?.text,
+    docResources(surface, tier).find((d) => d.uri === DOC_RESOURCE_URIS[0])
+      ?.text,
+  );
+}
+
+function coverageText(): string {
+  return String(
+    docResources("generic", "authenticated").find(
+      (d) => d.uri === DOC_RESOURCE_URIS[1],
+    )?.text,
   );
 }
 
@@ -78,7 +97,7 @@ describe("documentation resources", () => {
     const { resources } = await withClient({ surface: "generic" }, (c) =>
       c.listResources(),
     );
-    for (const doc of DOC_RESOURCES) {
+    for (const doc of docResources("generic", "authenticated")) {
       const listed = resources.find((r) => r.uri === doc.uri);
       expect(listed, doc.uri).toBeDefined();
       expect(listed?.name).toBe(doc.name);
@@ -90,7 +109,7 @@ describe("documentation resources", () => {
   });
 
   it("every listed resource can actually be read", async () => {
-    for (const doc of DOC_RESOURCES) {
+    for (const doc of docResources("generic", "authenticated")) {
       const result = await withClient({ surface: "generic" }, (c) =>
         c.readResource({ uri: doc.uri }),
       );
@@ -113,7 +132,7 @@ describe("documentation resources", () => {
     );
     const uris = resources.map((r) => r.uri);
     expect(uris.some((uri) => uri.startsWith("ui://"))).toBe(true);
-    for (const doc of DOC_RESOURCES) {
+    for (const doc of docResources("generic", "authenticated")) {
       expect(uris).toContain(doc.uri);
     }
   });
@@ -135,7 +154,7 @@ describe("documentation resources", () => {
   });
 
   it("documentation resource uris are unique", () => {
-    const uris = DOC_RESOURCES.map((doc) => doc.uri);
+    const uris = [...DOC_RESOURCE_URIS];
     expect(new Set(uris).size).toBe(uris.length);
   });
 
@@ -164,9 +183,89 @@ describe("documentation resources", () => {
     // Belt and braces for the case above: a tool deleted from the registry
     // outright would also vanish from the surface, but this asserts against the
     // registry so the failure message points at the real cause.
-    const registryNames = new Set(TOOL_REGISTRY.map((t) => t.name));
+    const registryNames = new Set(
+      TOOL_REGISTRY.map((t: { name: string }) => t.name),
+    );
     for (const [, name] of String(guideText()).matchAll(/`(tako_[a-z_]+)`/g)) {
       expect(registryNames, name).toContain(name);
     }
+  });
+
+  it("every parameter the guide names exists on a registered tool", async () => {
+    // The tool-NAME check above missed this class: the guide tells the model to
+    // set `include_contents: true`, and a renamed or removed parameter leaves
+    // that instruction silently wrong. Same failure as a phantom tool, one level
+    // down.
+    const { tools } = await withClient({ surface: "generic" }, (c) =>
+      c.listTools(),
+    );
+    const known = new Set<string>();
+    for (const tool of tools) {
+      const schema = tool.inputSchema as {
+        properties?: Record<string, unknown>;
+      };
+      for (const key of Object.keys(schema?.properties ?? {})) {
+        known.add(key);
+      }
+    }
+    const named = [...guideText().matchAll(/`([a-z][a-z0-9_]*): [^`]+`/g)].map(
+      (m) => m[1] as string,
+    );
+    expect(named.length).toBeGreaterThan(0);
+    for (const param of named) {
+      expect(known, param).toContain(param);
+    }
+  });
+
+  it("the coverage document and the server instructions agree on the domains", () => {
+    // They did not: the instructions listed `weather`, the resource did not, and
+    // the resource added `US government spending` that the instructions lacked.
+    // Both now render DOMAINS.
+    const text = coverageText();
+    for (const domain of DOMAINS) {
+      expect(text, domain.name).toContain(domain.name);
+    }
+    // Both surfaces render DOMAINS, so every name appears in both.
+    for (const domain of DOMAINS) {
+      expect(SERVER_INSTRUCTIONS, domain.name).toContain(domain.name);
+    }
+  });
+
+  it("the chatgpt surface documents the extra tool it registers", async () => {
+    const { tools } = await withClient({ surface: "chatgpt" }, (c) =>
+      c.listTools(),
+    );
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("tako_visualize");
+    expect(guideText("chatgpt", "authenticated")).toContain("tako_visualize");
+    // ...and the generic guide must not promise a tool that surface lacks.
+    expect(guideText("generic", "authenticated")).not.toContain(
+      "tako_visualize",
+    );
+  });
+
+  it("only the anonymous guide describes the anonymous gate", () => {
+    expect(guideText("generic", "free")).toContain("anonymous");
+    expect(guideText("generic", "authenticated")).not.toContain(
+      "This connection is anonymous",
+    );
+  });
+
+  it("a uri collision throws instead of dropping the document", () => {
+    const server = createMcpServer(ctx, { surface: "generic" });
+    // Re-registering into a set that already claims the URI is a programming
+    // error, not a case to absorb silently.
+    expect(() =>
+      registerDocResources(
+        server,
+        new Set([DOC_RESOURCE_URIS[0]]),
+        "generic",
+        "authenticated",
+      ),
+    ).toThrow(/already registered/);
+  });
+
+  it("the freshness claim has one definition", () => {
+    expect(guideText()).toContain(FRESHNESS);
   });
 });

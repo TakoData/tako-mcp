@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Env } from "./env.js";
 import worker from "./index.js";
 import { SERVER_VERSION } from "./mcp.js";
-import { DOC_RESOURCES } from "./resources.js";
+import { DOC_RESOURCE_URIS } from "./resources.js";
 
 // Valid RFC 6750 b64token — any non-empty ASCII token works for these tests
 // because `extractBearer` only validates shape, not value. Django's the one
@@ -240,7 +240,9 @@ describe("worker routing", () => {
         });
         expect(res.status).toBe(204);
         expect(res.headers.get("access-control-allow-origin")).toBe("*");
-        expect(res.headers.get("access-control-allow-methods")).toContain("POST");
+        expect(res.headers.get("access-control-allow-methods")).toContain(
+          "POST",
+        );
         expect(res.headers.get("access-control-allow-headers")).toContain(
           "Content-Type",
         );
@@ -562,7 +564,10 @@ describe("worker routing", () => {
     const takoVisualizeTool = body.result.tools.find(
       (t) => t.name === "tako_visualize",
     );
-    expect(takoVisualizeTool, "tako_visualize must be on the chatgpt default surface").toBeDefined();
+    expect(
+      takoVisualizeTool,
+      "tako_visualize must be on the chatgpt default surface",
+    ).toBeDefined();
     expect(takoVisualizeTool?._meta).toMatchObject({
       ui: { resourceUri: "ui://tako/embed/chart" },
       "ui/resourceUri": "ui://tako/embed/chart",
@@ -628,19 +633,20 @@ describe("worker routing", () => {
     const res = await SELF.fetch(
       "https://example.com/mcp/chatgpt?tools=agent",
       {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: AUTH_HEADER,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: AUTH_HEADER,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/list",
+          params: {},
+        }),
       },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/list",
-        params: {},
-      }),
-    });
+    );
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -700,7 +706,9 @@ describe("worker routing", () => {
     // `_chart_widget.ts`), and the tool RESULT names no ui resource at all
     // when there is no chart (`mcp.test.ts`), which removes the box outright
     // on any host that decides per call rather than per descriptor.
-    const takoSearchTool = body.result.tools.find((t) => t.name === "tako_search");
+    const takoSearchTool = body.result.tools.find(
+      (t) => t.name === "tako_search",
+    );
     expect(takoSearchTool?._meta).toMatchObject({
       ui: { resourceUri: "ui://tako/embed/chart" },
       "ui/resourceUri": "ui://tako/embed/chart",
@@ -998,13 +1006,20 @@ describe("worker routing", () => {
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
       },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 101, method: "tools/list", params: {} }),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 101,
+        method: "tools/list",
+        params: {},
+      }),
     });
     const body = (await res.json()) as {
       result: {
         tools: Array<{
           name: string;
-          outputSchema?: { properties?: { web_results?: { description?: string } } };
+          outputSchema?: {
+            properties?: { web_results?: { description?: string } };
+          };
         }>;
       };
     };
@@ -1212,7 +1227,7 @@ describe("worker routing", () => {
     const uris = (body.result?.resources ?? []).map(
       (resource) => (resource as { uri: string }).uri,
     );
-    expect(uris).toEqual(DOC_RESOURCES.map((doc) => doc.uri));
+    expect(uris).toEqual([...DOC_RESOURCE_URIS]);
   });
 
   it("POST /mcp resources/list is UA-independent — a claude UA gets the same list", async () => {
@@ -1246,7 +1261,7 @@ describe("worker routing", () => {
     const uris = (body.result?.resources ?? []).map(
       (resource) => (resource as { uri: string }).uri,
     );
-    expect(uris).toEqual(DOC_RESOURCES.map((doc) => doc.uri));
+    expect(uris).toEqual([...DOC_RESOURCE_URIS]);
     expect(uris.some((uri) => uri.startsWith("ui://"))).toBe(false);
   });
 
@@ -1258,11 +1273,19 @@ describe("worker routing", () => {
         accept: "application/json, text/event-stream",
         authorization: AUTH_HEADER,
       },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "prompts/list", params: {} }),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "prompts/list",
+        params: {},
+      }),
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { result?: { prompts: unknown[] }; error?: { code: number } };
+    const body = (await res.json()) as {
+      result?: { prompts: unknown[] };
+      error?: { code: number };
+    };
     // Must NOT be JSON-RPC -32601 "Method not found" — that is the warning
     // Smithery's capability scan surfaces. We expose no prompts, so an empty
     // list is the friendly, spec-clean response.

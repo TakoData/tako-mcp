@@ -1,4 +1,7 @@
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  McpServer,
+  ResourceTemplate,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 // No `.js` suffix — the SDK's package.json `exports` map only exposes
 // `./validation/cfworker`, unlike the other server subpaths which do ship
@@ -37,6 +40,7 @@ import {
 } from "./freetier.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { registerDocResources } from "./resources.js";
+import { DOMAIN_NAMES_INLINE, FRESHNESS } from "./vocabulary.js";
 import { logToolRequestId } from "./tools/_log.js";
 import { parseEnabledOptionalToolNames } from "./tools/_optional.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
@@ -183,7 +187,13 @@ export const SERVER_VERSION = "0.22.2"; // x-release-please-version
  * serve; if misrouting shows up, this hedge is the first thing to restore.
  */
 const SHARED_INSTRUCTION_PARAGRAPHS = [
-  "Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.",
+  // The domain list comes from `vocabulary.ts`, not from prose here. It was
+  // written out in both places and the two had already diverged -- this listed
+  // `weather`, the coverage resource did not, and the resource listed `US
+  // government spending` that this did not. An agent reads both in one session.
+  // Interpolating a complete enumeration after a colon substitutes a
+  // self-contained block, not a vocabulary term mid-sentence.
+  `Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: ${DOMAIN_NAMES_INLINE}.`,
 ];
 
 export const SERVER_INSTRUCTIONS = [
@@ -373,8 +383,7 @@ export function createMcpServer(
       version: SERVER_VERSION,
       title: "Tako",
       websiteUrl: "https://tako.com",
-      description:
-        "Proprietary, continuously-updated live data — plus interactive charts and visualizations — for finance, economics, demographics, prediction markets, and more. Covers the latest reported quarter, same-day market prices, and official releases as they publish.",
+      description: `Proprietary, continuously-updated live data — plus interactive charts and visualizations — for finance, economics, demographics, prediction markets, and more. ${FRESHNESS}`,
       ...(icons !== undefined ? { icons } : {}),
     },
     {
@@ -390,7 +399,9 @@ export function createMcpServer(
   // spec-clean answer. (tools/resources capabilities are auto-registered by the
   // SDK as those modules are registered below.)
   server.server.registerCapabilities({ prompts: {} });
-  server.server.setRequestHandler(ListPromptsRequestSchema, () => ({ prompts: [] }));
+  server.server.setRequestHandler(ListPromptsRequestSchema, () => ({
+    prompts: [],
+  }));
 
   // Dedupe state for `appUiResource` registration — `tako_search` is
   // currently the sole chart-widget owner (registers
@@ -404,16 +415,6 @@ export function createMcpServer(
   const registeredResourceUris = new Set<string>();
   const registeredTemplateNames = new Set<string>();
 
-  // Documentation resources, registered on EVERY instance before the tool loop.
-  // Two jobs: they make `resources/list` non-empty on every surface that
-  // registers no widget — which is now every surface except chatgpt, so the
-  // common path — and registering any resource is what wires the SDK's
-  // resources/* request handlers at all, the reason the hand-rolled empty-list
-  // fallback used to be needed below. An advertised capability that answers with
-  // nothing reads as broken to capability-probing clients and to MCP directory
-  // audits, which is what an external readiness audit scored it as.
-  registerDocResources(server, registeredResourceUris);
-
   // Which tools appear on which surface — and the ChatGPT-only /
   // ChatGPT-excluded / ChatGPT-default-on membership sets — live in
   // `tools/_surface.ts`, shared with `gen-registry.ts` so the
@@ -424,6 +425,16 @@ export function createMcpServer(
   // Empty by default → the default surface excludes every optional tool.
   const enabledOptionalToolNames =
     options.enabledOptionalToolNames ?? new Set<string>();
+
+  // Documentation resources, registered on EVERY instance before the tool loop.
+  // Two jobs: they make `resources/list` non-empty on every surface that
+  // registers no widget — which is now every surface except chatgpt, so the
+  // common path — and registering any resource is what wires the SDK's
+  // resources/* request handlers at all, the reason the hand-rolled empty-list
+  // fallback used to be needed below. An advertised capability that answers with
+  // nothing reads as broken to capability-probing clients and to MCP directory
+  // audits, which is what an external readiness audit scored it as.
+  registerDocResources(server, registeredResourceUris, surface, tier);
 
   for (const tool of TOOL_REGISTRY) {
     // Surface membership (opt-in gate + per-surface filters) is decided
@@ -480,7 +491,9 @@ function pickDeclared(
   schema: AnyToolModule["outputSchema"],
   value: Record<string, unknown>,
 ): Record<string, unknown> {
-  const shape = (schema as unknown as { shape?: Record<string, unknown> } | undefined)?.shape;
+  const shape = (
+    schema as unknown as { shape?: Record<string, unknown> } | undefined
+  )?.shape;
   if (shape === undefined) return value;
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(shape)) {
@@ -537,7 +550,10 @@ export function structuredContentFor(
   output: unknown,
 ): Record<string, unknown> {
   const full = output as Record<string, unknown>;
-  const narrow = (value: Record<string, unknown>, why: string): Record<string, unknown> => {
+  const narrow = (
+    value: Record<string, unknown>,
+    why: string,
+  ): Record<string, unknown> => {
     if (tool.outputSchema === undefined) return value;
     const picked = pickDeclared(tool.outputSchema, value);
     if (tool.outputSchema.safeParse(picked).success) return picked;
@@ -547,7 +563,8 @@ export function structuredContentFor(
     return picked;
   };
 
-  if (tool.slimStructured === undefined) return narrow(full, "no slimStructured hook");
+  if (tool.slimStructured === undefined)
+    return narrow(full, "no slimStructured hook");
   let slim: Record<string, unknown>;
   try {
     slim = tool.slimStructured(output);
@@ -570,7 +587,9 @@ export function structuredContentFor(
   // what ships always matches what was published. Narrowed WITHOUT a re-parse,
   // unlike the degradation paths above: slim has already conformed, and
   // removing keys the schema never declared cannot invalidate it.
-  return tool.outputSchema === undefined ? slim : pickDeclared(tool.outputSchema, slim);
+  return tool.outputSchema === undefined
+    ? slim
+    : pickDeclared(tool.outputSchema, slim);
 }
 
 /**
@@ -910,8 +929,9 @@ function registerTool(
       // monotonic count of polls / steps; `total` and `message` are
       // optional. Errors from the underlying transport are swallowed —
       // a notification failure must NEVER fail the tool call.
-      const progressToken = (extra._meta as { progressToken?: string | number } | undefined)
-        ?.progressToken;
+      const progressToken = (
+        extra._meta as { progressToken?: string | number } | undefined
+      )?.progressToken;
       // Diagnostic: log whether the client included a progressToken on
       // the request. Lets us confirm via `wrangler tail` whether a
       // given client is asking for progress (Claude.ai's TS SDK does
@@ -943,10 +963,7 @@ function registerTool(
           // without progress reset on this client; if the timeout
           // fires, the client will see a clean cancel rather than
           // an opaque transport error.
-          console.error(
-            `sendProgress failed for ${tool.name}:`,
-            err,
-          );
+          console.error(`sendProgress failed for ${tool.name}:`, err);
         }
       };
       // `tier` is stamped from the registration-time value — the SAME one
@@ -1209,7 +1226,8 @@ function registerTool(
             resultMeta = {
               ...(resultMeta ?? {}),
               ui: {
-                ...((resultMeta?.ui as Record<string, unknown> | undefined) ?? {}),
+                ...((resultMeta?.ui as Record<string, unknown> | undefined) ??
+                  {}),
                 resourceUri: resolvedUri,
               },
               "ui/resourceUri": resolvedUri,
@@ -1675,7 +1693,10 @@ export async function handleMcpRequest(
       case "batch":
         return freeTierBatchResponse();
       case "limited":
-        return freeTierLimitResponse(meterResult.requestId, commerceCopyAllowed);
+        return freeTierLimitResponse(
+          meterResult.requestId,
+          commerceCopyAllowed,
+        );
       case "allowed": {
         // Known-but-auth-required tool called anonymously: answer with
         // sign-in guidance instead of letting the SDK say "tool not
@@ -1712,7 +1733,11 @@ export async function handleMcpRequest(
       // The bearer IS a Worker-issued JWT but failed a binding check
       // (wrong audience/issuer/scope/type). Return a clean 401 rather than
       // forwarding it to Django as a raw API key.
-      return oauthChallengeResponse(request, oauth.error, oauth.errorDescription);
+      return oauthChallengeResponse(
+        request,
+        oauth.error,
+        oauth.errorDescription,
+      );
     }
     token = oauth.kind === "ok" ? oauth.takoToken : bearer;
     tier = "authenticated";
@@ -1762,7 +1787,8 @@ export async function handleMcpRequest(
     // tokens are ignored, never fatal. Log the raw value and resolved set so
     // `wrangler tail` shows what a given connector asked for.
     const rawToolsParam = url.searchParams.get("tools");
-    const enabledOptionalToolNames = parseEnabledOptionalToolNames(rawToolsParam);
+    const enabledOptionalToolNames =
+      parseEnabledOptionalToolNames(rawToolsParam);
     if (rawToolsParam !== null) {
       console.log(
         `[mcp] tools param=${JSON.stringify(rawToolsParam)} enabled=${
@@ -1956,7 +1982,8 @@ export async function logSdkValidationRejections(
       );
       const method = typeof call?.method === "string" ? call.method : "unknown";
       const params = call?.params as { name?: unknown } | undefined;
-      const toolName = typeof params?.name === "string" ? params.name : "unknown";
+      const toolName =
+        typeof params?.name === "string" ? params.name : "unknown";
       console.error(
         `[mcp] invalid params (-32602): method=${method} tool=${toolName} error=${
           rejection.error.message ?? ""
