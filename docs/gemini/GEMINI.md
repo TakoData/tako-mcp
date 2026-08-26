@@ -26,7 +26,7 @@ because the same call already searched the web for it.
 | You want | Tool | You get |
 | --- | --- | --- |
 | To see what exists, or a chart | `tako_search` | Data cards with headline values and an inline chart, plus web results with excerpts |
-| The values themselves | `tako_search` with `include_contents: true` | The same cards with each exportable card's most-recent rows inlined (billed per 1k rows) |
+| The values themselves | `tako_contents` on an `exportable: true` card's url | The card's rows, up to 2,000, billed per 1k delivered |
 | To know whether *curated* data exists | `tako_available_data` | Coverage names and a `node_id` to pin. Free and fast, graph only |
 | Full rows, or a web page's text | `tako_contents` | A card's CSV, or any URL's extracted text (pass `query` for just the matching passages). Needs a signed-in connection |
 
@@ -56,8 +56,7 @@ model already synthesizes.)
 ## Anonymous use and authentication
 
 With no credentials, `tako_search` and `tako_available_data` run right away (rate-limited,
-on shared capacity). `tako_contents` stays listed and asks you to sign in when called, as
-does `include_contents: true` on a search.
+on shared capacity). `tako_contents` stays listed and asks you to sign in when called.
 
 Sign in once with `/mcp auth tako` for a browser sign-in under your own account limits; a
 new account gets up to 2,000 free requests. API-key users can instead add an
