@@ -24,11 +24,10 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts. All 
 - Empty also means "not covered in Tako," NOT that the domain has no traffic — don't infer a fact from silence.
 
 ## Pick the tool
-- `tako_answer`: **the default for "how much traffic does <domain> get".** Returns the number in prose with its cited chart attached. This matters more here than anywhere: SimilarWeb is licensed, so a search card carries NO rows. The figure lives in the card's `description` or comes from here.
-- `tako_search`: reach for it when you want **breadth or a chart**, e.g. the ranked top-sites card, a head-to-head embed, or scanning several domains to see which are covered. Its cards are captions, never rows.
+- `tako_search`: **the default for "how much traffic does <domain> get".** One bare-domain query returns the Visits card; SimilarWeb is licensed, so the card carries NO rows on any path — the figure lives in the card's `description` (latest value + % change over the period) and the chart. Also the breadth tool: the ranked top-sites card, a head-to-head embed, or scanning several domains to see which are covered.
 - `tako_available_data`: FREE brand→entity resolver, and the right tool when the question is what Tako covers. Do NOT use it to rule a domain out (see the empty-result bullet).
-- SimilarWeb is a protected source, so EVERY traffic card is read-only: not exportable, no inline preview rows, and `tako_contents` cannot export the CSV. This is a licensing wall, not an error, so never call `tako_contents` on a traffic card. The numbers live in the card's `description` (latest value + % change over the period) and the chart; for one specific figure use `tako_answer`. (Web-result urls remain fetchable.)
-- Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search` (breadth is its job), then one `tako_answer` per domain in parallel and compute growth from the figures.
+- SimilarWeb is a protected source, so EVERY traffic card is read-only: not exportable, no inline rows even under `include_contents: true`, and `tako_contents` cannot export the CSV. This is a licensing wall, not an error, so never call `tako_contents` on a traffic card. The numbers live in the card's `description` (latest value + % change over the period) and the chart. (Web-result urls remain fetchable.)
+- Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search` (breadth is its job), then one narrow single-domain search per domain in parallel and compute growth from each card's `description` figures.
 
 ## Reading a result
 Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
@@ -47,11 +46,11 @@ Field names depend on the response format, so the checks below name the **concep
 - Point at any extra cards by linking their titles to their chart URLs — embed only the top card.
 
 ## Examples
-- Single domain (the common case) → tako_answer {"query": "How many monthly visits does netflix.com get?", "sources": ["data", "web"]} — the figure plus its cited SimilarWeb chart
-- Head-to-head → tako_answer {"query": "How do youtube.com and netflix.com compare on monthly visits?", "sources": ["data", "web"]} → absolute visits come from the per-domain figures, not a comparison card's % change
+- Single domain (the common case) → tako_search {"query": "netflix.com monthly visits", "sources": ["data", "web"]} — the figure (in the card's `description`) plus its SimilarWeb chart
+- Head-to-head → tako_search {"query": "youtube.com vs netflix.com monthly visits", "sources": ["data", "web"]} → absolute visits come from the per-domain cards' figures, not a comparison card's % change
 - Chart or ranking is the deliverable → tako_search {"query": "top websites by visits", "sources": ["data", "web"]} → embed the ranked card
-- App usage → tako_answer {"query": "How many monthly active users does the Spotify app have?", "sources": ["data", "web"]} → say whether you quoted SimilarWeb or company-reported MAU
-- Cohort fan-out → `tako_search` with `"sources": ["data"]` to see which domains are covered, then one `tako_answer` per domain for the figures
+- App usage → tako_search {"query": "Spotify app monthly active users", "sources": ["data", "web"]} → say whether you quoted SimilarWeb or company-reported MAU
+- Cohort fan-out → `tako_search` with `"sources": ["data"]` to see which domains are covered, then read each domain's figure from its card's `description`
 - Brand-shaped ask ("how much traffic does Netflix get?") → resolve to the domain yourself and ask about `netflix.com`; never answer from a subscriber card
 
 ## Output (tight and structured)

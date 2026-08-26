@@ -9,17 +9,18 @@ Leave `sources` at its default unless you have a confirmed reason to narrow it.
 
 How to do it:
 
-- If the question asks for **one specific figure**, call `tako_answer` and relay its
-  `answer` field directly. It is already synthesized and cited, so do not paraphrase away
-  the citation.
+- If the question asks for **one specific figure**, call `tako_search` with one entity and
+  one metric, and `include_contents: true` so the rows arrive with the card. Read the value
+  from the card (its `description` carries the headline) and cite the card's source.
 - If the question is **broad or multi-part**, decompose it into narrow single
   entity + metric searches and fire `tako_search` for each concurrently, then synthesize
   the results yourself. One entity, one metric per call.
 - If you are unsure the curated graph covers the metric, call `tako_available_data` first.
   It is free and returns the exact metric name to use. A miss there is not a dead end: the
   web half of the same search still applies.
-- If `tako_answer` comes back with a `guidance` field saying no data cards grounded the
-  answer, say so plainly and pivot the question. Do not rephrase and retry the same ask.
+- If `tako_search` comes back with zero data cards and a `guidance` field, follow it:
+  the free coverage check, ONE retry on the exact name it returns, then stop and answer
+  from the web results already in the response. Do not rephrase and retry blind.
 - Need the full text behind a web result rather than its excerpt? Call `tako_contents` on
   the url, with `query` set so you get just the matching passages.
 

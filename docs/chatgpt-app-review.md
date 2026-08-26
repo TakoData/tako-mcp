@@ -35,14 +35,14 @@ message the module can emit (`ALL_FREE_TIER_MESSAGES` — a new base message is 
 adding one line there). One suffix is deliberately outside that ban and gated per client
 instead:
 
-- `FREE_TIER_COMMERCE_UPSELL` (`workers/src/freetier.ts`) — "Connecting a Tako account
-  (tako.com) lifts these anonymous-access limits." Appended to the two rate-limit
-  messages and the shared-capacity message ONLY when the caller passes
-  `commerceCopyAllowedForUa` (positively-identified Anthropic clients; fails CLOSED, so
-  ChatGPT-family and every unrecognized UA — reviewers, crawlers, not-yet-classified
-  ChatGPT clients — get the byte-identical base text). Enforced by `freetier.test.ts` →
-  the "commerce-gated upsell" describe (default-off for every producer) and the
-  ChatGPT/unknown e2e byte-identity cases.
+- `FREE_TIER_COMMERCE_UPSELL` (`workers/src/freetier.ts`) — "Sign in with your client's
+  MCP authentication for up to 2,000 free requests on a new account, or connect with a
+  Tako API key (tako.com)." Appended to the two rate-limit messages and the
+  shared-capacity message on the GENERIC surface (`/mcp`) only. The ChatGPT app surface
+  (`/mcp/chatgpt`) never carries it — and never reaches those messages, because it serves
+  no anonymous tier (anonymous requests 401 before admission). Enforced by
+  `freetier.test.ts` → the "commerce-gated upsell" describe (default-off for every
+  producer) and the `/mcp/chatgpt` 401 case in `index.test.ts`.
 
 Two more model-visible strings live OUTSIDE `freetier.ts` and are likewise gated per
 client instead of banned outright (`workers/src/mcp.ts`):
@@ -56,11 +56,11 @@ client instead of banned outright (`workers/src/mcp.ts`):
 - `PAYMENT_REQUIRED_MESSAGE` (+ remedy splice) — an AUTHENTICATED caller's own account out
   of credits (Django 402). Every client gets the factual cause-only message. The remedy
   sentence (spliced from Django's own 402 body — "Upgrade your plan…" / "Add credits…") is
-  commerce copy, so it appears ONLY for positively-identified Anthropic clients:
-  `commerceCopyAllowedForUa` fails CLOSED, sending ChatGPT-family and every unrecognized
-  UA (reviewers, crawlers, not-yet-classified ChatGPT clients) the cause-only text.
-  Enforced by `mcp.test.ts` → "omits ALL remedy copy when commerce copy is not allowed"
-  and the ChatGPT/unknown e2e case in `freetier.test.ts`.
+  commerce copy, so it appears ONLY on the generic surface (`/mcp`): the ChatGPT app
+  surface (`/mcp/chatgpt`) gets the cause-only text, keyed on the request PATH — no
+  User-Agent classification is involved, so a reviewer or crawler cannot land on the
+  wrong side of it. Enforced by `mcp.test.ts` → "omits ALL remedy copy when commerce
+  copy is not allowed" and the `/mcp` vs `/mcp/chatgpt` 402 case in `freetier.test.ts`.
 
 Paid functionality itself is untouched: an authenticated connection behaves exactly as
 before, and `get_credit_balance` (opt-in only, not on the ChatGPT surface) still answers

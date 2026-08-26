@@ -188,7 +188,7 @@
             ]
           },
           "max_rows": {
-            "description": "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (use max_chars).",
+            "description": "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the 20-row default; raise up to 2,000 to export more. Rows are billed per 1,000 delivered. Ignored for web URLs (use max_chars).",
             "type": "integer",
             "minimum": 1,
             "maximum": 2000

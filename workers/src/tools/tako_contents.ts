@@ -147,7 +147,7 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
     .lte(2000)
     .optional()
     .describe(
-      "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the free 20-row default (baseline charge only); raise up to 2,000 to export more, billed per 1,000 rows beyond the free 20. Ignored for web URLs (use max_chars).",
+      "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the 20-row default; raise up to 2,000 to export more. Rows are billed per 1,000 delivered. Ignored for web URLs (use max_chars).",
     ),
   // Web-text character cap, passed through to the wire. The backend default is
   // the FULL page text (up to 1M chars ≈ 250k tokens — observed in the wild and
@@ -232,8 +232,9 @@ const itemSchema = z.object({
   // Present only when the fetched URL differs from the requested one (redirect).
   source_url: z.string().optional(),
   // USD actually charged for this artifact. Web text is metered per page; a
-  // Tako-card CSV bills a per-export baseline plus a per-1,000-row rate on rows
-  // beyond the free 20-row allowance. Surfaced so the agent can report the cost.
+  // Tako-card CSV bills a per-1,000-row rate on every row delivered (the free
+  // row allowance was removed in tako#29572, 2026-08-21). Surfaced so the
+  // agent can report the cost.
   cost: z.number(),
 });
 
