@@ -2,7 +2,7 @@
  * Tests for the `tako_answer` tool.
  *
  * The handler is a single POST + re-parse: it maps the tool input onto
- * the backend's `/api/v1/answer/` request body (v3 SearchRequest shape:
+ * the backend's `/api/v1/answer/` request body (AnswerRequest shape:
  * top-level `query` + a per-source `sources` object, NOT `inputs.text` and
  * NOT the old flat `source_indexes`) and re-validates the response through
  * the output schema. The interesting behavior is:
@@ -19,7 +19,7 @@ import type { ToolContext } from "./types.js";
 import takoAnswer, { buildAnswerBody } from "./tako_answer.js";
 import takoSearch from "./tako_search.js";
 import { APP_UI_RESOURCE_URI } from "./_chart_widget.js";
-import { SearchRequest } from "../generated/schemas.js";
+import { AnswerRequest, SearchRequest } from "../generated/schemas.js";
 import {
   bodyOf,
   jsonResponse,
@@ -141,7 +141,7 @@ describe("tako_answer handler", () => {
     const req = requestFrom(fetchMock.mock.calls[0]);
     expect(req.url).toBe("https://staging.trytako.com/api/v1/answer/");
     const body = await bodyOf(req);
-    // v3 SearchRequest: top-level `query` + per-source `sources` object
+    // AnswerRequest: top-level `query` + per-source `sources` object
     expect(body.query).toBe("What was US GDP in 2024?");
     expect(body.sources).toEqual({
       data: { include_contents: false },
@@ -405,7 +405,28 @@ describe("tako_answer contract guards", () => {
       country_code: "US", locale: "en-US", strict: false,
     });
     // The generated backend contract must accept the reshaped body.
-    expect(() => SearchRequest.parse(body)).not.toThrow();
+    expect(() => AnswerRequest.parse(body)).not.toThrow();
+  });
+
+  it("types the answer body against the component that carries output_schema", () => {
+    // TakoData/tako#29604 SPLIT /v1/answer off SearchRequest so it could carry
+    // `output_schema`. The `satisfies` in buildAnswerBody could not catch that:
+    // SearchRequest stayed valid for /v3/search, so the old name kept compiling
+    // against the wrong endpoint's contract. These two halves are what a split
+    // cannot slip past.
+
+    // Compile-time half: stops typechecking if buildAnswerBody is re-pointed at
+    // a component with no `output_schema` key.
+    type BodyKeys = keyof ReturnType<typeof buildAnswerBody>;
+    const carriesOutputSchema: "output_schema" extends BodyKeys ? true : false = true;
+    expect(carriesOutputSchema).toBe(true);
+
+    // Runtime half: proves the compile-time check is not vacuous — the two
+    // components really do differ, and both are .strict(), so the field is a
+    // 400 on /v3/search and accepted on /v1/answer.
+    const withSchema = { query: "US GDP", output_schema: { type: "object" } };
+    expect(() => AnswerRequest.parse(withSchema)).not.toThrow();
+    expect(() => SearchRequest.parse(withSchema)).toThrow();
   });
 
   it("documents the snippet contract on the ADVERTISED output schema", () => {
@@ -438,7 +459,7 @@ describe("tako_answer contract guards", () => {
     expect(body.sources?.web).toMatchObject({ highlights: true });
     // And the key has to exist in the contract: sources.web is extra="forbid",
     // so an unknown key is a 400 on every web answer, not a soft degrade.
-    expect(() => SearchRequest.parse(body)).not.toThrow();
+    expect(() => AnswerRequest.parse(body)).not.toThrow();
   });
 });
 
