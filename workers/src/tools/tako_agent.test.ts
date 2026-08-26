@@ -91,7 +91,7 @@ describe("tako_agent", () => {
     vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_2", status: "queued" });
     vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_2", status: "failed", error: { code: "x", message: "boom" } });
 
-    const handlerPromise = tool.handler({ query: "q", sources: ["tako"] }, ctx);
+    const handlerPromise = tool.handler({ query: "q", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
@@ -141,14 +141,16 @@ describe("tako_agent input schema", () => {
     expect(parsed.sources).toEqual(["data", "web"]);
   });
 
-  it("accepts web, data, and the legacy tako synonym", () => {
+  it("accepts web and data", () => {
     expect(tool.inputSchema.parse({ query: "q", sources: ["web"] }).sources).toEqual(["web"]);
     expect(tool.inputSchema.parse({ query: "q", sources: ["data", "web"] }).sources).toEqual([
       "data",
       "web",
     ]);
-    // "tako" is still accepted on input (folded onto "data" at the reshape).
-    expect(tool.inputSchema.parse({ query: "q", sources: ["tako"] }).sources).toEqual(["tako"]);
+  });
+
+  it('rejects the retired "tako" source alias', () => {
+    expect(tool.inputSchema.safeParse({ query: "q", sources: ["tako"] }).success).toBe(false);
   });
 
   it("rejects an empty sources array", () => {
@@ -166,8 +168,8 @@ describe("tako_agent contract guards", () => {
     expect(parsed.sources).toEqual(["data", "web"]);
   });
 
-  it("folds the legacy \"tako\" synonym onto \"data\" in source_indexes", () => {
-    const body = buildAgentBody(tool.inputSchema.parse({ query: "x", sources: ["tako"] }));
+  it("passes the sources array straight through to source_indexes", () => {
+    const body = buildAgentBody(tool.inputSchema.parse({ query: "x", sources: ["data"] }));
     expect(body.source_indexes).toEqual(["data"]);
   });
 
@@ -188,7 +190,7 @@ describe("tako_agent wire-drift guard", () => {
       output: { answer: "42", cards: [] }, // wrong key — backend drift
     } as never);
 
-    const handlerPromise = tool.handler({ query: "drift test", sources: ["tako"] }, ctx);
+    const handlerPromise = tool.handler({ query: "drift test", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     await expect(handlerPromise).rejects.toThrow(/drifted from the backend contract.*result/);
   });
@@ -201,7 +203,7 @@ describe("tako_agent wire-drift guard", () => {
       // run_id absent
     } as never);
 
-    const handlerPromise = tool.handler({ query: "no run_id", sources: ["tako"] }, ctx);
+    const handlerPromise = tool.handler({ query: "no run_id", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     await expect(handlerPromise).rejects.toThrow(/drifted from the backend contract/);
   });
@@ -214,7 +216,7 @@ describe("tako_agent wire-drift guard", () => {
       .mockResolvedValueOnce({ run_id: "run_inflight", status: "running" }) // still no result
       .mockResolvedValueOnce({ run_id: "run_inflight", status: "completed", result: { answer: "done", cards: [] } });
 
-    const handlerPromise = tool.handler({ query: "in-flight test", sources: ["tako"] }, ctx);
+    const handlerPromise = tool.handler({ query: "in-flight test", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
     expect(out.status).toBe("completed");
@@ -228,7 +230,7 @@ describe("tako_agent wire-drift guard", () => {
       .mockResolvedValueOnce({ run_id: "run_queued_inf", status: "queued" }) // no result, no created_at — bare queued response
       .mockResolvedValueOnce({ run_id: "run_queued_inf", status: "completed", result: null }); // completed with null result is fine
 
-    const handlerPromise = tool.handler({ query: "queued test", sources: ["tako"] }, ctx);
+    const handlerPromise = tool.handler({ query: "queued test", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
     expect(out.status).toBe("completed");
@@ -247,7 +249,7 @@ describe("tako_agent wire-drift guard", () => {
       result: { answer: "x", cards: [], citations: [{ index: 1 }] }, // title missing
     } as never);
 
-    const handlerPromise = tool.handler({ query: "citation drift", sources: ["tako"] }, ctx);
+    const handlerPromise = tool.handler({ query: "citation drift", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     await expect(handlerPromise).rejects.toThrow(/drifted from the backend contract.*result shape mismatch/);
   });

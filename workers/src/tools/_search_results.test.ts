@@ -433,7 +433,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   });
 
   it("treats the legacy \"tako\" source alias as data", () => {
-    const out = buildSearchOutput([], [], "req-6", null, ENV, ["tako"]);
+    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"]);
     expect(out.guidance).toMatch(/node_id/);
   });
 
@@ -759,7 +759,7 @@ describe("zero-card guidance routes back to tako_answer, not tako_contents", () 
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
   it("names tako_answer's retry and warns off tako_contents", () => {
-    for (const sources of [["data", "web"], ["data"]]) {
+    for (const sources of [["data", "web"], ["data"]] as ReadonlyArray<Array<"data" | "web">>) {
       const g = buildSearchOutput([], [], "req", null, ENV, sources).guidance ?? "";
       expect(g).toContain("tako_available_data");
       expect(g).toContain("strict:true");

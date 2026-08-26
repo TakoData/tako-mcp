@@ -691,12 +691,10 @@ export type SearchOutput = {
 };
 
 // Which sources a search actually hit, for tailoring zero-result guidance.
-// "tako" is a legacy alias for "data" (see tako_search's sources enum).
 // searchedData is exported for tako_answer's data-gap guidance gate — one
 // definition of "did this request search the data source" across both tools.
-type SearchedSources = readonly string[];
-export const searchedData = (s: SearchedSources): boolean =>
-  s.includes("data") || s.includes("tako");
+export type SearchedSources = ReadonlyArray<"data" | "web">;
+export const searchedData = (s: SearchedSources): boolean => s.includes("data");
 const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
 
 /**
@@ -1010,7 +1008,7 @@ export function buildSearchOutput(
   requestId: string,
   usage: Usage | null,
   env: Env,
-  searchedSources: readonly string[],
+  searchedSources: SearchedSources,
 ): SearchOutput {
   // Order before anything reads cards[0]: the widget/pub_id fields below lift
   // the TOP card, so the chart the host renders follows the same ordering the

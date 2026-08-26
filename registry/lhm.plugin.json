@@ -158,15 +158,14 @@
               "data",
               "web"
             ],
-            "description": "Source(s) to search. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. (\"tako\" is a legacy synonym for \"data\".)",
+            "description": "Source(s) to search. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph.",
             "minItems": 1,
             "type": "array",
             "items": {
               "type": "string",
               "enum": [
                 "data",
-                "web",
-                "tako"
+                "web"
               ]
             }
           },

@@ -1841,7 +1841,7 @@ describe("stringified array arguments survive SDK input validation", () => {
     // thing to pin; "sources" alone would also match an unrelated path.
     expect(text).toContain("invalid_value");
     expect(text).toContain('"sources"');
-    expect(text).toMatch(/"data",\s*"web",\s*"tako"/);
+    expect(text).toMatch(/"data",\s*"web"/);
     // Rejection has to happen at validation. If coercion ever widened the enum,
     // this call would bill a live upstream request instead of failing.
     expect(fetchMock).not.toHaveBeenCalled();

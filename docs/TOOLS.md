@@ -79,7 +79,7 @@ Parameters:
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `query` | string | yes |  | The deep/analytical question for the agent to work through. |
-| `sources` | array | no | `["data","web"]` | Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph. ("tako" is a legacy synonym for "data".) |
+| `sources` | array | no | `["data","web"]` | Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph. |
 | `thread_id` | string | no |  | Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread. |
 
 Fixed request inputs (the caller cannot change these):
@@ -112,15 +112,14 @@ Annotations:
         "data",
         "web"
       ],
-      "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph. (\"tako\" is a legacy synonym for \"data\".)",
+      "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph.",
       "minItems": 1,
       "type": "array",
       "items": {
         "type": "string",
         "enum": [
           "data",
-          "web",
-          "tako"
+          "web"
         ]
       }
     },
@@ -164,7 +163,7 @@ Parameters:
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `query` | string | yes |  | Natural-language question to answer (e.g. "What was US GDP in 2024?"). Website-traffic data is keyed by domain — ask about "openai.com monthly visits", not "OpenAI website visits". |
-| `sources` | array | no | `["data","web"]` | Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".) |
+| `sources` | array | no | `["data","web"]` | Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. |
 | `include_contents` | boolean | no | `false` | Set true to inline each cited data card's recent rows alongside the answer (`preview_rows` caps how many; rows are billed per 1k) — the values arrive with the prose, no follow-up fetch. Leave false (the default) for prose + citations only. DATA cards only; cited web pages are never auto-inlined (billed per page — use tako_contents). |
 | `preview_rows` | integer | no | `20` | Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default 20; rows are billed per 1k). For more rows, call tako_contents on the card's url (max_rows up to 2,000, billed per 1k rows). Ignored when include_contents is false. |
 | `country_code` | string | no | `"US"` | ISO country code for localized results. |
@@ -200,15 +199,14 @@ Annotations:
         "data",
         "web"
       ],
-      "description": "Source(s) to ground in. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. (\"tako\" is a legacy synonym for \"data\".)",
+      "description": "Source(s) to ground in. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph.",
       "minItems": 1,
       "type": "array",
       "items": {
         "type": "string",
         "enum": [
           "data",
-          "web",
-          "tako"
+          "web"
         ]
       }
     },
@@ -593,7 +591,7 @@ Parameters:
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `query` | string | yes |  | Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits". |
-| `sources` | array | no | `["data","web"]` | Source(s) to search. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".) |
+| `sources` | array | no | `["data","web"]` | Source(s) to search. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. |
 | `effort` | string ("fast" \\| "instant") | no |  | Search effort: "fast" (default) or "instant" (fastest, serves cached embeds as-is). Omit for fast. |
 | `count` | integer | no | `10` | Maximum number of results to return per source (1-20). |
 | `include_contents` | boolean | no | `false` | Set true to inline each Tako card's most-recent rows (`preview_rows` caps how many; rows are billed per 1k) — do this when you need the values themselves. Leave false (the default) for recon and fan-outs: cards still carry headline values and chart links. DATA source only; web page text is never auto-inlined (billed per page — use tako_contents). Requires a signed-in connection; anonymous calls that set this are refused with sign-in instructions. |
@@ -632,15 +630,14 @@ Annotations:
         "data",
         "web"
       ],
-      "description": "Source(s) to search. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. (\"tako\" is a legacy synonym for \"data\".)",
+      "description": "Source(s) to search. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph.",
       "minItems": 1,
       "type": "array",
       "items": {
         "type": "string",
         "enum": [
           "data",
-          "web",
-          "tako"
+          "web"
         ]
       }
     },

@@ -75,11 +75,11 @@ const inputSchema = z.object({
   // which contains a comma. See _loose_array.ts.
   sources: looseArray(
     z
-      .array(z.enum(["data", "web", "tako"]))
+      .array(z.enum(["data", "web"]))
       .min(1)
       .default(["data", "web"])
       .describe(
-        'Source(s) to search. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)',
+        'Source(s) to search. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph.',
       ),
     { field: "tako_search.sources", commaSeparated: true },
   ),
@@ -169,7 +169,7 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
   // Typed against the contract (not Record<string, …>) so a renamed/added
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
-  if (input.sources.includes("data") || input.sources.includes("tako")) {
+  if (input.sources.includes("data")) {
     const data: NonNullable<
       NonNullable<z.input<typeof SearchRequest>["sources"]>["data"]
     > = { count: input.count, include_contents: input.include_contents };

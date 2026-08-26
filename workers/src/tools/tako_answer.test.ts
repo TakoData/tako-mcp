@@ -169,7 +169,7 @@ describe("tako_answer handler", () => {
     ]);
 
     const out = await takoAnswer.handler(
-      { query: "obscure query", sources: ["tako"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
+      { query: "obscure query", sources: ["data"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
 
@@ -183,7 +183,7 @@ describe("tako_answer handler", () => {
     mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     const out = await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
+      { query: "test", sources: ["data"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
       CTX,
     ) as Record<string, unknown>;
 
@@ -202,7 +202,7 @@ describe("tako_answer handler", () => {
     ]);
 
     await expect(
-      takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false }, CTX),
+      takoAnswer.handler({ query: "q", sources: ["data", "web"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false }, CTX),
     ).rejects.toThrow(/unexpected wire shape/);
   });
 });
@@ -348,7 +348,7 @@ describe("tako_answer input schema", () => {
   it("accepts the legacy \"tako\" synonym and folds it onto the data key", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
     await takoAnswer.handler(
-      { query: "q", sources: ["tako"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
+      { query: "q", sources: ["data"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
@@ -371,7 +371,7 @@ describe("tako_answer input schema", () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, preview_rows: 50, country_code: "GB", locale: "en-GB", strict: false },
+      { query: "test", sources: ["data"], include_contents: false, preview_rows: 50, country_code: "GB", locale: "en-GB", strict: false },
       CTX,
     );
 
@@ -746,5 +746,12 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
       CTX,
     );
     expect(out.guidance).toBeUndefined();
+  });
+});
+
+describe("tako_answer sources enum", () => {
+  it('rejects the retired "tako" source alias', () => {
+    expect(takoAnswer.inputSchema.safeParse({ query: "q", sources: ["tako"] }).success).toBe(false);
+    expect(takoAnswer.inputSchema.safeParse({ query: "q", sources: ["data"] }).success).toBe(true);
   });
 });

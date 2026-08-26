@@ -51,7 +51,7 @@ const CTX: ToolContext = {
 // bulk of the request-mapping tests exercise the pointers-only path — the
 // default-true + row-preview behavior is covered by its own tests below.
 const DEFAULTS = {
-  sources: ["data"] as ("data" | "web" | "tako")[],
+  sources: ["data"] as ("data" | "web")[],
   count: 10,
   include_contents: false,
   preview_rows: 20,
@@ -152,9 +152,9 @@ describe("tako_search input schema", () => {
     ).toBeUndefined();
   });
 
-  it("accepts the legacy \"tako\" synonym in the sources enum", () => {
-    const parsed = tako_search.inputSchema.safeParse({ query: "x", sources: ["tako"] });
-    expect(parsed.success).toBe(true);
+  it('rejects the retired "tako" source alias', () => {
+    expect(tako_search.inputSchema.safeParse({ query: "x", sources: ["tako"] }).success).toBe(false);
+    expect(tako_search.inputSchema.safeParse({ query: "x", sources: ["data"] }).success).toBe(true);
   });
 
   it("defaults preview_rows to INLINE_PREVIEW_ROW_CAP and bounds it at 1..MAX_PREVIEW_ROWS", () => {
@@ -231,7 +231,7 @@ describe("tako_search request body", () => {
       jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
     ]);
 
-    await tako_search.handler({ query: "x", ...DEFAULTS, sources: ["tako"] }, CTX);
+    await tako_search.handler({ query: "x", ...DEFAULTS, sources: ["data"] }, CTX);
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
     expect(body.sources).toEqual({ data: { count: 10, include_contents: false } });
