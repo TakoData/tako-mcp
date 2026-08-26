@@ -5,7 +5,6 @@ const KNOWN: ReadonlySet<string> = new Set([
   "tako_search",
   "tako_contents",
   "tako_agent",
-  "tako_credit_balance",
 ]);
 
 describe("parseToolsParam", () => {
@@ -27,9 +26,6 @@ describe("parseToolsParam", () => {
   it("accepts names without the tako_ prefix", () => {
     expect(parseToolsParam("search,contents", KNOWN)).toEqual(
       new Set(["tako_search", "tako_contents"]),
-    );
-    expect(parseToolsParam("credit_balance", KNOWN)).toEqual(
-      new Set(["tako_credit_balance"]),
     );
   });
 

@@ -77,9 +77,7 @@ client instead of banned outright (`workers/src/mcp.ts`):
   wrong side of it. Enforced by `mcp.test.ts` → "omits ALL remedy copy when commerce
   copy is not allowed" and the `/mcp` vs `/mcp/chatgpt` 402 case in `freetier.test.ts`.
 
-Paid functionality itself is untouched: an authenticated connection behaves exactly as
-before, and `tako_credit_balance` (not on the ChatGPT surface) still answers
-account questions when a user asks one.
+Paid functionality on the ChatGPT surface is untouched.
 
 ## 2. No internal identifiers in tool responses
 

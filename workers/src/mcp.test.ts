@@ -847,7 +847,6 @@ describe("free-tier tool surface", () => {
     const expected = [
       "tako_available_data",
       "tako_contents",
-      "tako_credit_balance",
       "tako_graph_related",
       "tako_search",
     ];
@@ -947,14 +946,13 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
         ],
       },
     ],
-    // Both became DEFAULT-listed in the allowlist pass, so both are new
-    // anonymous surface: listed (the listing is auth-invariant, spec D4) but
-    // outside FREE_TIER_TOOL_NAMES, so each owes the same sign-in result.
+    // tako_graph_related became DEFAULT-listed in the allowlist pass, so it is
+    // listed on the anonymous surface (the listing is auth-invariant, spec D4)
+    // but remains outside FREE_TIER_TOOL_NAMES and owes the same sign-in result.
     // Covered here rather than only in `scripts/smoke.ts`, which needs a
     // deployed target with free-tier bindings — `wrangler dev` has none, so
     // its anonymous block skips and the assertion never runs locally.
     ["tako_graph_related", { node_id: "ent::anthropic::1" }],
-    ["tako_credit_balance", {}],
   ] as const)(
     "anonymous generic call to %s returns the www_authenticate challenge WITHOUT executing",
     async (name, args) => {
@@ -968,7 +966,6 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
             "tako_visualize",
             "tako_contents",
             "tako_graph_related",
-            "tako_credit_balance",
           ]),
           requestOrigin: "https://mcp.example.com",
         },

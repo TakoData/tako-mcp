@@ -68,12 +68,11 @@ Two path-selected surfaces, no User-Agent sniffing (`workers/src/surface.ts`): `
 2. `tako_contents` — Fetch underlying content (CSV or text) behind a result URL. Requires a signed-in connection. Default.
 3. `tako_available_data` — Find **what proprietary, structured data exists** on an entity or metric, and confirm a specific figure exists (and its exact name) before spending a priced `tako_search`. Summarizes the available metrics in one free call. Each match carries a `node_id` to pin into a follow-up `tako_search`. Default.
 4. `tako_graph_related` — Explore a node's relations (metrics, entities, `rel:competes_with`, `part_of`, `members`, sources) with `q` filtering and cursor paging. Drill into a node `tako_available_data` already resolved. Default.
-5. `tako_credit_balance` — Current credit balance. Default.
-6. `tako_answer` — Get **one** synthesized, citation-backed prose answer to a specific data question. Opt-in, and not recommended: the host model already synthesizes from search results.
-7. `tako_agent` — Answer Agent for multi-step data questions (~30–90s, polled). Opt-in; off the chatgpt surface, which sends no progressToken.
-8. `tako_visualize` — Create an embeddable chart/card from your own structured data. Opt-in on `/mcp`, listed by default on `/mcp/chatgpt`, the host that renders the widget inline.
+5. `tako_answer` — Get **one** synthesized, citation-backed prose answer to a specific data question. Opt-in, and not recommended: the host model already synthesizes from search results.
+6. `tako_agent` — Answer Agent for multi-step data questions (~30–90s, polled). Opt-in; off the chatgpt surface, which sends no progressToken.
+7. `tako_visualize` — Create an embeddable chart/card from your own structured data. Opt-in on `/mcp`, listed by default on `/mcp/chatgpt`, the host that renders the widget inline.
 
-Items 6-8 are opt-in: name the tool in `?tools=` (an allowlist that replaces the defaults; see `workers/src/tools/_tools_param.ts` and `_surface.ts`). The generated reference is `docs/TOOLS.md`; `registry:check` fails when it is stale.
+Items 5-7 are opt-in: name the tool in `?tools=` (an allowlist that replaces the defaults; see `workers/src/tools/_tools_param.ts` and `_surface.ts`). The generated reference is `docs/TOOLS.md`; `registry:check` fails when it is stale.
 
 ### Endpoints
 

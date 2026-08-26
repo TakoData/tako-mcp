@@ -293,7 +293,6 @@ The full reference — every description and parameter exactly as the model sees
 | `tako_available_data` | **Find what structured data exists** on an entity or metric in one free call — the exact metric name, a `node_id` to pin, and a ready-to-run `next_call`. |
 | `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows (billed per 1k rows) or a web page's text — pass `query` for just the matching passages. Requires a signed-in connection. |
 | `tako_graph_related` | Explore a graph node: its metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. Free. |
-| `tako_credit_balance` | The connected account's credit balance. |
 
 **Anonymous connections (no credentials):** the tool list is the same — it never changes with auth state. `tako_search` and `tako_available_data` run anonymously (rate-limited, on shared capacity); the others answer with sign-in instructions.
 
@@ -633,7 +632,7 @@ The Worker extracts the Bearer (or OAuth-derived) token, validates the MCP reque
 <details>
 <summary><b>Breaking changes</b></summary>
 
-- **`?tools=` now replaces the default listing instead of adding to it** (tokens are tool names, e.g. `?tools=search,contents,agent`). `tako_graph_search`, `tako_graph_node`, `tako_agent_start`, and `tako_agent_wait` were removed; `get_credit_balance` is now `tako_credit_balance`; `tako_graph_related` and `tako_credit_balance` are listed by default. See [`docs/TOOLS.md`](docs/TOOLS.md).
+- **`?tools=` now replaces the default listing instead of adding to it** (tokens are tool names, e.g. `?tools=search,contents,agent`). `tako_graph_search`, `tako_graph_node`, `tako_agent_start`, `tako_agent_wait`, `get_credit_balance`, and `tako_credit_balance` were removed; `tako_graph_related` is listed by default. See [`docs/TOOLS.md`](docs/TOOLS.md).
 - **The ChatGPT app surface no longer serves the Answer Agent in any form.** `https://mcp.tako.com/mcp/chatgpt?tools=agent` was the documented way to reach it; that URL now serves the fixed five-tool listing, because `?tools=` is ignored on `/mcp/chatgpt`. `https://mcp.tako.com/mcp?tools=search,available_data,agent` registers `tako_agent` for a ChatGPT developer-mode connector, but ChatGPT's ~60 s per-call ceiling cannot hold a 30–90 s run, so treat it as unsupported rather than a replacement. The agent returns to ChatGPT as reviewed app functionality, not as a hidden opt-in.
 
 **v0.3.0:**

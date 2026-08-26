@@ -14,15 +14,14 @@ Default listing:
 
 - `tako_available_data`
 - `tako_contents`
-- `tako_credit_balance`
 - `tako_graph_related`
 - `tako_search`
 
 Opt-in (name them in `?tools=`):
 
-- `tako_agent` — `?tools=available_data,contents,credit_balance,graph_related,search,agent`
-- `tako_answer` — `?tools=available_data,contents,credit_balance,graph_related,search,answer`
-- `tako_visualize` — `?tools=available_data,contents,credit_balance,graph_related,search,visualize`
+- `tako_agent` — `?tools=available_data,contents,graph_related,search,agent`
+- `tako_answer` — `?tools=available_data,contents,graph_related,search,answer`
+- `tako_visualize` — `?tools=available_data,contents,graph_related,search,visualize`
 
 Server instructions (authenticated):
 
@@ -450,41 +449,6 @@ Annotations:
       "minLength": 1
     }
   }
-}
-```
-</details>
-
-### tako_credit_balance
-
-**Tako: Credit Balance**
-
-- Listed by default on: `/mcp`
-- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
-
-Description:
-
-Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.
-
-Parameters:
-
-_none_
-
-Fixed request inputs (the caller cannot change these):
-
-_none_
-
-Annotations:
-
-- `/mcp`: title: Tako: Credit Balance; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-- `/mcp/chatgpt`: title: Tako: Credit Balance; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-
-<details><summary>Published input schema (JSON Schema)</summary>
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {}
 }
 ```
 </details>

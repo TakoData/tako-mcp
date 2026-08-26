@@ -12,10 +12,10 @@ import { describe, expect, it } from "vitest";
 import { TOOL_REGISTRY } from "./_registry.js";
 import { TOOL_NAME_PREFIX } from "./_tools_param.js";
 
-// Closed-domain tools per the MCP spec: tako_visualize renders data the caller
-// already supplied; tako_credit_balance reads Tako's own account state. Every
-// other tool reaches the open world (web + the live data graph).
-const CLOSED_WORLD = new Set(["tako_visualize", "tako_credit_balance"]);
+// Closed-domain tool per the MCP spec: tako_visualize renders data the caller
+// already supplied. Every other tool reaches the open world (web + the live
+// data graph).
+const CLOSED_WORLD = new Set(["tako_visualize"]);
 
 describe("tool annotations", () => {
   it("every tool declares all three hints explicitly (booleans)", () => {

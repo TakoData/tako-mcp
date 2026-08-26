@@ -60,7 +60,6 @@ export const MCP_TOOL_ALLOWLIST = [
   "tako_answer",
   "tako_available_data",
   "tako_contents",
-  "tako_credit_balance",
   "tako_graph_related",
   "tako_search",
   "tako_visualize",
