@@ -11,6 +11,23 @@
 export const TOOL_NAME_PREFIX = "tako_";
 
 /**
+ * Read `?tools=` off a request URL, joining REPEATED params rather than
+ * taking the first. `searchParams.get` returns only the first value, and
+ * under allowlist semantics that silently narrows the surface: a connector
+ * emitting `?tools=agent&tools=visualize` — repeated params are a normal URL
+ * idiom that some config UIs and URL builders produce — registers
+ * `tako_agent` alone and loses the defaults its own description names.
+ *
+ * `getAll` returns `[]` for an absent param, so `|| null` preserves the
+ * "absent → defaults" branch {@link parseToolsParam} keys on. A
+ * present-but-empty `?tools=` collapses to `null` too; it reached the same
+ * defaults before, via `parseToolsParam("")`.
+ */
+export function readToolsParam(url: URL): string | null {
+  return url.searchParams.getAll("tools").join(",") || null;
+}
+
+/**
  * Resolve a raw `?tools=` value into the set of tool names to register, or
  * `null` for "use the defaults".
  *

@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   FREE_TIER_SERVER_INSTRUCTIONS,
   SERVER_INSTRUCTIONS,
+  serverInstructionsForTier,
 } from "../instructions.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 import { isToolOnSurface, resolveToolSet } from "./_surface.js";
@@ -152,4 +153,60 @@ describe("server instructions name no tool a connection may not have", () => {
       expect(unreachable, `${label} names unreachable tools`).toEqual([]);
     });
   }
+});
+
+/**
+ * The block above pins the UNFILTERED constants against the cross-surface
+ * default set, which passes only because `tako_search`,
+ * `tako_available_data` and `tako_contents` are default on both surfaces.
+ * It says nothing about `?tools=`, and `?tools=` REPLACES the default listing
+ * (spec D1) — so `?tools=agent` used to serve a system prompt naming three
+ * tools the connection had not registered. This block is the derived guard:
+ * for any allowlist, every tool the instructions name must be in the set the
+ * request actually registers.
+ */
+describe("server instructions name no tool outside the resolved ?tools= set", () => {
+  const allowlists: ReadonlySet<string>[] = [
+    new Set(["tako_agent"]),
+    new Set(["tako_search"]),
+    new Set(["tako_search", "tako_contents"]),
+    new Set(["tako_visualize", "tako_credit_balance"]),
+    new Set(["tako_search", "tako_available_data", "tako_contents"]),
+  ];
+
+  for (const requested of allowlists) {
+    const label = [...requested].join(",");
+    for (const tier of ["authenticated", "free"] as const) {
+      it(`?tools=${label} (${tier}) names only what it registers`, () => {
+        const resolved = resolveToolSet("generic", requested);
+        const text = serverInstructionsForTier(tier, resolved);
+        const named = foreignToolNamesIn(text, "");
+        const phantom = named.filter((name) => !resolved.has(name));
+        expect(phantom, `instructions for ?tools=${label}`).toEqual([]);
+      });
+    }
+  }
+
+  it("a single-tool allowlist that names no instruction tool keeps the shared paragraph", () => {
+    // The fallback must stay non-empty: an empty `instructions` would drop
+    // the routing guidance that makes hosts reach for Tako at all.
+    const text = serverInstructionsForTier(
+      "authenticated",
+      resolveToolSet("generic", new Set(["tako_agent"])),
+    );
+    expect(foreignToolNamesIn(text, "")).toEqual([]);
+    expect(text).toContain("proprietary live-data graph");
+  });
+
+  it("the default listing still names all three, unfiltered", () => {
+    // Guards the other direction: over-filtering would silently strip
+    // guidance from every default connection.
+    const resolved = resolveToolSet("generic", null);
+    expect(serverInstructionsForTier("authenticated", resolved)).toBe(
+      SERVER_INSTRUCTIONS,
+    );
+    expect(serverInstructionsForTier("free", resolved)).toBe(
+      FREE_TIER_SERVER_INSTRUCTIONS,
+    );
+  });
 });

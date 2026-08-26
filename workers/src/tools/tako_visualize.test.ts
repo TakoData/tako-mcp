@@ -10,6 +10,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
+import {
+  DEFAULT_DARK_MODE,
+  DEFAULT_HEIGHT,
+  DEFAULT_WIDTH,
+} from "./_chart_widget.js";
 import takoVisualize, { buildVisualizeBody, COMPONENT_TYPES } from "./tako_visualize.js";
 import { CreateCardRequest, ThinVizCard } from "../generated/schemas.js";
 import {
@@ -477,5 +482,32 @@ describe("tako_visualize request contract guard (buildVisualizeBody)", () => {
     expect("image_ttl_minutes" in body).toBe(false);
     // Body still passes the contract
     expect(() => CreateCardRequest.parse(body)).not.toThrow();
+  });
+});
+
+describe("tako_visualize fixedInputs pin the render constants", () => {
+  // These rows are the one set in the tree that `fixed_inputs_drift.test.ts`
+  // cannot check: they name chart-URL render settings, not request fields, so
+  // there is no request body to read them back from. Pin them to the constants
+  // the handler actually applies, or `docs/TOOLS.md` publishes a width the
+  // cards do not use.
+  const declared = new Map(
+    takoVisualize.fixedInputs.map((f) => [f.field, f.value] as const),
+  );
+
+  it("declares exactly the three chart-url rows", () => {
+    expect([...declared.keys()]).toEqual([
+      "chart url dark_mode",
+      "chart url width",
+      "chart url height (when omitted)",
+    ]);
+  });
+
+  it("matches DEFAULT_DARK_MODE, DEFAULT_WIDTH and DEFAULT_HEIGHT", () => {
+    expect(JSON.parse(declared.get("chart url dark_mode") as string)).toBe(DEFAULT_DARK_MODE);
+    expect(JSON.parse(declared.get("chart url width") as string)).toBe(DEFAULT_WIDTH);
+    expect(
+      JSON.parse(declared.get("chart url height (when omitted)") as string),
+    ).toBe(DEFAULT_HEIGHT);
   });
 });

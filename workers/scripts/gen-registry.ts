@@ -18,7 +18,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
@@ -337,6 +337,37 @@ const LISTING_PATHS = [
   resolve(REPO_ROOT, "agent.json"),
 ];
 
+/**
+ * Every file `registry:check` READS, repo-relative, for
+ * `scripts/ci_paths.test.ts`.
+ *
+ * `workers-ci.yml`'s rule is that every file a guard reads must be a trigger
+ * path, or an edit to that file runs no CI and the guard is silently skipped.
+ * The rule failed three times while it was maintained by hand: `skills/**` and
+ * `.claude-plugin/**` (a skill with unparseable frontmatter shipped),
+ * `README.md`, then `chatgpt-app-snapshot.json` / `docs/TOOLS.md` /
+ * `agent.json`. This list is what makes it checkable — add a read here in the
+ * same commit that adds the `readFileSync`, and CI names the missing trigger
+ * path instead of skipping itself.
+ *
+ * Outputs count as inputs: the drift comparisons at the end of `--check` read
+ * the committed copy of every artifact the generator writes.
+ */
+export const GUARD_INPUT_PATHS: readonly string[] = [
+  METADATA_PATH,
+  REGISTRY_PATH,
+  LOBEHUB_PATH,
+  BARREL_PATH,
+  SUBMISSION_PATH,
+  SNAPSHOT_PATH,
+  TOOLS_DOC_PATH,
+  LLMS_FULL_PATH,
+  LLMS_PATH,
+  README_PATH,
+  ...SKILL_PATHS,
+  ...LISTING_PATHS,
+].map((absolute) => relative(REPO_ROOT, absolute).split(sep).join("/"));
+
 // Filename conventions for the tools/ directory. A tool module is any `.ts`
 // file that does NOT match one of the following:
 //   - `types.ts`                    (shared types, no default export)
@@ -378,6 +409,44 @@ export interface ToolsDocInput {
   freeTierToolNames: ReadonlySet<string>;
 }
 
+/**
+ * The `?tools=` set an opt-in tool needs to be USABLE: every default tool its
+ * own published text names, plus itself.
+ *
+ * `?tools=` replaces the default listing (spec D1), so `?tools=answer` lists
+ * `tako_answer` alone — and `tako_answer`'s description tells the model to
+ * "Run `tako_available_data` first when unsure the data exists" and to call
+ * `tako_contents` on a cited url. A caller who installs against that URL gets
+ * a model instructed to call two tools that answer the SDK's bare "tool not
+ * found". `docs/TOOLS.md` states the rule ("include the defaults you rely on")
+ * and the hand-written distribution listings were the files that broke it.
+ *
+ * DERIVED from the descriptions, not hand-listed, because that is the thing
+ * that drifts: reword a description to stop naming `tako_contents` and the
+ * requirement disappears on its own.
+ */
+function minimumToolsFor(
+  tool: ToolModule,
+  modules: ReadonlyArray<ToolModule>,
+): ReadonlySet<string> {
+  const defaults = resolveToolSet("generic", null);
+  const published = [
+    tool.description,
+    JSON.stringify(z.toJSONSchema(tool.inputSchema, { io: "input" })),
+  ].join(" ");
+  const needed = new Set<string>([tool.name]);
+  for (const other of modules) {
+    if (other.name === tool.name || !defaults.has(other.name)) continue;
+    if (new RegExp(`\\b${other.name}\\b`).test(published)) needed.add(other.name);
+  }
+  return needed;
+}
+
+/** `?tools=` token for a tool name — the `tako_` prefix is optional (spec D1). */
+function toolsToken(name: string): string {
+  return name.startsWith(TOOL_NAME_PREFIX) ? name.slice(TOOL_NAME_PREFIX.length) : name;
+}
+
 const SURFACE_PATHS: ReadonlyArray<{ surface: Surface; path: string; title: string }> = [
   { surface: "generic", path: "/mcp", title: "the generic surface, every client" },
   { surface: "chatgpt", path: "/mcp/chatgpt", title: "the ChatGPT app surface, OAuth only" },
@@ -416,7 +485,17 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     const optIn = modules.filter((m) => !listed.has(m.name));
     if (surface === "generic" && optIn.length > 0) {
       out.push("", "Opt-in (name them in `?tools=`):", "");
-      for (const m of optIn) out.push(`- \`${m.name}\` — \`?tools=${m.name.replace(/^tako_/, "")}\``);
+      // Defaults + the tool, NOT the bare token. A bare `?tools=agent` is a
+      // one-tool surface whose own description names `tako_search` with
+      // nothing to call — the exact failure the "include the defaults you
+      // rely on" warning six lines above exists to prevent, and this list is
+      // the thing a reader copies.
+      for (const m of optIn) {
+        const value = [...modules.filter((x) => listed.has(x.name)).map((x) => x.name), m.name]
+          .map(toolsToken)
+          .join(",");
+        out.push(`- \`${m.name}\` — \`?tools=${value}\``);
+      }
     }
     out.push("", "Server instructions (authenticated):", "", "```text", input.instructions.authenticated, "```", "");
     if (surface === "generic") {
@@ -899,16 +978,57 @@ async function main(): Promise<void> {
     const text = readFileSync(listingPath, "utf8");
     const where = relative(REPO_ROOT, listingPath);
     for (const name of optInNames) {
+      const token = toolsToken(name);
       // Word-boundary, so a tool name does not match a longer name that
       // starts with it.
-      if (!new RegExp(`\\b${name}\\b`).test(text)) continue;
-      const token = name.slice(TOOL_NAME_PREFIX.length);
-      if (new RegExp(`\\?tools=[^\\s\`"']*\\b(${name}|${token})\\b`).test(text)) {
+      const nameMentioned = new RegExp(`\\b${name}\\b`).test(text);
+      // Every `?tools=` value in the file that names this tool.
+      // Comma is NOT excluded — it separates tokens, so excluding it would
+      // truncate `?tools=search,answer` to `search` and report a false gap.
+      // A trailing sentence period is trimmed instead.
+      const values = [...text.matchAll(/\?tools=([^\s`"')]+)/g)]
+        .map((m) => (m[1] ?? "").replace(/[.,;:]+$/, ""))
+        .filter((value) =>
+          value.split(",").some((raw) => {
+            const t = raw.trim().toLowerCase();
+            return t === name || t === token;
+          }),
+        );
+      // An entry can advertise a tool by TOKEN alone (`?tools=visualize`,
+      // never spelling `tako_visualize`), so the token counts as advertising
+      // it. Keying only on the full name let two agent.json entries publish a
+      // one-tool URL unchecked.
+      if (!nameMentioned && values.length === 0) continue;
+      if (values.length === 0) {
+        disclosureProblems.push(
+          `${where} names ${name} without naming ?tools=${token}`,
+        );
         continue;
       }
-      disclosureProblems.push(
-        `${where} names ${name} without naming ?tools=${token}`,
+      // ADEQUACY, not mere presence: at least one of those values must list
+      // every default tool this tool's own description names, or a reader who
+      // copies the URL gets a model told to call something unregistered.
+      // At-least-one so a bare "append ?tools=answer" explaining the token
+      // stays legal alongside a full example.
+      const required = minimumToolsFor(
+        modules.find((m) => m.tool.name === name)!.tool,
+        modules.map((m) => m.tool),
       );
+      const adequate = values.some((value) => {
+        const listedTokens = new Set(
+          value.split(",").map((raw) => toolsToken(raw.trim().toLowerCase())),
+        );
+        return [...required].every((needed) => listedTokens.has(toolsToken(needed)));
+      });
+      if (!adequate) {
+        const want = [...required].map(toolsToken).join(",");
+        disclosureProblems.push(
+          `${where} discloses ${name} only via an INADEQUATE ?tools= value ` +
+            `(${values.join(" | ")}) — ${name}'s own description names default tools ` +
+            `the value omits, so a reader who copies it gets "tool not found". ` +
+            `Minimum: ?tools=${want}`,
+        );
+      }
     }
   }
   if (disclosureProblems.length > 0) {

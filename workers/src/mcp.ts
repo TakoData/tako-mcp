@@ -41,14 +41,10 @@ import {
   resolveFreeTierConfig,
   type Tier,
 } from "./freetier.js";
-import {
-  FREE_TIER_SERVER_INSTRUCTIONS,
-  SERVER_INSTRUCTIONS,
-  serverInstructionsForTier,
-} from "./instructions.js";
+import { serverInstructionsForTier } from "./instructions.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { logToolRequestId } from "./tools/_log.js";
-import { parseToolsParam } from "./tools/_tools_param.js";
+import { parseToolsParam, readToolsParam } from "./tools/_tools_param.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import {
   authRequiredToolResult,
@@ -59,6 +55,7 @@ import {
 import {
   FREE_TIER_TOOL_NAMES,
   isToolOnSurface,
+  resolveToolSet,
   toolAnnotationsForSurface,
 } from "./tools/_surface.js";
 import type { AnyToolModule, ToolContext } from "./tools/types.js";
@@ -231,7 +228,13 @@ export function createMcpServer(
     },
     {
       jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
-      instructions: serverInstructionsForTier(tier),
+      // Filter by what this request actually registers: `?tools=` replaces
+      // the default listing, so the instructions must not name a tool the
+      // connection cannot call (see `serverInstructionsForTier`).
+      instructions: serverInstructionsForTier(
+        tier,
+        resolveToolSet(options.surface, options.requestedToolNames ?? null),
+      ),
     },
   );
 
@@ -1540,7 +1543,7 @@ export async function handleMcpRequest(
           origin,
           surface,
           parseToolsParam(
-            new URL(request.url).searchParams.get("tools"),
+            readToolsParam(new URL(request.url)),
             REGISTRY_TOOL_NAMES,
           ),
           GENERIC_SIGN_IN_HINT,
@@ -1616,11 +1619,19 @@ export async function handleMcpRequest(
     // whose listing is fixed (spec D2). Parsing is tolerant — unknown
     // tokens are dropped, never fatal. Log the raw value and the resolved
     // set so `wrangler tail` shows what a given connector asked for.
-    const rawToolsParam = url.searchParams.get("tools");
+    //
+    // The LOGGED copy is capped at 200 for the same reason the User-Agent
+    // above is: this is caller-controlled and unbounded on the anonymous
+    // path, where no credential is required. A Worker URL carries ~16KB, and
+    // `readToolsParam` joins EVERY repeated `tools=` param, so one
+    // unauthenticated request could otherwise emit a ~16KB log line. Only the
+    // log is capped — `rawToolsParam` itself still feeds `parseToolsParam`
+    // whole, so a long-but-legitimate allowlist is never silently truncated.
+    const rawToolsParam = readToolsParam(url);
     const requestedToolNames = parseToolsParam(rawToolsParam, REGISTRY_TOOL_NAMES);
-    if (rawToolsParam !== null) {
+    if (url.searchParams.has("tools")) {
       console.log(
-        `[mcp] tools param=${JSON.stringify(rawToolsParam)} surface=${surface} resolved=${
+        `[mcp] tools param=${JSON.stringify((rawToolsParam ?? "").slice(0, 200))} surface=${surface} resolved=${
           surface === "chatgpt"
             ? "(ignored: fixed surface)"
             : [...(requestedToolNames ?? [])].join(",") || "(defaults)"

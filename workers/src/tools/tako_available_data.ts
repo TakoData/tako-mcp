@@ -225,8 +225,16 @@ const tako_available_data = {
     chatgpt: { openWorldHint: false },
   },
   fixedInputs: [
-    { field: "graph/search limit", value: "10", note: "Candidates inspected per lookup; the API default is 20." },
-    { field: "graph/related limit", value: "100", note: "Coverage page size; paging stops at 250 names or 4 pages." },
+    {
+      field: "graph/search limit",
+      value: "10",
+      note: "Candidates fetched per lookup (the API default is 20); the top 4 that survive the match gate are drilled.",
+    },
+    {
+      field: "graph/related limit",
+      value: "100",
+      note: "Coverage page size for the drill; paging stops at 250 names or 4 pages. The cheap per-candidate coverage probes send limit=1 instead.",
+    },
   ],
   // Declared as the FULL internal shape (assignable to the slim advertised
   // Output via its loose index signature) so tests and hooks keep real types.

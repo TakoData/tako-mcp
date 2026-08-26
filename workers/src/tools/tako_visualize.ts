@@ -400,10 +400,19 @@ const tako_visualize = {
     // `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: true },
   },
+  // These three are NOT request-body fields — `buildVisualizeBody` sends only
+  // `components`. They are the fixed render settings the tool applies to the
+  // chart URLs and reports back on its own output (see the `dark_mode`/`width`/
+  // `height` assignment in the handler below). Named the way
+  // `tako_available_data` names its endpoint query params, so `docs/TOOLS.md`
+  // does not publish them as things a caller could have sent, and so the
+  // derived wire-path guard in `fixed_inputs_drift.test.ts` correctly skips
+  // them. Their values are pinned to the constants directly in
+  // `tako_visualize.test.ts`.
   fixedInputs: [
-    { field: "dark_mode", value: "true", note: "Cards render in the dark theme." },
-    { field: "width", value: "900", note: "Card width in pixels." },
-    { field: "height (when omitted)", value: "720", note: "Card height in pixels unless height is set." },
+    { field: "chart url dark_mode", value: "true", note: "Cards render in the dark theme." },
+    { field: "chart url width", value: "900", note: "Card width in pixels." },
+    { field: "chart url height (when omitted)", value: "720", note: "Card height in pixels unless height is set." },
   ],
   async handler(input, ctx): Promise<Output> {
     const body = buildVisualizeBody(input);

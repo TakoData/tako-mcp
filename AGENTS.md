@@ -94,6 +94,7 @@ Items 6-8 are opt-in: name the tool in `?tools=` (an allowlist that replaces the
 - One file per tool under `workers/src/tools/`; each exports a `ToolModule` (see `types.ts`)
 - Vitest for unit tests, `@cloudflare/vitest-pool-workers` for Worker-context tests
 - Never edit `workers/src/tools/_registry.ts` or `registry/server.json` by hand — run `npm run registry:gen`
+- `chatgpt-app-submission.json` is what we INTEND to submit next, not what OpenAI currently holds. OpenAI snapshots names, descriptions and input schemas at submission and does not update them live, so between submissions this file and OpenAI's copy disagree by exactly the changes waiting to ship — `tako_graph_related` was added to it before any resubmission. `chatgpt-app-snapshot.json` is the sha256 parity record of the same surface as last ACCEPTED here; `registry:check` compares the live tools against it and `registry:gen --accept` is the only thing that moves it. Before resubmitting, diff the submission file against what was actually last sent.
 - Errors: handlers throw `DjangoError`; `mcp.ts` catches and maps via `djangoErrorToToolResult`
 
 ## PR Guidelines

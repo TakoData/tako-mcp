@@ -40,16 +40,6 @@ describe("graphErrorMessage", () => {
     expect(msg).toMatch(/unknown `relation` is NOT a 404/);
   });
 
-  it("node 404 → explains where ids come from and echoes the id", () => {
-    const msg = graphErrorMessage(
-      new DjangoNotFoundError({ path: "/api/v1/graph/node/x", method: "GET" }),
-      "node",
-      "not-a-real-id",
-    );
-    expect(msg).toMatch(/no graph node with id "not-a-real-id"/);
-    expect(msg).toMatch(/never a plain name/);
-  });
-
   it("429 → rate-limit backoff guidance", () => {
     const msg = graphErrorMessage(
       new DjangoHttpError({ ...P, status: 429, body: "" }),
@@ -89,7 +79,7 @@ describe("graphErrorMessage", () => {
   it("non-JSON 2xx (parse error) → unreadable-response guidance", () => {
     const msg = graphErrorMessage(
       new DjangoResponseParseError({ ...P, status: 200, cause: new Error("bad") }),
-      "node",
+      "related",
       "n1",
     );
     expect(msg).toMatch(/unreadable \(non-JSON\)/);

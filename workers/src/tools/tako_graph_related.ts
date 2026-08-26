@@ -11,7 +11,12 @@
 import { z } from "zod";
 
 import { djangoGet } from "../django.js";
-import { graphErrorMessage, graphRelatedOutputShape } from "./_graph.js";
+import {
+  graphErrorMessage,
+  graphNodeSchema,
+  graphRelationSchema,
+  graphRelatedOutputShape,
+} from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
 import type { ToolModule } from "./types.js";
 
@@ -54,7 +59,64 @@ const inputSchema = z.object({
 type Input = z.infer<typeof inputSchema>;
 
 const outputSchema = z.object(graphRelatedOutputShape);
+type GraphNode = z.infer<typeof graphNodeSchema>;
+type GraphRelation = z.infer<typeof graphRelationSchema>;
 type Output = z.infer<typeof outputSchema>;
+
+/**
+ * The payload the MCP layer must not forward whole. `graph/related` returns
+ * the FULL node record for every related item, and the description dominates:
+ * the Nvidia overview measures 82,741 chars at `limit: 5` — ~849 chars per
+ * item — and Anthropic PBC's 83,487 overflowed the MCP result cap outright.
+ * A default-listed tool cannot spend that, and it would spend it TWICE:
+ * `mcp.ts` builds the text channel from `JSON.stringify(output)` when no
+ * `renderText` exists, then emits the same object as `structuredContent`.
+ *
+ * Dropping `description` and `aliases` from related items is what makes an
+ * overview ~2k instead of ~83k. Both are `.optional()` on `graphNodeSchema`,
+ * so the slim still conforms to the advertised outputSchema — the reason the
+ * design could promise the reduction with "schema unchanged". The top-level
+ * `node` keeps its description: it is one record, and it is the node the
+ * caller named. For a related item's own detail, call the tool again on its
+ * id, or `tako_search` for its values.
+ */
+function slimRelatedItem(item: GraphNode): GraphNode {
+  const slim: GraphNode = { id: item.id, type: item.type, name: item.name };
+  if (item.subtype !== undefined) slim.subtype = item.subtype;
+  if (item.label !== undefined) slim.label = item.label;
+  return slim;
+}
+
+function slimRelationGroup(group: GraphRelation): GraphRelation {
+  return { ...group, items: group.items.map(slimRelatedItem) };
+}
+
+/** Markdown index of the slim shape — one line per related item. */
+function renderRelatedMarkdown(output: Output): string {
+  const lines: string[] = [];
+  const node = output.node;
+  lines.push(`**${node.name}** (${node.subtype ?? node.type}) — \`${node.id}\``);
+  if (node.description) lines.push("", node.description);
+
+  const groups = output.relation ? [output.relation] : (output.relations ?? []);
+  if (groups.length === 0) {
+    lines.push("", "No related nodes.");
+    return lines.join("\n");
+  }
+  for (const group of groups) {
+    const shown = group.items.length;
+    const count = group.total_capped ? `${shown} of ${group.total}+` : `${shown} of ${group.total}`;
+    lines.push("", `### ${group.label} (\`${group.key}\`, ${group.kind}) — ${count}`);
+    for (const item of group.items) {
+      const qualifier = item.subtype ?? item.type;
+      lines.push(`- ${item.name} — \`${item.id}\` (${qualifier})`);
+    }
+    if (group.next_cursor) {
+      lines.push(`_More: call again with \`relation: "${group.key}"\` and \`cursor: "${group.next_cursor}"\`._`);
+    }
+  }
+  return lines.join("\n");
+}
 
 const tako_graph_related = {
   name: "tako_graph_related",
@@ -113,6 +175,17 @@ const tako_graph_related = {
       );
     }
     return parsed.data;
+  },
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderRelatedMarkdown(output);
+  },
+  slimStructured(output) {
+    const slim: Record<string, unknown> = { node: output.node };
+    if (output.relations != null) slim.relations = output.relations.map(slimRelationGroup);
+    if (output.relation != null) slim.relation = slimRelationGroup(output.relation);
+    if (output.inferred_labels != null) slim.inferred_labels = output.inferred_labels;
+    return slim;
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

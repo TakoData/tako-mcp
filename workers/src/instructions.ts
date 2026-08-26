@@ -138,11 +138,62 @@ const SHARED_INSTRUCTION_PARAGRAPHS = [
   "Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.",
 ];
 
-export const SERVER_INSTRUCTIONS = [
-  ...SHARED_INSTRUCTION_PARAGRAPHS,
-  "",
-  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url. Set `include_contents: true` on `tako_search` when you need the rows themselves.",
-].join("\n");
+/**
+ * One instruction sentence and the tools it NAMES. A sentence is served only
+ * when every tool it names is registered for the request.
+ *
+ * `?tools=` replaces the default listing (spec D1), so a connection can be
+ * missing any of these: `?tools=agent` registers `tako_agent` alone. An
+ * instruction naming an absent tool is worse than a description doing it —
+ * `initialize` instructions land in the host's system prompt, so the model is
+ * told to call a name that answers the SDK's bare "tool not found" with no
+ * recovery. `docs/TOOLS.md` records the accepted version of this trade-off for
+ * DESCRIPTIONS, which a caller opts into per tool; the instructions string is
+ * served to every connection and had no such carve-out.
+ */
+type ToolSentence = { readonly tools: readonly string[]; readonly text: string };
+
+const AUTHENTICATED_TOOL_SENTENCES: readonly ToolSentence[] = [
+  {
+    tools: ["tako_available_data"],
+    text: "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name.",
+  },
+  {
+    tools: ["tako_contents"],
+    text: "`tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.",
+  },
+  {
+    tools: ["tako_search"],
+    text: "Set `include_contents: true` on `tako_search` when you need the rows themselves.",
+  },
+];
+
+/**
+ * Assemble the instructions for a tier from the sentences whose tools survive.
+ *
+ * `registered === null` means "serve everything" — the value the exported
+ * constants below are built from, and what a caller that cannot resolve a
+ * toolset gets. When no sentence survives, the shared paragraph stands alone:
+ * it names no tool, so it is true on every surface.
+ */
+function assembleInstructions(
+  sentences: readonly ToolSentence[],
+  registered: ReadonlySet<string> | null,
+): string {
+  const kept =
+    registered === null
+      ? sentences
+      : sentences.filter((s) => s.tools.every((name) => registered.has(name)));
+  const paragraph = kept.map((s) => s.text).join(" ");
+  return paragraph === ""
+    ? SHARED_INSTRUCTION_PARAGRAPHS.join("\n")
+    : [...SHARED_INSTRUCTION_PARAGRAPHS, "", paragraph].join("\n");
+}
+
+export const SERVER_INSTRUCTIONS = assembleInstructions(
+  AUTHENTICATED_TOOL_SENTENCES,
+  null,
+);
 
 /**
  * Instructions served to ANONYMOUS (free-tier) connections. Identical to
@@ -157,17 +208,45 @@ export const SERVER_INSTRUCTIONS = [
  * connections keep `SERVER_INSTRUCTIONS` byte-identical — existing
  * integrations see no change.
  */
-export const FREE_TIER_SERVER_INSTRUCTIONS = [
-  ...SHARED_INSTRUCTION_PARAGRAPHS,
-  "",
-  // "the tools that run", not "the full toolset": the LISTING is
-  // auth-invariant (spec D4) — `tako_contents` stays listed anonymously —
-  // so a toolset-count claim would be false; what's true is which tools
-  // EXECUTE.
-  "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. This connection is anonymous: `tako_available_data` and `tako_search` are the tools that run here. `tako_contents` — which reads one source in full (an exportable card's rows, or a web page's text by url) — and inline rows on search (`include_contents: true`) need a connection signed in with a Tako account.",
-].join("\n");
+const FREE_TIER_TOOL_SENTENCES: readonly ToolSentence[] = [
+  {
+    tools: ["tako_available_data"],
+    text: "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name.",
+  },
+  {
+    // "the tools that run", not "the full toolset": the LISTING is
+    // auth-invariant (spec D4) — `tako_contents` stays listed anonymously —
+    // so a toolset-count claim would be false; what's true is which tools
+    // EXECUTE. Named tools: BOTH, so the sentence drops whenever either is
+    // absent rather than promising a run for something unregistered.
+    tools: ["tako_available_data", "tako_search"],
+    text: "This connection is anonymous: `tako_available_data` and `tako_search` are the tools that run here.",
+  },
+  {
+    // Names `tako_search` too, via `include_contents`.
+    tools: ["tako_contents", "tako_search"],
+    text: "`tako_contents` — which reads one source in full (an exportable card's rows, or a web page's text by url) — and inline rows on search (`include_contents: true`) need a connection signed in with a Tako account.",
+  },
+];
 
-/** The `initialize` instructions for a connection's tier. */
-export function serverInstructionsForTier(tier: Tier): string {
-  return tier === "free" ? FREE_TIER_SERVER_INSTRUCTIONS : SERVER_INSTRUCTIONS;
+export const FREE_TIER_SERVER_INSTRUCTIONS = assembleInstructions(
+  FREE_TIER_TOOL_SENTENCES,
+  null,
+);
+
+/**
+ * The `initialize` instructions for a connection's tier and resolved toolset.
+ *
+ * Pass the set `mcp.ts` actually registers (`resolveToolSet(...)`), so a
+ * `?tools=` connection is never told about a tool it cannot call. Omitting it
+ * serves every sentence, which is correct only when the caller knows the
+ * default listing is in force.
+ */
+export function serverInstructionsForTier(
+  tier: Tier,
+  registered: ReadonlySet<string> | null = null,
+): string {
+  return tier === "free"
+    ? assembleInstructions(FREE_TIER_TOOL_SENTENCES, registered)
+    : assembleInstructions(AUTHENTICATED_TOOL_SENTENCES, registered);
 }

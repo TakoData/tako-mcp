@@ -27,6 +27,16 @@ import type { AnyToolModule, ToolAnnotations } from "./types.js";
  * tool, plus graph exploration and the balance lookup. Everything else
  * (`tako_answer`, `tako_agent`, `tako_visualize`) is reachable only by
  * naming it in `?tools=`.
+ *
+ * `tako_credit_balance` looks like the odd one out — its own description tells
+ * the model not to call it preemptively — so do NOT demote it to an opt-in
+ * without reading this. `.claude-plugin/plugin.json` pins
+ * `https://mcp.tako.com/mcp` with NO query string and the plugin's URL is not
+ * user-editable, so `?tools=credit_balance` is not a home a plugin user can
+ * reach: opt-in means no Claude Code plugin user can ever check a balance. It
+ * costs 394 chars of descriptor (275 description + 119 schema) against this
+ * set's 15,912 — 2.5%, and 15x less than `tako_search`. Restraint copy on a
+ * listed tool is the copy doing its job, not an argument for hiding it.
  */
 export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "tako_search",
@@ -39,10 +49,12 @@ export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
 /**
  * The complete anonymous EXECUTABLE tool surface. The listing is
  * auth-invariant (spec D4): every default tool stays listed on anonymous
- * connections, and a tool outside this set — `tako_contents` — answers
- * sign-in instructions at dispatch time (see the free-tier gate in
- * `mcp.ts`) instead of executing on the shared account. `tako_answer` is
- * opt-in via `?tools=answer` (spec D1) and never executes anonymously.
+ * connections, and a default tool outside this set answers sign-in
+ * instructions at dispatch time (see the free-tier gate in `mcp.ts`) instead
+ * of executing on the shared account. That is THREE of the five defaults —
+ * `tako_contents`, `tako_graph_related` and `tako_credit_balance` — so an
+ * anonymous connection lists five tools and only two of them run. `tako_answer`
+ * is opt-in via `?tools=answer` (spec D1) and never executes anonymously.
  *
  * It lives HERE, not in `freetier.ts`, because `freetier.ts` imports
  * `TOOL_REGISTRY` — the barrel `scripts/gen-registry.ts` WRITES. A generator

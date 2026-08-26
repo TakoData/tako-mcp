@@ -634,6 +634,7 @@ The Worker extracts the Bearer (or OAuth-derived) token, validates the MCP reque
 <summary><b>Breaking changes</b></summary>
 
 - **`?tools=` now replaces the default listing instead of adding to it** (tokens are tool names, e.g. `?tools=search,contents,agent`). `tako_graph_search`, `tako_graph_node`, `tako_agent_start`, and `tako_agent_wait` were removed; `get_credit_balance` is now `tako_credit_balance`; `tako_graph_related` and `tako_credit_balance` are listed by default. See [`docs/TOOLS.md`](docs/TOOLS.md).
+- **The ChatGPT app surface no longer serves the Answer Agent in any form.** `https://mcp.tako.com/mcp/chatgpt?tools=agent` was the documented way to reach it; that URL now serves the fixed five-tool listing, because `?tools=` is ignored on `/mcp/chatgpt`. `https://mcp.tako.com/mcp?tools=search,available_data,agent` registers `tako_agent` for a ChatGPT developer-mode connector, but ChatGPT's ~60 s per-call ceiling cannot hold a 30–90 s run, so treat it as unsupported rather than a replacement. The agent returns to ChatGPT as reviewed app functionality, not as a hidden opt-in.
 
 **v0.3.0:**
 

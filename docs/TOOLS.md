@@ -20,9 +20,9 @@ Default listing:
 
 Opt-in (name them in `?tools=`):
 
-- `tako_agent` — `?tools=agent`
-- `tako_answer` — `?tools=answer`
-- `tako_visualize` — `?tools=visualize`
+- `tako_agent` — `?tools=available_data,contents,credit_balance,graph_related,search,agent`
+- `tako_answer` — `?tools=available_data,contents,credit_balance,graph_related,search,answer`
+- `tako_visualize` — `?tools=available_data,contents,credit_balance,graph_related,search,visualize`
 
 Server instructions (authenticated):
 
@@ -86,7 +86,7 @@ Parameters:
 Fixed request inputs (the caller cannot change these):
 
 - `effort` = `"medium"` — The only Answer Agent effort level launched.
-- `poll interval / budget` = `5 s / 295 s` — The call polls the run until it completes or the budget ends.
+- `worker poll interval / budget` = `5 s / 295 s` — The call polls the run until it completes or the budget ends.
 
 Annotations:
 
@@ -289,8 +289,8 @@ Parameters:
 
 Fixed request inputs (the caller cannot change these):
 
-- `graph/search limit` = `10` — Candidates inspected per lookup; the API default is 20.
-- `graph/related limit` = `100` — Coverage page size; paging stops at 250 names or 4 pages.
+- `graph/search limit` = `10` — Candidates fetched per lookup (the API default is 20); the top 4 that survive the match gate are drilled.
+- `graph/related limit` = `100` — Coverage page size for the drill; paging stops at 250 names or 4 pages. The cheap per-candidate coverage probes send limit=1 instead.
 
 Annotations:
 
@@ -759,9 +759,9 @@ Parameters:
 
 Fixed request inputs (the caller cannot change these):
 
-- `dark_mode` = `true` — Cards render in the dark theme.
-- `width` = `900` — Card width in pixels.
-- `height (when omitted)` = `720` — Card height in pixels unless height is set.
+- `chart url dark_mode` = `true` — Cards render in the dark theme.
+- `chart url width` = `900` — Card width in pixels.
+- `chart url height (when omitted)` = `720` — Card height in pixels unless height is set.
 
 Annotations:
 
