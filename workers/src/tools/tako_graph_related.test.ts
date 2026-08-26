@@ -349,11 +349,19 @@ describe("tako_graph_related output slimming", () => {
   // `cur::2` and `relation: "metrics"` (asserted above) survive its removal.
   it("renderText marks each group complete or truncated", () => {
     const text = takoGraphRelated.renderText(fatOverview as never, undefined as never);
-    // Complete: 20 shown of 20 total, not capped — no trailing `+`.
-    expect(text).toContain("20 of 20");
-    expect(text).not.toContain("20 of 20+");
-    // Truncated: 10 shown of a capped 40, so the total carries the `+`.
-    expect(text).toContain("10 of 40+");
+    // The marker moved from "N of M" to the group total plus an ellipsis when
+    // items remain, because the overview now previews a fixed three per group
+    // and "3 of 40" would say more about OVERVIEW_PREVIEW_N than about the
+    // graph. The invariant above is unchanged: complete and truncated must
+    // stay distinguishable at a glance.
+    //
+    // Complete: total 20, not capped — no trailing `+`.
+    expect(text).toContain("Competes with — 20:");
+    expect(text).not.toContain("Competes with — 20+");
+    // Truncated: a capped 40, so the total carries the `+`, and the line ends
+    // in an ellipsis beside the cursor that reaches the rest.
+    expect(text).toContain("Metrics — 40+:");
+    expect(text).toContain("…");
   });
 
   // THE DRILL, which every fixture above skips. `relations` is the overview;
@@ -396,7 +404,9 @@ describe("tako_graph_related output slimming", () => {
   it("renderText renders the drilled relation and cuts it hardest", () => {
     const text = takoGraphRelated.renderText(fatDrill as never, undefined as never);
     expect(text).toContain("Metrics");
-    expect(text).toContain("100 of 250+");
+    // The drill splits what "100 of 250+" packed into one phrase: the group's
+    // true total, and how much of it this page carries.
+    expect(text).toContain("250+ total, 100 on this page");
     expect(text).toContain("cur::9");
     expect(text).toContain("ent::co200");
     expect(text).not.toContain("X".repeat(50));
