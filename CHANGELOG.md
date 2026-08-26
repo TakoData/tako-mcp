@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.22.2](https://github.com/TakoData/tako-mcp/compare/v0.22.1...v0.22.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* **answer:** type the answer body against AnswerRequest, not SearchRequest ([afede25](https://github.com/TakoData/tako-mcp/commit/afede25b9ebdfc6d0adddf958d5fa9c3f74dea5f))
+* **answer:** type the answer body against AnswerRequest, not SearchRequest ([63ee4f1](https://github.com/TakoData/tako-mcp/commit/63ee4f152efaf90bc7865ffe6a5ecb543ba9c190))
+* **deps:** override sharp, ip-address and undici to clear five advisories ([558c6f7](https://github.com/TakoData/tako-mcp/commit/558c6f769db42a76be7eed72719b2236709921b7))
+* **deps:** override sharp, ip-address and undici to clear five advisories ([aa02fde](https://github.com/TakoData/tako-mcp/commit/aa02fdeadca919952cabe3fb08681cd3cd8af8e2))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([ff63053](https://github.com/TakoData/tako-mcp/commit/ff630539ae1da2ab495f4355e5dc82a3b22b4685))
+* sync OpenAPI spec from monorepo ([#257](https://github.com/TakoData/tako-mcp/issues/257)) ([737b24f](https://github.com/TakoData/tako-mcp/commit/737b24f77050ed58cbe6d7fa3940cb36777acf51))
+* sync OpenAPI spec from TakoData/tako ([b7043a5](https://github.com/TakoData/tako-mcp/commit/b7043a55fd2f752d0afc9551ea6846936a95a75d))
+
 ## [0.22.1](https://github.com/TakoData/tako-mcp/compare/v0.22.0...v0.22.1) (2026-08-25)
 
 
