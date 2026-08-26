@@ -375,6 +375,7 @@ describe("buildToolsDoc", () => {
       query: z.string().describe("Natural-language query."),
       count: z.number().int().min(1).max(20).optional().describe("Max results."),
     }),
+    outputSchema: z.object({ found: z.boolean().describe("Whether anything matched.") }),
     annotations: { title: "Tako: Search", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     annotationsBySurface: { chatgpt: { openWorldHint: false } },
     fixedInputs: [{ field: "sources.web.highlights", value: "true", note: "Highlights on." }],
@@ -441,5 +442,40 @@ describe("buildToolsDoc", () => {
   it("includes both instruction variants verbatim", () => {
     expect(doc).toContain("AUTH TEXT");
     expect(doc).toContain("ANON TEXT");
+  });
+
+  // The doc's own framing, pinned: a reader auditing what the model reads has
+  // to be able to tell, per block, whether it is even on the wire. The flat
+  // version put `fixedInputs` (never published) directly under Parameters.
+  it("bands every tool section into model-visible, client-visible, and repo-only", () => {
+    for (const name of ["tako_search", "tako_agent"]) {
+      const section = doc.slice(doc.indexOf(`### ${name}\n`));
+      const body = section.slice(0, section.indexOf("\n### ", 1) + 1 || undefined);
+      expect(body.indexOf("#### Model-visible")).toBeGreaterThan(-1);
+      expect(body.indexOf("#### Client-visible")).toBeGreaterThan(body.indexOf("#### Model-visible"));
+      expect(body.indexOf("#### Repo-only")).toBeGreaterThan(body.indexOf("#### Client-visible"));
+    }
+  });
+
+  it("names the three bands in the header key", () => {
+    expect(doc).toContain("## What reaches whom");
+    expect(doc).toContain("**Model-visible**");
+    expect(doc).toContain("**Client-visible**");
+    expect(doc).toContain("**Repo-only**");
+  });
+
+  // draft-07, not zod's 2020-12 default — the dialect the SDK actually
+  // publishes. `mcp.conformance.test.ts` pins this against a real tools/list;
+  // this is the cheap unit-level tripwire on the renderer itself.
+  it("renders both schemas in the dialect the SDK publishes", () => {
+    expect(doc).toContain("Published input schema (JSON Schema)");
+    expect(doc).toContain("Published output schema (JSON Schema)");
+    expect(doc).toContain('"$schema": "http://json-schema.org/draft-07/schema#"');
+    expect(doc).not.toContain("json-schema.org/draft/2020-12");
+  });
+
+  it("says so plainly when a tool publishes no output schema", () => {
+    const agentSection = doc.slice(doc.indexOf("### tako_agent\n"));
+    expect(agentSection).toContain("Published output schema: _none");
   });
 });

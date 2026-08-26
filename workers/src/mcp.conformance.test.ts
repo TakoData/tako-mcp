@@ -30,6 +30,7 @@ import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validatio
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { structuredContentFor } from "./mcp.js";
+import { publishedJsonSchema } from "./tools/_published_schema.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
 import type { AnyToolModule } from "./tools/types.js";
 
@@ -51,6 +52,8 @@ interface PublishedSchema {
 }
 
 let published: Map<string, PublishedSchema>;
+/** Full `tools/list` descriptors, for the `docs/TOOLS.md` renderer guard below. */
+let descriptors: Map<string, { inputSchema?: unknown; outputSchema?: unknown }>;
 
 beforeAll(async () => {
   const res = await SELF.fetch(`https://example.com/mcp${ALL_TOOLS_QUERY}`, {
@@ -64,7 +67,9 @@ beforeAll(async () => {
   });
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
-    result: { tools: Array<{ name: string; outputSchema?: PublishedSchema }> };
+    result: {
+      tools: Array<{ name: string; inputSchema?: unknown; outputSchema?: PublishedSchema }>;
+    };
   };
   published = new Map(
     body.result.tools
@@ -72,6 +77,12 @@ beforeAll(async () => {
       .map((t) => [t.name, t.outputSchema as PublishedSchema]),
   );
   expect(published.size).toBeGreaterThan(0);
+  descriptors = new Map(
+    body.result.tools.map((t) => [
+      t.name,
+      { inputSchema: t.inputSchema, outputSchema: t.outputSchema },
+    ]),
+  );
 });
 
 const moduleFor = (name: string): AnyToolModule => {
@@ -510,4 +521,43 @@ describe("the sweep sees into union branches, not just objects and arrays", () =
     };
     expect(bannedKeysIn(schema, "t", banned)).toEqual([]);
   });
+});
+
+/**
+ * `docs/TOOLS.md` claims byte-for-byte parity with `tools/list`. Pin the claim
+ * against a real response, because the obvious way to render a schema breaks
+ * it: `registerTool` converts through the SDK's `toJsonSchemaCompat`, which on
+ * zod v4 targets draft-07, while zod's own `toJSONSchema` default is 2020-12.
+ * The doc shipped the 2020-12 `$schema` line — the only byte that differed
+ * across all 16 published schemas — until this guard existed.
+ *
+ * An SDK bump that changes the dialect now fails here instead of silently
+ * drifting the doc.
+ */
+describe("publishedJsonSchema matches what tools/list actually publishes", () => {
+  it("covers every tool on the surface", () => {
+    expect(descriptors.size).toBe(TOOL_REGISTRY.length);
+  });
+
+  for (const entry of TOOL_REGISTRY) {
+    const tool = entry as unknown as AnyToolModule;
+
+    it(`${tool.name} input schema is byte-identical`, () => {
+      const wire = descriptors.get(tool.name)?.inputSchema;
+      expect(wire).toBeDefined();
+      expect(publishedJsonSchema(tool.inputSchema, "input")).toEqual(wire);
+    });
+
+    it(`${tool.name} output schema is byte-identical`, () => {
+      const wire = descriptors.get(tool.name)?.outputSchema;
+      const rendered =
+        tool.outputSchema === undefined
+          ? undefined
+          : publishedJsonSchema(tool.outputSchema, "output");
+      // `undefined` on both sides is the honest pass: a tool with no
+      // `outputSchema`, or one the SDK declines to advertise, must render no
+      // block in the doc either.
+      expect(rendered).toEqual(wire);
+    });
+  }
 });

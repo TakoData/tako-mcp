@@ -32,6 +32,7 @@ import {
   FREE_TIER_SERVER_INSTRUCTIONS,
   SERVER_INSTRUCTIONS,
 } from "../src/instructions.js";
+import { publishedJsonSchema } from "../src/tools/_published_schema.js";
 import {
   FREE_TIER_TOOL_NAMES,
   isToolOnSurface,
@@ -469,9 +470,19 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     "",
     "# Tako MCP tools",
     "",
-    "This page is rendered from the same objects the server publishes on `tools/list`. Every description, parameter description, and annotation below is byte-for-byte what the model reads. Host-level `_meta` (security schemes, widget bindings) is not shown.",
+    "Rendered from the same objects that serve `tools/list`, so every schema and every line of prose below is byte-for-byte what the server publishes.",
     "",
-    "## Choosing tools with `?tools=`",
+    "## What reaches whom",
+    "",
+    "Publishing something is not the same as the model reading it. Three bands, and every section below carries the label of the one it belongs to.",
+    "",
+    "**Model-visible** — reaches the model's context. Server `instructions`, and per tool the `name`, `description`, and `inputSchema` (each property's description, default, and enum included). At call time the result's `content[].text` joins them.",
+    "",
+    "**Client-visible** — published on `tools/list`, then dropped by the host when it builds the model's tool catalog: `outputSchema`, `annotations`, `_meta`. Clients use them to validate structured results, label the tool in a UI, and drive widgets. The model never sees them. Claude Code hands the model `name`, `description`, and `parameters` (= `inputSchema`) only, and reads `outputSchema` for renderer validation ([claude-code#54197](https://github.com/anthropics/claude-code/issues/54197), open as of 2026-08-26); VS Code has the same gap. The spec permits this: servers MUST emit conforming `structuredContent` and clients SHOULD validate it against `outputSchema`, but nothing requires either to reach the model. Whether `structuredContent` itself reaches the model is host-dependent — Claude Code prefers `content` when a result carries both. Host-level `_meta` (security schemes, widget bindings) is client-visible and is not rendered here.",
+    "",
+    "**Repo-only** — never on the wire in any form. Which surfaces list a tool, whether it runs anonymously, its fixed request inputs, and the `?tools=` rules below. These describe how the server is deployed. They are written for you and sent to nobody.",
+    "",
+    "## Choosing tools with `?tools=` (repo-only)",
     "",
     "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
     "",
@@ -480,7 +491,7 @@ export function buildToolsDoc(input: ToolsDocInput): string {
   for (const { surface, path, title } of SURFACE_PATHS) {
     const listed = resolveToolSet(surface, null);
     out.push(`## \`${path}\` — ${title}`, "");
-    out.push("Default listing:", "");
+    out.push("Default listing (repo-only — the model sees the resulting list, not this statement):", "");
     for (const m of modules) if (listed.has(m.name)) out.push(`- \`${m.name}\``);
     const optIn = modules.filter((m) => !listed.has(m.name));
     if (surface === "generic" && optIn.length > 0) {
@@ -497,9 +508,9 @@ export function buildToolsDoc(input: ToolsDocInput): string {
         out.push(`- \`${m.name}\` — \`?tools=${value}\``);
       }
     }
-    out.push("", "Server instructions (authenticated):", "", "```text", input.instructions.authenticated, "```", "");
+    out.push("", "Server instructions, authenticated (model-visible — the host injects these into the model's context):", "", "```text", input.instructions.authenticated, "```", "");
     if (surface === "generic") {
-      out.push("Server instructions (anonymous):", "", "```text", input.instructions.anonymous, "```", "");
+      out.push("Server instructions, anonymous (model-visible):", "", "```text", input.instructions.anonymous, "```", "");
     }
   }
 
@@ -509,16 +520,12 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     if (reg === undefined) throw new Error(`buildToolsDoc: no registry entry for ${m.name}`);
     out.push(`### ${m.name}`, "");
     out.push(`**${m.annotations.title}**`, "");
-    const surfaces = SURFACE_PATHS.filter((s) => isToolOnSurface(m.name, s.surface, null)).map((s) => `\`${s.path}\``);
-    out.push(`- Listed by default on: ${surfaces.length > 0 ? surfaces.join(", ") : "none (opt-in on `/mcp`)"}`);
-    // Qualified with the path: anonymous connections exist only on `/mcp`.
-    // `/mcp/chatgpt` is OAuth-only and 401s before admission, so an
-    // unqualified "Runs anonymously: yes" reads as a claim about a surface
-    // that has no anonymous tier.
-    out.push(
-      `- Runs anonymously (on \`/mcp\`): ${input.freeTierToolNames.has(m.name) ? "yes" : "no (answers with sign-in instructions)"}`,
-      "",
-    );
+    // Banded, not flat. The flat order interleaved the three audiences, and a
+    // reader auditing what the model reads had to know, heading by heading,
+    // which ones were even on the wire — `fixedInputs` sat directly under
+    // Parameters and reads as more parameters. Bands let that reader take one
+    // pass down `#### Model-visible` across every tool.
+    out.push("#### Model-visible", "");
     out.push("Description:", "", m.description, "");
     out.push("Parameters:", "");
     const params = Object.entries(reg.parameters);
@@ -533,6 +540,48 @@ export function buildToolsDoc(input: ToolsDocInput): string {
       }
       out.push("");
     }
+    const inputSchema = publishedJsonSchema(m.inputSchema, "input");
+    if (inputSchema === undefined) {
+      throw new Error(`buildToolsDoc: ${m.name} has an inputSchema the SDK cannot publish`);
+    }
+    out.push("<details><summary>Published input schema (JSON Schema)</summary>", "", "```json",
+      JSON.stringify(inputSchema, null, 2), "```", "</details>", "");
+
+    out.push("#### Client-visible", "");
+    out.push("Annotations:", "");
+    for (const { surface, path } of SURFACE_PATHS) {
+      out.push(`- \`${path}\`: ${renderAnnotations(toolAnnotationsForSurface(m, surface))}`);
+    }
+    out.push("");
+    // The output schema is what `structuredContent` is validated against, and
+    // it is the half of the contract no model ever reads — which is why it
+    // went unrendered here for so long, and why the band label matters more
+    // on this block than on any other.
+    const outputSchema =
+      m.outputSchema === undefined ? undefined : publishedJsonSchema(m.outputSchema, "output");
+    if (outputSchema === undefined) {
+      out.push(
+        m.outputSchema === undefined
+          ? "Published output schema: _none — this tool declares no `outputSchema`_"
+          : "Published output schema: _none — the declared `outputSchema` is not an object schema, so `mcp.ts` does not advertise it_",
+        "",
+      );
+    } else {
+      out.push("<details><summary>Published output schema (JSON Schema)</summary>", "", "```json",
+        JSON.stringify(outputSchema, null, 2), "```", "</details>", "");
+    }
+
+    out.push("#### Repo-only", "");
+    const surfaces = SURFACE_PATHS.filter((s) => isToolOnSurface(m.name, s.surface, null)).map((s) => `\`${s.path}\``);
+    out.push(`- Listed by default on: ${surfaces.length > 0 ? surfaces.join(", ") : "none (opt-in on `/mcp`)"}`);
+    // Qualified with the path: anonymous connections exist only on `/mcp`.
+    // `/mcp/chatgpt` is OAuth-only and 401s before admission, so an
+    // unqualified "Runs anonymously: yes" reads as a claim about a surface
+    // that has no anonymous tier.
+    out.push(
+      `- Runs anonymously (on \`/mcp\`): ${input.freeTierToolNames.has(m.name) ? "yes" : "no (answers with sign-in instructions)"}`,
+      "",
+    );
     // Two sections, because one heading made a false claim about half the
     // rows: the Worker's poll loop and the chart-URL render params never reach
     // a request body, and publishing them under "Fixed request inputs" sent
@@ -554,12 +603,6 @@ export function buildToolsDoc(input: ToolsDocInput): string {
       for (const f of workerRows) out.push(`- \`${f.field}\` = \`${f.value}\` — ${f.note}`);
       out.push("");
     }
-    out.push("Annotations:", "");
-    for (const { surface, path } of SURFACE_PATHS) {
-      out.push(`- \`${path}\`: ${renderAnnotations(toolAnnotationsForSurface(m, surface))}`);
-    }
-    out.push("", "<details><summary>Published input schema (JSON Schema)</summary>", "", "```json",
-      JSON.stringify(z.toJSONSchema(m.inputSchema, { io: "input" }), null, 2), "```", "</details>", "");
   }
   return out.join("\n");
 }

@@ -2,15 +2,25 @@
 
 # Tako MCP tools
 
-This page is rendered from the same objects the server publishes on `tools/list`. Every description, parameter description, and annotation below is byte-for-byte what the model reads. Host-level `_meta` (security schemes, widget bindings) is not shown.
+Rendered from the same objects that serve `tools/list`, so every schema and every line of prose below is byte-for-byte what the server publishes.
 
-## Choosing tools with `?tools=`
+## What reaches whom
+
+Publishing something is not the same as the model reading it. Three bands, and every section below carries the label of the one it belongs to.
+
+**Model-visible** — reaches the model's context. Server `instructions`, and per tool the `name`, `description`, and `inputSchema` (each property's description, default, and enum included). At call time the result's `content[].text` joins them.
+
+**Client-visible** — published on `tools/list`, then dropped by the host when it builds the model's tool catalog: `outputSchema`, `annotations`, `_meta`. Clients use them to validate structured results, label the tool in a UI, and drive widgets. The model never sees them. Claude Code hands the model `name`, `description`, and `parameters` (= `inputSchema`) only, and reads `outputSchema` for renderer validation ([claude-code#54197](https://github.com/anthropics/claude-code/issues/54197), open as of 2026-08-26); VS Code has the same gap. The spec permits this: servers MUST emit conforming `structuredContent` and clients SHOULD validate it against `outputSchema`, but nothing requires either to reach the model. Whether `structuredContent` itself reaches the model is host-dependent — Claude Code prefers `content` when a result carries both. Host-level `_meta` (security schemes, widget bindings) is client-visible and is not rendered here.
+
+**Repo-only** — never on the wire in any form. Which surfaces list a tool, whether it runs anonymously, its fixed request inputs, and the `?tools=` rules below. These describe how the server is deployed. They are written for you and sent to nobody.
+
+## Choosing tools with `?tools=` (repo-only)
 
 On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.
 
 ## `/mcp` — the generic surface, every client
 
-Default listing:
+Default listing (repo-only — the model sees the resulting list, not this statement):
 
 - `tako_available_data`
 - `tako_contents`
@@ -24,7 +34,7 @@ Opt-in (name them in `?tools=`):
 - `tako_answer` — `?tools=available_data,contents,credit_balance,graph_related,search,answer`
 - `tako_visualize` — `?tools=available_data,contents,credit_balance,graph_related,search,visualize`
 
-Server instructions (authenticated):
+Server instructions, authenticated (model-visible — the host injects these into the model's context):
 
 ```text
 Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.
@@ -32,7 +42,7 @@ Tako searches the live web AND a proprietary live-data graph in the same call. R
 `tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url. Set `include_contents: true` on `tako_search` when you need the rows themselves.
 ```
 
-Server instructions (anonymous):
+Server instructions, anonymous (model-visible):
 
 ```text
 Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.
@@ -42,7 +52,7 @@ Tako searches the live web AND a proprietary live-data graph in the same call. R
 
 ## `/mcp/chatgpt` — the ChatGPT app surface, OAuth only
 
-Default listing:
+Default listing (repo-only — the model sees the resulting list, not this statement):
 
 - `tako_available_data`
 - `tako_contents`
@@ -50,7 +60,7 @@ Default listing:
 - `tako_search`
 - `tako_visualize`
 
-Server instructions (authenticated):
+Server instructions, authenticated (model-visible — the host injects these into the model's context):
 
 ```text
 Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.
@@ -64,8 +74,7 @@ Tako searches the live web AND a proprietary live-data graph in the same call. R
 
 **Tako: Answer Agent**
 
-- Listed by default on: none (opt-in on `/mcp`)
-- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+#### Model-visible
 
 Description:
 
@@ -83,24 +92,11 @@ Parameters:
 | `sources` | array | no | `["data","web"]` | Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph. ("tako" is a legacy synonym for "data".) |
 | `thread_id` | string | no |  | Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread. |
 
-Fixed request inputs (the caller cannot change these):
-
-- `effort` = `"medium"` — The only Answer Agent effort level launched.
-
-Fixed worker-side settings (not request fields):
-
-- `poll interval / budget` = `5 s / 295 s` — The call polls the run until it completes or the budget ends.
-
-Annotations:
-
-- `/mcp`: title: Tako: Answer Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Answer Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false
-
 <details><summary>Published input schema (JSON Schema)</summary>
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "query": {
@@ -139,12 +135,94 @@ Annotations:
 ```
 </details>
 
+#### Client-visible
+
+Annotations:
+
+- `/mcp`: title: Tako: Answer Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Answer Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "description": "queued | running | completed | failed."
+    },
+    "timed_out": {
+      "type": "boolean",
+      "description": "True when the wait window elapsed before a terminal status — poll again with the same run_id."
+    },
+    "thread_id": {
+      "description": "Pass back as thread_id to ask a follow-up in the same conversation.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "run_id",
+    "status",
+    "timed_out"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+#### Repo-only
+
+- Listed by default on: none (opt-in on `/mcp`)
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Fixed request inputs (the caller cannot change these):
+
+- `effort` = `"medium"` — The only Answer Agent effort level launched.
+
+Fixed worker-side settings (not request fields):
+
+- `poll interval / budget` = `5 s / 295 s` — The call polls the run until it completes or the budget ends.
+
 ### tako_answer
 
 **Tako: Answer**
 
-- Listed by default on: none (opt-in on `/mcp`)
-- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+#### Model-visible
 
 Description:
 
@@ -173,22 +251,11 @@ Parameters:
 | `node_ids` | array | no |  | Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source. |
 | `strict` | boolean | no | `false` | Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return. |
 
-Fixed request inputs (the caller cannot change these):
-
-- `sources.web.include_contents` = `false` — Web page text is never inlined; call tako_contents on a url.
-- `sources.web.snippet_max_chars` = `2000` — Excerpt cap per web result; the API default on /v1/answer is 1000.
-- `sources.web.highlights` = `true` — Query-relevant highlight passages per web result; the API default is false.
-
-Annotations:
-
-- `/mcp`: title: Tako: Answer; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Answer; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-
 <details><summary>Published input schema (JSON Schema)</summary>
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "query": {
@@ -256,12 +323,115 @@ Annotations:
 ```
 </details>
 
+#### Client-visible
+
+Annotations:
+
+- `/mcp`: title: Tako: Answer; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Answer; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "answer": {
+      "description": "The synthesized, citation-backed answer.",
+      "type": "string"
+    },
+    "cards": {
+      "description": "Cards cited by the answer.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {}
+      }
+    },
+    "web_results": {
+      "description": "Web results cited by the answer, each with a `snippet` of the passages selected against the question rather than the page's opening text. A ' … ' inside one marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one continuous sentence. `null` means no relevant passage was found on that page.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {}
+      }
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "total_cost_usd": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total_cost_usd"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cost-plus usage for this request (null when not metered)."
+    },
+    "guidance": {
+      "description": "Present only when the data source grounded zero cards: the deterministic coverage verdict.",
+      "type": "string"
+    },
+    "pub_id": {
+      "type": "string"
+    },
+    "embed_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "image_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "dark_mode": {
+      "type": "boolean"
+    },
+    "width": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "height": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "usage"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+#### Repo-only
+
+- Listed by default on: none (opt-in on `/mcp`)
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Fixed request inputs (the caller cannot change these):
+
+- `sources.web.include_contents` = `false` — Web page text is never inlined; call tako_contents on a url.
+- `sources.web.snippet_max_chars` = `2000` — Excerpt cap per web result; the API default on /v1/answer is 1000.
+- `sources.web.highlights` = `true` — Query-relevant highlight passages per web result; the API default is false.
+
 ### tako_available_data
 
 **Tako: Available Data**
 
-- Listed by default on: `/mcp`, `/mcp/chatgpt`
-- Runs anonymously (on `/mcp`): yes
+#### Model-visible
 
 Description:
 
@@ -290,21 +460,11 @@ Parameters:
 | `types` | string ("entity" \\| "metric") | no |  | Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both. |
 | `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`. |
 
-Fixed request inputs (the caller cannot change these):
-
-- `graph/search limit` = `10` — Candidates fetched per lookup (the API default is 20); the top 4 that survive the match gate are inspected — 1 drilled in full, 3 by a limit=1 probe. A shell rank-0 costs one more drill.
-- `graph/related limit` = `100` — Coverage page size for the drill; paging stops at 250 names or 4 pages. The cheap per-candidate coverage probes send limit=1 instead.
-
-Annotations:
-
-- `/mcp`: title: Tako: Available Data; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Available Data; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-
 <details><summary>Published input schema (JSON Schema)</summary>
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "q": {
@@ -350,12 +510,280 @@ Annotations:
 ```
 </details>
 
+#### Client-visible
+
+Annotations:
+
+- `/mcp`: title: Tako: Available Data; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Available Data; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "found": {
+      "type": "boolean",
+      "description": "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): both halves resolved and the pinned metric passed the name test — read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that."
+    },
+    "verified": {
+      "description": "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and holds nothing matching, so a pinned call will probably return 0 cards; the emitted next_call therefore drops the pin. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
+      "type": "string",
+      "enum": [
+        "coverage",
+        "pair",
+        "unlinked",
+        "resolution"
+      ]
+    },
+    "query": {
+      "type": "string"
+    },
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "unavailable": {
+            "type": "boolean"
+          },
+          "coverage": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "total": {
+                "type": "number"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "node_id": {
+                      "type": "string",
+                      "description": "Pin this in a follow-up's node_ids WITH strict:true."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "node_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "items_truncated": {
+                "description": "More coverage entries exist than are listed here — the full NAME list is in the text channel.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "total",
+              "truncated",
+              "items"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "node_id",
+          "name",
+          "type",
+          "coverage"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "The resolved matches and their coverage, each entry carrying the node id to pin. To fetch a specific metric precisely: call tako_search with node_ids=[<the metric's node_id>] AND strict:true — an entity-only pin without strict does not steer retrieval."
+    },
+    "next_call": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "enum": [
+                "tako_search"
+              ]
+            },
+            "query": {
+              "type": "string"
+            },
+            "node_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "strict": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "tool",
+            "query",
+            "node_ids",
+            "strict"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Ready-to-run follow-up: call this tool with exactly this query, node_ids and strict. node_ids holds the METRIC node only — strict is an OR over pinned nodes, so adding the entity id widens the filter back out. Null when no metric resolved."
+    },
+    "metric_query": {
+      "type": "string"
+    },
+    "entity": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node_id",
+            "name",
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "metric": {
+      "description": "The metric whose node_id belongs in the follow-up's node_ids.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node_id",
+            "name",
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "entity_alternates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "name",
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "metric_alternates": {
+      "description": "Runners-up. The top metric is right ~80% of the time and the top three ~93-95%, so check these before accepting the primary.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "name",
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "found",
+    "query",
+    "matches",
+    "next_call"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+#### Repo-only
+
+- Listed by default on: `/mcp`, `/mcp/chatgpt`
+- Runs anonymously (on `/mcp`): yes
+
+Fixed request inputs (the caller cannot change these):
+
+- `graph/search limit` = `10` — Candidates fetched per lookup (the API default is 20); the top 4 that survive the match gate are inspected — 1 drilled in full, 3 by a limit=1 probe. A shell rank-0 costs one more drill.
+- `graph/related limit` = `100` — Coverage page size for the drill; paging stops at 250 names or 4 pages. The cheap per-candidate coverage probes send limit=1 instead.
+
 ### tako_contents
 
 **Tako: Fetch Contents**
 
-- Listed by default on: `/mcp`, `/mcp/chatgpt`
-- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+#### Model-visible
 
 Description:
 
@@ -379,21 +807,11 @@ Parameters:
 | `max_chars` | integer | no |  | Web URLs only: character cap on the extracted page text (max 1,000,000 = full text). Inline fetches default to 100,000 PER URL when fetching one url, less when batching several (a shared per-call character budget split across the batch — set this explicitly to opt out and get the full 100,000, or more, per url regardless of batch size). Billing is per page regardless, so the cap only trims what reaches you, and `truncated: true` reports a cut. Raise it when you need a full long document inline. In url mode the downloaded file is the full text unless you set this (an explicit value caps the file too). Ignored when `query` is set (passages always scan the full text) and for Tako card URLs (use max_rows). |
 | `query` | string | no |  | Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query="RevPAR" against a hotel earnings page. The FULL page text is always scanned (max_chars is ignored). The `note` field summarizes the matches; a no-match note says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode. |
 
-Fixed request inputs (the caller cannot change these):
-
-- `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for inline web text; 1,000,000 when query is set; omitted in url mode.
-- `query` = `(stripped from the request)` — Passage extraction runs in the Worker; the API has no such field.
-
-Annotations:
-
-- `/mcp`: title: Tako: Fetch Contents; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Fetch Contents; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-
 <details><summary>Published input schema (JSON Schema)</summary>
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "url": {
@@ -454,12 +872,255 @@ Annotations:
 ```
 </details>
 
+#### Client-visible
+
+Annotations:
+
+- `/mcp`: title: Tako: Fetch Contents; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Fetch Contents; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "dataset": {
+            "type": "object",
+            "properties": {
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "Column name."
+                    },
+                    "type": {
+                      "description": "Logical column type: 'string', 'number', 'boolean', 'date', or 'datetime'. Temporal cells are ISO-8601 strings.",
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "date",
+                        "datetime"
+                      ]
+                    },
+                    "unit": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Structured unit for the column values, e.g. 'USD billions', '%'. Null when unitless."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Typed header entry; `type` is the JSON-facing column type."
+                },
+                "description": "Ordered column headers (name + type), one per position in every row."
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "description": "Row data as positional cell arrays aligned to `columns` order. Cells are string/number/boolean/null; nulls are preserved, never coerced."
+              },
+              "total_rows": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "True total number of rows in the underlying data, before any truncation."
+              },
+              "truncated": {
+                "type": "boolean",
+                "description": "True when `rows` was capped and total_rows exceeds the number returned."
+              },
+              "ref": {
+                "type": "string",
+                "description": "Source URL the dataset was derived from (e.g. the Tako card URL)."
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "Human-readable source name (e.g. 'FRED', 'S&P Global')."
+                    },
+                    "index": {
+                      "default": "data",
+                      "type": "string",
+                      "enum": [
+                        "data",
+                        "web"
+                      ],
+                      "description": "Source index the rows came from: 'data' (Tako) or 'web'."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "index"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Per-dataset provenance entry. `index` names the source index, not a\ncitation display number. It is \"data\" for every dataset today — web\ncontent never fills a dataset slot."
+                },
+                "description": "Provenance for the dataset: the sources the rows were drawn from."
+              },
+              "provenance": {
+                "default": "query",
+                "type": "string",
+                "enum": [
+                  "query",
+                  "web_extraction"
+                ],
+                "description": "How the rows were produced: 'query' (Tako data) or 'web_extraction'."
+              }
+            },
+            "required": [
+              "columns",
+              "rows",
+              "total_rows",
+              "truncated",
+              "ref",
+              "sources",
+              "provenance"
+            ],
+            "additionalProperties": false,
+            "description": "The dataset-slot envelope: exact retrieved rows as positional arrays\nin `columns` order. The rows come directly from the data source; the LLM\nnever transcribes them."
+          },
+          "format": {
+            "type": "string"
+          },
+          "total_rows": {
+            "type": "number"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "download_url": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "source_url": {
+            "type": "string"
+          },
+          "cost": {
+            "type": "number"
+          },
+          "url": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cost",
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "cost": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "results",
+    "cost"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+#### Repo-only
+
+- Listed by default on: `/mcp`, `/mcp/chatgpt`
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Fixed request inputs (the caller cannot change these):
+
+- `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for inline web text; 1,000,000 when query is set; omitted in url mode.
+- `query` = `(stripped from the request)` — Passage extraction runs in the Worker; the API has no such field.
+
 ### tako_credit_balance
 
 **Tako: Credit Balance**
 
-- Listed by default on: `/mcp`
-- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+#### Model-visible
 
 Description:
 
@@ -469,32 +1130,66 @@ Parameters:
 
 _none_
 
-Fixed request inputs (the caller cannot change these):
-
-_none_
-
-Annotations:
-
-- `/mcp`: title: Tako: Credit Balance; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-- `/mcp/chatgpt`: title: Tako: Credit Balance; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-
 <details><summary>Published input schema (JSON Schema)</summary>
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {}
 }
 ```
 </details>
 
+#### Client-visible
+
+Annotations:
+
+- `/mcp`: title: Tako: Credit Balance; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+- `/mcp/chatgpt`: title: Tako: Credit Balance; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "details": {
+      "type": "object",
+      "properties": {
+        "credit_balance": {
+          "type": "number"
+        },
+        "formatted_credit_balance": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "details"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+#### Repo-only
+
+- Listed by default on: `/mcp`
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Fixed request inputs (the caller cannot change these):
+
+_none_
+
 ### tako_graph_related
 
 **Tako: Graph Related**
 
-- Listed by default on: `/mcp`, `/mcp/chatgpt`
-- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+#### Model-visible
 
 Description:
 
@@ -517,20 +1212,11 @@ Parameters:
 | `cursor` | string | no |  | Pagination cursor (for a single drilled relation; intended for single-q use). |
 | `limit` | integer | no |  | Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items. |
 
-Fixed request inputs (the caller cannot change these):
-
-_none_
-
-Annotations:
-
-- `/mcp`: title: Tako: Graph Related; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Graph Related; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-
 <details><summary>Published input schema (JSON Schema)</summary>
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "node_id": {
@@ -588,12 +1274,329 @@ Annotations:
 ```
 </details>
 
+#### Client-visible
+
+Annotations:
+
+- `/mcp`: title: Tako: Graph Related; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Graph Related; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "relations": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "aliases": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "subtype": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "label": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "total": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "total_capped": {
+                "type": "boolean"
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "kind",
+              "label",
+              "items",
+              "total",
+              "total_capped"
+            ],
+            "additionalProperties": false
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "relation": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "aliases": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "subtype": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "label": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "type",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "total": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "total_capped": {
+              "type": "boolean"
+            },
+            "next_cursor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "key",
+            "kind",
+            "label",
+            "items",
+            "total",
+            "total_capped"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "inferred_labels": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "node"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+#### Repo-only
+
+- Listed by default on: `/mcp`, `/mcp/chatgpt`
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Fixed request inputs (the caller cannot change these):
+
+_none_
+
 ### tako_search
 
 **Tako: Search**
 
-- Listed by default on: `/mcp`, `/mcp/chatgpt`
-- Runs anonymously (on `/mcp`): yes
+#### Model-visible
 
 Description:
 
@@ -628,23 +1631,11 @@ Parameters:
 | `node_ids` | array | no |  | Graph node ids (from tako_available_data, or a card's nodes) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source. |
 | `strict` | boolean | no | `false` | Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return. |
 
-Fixed request inputs (the caller cannot change these):
-
-- `sources.web.include_contents` = `false` — Web page text is never inlined; call tako_contents on a url.
-- `sources.web.snippet_max_chars` = `2000` — Excerpt cap per web result; the API default is 4000.
-- `sources.web.highlights` = `true` — Query-relevant highlight passages per web result; the API default is false.
-- `sources.web.count` = `= count` — The same count is sent to both sources.
-
-Annotations:
-
-- `/mcp`: title: Tako: Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-
 <details><summary>Published input schema (JSON Schema)</summary>
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "query": {
@@ -727,12 +1718,112 @@ Annotations:
 ```
 </details>
 
+#### Client-visible
+
+Annotations:
+
+- `/mcp`: title: Tako: Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
+- `/mcp/chatgpt`: title: Tako: Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "cards": {
+      "description": "The data cards — the payload. Each carries its title, description (headline value), facts, and inline rows under `content`.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {}
+      }
+    },
+    "web_results": {
+      "description": "Web results, each with a `snippet`. A snippet is the passages selected against your query, not the page's opening text, so it usually carries the answer-bearing sentence. A ' … ' inside one marks a discontinuity — either passages joined from different parts of the page, or the page's own ellipsis — so read it as a whole and never quote across it as one continuous sentence. `null` means that page had no relevant passage — its url is still fetchable via tako_contents.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {}
+      }
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "total_cost_usd": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total_cost_usd"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cost-plus usage for this request (null when not metered)."
+    },
+    "guidance": {
+      "description": "Present only on a zero-card response: the recovery protocol.",
+      "type": "string"
+    },
+    "pub_id": {
+      "type": "string"
+    },
+    "embed_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "image_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "dark_mode": {
+      "type": "boolean"
+    },
+    "width": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "height": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "usage"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
+#### Repo-only
+
+- Listed by default on: `/mcp`, `/mcp/chatgpt`
+- Runs anonymously (on `/mcp`): yes
+
+Fixed request inputs (the caller cannot change these):
+
+- `sources.web.include_contents` = `false` — Web page text is never inlined; call tako_contents on a url.
+- `sources.web.snippet_max_chars` = `2000` — Excerpt cap per web result; the API default is 4000.
+- `sources.web.highlights` = `true` — Query-relevant highlight passages per web result; the API default is false.
+- `sources.web.count` = `= count` — The same count is sent to both sources.
+
 ### tako_visualize
 
 **Tako: Visualize**
 
-- Listed by default on: `/mcp/chatgpt`
-- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+#### Model-visible
 
 Description:
 
@@ -760,26 +1851,11 @@ Parameters:
 | `height` | integer | no |  | Chart height in pixels (100–2000). Overrides the default aspect-ratio height. |
 | `normalize_currencies` | string | no |  | Target ISO 4217 currency code (e.g. 'USD'). Converts recognized currency-denominated datasets to this currency using historical rates. |
 
-Fixed request inputs (the caller cannot change these):
-
-_none_
-
-Fixed worker-side settings (not request fields):
-
-- `chart url dark_mode` = `true` — Cards render in the dark theme.
-- `chart url width` = `900` — Card width in pixels.
-- `chart url height (when omitted)` = `720` — Card height in pixels unless height is set.
-
-Annotations:
-
-- `/mcp`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false
-- `/mcp/chatgpt`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
-
 <details><summary>Published input schema (JSON Schema)</summary>
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "components": {
@@ -1626,3 +2702,71 @@ Annotations:
 }
 ```
 </details>
+
+#### Client-visible
+
+Annotations:
+
+- `/mcp`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false
+- `/mcp/chatgpt`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "webpage_url": {
+      "type": "string"
+    },
+    "pub_id": {
+      "type": "string"
+    },
+    "embed_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "image_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "dark_mode": {
+      "type": "boolean"
+    },
+    "width": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "height": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "additionalProperties": false
+}
+```
+</details>
+
+#### Repo-only
+
+- Listed by default on: `/mcp/chatgpt`
+- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
+
+Fixed request inputs (the caller cannot change these):
+
+_none_
+
+Fixed worker-side settings (not request fields):
+
+- `chart url dark_mode` = `true` — Cards render in the dark theme.
+- `chart url width` = `900` — Card width in pixels.
+- `chart url height (when omitted)` = `720` — Card height in pixels unless height is set.
