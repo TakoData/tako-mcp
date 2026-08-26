@@ -193,13 +193,13 @@ const coverageMatchSchema = z.object({
 // don't pay for the full name lists twice.
 const fullOutputSchema = z.object({
   found: z.boolean().describe(
-    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): the resolved entity HOLDS something matching — the pinned metric is on its own metric list (`verified: pair`), or its metrics contain the caller's phrase. Both names resolving isn't enough: `unlinked` with no matching list yields false. A metric that resolved nowhere globally still yields true when the entity's own list carries the phrase. Read `verified` for what was actually checked. Either way, running `next_call` is what confirms retrievable data exists — and 0 cards from it is NOT conclusive on its own: retry without `node_ids` first, since the pin is a hard filter over a graph that holds near-duplicate metric nodes.",
+    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): both halves RESOLVED to confident graph nodes — read `verified` for what was actually checked. Either way, running `next_call` is what confirms retrievable data exists — and 0 cards from it means Tako holds no chart for the pair, since the handle carries no pin to blame.",
   ),
   verified: z
     .enum(["coverage", "pair", "unlinked", "resolution"])
     .optional()
     .describe(
-      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled (discovery path). `pair`: the metric is on the entity's own metric list — the strongest free evidence available. `unlinked`: the entity's list was checked and the PINNED metric is not on it, so a pinned call will probably return 0 cards; the emitted next_call drops the pin. It is a verdict on that one node, not on the list: `unlinked` with `found: true` means your `metric` phrase did match entries, just not the pinned one, and `coverage` names them. `resolution`: no pair evidence — the check was skipped or failed, so treat it exactly as before. None of these means a chart exists.",
+      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled (discovery path). `pair`: the metric is on the entity's own metric list — the strongest free evidence available. `unlinked`: the entity's list was checked and holds nothing matching, so a card for this pair is unlikely. `resolution`: no pair evidence — the check was skipped or failed, so treat it exactly as before. None of these means a chart exists.",
     ),
   query: z.string(),
   summary: z.string(),

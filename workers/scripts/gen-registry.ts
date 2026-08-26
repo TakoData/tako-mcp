@@ -144,6 +144,55 @@ export function assertLlmsFullCoverage(
 }
 
 /**
+ * Assert no `llms-full.txt` section advises a pin for a tool that cannot take one.
+ *
+ * DISTINCT FROM PIN FORM, and that distinction is the whole point. The form guard
+ * below asks "is this the pin that works"; this asks "can the tool it is written
+ * under accept a pin at all". A sentence passes the form guard while being wrong:
+ * the `tako_available_data` section read "pin THAT metric node id alone with
+ * `strict: true` … `next_call` is that follow-up prewritten (query + the metric
+ * node + `strict`)" — the exact measured-correct recipe, naming `strict: true`,
+ * under a tool whose `next_call` targets `tako_search`, which rejects both
+ * parameters. Perfect form, unreachable target, guard silent.
+ *
+ * Attribution is by SECTION rather than by naming a tool in the sentence, because
+ * the legitimate advice doesn't name one: llms-full's two surviving pin
+ * sentences say "ask here" and rely on the `### <tool>` heading above them. A
+ * name-in-sentence rule flags both, plus AGENTS.md's "search on that name, since
+ * `tako_search` takes no pin" — a sentence asserting the OPPOSITE, which
+ * `ADVISES_PINNING` matches anyway because it is a prose detector.
+ *
+ * Pin capability is derived from the tool's own published input schema, nested
+ * properties included (`tako_search_advanced` carries `node_ids` inside `data`),
+ * so nothing here goes stale when a tool gains or loses the parameter.
+ */
+export function assertPinAdviceReachableInLlmsFull(
+  llmsFull: string,
+  pinCapableTools: ReadonlySet<string>,
+): void {
+  if (pinCapableTools.size === 0) return;
+  const problems: string[] = [];
+  for (const part of llmsFull.split(/^### /m).slice(1)) {
+    const nl = part.indexOf("\n");
+    const heading = (nl === -1 ? part : part.slice(0, nl)).trim();
+    if (pinCapableTools.has(heading)) continue;
+    const body = nl === -1 ? "" : part.slice(nl + 1);
+    for (const sentence of pinAdvisingSentences(body)) {
+      problems.push(
+        `section "### ${heading}" advises a pin, but that tool accepts no \`node_ids\`\n      "${sentence.slice(0, 160)}"`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `pin advice points at a tool that rejects it:\n  ${problems.join("\n  ")}\n` +
+        `Only ${[...pinCapableTools].sort().join(", ")} accept a pin. ` +
+        `Route the rest to the canonical NAME, which is what recovers cards.`,
+    );
+  }
+}
+
+/**
  * Assert that the hand-written `llms-full.txt` advises the pin form measured to
  * WORK: the METRIC node id alone, with `strict: true`.
  *
@@ -190,7 +239,7 @@ export function assertPinFormInDocs(
   }
   if (problems.length > 0) {
     throw new Error(
-      `pin-form drift — docs advise a pin form measured NOT to steer retrieval:\n  ${problems.join(
+      `pin-form drift — docs advise a pin form measured NOT to land the metric:\n  ${problems.join(
         "\n  ",
       )}\nUse the PINNED_RETRY / PINNED_FROM_CARD wording from workers/src/tools/_search_results.ts.`,
     );
@@ -835,7 +884,14 @@ export function buildLobehubPlugin(
     return {
       name: tool.name,
       description: tool.description,
-      inputSchema: z.toJSONSchema(tool.inputSchema, { target: "draft-7" }),
+      // `io: "input"` matters and its absence was a real defect: without it zod
+      // serializes with OUTPUT semantics, where a `.default()` field is always
+      // present and therefore lands in `required`. LobeHub then read
+      // `tako_search.sources` as mandatory while the MCP schema — which does pass
+      // `io: "input"` — called it optional, so the two published descriptions of
+      // the same tool disagreed. Measured: required goes from
+      // ["query","sources"] to ["query"].
+      inputSchema: z.toJSONSchema(tool.inputSchema, { target: "draft-7", io: "input" }),
     };
   });
   // Only `version` and `tools` are regenerated. EVERYTHING ELSE — including
@@ -1084,6 +1140,19 @@ async function main(): Promise<void> {
   //     is exempted for, so they join at `requireStrict: false` too. Verified:
   //     all three are clean under the unambiguous rule, and each trips the
   //     strict rule on that one sentence alone.
+  // Derived, never listed: a tool accepts a pin iff its published input schema
+  // carries `node_ids` anywhere (nested counts — see the function's doc comment).
+  const pinCapableTools = new Set(
+    modules
+      .filter((m) =>
+        JSON.stringify(z.toJSONSchema(m.tool.inputSchema, { io: "input" })).includes(
+          '"node_ids"',
+        ),
+      )
+      .map((m) => m.tool.name),
+  );
+  assertPinAdviceReachableInLlmsFull(llmsFull, pinCapableTools);
+
   assertPinFormInDocs([
     { file: "llms-full.txt", text: llmsFull, requireStrict: true },
     { file: "README.md", text: readFileSync(README_PATH, "utf8"), requireStrict: false },

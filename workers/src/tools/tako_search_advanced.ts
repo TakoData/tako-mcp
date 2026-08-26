@@ -1,6 +1,18 @@
 /**
- * `tako_search_advanced` — the v3 `POST /api/v3/search` request body exposed
- * one-to-one, behind `?tools=search_advanced` on `/mcp`.
+ * `tako_search_advanced` — the v3 `POST /api/v3/search` request body's
+ * RETRIEVAL options, behind `?tools=search_advanced` on `/mcp`.
+ *
+ * NOT the whole body, and the docs must not claim otherwise. Spec D4 says
+ * "one-to-one" and then enumerates a subset; this is that subset. Omitted, and
+ * the canonical list — both source blocks are `.strict()` and the top level is
+ * a fixed `z.object`, so sending any of these is a -32602, never a silent drop:
+ *   top level: `location`, `timezone`, `output_settings`, `include_related`
+ *   data:      `mode` (documented no-op for Tako cards; kept upstream for
+ *              schema stability, so exposing it would advertise a no-op)
+ *   web:       `article_content_max_chars`, `published_after`, `published_before`
+ * The three web fields are the ones a caller is most likely to want — date-
+ * filtered web search is a real ask. Add them to the `.pick()` below when they
+ * are wanted; that is the only edit needed.
  *
  * WHY IT IS OPT-IN. `tako_search` is the tool a model should reach for: every
  * option here is a cost, context or latency knob rather than a statement of
@@ -23,8 +35,25 @@
  * to mirror the API exactly. Each field is unwrapped past its default first.
  *
  * NOT ON THE CHATGPT SURFACE and not anonymous-executable: it can bill rows.
- * It also declares no widget hooks — the chart widget and the inline PNG belong
- * to the default surface, and this tool is never on it.
+ *
+ * NO WIDGET HOOKS, and the reason is a COST choice, not a surface rule. The
+ * earlier comment here said the inline PNG "belongs to the default surface, and
+ * this tool is never on it" — that is wrong twice over: mcp.ts gates the widget
+ * on the SURFACE (`widgetSuppressed = options.surface !== "chatgpt"`) and runs
+ * `extraContentBlocks` whenever `ui === undefined`, which on `/mcp` is always;
+ * and `tako_answer` is opt-in on `/mcp` and declares both hooks. Listing
+ * membership has nothing to do with it, so a future reader must not "restore"
+ * the hooks on that reasoning.
+ *
+ * The actual reason: `extraContentBlocks` fetches the card render and base64s
+ * ~170 KB into every result, with no way for the caller to decline. A caller who
+ * reached for this tool asked for `effort: deep`, a wider `count`, or inline
+ * rows — data, not a picture — and paying for an image on every call is the
+ * opposite of the control this tool exists to give. `runSearch` still lifts
+ * `pub_id` / `embed_url` / `image_url` into the output, so the chart is one
+ * click-through away and a host can render it if it wants; only the automatic
+ * inline PNG is absent. When the chart IS the deliverable, `tako_search` is the
+ * tool, and it renders inline.
  */
 import { z } from "zod";
 
@@ -44,13 +73,15 @@ import { runSearch } from "./tako_search.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
-  "Full control over the v3 search request: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.",
+  "The v3 search request's retrieval options: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.",
   "",
   "Use `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.",
   "",
   "Nothing is sent unless you set it, so an omitted field takes the server default named in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.",
   "",
-  "To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out, and a pin at the default `strict: false` does not steer retrieval. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
+  "One consequence to know before switching: `tako_search` forces `web.highlights: true` for you. This tool forces nothing, so an omitted `highlights` takes the server default of false and each web snippet becomes the page's opening text instead of the passages matching your query. Set it unless you want the opening.",
+  "",
+  "To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. At the default `strict: false` a pin still does something — the node becomes a retrieval candidate and ranks up — but the boost is deliberately small, so it doesn't guarantee that card comes back; `strict: true` is what makes it certain. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
 ].join("\n");
 
 
@@ -101,7 +132,15 @@ const dataBlock = z
   .strict();
 
 /**
- * The web block. Spec D4's enumeration, which is a SUBSET of
+ * The web block. NOTE the one asymmetry with `tako_search`: that tool declares
+ * `sources.web.highlights = true` in `fixedInputs`, this one declares nothing, so
+ * an omitted `highlights` here takes the API default of false and snippets become
+ * page-opening text. That is correct under the mirror-the-API rule and it is a
+ * real downgrade for a caller who moved here for `effort: deep`, so DESCRIPTION
+ * says it in words. Don't "fix" it by adding a fixedInput — forcing a value is
+ * the thing this tool exists not to do.
+ *
+ * Spec D4's enumeration, which is a SUBSET of
  * `WebSourceSettings`: `article_content_max_chars`, `published_after` and
  * `published_before` are deliberately out of this pass. Add them here when
  * they are wanted — the `.pick()` is the only place that needs to change.
@@ -197,7 +236,7 @@ const tako_search_advanced = {
     // there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
-  // Nothing is fixed. Mirroring the API one-to-one is this tool's entire job;
+  // Nothing is fixed. Mirroring the API's retrieval options is this tool's job;
   // the one opinionated override in the surface (web highlights) lives on
   // `tako_search`, where a caller who wants it off has nowhere else to go.
   fixedInputs: [],

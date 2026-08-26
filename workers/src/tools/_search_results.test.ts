@@ -9,10 +9,14 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { ContentItem } from "../generated/schemas.js";
+
 import {
+  CONTENT_META_KEYS,
+  CONTENT_PAYLOAD_KEYS,
+  NARROWER_WEB_ATTEMPT,
   buildSearchOutput,
   hoistSourceGlossary,
-  NARROWER_WEB_ATTEMPT,
   orderCardsByUsefulness,
   slimCard,
   slimCardContent,
@@ -840,5 +844,69 @@ describe("slimCardContent and the card_json payload", () => {
     const out = slimCardContent(dense as never, 2) as Record<string, unknown>;
     expect(out.records).toHaveLength(2);
     expect(out.truncated).toBe(true);
+  });
+});
+
+// The card_data leak was a hand-listed set falling behind a generated one:
+// slimCardContent destructured three payload keys while ContentItem had four, so
+// `rowCap: null` — "drop every row" — shipped the whole card_json object. Adding a
+// fourth literal fixes that instance and leaves the class open, because nothing
+// notices a FIFTH channel.
+//
+// These two tests close it by binding CONTENT_PAYLOAD_KEYS at both ends: to the
+// function's real behaviour, and to the backend's real schema. Neither is
+// checkable by reading the destructure, which is why the classification is a
+// declared const now.
+describe("the payload/metadata split cannot drift", () => {
+  it("slimCardContent nulls every key classified as a payload", () => {
+    // Built per-key rather than all at once: a single object would pass even if
+    // the function only handled one of the four.
+    for (const key of CONTENT_PAYLOAD_KEYS) {
+      const content = { content_format: "json_compact", cost: 1, [key]: { some: "payload" } };
+      const out = slimCardContent(content as unknown as ResultContent, null) as unknown as Record<
+        string,
+        unknown
+      >;
+      expect(out[key], `slimCardContent leaked ${key} at rowCap null`).toBeNull();
+    }
+  });
+
+  it("keeps every metadata key through the same drop", () => {
+    const content = {
+      content_format: "json_compact",
+      cost: 2,
+      total_rows: 300,
+      truncated: true,
+      card_data_schema: { title: "shape" },
+      manifest: [{ name: "t" }],
+      source_url: "https://trytako.com/c/x",
+      data: "rows",
+    };
+    const out = slimCardContent(content as unknown as ResultContent, null) as unknown as Record<
+      string,
+      unknown
+    >;
+    for (const key of ["content_format", "cost", "total_rows", "truncated", "card_data_schema", "manifest", "source_url"]) {
+      expect(out[key], `slimCardContent dropped metadata ${key}`).not.toBeNull();
+    }
+  });
+
+  it("classifies every generated ContentItem key as payload or metadata", () => {
+    // The guard that actually catches a NEW backend channel. A fifth payload key
+    // upstream lands here as an unclassified name, and the author has to decide
+    // which side it belongs on — instead of it defaulting into `meta` and riding
+    // out on a call that asked for no rows.
+    const classified = new Set<string>([...CONTENT_PAYLOAD_KEYS, ...CONTENT_META_KEYS]);
+    const generated = Object.keys(ContentItem.shape);
+    expect(generated.length).toBeGreaterThan(10);
+    const unclassified = generated.filter((k) => !classified.has(k)).sort();
+    expect(
+      unclassified,
+      "new ContentItem key(s): classify as a row payload (add to CONTENT_PAYLOAD_KEYS and the slimCardContent destructure) or as metadata (CONTENT_META_KEYS)",
+    ).toEqual([]);
+    // And nothing classified has disappeared upstream — a stale name here would
+    // make the check above pass while covering a key that no longer exists.
+    const stale = [...classified].filter((k) => !generated.includes(k)).sort();
+    expect(stale, "classified key(s) no longer in ContentItem").toEqual([]);
   });
 });

@@ -934,9 +934,9 @@ describe("tako_available_data — metric confidence is judged on what is shown",
     // Backend order is preserved — confidentMatch decides confidence, never
     // order (promoting rank 2 was measured to pick ratios over real metrics).
     expect(out.metric?.node_id).toBe("mt::opex::1");
-    // The recovery has to stay available: every candidate keeps its node id, so
-    // the caller can pin one deliberately. This is what a live agent run did on
-    // its own, choosing R&D Expenses (Normalized).
+    // The recovery has to stay available: every candidate keeps its node id for
+    // tako_graph_related traversal, and its NAME is what the caller searches on.
+    // A live agent run picked R&D Expenses (Normalized) off this list unaided.
     expect(out.metric_alternates?.map((m) => m.node_id)).toEqual([
       "mt::rd_norm::2",
       "mt::rd_amer::3",
@@ -1269,8 +1269,8 @@ describe("tako_available_data — pair confirmation", () => {
     // Measured on prod: `q="Backlog"` scoped to Lockheed Martin fills the page
     // and returns a next_cursor, because the filter is a SUBSTRING match and
     // the entity holds `12 Month Backlog`, `90 Day Backlog`, `AA&S Backlog`...
-    // Calling that absence drops the pin and prints "the graph holds no edge …
-    // report the gap" on evidence we never had.
+    // Calling that absence prints "the graph holds no edge … report the gap" on
+    // evidence we never had.
     mockFetchSequence([
       jsonResponse(200, { results: [searchHit("ent::lmt::1", "Lockheed Martin Corporation")] }),
       jsonResponse(200, { results: [searchHit("mt::backlog::1", "Backlog", "metric", "METRIC")] }),

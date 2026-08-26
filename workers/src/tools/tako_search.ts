@@ -215,14 +215,21 @@ export async function runSearch(
   }
   // Slim the model-facing payload, which shrinks BOTH channels the model sees
   // (content.text + structuredContent in mcp.ts are both derived from this).
-  // Web page text is always dropped — billed per page, fetched on demand via
-  // tako_contents.
+  //
+  // Web page text is kept only when the REQUEST asked for it. Derived from the
+  // body rather than passed by the caller, so the two tools cannot disagree with
+  // what went on the wire: tako_search never sets sources.web.include_contents,
+  // so it always drops; tako_search_advanced exposes the field, so a caller who
+  // sets it gets what the generated description promises. On /v3/search that
+  // text is free (see slimWebResult), so context is the only cost and the caller
+  // has already accepted it.
+  const keepWebText = body.sources?.web?.include_contents === true;
   const { cards: slimCards, glossary } = hoistSourceGlossary(
     cards.data.map((c) => slimCard(c, rowCap)),
   );
   const output = buildSearchOutput(
     slimCards,
-    webResults.data.map(slimWebResult),
+    webResults.data.map((w) => slimWebResult(w, keepWebText)),
     wire.request_id,
     wire.usage ?? null,
     ctx.env,

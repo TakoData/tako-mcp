@@ -63,13 +63,12 @@
         },
         "required": [
           "q"
-        ],
-        "additionalProperties": false
+        ]
       }
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.\n\nBest for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline (and, with include_contents: true, a rows preview), not the full series.\n\nPrecondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.\n\nWeb URLs always work — so this is also the fallback path when tako_search surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
+      "description": "Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.\n\nBest for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline, never the rows themselves.\n\nPrecondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.\n\nWeb URLs always work — so this is also the fallback path when tako_search surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -123,11 +122,8 @@
           }
         },
         "required": [
-          "urls",
-          "mode",
-          "content_format"
-        ],
-        "additionalProperties": false
+          "urls"
+        ]
       }
     },
     {
@@ -168,10 +164,8 @@
           }
         },
         "required": [
-          "query",
-          "sources"
-        ],
-        "additionalProperties": false
+          "query"
+        ]
       }
     }
   ]

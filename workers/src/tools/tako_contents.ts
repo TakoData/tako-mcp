@@ -30,7 +30,13 @@
 import { z } from "zod";
 
 import { DjangoError, DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } from "../django.js";
-import { ContentsDeliveryMode, ContentsRequest, ContentsResponse, TakoDataset } from "../generated/schemas.js";
+import {
+  ContentsDeliveryMode,
+  ContentsFormat,
+  ContentsRequest,
+  ContentsResponse,
+  TakoDataset,
+} from "../generated/schemas.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import { extractPassages } from "./_passages.js";
@@ -41,10 +47,18 @@ import {
 } from "./_render_markdown.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
+// No mention of `include_contents` here, and it cannot be reintroduced. The
+// parenthetical this description used to carry ("and, with include_contents:
+// true, a rows preview") named a parameter that no tool on EITHER of this tool's
+// surfaces accepts: D4 removed it from `tako_search`, and the two tools that
+// still take it (`tako_answer`, `tako_search_advanced`) are both opt-in, which
+// `phantom_tool.test.ts` forbids a default-listed tool from naming. So there is
+// no rewording that keeps the claim — after D4 a search result carries no rows
+// on any reachable path, which is exactly why this tool exists.
 const DESCRIPTION = [
   "Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.",
   "",
-  "Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline (and, with include_contents: true, a rows preview), not the full series.",
+  "Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline, never the rows themselves.",
   "",
   "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.",
   "",
@@ -127,20 +141,29 @@ const inputSchema = z.object({
   // depends on this: csv→data, json_records→records, json_compact→dataset (see
   // outputSchema/handler).
   //
-  // NOT sourced from the generated ContentsRequest.content_format, which also
-  // admits "card_json". `itemSchema` has exactly three payload channels and
-  // card_json's payload arrives under `card_data`, which none of them holds —
-  // so offering it here would advertise a format this tool cannot return.
-  // Restore it together with a `card_data` channel on itemSchema, not before.
-  // `tako_search_advanced` DOES offer card_json: its cards carry `content`
-  // loosely, so the payload has somewhere to land there.
-  content_format: z
-    .enum(["csv", "json_records", "json_compact"])
+  // DERIVED from the generated enum, minus the one value this tool cannot
+  // deliver. `itemSchema` has exactly three payload channels and card_json's
+  // payload arrives under `card_data`, which none of them holds — so offering it
+  // here would advertise a format this tool cannot return. Restore it together
+  // with a `card_data` channel on itemSchema, not before. `tako_search_advanced`
+  // DOES offer card_json: its cards carry `content` loosely, so the payload has
+  // somewhere to land there.
+  //
+  // `.exclude()` rather than a literal `z.enum([...])`: a hand-written list
+  // compiles fine when the backend renames a member, and this tool would then
+  // advertise a format the API rejects at runtime. Subtracting from the
+  // generated enum keeps the compile-time link — rename `json_compact` upstream
+  // and this line fails, which is the whole point of parsing rather than casting
+  // everywhere else in this file.
+  content_format: ContentsFormat.exclude(["card_json"])
     .default("csv")
     .describe(
       "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
     ),
-  // Expose the row cap so an agent can pull more than the 20-row default.
+  // Expose the row cap so an agent can cap a large card, or ask for fewer rows
+  // than the default. The default is NOT 20: omitting max_rows returns the whole
+  // card up to the 2,000-row system ceiling (generated ContentsRequest), which is
+  // what the field description and the file header both now say.
   // Applies in BOTH delivery modes (url mode is capped too — there is no
   // uncapped export). Bound it to the backend's 2,000-row ceiling here so the
   // cap is explicit in the discovery card and over-asks fail fast at the MCP

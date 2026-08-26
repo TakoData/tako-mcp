@@ -53,11 +53,20 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
 
 /**
  * How to spend the ONE pinned retry. Measured on prod (2026-07-29): a pin at
- * the default `strict:false` did not steer retrieval at all — a deliberately
+ * the default `strict:false` did not change which card came back — a deliberately
  * WRONG node changed nothing, and pinning a metric node without strict
  * returned a DIFFERENT metric's card. The same metric node WITH `strict:true`
  * returned exactly that card. So "pinning its node_ids" alone described the
- * variant that does nothing; this names the one that works.
+ * WEAKER variant; this names the one that works.
+ *
+ * "Weaker", not inert, and the distinction matters to whoever re-reads this:
+ * `s25b_kg_v2_matches/pinned_nodes.py` injects a pinned node with a dedicated
+ * MatchBucket — a guaranteed allocation slot — and PINNED_NODE_MATCH_SCORE = 3.5
+ * against an organic ceiling of ~3.0, unconditional on `strict`. That comment
+ * calls the score "deliberately NOT score-dominant" and "Provisional; tune with
+ * evals". So the reading below is: the pin IS applied, and is simply too weak to
+ * change which card wins. Do not restate it as "the pin does nothing" — the next
+ * author who checks the backend will find the opposite and distrust the rest.
  *
  * Exported because `tako_answer`'s zero-card guidance needs the identical
  * recipe: two tools whose recovery advice drifts apart teach the model two
@@ -91,7 +100,7 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
 // `tako_search_advanced` accepts a pin, but it is opt-in and prescribes the
 // form in its own description.
 export const PINNED_RETRY =
-  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all. If that pinned call returns 0 cards, run it once more with `node_ids` removed before concluding the data is absent: `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards, so the pin itself is sometimes what empties the result";
+  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false only boosts the node rather than selecting it, which measured as not enough to land the metric. If that pinned call returns 0 cards, run it once more with `node_ids` removed before concluding the data is absent: `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards, so the pin itself is sometimes what empties the result";
 
 /**
  * The same recipe for the card-in-hand case. {@link PINNED_RETRY} sources the
@@ -121,7 +130,7 @@ export const PINNED_RETRY =
  * module would throw ReferenceError on load.
  */
 export const PINNED_FROM_CARD =
-  "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card, or omitting strict, does not steer retrieval";
+  "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card re-admits its other cards, and omitting strict only boosts, which measured as not enough to land the metric";
 
 // Backend TakoCard (api/ga/v3/search/types.py::TakoCard). Loose so a richer
 // backend card doesn't break parsing. Shared by tako_search + tako_answer.
@@ -385,6 +394,37 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * `null` there would be worse still: it would discard the account-default rows
  * of a caller who set include_contents and omitted max_rows.
  */
+/**
+ * The four keys that carry a ROW PAYLOAD, and the ten that carry metadata about
+ * one. Declared rather than left implicit in the destructure below because the
+ * `card_data` leak was exactly this list falling behind the backend: it named
+ * three keys while the generated `ContentItem` had four, so a call asking to drop
+ * every row shipped the whole rich card_json object.
+ *
+ * The destructure stays a destructure — it is type-checked, and a runtime array
+ * cannot drive one — so these consts are bound to reality by two tests instead:
+ * one asserts slimCardContent actually nulls every PAYLOAD key, the other
+ * asserts every `ContentItem` key is classified here. A fifth payload channel
+ * upstream then fails a test rather than silently leaking.
+ *
+ * `card_data_schema` is METADATA on purpose: it is the SHAPE, not the payload,
+ * and a url-mode or quote response returns it beside a null `card_data`, so
+ * dropping it would lose the only thing those two shapes carry.
+ */
+export const CONTENT_PAYLOAD_KEYS = ["data", "records", "dataset", "card_data"] as const;
+export const CONTENT_META_KEYS = [
+  "content_format",
+  "cost",
+  "card_data_schema",
+  "url",
+  "expires_at",
+  "total_rows",
+  "truncated",
+  "export_pricing",
+  "manifest",
+  "source_url",
+] as const;
+
 export function slimCardContent(
   content: ResultContent | null | undefined,
   capRows: number | "all" | null,
@@ -608,13 +648,27 @@ export function hoistSourceGlossary(cards: TakoCard[]): {
 }
 
 /**
- * Slim a web result's `content`. Web `content.data` is the page's full
- * extracted text — always dropped: it is billed per page AND is a large prose
- * blob, so it is never auto-inlined. The model pulls it via tako_contents(url)
- * when it actually needs the page text (title/url/snippet stay for citation).
+ * Slim a web result's `content`. Web `content.data` is the page's full extracted
+ * text: a large prose blob, so it is dropped unless the caller ASKED for it on
+ * the wire (`sources.web.include_contents`). Dropping what the caller requested
+ * is the defect this parameter fixes — tako_search_advanced advertises the
+ * generated `include_contents` description ("Tako returns it free of charge")
+ * and used to throw the result away, which is the dishonest-parameter shape spec
+ * D4 exists to remove.
+ *
+ * NOT "billed per page", which the previous version of this comment claimed and
+ * which drove the unconditional drop. That is true of `POST /api/v1/contents`, a
+ * different endpoint. On `/v3/search` the generated WebSourceSettings says the
+ * page text comes back FREE, best-effort. So context size is the only cost, and
+ * the caller who set the flag has already accepted it.
+ *
+ * `keepText` is REQUIRED, deliberately. As a defaulted parameter it would be fed
+ * `.map`'s index by the two existing `.map(slimWebResult)` call sites — keeping
+ * text for every result except the first. Required means tsc rejects the bare
+ * form instead.
  */
-export const slimWebResult = (w: WebResult): WebResult =>
-  w.content == null
+export const slimWebResult = (w: WebResult, keepText: boolean): WebResult =>
+  w.content == null || keepText
     ? w
     : { ...w, content: slimCardContent(w.content, null) };
 

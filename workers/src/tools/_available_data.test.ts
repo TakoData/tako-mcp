@@ -357,7 +357,7 @@ describe("buildSummary", () => {
   });
 
   // node_ids carries the METRIC node and strict is set: measured on staging,
-  // an entity pin at the default strict:false does not steer retrieval at all,
+  // an entity pin at the default strict:false did not change the card returned,
   // while the metric node WITH strict returns exactly that metric's card.
   it("buildNextCall: names both halves canonically, no pin; null when no match has coverage", () => {
     // The handle carries a query and nothing else. tako_search takes no
@@ -639,5 +639,131 @@ describe("buildPairSummary — metric list clauses", () => {
   it("pair + list of one adds nothing; pair + list of several offers the variants", () => {
     expect(buildPairSummary({ entityQuery: "Apple", metricQuery: "gross margin", pair, domainShaped: false, verified: "pair", metricList: ["Gross Margin"] })).not.toContain("own metrics contain");
     expect(buildPairSummary({ entityQuery: "Apple", metricQuery: "gross margin", pair, domainShaped: false, verified: "pair", metricList: ["Gross Margin", "Gross Margin (%)"] })).toContain("2 of NVIDIA Corporation's own metrics contain \"gross margin\"");
+  });
+});
+
+// Every branch of buildPairSummary is a RUNTIME VALUE, and it reaches the model
+// as the FIRST block of the rendered markdown (`blocks = [o.summary]` in
+// _render_markdown.ts), so no published-surface guard can see it:
+// phantom_tool.test.ts reads descriptions and schemas, _pin_form.test.ts reads
+// descriptions and takoCardSchema fields. This is the only check these strings get.
+//
+// The rule: since the D4 split `buildPairNextCall` returns `{tool, query}` on
+// every path — no `node_ids`, no `strict`. So a summary that prescribes a pin
+// names parameters tako_search rejects, and a summary that says "retry with
+// node_ids removed" prescribes a byte-identical second PRICED search. Both
+// shipped, on the pair branch Appendix B calls the best call on the surface.
+//
+// `\bpin` is not redundant with the other two alternatives, and dropping it
+// re-opens the hole: the worst instance read "The next_call below therefore
+// drops the pin", which contains neither `node_ids` nor `strict`.
+describe("no summary branch prescribes a pin", () => {
+  const PIN_VOCAB = /node_ids|strict|\bpin/i;
+
+  type Input = Parameters<typeof buildPairSummary>[0];
+  const resolved = (): Input["pair"] => ({
+    entity: { node_id: "ent::nvda::1", name: "NVIDIA Corporation", type: "entity" },
+    metric: { node_id: "mt::gm::1", name: "Gross Margin (%)", type: "metric" },
+    entity_alternates: [],
+    metric_alternates: [],
+  });
+
+  const BRANCHES: ReadonlyArray<readonly [string, Input]> = [
+    ["entity null, domain-shaped",
+      { entityQuery: "openai.com", metricQuery: "visits", domainShaped: true,
+        pair: { ...resolved(), entity: null } }],
+    ["entity null, plain name",
+      { entityQuery: "zzzznotathing", metricQuery: "visits", domainShaped: false,
+        pair: { ...resolved(), entity: null } }],
+    ["metric null",
+      { entityQuery: "Nvidia", metricQuery: "widgets", domainShaped: false,
+        pair: { ...resolved(), metric: null } }],
+    ["metric not confident",
+      { entityQuery: "Pfizer", metricQuery: "R&D expense", domainShaped: false,
+        pair: resolved(), metricConfident: false }],
+    ["metric not confident, with near names",
+      { entityQuery: "Pfizer", metricQuery: "R&D expense", domainShaped: false,
+        pair: resolved(), metricConfident: false,
+        entityMetricMatches: ["R&D Expenses (Normalized)"] }],
+    ["unlinked",
+      { entityQuery: "Lockheed Martin", metricQuery: "backlog", domainShaped: false,
+        pair: resolved(), verified: "unlinked" }],
+    ["unlinked, with near names",
+      { entityQuery: "Lockheed Martin", metricQuery: "backlog", domainShaped: false,
+        pair: resolved(), verified: "unlinked",
+        entityMetricMatches: ["12 Month Backlog"] }],
+    ["pair",
+      { entityQuery: "Nvidia", metricQuery: "gross margin", domainShaped: false,
+        pair: resolved(), verified: "pair" }],
+    ["resolution",
+      { entityQuery: "Nvidia", metricQuery: "gross margin", domainShaped: false,
+        pair: resolved(), verified: "resolution" }],
+  ] as const;
+
+  it("reaches all seven returns, so the assertion below cannot pass vacuously", () => {
+    const byLabel = new Map(BRANCHES.map(([label, i]) => [label, buildPairSummary(i)]));
+    expect(byLabel.get("entity null, domain-shaped")).toMatch(/bare domain/);
+    expect(byLabel.get("entity null, plain name")).toMatch(/rephrase the name/);
+    expect(byLabel.get("metric null")).toMatch(/no metric matching/);
+    expect(byLabel.get("metric not confident")).toMatch(/NO metric confidently matches/);
+    expect(byLabel.get("unlinked")).toMatch(/holds no edge/);
+    expect(byLabel.get("pair")).toMatch(/IS on/);
+    expect(byLabel.get("resolution")).toMatch(/Run the next_call below verbatim/);
+  });
+
+  it("names no pin parameter on any branch", () => {
+    for (const [label, input] of BRANCHES) {
+      const summary = buildPairSummary(input);
+      expect(summary.length, label).toBeGreaterThan(0);
+      expect(summary, label).not.toMatch(PIN_VOCAB);
+    }
+  });
+
+  it("the two terminal branches report the gap instead of prescribing a retry", () => {
+    for (const verified of ["pair", "resolution"] as const) {
+      const summary = buildPairSummary({
+        entityQuery: "Nvidia", metricQuery: "gross margin",
+        domainShaped: false, pair: resolved(), verified,
+      });
+      expect(summary, verified).toMatch(/report the gap/);
+      expect(summary, verified).not.toMatch(/SAME query/i);
+    }
+  });
+
+  // buildSummary is buildPairSummary's SIBLING — the discovery path — and its
+  // closing "how to spend this" block had the same defect, missed by the sweep
+  // that fixed the lookup path and by the first version of this guard, which
+  // covered buildPairSummary alone. One branch described `next_call` as
+  // "tako_search with query X, the METRIC node pinned and strict:true" when
+  // buildNextCall returns `{tool, query}`; the other prescribed the pin outright.
+  //
+  // Branch selection, from buildNextCall: a METRIC match (coverage.kind
+  // "entities") always yields a handle; an ENTITY match yields one only when its
+  // coverage list is <= NEXT_CALL_MAX_NAMES, so a longer list takes the
+  // no-handle branch. Both are exercised below.
+  it("neither buildSummary tail branch prescribes a pin", () => {
+    const short = buildMatch(entityNode(), group("metrics", ["Gross Margin (%)", "Revenue"]));
+    const long = buildMatch(
+      entityNode(),
+      group("metrics", ["A Ratio", "B Ratio", "C Ratio", "D Ratio", "E Ratio"]),
+    );
+    const named = buildMatch(metricNode(), group("entities", ["United States", "Canada"]));
+
+    const cases: ReadonlyArray<readonly [string, CoverageMatch[]]> = [
+      ["handle branch, entity match", [short]],
+      ["handle branch, metric match", [named]],
+      ["no-handle branch, long coverage list", [long]],
+    ];
+
+    for (const [label, matches] of cases) {
+      const summary = buildSummary({ query: "apple", matches, otherMatches: [] });
+      expect(summary, label).not.toMatch(PIN_VOCAB);
+    }
+
+    // Non-vacuous: assert each tail branch was actually rendered.
+    expect(buildSummary({ query: "apple", matches: [short], otherMatches: [] }))
+      .toMatch(/ready-made `next_call` verbatim/);
+    expect(buildSummary({ query: "apple", matches: [long], otherMatches: [] }))
+      .toMatch(/canonical name is what recovers cards/);
   });
 });

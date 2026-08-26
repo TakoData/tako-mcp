@@ -62,6 +62,83 @@ function foreignToolNamesIn(text: string, ownName: string): string[] {
   return [...found].sort();
 }
 
+/**
+ * Every INPUT parameter name in the registry, and the ones each surface can
+ * actually accept. A parameter is reachable on a surface iff some tool listed
+ * there declares it — nested properties count, because tako_search_advanced
+ * puts `node_ids` and `include_contents` inside its `data` / `web` blocks.
+ */
+function inputParamNames(tool: (typeof TOOL_REGISTRY)[number]): Set<string> {
+  const out = new Set<string>();
+  const walk = (node: unknown): void => {
+    if (node === null || typeof node !== "object") return;
+    const obj = node as Record<string, unknown>;
+    if (obj.properties !== null && typeof obj.properties === "object") {
+      for (const key of Object.keys(obj.properties as object)) out.add(key);
+    }
+    for (const value of Object.values(obj)) walk(value);
+  };
+  walk(z.toJSONSchema(tool.inputSchema, { io: "input" }));
+  return out;
+}
+
+/**
+ * A tool name is not the only phantom a description can carry. `tako_contents`
+ * shipped "a search result carries only a chart and headline (and, with
+ * include_contents: true, a rows preview)" — naming a PARAMETER that D4 had
+ * removed from `tako_search` and that survives only on two opt-in tools, which
+ * the rule above forbids a default-listed tool from naming. The tool-name loops
+ * cannot see it: `include_contents` is not a tool.
+ *
+ * Restricted to MULTI-WORD (snake_case) parameter names, and that restriction is
+ * structural rather than a curated list. Measured: the unrestricted form flags
+ * `data`, `type`, `rows`, `web`, `count`, `value`, `items`, `source`, `title` and
+ * `description` on every tool, because those are ordinary English as well as
+ * parameter names somewhere in the registry — 39 "unreachable" names on the
+ * generic surface and a hit on all five listed tools. An underscore is the
+ * property that separates a parameter reference from prose, and it is read off
+ * the schema's own keys, so nothing goes stale when a parameter is renamed.
+ *
+ * The cost of the restriction, stated so nobody assumes coverage it lacks:
+ * single-word phantoms (`effort`, `strict`, `mode`, `count`) are NOT caught here.
+ * `strict` is covered by _pin_form.test.ts; the rest are not covered anywhere.
+ */
+describe("no listed tool names a parameter that is off its surface", () => {
+  const multiWordParams = new Set<string>();
+  for (const tool of TOOL_REGISTRY) {
+    for (const param of inputParamNames(tool)) {
+      if (param.includes("_")) multiWordParams.add(param);
+    }
+  }
+
+  it("finds multi-word parameters to check", () => {
+    // Without this the whole block passes vacuously if the walk breaks.
+    expect(multiWordParams.size).toBeGreaterThan(8);
+  });
+
+  for (const surface of ["generic", "chatgpt"] as const satisfies Surface[]) {
+    const listed = TOOL_REGISTRY.filter((t) => isToolOnSurface(t.name, surface, null));
+    const reachable = new Set<string>();
+    for (const tool of listed) {
+      for (const param of inputParamNames(tool)) reachable.add(param);
+    }
+    const unreachable = [...multiWordParams].filter((p) => !reachable.has(p));
+
+    it(`${surface} has parameters that are off-surface, so the check has teeth`, () => {
+      expect(unreachable.length).toBeGreaterThan(0);
+    });
+
+    for (const tool of listed) {
+      it(`${tool.name} on ${surface} names only parameters reachable there`, () => {
+        const named = unreachable.filter((p) =>
+          new RegExp(`\\b${p}\\b`).test(publishedText(tool)),
+        );
+        expect(named, `${tool.name} names off-surface parameters`).toEqual([]);
+      });
+    }
+  }
+});
+
 describe("no listed tool names a tool that is off its surface", () => {
   // The DEFAULT listing on each surface: no `?tools=` opt-ins. This is what
   // every connection sees unless the operator opted in by hand.

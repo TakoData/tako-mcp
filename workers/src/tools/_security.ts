@@ -146,12 +146,18 @@ export function authRequiredToolResult(
    * Replaces the default lead sentence.
    *
    * The default asserts THE TOOL needs an account. That is false when a FREE
-   * tool refuses one INPUT: an anonymous `tako_search` runs fine, it just
-   * cannot inline billed rows, so leading with "this tool requires a Tako
-   * account" tells the model the opposite of what happened and invites it to
-   * abandon a call that would succeed without `include_contents`. Google
-   * style: what happened, then why, then what to do — the caller that knows
-   * the real what-happened passes it here.
+   * tool refuses one INPUT: the tool runs fine anonymously and only that input
+   * is out of reach, so leading with "this tool requires a Tako account" tells
+   * the model the opposite of what happened and invites it to abandon a call
+   * that would have succeeded with the input dropped. Google style: what
+   * happened, then why, then what to do — the caller that knows the real
+   * what-happened passes it here.
+   *
+   * CURRENTLY UNREACHABLE, and kept on purpose. The only call site that passes
+   * a `lead` is the `anonymousInputRejects` branch in `mcp.ts`, and no tool
+   * declares that hook since D4 moved rows off `tako_search` onto the
+   * auth-required `tako_contents`. The parameter belongs to that machinery and
+   * survives with it — see the comment on that branch for why it stays.
    */
   lead?: string,
 ): {

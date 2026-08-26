@@ -302,7 +302,7 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 
 | Tool | Token | What it's for |
 | ---- | ----- | ------------- |
-| `tako_search_advanced` | `search_advanced` | The v3 search request in full: per-source `count`, inline rows and `max_rows`, graph pins (`node_ids` + `strict`), web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars`, and `effort: deep`. Same response shape as `tako_search`. |
+| `tako_search_advanced` | `search_advanced` | The v3 search request's retrieval options: per-source `count`, inline rows and `max_rows`, graph pins (`node_ids` + `strict`), web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars`, and `effort: deep`. Same structured payload as `tako_search`, minus the auto-rendered inline chart — `embed_url` is still there to click through. |
 | `tako_answer` | `answer` | One synthesized, citation-backed prose answer. **Not recommended** — your model already synthesizes from `tako_search` results. |
 | `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research (~30–90s) across many retrievals, returning a synthesized answer plus chart cards. |
 | `tako_visualize` | `visualize` | Author an embeddable chart/card from your own typed `components` (timeseries, bar, table, financial boxes…). On by default on `/mcp/chatgpt`, the host that renders the widget inline. |
@@ -327,7 +327,7 @@ Two tools, one step apart — `tako_search` locates, `tako_contents` reads:
 | **To see what exists** — recon, fan-outs, a chart to embed | `tako_search` | Cards with headline values, node ids, and chart links, plus web results. Cheap; safe to parallelize widely. |
 | **The values themselves** — rows to compute over or quote | `tako_contents` on the card's url | Up to 2,000 rows of an `exportable: true` card, billed per 1k delivered. |
 | **A web page's text** | `tako_contents` on the web result's url | The page's extracted text (`query` narrows it to matching passages). |
-| **Every v3 option** — per-source counts, graph pins, domain filters, `effort: deep` | `tako_search_advanced` (opt-in, `?tools=search_advanced`) | The same response shape as `tako_search`. |
+| **More search options** — per-source counts, graph pins, domain filters, `effort: deep` | `tako_search_advanced` (opt-in, `?tools=search_advanced`) | The same structured payload as `tako_search`. No inline chart render — the response still carries `embed_url`. |
 
 - **Broad or multi-part questions → parallel narrow searches.** Decompose into single entity+metric queries fired concurrently — e.g. *"US CPI inflation"*, *"US core CPI inflation"*, *"US PCE inflation"* — then synthesize yourself.
 - **Unsure what Tako covers → `tako_available_data` first.** It is free, returns the metric's exact name to search on, and a miss there still leaves web search.

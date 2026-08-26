@@ -153,7 +153,7 @@ Best for: a single, self-contained data question with one answer. The `answer` i
 
 Reach past it for a different job: `tako_search` for breadth, and for values too — it takes the same `include_contents: true`; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.
 
-Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.
+Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin widens the filter back out, and a pin without strict only boosts — measured as not enough to land the metric). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.
 
 Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.
 
@@ -357,7 +357,7 @@ Description:
 
 Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.
 
-Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline (and, with include_contents: true, a rows preview), not the full series.
+Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline, never the rows themselves.
 
 Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.
 
@@ -676,13 +676,15 @@ Annotations:
 
 Description:
 
-Full control over the v3 search request: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.
+The v3 search request's retrieval options: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.
 
 Use `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.
 
 Nothing is sent unless you set it, so an omitted field takes the server default named in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.
 
-To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out, and a pin at the default `strict: false` does not steer retrieval. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.
+One consequence to know before switching: `tako_search` forces `web.highlights: true` for you. This tool forces nothing, so an omitted `highlights` takes the server default of false and each web snippet becomes the page's opening text instead of the passages matching your query. Set it unless you want the opening.
+
+To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. At the default `strict: false` a pin still does something — the node becomes a retrieval candidate and ranks up — but the boost is deliberately small, so it doesn't guarantee that card comes back; `strict: true` is what makes it certain. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.
 
 Parameters:
 

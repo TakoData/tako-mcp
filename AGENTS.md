@@ -70,11 +70,11 @@ Two path-selected surfaces, no User-Agent sniffing (`workers/src/surface.ts`): `
 4. `tako_graph_related` — Explore a node's relations (metrics, entities, `rel:competes_with`, `part_of`, `members`, sources) as a compact overview or one paged relation, slimmed to id/name/type/subtype/label; `q` is a substring filter. Drill into a node `tako_available_data` already resolved. Default.
 5. `tako_credit_balance` — Current credit balance. Default.
 6. `tako_answer` — Get **one** synthesized, citation-backed prose answer to a specific data question. Opt-in, and not recommended: the host model already synthesizes from search results.
-7. `tako_search_advanced` — The v3 `SearchRequest` body's RETRIEVAL options, not the whole body: `effort` (including `deep`), per-source `count` / `include_contents` / `max_rows` / `content_format` / `node_ids` / `strict`, and web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars` / `article_content_max_chars` / `highlights`. Schema derived from `workers/src/generated/schemas.ts` so it cannot drift. Opt-in via `?tools=search_advanced`.
+7. `tako_search_advanced` — The v3 `SearchRequest`'s retrieval options, NOT the whole body (the omissions are listed in the file header): `effort` (including `deep`), per-source `count` / `include_contents` / `max_rows` / `content_format` / `node_ids` / `strict`, and web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars` / `article_content_max_chars` / `highlights`. Schema derived from `workers/src/generated/schemas.ts` so it cannot drift. Opt-in via `?tools=search_advanced`.
 8. `tako_agent` — Answer Agent for multi-step data questions (~30–90s, polled). Opt-in; off the chatgpt surface, which sends no progressToken.
 9. `tako_visualize` — Create an embeddable chart/card from your own structured data. Opt-in on `/mcp`, listed by default on `/mcp/chatgpt`, the host that renders the widget inline.
 
-Items 5-7 are opt-in: name the tool in `?tools=` (an allowlist that replaces the defaults; see `workers/src/tools/_tools_param.ts` and `_surface.ts`). The generated reference is `docs/TOOLS.md`; `registry:check` fails when it is stale.
+Items 6-9 are opt-in: name the tool in `?tools=` (an allowlist that replaces the defaults; see `workers/src/tools/_tools_param.ts` and `_surface.ts`). The generated reference is `docs/TOOLS.md`; `registry:check` fails when it is stale.
 
 ### Endpoints
 
@@ -103,7 +103,10 @@ Items 5-7 are opt-in: name the tool in `?tools=` (an allowlist that replaces the
 - Run `cd workers && npm run typecheck && npm test && npm run registry:check` before submitting
 - New tools: add a `workers/src/tools/<name>.ts` exporting a `ToolModule`, then `npm run registry:gen` to refresh the registry
 - Smoke locally: `SMOKE_BASE_URL=https://mcp.staging.tako.com TAKO_SMOKE_API_TOKEN=... npm run smoke`
-- Keep tool descriptions agent-optimized (lead with "Use this when...")
+- Keep tool descriptions agent-optimized: lead with what the tool DOES in one
+  line, then a `Best for:` line naming when to reach for it. (Not "Use this
+  when..." — no tool has led with that phrasing for a long time, and the
+  generated `docs/TOOLS.md` is the place to check what the model actually reads.)
 - Never commit API keys or tokens
 
 ## Safety Rules

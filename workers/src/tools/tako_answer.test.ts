@@ -345,7 +345,7 @@ describe("tako_answer input schema", () => {
     expect(parsed.sources).toEqual(["data", "web"]);
   });
 
-  it("accepts the legacy \"tako\" synonym and folds it onto the data key", async () => {
+  it("folds a sources list naming data onto the data source key", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
     await takoAnswer.handler(
       { query: "q", sources: ["data"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
