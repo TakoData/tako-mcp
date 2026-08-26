@@ -663,8 +663,8 @@ describe("worker routing", () => {
     expect(names.has("tako_agent")).toBe(false);
     // The default tools are still present alongside.
     expect(names.has("tako_search")).toBe(true);
-    // `tako_visualize` is opt-in for other clients but default-on for
-    // widget clients (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES`) — it powers the widget.
+    // `tako_visualize` is opt-in on /mcp but default-on here
+    // (`CHATGPT_DEFAULT_ON_TOOL_NAMES`) — it powers the widget.
     expect(names.has("tako_visualize")).toBe(true);
     // 3 defaults + tako_visualize (ChatGPT default-on) + the split pair = 6.
     expect(body.result.tools).toHaveLength(6);
@@ -743,8 +743,8 @@ describe("worker routing", () => {
     expect(names.has("tako_agent_wait")).toBe(false);
     expect(names.has("tako_agent")).toBe(false);
     expect(names.has("tako_search")).toBe(true);
-    // `tako_visualize` IS present without opting in — ChatGPT keeps it on
-    // the default surface (`WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES`) for the widget.
+    // `tako_visualize` IS present without opting in — the chatgpt surface
+    // keeps it on by default (`CHATGPT_DEFAULT_ON_TOOL_NAMES`) for the widget.
     expect(names.has("tako_visualize")).toBe(true);
     // The other opt-in tools stay absent for ChatGPT too; the default
     // discovery tool is present.

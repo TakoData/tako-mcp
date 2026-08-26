@@ -26,8 +26,8 @@
  * tools are useful but rarely needed, so they are kept off the default
  * surface to save per-session context. They compose freely, e.g.
  * `?tools=visualize,credits`. Exception: `tako_visualize` stays on the
- * default surface for widget clients (it powers the chart widget) — see
- * `WIDGET_CLIENT_DEFAULT_ON_TOOL_NAMES` in `_surface.ts`.
+ * default chatgpt surface (it powers the chart widget) — see
+ * `CHATGPT_DEFAULT_ON_TOOL_NAMES` in `_surface.ts`.
  *
  * `graph` enables the three low-level graph primitives (search / related /
  * node). `tako_available_data` covers the common discovery path in one call,

@@ -812,13 +812,12 @@ describe("wrangler.jsonc ↔ message drift", () => {
 });
 
 describe("commerce-gated upsell (FREE_TIER_COMMERCE_UPSELL)", () => {
-  // The base messages above stay commerce-free because they reach ChatGPT's
-  // model. On connections POSITIVELY identified as Anthropic clients
-  // (`commerceCopyAllowedForUa` in mcp.ts — the same allowlist that gates
-  // the authenticated 402 remedy), the anonymous limit moment is the one
-  // place a caller can be told that an account lifts the limits — the same
-  // conversion point Exa's keyless tier uses. The flag defaults to false,
-  // so every producer fails closed.
+  // The base messages above stay commerce-free. On the generic surface
+  // (`commerceCopyAllowed = surface === "generic"` in mcp.ts — the same
+  // gate as the authenticated 402 remedy), the anonymous limit moment is
+  // the one place a caller can be told that an account lifts the limits —
+  // the same conversion point Exa's keyless tier uses. The flag defaults
+  // to false, so every producer fails closed.
 
   it("is absent from every producer by default (fails closed)", async () => {
     const limited = (await freeTierLimitResponse(1).json()) as {
@@ -1410,10 +1409,9 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(body.result._meta["tako/error"]?.status).toBe(402);
   });
 
-  it("authenticated credit exhaustion on Claude Code (unknown McpClientKind) still gets the remedy", async () => {
-    // Claude Code deliberately buckets as "unknown" for widget routing;
-    // the commerce gate keys on the UA allowlist instead, so the flagship
-    // raw-Bearer client is not stranded with OpenAI's crawlers.
+  it("authenticated credit exhaustion on Claude Code gets the remedy like every /mcp client", async () => {
+    // The commerce gate keys on the surface, not the UA, so the flagship
+    // raw-Bearer client gets the same remedy as any other /mcp caller.
     mockFetchSequence([PAYG_402()]);
     const res = await worker.fetch(
       post(SEARCH_CALL_BODY, {

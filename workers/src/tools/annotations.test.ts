@@ -33,8 +33,8 @@ describe("tool annotations", () => {
   });
 
   it("readOnlyHint is false for exactly the durable-resource writers", () => {
-    // The write line (see `annotationsByClient` in types.ts) is drawn once,
-    // for every client: a call is a WRITE when it creates a durable,
+    // The write line (see `annotationsBySurface` in types.ts) is drawn once,
+    // for every surface: a call is a WRITE when it creates a durable,
     // user-addressable resource — a chart card with public URLs
     // (tako_visualize) or a queued agent run reachable later via
     // `run_id`/`thread_id` (tako_agent, tako_agent_start). Everything else,

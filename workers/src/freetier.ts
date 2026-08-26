@@ -5,10 +5,9 @@
  * free-tier bindings are configured, the Worker serves it as a rate-limited
  * anonymous request instead of a 401: a shared free-tier Tako API key is
  * forwarded to Django, the EXECUTABLE toolset shrinks to
- * `FREE_TIER_TOOL_NAMES` (ChatGPT clients additionally LIST — but cannot
- * run — the auth-required submitted tools, see
- * `CHATGPT_ANONYMOUS_DISCOVERABLE_TOOL_NAMES` in `tools/_surface.ts`),
- * and requests are limited by two buckets:
+ * `FREE_TIER_TOOL_NAMES` (the LISTING is unchanged — a listed
+ * auth-required tool answers sign-in instructions at dispatch, see the
+ * free-tier gate in `mcp.ts`), and requests are limited by two buckets:
  *
  * - A constant-key bucket hit by every anonymous request regardless of
  *   method — PER-COLO BURST SHAPING, not a true global ceiling:
@@ -386,9 +385,9 @@ export const FREE_TIER_COMMERCE_UPSELL =
  * (`code: -32000`, distinct from `-32001` auth failures) with a
  * `Retry-After` matching the limiter window.
  *
- * `commerceCopyAllowed` (from `commerceCopyAllowedForUa` in `mcp.ts`)
- * appends `FREE_TIER_COMMERCE_UPSELL`; defaults false so every caller
- * fails closed.
+ * `commerceCopyAllowed` (`surface === "generic"` in `mcp.ts`) appends
+ * `FREE_TIER_COMMERCE_UPSELL`; defaults false so every caller fails
+ * closed.
  */
 export function freeTierLimitResponse(
   requestId: JsonRpcRequestId,

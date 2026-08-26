@@ -1417,8 +1417,8 @@ describe("paymentRequiredToolResult", () => {
   it("omits ALL remedy copy when commerce copy is not allowed", () => {
     // OpenAI's commerce policy forbids promoting purchases through an
     // app, and Django's remedies name plan upgrades and credit purchases
-    // — exactly that copy. `commerceCopyAllowedForUa` fails closed, so
-    // ChatGPT-family AND unrecognized clients land here.
+    // — exactly that copy. Commerce copy keys on the surface, and the
+    // chatgpt surface passes `false` here.
     for (const body of [SUBSCRIPTION_402_BODY, PAYG_402_BODY]) {
       const text = paymentRequiredToolResult(err402(body), false).content[0]
         ?.text;
