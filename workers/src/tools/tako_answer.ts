@@ -328,8 +328,10 @@ const takoAnswer = {
     // always drop web page text (billed per page — fetched via tako_contents).
     // Slims BOTH model-visible channels at once (content.text +
     // structuredContent are derived from this). The ?? guards direct handler
-    // calls that bypass the schema's defaults.
-    const cap = (input.include_contents ?? true)
+    // calls that bypass the schema's defaults, so it must MATCH the schema
+    // default: `?? true` inlined billed rows for a caller who asked for none,
+    // contradicting the `false` the published schema advertises.
+    const cap = (input.include_contents ?? false)
       ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
       : null;
     // Order cards most-useful-first (see orderCardsByUsefulness) — the
