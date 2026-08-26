@@ -781,3 +781,64 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
     }
   });
 });
+
+describe("slimCardContent and the card_json payload", () => {
+  const cardJson = {
+    content_format: "card_json",
+    card_data: { card_type: "timeseries", records: [1, 2, 3] },
+    card_data_schema: { title: "Timeseries", type: "object" },
+    total_rows: 3,
+    cost: 0.01,
+  };
+
+  it("drops card_data when the cap says drop every row", () => {
+    // Before this, card_data was not one of the three destructured payload
+    // keys, so it rode through in `meta` — a "drop all rows" call shipped the
+    // whole rich object anyway.
+    const out = slimCardContent(cardJson as never, null) as Record<string, unknown>;
+    expect(out.card_data).toBeNull();
+    // Metadata survives so the "rows available, call tako_contents" signal does.
+    expect(out.content_format).toBe("card_json");
+    expect(out.total_rows).toBe(3);
+    // card_data_schema is the SHAPE, not the payload: a url-mode or quote
+    // response returns it beside a null card_data, so it must not be dropped.
+    expect(out.card_data_schema).toEqual({ title: "Timeseries", type: "object" });
+  });
+
+  it('keeps card_data verbatim under the "all" cap', () => {
+    const out = slimCardContent(cardJson as never, "all") as Record<string, unknown>;
+    expect(out.card_data).toEqual({ card_type: "timeseries", records: [1, 2, 3] });
+  });
+
+  it('keeps every row payload verbatim under the "all" cap', () => {
+    // "all" is what tako_search_advanced passes: it sends sources.data.max_rows
+    // on the wire, so the backend already applied the caller's cap and a
+    // second cap here could only clamp BELOW what they paid for.
+    const dense = {
+      content_format: "json_compact",
+      cost: 0.01,
+      dataset: {
+        columns: [{ name: "t", type: "datetime" }, { name: "v", type: "number" }],
+        rows: [["d0", 0], ["d1", 1], ["d2", 2]],
+        total_rows: 3,
+        truncated: false,
+        ref: "r",
+        sources: [],
+        provenance: "query",
+      },
+    };
+    const out = slimCardContent(dense as never, "all") as Record<string, unknown>;
+    expect((out.dataset as { rows: unknown[] }).rows).toHaveLength(3);
+  });
+
+  it("still caps a numeric budget to the most-recent rows", () => {
+    const dense = {
+      content_format: "json_records",
+      cost: 0.01,
+      records: [{ t: "2024-01-01", v: 1 }, { t: "2024-02-01", v: 2 }, { t: "2024-03-01", v: 3 }],
+    };
+    const out = slimCardContent(dense as never, 2) as Record<string, unknown>;
+    expect(out.records).toHaveLength(2);
+    expect(out.truncated).toBe(true);
+  });
+});

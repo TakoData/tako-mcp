@@ -175,12 +175,14 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
  * both at once.
  *
  * `rowCap` is the per-card inline row budget: `null` drops every row (what the
- * simple tool passes — it never inlines), a number caps to the N most-recent.
+ * simple tool passes — it never inlines), "all" keeps what the backend sent
+ * (what tako_search_advanced passes — it sends its own max_rows on the wire),
+ * a number caps to the N most-recent.
  */
 export async function runSearch(
   body: z.input<typeof SearchRequest>,
   sources: SearchedSources,
-  rowCap: number | null,
+  rowCap: number | "all" | null,
   ctx: ToolContext,
 ): Promise<SearchOutput> {
   // v3 fast/instant is synchronous (~120s sync ceiling). No async/202,

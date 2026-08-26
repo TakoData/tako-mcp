@@ -241,6 +241,14 @@ export const MAX_PREVIEW_ROWS = 250;
 type LooseContent = ResultContent & {
   records?: Array<Record<string, unknown>> | null;
   dataset?: { columns?: unknown; rows?: unknown[] } | null;
+  // card_json's payload (generated `ContentItem.card_data`). Card-type-specific,
+  // so it has no generic row axis to slice — but it IS a row payload for
+  // billing and for context, so it has to be droppable alongside the other
+  // three. Its sibling `card_data_schema` is the SHAPE, not the payload, and
+  // deliberately stays in `meta`: a url-mode or quote response returns it
+  // beside a null `card_data`, so dropping it would lose the only thing those
+  // two shapes carry.
+  card_data?: unknown;
 };
 
 // Column types the backend uses for the temporal axis of a dataset. Detecting
@@ -366,19 +374,30 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * / truncated / export_pricing / url) is always kept so the "N rows available,
  * priced — call tako_contents" signal survives.
  *
- *   capRows === null → drop all rows (the model fetches via tako_contents).
- *   capRows === N    → keep the N most-recent rows (order-aware, a bounded peek).
+ *   capRows === null  → drop all rows (the model fetches via tako_contents).
+ *   capRows === N     → keep the N most-recent rows (order-aware, a bounded peek).
+ *   capRows === "all" → keep what the backend sent, untouched.
+ *
+ * "all" exists for `tako_search_advanced`, which sends `sources.data.max_rows`
+ * on the wire. The backend has therefore already applied the caller's own cap —
+ * including the 2,000-row ceiling the simple tool cannot reach — so a second
+ * cap here could only clamp BELOW what the caller asked and paid for. Passing
+ * `null` there would be worse still: it would discard the account-default rows
+ * of a caller who set include_contents and omitted max_rows.
  */
 export function slimCardContent(
   content: ResultContent | null | undefined,
-  capRows: number | null,
+  capRows: number | "all" | null,
 ): ResultContent | null | undefined {
   if (content == null) return content;
-  // Strip the three row-payload keys out; `meta` keeps everything else
-  // (content_format/cost/total_rows/truncated/export_pricing/url/…).
-  const { data: rawData, records, dataset, ...meta } = content as LooseContent;
+  // The backend already applied this caller's cap — see the "all" note above.
+  if (capRows === "all") return content;
+  // Strip the four row-payload keys out; `meta` keeps everything else
+  // (content_format/cost/total_rows/truncated/export_pricing/url/
+  // card_data_schema/…).
+  const { data: rawData, records, dataset, card_data: cardData, ...meta } = content as LooseContent;
   if (capRows === null) {
-    return { ...meta, data: null, records: null, dataset: null } as ResultContent;
+    return { ...meta, data: null, records: null, dataset: null, card_data: null } as ResultContent;
   }
 
   // CSV payload lives in `data` — cap it in place rather than blanking it, so an
@@ -419,6 +438,13 @@ export function slimCardContent(
     data: cappedData,
     records: cappedRecords,
     dataset: cappedDataset,
+    // Passed through, not sliced: the backend truncates card_json to the same
+    // max_rows as every other format, and the object is card-type-specific, so
+    // there is no generic row axis to cut here. Only the null branch above
+    // touches it. Reachable only if a numeric cap is ever paired with
+    // card_json — no caller does that today (the simple tool requests no
+    // content_format and the advanced tool passes "all").
+    card_data: cardData ?? null,
     ...meta,
     truncated: slicedRecords || slicedRows || csvTruncated || meta.truncated || false,
   } as ResultContent;
@@ -479,7 +505,7 @@ function orderCardKeys(card: TakoCard): TakoCard {
  * is only the fallback for older backends. Keys are re-ordered data-first
  * (see CARD_KEY_ORDER). Pure in-memory — no I/O.
  */
-export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
+export const slimCard = (card: TakoCard, capRows: number | "all" | null): TakoCard => {
   const exportable = card.exportable ?? card.content != null;
   // Share opt-in on the passthrough embed_url, so the url an agent quotes
   // from the text matches the one the widget renders for the same card —
