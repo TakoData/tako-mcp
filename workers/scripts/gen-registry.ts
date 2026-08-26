@@ -16,6 +16,7 @@
  * on every PR so a stale registry or barrel fails the build.
  */
 
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -315,6 +316,7 @@ const SKILL_PATHS = [
   resolve(REPO_ROOT, "skills", "tako-web-traffic", "SKILL.md"),
 ];
 const SUBMISSION_PATH = resolve(REPO_ROOT, "chatgpt-app-submission.json");
+const SNAPSHOT_PATH = resolve(REPO_ROOT, "chatgpt-app-snapshot.json");
 /**
  * Hand-written distribution listings. Neither is generated, so both drifted
  * silently when four tools moved behind `?tools=` and the UA classifier was
@@ -511,6 +513,79 @@ function serializeJson(obj: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// ChatGPT snapshot: description + input schema of every reviewed tool
+// ---------------------------------------------------------------------------
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+interface ChatgptSnapshot {
+  note: string;
+  tools: Record<string, { description_sha256: string; input_schema_sha256: string }>;
+}
+
+const SNAPSHOT_NOTE =
+  "OpenAI snapshots tool names, descriptions, and input schemas at submission and does not update them live. registry:check fails when a reviewed tool drifts from this file. Resubmit the app, then run: npm run registry:gen -- --accept-chatgpt-snapshot";
+
+/** The snapshot for the tools on the fixed chatgpt surface, serialized. */
+export function buildChatgptSnapshot(
+  tools: ReadonlyArray<Pick<ToolModule, "name" | "description" | "inputSchema">>,
+): string {
+  const snapshot: ChatgptSnapshot = { note: SNAPSHOT_NOTE, tools: {} };
+  for (const tool of tools) {
+    if (!isToolOnSurface(tool.name, "chatgpt", null)) continue;
+    snapshot.tools[tool.name] = {
+      description_sha256: sha256(tool.description),
+      input_schema_sha256: sha256(
+        JSON.stringify(z.toJSONSchema(tool.inputSchema, { io: "input" })),
+      ),
+    };
+  }
+  return serializeJson(snapshot);
+}
+
+/**
+ * Fail when a tool on the chatgpt surface no longer matches the accepted
+ * snapshot. `assertChatgptSubmissionParity` guards the tool SET and the
+ * annotations; this guards the two things OpenAI's snapshot also carries
+ * and that check cannot see — the description and the input schema.
+ */
+export function assertChatgptSnapshot(
+  tools: ReadonlyArray<Pick<ToolModule, "name" | "description" | "inputSchema">>,
+  snapshotJson: string,
+): void {
+  const accepted = JSON.parse(snapshotJson) as ChatgptSnapshot;
+  const live = JSON.parse(buildChatgptSnapshot(tools)) as ChatgptSnapshot;
+  const problems: string[] = [];
+  for (const [name, hashes] of Object.entries(live.tools)) {
+    const was = accepted.tools[name];
+    if (was === undefined) {
+      problems.push(`tool "${name}" is on the chatgpt surface but not in the snapshot`);
+      continue;
+    }
+    if (was.description_sha256 !== hashes.description_sha256) {
+      problems.push(`tool "${name}" description changed since the accepted snapshot`);
+    }
+    if (was.input_schema_sha256 !== hashes.input_schema_sha256) {
+      problems.push(`tool "${name}" input_schema changed since the accepted snapshot`);
+    }
+  }
+  for (const name of Object.keys(accepted.tools)) {
+    if (!(name in live.tools)) {
+      problems.push(`tool "${name}" is in the snapshot but no longer on the chatgpt surface`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `chatgpt-app-snapshot.json drift — a reviewed ChatGPT tool changed:\n  ${problems.join(
+        "\n  ",
+      )}\nOpenAI's copy is fixed at submission. Resubmit the app with the new text, then accept the snapshot: npm run registry:gen -- --accept-chatgpt-snapshot`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // LobeHub plugin descriptor
 // ---------------------------------------------------------------------------
 
@@ -621,6 +696,7 @@ function buildBarrel(modules: LoadedModule[]): string {
 
 async function main(): Promise<void> {
   const checkMode = process.argv.includes("--check");
+  const acceptSnapshot = process.argv.includes("--accept-chatgpt-snapshot");
 
   const metadata = JSON.parse(readFileSync(METADATA_PATH, "utf8")) as Record<
     string,
@@ -753,6 +829,21 @@ async function main(): Promise<void> {
     modules.map((m) => m.tool),
     readFileSync(SUBMISSION_PATH, "utf8"),
   );
+
+  // 4b. ChatGPT description/schema snapshot: OpenAI serves the text it
+  //     reviewed, so editing a listed tool's description or input schema
+  //     silently desynchronizes the app from this server until a
+  //     resubmission. The parity check above cannot see either field.
+  const liveSnapshot = buildChatgptSnapshot(modules.map((m) => m.tool));
+  if (acceptSnapshot && !checkMode) {
+    writeFileSync(SNAPSHOT_PATH, liveSnapshot);
+    console.log(`wrote ${SNAPSHOT_PATH} (accepted the current chatgpt surface)`);
+  } else {
+    assertChatgptSnapshot(
+      modules.map((m) => m.tool),
+      readFileSync(SNAPSHOT_PATH, "utf8"),
+    );
+  }
 
   const registry = buildRegistry(metadata, registryTools);
   const registryJson = serializeJson(registry);

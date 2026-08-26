@@ -1,10 +1,14 @@
 import { describe, it, expect } from "vitest";
+import { z } from "zod";
+
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import {
   assertAllToolsDescribed,
+  assertChatgptSnapshot,
   assertChatgptSubmissionParity,
   assertLlmsFullCoverage,
   assertPinFormInDocs,
+  buildChatgptSnapshot,
   buildLobehubPlugin,
   LOBEHUB_TOOL_ALLOWLIST,
   MCP_TOOL_ALLOWLIST,
@@ -319,4 +323,43 @@ describe("assertChatgptSubmissionParity", () => {
   // NOTE: parity against the REAL registry + committed submission file is
   // asserted by `npm run registry:check` (CI), not here — this suite runs
   // in the Workers pool, which has no filesystem.
+});
+
+describe("assertChatgptSnapshot", () => {
+  const search = {
+    name: "tako_search",
+    description: "Search.",
+    inputSchema: z.object({ query: z.string() }),
+  };
+  const others = [
+    { name: "tako_available_data", description: "a", inputSchema: z.object({ q: z.string() }) },
+    { name: "tako_contents", description: "c", inputSchema: z.object({ urls: z.array(z.string()) }) },
+    { name: "tako_visualize", description: "v", inputSchema: z.object({ components: z.array(z.any()) }) },
+    { name: "tako_graph_related", description: "g", inputSchema: z.object({ node_id: z.string() }) },
+  ];
+
+  it("passes when the live descriptions and schemas match the snapshot", () => {
+    const snapshot = buildChatgptSnapshot([search, ...others]);
+    expect(() => assertChatgptSnapshot([search, ...others], snapshot)).not.toThrow();
+  });
+
+  it("fails when a reviewed tool's description changes", () => {
+    const snapshot = buildChatgptSnapshot([search, ...others]);
+    const edited = { ...search, description: "Search, now with more words." };
+    expect(() => assertChatgptSnapshot([edited, ...others], snapshot)).toThrow(
+      /tako_search.*description.*resubmit/is,
+    );
+  });
+
+  it("fails when a reviewed tool's input schema changes", () => {
+    const snapshot = buildChatgptSnapshot([search, ...others]);
+    const edited = { ...search, inputSchema: z.object({ query: z.string(), count: z.number() }) };
+    expect(() => assertChatgptSnapshot([edited, ...others], snapshot)).toThrow(/input_schema/);
+  });
+
+  it("ignores tools that are not on the chatgpt surface", () => {
+    const snapshot = buildChatgptSnapshot([search, ...others]);
+    const agent = { name: "tako_agent", description: "x", inputSchema: z.object({}) };
+    expect(() => assertChatgptSnapshot([search, ...others, agent], snapshot)).not.toThrow();
+  });
 });
