@@ -12,10 +12,13 @@
  * search/answer set `content` via the lenient supports_data_export() while
  * this endpoint gates on the stricter export_safe(), so a content-bearing
  * card can still 403 (the handler maps that to a self-correcting message).
- * A Tako card CSV is capped at a 20-row default in BOTH modes; `max_rows`
- * raises that up to a 2000-row ceiling — there is no uncapped export. Every
- * row delivered is billed per 1k; tako#29572 (2026-08-21) removed the row
- * allowance, so no copy here may describe a row as costless.
+ * A Tako card export returns the WHOLE card by default, up to the backend's
+ * 2000-row ceiling; `max_rows` caps it lower. Both modes bill every row
+ * delivered, per 1k; tako#29572 (2026-08-21) removed the row allowance, so no
+ * copy here may describe a row as costless. (An inline card preview inside a
+ * SEARCH response is a different, much smaller cap — see INLINE_PREVIEW_ROW_CAP
+ * in _search_results.ts. Conflating the two is where the 20-row claim here came
+ * from.)
  * `mode` controls only delivery, not the row count: "inline" (default) returns
  * the (capped) content in the response body — total_rows/truncated report the
  * true size — so the model can read it directly; "url" returns a short-lived
@@ -101,7 +104,7 @@ export const MAX_CONTENTS_URLS = 10;
  */
 export const BATCH_CHAR_BUDGET = 250_000;
 
-const inputSchema = ContentsRequest.pick({ url: true }).extend({
+const inputSchema = z.object({
   // looseArray: a host that sends one URL as a bare string, or the array as
   // JSON text, gets it coerced instead of a -32602. Deliberately NOT
   // `commaSeparated`: the item schema has no url format check, so splitting
@@ -112,31 +115,31 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
       .array(ContentsRequest.shape.url.min(1))
       .min(1)
       .max(MAX_CONTENTS_URLS)
-      .optional()
       .describe(
         `The result URLs to fetch, 1-${MAX_CONTENTS_URLS} per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an \`error\` instead of a payload).`,
       ),
     { field: "tako_contents.urls" },
   ),
-  // Legacy single-URL form, kept so an in-flight caller pinned to the old
-  // schema keeps working. `urls` is the documented shape. Not enforced as
-  // mutually exclusive on purpose: if a caller sends both, `urls` wins and
-  // `url` is ignored, which is friendlier than 400-ing a request we can
-  // serve. At least one is required (the handler rejects neither).
-  url: ContentsRequest.shape.url
-    .min(1)
-    .optional()
-    .describe("Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`."),
   mode: ContentsDeliveryMode
     .default("inline")
-    .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
-  // Serialization of a Tako card's data. parse-don't-cast: reuse the generated
-  // shape (keeps the enum + "csv" default) and re-describe for the MCP surface.
-  // Which output field carries the payload depends on this: csv→data,
-  // json_records→records, json_compact→dataset (see outputSchema/handler).
-  content_format: ContentsRequest.shape.content_format.describe(
-    "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
-  ),
+    .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
+  // Serialization of a Tako card's data. Which output field carries the payload
+  // depends on this: csv→data, json_records→records, json_compact→dataset (see
+  // outputSchema/handler).
+  //
+  // NOT sourced from the generated ContentsRequest.content_format, which also
+  // admits "card_json". `itemSchema` has exactly three payload channels and
+  // card_json's payload arrives under `card_data`, which none of them holds —
+  // so offering it here would advertise a format this tool cannot return.
+  // Restore it together with a `card_data` channel on itemSchema, not before.
+  // `tako_search_advanced` DOES offer card_json: its cards carry `content`
+  // loosely, so the payload has somewhere to land there.
+  content_format: z
+    .enum(["csv", "json_records", "json_compact"])
+    .default("csv")
+    .describe(
+      "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
+    ),
   // Expose the row cap so an agent can pull more than the 20-row default.
   // Applies in BOTH delivery modes (url mode is capped too — there is no
   // uncapped export). Bound it to the backend's 2,000-row ceiling here so the
@@ -149,7 +152,7 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
     .lte(2000)
     .optional()
     .describe(
-      "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the 20-row default; raise up to 2,000 to export more. Rows are billed per 1,000 delivered. Ignored for web URLs (use max_chars).",
+      "Tako cards only: max rows to return, in either delivery mode. Omit it to get the whole card, up to the 2,000-row system ceiling; Tako clamps a larger value to that ceiling. Rows are billed per 1,000 delivered, so lower it to spend less. Ignored for web URLs (use max_chars).",
     ),
   // Web-text character cap, passed through to the wire. The backend default is
   // the FULL page text (up to 1M chars ≈ 250k tokens — observed in the wild and
@@ -301,9 +304,8 @@ async function fetchOne(
   // `query`/`urls` are MCP-layer knobs, NOT wire fields — strip them or the
   // backend's extra="forbid" 400s the request. The rest conforms to the
   // generated ContentsRequest contract (url + mode + optional max_rows).
-  const { query: passageQuery, max_chars: maxCharsAsked, urls: _urls, url: _url, ...rest } = input;
+  const { query: passageQuery, max_chars: maxCharsAsked, urls: _urls, ...rest } = input;
   void _urls;
-  void _url;
   const inline = input.mode !== "url";
   // Effective web-text cap (see the max_chars schema comment for the full
   // rationale): query pins the ceiling so passages scan the whole page (the
@@ -491,14 +493,9 @@ const takoContents = {
     { field: "query", value: "(stripped from the request)", note: "Passage extraction runs in the Worker; the API has no such field." },
   ],
   async handler(input, ctx): Promise<Output> {
-    const targets = input.urls ?? (input.url !== undefined ? [input.url] : []);
-    if (targets.length === 0) {
-      throw new Error(
-        "tako_contents needs at least one URL: pass `urls: [\"…\"]` (1-" +
-          MAX_CONTENTS_URLS +
-          " per call).",
-      );
-    }
+    // `urls` is required and min(1), so the schema rejects an empty call before
+    // the handler runs — no runtime guard needed.
+    const targets = input.urls;
     // Fan out: the backend takes ONE url per request, so a batch is N
     // subrequests issued concurrently. allSettled, not all — one URL's 403
     // (a license-gated card) must not discard the pages that did resolve.

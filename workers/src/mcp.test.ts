@@ -937,7 +937,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
   // the allowlist below names BOTH: `?tools=visualize` alone would replace
   // the defaults and drop tako_contents (spec D1).
   it.each([
-    ["tako_contents", { url: "https://trytako.com/card/abc123" }],
+    ["tako_contents", { urls: ["https://trytako.com/card/abc123"] }],
     [
       "tako_visualize",
       {
@@ -1047,7 +1047,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     const result = await callTool(
       { requestOrigin: "https://mcp.example.com" },
       "tako_contents",
-      { url: "https://trytako.com/card/abc123" },
+      { urls: ["https://trytako.com/card/abc123"] },
       "free", // ctx.tier only — options.tier deliberately omitted
     );
     expect(result.isError).toBe(true);
@@ -1071,7 +1071,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     const result = await callTool(
       { requestOrigin: "https://mcp.example.com" },
       "tako_contents",
-      { url: "https://trytako.com/card/abc123" },
+      { urls: ["https://trytako.com/card/abc123"] },
     );
     expect(fetchMock).toHaveBeenCalled();
     expect(result._meta?.["mcp/www_authenticate"]).toBeUndefined();

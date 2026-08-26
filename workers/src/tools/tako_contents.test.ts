@@ -23,53 +23,53 @@ afterEach(() => {
 // --- A3: tests that validate the generated-contract schema wiring ---
 it("exposes a mode parameter sourced from the generated contract", () => {
   const shape = tool.inputSchema.shape as Record<string, unknown>;
-  expect(shape).toHaveProperty("url");
+  expect(shape).toHaveProperty("urls");
   expect(shape).toHaveProperty("mode");
 });
 
 it("defaults mode to inline (the documented MCP override of the contract default)", () => {
-  const parsed = tool.inputSchema.parse({ url: "https://example.com" });
+  const parsed = tool.inputSchema.parse({ urls: ["https://example.com"] });
   expect(parsed.mode).toBe("inline");
 });
 // --- end A3 tests ---
 
 describe("tako_contents input schema", () => {
   it("defaults mode to \"inline\"", () => {
-    const parsed = tool.inputSchema.parse({ url: "https://tako.com/card/abc" });
+    const parsed = tool.inputSchema.parse({ urls: ["https://tako.com/card/abc"] });
     expect(parsed.mode).toBe("inline");
   });
 
   it("rejects an unknown mode", () => {
-    expect(() => tool.inputSchema.parse({ url: "https://x", mode: "stream" })).toThrow();
+    expect(() => tool.inputSchema.parse({ urls: ["https://x"], mode: "stream" })).toThrow();
   });
 
   it("rejects an empty url (local .min(1) guard; the spec has no minLength)", () => {
-    expect(() => tool.inputSchema.parse({ url: "" })).toThrow();
+    expect(() => tool.inputSchema.parse({ urls: [""] })).toThrow();
   });
 
   it("exposes an optional max_rows", () => {
     const shape = tool.inputSchema.shape as Record<string, unknown>;
     expect(shape).toHaveProperty("max_rows");
     // Omitted → absent from parsed input (backend applies its 20-row default).
-    const parsed = tool.inputSchema.parse({ url: "https://tako.com/card/abc" }) as Record<string, unknown>;
+    const parsed = tool.inputSchema.parse({ urls: ["https://tako.com/card/abc"] }) as Record<string, unknown>;
     expect(parsed).not.toHaveProperty("max_rows");
   });
 
   it("accepts a max_rows within 1..2000 and rejects out-of-range values", () => {
-    expect(tool.inputSchema.parse({ url: "https://x", max_rows: 500 }).max_rows).toBe(500);
-    expect(tool.inputSchema.parse({ url: "https://x", max_rows: 2000 }).max_rows).toBe(2000);
-    expect(() => tool.inputSchema.parse({ url: "https://x", max_rows: 0 })).toThrow();
-    expect(() => tool.inputSchema.parse({ url: "https://x", max_rows: 2001 })).toThrow();
+    expect(tool.inputSchema.parse({ urls: ["https://x"], max_rows: 500 }).max_rows).toBe(500);
+    expect(tool.inputSchema.parse({ urls: ["https://x"], max_rows: 2000 }).max_rows).toBe(2000);
+    expect(() => tool.inputSchema.parse({ urls: ["https://x"], max_rows: 0 })).toThrow();
+    expect(() => tool.inputSchema.parse({ urls: ["https://x"], max_rows: 2001 })).toThrow();
   });
 
   it("exposes content_format (enum) defaulting to csv", () => {
     const shape = tool.inputSchema.shape as Record<string, unknown>;
     expect(shape).toHaveProperty("content_format");
-    expect(tool.inputSchema.parse({ url: "https://tako.com/card/abc" }).content_format).toBe("csv");
+    expect(tool.inputSchema.parse({ urls: ["https://tako.com/card/abc"] }).content_format).toBe("csv");
     expect(
-      tool.inputSchema.parse({ url: "https://x", content_format: "json_records" }).content_format,
+      tool.inputSchema.parse({ urls: ["https://x"], content_format: "json_records" }).content_format,
     ).toBe("json_records");
-    expect(() => tool.inputSchema.parse({ url: "https://x", content_format: "xml" })).toThrow();
+    expect(() => tool.inputSchema.parse({ urls: ["https://x"], content_format: "xml" })).toThrow();
   });
 });
 
@@ -165,32 +165,21 @@ describe("tako_contents handler", () => {
     expect(out.results[1]?.error).not.toContain("Django returned");
   });
 
-  it("accepts the legacy single `url` form as urls: [url]", async () => {
-    vi.mocked(djangoPost).mockResolvedValue(item("legacy"));
-    const out = await tool.handler({ url: "https://legacy", ...CALL }, ctx);
+  it("serves a single url as a one-item batch", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(item("only"));
+    const out = await tool.handler({ urls: ["https://only"], ...CALL }, ctx);
     expect(out.results).toHaveLength(1);
-    expect(out.results[0]?.data).toBe("legacy");
-    expect(out.results[0]?.url).toBe("https://legacy");
+    expect(out.results[0]?.data).toBe("only");
+    expect(out.results[0]?.url).toBe("https://only");
   });
 
-  it("rejects (with a helpful message, not a bare schema error) when neither `url` nor `urls` is given", async () => {
-    // The schema cannot express "at least one of these two optional fields" —
-    // this runtime check is the ONLY enforcement of that constraint.
-    await expect(tool.handler({ ...CALL }, ctx)).rejects.toThrow(/at least one URL/);
+  it("rejects a call naming no url at the SCHEMA, so the handler never runs", () => {
+    // `urls` is required and min(1) since the deprecated single-`url` form went
+    // away, so the constraint is expressible in the schema and the old runtime
+    // "at least one URL" guard is gone with it.
+    expect(tool.inputSchema.safeParse({}).success).toBe(false);
+    expect(tool.inputSchema.safeParse({ urls: [] }).success).toBe(false);
     expect(djangoPost).not.toHaveBeenCalled();
-  });
-
-  it("when both `url` and `urls` are sent, `urls` wins silently (documented, not a 400)", async () => {
-    vi.mocked(djangoPost)
-      .mockResolvedValueOnce(item("page A"))
-      .mockResolvedValueOnce(item("page B"));
-    const out = await tool.handler(
-      { url: "https://legacy-ignored", urls: ["https://a", "https://b"], ...CALL },
-      ctx,
-    );
-    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(2);
-    expect(out.results.map((r) => r.url)).toEqual(["https://a", "https://b"]);
-    expect(out.results.some((r) => r.url === "https://legacy-ignored")).toBe(false);
   });
 
   it("caps the batch so one call cannot fan out unbounded", () => {
@@ -270,7 +259,7 @@ describe("tako_contents handler", () => {
       request_id: "r-passages",
     });
     const parsed = tool.inputSchema.parse({
-      url: "https://example.com/a", mode: "inline", query: "RevPAR",
+      urls: ["https://example.com/a"], mode: "inline", query: "RevPAR",
     });
     const out = await tool.handler(parsed, ctx);
     // Passages, not the full dump — data is PURE page text; the match summary
@@ -300,7 +289,7 @@ describe("tako_contents handler", () => {
       request_id: "r-card-q",
     });
     const parsed = tool.inputSchema.parse({
-      url: "https://tako.com/card/abc", query: "RevPAR",
+      urls: ["https://tako.com/card/abc"], query: "RevPAR",
     });
     const out = await tool.handler(parsed, ctx);
     // CSV passes through untouched — no passage header injected into data.
@@ -315,7 +304,7 @@ describe("tako_contents handler", () => {
       request_id: "r-miss",
     });
     const parsed = tool.inputSchema.parse({
-      url: "https://example.com/a", query: "zebra unicorn",
+      urls: ["https://example.com/a"], query: "zebra unicorn",
     });
     const out = await tool.handler(parsed, ctx);
     expect(out.results[0]?.note).toContain("NOT FOUND");
@@ -374,7 +363,7 @@ describe("tako_contents handler", () => {
       ],
       request_id: "r6",
     });
-    const parsed = tool.inputSchema.parse({ url: "https://tako.com/card/abc", max_rows: 1000 });
+    const parsed = tool.inputSchema.parse({ urls: ["https://tako.com/card/abc"], max_rows: 1000 });
     await tool.handler(parsed, ctx);
     const call = vi.mocked(djangoPost).mock.calls[0]!;
     expect(call[3]).toEqual({
@@ -392,7 +381,7 @@ describe("tako_contents handler", () => {
       request_id: "r-chars",
     });
     // The schema deliberately has NO default — the handler decides per mode.
-    const parsed = tool.inputSchema.parse({ url: "https://example.com/a" });
+    const parsed = tool.inputSchema.parse({ urls: ["https://example.com/a"] });
     expect(parsed.max_chars).toBeUndefined();
     await tool.handler(parsed, ctx);
     const call = vi.mocked(djangoPost).mock.calls[0]!;
@@ -497,7 +486,7 @@ describe("tako_contents handler", () => {
       ],
       request_id: "r-url-nochars",
     });
-    const parsed = tool.inputSchema.parse({ url: "https://example.com/a", mode: "url" });
+    const parsed = tool.inputSchema.parse({ urls: ["https://example.com/a"], mode: "url" });
     await tool.handler(parsed, ctx);
     expect(vi.mocked(djangoPost).mock.calls[0]![3]).not.toHaveProperty("max_chars");
   });
@@ -510,7 +499,7 @@ describe("tako_contents handler", () => {
     // Even an explicit cap is overridden — a capped scan would turn a late
     // match into a false deterministic miss.
     const parsed = tool.inputSchema.parse({
-      url: "https://example.com/a", query: "RevPAR", max_chars: 5000,
+      urls: ["https://example.com/a"], query: "RevPAR", max_chars: 5000,
     });
     await tool.handler(parsed, ctx);
     expect((vi.mocked(djangoPost).mock.calls[0]![3] as { max_chars?: number }).max_chars).toBe(1_000_000);
@@ -522,17 +511,17 @@ describe("tako_contents handler", () => {
       contents: [{ content_format: null, data: page, truncated: false, cost: 1, source_url: "https://example.com/a" }],
       request_id: "r-derived-cut",
     });
-    const parsed = tool.inputSchema.parse({ url: "https://example.com/a", max_chars: 50 });
+    const parsed = tool.inputSchema.parse({ urls: ["https://example.com/a"], max_chars: 50 });
     const out = await tool.handler(parsed, ctx);
     expect(out.results[0]?.truncated).toBe(true);
     // Below the cap → complete → omitted (see the web-text test above).
   });
 
   it("max_chars: accepts a caller override up to the 1M full-text ceiling, rejects out-of-range", async () => {
-    expect(tool.inputSchema.parse({ url: "https://x", max_chars: 1_000_000 }).max_chars).toBe(1_000_000);
-    expect(tool.inputSchema.parse({ url: "https://x", max_chars: 5000 }).max_chars).toBe(5000);
-    expect(() => tool.inputSchema.parse({ url: "https://x", max_chars: 0 })).toThrow();
-    expect(() => tool.inputSchema.parse({ url: "https://x", max_chars: 1_000_001 })).toThrow();
+    expect(tool.inputSchema.parse({ urls: ["https://x"], max_chars: 1_000_000 }).max_chars).toBe(1_000_000);
+    expect(tool.inputSchema.parse({ urls: ["https://x"], max_chars: 5000 }).max_chars).toBe(5000);
+    expect(() => tool.inputSchema.parse({ urls: ["https://x"], max_chars: 0 })).toThrow();
+    expect(() => tool.inputSchema.parse({ urls: ["https://x"], max_chars: 1_000_001 })).toThrow();
   });
 
   it("json_records: maps records (data/dataset null) and passes content_format through", async () => {
@@ -553,7 +542,7 @@ describe("tako_contents handler", () => {
       request_id: "r7",
     });
     const parsed = tool.inputSchema.parse({
-      url: "https://tako.com/card/abc",
+      urls: ["https://tako.com/card/abc"],
       content_format: "json_records",
     });
     const out = await tool.handler(parsed, ctx);
@@ -597,7 +586,7 @@ describe("tako_contents handler", () => {
       request_id: "r8",
     });
     const parsed = tool.inputSchema.parse({
-      url: "https://tako.com/card/abc",
+      urls: ["https://tako.com/card/abc"],
       content_format: "json_compact",
     });
     const out = await tool.handler(parsed, ctx);
@@ -713,5 +702,32 @@ describe("tako_contents handler", () => {
     await expect(
       tool.handler({ urls: ["https://tako.com/card/x"], mode: "inline", content_format: "csv", max_chars: 100_000 }, ctx),
     ).rejects.toThrow(/returned 500/);
+  });
+});
+
+
+// --- D4 defect list: the deprecated single-url form, card_json, max_rows copy ---
+describe("tako_contents input surface after the D4 trim", () => {
+  it("has no deprecated single-url form", () => {
+    expect(Object.keys(tool.inputSchema.shape)).not.toContain("url");
+  });
+
+  it("does not advertise card_json until the output schema carries a channel for it", () => {
+    // itemSchema has exactly three payload channels — data / records / dataset.
+    // card_json returns `card_data`, which none of them holds.
+    expect(
+      tool.inputSchema.safeParse({ urls: ["https://x"], content_format: "card_json" }).success,
+    ).toBe(false);
+    expect(
+      tool.inputSchema.safeParse({ urls: ["https://x"], content_format: "json_compact" }).success,
+    ).toBe(true);
+  });
+
+  it("states the real max_rows default: the whole card, up to 2,000 rows", () => {
+    const described = tool.inputSchema.shape.max_rows.description ?? "";
+    expect(described).not.toMatch(/20-row default/i);
+    expect(described).toMatch(/2,000/);
+    // The same claim rode in the mode description, where it was equally wrong.
+    expect(tool.inputSchema.shape.mode.description ?? "").not.toMatch(/20-row default/i);
   });
 });

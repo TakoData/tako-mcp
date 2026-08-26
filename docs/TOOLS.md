@@ -377,11 +377,10 @@ Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `url` | string | no |  | Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`. |
-| `urls` | array | no |  | The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload). |
-| `mode` | string ("url" \\| "inline") | no | `"inline"` | Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file. |
-| `content_format` | string ("csv" \\| "json_records" \\| "json_compact" \\| "card_json") | no | `"csv"` | Tako cards only — serialization of the returned data: "csv" (default, returned as text in `data`), "json_records" (array of row objects in `records`), or "json_compact" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`). |
-| `max_rows` | integer | no |  | Tako cards only: max CSV rows to return, in either delivery mode. Omit for the 20-row default; raise up to 2,000 to export more. Rows are billed per 1,000 delivered. Ignored for web URLs (use max_chars). |
+| `urls` | array | yes |  | The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload). |
+| `mode` | string ("url" \\| "inline") | no | `"inline"` | Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file. |
+| `content_format` | string ("csv" \\| "json_records" \\| "json_compact") | no | `"csv"` | Tako cards only — serialization of the returned data: "csv" (default, returned as text in `data`), "json_records" (array of row objects in `records`), or "json_compact" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`). |
+| `max_rows` | integer | no |  | Tako cards only: max rows to return, in either delivery mode. Omit it to get the whole card, up to the 2,000-row system ceiling; Tako clamps a larger value to that ceiling. Rows are billed per 1,000 delivered, so lower it to spend less. Ignored for web URLs (use max_chars). |
 | `max_chars` | integer | no |  | Web URLs only: character cap on the extracted page text (max 1,000,000 = full text). Inline fetches default to 100,000 PER URL when fetching one url, less when batching several (a shared per-call character budget split across the batch — set this explicitly to opt out and get the full 100,000, or more, per url regardless of batch size). Billing is per page regardless, so the cap only trims what reaches you, and `truncated: true` reports a cut. Raise it when you need a full long document inline. In url mode the downloaded file is the full text unless you set this (an explicit value caps the file too). Ignored when `query` is set (passages always scan the full text) and for Tako card URLs (use max_rows). |
 | `query` | string | no |  | Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query="RevPAR" against a hotel earnings page. The FULL page text is always scanned (max_chars is ignored). The `note` field summarizes the matches; a no-match note says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode. |
 
@@ -402,13 +401,7 @@ Annotations:
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
-    "url": {
-      "description": "Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`.",
-      "type": "string",
-      "minLength": 1
-    },
     "urls": {
-      "description": "The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload).",
       "minItems": 1,
       "maxItems": 10,
       "type": "array",
@@ -416,11 +409,12 @@ Annotations:
         "type": "string",
         "minLength": 1,
         "description": "The result URL to fetch downloadable content for (a TakoCard.webpage_url or a WebResult.url). A Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted text."
-      }
+      },
+      "description": "The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload)."
     },
     "mode": {
       "default": "inline",
-      "description": "Delivery only — does NOT change the row cap: \"inline\" (default) returns the content in the response body (a Tako card — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url to the same capped file.",
+      "description": "Delivery only — does NOT change the row cap: \"inline\" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url to the same capped file.",
       "type": "string",
       "enum": [
         "url",
@@ -434,12 +428,11 @@ Annotations:
       "enum": [
         "csv",
         "json_records",
-        "json_compact",
-        "card_json"
+        "json_compact"
       ]
     },
     "max_rows": {
-      "description": "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the 20-row default; raise up to 2,000 to export more. Rows are billed per 1,000 delivered. Ignored for web URLs (use max_chars).",
+      "description": "Tako cards only: max rows to return, in either delivery mode. Omit it to get the whole card, up to the 2,000-row system ceiling; Tako clamps a larger value to that ceiling. Rows are billed per 1,000 delivered, so lower it to spend less. Ignored for web URLs (use max_chars).",
       "type": "integer",
       "minimum": 1,
       "maximum": 2000
@@ -455,7 +448,10 @@ Annotations:
       "type": "string",
       "minLength": 1
     }
-  }
+  },
+  "required": [
+    "urls"
+  ]
 }
 ```
 </details>
