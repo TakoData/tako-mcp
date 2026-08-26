@@ -462,6 +462,8 @@ export const availableDataSlimOutputShape = z.looseObject({
         node_id: z.string(),
         name: z.string(),
         type: z.string(),
+        subtype: z.string().nullable().optional(),
+        label: z.string().nullable().optional(),
         unavailable: z.boolean().optional(),
         coverage: z.looseObject({
           kind: z.string(),
@@ -484,6 +486,24 @@ export const availableDataSlimOutputShape = z.looseObject({
     )
     .describe(
       "The resolved matches and their coverage, each entry carrying the node id to pin. To fetch a specific metric precisely: call tako_search with node_ids=[<the metric's node_id>] AND strict:true — an entity-only pin without strict does not steer retrieval.",
+    ),
+  // Optional in the ADVERTISED shape, always present in the emitted value —
+  // the same rule `items_truncated` follows: the handler's FULL output carries
+  // `other_matches`, not `candidates`, and must stay assignable to this shape.
+  candidates: z
+    .array(
+      z.object({
+        node_id: z.string(),
+        name: z.string(),
+        type: z.string(),
+        subtype: z.string().nullable(),
+        label: z.string().nullable(),
+        coverage_total: z.number().int().optional(),
+      }),
+    )
+    .optional()
+    .describe(
+      "The other nodes `q` resolved to, best first, each with the id to pin in a follow-up or to explore with tako_graph_related. coverage_total is present only for candidates that were coverage-checked; the text channel carries their aliases.",
     ),
   next_call: z
     .object({
@@ -517,6 +537,9 @@ interface CoverageMatchLike {
   node_id: string;
   name: string;
   type: string;
+  subtype: string | null;
+  label: string | null;
+  aliases: string[];
   unavailable?: boolean | undefined;
   coverage: {
     kind: string;
@@ -542,7 +565,16 @@ export interface AvailableDataFullOutput {
   query: string;
   summary: string;
   matches: CoverageMatchLike[];
-  other_matches: Array<{ name: string; type: string }>;
+  other_matches: Array<{
+    node_id: string;
+    name: string;
+    type: string;
+    subtype: string | null;
+    label: string | null;
+    aliases: string[];
+    coverage_total?: number | undefined;
+    coverage_capped?: boolean | undefined;
+  }>;
   next_call: { tool: "tako_search"; query: string; node_ids: string[]; strict: boolean } | null;
   /** False when the gate failed open — the matches are low-confidence. */
   confident?: boolean | undefined;
@@ -573,6 +605,8 @@ export function slimAvailableDataStructured(
       node_id: m.node_id,
       name: m.name,
       type: m.type,
+      ...(m.subtype === undefined ? {} : { subtype: m.subtype }),
+      ...(m.label === undefined ? {} : { label: m.label }),
       ...(m.unavailable === true ? { unavailable: true } : {}),
       coverage: {
         kind: m.coverage.kind,
@@ -581,6 +615,16 @@ export function slimAvailableDataStructured(
         items: m.coverage.items.slice(0, STRUCTURED_COVERAGE_ITEMS),
         items_truncated: m.coverage.items.length > STRUCTURED_COVERAGE_ITEMS,
       },
+    })),
+    // The wide candidate list reaches the machine channel too: a
+    // structured-only reader could not act on names it had no ids for.
+    candidates: (o.other_matches ?? []).map((c) => ({
+      node_id: c.node_id,
+      name: c.name,
+      type: c.type,
+      subtype: c.subtype ?? null,
+      label: c.label ?? null,
+      ...(c.coverage_total === undefined ? {} : { coverage_total: c.coverage_total }),
     })),
     next_call: o.next_call,
     ...(o.metric_query === undefined ? {} : { metric_query: o.metric_query }),

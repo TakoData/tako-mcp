@@ -3,7 +3,7 @@
   "tools": {
     "tako_available_data": {
       "description_sha256": "d8990d83d505f9b5a02e09c3cac7b023f38932c50ab030664c8766d793abb81d",
-      "input_schema_sha256": "922002d8511ce6b635a6ef0cc9f94c0f6ed493a89d145be8159d5ced1210f37d"
+      "input_schema_sha256": "04574115b97d8d320fd1ed62397a003305a9883c79c1c9ef2967c1ff117b6f8f"
     },
     "tako_contents": {
       "description_sha256": "3e5fdf64f474f051c0dadddafdf2f428e5a07b3627580d6f686b5185ef8e4091",

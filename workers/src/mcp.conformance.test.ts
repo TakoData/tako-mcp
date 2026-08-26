@@ -359,7 +359,9 @@ describe("realistic payloads validate against the published schema", () => {
             node_id: "ent::nvidia::1",
             name: "NVIDIA Corporation",
             type: "entity",
+            subtype: "Companies",
             label: "ORG",
+            aliases: ["NVDA"],
             coverage: {
               kind: "metrics",
               items: [{ name: "Revenue", node_id: "mt::revenue::1" }],

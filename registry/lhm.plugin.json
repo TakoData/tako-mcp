@@ -59,6 +59,12 @@
               "STOCK_TICKER",
               "WEBSITE"
             ]
+          },
+          "limit": {
+            "description": "How many candidate nodes to resolve for `q` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
           }
         },
         "required": [

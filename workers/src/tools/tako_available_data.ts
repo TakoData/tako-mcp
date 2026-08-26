@@ -23,6 +23,9 @@ import { djangoGet } from "../django.js";
 import {
   ALTERNATES_SHOWN,
   buildMatch,
+  candidateRef,
+  DEFAULT_CANDIDATES,
+  MAX_CANDIDATES,
   buildNextCall,
   buildPairNextCall,
   buildPairSummary,
@@ -115,6 +118,9 @@ const inputSchema = z.object({
   label: z.enum(NER_LABELS).optional().describe(
     "NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`.",
   ),
+  limit: z.number().int().min(1).max(MAX_CANDIDATES).optional().describe(
+    "How many candidate nodes to resolve for `q` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list.",
+  ),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -148,7 +154,9 @@ const coverageMatchSchema = z.object({
   node_id: z.string(),
   name: z.string(),
   type: z.string(),
-  label: z.string().nullable().optional(),
+  subtype: z.string().nullable(),
+  label: z.string().nullable(),
+  aliases: z.array(z.string()),
   unavailable: z.boolean().optional(),
   coverage: coverageGroupSchema,
 });
@@ -175,11 +183,14 @@ const fullOutputSchema = z.object({
   confident: z.boolean().optional(),
   other_matches: z.array(
     z.object({
+      node_id: z.string(),
       name: z.string(),
       type: z.string(),
+      subtype: z.string().nullable(),
+      label: z.string().nullable(),
+      aliases: z.array(z.string()),
       // Present for candidates that were coverage-probed but not rendered in
       // full — enough to switch to one without re-running the tool.
-      node_id: z.string().optional(),
       coverage_total: z.number().int().optional(),
       // True when the server stopped counting — `coverage_total` is a floor.
       coverage_capped: z.boolean().optional(),
@@ -225,23 +236,29 @@ const tako_available_data = {
     chatgpt: { openWorldHint: false },
   },
   fixedInputs: [
+    // `graph/search limit` is gone from this list: it is the caller's `limit`
+    // parameter now, so it is not a fixed input any more. The candidate
+    // arithmetic it carried moved to the probe row below and stays DERIVED
+    // rather than restated — a hand-written copy of these numbers once claimed
+    // four full drills where the handler does one drill plus three limit=1
+    // probes, and `docs/TOOLS.md` published the wrong figure verbatim.
+    // `fixedInputs` is read off the imported module (`gen-registry.ts`), so
+    // retuning a constant regenerates the doc instead of drifting it.
     {
-      field: "graph/search limit",
-      value: "10",
-      // Derived, not restated: the previous hand-written copy of these numbers
-      // claimed four full drills where the handler does one drill plus three
-      // limit=1 probes, and `docs/TOOLS.md` published the wrong figure verbatim.
-      // `fixedInputs` is read off the imported module (`gen-registry.ts:536`),
-      // so retuning either constant regenerates the doc instead of drifting it.
+      field: "graph/related limit (coverage drill)",
+      value: String(PAGE_LIMIT),
       note:
-        `Candidates fetched per lookup (the API default is 20); the top ${SELECT_TOP_N} that ` +
-        `survive the match gate are inspected — ${RENDER_FULL_N} drilled in full, ` +
-        `${SELECT_TOP_N - RENDER_FULL_N} by a limit=1 probe. A shell rank-0 costs one more drill.`,
+        `Page size for the rendered coverage list; paging stops at ${MAX_COVERAGE_NAMES} names ` +
+        `or ${MAX_COVERAGE_PAGES} pages.`,
     },
     {
-      field: "graph/related limit",
-      value: "100",
-      note: "Coverage page size for the drill; paging stops at 250 names or 4 pages. The cheap per-candidate coverage probes send limit=1 instead.",
+      field: "graph/related limit (candidate probes)",
+      value: "1",
+      note:
+        `The cheap per-candidate coverage probes fetch a count only — the probed candidates' ` +
+        `lists are never read. The top ${SELECT_TOP_N} gated candidates are inspected: ` +
+        `${RENDER_FULL_N} drilled in full and ${SELECT_TOP_N - RENDER_FULL_N} by a limit=1 ` +
+        `probe. A shell rank-0 costs one more drill.`,
     },
   ],
   // Declared as the FULL internal shape (assignable to the slim advertised
@@ -266,7 +283,10 @@ const tako_available_data = {
       types?: "entity" | "metric",
       label?: string,
     ): Promise<GraphNode[]> => {
-      const query: Record<string, string | number | boolean> = { q, limit: 10 };
+      const query: Record<string, string | number | boolean> = {
+        q,
+        limit: input.limit ?? DEFAULT_CANDIDATES,
+      };
       if (types !== undefined) query.types = types;
       if (label !== undefined) query.label = label;
 
@@ -784,9 +804,7 @@ const tako_available_data = {
     // reader saw coverage on a `found: false` response.
     if (!gate.gated) {
       const resolvedOnly = gate.kept.slice(0, SELECT_TOP_N).map(resolvedOnlyMatch);
-      const unlisted = gate.kept
-        .slice(SELECT_TOP_N)
-        .map((n) => ({ name: n.name, type: n.type }));
+      const unlisted = gate.kept.slice(SELECT_TOP_N).map(candidateRef);
       return {
         found: false,
         // Nothing was drilled here — these nodes are resolutions the summary is
@@ -885,13 +903,11 @@ const tako_available_data = {
         matches = promotedDrill;
         rendered = [best.node];
         demoted.push(
-          ...firstDrill.map((m) => ({
-            name: m.name,
-            type: m.type,
-            node_id: m.node_id,
-            coverage_total: m.coverage.total,
-            coverage_capped: m.coverage.capped,
-          })),
+          ...firstDrill.map((m) => {
+            const { coverage, unavailable, ...ref } = m;
+            void unavailable;
+            return { ...ref, coverage_total: coverage.total, coverage_capped: coverage.capped };
+          }),
         );
       }
       // else: the promoted drill failed and rank 0 has a real list — no
@@ -908,18 +924,12 @@ const tako_available_data = {
       // Probed but not rendered: one line each, carrying id + coverage count.
       ...probes
         .filter((pr) => !renderedIds.has(pr.node.id))
-        .map((pr) => ({
-          name: pr.node.name,
-          type: pr.node.type,
-          node_id: pr.node.id,
-          coverage_total: pr.total,
-          coverage_capped: pr.capped,
-        })),
-      // Never inspected: name only.
+        .map((pr) => ({ ...candidateRef(pr.node), coverage_total: pr.total, coverage_capped: pr.capped })),
+      // Never inspected: id, kind, and aliases, but no coverage count.
       ...gate.kept
         .slice(SELECT_TOP_N)
         .concat(results.filter((n) => !gate.kept.includes(n)))
-        .map((n) => ({ name: n.name, type: n.type })),
+        .map(candidateRef),
     ];
 
     return {

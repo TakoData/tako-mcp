@@ -288,11 +288,12 @@ Parameters:
 | `metric` | string | no |  | The measure you want, when you already know it — e.g. "gross margin", "passenger cruise days", "capex". Supplying it is the FAST path: the tool resolves the entity+metric pair directly and hands back a runnable next_call, instead of listing every metric the entity has. Omit it only to browse what exists. |
 | `types` | string ("entity" \\| "metric") | no |  | Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both. |
 | `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`. |
+| `limit` | integer | no |  | How many candidate nodes to resolve for `q` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list. |
 
 Fixed request inputs (the caller cannot change these):
 
-- `graph/search limit` = `10` — Candidates fetched per lookup (the API default is 20); the top 4 that survive the match gate are inspected — 1 drilled in full, 3 by a limit=1 probe. A shell rank-0 costs one more drill.
-- `graph/related limit` = `100` — Coverage page size for the drill; paging stops at 250 names or 4 pages. The cheap per-candidate coverage probes send limit=1 instead.
+- `graph/related limit (coverage drill)` = `100` — Page size for the rendered coverage list; paging stops at 250 names or 4 pages.
+- `graph/related limit (candidate probes)` = `1` — The cheap per-candidate coverage probes fetch a count only — the probed candidates' lists are never read. The top 4 gated candidates are inspected: 1 drilled in full and 3 by a limit=1 probe. A shell rank-0 costs one more drill.
 
 Annotations:
 
@@ -340,6 +341,12 @@ Annotations:
         "STOCK_TICKER",
         "WEBSITE"
       ]
+    },
+    "limit": {
+      "description": "How many candidate nodes to resolve for `q` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
     }
   },
   "required": [

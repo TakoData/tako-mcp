@@ -1334,3 +1334,39 @@ describe("tako_available_data — pair confirmation", () => {
     expect(out.verified).toBe("coverage");
   });
 });
+
+describe("tako_available_data — candidate metadata and limit (fix 6)", () => {
+  it("forwards limit to graph/search and lists every candidate with id, subtype, label, and aliases", async () => {
+    const fetchMock = mockFetchSequence([
+      jsonResponse(200, {
+        results: [
+          { ...searchHit("apple-inc", "Apple Inc."), subtype: "Companies", aliases: ["Apple", "AAPL", "Apple Computer", "Cupertino"] },
+          { ...searchHit("apple-gpe", "Apple", "entity", "GPE"), subtype: "Cities" },
+          { ...searchHit("apple-records", "Apple Records"), subtype: "Companies" },
+          { ...searchHit("apple-bank", "Apple Bank"), subtype: "Companies" },
+          { ...searchHit("apple-hosp", "Apple Hospitality REIT"), subtype: "Companies", aliases: ["APLE"] },
+          { ...searchHit("apple-pie", "Apple Pie Co"), subtype: "Companies" },
+        ],
+      }),
+      jsonResponse(200, drill("apple-inc", "Apple Inc.", "metrics", ["Revenue"], 47)),
+      jsonResponse(200, drill("apple-gpe", "Apple", "metrics", [], 0)),
+      jsonResponse(200, drill("apple-records", "Apple Records", "metrics", ["X"], 5)),
+      jsonResponse(200, drill("apple-bank", "Apple Bank", "metrics", ["X"], 2)),
+    ]);
+    const out = await takoAvailableData.handler({ q: "apple", limit: 20 }, CTX);
+    expect(new URL(requestFrom(fetchMock.mock.calls[0]).url).searchParams.get("limit")).toBe("20");
+    // The rendered match carries its kind and (capped) aliases.
+    expect(out.matches[0]).toMatchObject({ subtype: "Companies", label: "ORG", aliases: ["Apple", "AAPL", "Apple Computer"] });
+    // Uninspected candidates are no longer name-only: the wide list the deleted graph search used to give.
+    const unprobed = out.other_matches.filter((o) => o.coverage_total === undefined);
+    expect(unprobed.map((o) => o.node_id)).toEqual(["apple-hosp", "apple-pie"]);
+    expect(unprobed[0]).toMatchObject({ subtype: "Companies", label: "ORG", aliases: ["APLE"] });
+    expect(out.summary).toContain("- Apple Hospitality REIT (Companies, ORG) (`apple-hosp`) — aliases: APLE");
+    expect(out.summary).toContain("- Apple Records (Companies, ORG) — 5 metrics (`apple-records`)");
+  });
+
+  it("rejects limit outside 1..20", () => {
+    expect(() => takoAvailableData.inputSchema.parse({ q: "apple", limit: 21 })).toThrow();
+    expect(() => takoAvailableData.inputSchema.parse({ q: "apple", limit: 0 })).toThrow();
+  });
+});

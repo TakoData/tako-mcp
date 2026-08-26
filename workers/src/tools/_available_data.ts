@@ -91,7 +91,19 @@ export const MAX_COVERAGE_NAMES = 250;
 // slack covers a server that pages smaller than PAGE_LIMIT without letting a
 // pathological page size serialize dozens of sequential calls.
 export const MAX_COVERAGE_PAGES = 4;
-export const OTHER_MATCH_PREVIEW = 5;
+/**
+ * How many candidates `graph/search` returns, and so how many the tool lists.
+ * The default is today's fixed request; the cap is the endpoint's own maximum.
+ * Only SELECT_TOP_N (plus the top of each kind) are coverage-checked — a
+ * `graph/related` probe per candidate at 20 would spend the ~180 req/min
+ * budget on receipts nobody reads. The rest are listed with id, kind, and
+ * aliases so the model can switch or explore them without another call: this
+ * is the residual job of the deleted graph search tool.
+ */
+export const MAX_CANDIDATES = 20;
+export const DEFAULT_CANDIDATES = 10;
+/** Aliases shown per candidate line — enough to recognise a ticker or abbreviation. */
+export const ALIASES_SHOWN = 3;
 
 // Metric names that read as internal/accounting plumbing rather than the
 // headline figures a person expects first. The backend returns metrics in a
@@ -153,23 +165,37 @@ export interface CoverageGroup {
   capped: boolean;
 }
 
-/** Coverage for one expanded node. */
-export interface CoverageMatch {
+/** What every resolved node carries, rendered or not: enough to pin it, explore it, or tell it from a same-named node. */
+export interface CandidateRef {
   node_id: string;
   name: string;
   type: string;
-  label?: string | null;
+  subtype: string | null;
+  label: string | null;
+  aliases: string[];
+}
+
+export function candidateRef(node: GraphNode): CandidateRef {
+  return {
+    node_id: node.id,
+    name: node.name,
+    type: node.type,
+    subtype: node.subtype ?? null,
+    label: node.label ?? null,
+    aliases: (node.aliases ?? []).slice(0, ALIASES_SHOWN),
+  };
+}
+
+/** Coverage for one expanded node. */
+export interface CoverageMatch extends CandidateRef {
   /** True when the node resolved but its coverage lookup failed. */
   unavailable?: boolean;
   coverage: CoverageGroup;
 }
 
-export interface OtherMatch {
-  name: string;
-  type: string;
-  /** Present for candidates we coverage-probed but did not render in full. */
-  node_id?: string;
-  /** Coverage count from the `limit=1` probe; a floor when `capped`. */
+/** A candidate that was not rendered in full: a receipt line. */
+export type OtherMatch = CandidateRef & {
+  /** Coverage count from the `limit=1` probe; absent when the candidate was never inspected. A floor when `coverage_capped`. */
   coverage_total?: number;
   /**
    * The server stopped counting at its own cap, so `coverage_total` is a floor
@@ -178,7 +204,7 @@ export interface OtherMatch {
    * "at least 63 entities" for a node the server counted exactly.
    */
   coverage_capped?: boolean;
-}
+};
 
 const emptyGroup = (kind: CoverageKind): CoverageGroup => ({
   kind, items: [], names: [], total: 0, truncated: false, capped: false,
@@ -249,13 +275,7 @@ export function selectCoverage(
 
 /** Build a `CoverageMatch` from a resolved node + its drilled coverage group. */
 export function buildMatch(node: GraphNode, group: GraphRelation | null | undefined): CoverageMatch {
-  return {
-    node_id: node.id,
-    name: node.name,
-    type: node.type,
-    label: node.label ?? null,
-    coverage: selectCoverage(group, coverageKindFor(node.type)),
-  };
+  return { ...candidateRef(node), coverage: selectCoverage(group, coverageKindFor(node.type)) };
 }
 
 /**
@@ -280,25 +300,12 @@ export function hasLiveCoverage(m: CoverageMatch): boolean {
  * matched, and `structuredContent` shows total 0 rather than contradicting it.
  */
 export function resolvedOnlyMatch(node: GraphNode): CoverageMatch {
-  return {
-    node_id: node.id,
-    name: node.name,
-    type: node.type,
-    label: node.label ?? null,
-    coverage: emptyGroup(coverageKindFor(node.type)),
-  };
+  return { ...candidateRef(node), coverage: emptyGroup(coverageKindFor(node.type)) };
 }
 
 /** A match whose coverage lookup failed — resolved, but coverage unavailable. */
 export function unavailableMatch(node: GraphNode): CoverageMatch {
-  return {
-    node_id: node.id,
-    name: node.name,
-    type: node.type,
-    label: node.label ?? null,
-    unavailable: true,
-    coverage: emptyGroup(coverageKindFor(node.type)),
-  };
+  return { ...candidateRef(node), unavailable: true, coverage: emptyGroup(coverageKindFor(node.type)) };
 }
 
 // Counts only — the names themselves are rendered once, under each match in
@@ -308,8 +315,14 @@ function countStr(g: CoverageGroup): string {
   return `${g.total}${g.capped ? "+" : ""}`;
 }
 
-function labelSuffix(m: CoverageMatch): string {
-  return m.label ? ` (${m.label})` : "";
+/** "(Companies, ORG)" — subtype then label, whichever the node has. Empty when it has neither. */
+function kindTag(c: { subtype?: string | null; label?: string | null }): string {
+  const parts = [c.subtype, c.label].filter((p): p is string => typeof p === "string" && p !== "");
+  return parts.length > 0 ? ` (${parts.map(oneLine).join(", ")})` : "";
+}
+
+function aliasTag(aliases: readonly string[]): string {
+  return aliases.length > 0 ? ` — aliases: ${aliases.map(oneLine).join(", ")}` : "";
 }
 
 function coverageClause(g: CoverageGroup): string {
@@ -328,14 +341,13 @@ function emptyClause(kind: CoverageKind): string {
 }
 
 function matchLine(m: CoverageMatch): string {
-  const head = `**${oneLine(m.name)}${labelSuffix(m)}**`;
+  const head = `**${oneLine(m.name)}**${kindTag(m)}`;
+  const tail = aliasTag(m.aliases);
   if (m.unavailable) {
-    return `${head} — resolved, but Tako couldn't load its coverage right now (temporary); retry.`;
+    return `${head} — resolved, but Tako couldn't load its coverage right now (temporary); retry.${tail}`;
   }
-  if (m.coverage.total === 0) {
-    return `${head} — ${emptyClause(m.coverage.kind)}.`;
-  }
-  return `${head} — ${coverageClause(m.coverage)}.`;
+  if (m.coverage.total === 0) return `${head} — ${emptyClause(m.coverage.kind)}.${tail}`;
+  return `${head} — ${coverageClause(m.coverage)}.${tail}`;
 }
 
 /**
@@ -658,7 +670,7 @@ export function buildSummary(input: {
   // `q="the vibes of tuesday"` came to report 250+ metrics on Tuesday Morning
   // Corporation. Name what actually resolved and let the caller judge.
   if (!confident) {
-    const names = matches.map((m) => `**${oneLine(m.name)}${labelSuffix(m)}**`).join(", ");
+    const names = matches.map((m) => `**${oneLine(m.name)}**${kindTag(m)}`).join(", ");
     return `No graph node confidently matches "${query}". The closest resolutions are ${names} — almost certainly NOT what you asked for. Rephrase with the exact entity or metric name, or use tako_search directly.`;
   }
   const withData = matches.filter(hasLiveCoverage).length;
@@ -679,7 +691,7 @@ export function buildSummary(input: {
   // Candidates we probed get a one-line receipt carrying their node id and
   // coverage count — enough to switch to one without re-running this tool, and
   // ~110 chars instead of the ~8.3k a second full coverage list costs.
-  const probed = otherMatches.filter((o) => o.node_id !== undefined);
+  const probed = otherMatches.filter((o) => o.coverage_total !== undefined);
   if (probed.length > 0) {
     const lines = probed.map((o) => {
       const count = o.coverage_total ?? 0;
@@ -695,22 +707,22 @@ export function buildSummary(input: {
       // on every non-zero total, which claimed a floor for counts the server
       // reported exactly (`Inflation Rate — 63+ entities` for exactly 63).
       const floor = o.coverage_capped === true ? "+" : "";
-      return `- ${oneLine(o.name)} — ${count}${floor} ${noun} (\`${oneLine(o.node_id as string)}\`)`;
+      return `- ${oneLine(o.name)}${kindTag(o)} — ${count}${floor} ${noun} (\`${oneLine(o.node_id)}\`)${aliasTag(o.aliases)}`;
     });
     blocks.push(
       "",
-      `Also resolved (not listed in full — re-run with the one you want, or pin its node_id):\n${lines.join("\n")}`,
+      `Also resolved (not listed in full — re-run with the one you want, or pass its node_id to tako_graph_related):\n${lines.join("\n")}`,
     );
   }
-  const unprobed = otherMatches.filter((o) => o.node_id === undefined);
+  // Never inspected. Every one is listed — with its id, kind, and aliases — so
+  // the model can switch to one or explore it without a second resolve call.
+  // Flattened, like every other slot that echoes an upstream name.
+  const unprobed = otherMatches.filter((o) => o.coverage_total === undefined);
   if (unprobed.length > 0) {
-    // Flattened: every other slot that echoes an upstream name does the same,
-    // and this one is a bare comma-joined list where a newline is free to start
-    // a line that mimics the match lines above it.
-    const names = unprobed.slice(0, OTHER_MATCH_PREVIEW).map((o) => oneLine(o.name));
-    const rest = unprobed.length - names.length;
-    const tail = rest > 0 ? `, and ${rest} more` : "";
-    blocks.push("", `Also matched: ${names.join(", ")}${tail}.`);
+    const lines = unprobed.map(
+      (o) => `- ${oneLine(o.name)}${kindTag(o)} (\`${oneLine(o.node_id)}\`)${aliasTag(o.aliases)}`,
+    );
+    blocks.push("", `Also matched (not coverage-checked):\n${lines.join("\n")}`);
   }
 
   // Mirror the tool's next_call gate: advertise the ready-made handle only

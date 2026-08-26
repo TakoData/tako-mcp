@@ -320,6 +320,9 @@ describe("renderAvailableDataMarkdown + slim", () => {
         node_id: "ent_tsla",
         name: "Tesla, Inc.",
         type: "entity",
+        subtype: "Companies",
+        label: "ORG",
+        aliases: ["Tesla"],
         coverage: {
           kind: "metrics",
           items: [
@@ -333,7 +336,9 @@ describe("renderAvailableDataMarkdown + slim", () => {
         },
       },
     ],
-    other_matches: [],
+    other_matches: [
+      { node_id: "ent_x", name: "Tesla Energy", type: "entity", subtype: "Companies", label: "ORG", aliases: [], coverage_total: 3, coverage_capped: false },
+    ],
     next_call: { tool: "tako_search" as const, query: "Tesla, Inc. Revenue", node_ids: ["mt_rev"], strict: true },
   };
 
@@ -352,9 +357,13 @@ describe("renderAvailableDataMarkdown + slim", () => {
   // the whole point of the discovery step, so they must be here.
   it("carries matches with their node ids in structuredContent", () => {
     const slim = slimAvailableDataStructured(output);
-    expect(Object.keys(slim).sort()).toEqual(["found", "matches", "next_call", "query"]);
+    expect(Object.keys(slim).sort()).toEqual(["candidates", "found", "matches", "next_call", "query"]);
     const matches = slim.matches as Array<Record<string, unknown>>;
     expect(matches[0]?.node_id).toBe("ent_tsla");
+    expect(slim.candidates).toEqual([
+      { node_id: "ent_x", name: "Tesla Energy", type: "entity", subtype: "Companies", label: "ORG", coverage_total: 3 },
+    ]);
+    expect(matches[0]).toMatchObject({ subtype: "Companies", label: "ORG" });
     const coverage = matches[0]?.coverage as Record<string, unknown>;
     expect(coverage.items).toEqual([
       { name: "Revenue", node_id: "mt_rev" },

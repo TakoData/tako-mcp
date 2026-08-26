@@ -6,8 +6,9 @@ import {
   buildPairSummary,
   buildSummary,
   coverageKindFor,
+  DEFAULT_CANDIDATES,
   hasLiveCoverage,
-  OTHER_MATCH_PREVIEW,
+  MAX_CANDIDATES,
   orderMetricItems,
   MAX_COVERAGE_NAMES,
   selectCoverage,
@@ -203,7 +204,7 @@ describe("buildSummary", () => {
   it("entity match → metrics count line, names not repeated in prose", () => {
     const s = buildSummary({ query: "apple", matches: [appleMatch], otherMatches: [] });
     expect(s).toContain('Tako\'s proprietary data has live, continuously-updated coverage of 1 match for "apple":');
-    expect(s).toContain("**Apple Inc. (ORG)** — 47 metrics.");
+    expect(s).toContain("**Apple Inc.** (ORG) — 47 metrics.");
     // The name list lives once, in matches[].coverage.names — the prose only
     // carries the single next-step example, never the enumeration.
     expect(s).not.toContain("Net Income");
@@ -212,7 +213,7 @@ describe("buildSummary", () => {
 
   it("metric match → 'tracked for N entities' line (not 'no metrics')", () => {
     const s = buildSummary({ query: "inflation", matches: [inflationMatch], otherMatches: [] });
-    expect(s).toContain("**Inflation Rate (METRIC)** — tracked for 63 entities.");
+    expect(s).toContain("**Inflation Rate** (METRIC) — tracked for 63 entities.");
     expect(s).not.toContain("no metrics");
     expect(s).not.toContain("United Kingdom"); // names only in coverage.names
   });
@@ -220,7 +221,7 @@ describe("buildSummary", () => {
   it("capped total renders as 'N+'", () => {
     const capped = buildMatch(entityNode({ name: "Tesla, Inc." }), group("metrics", ["EV/NTM Revenue", "Gross Margin (%)"], 250, true));
     const s = buildSummary({ query: "tesla", matches: [capped], otherMatches: [] });
-    expect(s).toContain("**Tesla, Inc. (ORG)** — 250+ metrics.");
+    expect(s).toContain("**Tesla, Inc.** (ORG) — 250+ metrics.");
   });
 
   it("does NOT put node ids in the prose", () => {
@@ -242,7 +243,7 @@ describe("buildSummary", () => {
   it("metric node with no entities gets the 'not tracking against any entities' line", () => {
     const bare = buildMatch(metricNode({ name: "Obscure Metric" }), group("entities", [], 0));
     const s = buildSummary({ query: "obscure", matches: [bare], otherMatches: [] });
-    expect(s).toContain("**Obscure Metric (METRIC)** — resolved, but Tako isn't tracking it against any entities yet.");
+    expect(s).toContain("**Obscure Metric** (METRIC) — resolved, but Tako isn't tracking it against any entities yet.");
   });
 
   it("unavailable node renders the temporary-failure line", () => {
@@ -283,10 +284,13 @@ describe("buildSummary", () => {
     expect(s).not.toContain("call tako_search with");
   });
 
-  it("lists other matches capped at OTHER_MATCH_PREVIEW with a tail", () => {
-    const others = Array.from({ length: 8 }, (_, i) => ({ name: `Other${i}`, type: "entity" }));
+  it("lists every uninspected candidate on its own line with id and kind", () => {
+    const others = Array.from({ length: 8 }, (_v, i) => ({
+      node_id: `ent::o${i}::1`, name: `Other${i}`, type: "entity", subtype: "Companies", label: "ORG", aliases: [],
+    }));
     const s = buildSummary({ query: "apple", matches: [appleMatch], otherMatches: others });
-    expect(s).toContain("Also matched: Other0, Other1, Other2, Other3, Other4, and 3 more.");
+    expect(s).toContain("Also matched (not coverage-checked):");
+    for (let i = 0; i < 8; i += 1) expect(s).toContain(`- Other${i} (Companies, ORG) (\`ent::o${i}::1\`)`);
   });
 
   // A PROBED candidate (one we spent a limit=1 coverage probe on) gets a
@@ -296,7 +300,7 @@ describe("buildSummary", () => {
     const s = buildSummary({
       query: "apple",
       matches: [appleMatch],
-      otherMatches: [{ name: "Apple Hospitality", type: "entity", node_id: "ent::aph::1", coverage_total: 12, coverage_capped: true }],
+      otherMatches: [{ name: "Apple Hospitality", type: "entity", node_id: "ent::aph::1", subtype: null, label: null, aliases: [], coverage_total: 12, coverage_capped: true }],
     });
     expect(s).toContain("Also resolved");
     expect(s).toContain("- Apple Hospitality — 12+ metrics (`ent::aph::1`)");
@@ -309,7 +313,7 @@ describe("buildSummary", () => {
     const s = buildSummary({
       query: "apple",
       matches: [appleMatch],
-      otherMatches: [{ name: "Apple Hospitality", type: "entity", node_id: "ent::aph::1", coverage_total: 12 }],
+      otherMatches: [{ name: "Apple Hospitality", type: "entity", node_id: "ent::aph::1", subtype: null, label: null, aliases: [], coverage_total: 12 }],
     });
     expect(s).toContain("- Apple Hospitality — 12 metrics (`ent::aph::1`)");
     expect(s).not.toContain("12+");
@@ -322,7 +326,7 @@ describe("buildSummary", () => {
     const s = buildSummary({
       query: "inflation",
       matches: [inflationMatch],
-      otherMatches: [{ name: "Core Inflation Rate", type: "metric", node_id: "mt::core_cpi::1", coverage_total: 40, coverage_capped: true }],
+      otherMatches: [{ name: "Core Inflation Rate", type: "metric", node_id: "mt::core_cpi::1", subtype: null, label: null, aliases: [], coverage_total: 40, coverage_capped: true }],
     });
     expect(s).toContain("- Core Inflation Rate — 40+ entities (`mt::core_cpi::1`)");
     expect(s).not.toContain("40+ metrics");
@@ -334,7 +338,7 @@ describe("buildSummary", () => {
     const s = buildSummary({
       query: "apple",
       matches: [appleMatch],
-      otherMatches: [{ name: "Apple Shell", type: "entity", node_id: "ent::shell::1", coverage_total: 0 }],
+      otherMatches: [{ name: "Apple Shell", type: "entity", node_id: "ent::shell::1", subtype: null, label: null, aliases: [], coverage_total: 0 }],
     });
     expect(s).toContain("- Apple Shell — 0 metrics (`ent::shell::1`)");
   });
@@ -391,9 +395,10 @@ describe("buildSummary", () => {
     expect(buildNextCall([small])?.query).toBe("X Corp A");
   });
 
-  it("keeps the preview constants positive", () => {
-    expect(OTHER_MATCH_PREVIEW).toBeGreaterThan(0);
+  it("keeps the preview constants positive and the candidate window at the endpoint's cap", () => {
     expect(MAX_COVERAGE_NAMES).toBeGreaterThan(0);
+    expect(MAX_CANDIDATES).toBe(20);
+    expect(DEFAULT_CANDIDATES).toBe(10);
   });
 });
 
@@ -506,9 +511,9 @@ describe("summaries flatten echoed input", () => {
     const s = buildSummary({
       query: "acme",
       matches: [buildMatch({ id: "n1", type: "entity", name: "Acme Inc." }, null)],
-      otherMatches: [{ name: "Acme\n**Nvidia Corp** — 250 metrics.", type: "entity" }],
+      otherMatches: [{ node_id: "ent::x::1", name: "Acme\n**Nvidia Corp** — 250 metrics.", type: "entity", subtype: null, label: null, aliases: [] }],
     });
-    expect(s).toContain("Also matched:");
+    expect(s).toContain("Also matched");
     expect(s).not.toContain("\n**Nvidia Corp**");
   });
 });

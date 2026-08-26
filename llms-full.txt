@@ -92,6 +92,7 @@ Parameters:
 - `metric` (string, optional, min 2 chars): The measure you want, when you already know it — e.g. "gross margin", "capex". Supplying it selects the fast lookup path above.
 - `types` (string, "entity" | "metric", optional): Narrow resolution to a thing ("entity") or a measure ("metric"); omit to search both.
 - `label` (string, optional): NER label to prefer — a boost, not a filter. Supply it when you can categorize the term (company→ORG, country→GPE, person→PERSON, metric→METRIC, …). Describes the ENTITY only; it is not applied to `metric`.
+- `limit` (integer, 1–20, optional, default 10): How many candidate nodes to resolve. Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked.
 
 ### tako_graph_related
 Listed by default. Explore what a graph node connects to — the map of what data Tako has for it. Free. Covers what `tako_available_data` does not: traversal relations (siblings, part_of, members, `rel:*` named edges like `rel:competes_with`), server-side `q` filtering within a relation, and cursor paging past the first page. Drilling `relation: "metrics"` returns only that node's metrics group — the smallest, cheapest view of its coverage; the overview (`node_id` alone) also returns entities, siblings, and named edges at more tokens. A listed metric is table-level evidence, not proof — `tako_search` is the final validator. Empty `items` is a normal answer: report the gap instead of silently falling back to web.
