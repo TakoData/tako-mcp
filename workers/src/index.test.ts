@@ -888,9 +888,8 @@ describe("worker routing", () => {
     // `tako_search` is now fast-only (`/api/v3/search`) with no in-tool
     // deep path, so the per-client description split is gone: every host
     // gets the same description. It promises the inline auto-render and
-    // points deep / empty-result follow-ups at the Tako agent
-    // (`tako_agent_start` → `tako_agent_wait`); it must NOT mention the
-    // removed legacy machinery (`search_effort`, server-side
+    // points deep / empty-result follow-ups at the Tako agent; it must NOT
+    // mention the removed legacy machinery (`search_effort`, server-side
     // auto-escalation, or the old `start_deep_knowledge_search` tool).
     async function descFor(userAgent?: string): Promise<string> {
       const res = await SELF.fetch("https://example.com/mcp", {

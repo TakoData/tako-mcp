@@ -48,8 +48,10 @@ tools:
   - name: tako_answer
     description: >-
       Get a synthesized, citation-backed answer from Tako and/or the web.
-      Opt-in — append ?tools=answer to the server URL. Most hosts should
-      prefer tako_search and synthesize the answer themselves.
+      Opt-in — append ?tools=answer to the server URL, an allowlist that
+      replaces the default listing, so name the other tools you want too
+      (?tools=search,answer). Most hosts should prefer tako_search and
+      synthesize the answer themselves.
   - name: tako_contents
     description: Fetch the content behind a result URL (a card's CSV or a page's text)
   - name: tako_visualize
@@ -62,10 +64,13 @@ tools:
       Run Tako's Answer Agent — multi-step research for complex questions;
       returns a cited answer plus chart cards. Opt-in — append ?tools=agent
       to the server URL.
-  - name: tako_credit_balance
+  - name: tako_graph_related
     description: >-
-      Check the connected account's API credit balance. Opt-in — append
-      ?tools=credits to the server URL.
+      Explore what a Tako graph node connects to — its metrics, the entities a
+      metric covers, competitors, memberships, and sources. Free, and listed by
+      default.
+  - name: tako_credit_balance
+    description: Check the connected account's API credit balance. Listed by default.
 examples:
   - title: Search for Charts
     description: Find existing visualizations on any topic

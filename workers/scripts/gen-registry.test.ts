@@ -100,11 +100,12 @@ describe("assertLlmsFullCoverage", () => {
   });
 
   it("only matches whole `### name` headings, not prefixes", () => {
-    // A `### tako_agent` section must not satisfy `tako_agent_start`.
+    // A `### tako_agent` section must not satisfy a longer name that starts
+    // with it.
     const doc = "### tako_agent\nParameters:\n- `query`\n";
     expect(() =>
-      assertLlmsFullCoverage([tool("tako_agent_start", "query")], doc),
-    ).toThrow(/tako_agent_start.*never mentioned/);
+      assertLlmsFullCoverage([tool("tako_agent_deluxe", "query")], doc),
+    ).toThrow(/tako_agent_deluxe.*never mentioned/);
   });
 });
 

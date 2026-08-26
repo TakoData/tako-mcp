@@ -210,7 +210,7 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
    spend.
 
    **Do not read the balance from the legacy `credit_balance` endpoint.**
-   `GET /api/v1/credit_balance/` — and therefore the `get_credit_balance`
+   `GET /api/v1/credit_balance/` — and therefore the `tako_credit_balance`
    MCP tool — reads the legacy Metronome/Redis ledger via
    `BillingServiceSingleton.get_remaining_credit_balance`, NOT
    `ApiCreditAccount.balance_cents`. It reported $0.00 for an account that

@@ -15,18 +15,17 @@
  *                                 (soft-skipped when the target has no
  *                                 free-tier bindings, e.g. local wrangler dev)
  *   2. MCP `initialize`        → handshake completes
- *   3. MCP `tools/list`        → connects with `?tools=agent,visualize,credits,graph`
- *                                 (those tools are opt-in — see `_optional.ts`);
- *                                 hard-asserts the canary tools incl. the three
- *                                 graph primitives; loosely asserts at least
- *                                 one agent tool is present
+ *   3. MCP `tools/list`        → connects with every tool named in `?tools=`
+ *                                 (an allowlist that REPLACES the defaults);
+ *                                 hard-asserts the canary tools and that
+ *                                 `tako_agent` is present
  *   4. MCP Apps widget assertion on `tako_search` (soft-warn on miss)
  *   5. Per-tool MCP `tools/call` canaries:
  *        a. `tako_search "US GDP"`        — non-empty results (read-only)
  *        a2. `tako_available_data "US GDP"` — summary + a match with node_id (read-only)
  *        b. `tako_answer "US GDP"`        — answer text returned (read-only)
  *        c. `tako_contents {url from search}` — inline data (default) + presigned download_url (mode:"url"), both read-only
- *        d. `get_credit_balance`          — `details.credit_balance`
+ *        d. `tako_credit_balance`         — `details.credit_balance`
  *                                           must be a number or numeric string (read-only)
  *        e. `tako_visualize`              — creates a card (charges 1 credit)
  *   6. Native-card proxy on the card step 5e just created — all three of its
@@ -52,8 +51,8 @@
  *     overwrites a card with it.
  *
  * Excluded by design:
- *   - `tako_agent` / `tako_agent_start` / `tako_agent_wait` — long-running;
- *     presence is asserted in step 3 but the tools are not called
+ *   - `tako_agent` — long-running; presence is asserted in step 3 but the
+ *     tool is not called
  *   - removed tools (reporting, chart-authoring) — see Tasks 2–3 cleanup
  *   - `explore_knowledge_graph` — removed in PR #47
  *
@@ -192,7 +191,9 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
 // (c) Authenticated /mcp/chatgpt lists the submitted surface with top-level
 //     securitySchemes and explicit boolean idempotentHint on every tool.
 {
-  const res = await fetch(`${baseUrl}/mcp/chatgpt`, {
+  // `?tools=agent,answer` on the URL: the chatgpt listing is FIXED at
+  // submission (spec D2), so the param must change nothing here.
+  const res = await fetch(`${baseUrl}/mcp/chatgpt?tools=agent,answer`, {
     method: "POST",
     headers: { ...JSON_RPC_HEADERS, authorization: `Bearer ${apiToken}` },
     body: rpc(2, "tools/list", {}),
@@ -209,13 +210,16 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
   };
   const tools = body.result?.tools ?? [];
   const names = tools.map((t) => t.name).sort();
+  const CHATGPT_EXPECTED = [
+    "tako_available_data",
+    "tako_contents",
+    "tako_graph_related",
+    "tako_search",
+    "tako_visualize",
+  ];
   assert(
-    names.includes("tako_visualize"),
-    `/mcp/chatgpt listing lacks tako_visualize (got: ${names.join(", ")})`,
-  );
-  assert(
-    !names.includes("tako_answer"),
-    "/mcp/chatgpt listing includes tako_answer — it is ?tools=answer opt-in",
+    names.join(",") === CHATGPT_EXPECTED.join(","),
+    `/mcp/chatgpt listing is not the submitted five tools (got: ${names.join(", ")})`,
   );
   for (const t of tools) {
     assert(
@@ -252,7 +256,13 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
       result?: { tools?: Array<{ name: string }> };
     };
     const names = (body.result?.tools ?? []).map((t) => t.name).sort();
-    const expected = ["tako_available_data", "tako_contents", "tako_search"];
+    const expected = [
+      "tako_available_data",
+      "tako_contents",
+      "tako_credit_balance",
+      "tako_graph_related",
+      "tako_search",
+    ];
     assert(
       JSON.stringify(names) === JSON.stringify(expected),
       `anonymous /mcp listing is [${names.join(", ")}], expected [${expected.join(", ")}]`,
@@ -297,12 +307,13 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
 // ---------------------------------------------------------------------------
 // 2-5. MCP protocol via the SDK client
 // ---------------------------------------------------------------------------
-// Opt in to the optional tools the smoke exercises (see `_optional.ts`):
-// `agent` for the agent-presence assert, `answer`, `visualize` and
-// `credits` for the tool calls below, `graph` for the primitives' presence
-// assert. This also smoke-tests the `?tools=` opt-in path itself.
+// Name every tool the smoke exercises: `?tools=` is an allowlist that
+// replaces the defaults (spec D1), so a default tool left out here is not
+// listed. This also smoke-tests the `?tools=` path itself.
 const transport = new StreamableHTTPClientTransport(
-  new URL(`${baseUrl}/mcp?tools=agent,answer,visualize,credits,graph`),
+  new URL(
+    `${baseUrl}/mcp?tools=tako_search,tako_answer,tako_contents,tako_available_data,tako_visualize,tako_credit_balance,tako_graph_related,tako_agent`,
+  ),
   {
     requestInit: {
       headers: { authorization: `Bearer ${apiToken}` },
@@ -330,7 +341,7 @@ try {
   // with a useful diff if a registry change drops one of them. We don't
   // assert on the *full* tool list because the surface evolves (e.g.
   // explore_knowledge_graph removal in PR #47).
-  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_available_data", "tako_visualize", "get_credit_balance", "tako_graph_search", "tako_graph_related", "tako_graph_node"];
+  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_available_data", "tako_visualize", "tako_credit_balance", "tako_graph_related"];
   for (const required of requiredTools) {
     if (!toolNames.includes(required)) {
       fail(
@@ -340,10 +351,9 @@ try {
   }
   ok(`tools/list → ${tools.length} tools (${toolNames.join(", ")})`);
 
-  // Loose agent-presence check — the agent split is client-gated so the
-  // smoke client's UA may register tako_agent (unsplit) or tako_agent_start
-  // (split). We do NOT call agent tools — they run long.
-  const hasAgent = toolNames.includes("tako_agent") || toolNames.includes("tako_agent_start");
+  // `tako_agent` is named in the allowlist above. We do NOT call it — it
+  // runs long.
+  const hasAgent = toolNames.includes("tako_agent");
   assert(hasAgent, `expected an agent tool in tools/list (got: ${toolNames.join(", ")})`);
   ok("agent tool present");
 
@@ -509,20 +519,20 @@ try {
   );
   ok(`tako_contents {url, mode:"url"} → download_url present`);
 
-  // ----- d) get_credit_balance ------------------------------------------
+  // ----- d) tako_credit_balance ------------------------------------------
   // Asserts `credit_balance` is present and either a number or a numeric
   // string (DRF can serialize DecimalField as either depending on
-  // `coerce_to_string` — see the loose schema in get_credit_balance.ts).
+  // `coerce_to_string` — see the loose schema in tako_credit_balance.ts).
   // A rename or removal of the field on the backend produces a red smoke
   // instead of a green one with `<unset>` printed.
-  const cbResult = await callOk(client, "get_credit_balance", {});
+  const cbResult = await callOk(client, "tako_credit_balance", {});
   const cbStructured = cbResult.structuredContent as
     | { details?: Record<string, unknown> }
     | undefined;
-  assert(cbStructured, "get_credit_balance missing structuredContent");
+  assert(cbStructured, "tako_credit_balance missing structuredContent");
   assert(
     cbStructured.details && typeof cbStructured.details === "object",
-    "get_credit_balance.details is not an object",
+    "tako_credit_balance.details is not an object",
   );
   const balance = cbStructured.details["credit_balance"];
   // Reject empty / whitespace-only strings explicitly: `Number("")` and
@@ -540,9 +550,9 @@ try {
         : null;
   assert(
     balanceNumeric !== null,
-    `get_credit_balance.details.credit_balance is not a number or numeric string: ${JSON.stringify(balance)}`,
+    `tako_credit_balance.details.credit_balance is not a number or numeric string: ${JSON.stringify(balance)}`,
   );
-  ok(`get_credit_balance → details.credit_balance=${balanceNumeric}`);
+  ok(`tako_credit_balance → details.credit_balance=${balanceNumeric}`);
 
   // ----- e) tako_visualize canary (creates a tiny card; CHARGES 1 CREDIT) ----
   const tvResult = await callOk(client, "tako_visualize", {
