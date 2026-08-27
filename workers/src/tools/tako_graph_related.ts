@@ -1,10 +1,12 @@
 /**
  * `tako_graph_related` — explore what a resolved graph node connects to.
  *
- * Wraps `GET /api/v1/graph/related`. Overview mode (no relation, no q) is the
- * coverage map; drill mode (relation=<key>) pages one group. `q` is a single
- * substring filter — to cover several name-variants of a metric, call this
- * tool once per variant (graph calls are free). Wire-guarded against the
+ * Wraps `GET /api/v1/graph/related`. Overview mode (no relation, no q) returns
+ * each group's key, label, total, and its first three items; drill mode
+ * (relation=<key>) pages one group. Items are slimmed to id, name, type,
+ * subtype, label — see `slimRelatedResponse`. `q` is a single substring filter
+ * — to cover several name-variants of a metric, call this tool once per
+ * variant (graph calls are free). Wire-guarded against the
  * loose graphRelatedOutputShape facade (not the strict generated schema, whose
  * RelationKind enum drifts — see the handler note).
  */
@@ -12,12 +14,14 @@ import { z } from "zod";
 
 import { djangoGet } from "../django.js";
 import {
+  FIXED_RELATION_KEYS,
   graphErrorMessage,
-  graphNodeSchema,
-  graphRelationSchema,
   graphRelatedOutputShape,
+  OVERVIEW_PREVIEW_N,
+  slimRelatedResponse,
 } from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
+import { renderGraphRelatedMarkdown } from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
 
 const NER_LABELS = [
@@ -28,19 +32,21 @@ const NER_LABELS = [
 const DESCRIPTION = [
   "Explore what a graph node connects to — the map of what data Tako has for it. Free.",
   "",
-  "Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.",
+  "Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.",
   "",
-  'Drilling `relation: "metrics"` returns only that node\'s metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.',
-  'Filtering with `q` ("revenue") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
+  `Two modes. Overview (\`node_id\` alone) is a compact map: every relation group with its \`key\`, \`label\`, \`total\`, and its first ${String(OVERVIEW_PREVIEW_N)} items — a few hundred tokens, never a page. Drill (\`relation: "<key>"\`) pages that one group; each item carries \`id\`, \`name\`, \`type\`, \`subtype\`, and \`label\`, and only the focal node carries \`aliases\` and a truncated \`description\`.`,
+  "",
+  `Relation keys come from the overview. The fixed keys are ${FIXED_RELATION_KEYS.map((k) => `\`${k}\``).join(", ")}; named edges look like \`rel:<phrase>\`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.`,
+  '`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: "revenue" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
 ].join("\n");
 
 const inputSchema = z.object({
   node_id: z.string().min(1).describe("Opaque public id of the node to explore."),
   relation: z.string().min(1).optional().describe(
-    "Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups.",
+    `Relation key to page, taken from the overview: ${FIXED_RELATION_KEYS.join(", ")}, or rel:<phrase>. Omit for the overview.`,
   ),
   q: z.string().min(1).optional().describe(
-    "Optional case-insensitive substring filter on name+aliases (single string). For several name-variants of a metric, call the tool once per variant.",
+    "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group.",
   ),
   label: z.enum(NER_LABELS).optional().describe(
     "Prefer related nodes with this NER label (boost, not a filter).",
@@ -51,23 +57,25 @@ const inputSchema = z.object({
   cursor: z.string().min(1).optional().describe(
     "Pagination cursor (for a single drilled relation; intended for single-q use).",
   ),
-  // Measured against production, not inferred: `?node_id=…&limit=3` and
+  // `limit` is INERT in overview mode, and the description must say so or a
+  // caller pays a round trip to widen a map that never widens. Two independent
+  // caps stack: measured against production, `?node_id=…&limit=3` and
   // `&limit=100` return byte-identical overviews (82,741 chars for NVIDIA, 16
-  // groups, every group capped at 10 items). `limit` is INERT in overview mode
-  // — the server caps each group at 10 — so a caller that raises it to widen
-  // the coverage map gets nothing and pays a round trip. The backend's own
-  // OpenAPI description has the same gap; this one states the restriction
-  // because the model reads it.
+  // groups, every group capped at 10 items) — and on top of that
+  // `slimRelatedResponse` slices every group to OVERVIEW_PREVIEW_N before
+  // either channel sees it. The describe() interpolates that constant rather
+  // than restating it: the tool's own cap is the one a caller actually
+  // observes, and the DESCRIPTION string ships in the same `tools/list`
+  // payload, so a hand-written number here contradicts that one the moment
+  // the constant moves.
   limit: z.number().int().min(1).max(100).optional().describe(
-    "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items.",
+    `Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first ${String(OVERVIEW_PREVIEW_N)} items no matter what you pass.`,
   ),
 });
 
 type Input = z.infer<typeof inputSchema>;
 
 const outputSchema = z.object(graphRelatedOutputShape);
-type GraphNode = z.infer<typeof graphNodeSchema>;
-type GraphRelation = z.infer<typeof graphRelationSchema>;
 type Output = z.infer<typeof outputSchema>;
 
 /**
@@ -79,51 +87,21 @@ type Output = z.infer<typeof outputSchema>;
  * `mcp.ts` builds the text channel from `JSON.stringify(output)` when no
  * `renderText` exists, then emits the same object as `structuredContent`.
  *
- * Dropping `description` and `aliases` from related items is what makes an
- * overview ~2k instead of ~83k. Both are `.optional()` on `graphNodeSchema`,
- * so the slim still conforms to the advertised outputSchema — the reason the
- * design could promise the reduction with "schema unchanged". The top-level
- * `node` keeps its description: it is one record, and it is the node the
- * caller named. For a related item's own detail, call the tool again on its
- * id, or `tako_search` for its values.
+ * The slimming therefore runs in the HANDLER (`slimRelatedResponse`), before
+ * either channel can read the output — dropping `description` and `aliases`
+ * from related items, and keeping only the first `OVERVIEW_PREVIEW_N` items
+ * of each overview group next to its true `total`. Every dropped field is
+ * `.optional()` on `graphNodeSchema`, so the slim still conforms to the
+ * advertised outputSchema. `slimStructured` re-applies the same function so
+ * the hook stays honest if a caller hands it an unslimmed record; it is
+ * idempotent. The focal `node` keeps its aliases and a bounded description:
+ * it is one record, and it is the node the caller named. For a related
+ * item's own detail, call the tool again on its id.
+ *
+ * Measured on staging 2026-08-26: Anthropic PBC's 17-group overview is 87,556
+ * chars on the wire and reaches the model as 2,108 chars of text plus 6,787
+ * of structuredContent; NVIDIA's is 87,798 → 2,014 / 6,788.
  */
-function slimRelatedItem(item: GraphNode): GraphNode {
-  const slim: GraphNode = { id: item.id, type: item.type, name: item.name };
-  if (item.subtype !== undefined) slim.subtype = item.subtype;
-  if (item.label !== undefined) slim.label = item.label;
-  return slim;
-}
-
-function slimRelationGroup(group: GraphRelation): GraphRelation {
-  return { ...group, items: group.items.map(slimRelatedItem) };
-}
-
-/** Markdown index of the slim shape — one line per related item. */
-function renderRelatedMarkdown(output: Output): string {
-  const lines: string[] = [];
-  const node = output.node;
-  lines.push(`**${node.name}** (${node.subtype ?? node.type}) — \`${node.id}\``);
-  if (node.description) lines.push("", node.description);
-
-  const groups = output.relation ? [output.relation] : (output.relations ?? []);
-  if (groups.length === 0) {
-    lines.push("", "No related nodes.");
-    return lines.join("\n");
-  }
-  for (const group of groups) {
-    const shown = group.items.length;
-    const count = group.total_capped ? `${shown} of ${group.total}+` : `${shown} of ${group.total}`;
-    lines.push("", `### ${group.label} (\`${group.key}\`, ${group.kind}) — ${count}`);
-    for (const item of group.items) {
-      const qualifier = item.subtype ?? item.type;
-      lines.push(`- ${item.name} — \`${item.id}\` (${qualifier})`);
-    }
-    if (group.next_cursor) {
-      lines.push(`_More: call again with \`relation: "${group.key}"\` and \`cursor: "${group.next_cursor}"\`._`);
-    }
-  }
-  return lines.join("\n");
-}
 
 const tako_graph_related = {
   name: "tako_graph_related",
@@ -181,18 +159,19 @@ const tako_graph_related = {
         "Tako graph/related endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
-    return parsed.data;
+    // Slim AFTER the wire guard: the guard proves the shape, the slimmer
+    // decides what the model pays for. See the size constants in _graph.ts.
+    return slimRelatedResponse(parsed.data);
   },
   renderText(output, _ctx) {
     void _ctx;
-    return renderRelatedMarkdown(output);
+    return renderGraphRelatedMarkdown(output);
   },
   slimStructured(output) {
-    const slim: Record<string, unknown> = { node: output.node };
-    if (output.relations != null) slim.relations = output.relations.map(slimRelationGroup);
-    if (output.relation != null) slim.relation = slimRelationGroup(output.relation);
-    if (output.inferred_labels != null) slim.inferred_labels = output.inferred_labels;
-    return slim;
+    // Idempotent: the handler already slimmed. Kept because the hook is the
+    // contract `mcp.ts` reads, and a caller that constructs an output by hand
+    // must not be able to publish a fat one.
+    return slimRelatedResponse(output);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

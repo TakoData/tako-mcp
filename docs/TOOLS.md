@@ -273,8 +273,10 @@ Worth one call first when you need a measure's EXACT name: resolving a loose phr
 Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).
 
 Tips:
-Know the measure? Split it: q="Carnival", metric="passenger cruise days" — you get the entity+metric pair and a runnable next_call in ~0.6s. Only omit `metric` to browse everything an entity has.
+Know the measure? Split it: q="Carnival", metric="passenger cruise days" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q="Nvidia", metric="data center" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.
 One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.
+When `q` names both an entity and a metric ("US core PCE" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.
+On the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.
 Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).
 Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. To land on exactly one metric, pin THAT node id alone with strict:true and name the entity in the query text; the call then returns that metric's card or nothing. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten (query + the metric node + strict) — run it verbatim.
 A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.
@@ -288,11 +290,12 @@ Parameters:
 | `metric` | string | no |  | The measure you want, when you already know it — e.g. "gross margin", "passenger cruise days", "capex". Supplying it is the FAST path: the tool resolves the entity+metric pair directly and hands back a runnable next_call, instead of listing every metric the entity has. Omit it only to browse what exists. |
 | `types` | string ("entity" \\| "metric") | no |  | Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both. |
 | `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`. |
+| `limit` | integer | no |  | How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` pins, and a deeper metric node can turn a confident single answer into a two-candidate tie. |
 
 Fixed request inputs (the caller cannot change these):
 
-- `graph/search limit` = `10` — Candidates fetched per lookup (the API default is 20); the top 4 that survive the match gate are inspected — 1 drilled in full, 3 by a limit=1 probe. A shell rank-0 costs one more drill.
-- `graph/related limit` = `100` — Coverage page size for the drill; paging stops at 250 names or 4 pages. The cheap per-candidate coverage probes send limit=1 instead.
+- `graph/related limit (coverage drill)` = `100` — Page size for the rendered coverage list; paging stops at 250 names or 4 pages.
+- `graph/related limit (candidate probes)` = `1` — The cheap per-candidate coverage probes fetch a count only — the probed candidates' lists are never read. The top 4 gated candidates are inspected: 1 drilled in full and 3 by a limit=1 probe. A shell rank-0 costs one more drill.
 
 Annotations:
 
@@ -340,6 +343,12 @@ Annotations:
         "STOCK_TICKER",
         "WEBSITE"
       ]
+    },
+    "limit": {
+      "description": "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` pins, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
     }
   },
   "required": [
@@ -464,22 +473,24 @@ Description:
 
 Explore what a graph node connects to — the map of what data Tako has for it. Free.
 
-Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.
+Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.
 
-Drilling `relation: "metrics"` returns only that node's metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.
-Filtering with `q` ("revenue") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.
+Two modes. Overview (`node_id` alone) is a compact map: every relation group with its `key`, `label`, `total`, and its first 3 items — a few hundred tokens, never a page. Drill (`relation: "<key>"`) pages that one group; each item carries `id`, `name`, `type`, `subtype`, and `label`, and only the focal node carries `aliases` and a truncated `description`.
+
+Relation keys come from the overview. The fixed keys are `metrics`, `entities`, `siblings`, `part_of`, `members`; named edges look like `rel:<phrase>`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.
+`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: "revenue" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `node_id` | string | yes |  | Opaque public id of the node to explore. |
-| `relation` | string | no |  | Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups. |
-| `q` | string | no |  | Optional case-insensitive substring filter on name+aliases (single string). For several name-variants of a metric, call the tool once per variant. |
+| `relation` | string | no |  | Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview. |
+| `q` | string | no |  | Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group. |
 | `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | Prefer related nodes with this NER label (boost, not a filter). |
 | `infer_label` | boolean | no |  | Auto-detect labels from q (default true server-side, only when q is set). |
 | `cursor` | string | no |  | Pagination cursor (for a single drilled relation; intended for single-q use). |
-| `limit` | integer | no |  | Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items. |
+| `limit` | integer | no |  | Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -503,12 +514,12 @@ Annotations:
       "description": "Opaque public id of the node to explore."
     },
     "relation": {
-      "description": "Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups.",
+      "description": "Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview.",
       "type": "string",
       "minLength": 1
     },
     "q": {
-      "description": "Optional case-insensitive substring filter on name+aliases (single string). For several name-variants of a metric, call the tool once per variant.",
+      "description": "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group.",
       "type": "string",
       "minLength": 1
     },
@@ -539,7 +550,7 @@ Annotations:
       "minLength": 1
     },
     "limit": {
-      "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items.",
+      "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass.",
       "type": "integer",
       "minimum": 1,
       "maximum": 100

@@ -63,8 +63,14 @@ type GraphNode = z.infer<typeof graphNodeSchema>;
  * and collapsing "checked, no edge" with "never checked" would repeat the
  * mistake one level down.
  *
- *   "pair"       the metric is on the entity's own metric list
- *   "unlinked"   the probe RAN and the entity's list holds nothing matching
+ *   "pair"       the PINNED metric is on the entity's own metric list
+ *   "unlinked"   the probe RAN, saw the list WHOLE, and the PINNED metric was
+ *                not on it. Scoped to that one node on purpose: the same probe
+ *                returns `entityMetricMatches`, which is routinely non-empty on
+ *                an `unlinked` verdict (Pfizer holds 20 entries for
+ *                `q="expense"` while the pinned node is on none of them). Read
+ *                as "the list holds nothing matching", it would contradict the
+ *                near-misses shipped beside it.
  *   "resolution" no pair evidence: probe skipped, timed out, or errored
  *
  * `"resolution"` covers both probe-failed and probe-skipped because the
@@ -113,8 +119,10 @@ const MIN_PREFIX_CHARS = 3;
 export const ENTITY_MATCHES_SHOWN = 3;
 
 /**
- * THE substring filter to send as `graph/related`'s `q` — exactly one, so the
- * probe is one round trip.
+ * THE VERDICT filter to send as `graph/related`'s `q` — the one whose hits
+ * decide `pair` vs `unlinked`. It is no longer the only filter on the wire:
+ * `metricFilters` also sends the caller's verbatim phrase, which buys the
+ * browse LIST and never a verdict.
  *
  * `q` is a case-insensitive SUBSTRING filter on name+aliases — a stricter,
  * different test from the token containment used everywhere else in this tool.
@@ -135,9 +143,12 @@ export const ENTITY_MATCHES_SHOWN = 3;
  *   `"R&D expense"` matches nothing on Pfizer while `"expense"` surfaces its
  *   real R&D metrics.
  *
- * A SECOND variant was implemented and measured (24 pairs, prod, 2026-08-04):
- * it changed the verdict on 0 of them, adding only extra near-miss entries, at
- * the cost of a second `graph/related` on every probed call. Removed.
+ * A SECOND VERDICT variant was implemented and measured (24 pairs, prod,
+ * 2026-08-04): it changed the verdict on 0 of them, adding only extra
+ * near-miss entries, at the cost of a second `graph/related` on every probed
+ * call. Removed, and that still holds — the second filter this module now
+ * sends is the caller's VERBATIM phrase, and it buys the list, not a verdict.
+ * See `metricFilters`, which collapses the two to one call when they agree.
  */
 export function metricFilter(input: {
   metricQuery: string;
@@ -157,6 +168,50 @@ export function metricFilter(input: {
   return clean(longest) ?? clean(input.metricQuery);
 }
 
+/**
+ * How many gated entity candidates the lookup path coverage-probes, in the
+ * same round trip as the pair probe. Two: the stub-over-real pairs measured
+ * in the spec (`Duolingo` PRODUCT over `Duolingo, Inc.`, `croc` over
+ * `Crocs, Inc.`) are adjacent in gate order. `relation.total` ignores the
+ * `q` filter, so each probe returns the entity's full metric count for free
+ * — the coverage evidence fix 2 binds the pair with. This is NOT the entity
+ * probe the module header in tako_available_data.ts records as a 6.4x
+ * regression: that one added a second round trip; these run alongside the
+ * probe that already exists.
+ */
+export const PAIR_ENTITY_PROBES = 2;
+
+export interface MetricFilters {
+  /** The caller's `metric` phrase, as typed — the browse filter (fix 3). */
+  verbatim: string | null;
+  /** Today's confirm-or-diagnose filter (`metricFilter`); null when it would repeat `verbatim`. */
+  fallback: string | null;
+}
+
+/**
+ * The substring filters the lookup probe sends, in parallel. `verbatim`
+ * returns the entity's own metrics whose name or alias contains what the
+ * caller typed — `metric="data center"` on NVIDIA returns 13 named metrics
+ * with ids, which the tool returns as a list instead of a 25-of-250 sample.
+ * `fallback` keeps today's verdict logic byte-for-byte. A second filter was
+ * measured to change 0 of 24 VERDICTS (see `metricFilter`); that still
+ * holds — this one buys the list, not a verdict. When the two strings agree
+ * (a single-token confident metric like `backlog`), only one call is made.
+ */
+export function metricFilters(input: {
+  metricQuery: string;
+  resolvedName?: string | null;
+  confident: boolean;
+}): MetricFilters {
+  const fallback = metricFilter(input);
+  const trimmed = input.metricQuery.trim();
+  const verbatim = trimmed.length < MIN_FILTER_CHARS ? null : trimmed;
+  if (verbatim !== null && fallback !== null && verbatim.toLowerCase() === fallback.toLowerCase()) {
+    return { verbatim, fallback: null };
+  }
+  return { verbatim, fallback };
+}
+
 export interface PairReconciliation {
   /** `"pair"` or `"unlinked"`; the caller substitutes `"resolution"` if the probe never ran. */
   verified: PairVerdict;
@@ -167,6 +222,12 @@ export interface PairReconciliation {
    * `"resolution"`.
    */
   entityMetricMatches: GraphNode[];
+  /**
+   * The entity's own metrics that contain the caller's phrase (the verbatim
+   * filter's hits), backend order, deduped by id. Returned to the caller as a
+   * coverage list with ids — the browse view. Never used to choose a pin.
+   */
+  metricList: GraphNode[];
 }
 
 /**
@@ -240,6 +301,8 @@ function byQueryOverlap(query: string, nodes: readonly GraphNode[]): GraphNode[]
 export function reconcilePair(input: {
   metricQuery: string;
   globalMetric: GraphNode | null;
+  /** Hits from the caller's verbatim phrase — the list returned to the caller (fix 3). */
+  verbatim: readonly GraphNode[];
   scoped: readonly GraphNode[];
   /**
    * The filtered list was exhausted — `graph/related` returned no
@@ -251,23 +314,34 @@ export function reconcilePair(input: {
   complete: boolean;
 }): PairReconciliation {
   const { metricQuery, globalMetric, complete } = input;
-  const scoped = [...input.scoped];
-  const entityMetricMatches = byQueryOverlap(metricQuery, scoped).slice(0, ENTITY_MATCHES_SHOWN);
+  // Both filters answer the same structural question, so the id check reads
+  // their UNION: a `pair` verdict must not depend on which of the two happened
+  // to return the pinned node.
+  const seen = new Set<string>();
+  const union: GraphNode[] = [];
+  for (const n of [...input.verbatim, ...input.scoped]) {
+    if (seen.has(n.id)) continue;
+    seen.add(n.id);
+    union.push(n);
+  }
+  // One `graph/related` page cannot repeat an id, so this needs no dedupe of
+  // its own — the union above dedupes because it MERGES two pages.
+  const metricList = [...input.verbatim];
+  const entityMetricMatches = byQueryOverlap(metricQuery, union).slice(0, ENTITY_MATCHES_SHOWN);
 
-  // Rank 0 is absent or unvetted. NOTHING about linkage is established here —
-  // there is no pinned node to check, and the filter that ran was chosen to
-  // surface near-misses rather than to confirm anything. Reporting `"unlinked"`
-  // would claim "the entity's list holds nothing matching" while
-  // `entityMetricMatches` frequently holds several (measured: Pfizer returns 20
-  // entries for `q="expense"`). The near-misses still ride along — they are the
-  // whole payload on this path.
+  // Rank 0 is absent or unvetted, so THERE IS NO PINNED NODE TO JUDGE — and
+  // `unlinked` is a verdict on the pinned node (see the PairVerdict docblock).
+  // Nothing about linkage is established here: the filter that ran was chosen
+  // to surface near-misses rather than to confirm anything, and a verdict needs
+  // a subject. `resolution` is the only honest answer. The near-misses still
+  // ride along — they are the whole payload on this path.
   if (globalMetric === null || !confidentMatch(metricQuery, globalMetric)) {
-    return { verified: "resolution", entityMetricMatches };
+    return { verified: "resolution", entityMetricMatches, metricList };
   }
 
   // Found: linkage is proven, and a truncated page cannot un-prove it.
-  if (scoped.some((n) => n.id === globalMetric.id)) {
-    return { verified: "pair", entityMetricMatches };
+  if (union.some((n) => n.id === globalMetric.id)) {
+    return { verified: "pair", entityMetricMatches, metricList };
   }
 
   // Not found. That is only ABSENCE if the whole filtered list was seen. On a
@@ -275,5 +349,5 @@ export function reconcilePair(input: {
   // pin and print "the graph holds no edge ... report the gap" on evidence we
   // do not have — the same absence-of-evidence error the `null`-vs-`[]` rule in
   // `pairProbe` exists to prevent, one level up.
-  return { verified: complete ? "unlinked" : "resolution", entityMetricMatches };
+  return { verified: complete ? "unlinked" : "resolution", entityMetricMatches, metricList };
 }

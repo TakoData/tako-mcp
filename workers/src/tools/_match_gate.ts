@@ -116,6 +116,29 @@ export function plausibleMatch(query: string, candidate: MatchCandidate): boolea
 }
 
 /**
+ * Does the query mention the WHOLE of one of the candidate's surfaces?
+ *
+ * One direction of `plausibleMatch` — candidate ⊆ query — on its own. The gate
+ * needs both directions (`Carnival` must reach `Carnival Corporation Ltd.`),
+ * but deciding that a query names BOTH an entity and a metric needs the
+ * stricter one: `q="Disney"` passes the gate for the metric
+ * `Disney Core Paid Subscribers` (query ⊆ name), and treating that as a tie
+ * would turn every bare company name into a two-candidate answer. `Core` and
+ * the alias `Core PCE` are both inside `US core PCE`; the KPI is not inside
+ * `Disney`.
+ */
+export function mentionedWhole(query: string, candidate: MatchCandidate): boolean {
+  const q = matchTokens(query);
+  if (q.size === 0) return false;
+  for (const surface of [candidate.name, ...(candidate.aliases ?? [])]) {
+    if (typeof surface !== "string" || surface === "") continue;
+    const c = matchTokens(surface);
+    if (c.size > 0 && contains(q, c)) return true;
+  }
+  return false;
+}
+
+/**
  * Keep only plausible candidates, in the backend's order (see the "not a
  * ranker" note above). Returns the ORIGINAL list when nothing passes — the
  * fail-open contract: a gate that is too strict must degrade to today's

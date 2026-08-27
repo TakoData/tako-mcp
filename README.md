@@ -290,9 +290,9 @@ The full reference — every description and parameter exactly as the model sees
 | Tool | What it's for |
 | ---- | ------------- |
 | `tako_search` | **Pull the data to work with.** Fast search over Tako's curated graph and the live web. Cards carry headline values and chart links; set `include_contents: true` to inline each exportable card's most-recent rows (billed per 1k rows; `preview_rows` caps how many). The top result renders inline as a chart with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
-| `tako_available_data` | **Find what structured data exists** on an entity or metric in one free call — the exact metric name, a `node_id` to pin, and a ready-to-run `next_call`. |
+| `tako_available_data` | **Find what structured data exists** on an entity or metric in one free call — the exact metric name, a `node_id` to pin, and a ready-to-run `next_call`. Ambiguous names come back as candidates with subtype and label; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
 | `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows (billed per 1k rows) or a web page's text — pass `query` for just the matching passages. Requires a signed-in connection. |
-| `tako_graph_related` | Explore a graph node: its metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. Free. |
+| `tako_graph_related` | Explore a graph node: a compact overview (each relation's key, total, first three items) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. Free. |
 
 **Anonymous connections (no credentials):** the tool list is the same — it never changes with auth state. `tako_search` and `tako_available_data` run anonymously (rate-limited, on shared capacity); the others answer with sign-in instructions.
 
