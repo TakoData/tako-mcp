@@ -4,15 +4,22 @@
  *
  * NOT the whole body, and the docs must not claim otherwise. Spec D4 says
  * "one-to-one" and then enumerates a subset; this is that subset. Omitted, and
- * the canonical list — both source blocks are `.strict()` and the top level is
- * a fixed `z.object`, so sending any of these is a -32602, never a silent drop:
+ * the canonical list — every one of these is a -32602, never a silent drop:
  *   top level: `location`, `timezone`, `output_settings`, `include_related`
  *   data:      `mode` (documented no-op for Tako cards; kept upstream for
  *              schema stability, so exposing it would advertise a no-op)
- *   web:       `article_content_max_chars`, `published_after`, `published_before`
- * The three web fields are the ones a caller is most likely to want — date-
- * filtered web search is a real ask. Add them to the `.pick()` below when they
- * are wanted; that is the only edit needed.
+ *   web:       `published_after`, `published_before`
+ * Add them to the `.pick()` below when they are wanted; that is the only edit
+ * needed. Date-filtered web search is the likeliest ask.
+ *
+ * The rejection above holds because ALL THREE levels carry `.strict()` — both
+ * source blocks and the top-level object. That last one is easy to get wrong in
+ * exactly the direction that breaks the claim: a bare `z.object` STRIPS unknown
+ * keys, it does not reject them, so for a while this header promised a -32602
+ * while the four top-level fields dropped in silence and the generated
+ * `docs/TOOLS.md` emitted `additionalProperties: false` on `data` and `web` and
+ * nothing at the top. If you relax any level, fix this paragraph and
+ * `llms-full.txt` in the same change.
  *
  * WHY IT IS OPT-IN. `tako_search` is the tool a model should reach for: every
  * option here is a cost, context or latency knob rather than a statement of
@@ -81,7 +88,9 @@ const DESCRIPTION = [
   "",
   "One consequence to know before switching: `tako_search` forces `web.highlights: true` for you. This tool forces nothing, so an omitted `highlights` takes the server default of false and each web snippet becomes the page's opening text instead of the passages matching your query. Set it unless you want the opening.",
   "",
-  "To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. At the default `strict: false` a pin still does something — the node becomes a retrieval candidate and ranks up — but the boost is deliberately small, so it doesn't guarantee that card comes back; `strict: true` is what makes it certain. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
+  "One field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.",
+  "",
+  "To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
 ].join("\n");
 
 
@@ -140,10 +149,21 @@ const dataBlock = z
  * says it in words. Don't "fix" it by adding a fixedInput — forcing a value is
  * the thing this tool exists not to do.
  *
- * Spec D4's enumeration, which is a SUBSET of
- * `WebSourceSettings`: `article_content_max_chars`, `published_after` and
- * `published_before` are deliberately out of this pass. Add them here when
- * they are wanted — the `.pick()` is the only place that needs to change.
+ * Spec D4's enumeration, which is a SUBSET of `WebSourceSettings`:
+ * `published_after` and `published_before` are deliberately out of this pass.
+ * Add them here when they are wanted — the `.pick()` is the only place that
+ * needs to change.
+ *
+ * `article_content_max_chars` is NOT in that deferred set, though D4 grouped it
+ * with the two date filters. It is the only bound on `include_contents`, which
+ * sits directly above it in the same `.pick()`: the generated default is 30,000
+ * chars and `count` runs to 20, so `{include_contents: true, count: 20}` can put
+ * ~600 KB (~150k tokens) of page text into `structuredContent`. Nothing clamps
+ * that Worker-side — `runSearch` keeps the text verbatim once the request asked
+ * for it — and because this block is `.strict()`, withholding the field leaves
+ * the caller no lever at all. `snippet_max_chars` caps the excerpt, not
+ * `content.data`. Deferring the date filters costs a caller nothing; deferring
+ * this one costs them the cap on the payload this tool newly stops discarding.
  */
 const webBlock = z
   .object(
@@ -155,6 +175,7 @@ const webBlock = z
         exclude_domains: true,
         category: true,
         snippet_max_chars: true,
+        article_content_max_chars: true,
         highlights: true,
       }).shape,
     ),
@@ -183,7 +204,20 @@ const inputSchema = z.object({
   web: webBlock
     .optional()
     .describe("Web source settings. Include this key — even as an empty object — to search the web."),
-});
+})
+  // `.strict()`, matching both source blocks. A bare `z.object` is precisely
+  // what STRIPS unknown keys, so the four unexposed top-level fields
+  // (`location`, `timezone`, `output_settings`, `include_related`) used to
+  // vanish in silence while this file's header and `llms-full.txt` both told
+  // readers they raised a -32602. Rejecting is the better half of that
+  // contradiction to keep: a caller who names a field this tool does not
+  // forward has made a mistake worth hearing about, and the alternative is a
+  // request that quietly does something other than what it says.
+  //
+  // Free to tighten because the tool is NEW in this change — no deployed caller
+  // can be relying on the silent drop. That is the opposite call from
+  // `tako_contents`' deprecated `url`, which is live and therefore kept.
+  .strict();
 
 type Input = z.infer<typeof inputSchema>;
 

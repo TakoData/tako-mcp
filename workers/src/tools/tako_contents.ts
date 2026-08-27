@@ -129,11 +129,29 @@ const inputSchema = z.object({
       .array(ContentsRequest.shape.url.min(1))
       .min(1)
       .max(MAX_CONTENTS_URLS)
+      .optional()
       .describe(
         `The result URLs to fetch, 1-${MAX_CONTENTS_URLS} per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an \`error\` instead of a payload).`,
       ),
     { field: "tako_contents.urls" },
   ),
+  // Legacy single-URL form, kept so an in-flight caller pinned to the old schema
+  // keeps working. `urls` is the documented shape.
+  //
+  // This is a HOSTED server: dropping the field breaks live connections at the
+  // moment of deploy, with no version for a client to pin and no deprecation
+  // window served. Removing it is its own change, behind traffic data showing
+  // nothing still sends it — not a rider on the D4 search split, which does not
+  // touch this tool's inputs.
+  //
+  // Not enforced as mutually exclusive on purpose: if a caller sends both,
+  // `urls` wins and `url` is ignored, which is friendlier than 400-ing a request
+  // we can serve. At least one is required — the handler rejects neither, so the
+  // runtime guard below is load-bearing again the moment `urls` is optional.
+  url: ContentsRequest.shape.url
+    .min(1)
+    .optional()
+    .describe("Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`."),
   mode: ContentsDeliveryMode
     .default("inline")
     .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
@@ -327,8 +345,9 @@ async function fetchOne(
   // `query`/`urls` are MCP-layer knobs, NOT wire fields — strip them or the
   // backend's extra="forbid" 400s the request. The rest conforms to the
   // generated ContentsRequest contract (url + mode + optional max_rows).
-  const { query: passageQuery, max_chars: maxCharsAsked, urls: _urls, ...rest } = input;
+  const { query: passageQuery, max_chars: maxCharsAsked, urls: _urls, url: _url, ...rest } = input;
   void _urls;
+  void _url;
   const inline = input.mode !== "url";
   // Effective web-text cap (see the max_chars schema comment for the full
   // rationale): query pins the ceiling so passages scan the whole page (the
@@ -516,9 +535,17 @@ const takoContents = {
     { field: "query", value: "(stripped from the request)", note: "Passage extraction runs in the Worker; the API has no such field." },
   ],
   async handler(input, ctx): Promise<Output> {
-    // `urls` is required and min(1), so the schema rejects an empty call before
-    // the handler runs — no runtime guard needed.
-    const targets = input.urls;
+    // Load-bearing, not defensive: `urls` is OPTIONAL because the deprecated
+    // `url` may carry the request instead, so the schema alone cannot reject an
+    // empty call. A caller who sends neither reaches here with nothing to fetch.
+    const targets = input.urls ?? (input.url !== undefined ? [input.url] : []);
+    if (targets.length === 0) {
+      throw new Error(
+        "tako_contents needs at least one URL: pass `urls: [\"…\"]` (1-" +
+          MAX_CONTENTS_URLS +
+          " per call).",
+      );
+    }
     // Fan out: the backend takes ONE url per request, so a batch is N
     // subrequests issued concurrently. allSettled, not all — one URL's 403
     // (a license-gated card) must not discard the pages that did resolve.

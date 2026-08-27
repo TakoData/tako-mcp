@@ -349,7 +349,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
   it("attaches the full anti-retry protocol when cards AND web_results are both empty", () => {
-    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false);
     // The load-bearing instruction: do not re-issue reworded searches.
     expect(out.guidance).toMatch(/do not retry/i);
     expect(out.guidance).toMatch(/tako_available_data/);
@@ -359,7 +359,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
     // The common default-source miss: no data card, some web hits. This is
     // exactly the "reword and retry for a chart" loop case, so guidance must
     // not be silently skipped here.
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"], false);
     expect(out.guidance).toMatch(/web_results/);
     // The verdict is scoped to the graph, not to the whole call.
     expect(out.guidance).toMatch(/DATA GRAPH only/);
@@ -373,7 +373,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // carve-out must be explicit — a model reading this cannot be left to infer
   // that web refinement is still allowed.
   it("does not ban web re-searching when zero cards come back with web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"], false);
     const g = out.guidance ?? "";
     expect(g).toContain("Re-searching is NOT banned here");
     // Names the fan-out that wins these questions.
@@ -387,7 +387,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // has zero cards by construction, so the graph verdict below would be built
   // from evidence that does not exist.
   it("renders no graph verdict for a web-only search that DID return web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"]);
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"], false);
     const g = out.guidance ?? "";
     expect(g).toMatch(/WEB source only/);
     expect(g).not.toMatch(/DATA GRAPH only/);
@@ -402,7 +402,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   });
 
   it("tailors the both-empty protocol for a data-only search (web fallback allowed on the single retry)", () => {
-    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"]);
+    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"], false);
     expect(out.guidance).toMatch(/tako_available_data/);
     expect(out.guidance).toMatch(/"web"/);
     // No web-axis carve-out here: the web was never searched, so there is no
@@ -416,7 +416,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // situation, opposite verdict, on the most common Tako-has-nothing path — so it
   // is now one shared constant rather than a sentence in one of the two tools.
   it("allows the same single narrower web attempt tako_answer allows, when web was searched", () => {
-    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false);
     expect(out.guidance).toContain(NARROWER_WEB_ATTEMPT);
     expect(out.guidance).toMatch(/WEB axis only/);
   });
@@ -426,7 +426,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // This branch used to ban that lever — "do NOT retry this query or
   // rephrasings of it" — which left the model with nothing to do at all.
   it("tells a web-only search to refine, and claims nothing about graph coverage", () => {
-    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"]);
+    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"], false);
     const g = out.guidance ?? "";
     expect(g).not.toMatch(/node_id/);
     expect(g).toMatch(/Refine and re-search/i);
@@ -440,13 +440,13 @@ describe("buildSearchOutput — zero-card guidance", () => {
     // Was "treats the legacy tako alias as data" and keyed on /node_id/ in the
     // guidance; the alias is gone and so is the pin recipe, so pin the branch
     // by the verdict it is the only one to state.
-    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"]);
+    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false);
     expect(out.guidance).toMatch(/tako_available_data/);
     expect(out.guidance).toMatch(/do NOT retry/i);
   });
 
   it("omits guidance when any card is present", () => {
-    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false);
     expect(out.guidance).toBeUndefined();
   });
 });
@@ -730,7 +730,7 @@ describe("orderCardsByUsefulness", () => {
     const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
     const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00");
     const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00");
-    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"]);
+    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false);
     expect(out.cards[0]?.card_id).toBe("fresh_second");
     // The chart the host renders must not disagree with the document.
     expect(out.pub_id).toBe("fresh_second");
@@ -768,21 +768,43 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
 
   it("sends the model to tako_available_data for the exact name", () => {
     for (const sources of [["data", "web"], ["data"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources).guidance ?? "";
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false).guidance ?? "";
       expect(g).toContain("tako_available_data");
       expect(g).toMatch(/canonical name/i);
     }
   });
 
-  it("never advises a pin, because tako_search takes none after the D4 split", () => {
+  it("never advises a pin on an UNPINNED call — tako_search takes none after the D4 split", () => {
     // This guidance used to interpolate PINNED_RETRY. Advice for `node_ids` /
     // `strict` on a tool that rejects both is a phantom parameter, and it is
     // invisible to phantom_tool.test.ts — that guard reads published schemas
     // and descriptions, and this is a runtime VALUE.
+    //
+    // `strictPin: false` is what `tako_search` always produces (it cannot send
+    // either field), so this is that tool's every path.
     for (const sources of [["data", "web"], ["data"], ["web"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources).guidance ?? "";
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false).guidance ?? "";
       expect(g, `sources=${sources.join(",")}`).not.toMatch(/node_ids|strict/i);
     }
+  });
+
+  it("blames the FILTER, not coverage, when the request carried a strict pin", () => {
+    // Reachable only from tako_search_advanced. Without this branch the model
+    // reads "the data is not covered, rewording will not change that" after a
+    // hard filter returned nothing — a coverage verdict the request cannot
+    // support (KE-812: pinned handles returned FEWER cards on 11 of 20 pairs),
+    // and one that contradicts that tool's own description.
+    const g = buildSearchOutput([], [], "req", null, ENV, ["data", "web"], true).guidance ?? "";
+    expect(g).toMatch(/hard filter/i);
+    expect(g).toMatch(/node_ids/);
+    // The verdict the unpinned branch gives must NOT appear here.
+    expect(g).not.toMatch(/does not cover this query/i);
+    expect(g).not.toMatch(/do NOT retry/i);
+  });
+
+  it("keeps the pin branch off the web-only path, which never applied a data filter", () => {
+    const g = buildSearchOutput([], [], "req", null, ENV, ["web"], true).guidance ?? "";
+    expect(g).not.toMatch(/hard filter/i);
   });
 });
 

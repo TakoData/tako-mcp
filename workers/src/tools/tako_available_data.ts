@@ -114,7 +114,7 @@ const DESCRIPTION = [
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).",
   "Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.",
   "A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.",
-  "This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, Tako holds no chart for that pair: report the gap rather than rephrasing the query further.",
+  "This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -191,16 +191,16 @@ const coverageMatchSchema = z.object({
 // the slim structuredContent shape (the verdict, the matches with their node
 // ids, and next_call) so hosts that count structuredContent toward context
 // don't pay for the full name lists twice.
+// `found` and `verified` carry NO `.describe()` here on purpose. This schema
+// types the handler's return; `availableDataSlimOutputShape` is what
+// `tools/list` publishes, so only that copy reaches a model — and only that
+// copy is guarded (`_pin_form.test.ts` walks published schemas, so pin
+// vocabulary added here would pass clean while the same string in the slim
+// shape fails). Two hand-maintained copies of the same model-facing prose
+// drift; the published one is the contract. Read the semantics there.
 const fullOutputSchema = z.object({
-  found: z.boolean().describe(
-    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): both halves RESOLVED to confident graph nodes — read `verified` for what was actually checked. Either way, running `next_call` is what confirms retrievable data exists — and 0 cards from it means Tako holds no chart for the pair, since the handle carries no pin to blame.",
-  ),
-  verified: z
-    .enum(["coverage", "pair", "unlinked", "resolution"])
-    .optional()
-    .describe(
-      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled (discovery path). `pair`: the metric is on the entity's own metric list — the strongest free evidence available. `unlinked`: the entity's list was checked and holds nothing matching, so a card for this pair is unlikely. `resolution`: no pair evidence — the check was skipped or failed, so treat it exactly as before. None of these means a chart exists.",
-    ),
+  found: z.boolean(),
+  verified: z.enum(["coverage", "pair", "unlinked", "resolution"]).optional(),
   query: z.string(),
   summary: z.string(),
   matches: z.array(coverageMatchSchema),

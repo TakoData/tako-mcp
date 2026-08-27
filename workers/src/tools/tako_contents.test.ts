@@ -173,13 +173,28 @@ describe("tako_contents handler", () => {
     expect(out.results[0]?.url).toBe("https://only");
   });
 
-  it("rejects a call naming no url at the SCHEMA, so the handler never runs", () => {
-    // `urls` is required and min(1) since the deprecated single-`url` form went
-    // away, so the constraint is expressible in the schema and the old runtime
-    // "at least one URL" guard is gone with it.
-    expect(tool.inputSchema.safeParse({}).success).toBe(false);
-    expect(tool.inputSchema.safeParse({ urls: [] }).success).toBe(false);
+  it("rejects a call naming neither url form, at the HANDLER", async () => {
+    // The schema alone CANNOT enforce this: `urls` is optional because the
+    // deprecated single `url` may carry the request instead, so `{}` parses.
+    // The runtime guard is what rejects it, and it stays load-bearing for as
+    // long as `url` is served.
+    expect(tool.inputSchema.safeParse({}).success).toBe(true);
+    await expect(tool.handler({ ...CALL }, ctx)).rejects.toThrow(/at least one URL/);
     expect(djangoPost).not.toHaveBeenCalled();
+  });
+
+  it("still serves the deprecated single `url`, and lets `urls` win over it", async () => {
+    // A hosted server: a live caller pinned to the old shape must keep working
+    // across this deploy. Sending both is served rather than 400-ed, `urls`
+    // winning, because refusing a request we can answer is the worse failure.
+    vi.mocked(djangoPost).mockResolvedValue(item("legacy"));
+    const viaUrl = await tool.handler({ url: "https://legacy", ...CALL }, ctx);
+    expect(viaUrl.results[0]?.url).toBe("https://legacy");
+
+    vi.mocked(djangoPost).mockResolvedValue(item("plural"));
+    const both = await tool.handler({ url: "https://legacy", urls: ["https://plural"], ...CALL }, ctx);
+    expect(both.results).toHaveLength(1);
+    expect(both.results[0]?.url).toBe("https://plural");
   });
 
   it("caps the batch so one call cannot fan out unbounded", () => {
@@ -708,8 +723,13 @@ describe("tako_contents handler", () => {
 
 // --- D4 defect list: the deprecated single-url form, card_json, max_rows copy ---
 describe("tako_contents input surface after the D4 trim", () => {
-  it("has no deprecated single-url form", () => {
-    expect(Object.keys(tool.inputSchema.shape)).not.toContain("url");
+  it("keeps the deprecated single-url form — removing it breaks live callers", () => {
+    // Dropping `url` is a real change with a real blast radius (this is a hosted
+    // server; there is no version for a client to pin), so it belongs in its own
+    // PR behind traffic data — not in the D4 search split, which does not touch
+    // this tool's inputs. This test exists to make that removal deliberate.
+    expect(Object.keys(tool.inputSchema.shape)).toContain("url");
+    expect(tool.inputSchema.safeParse({ url: "https://x" }).success).toBe(true);
   });
 
   it("does not advertise card_json until the output schema carries a channel for it", () => {

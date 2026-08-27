@@ -55,7 +55,9 @@ export const searchSlimOutputShape = z.looseObject({
   cards: z
     .array(z.looseObject({}))
     .optional()
-    .describe("The data cards — the payload. Each carries its title, description (headline value), facts, and inline rows under `content`."),
+    .describe(
+      "The data cards — the payload. Each carries its title, description (headline value), and facts. Rows ride under `content` only on a call that explicitly asked to inline them; `tako_search` never does, so read a card's rows with `tako_contents` on its url — and only when it is `exportable: true`.",
+    ),
   // The snippet contract lives HERE, not on `webResultSchema.snippet`. That
   // schema is the wire-parse guard and the internal shape; this loose one is
   // what `tools/list` advertises, so a per-element description there reaches

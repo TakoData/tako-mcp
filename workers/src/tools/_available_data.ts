@@ -815,10 +815,10 @@ export function buildPairSummary(input: {
       entityMetricMatches.length > 0
         ? ` The nearest metrics ${oneLine(pair.entity.name)} DOES have: ${entityMetricMatches.map(oneLine).join(", ")}.`
         : "";
-    return `Resolved "${entityQuery}" + "${metricQuery}", but ${oneLine(pair.metric.name)} is NOT on ${oneLine(pair.entity.name)}'s own metric list — the name fits, the graph holds no edge, so a card for this pair is unlikely.${near}${listClause(1)} Run the next_call below anyway — it is the only free way to be sure. If it is empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
+    return `Resolved "${entityQuery}" + "${metricQuery}", but ${oneLine(pair.metric.name)} is NOT on ${oneLine(pair.entity.name)}'s own metric list — the name fits, the graph holds no edge, so a card for this pair is unlikely.${near}${listClause(1)} Run the next_call below anyway — it is the only free way to be sure. If it is empty, stop there: report the gap rather than rephrasing further.`;
   }
   if (verified === "pair") {
-    return `Resolved "${entityQuery}" + "${metricQuery}", and ${oneLine(pair.metric.name)} IS on ${oneLine(pair.entity.name)}'s own metric list — the strongest free confirmation available, though it still does not guarantee a chart exists.${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, Tako holds no chart for this pair: report the gap rather than rephrasing further.`;
+    return `Resolved "${entityQuery}" + "${metricQuery}", and ${oneLine(pair.metric.name)} IS on ${oneLine(pair.entity.name)}'s own metric list — the strongest free confirmation available, though it still does not guarantee a chart exists.${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, stop there: report the gap rather than rephrasing further.`;
   }
   // The zero-card advice used to read "Tako has no card for this pair — that is
   // the definitive answer, do not rephrase and retry". Measured on staging
@@ -837,17 +837,26 @@ export function buildPairSummary(input: {
   // That measurement retired the "definitive" wording; the D4 split then retired
   // the retry that replaced it. No path pins any more, so "the same query without
   // the pin" IS the next_call, and prescribing it a second time buys a
-  // byte-identical priced search. The advice is terminal again — but on the
-  // opposite ground from the original: not "a pinned zero proves absence", rather
-  // "there was never a pin to blame". Keep the table below: it is the only record
-  // of why `strict` left the simple tool, and the bound it set still holds — one
-  // call, no rephrase-and-vary loop, which is the thrash the old wording existed
-  // to stop (after a zero-card answer agents called tako_contents 56 times).
+  // byte-identical priced search.
+  //
+  // The ADVICE is terminal — one call, then stop. The CLAIM is not, and keeping
+  // those apart is the whole point of the current wording. "There was never a pin
+  // to blame" removes the old mechanism for a false zero; it does not turn one
+  // fuzzy retrieval into proof of absence, and the same measurement put the
+  // canonical name at 9 of 15 pairs, not 15. A conclusive-negative phrasing has
+  // now been removed here three times — e8d5a15 ("stop calling a zero-card pin
+  // definitive"), c287554 ("absence must be established, not assumed"), and this
+  // one, which reinstated it on the new ground above. So: say "report the gap",
+  // never "Tako holds no chart for this pair". Keep the table below: it is the
+  // only record of why `strict` left the simple tool, and the bound it set still
+  // holds — one call, no rephrase-and-vary loop, which is the thrash the old
+  // wording existed to stop (after a zero-card answer agents called tako_contents
+  // 56 times).
   //
   // The run itself was driven by hand against staging and is NOT checked in, so
   // the per-handle table above is the record — treat it as the citation, not as a
   // pointer to a script. Root cause (the near-duplicate metric nodes) is KE-812.
-  return `Resolved "${entityQuery}" + "${metricQuery}".${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, Tako has no card for this pair: report the gap rather than rephrasing further.`;
+  return `Resolved "${entityQuery}" + "${metricQuery}".${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, stop there: report the gap rather than rephrasing further.`;
 }
 
 /** A `q` that looks like a hostname (has a dot, no spaces). */

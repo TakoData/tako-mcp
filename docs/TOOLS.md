@@ -154,7 +154,7 @@ What it adds over retrieval: it reads the cited web pages internally, so their c
 
 Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.
 
-Reach past it for a different job: `tako_search` for breadth, and for values too — it takes the same `include_contents: true`; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.
+Reach past it for a different job: `tako_search` for breadth — it inlines no rows at all, so values there come from `tako_contents` on the cards it finds; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.
 
 Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin widens the filter back out, and a pin without strict only boosts — measured as not enough to land the metric). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.
 
@@ -278,7 +278,7 @@ One metric across many entities → one metric-first call; one entity across man
 Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).
 Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.
 A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.
-This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, Tako holds no chart for that pair: report the gap rather than rephrasing the query further.
+This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.
 
 Parameters:
 
@@ -370,7 +370,8 @@ Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `urls` | array | yes |  | The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload). |
+| `urls` | array | no |  | The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload). |
+| `url` | string | no |  | Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`. |
 | `mode` | string ("url" \\| "inline") | no | `"inline"` | Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file. |
 | `content_format` | string ("csv" \\| "json_records" \\| "json_compact") | no | `"csv"` | Tako cards only — serialization of the returned data: "csv" (default, returned as text in `data`), "json_records" (array of row objects in `records`), or "json_compact" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`). |
 | `max_rows` | integer | no |  | Tako cards only: max rows to return, in either delivery mode. Omit it to get the whole card, up to the 2,000-row system ceiling; Tako clamps a larger value to that ceiling. Rows are billed per 1,000 delivered, so lower it to spend less. Ignored for web URLs (use max_chars). |
@@ -395,6 +396,7 @@ Annotations:
   "type": "object",
   "properties": {
     "urls": {
+      "description": "The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload).",
       "minItems": 1,
       "maxItems": 10,
       "type": "array",
@@ -402,8 +404,12 @@ Annotations:
         "type": "string",
         "minLength": 1,
         "description": "The result URL to fetch downloadable content for (a TakoCard.webpage_url or a WebResult.url). A Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted text."
-      },
-      "description": "The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload)."
+      }
+    },
+    "url": {
+      "description": "Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`.",
+      "type": "string",
+      "minLength": 1
     },
     "mode": {
       "default": "inline",
@@ -441,10 +447,7 @@ Annotations:
       "type": "string",
       "minLength": 1
     }
-  },
-  "required": [
-    "urls"
-  ]
+  }
 }
 ```
 </details>
@@ -606,7 +609,7 @@ Data and web come back together — treat them as one result, not an either/or. 
 
 Non-exportable cards (`exportable: false`, usually license-gated) return no rows on any path: read the headline value from the card's `description` when it carries one (each such card carries a `values_hint` saying exactly this).
 
-Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The web results' snippets ride in structuredContent (web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).
+Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link), then Web Results, then source notes. The web results' snippets ride in structuredContent (web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).
 
 Parameters:
 
@@ -687,7 +690,9 @@ Nothing is sent unless you set it, so an omitted field takes the server default 
 
 One consequence to know before switching: `tako_search` forces `web.highlights: true` for you. This tool forces nothing, so an omitted `highlights` takes the server default of false and each web snippet becomes the page's opening text instead of the passages matching your query. Set it unless you want the opening.
 
-To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. At the default `strict: false` a pin still does something — the node becomes a retrieval candidate and ranks up — but the boost is deliberately small, so it doesn't guarantee that card comes back; `strict: true` is what makes it certain. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.
+One field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.
+
+To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.
 
 Parameters:
 
@@ -857,6 +862,12 @@ Annotations:
           ],
           "description": "Character cap on the text excerpt returned per web result. If you omit this field, the search endpoint applies 4000 and the answer endpoint applies 1000. If you send a value, the server uses that value exactly. The maximum is 20000."
         },
+        "article_content_max_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "description": "Character cap on the full article text when include_contents is true. Default 30000, maximum 1000000."
+        },
         "highlights": {
           "type": "boolean",
           "description": "Return query-relevant highlight passages as each web result's snippet, instead of the opening text of the page. Highlights usually carry the answer-bearing sentences, and stay within snippet_max_chars. Unless you also set include_contents, Tako requests no page text, so a page with no highlight returns snippet: null. The snippet can also hold more than one passage from different parts of the page, joined by ' … '. Read the snippet as a whole. Do not cut the snippet to a fixed length. Do not quote the snippet as one continuous sentence. Default false."
@@ -867,7 +878,8 @@ Annotations:
   },
   "required": [
     "query"
-  ]
+  ],
+  "additionalProperties": false
 }
 ```
 </details>

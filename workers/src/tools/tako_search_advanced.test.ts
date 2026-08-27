@@ -150,6 +150,36 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
       tako_search_advanced.inputSchema.safeParse({ query: "x", data: { counts: 3 } }).success,
     ).toBe(false);
   });
+
+  it("rejects an unexposed field at the TOP level too, not just on the blocks", () => {
+    // The header and llms-full.txt both promise a -32602 for these four, and the
+    // promise was false while the top level was a bare `z.object`: that STRIPS
+    // unknown keys rather than rejecting them, so `location` and friends dropped
+    // in silence. Only the nested case was ever tested. Every one of the four
+    // named in the header is checked here so a later `.pick()` widening cannot
+    // leave the doc claim half true.
+    for (const field of ["location", "timezone", "output_settings", "include_related"]) {
+      expect(
+        tako_search_advanced.inputSchema.safeParse({ query: "x", [field]: "anything" }).success,
+        `top-level ${field} must be rejected, not stripped`,
+      ).toBe(false);
+    }
+  });
+
+  it("exposes the cap on the payload include_contents stops discarding", () => {
+    // `article_content_max_chars` is the ONLY bound on `web.include_contents`:
+    // the generated default is 30,000 chars and `count` runs to 20, so without
+    // it a caller has no way to keep a 20-result call from inlining ~600 KB of
+    // page text — and `.strict()` means they cannot pass it unless it is picked.
+    const parsed = tako_search_advanced.inputSchema.parse({
+      query: "x",
+      web: { include_contents: true, article_content_max_chars: 4000 },
+    });
+    expect(parsed.web?.article_content_max_chars).toBe(4000);
+    // It must reach the wire, not just the schema.
+    const body = buildAdvancedSearchBody(parsed);
+    expect(body.sources?.web?.article_content_max_chars).toBe(4000);
+  });
 });
 
 // The advertised `web.include_contents` was inert: slimWebResult dropped page
@@ -278,5 +308,79 @@ describe("the highlights asymmetry with tako_search is stated, not silent", () =
     // And omitting it sends nothing, so the server default applies.
     const bare = tako_search_advanced.inputSchema.parse({ query: "x", web: {} });
     expect(buildAdvancedSearchBody(bare).sources).toEqual({ web: {} });
+  });
+});
+
+// The DATA half of the honoured-parameter rule, and the reason it is here: the
+// web trio above covered `web.include_contents` while `data.include_contents` —
+// this tool's headline capability, the whole reason rows left `tako_search` —
+// had no handler test at all. Mutating the handler's
+// `input.data?.include_contents === true ? "all" : null` to a constant `null`
+// left ALL 1,245 tests in the default project green: `_search_results.test.ts`
+// covers `slimCardContent(…, "all")` in isolation, but nothing bound the
+// handler's choice to it, so the tool could advertise rows and throw them away
+// exactly as the web side did before it was fixed.
+const cardWithRows = () => ({
+  card_id: "abc123",
+  title: "US GDP",
+  webpage_url: "https://trytako.com/charts/us-gdp",
+  content: {
+    content_format: "json_compact",
+    cost: 0.001,
+    data: null,
+    records: null,
+    dataset: {
+      columns: [
+        { name: "date", type: "date" },
+        { name: "v", type: "number" },
+      ],
+      rows: [["2024-01-01", 29]],
+      total_rows: 1,
+      truncated: false,
+      ref: "https://trytako.com/charts/us-gdp",
+      sources: [{ name: "FRED", index: "data" }],
+      provenance: "query",
+    },
+    url: null,
+    expires_at: null,
+    total_rows: 1,
+    truncated: false,
+    export_pricing: null,
+    source_url: "https://trytako.com/charts/us-gdp",
+  },
+});
+
+describe("data include_contents is honoured, not advertised and dropped", () => {
+  const searchResponse = () =>
+    jsonResponse(200, { cards: [cardWithRows()], web_results: [], request_id: "req-data" });
+
+  const datasetOf = (out: { cards: Array<{ content?: unknown }> }) =>
+    (out.cards[0]?.content as { dataset?: unknown } | null | undefined)?.dataset;
+
+  it("keeps card rows when the caller sets data.include_contents", async () => {
+    mockFetchSequence([searchResponse()]);
+    const out = await tako_search_advanced.handler(
+      tako_search_advanced.inputSchema.parse({ query: "us gdp", data: { include_contents: true } }),
+      CTX,
+    );
+    expect(datasetOf(out)).toMatchObject({ rows: [["2024-01-01", 29]] });
+  });
+
+  it("drops card rows when the caller names the data block without the flag", async () => {
+    mockFetchSequence([searchResponse()]);
+    const out = await tako_search_advanced.handler(
+      tako_search_advanced.inputSchema.parse({ query: "us gdp", data: {} }),
+      CTX,
+    );
+    expect(datasetOf(out)).toBeNull();
+    // total_rows is METADATA, not a payload channel: it survives the drop so the
+    // model still knows rows exist and can fetch them with tako_contents.
+    expect((out.cards[0]?.content as { total_rows?: unknown })?.total_rows).toBe(1);
+  });
+
+  it("tako_search always drops them — the simple tool cannot request them", async () => {
+    mockFetchSequence([searchResponse()]);
+    const out = await tako_search.handler({ query: "us gdp", sources: ["data"] }, CTX);
+    expect(datasetOf(out)).toBeNull();
   });
 });

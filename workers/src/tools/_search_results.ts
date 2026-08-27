@@ -890,7 +890,31 @@ export const NARROWER_WEB_ATTEMPT =
 function buildZeroResultGuidance(
   hasWebResults: boolean,
   sources: SearchedSources,
+  strictPin: boolean,
 ): string {
+  // The pin branch comes FIRST because every branch below reports a verdict
+  // about coverage, and under a hard filter that verdict is unsupported. A
+  // `strict: true` pin returns ONLY cards matching a pinned node, and the graph
+  // holds near-duplicate metric nodes where only one twin carries cards — so
+  // zero cards is evidence about the FILTER, not about what Tako holds. KE-812
+  // measured pinned handles returning FEWER cards than the same query unpinned
+  // on 11 of 20 pairs.
+  //
+  // Reachable only from `tako_search_advanced`: `tako_search` takes no pin, so
+  // `strictPin` is always false there. Without this branch that tool's callers
+  // read "the data is not covered, rewording will not change that" — mid-failure
+  // copy that contradicts the tool's own description, which tells them to drop
+  // `node_ids` and retry.
+  if (strictPin && searchedData(sources)) {
+    return [
+      "No data cards — but this request pinned `node_ids` with `strict: true`, which is a HARD FILTER: only cards matching a pinned node can come back.",
+      "Zero cards here is evidence about the filter, NOT about coverage. The graph holds near-duplicate metric nodes where only one twin carries cards, so a pinned query returned FEWER cards than the same query unpinned on 11 of 20 pairs measured.",
+      "Re-run the SAME query text with `node_ids` dropped before concluding anything. Do not report a coverage gap on the strength of this response.",
+      ...(hasWebResults
+        ? ["Web results did come back — answer from them meanwhile (tako_contents on the most relevant url fetches its full page text)."]
+        : []),
+    ].join(" ");
+  }
   if (hasWebResults) {
     // A web-only search has zero cards BY CONSTRUCTION — the data index was
     // never queried — so the branch below would report a graph verdict from
@@ -1093,6 +1117,7 @@ export function buildSearchOutput(
   usage: Usage | null,
   env: Env,
   searchedSources: SearchedSources,
+  strictPin: boolean,
 ): SearchOutput {
   // Order before anything reads cards[0]: the widget/pub_id fields below lift
   // the TOP card, so the chart the host renders follows the same ordering the
@@ -1115,6 +1140,7 @@ export function buildSearchOutput(
           guidance: buildZeroResultGuidance(
             webResults.length > 0,
             searchedSources,
+            strictPin,
           ),
         }
       : {}),

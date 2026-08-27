@@ -58,7 +58,7 @@ const DESCRIPTION = [
   "",
   "Non-exportable cards (`exportable: false`, usually license-gated) return no rows on any path: read the headline value from the card's `description` when it carries one (each such card carries a `values_hint` saying exactly this).",
   "",
-  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link, a rows-count pointer), then Web Results, then source notes. The web results' snippets ride in structuredContent (web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
+  "Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link), then Web Results, then source notes. The web results' snippets ride in structuredContent (web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -224,6 +224,14 @@ export async function runSearch(
   // text is free (see slimWebResult), so context is the only cost and the caller
   // has already accepted it.
   const keepWebText = body.sources?.web?.include_contents === true;
+  // DERIVED from the wire body for the same reason `keepWebText` is: the two
+  // search tools then cannot disagree with what was actually requested, and
+  // `tako_search` — which takes no pin — gets `false` without naming the concept.
+  // Both halves are required: `strict: true` with an empty `node_ids` is a 400 at
+  // the backend, and a pin without `strict` only boosts, so neither alone makes
+  // zero cards a filter artefact.
+  const strictPin =
+    body.sources?.data?.strict === true && (body.sources?.data?.node_ids?.length ?? 0) > 0;
   const { cards: slimCards, glossary } = hoistSourceGlossary(
     cards.data.map((c) => slimCard(c, rowCap)),
   );
@@ -234,6 +242,7 @@ export async function runSearch(
     wire.usage ?? null,
     ctx.env,
     sources,
+    strictPin,
   );
   // Glossary spreads on LAST so it serializes after the data — truncating
   // clients then drop boilerplate first.

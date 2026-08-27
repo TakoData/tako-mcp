@@ -66,6 +66,34 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * Assert `next_call` is a handle `tako_search` runs VERBATIM — derived from that
+ * tool's own schema, never a literal.
+ *
+ * `inputSchema.safeParse(next_call).success` cannot enforce this and used to be
+ * what stood here: the schema is a plain `z.object`, so it STRIPS unknown keys
+ * and returns success for `{tool, query, node_ids, strict}` exactly as it does
+ * for `{tool, query}` — `tako_search.test.ts` pins that stripping behaviour. So
+ * the assertion held whether or not the handle carried fields the tool would
+ * silently drop, which is the defect it was written to catch.
+ *
+ * Deriving from `shape` means this keeps working when tako_search gains or
+ * loses a parameter; a hand-written key list would go stale the next time it
+ * does.
+ */
+function expectRunnableByTakoSearch(nextCall: Record<string, unknown> | null): void {
+  // Callers reach this only on paths that MUST emit a handle; the suppression
+  // paths assert `next_call === null` directly and never come here.
+  expect(nextCall, "next_call was suppressed on a path that should emit one").not.toBeNull();
+  const keys = Object.keys(nextCall ?? {}).filter((k) => k !== "tool");
+  // Without this the loop passes vacuously on a handle that is `{tool}` alone.
+  expect(keys.length).toBeGreaterThan(0);
+  const accepted = Object.keys(takoSearch.inputSchema.shape);
+  for (const key of keys) {
+    expect(accepted, `next_call.${key} is not a tako_search parameter`).toContain(key);
+  }
+}
+
 describe("tako_available_data", () => {
   it("tool name is tako_available_data", () => {
     expect(takoAvailableData.name).toBe("tako_available_data");
@@ -568,7 +596,7 @@ describe("tako_available_data", () => {
     });
     // Whatever the handle says, tako_search must accept it verbatim. A handle
     // labelled "run verbatim" that the tool rejects is worse than no handle.
-    expect(takoSearch.inputSchema.safeParse(out.next_call).success).toBe(true);
+    expectRunnableByTakoSearch(out.next_call);
     expect(out.summary).toContain("next_call");
   });
 
@@ -687,7 +715,7 @@ describe("tako_available_data — lookup path", () => {
     expect(out.matches[0]?.coverage.names).toEqual(["Gross Margin (%)"]);
     // `matches` is no longer empty here (PR 267 returns the filtered list), but
     // the handle must still be one tako_search accepts verbatim.
-    expect(takoSearch.inputSchema.safeParse(out.next_call).success).toBe(true);
+    expectRunnableByTakoSearch(out.next_call);
   });
 
   it("carries alternates so a wrong top-1 is visible and self-correctable", async () => {

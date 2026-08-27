@@ -117,19 +117,49 @@ describe("no listed tool names a parameter that is off its surface", () => {
   });
 
   for (const surface of ["generic", "chatgpt"] as const satisfies Surface[]) {
-    const listed = TOOL_REGISTRY.filter((t) => isToolOnSurface(t.name, surface, null));
-    const reachable = new Set<string>();
-    for (const tool of listed) {
-      for (const param of inputParamNames(tool)) reachable.add(param);
-    }
-    const unreachable = [...multiWordParams].filter((p) => !reachable.has(p));
+    const defaults = TOOL_REGISTRY.filter((t) => isToolOnSurface(t.name, surface, null));
 
-    it(`${surface} has parameters that are off-surface, so the check has teeth`, () => {
+    it(`${surface} defaults leave parameters off-surface, so the check has teeth`, () => {
+      const reachable = new Set(defaults.flatMap((t) => [...inputParamNames(t)]));
+      const unreachable = [...multiWordParams].filter((p) => !reachable.has(p));
       expect(unreachable.length).toBeGreaterThan(0);
     });
 
-    for (const tool of listed) {
-      it(`${tool.name} on ${surface} names only parameters reachable there`, () => {
+    // EVERY tool, not just the default listing. An opt-in tool publishes to a
+    // real connection the moment an operator writes `?tools=<name>`, and until
+    // this loop covered them `tako_answer`, `tako_agent` and
+    // `tako_search_advanced` got no phantom-parameter check at all.
+    //
+    // Reachability is resolved per TOOL SET rather than assumed: the defaults
+    // PLUS the tool itself, which is the same model the two tool-name blocks
+    // below already enforce ("no opt-in tool names a tool outside the defaults
+    // plus itself"). `?tools=` does replace the defaults, but the docs tell
+    // operators to name the defaults they rely on, and a stricter itself-only
+    // model contradicts the sibling rule — it flags `tako_answer` citing
+    // `tako_contents`' `max_rows`, which is a legitimate cross-reference. A
+    // tool the surface cannot serve at all drops out of the set and is skipped.
+    //
+    // What this does NOT catch: a sentence that attributes a reachable
+    // parameter to the WRONG tool. `tako_answer` shipped "`tako_search` ... it
+    // takes the same `include_contents: true`" while owning `include_contents`
+    // itself, so the name is reachable on its own connection and every check
+    // here stays green. Catching that needs a sentence-scoped attribution rule
+    // — prose parsing, with the blind spots `ADVISES_PINNING` documents — and
+    // it is deliberately not attempted here.
+    for (const tool of TOOL_REGISTRY) {
+      const isDefault = defaults.some((d) => d.name === tool.name);
+      const toolSet = resolveToolSet(
+        surface,
+        isDefault ? null : new Set([...defaults.map((d) => d.name), tool.name]),
+      );
+      if (!toolSet.has(tool.name)) continue;
+      const reachable = new Set(
+        TOOL_REGISTRY.filter((t) => toolSet.has(t.name)).flatMap((t) => [...inputParamNames(t)]),
+      );
+      const unreachable = [...multiWordParams].filter((p) => !reachable.has(p));
+      const via = isDefault ? "" : " (opt-in)";
+
+      it(`${tool.name} on ${surface}${via} names only parameters reachable there`, () => {
         const named = unreachable.filter((p) =>
           new RegExp(`\\b${p}\\b`).test(publishedText(tool)),
         );

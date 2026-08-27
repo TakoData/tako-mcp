@@ -54,7 +54,7 @@ const DESCRIPTION = [
   "",
   "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.",
   "",
-  "Reach past it for a different job: `tako_search` for breadth, and for values too — it takes the same `include_contents: true`; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.",
+  "Reach past it for a different job: `tako_search` for breadth — it inlines no rows at all, so values there come from `tako_contents` on the cards it finds; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.",
   "",
   "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin widens the filter back out, and a pin without strict only boosts — measured as not enough to land the metric). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
