@@ -511,7 +511,7 @@ export const availableDataSlimOutputShape = z.looseObject({
     )
     .optional()
     .describe(
-      "The other nodes `q` resolved to, best first, each with the id to pin in a follow-up or to explore with tako_graph_related. coverage_total is present only for candidates that were coverage-checked; the text channel carries their aliases.",
+      "The other nodes `q` resolved to, best first, each with its canonical name to search on and its id to explore with tako_graph_related. coverage_total is present only for candidates that were coverage-checked; the text channel carries their aliases.",
     ),
   next_call: z
     .object({

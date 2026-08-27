@@ -124,7 +124,7 @@
     },
     {
       "name": "tako_available_data",
-      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nAsk it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.\n\nWorth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nKnow the measure? Split it: q=\"Carnival\", metric=\"passenger cruise days\" — you get the entity+metric pair and a runnable next_call in ~0.6s. Only omit `metric` to browse everything an entity has.\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).\nEach match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.\nA broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.\nThis tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.",
+      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nAsk it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.\n\nWorth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nKnow the measure? Split it: q=\"Carnival\", metric=\"passenger cruise days\" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q=\"Nvidia\", metric=\"data center\" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.\nWhen `q` names both an entity and a metric (\"US core PCE\" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.\nOn the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).\nEach match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.\nA broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.\nThis tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.",
       "parameters": {
         "q": {
           "type": "string",
@@ -159,6 +159,10 @@
             "STOCK_TICKER",
             "WEBSITE"
           ]
+        },
+        "limit": {
+          "type": "integer",
+          "description": "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` names, and a deeper metric node can turn a confident single answer into a two-candidate tie."
         }
       },
       "annotations": {
@@ -222,20 +226,8 @@
       }
     },
     {
-      "name": "tako_credit_balance",
-      "description": "Use this only when the user explicitly asks about their Tako credit balance, subscription, or remaining credits. Do NOT call preemptively before other tools — Tako's other tools surface credit_cost in their own responses, so a pre-flight balance check is redundant and noisy.",
-      "parameters": {},
-      "annotations": {
-        "title": "Tako: Credit Balance",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "tako_graph_related",
-      "description": "Explore what a graph node connects to — the map of what data Tako has for it. Free.\n\nBest for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), subsidiaries, index or group membership (`part_of`, `members`), and sources.\n\nDrilling `relation: \"metrics\"` returns only that node's metrics group — the smallest, cheapest view of what data Tako holds for it. The full overview (`node_id` alone) also returns entities, siblings, and named edges, at more tokens.\nFiltering with `q` (\"revenue\") narrows to matching names. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.",
+      "description": "Explore what a graph node connects to — the map of what data Tako has for it. Free.\n\nBest for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.\n\nTwo modes. Overview (`node_id` alone) is a compact map: every relation group with its `key`, `label`, `total`, and its first 3 items — a few hundred tokens, never a page. Drill (`relation: \"<key>\"`) pages that one group; each item carries `id`, `name`, `type`, `subtype`, and `label`, and only the focal node carries `aliases` and a truncated `description`.\n\nRelation keys come from the overview. The fixed keys are `metrics`, `entities`, `siblings`, `part_of`, `members`; named edges look like `rel:<phrase>`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.\n`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: \"revenue\" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.",
       "parameters": {
         "node_id": {
           "type": "string",
@@ -244,11 +236,11 @@
         },
         "relation": {
           "type": "string",
-          "description": "Relation key to page: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview of all groups."
+          "description": "Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview."
         },
         "q": {
           "type": "string",
-          "description": "Optional case-insensitive substring filter on name+aliases (single string). For several name-variants of a metric, call the tool once per variant."
+          "description": "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group."
         },
         "label": {
           "type": "string",
@@ -277,7 +269,7 @@
         },
         "limit": {
           "type": "integer",
-          "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where each group returns at most 10 items."
+          "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass."
         }
       },
       "annotations": {

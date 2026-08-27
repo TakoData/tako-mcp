@@ -139,7 +139,7 @@ const inputSchema = z.object({
   // tie with `next_call: null`). A caller raising it to "see more options" is
   // entitled to know it can get a different answer, not just a longer one.
   limit: z.number().int().min(1).max(MAX_CANDIDATES).optional().describe(
-    "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` pins, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
+    "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` names, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
   ),
 });
 

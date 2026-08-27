@@ -1615,7 +1615,10 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
     expect(out.entity_alternates?.map((e) => e.node_id)).toEqual(["ent::duo-stub::1"]);
     expect(out.verified).toBe("pair");
     expect(out.found).toBe(true);
-    expect(out.next_call?.query).toBe("Duolingo, Inc. daily active users");
+    // Both halves CANONICAL since the D4 split: the graph's metric name, not the
+    // caller's phrase. The pin used to carry the precision; with tako_search
+    // taking none, the canonical name is the only steering signal left.
+    expect(out.next_call?.query).toBe("Duolingo, Inc. Daily Active Users");
     expect(out.matches[0]?.coverage.items.map((i) => i.node_id)).toEqual(["mt::dau::1", "mt::dau2::1"]);
   });
 
@@ -1683,7 +1686,9 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
     const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
     expect(out.verified).toBe("unlinked");
     expect(out.found).toBe(true);
-    expect(out.next_call).toEqual({ tool: "tako_search", query: "Lockheed Martin Corporation backlog", node_ids: [], strict: false });
+    // No pin on any path after D4, so `unlinked` and a confirmed pair emit the
+    // same shape. What `unlinked` still changes is the summary.
+    expect(out.next_call).toEqual({ tool: "tako_search", query: "Lockheed Martin Corporation Backlog" });
     expect(out.matches[0]?.coverage.names).toEqual(["12 Month Backlog"]);
   });
 
