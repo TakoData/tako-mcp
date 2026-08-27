@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
-  FREE_TIER_SERVER_INSTRUCTIONS,
   SERVER_INSTRUCTIONS,
-  serverInstructionsForTier,
+  serverInstructionsFor,
 } from "../instructions.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 import { isToolOnSurface, resolveToolSet } from "./_surface.js";
@@ -218,8 +217,8 @@ describe("no opt-in tool names a tool outside the defaults plus itself", () => {
 
 /**
  * The `initialize` instructions are the widest phantom surface in the repo and
- * the only one not published by a tool: `mcp.ts` returns one string per TIER,
- * never per surface, and the host puts it in the model's system prompt. So a
+ * the only one not published by a tool: `mcp.ts` returns ONE string for every
+ * tier and surface, and the host puts it in the model's system prompt. So a
  * tool name here is read by every connection on every surface, including the
  * connections that do not register it.
  *
@@ -247,23 +246,18 @@ describe("server instructions name no tool a connection may not have", () => {
     expect(universal.length).toBeGreaterThan(0);
   });
 
-  for (const [label, text] of [
-    ["SERVER_INSTRUCTIONS", SERVER_INSTRUCTIONS],
-    ["FREE_TIER_SERVER_INSTRUCTIONS", FREE_TIER_SERVER_INSTRUCTIONS],
-  ] as const) {
-    it(`${label} names only tools every surface registers by default`, () => {
-      // `ownName` is empty: instructions belong to no tool, so every name in
-      // them is foreign and none gets the self-reference exemption.
-      const unreachable = foreignToolNamesIn(text, "").filter(
-        (name) => !universal.includes(name),
-      );
-      expect(unreachable, `${label} names unreachable tools`).toEqual([]);
-    });
-  }
+  it("SERVER_INSTRUCTIONS names only tools every surface registers by default", () => {
+    // `ownName` is empty: instructions belong to no tool, so every name in
+    // them is foreign and none gets the self-reference exemption.
+    const unreachable = foreignToolNamesIn(SERVER_INSTRUCTIONS, "").filter(
+      (name) => !universal.includes(name),
+    );
+    expect(unreachable, "SERVER_INSTRUCTIONS names unreachable tools").toEqual([]);
+  });
 });
 
 /**
- * The block above pins the UNFILTERED constants against the cross-surface
+ * The block above pins the UNFILTERED constant against the cross-surface
  * default set, which passes only because `tako_search`,
  * `tako_available_data` and `tako_contents` are default on both surfaces.
  * It says nothing about `?tools=`, and `?tools=` REPLACES the default listing
@@ -283,22 +277,19 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
 
   for (const requested of allowlists) {
     const label = [...requested].join(",");
-    for (const tier of ["authenticated", "free"] as const) {
-      it(`?tools=${label} (${tier}) names only what it registers`, () => {
-        const resolved = resolveToolSet("generic", requested);
-        const text = serverInstructionsForTier(tier, resolved);
-        const named = foreignToolNamesIn(text, "");
-        const phantom = named.filter((name) => !resolved.has(name));
-        expect(phantom, `instructions for ?tools=${label}`).toEqual([]);
-      });
-    }
+    it(`?tools=${label} names only what it registers`, () => {
+      const resolved = resolveToolSet("generic", requested);
+      const text = serverInstructionsFor(resolved);
+      const named = foreignToolNamesIn(text, "");
+      const phantom = named.filter((name) => !resolved.has(name));
+      expect(phantom, `instructions for ?tools=${label}`).toEqual([]);
+    });
   }
 
   it("a single-tool allowlist that names no instruction tool keeps the shared paragraph", () => {
     // The fallback must stay non-empty: an empty `instructions` would drop
     // the routing guidance that makes hosts reach for Tako at all.
-    const text = serverInstructionsForTier(
-      "authenticated",
+    const text = serverInstructionsFor(
       resolveToolSet("generic", new Set(["tako_agent"])),
     );
     expect(foreignToolNamesIn(text, "")).toEqual([]);
@@ -313,7 +304,7 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
   // the half nothing else does — what a partial allowlist KEEPS.
   it("?tools=search,contents keeps its own sentences and drops the others", () => {
     const resolved = resolveToolSet("generic", new Set(["tako_search", "tako_contents"]));
-    const text = serverInstructionsForTier("authenticated", resolved);
+    const text = serverInstructionsFor(resolved);
     // Kept: both sentences whose tools are entirely inside the allowlist. The
     // tako_search sentence is "retrieves the cards and web links" since D4 —
     // it used to be "set `include_contents: true`", a parameter the tool no
@@ -330,11 +321,6 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     // Guards the other direction: over-filtering would silently strip
     // guidance from every default connection.
     const resolved = resolveToolSet("generic", null);
-    expect(serverInstructionsForTier("authenticated", resolved)).toBe(
-      SERVER_INSTRUCTIONS,
-    );
-    expect(serverInstructionsForTier("free", resolved)).toBe(
-      FREE_TIER_SERVER_INSTRUCTIONS,
-    );
+    expect(serverInstructionsFor(resolved)).toBe(SERVER_INSTRUCTIONS);
   });
 });

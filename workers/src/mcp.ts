@@ -41,7 +41,7 @@ import {
   resolveFreeTierConfig,
   type Tier,
 } from "./freetier.js";
-import { serverInstructionsForTier } from "./instructions.js";
+import { serverInstructionsFor } from "./instructions.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { logToolRequestId } from "./tools/_log.js";
 import { parseToolsParam, readToolsParam } from "./tools/_tools_param.js";
@@ -230,9 +230,10 @@ export function createMcpServer(
       jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
       // Filter by what this request actually registers: `?tools=` replaces
       // the default listing, so the instructions must not name a tool the
-      // connection cannot call (see `serverInstructionsForTier`).
-      instructions: serverInstructionsForTier(
-        tier,
+      // connection cannot call (see `serverInstructionsFor`). NOT by tier:
+      // the host loads this string once, so a tier-specific variant would
+      // outlive a mid-conversation sign-in (see `instructions.ts`).
+      instructions: serverInstructionsFor(
         resolveToolSet(options.surface, options.requestedToolNames ?? null),
       ),
     },

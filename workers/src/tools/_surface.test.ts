@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { TOOL_REGISTRY } from "./_registry.js";
 import {
   CHATGPT_TOOL_NAMES,
+  FREE_TIER_TOOL_NAMES,
   GENERIC_DEFAULT_TOOL_NAMES,
   isToolOnSurface,
   resolveToolSet,
@@ -25,6 +26,18 @@ describe("surface membership sets", () => {
       "tako_graph_related",
       "tako_search",
     ]);
+  });
+
+  it("the anonymous executable set is tako_search alone, and a subset of the default listing", () => {
+    // A free tool that is not default-listed would be executable but
+    // invisible; a default tool that is free must be one the shared account
+    // can afford. `tako_available_data` fails the second test (see the
+    // constant's comment) and left the set.
+    expect([...FREE_TIER_TOOL_NAMES]).toEqual(["tako_search"]);
+    for (const name of FREE_TIER_TOOL_NAMES) {
+      expect(GENERIC_DEFAULT_TOOL_NAMES.has(name), name).toBe(true);
+      expect(REGISTRY_NAMES.has(name), name).toBe(true);
+    }
   });
 
   it("chatgpt listing is the five submitted tools (spec D2)", () => {
@@ -88,5 +101,30 @@ describe("toolAnnotationsForSurface", () => {
 
   it("chatgpt serves the Apps-review override", () => {
     expect(toolAnnotationsForSurface(tool, "chatgpt").openWorldHint).toBe(false);
+  });
+});
+
+describe("tool descriptions are tier-invariant", () => {
+  // Descriptions (like `initialize` instructions) are loaded by the host once
+  // and survive a mid-conversation sign-in, so a tier-varying claim in one
+  // outlives the state it describes — the sign-in signal belongs only in the
+  // dispatch-time `authRequiredToolResult` (`mcp.ts`). `tako_contents` is the
+  // one exemption: its sentence ("Requires a signed-in connection; anonymous
+  // calls return sign-in instructions") is TRUE on every tier, because the
+  // tool is auth-required outright.
+  const TIER_CLAIM = /anonymous|signed[- ]in|sign[- ]in|Tako account/i;
+
+  it("no description claims tier-varying availability (tako_contents exempt)", () => {
+    for (const tool of TOOL_REGISTRY) {
+      if (tool.name === "tako_contents") continue;
+      expect(TIER_CLAIM.test(tool.description), tool.name).toBe(false);
+    }
+  });
+
+  it("the tako_contents exemption is still earning its place", () => {
+    // If this fails, the sentence was removed — delete the exemption too.
+    const contents = TOOL_REGISTRY.find((t) => t.name === "tako_contents");
+    expect(contents).toBeDefined();
+    expect(TIER_CLAIM.test(contents!.description)).toBe(true);
   });
 });

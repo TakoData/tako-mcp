@@ -36,14 +36,29 @@ export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The complete anonymous EXECUTABLE tool surface. The listing is
- * auth-invariant (spec D4): every default tool stays listed on anonymous
- * connections, and a default tool outside this set answers sign-in
+ * The complete anonymous EXECUTABLE tool surface: `tako_search` alone. The
+ * listing is auth-invariant (spec D4): every default tool stays listed on
+ * anonymous connections, and a default tool outside this set answers sign-in
  * instructions at dispatch time (see the free-tier gate in `mcp.ts`) instead
- * of executing on the shared account. That is two of the four defaults —
- * `tako_contents` and `tako_graph_related` — so an anonymous connection lists
- * four tools and only two of them run. `tako_answer`
- * is opt-in via `?tools=answer` (spec D1) and never executes anonymously.
+ * of executing on the shared account. So an anonymous connection lists four
+ * tools and one of them runs. `tako_answer` is opt-in via `?tools=answer`
+ * (spec D1) and never executes anonymously.
+ *
+ * `tako_available_data` LEFT this set on purpose, and the reason is not
+ * credits. Graph calls are credit-free, so the per-IP limiter (which counts
+ * only calls to tools in this set) was metering a tool that spent nothing.
+ * What graph traffic actually consumes is the shared account's per-user rate
+ * limit in Django (`graph_explore_user_burst`, 180/minute across EVERY
+ * anonymous caller worldwide, since they all authenticate as one key). One
+ * `tako_available_data` call fans out into up to ~9 graph requests
+ * (`graph/search` + a 4-page coverage drill + candidate probes), so roughly
+ * twenty anonymous calls a minute exhausted the bucket for everyone — while
+ * `tako_graph_related`, which makes ONE graph request, was refused. With
+ * this set at `tako_search` alone, anonymous traffic makes zero graph
+ * requests and the tier's only cost is the credit-priced search it meters.
+ * The anonymous tier is a taste of search that converts to sign-in, not a
+ * discovery surface: a refused call returns the sign-in result, which is the
+ * prompt.
  *
  * It lives HERE, not in `freetier.ts`, because `freetier.ts` imports
  * `TOOL_REGISTRY` — the barrel `scripts/gen-registry.ts` WRITES. A generator
@@ -54,7 +69,6 @@ export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
  * imports), so the generator reaches the set without reaching the barrel.
  */
 export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "tako_available_data",
   "tako_search",
 ]);
 

@@ -23,11 +23,11 @@
  *   `app/backend/api/throttling/policy.py` in the monorepo rather than from
  *   here: a copy of that table went stale the moment `tako_answer` moved
  *   behind `?tools=answer` (it named answer, which no anonymous connection
- *   can reach, and omitted `tako_available_data`, which every one can).
+ *   can reach), and again when `tako_available_data` left the free set.
  * - A PER-IP bucket (fairness layer) counting only `tools/call`s that name
- *   `tako_search` or `tako_available_data` — the only requests that spend
- *   Tako credits. A call to any other tool spends none and does not burn the
- *   caller's per-IP quota (it still counts per-colo).
+ *   a tool in `FREE_TIER_TOOL_NAMES` — `tako_search`, the one request that
+ *   spends Tako credits. A call to any other tool spends none and does not
+ *   burn the caller's per-IP quota (it still counts per-colo).
  *   Per-IP keying alone means little for hosted hosts (shared egress
  *   IPs), which is why the platform-wide bound lives in Django.
  *

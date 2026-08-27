@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
-import {
-  FREE_TIER_SERVER_INSTRUCTIONS,
-  SERVER_INSTRUCTIONS,
-  serverInstructionsForTier,
-} from "./instructions.js";
+import { SERVER_INSTRUCTIONS, serverInstructionsFor } from "./instructions.js";
 
 describe("instructions module", () => {
-  it("serves the authenticated text for authenticated and the anonymous text for free", () => {
-    expect(serverInstructionsForTier("authenticated")).toBe(SERVER_INSTRUCTIONS);
-    expect(serverInstructionsForTier("free")).toBe(FREE_TIER_SERVER_INSTRUCTIONS);
+  it("serves one string with no tier parameter", () => {
+    // The host loads `instructions` once at `initialize`; a per-tier variant
+    // outlives a mid-conversation sign-in. The signature is the guard.
+    expect(serverInstructionsFor.length).toBe(0);
+    expect(serverInstructionsFor()).toBe(SERVER_INSTRUCTIONS);
+    expect(serverInstructionsFor(null)).toBe(SERVER_INSTRUCTIONS);
   });
 
-  it("both variants share the opening paragraph", () => {
-    const [opening = ""] = SERVER_INSTRUCTIONS.split("\n");
-    expect(FREE_TIER_SERVER_INSTRUCTIONS.startsWith(opening)).toBe(true);
+  it("carries no tier-specific claim", () => {
+    // What runs anonymously is answered at dispatch (`authRequiredToolResult`),
+    // never in text the host caches in the system prompt.
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/anonymous|sign(ed)?[ -]in|Tako account/i);
   });
 });

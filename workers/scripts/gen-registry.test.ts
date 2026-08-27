@@ -400,7 +400,7 @@ describe("buildToolsDoc", () => {
         : { query: { type: "string", required: true } },
       annotations: m.annotations,
     })),
-    instructions: { authenticated: "AUTH TEXT", anonymous: "ANON TEXT" },
+    instructions: "INSTRUCTIONS TEXT",
     freeTierToolNames: new Set(["tako_search"]),
   });
 
@@ -439,9 +439,10 @@ describe("buildToolsDoc", () => {
     expect(doc).toContain("Runs anonymously (on `/mcp`): yes"); // tako_search is free-tier
   });
 
-  it("includes both instruction variants verbatim", () => {
-    expect(doc).toContain("AUTH TEXT");
-    expect(doc).toContain("ANON TEXT");
+  it("includes the instructions verbatim", () => {
+    // One string for every tier — see `instructions.ts` for why there is
+    // no anonymous variant to render.
+    expect(doc).toContain("INSTRUCTIONS TEXT");
   });
 });
 

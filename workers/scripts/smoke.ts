@@ -25,8 +25,6 @@
  *        a2. `tako_available_data "US GDP"` — summary + a match with node_id (read-only)
  *        b. `tako_answer "US GDP"`        — answer text returned (read-only)
  *        c. `tako_contents {url from search}` — inline data (default) + presigned download_url (mode:"url"), both read-only
- *        d. `tako_credit_balance`         — `details.credit_balance`
- *                                           must be a number or numeric string (read-only)
  *        e. `tako_visualize`              — creates a card (charges 1 credit)
  *   6. Native-card proxy on the card step 5e just created — all three of its
  *      routes, since the feature is only as live as its weakest one:
@@ -260,7 +258,6 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
     const expected = [
       "tako_available_data",
       "tako_contents",
-      "tako_credit_balance",
       "tako_graph_related",
       "tako_search",
     ];
@@ -300,16 +297,18 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
     // No anonymous tako_search case here. It used to carry one refusable input
     // (`include_contents: true`, which billed rows to the shared free account);
     // the D4 split removed it, so anonymous tako_search has nothing left to
-    // refuse — the tool itself runs on the free tier.
+    // refuse — the tool itself runs on the free tier, and is the ONLY tool
+    // that does.
     //
-    // Both of the following are newly default in the allowlist pass, so both are
-    // NEW anonymous surface: listed (the listing is auth-invariant, spec D4) but
-    // outside FREE_TIER_TOOL_NAMES, so each must answer sign-in at dispatch. The
-    // spec's Verification names tako_graph_related by hand for this reason.
+    // Every other default tool is listed (the listing is auth-invariant, spec
+    // D4) but outside FREE_TIER_TOOL_NAMES, so each must answer sign-in at
+    // dispatch. tako_available_data is the newest: it left the free set
+    // because one call fans out into up to ~9 graph requests against the
+    // shared account's per-user graph limit (`_surface.ts`).
     await authRequiredKind(5, "tako_graph_related", { node_id: "smoke" });
     ok("anonymous tako_graph_related → sign-in instructions (auth_required)");
-    await authRequiredKind(6, "tako_credit_balance", {});
-    ok("anonymous tako_credit_balance → sign-in instructions (auth_required)");
+    await authRequiredKind(6, "tako_available_data", { q: "smoke" });
+    ok("anonymous tako_available_data → sign-in instructions (auth_required)");
   }
 }
 
@@ -352,7 +351,7 @@ try {
   // with a useful diff if a registry change drops one of them. We don't
   // assert on the *full* tool list because the surface evolves (e.g.
   // explore_knowledge_graph removal in PR #47).
-  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_available_data", "tako_visualize", "tako_credit_balance", "tako_graph_related"];
+  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_available_data", "tako_visualize", "tako_graph_related"];
   for (const required of requiredTools) {
     if (!toolNames.includes(required)) {
       fail(
@@ -529,41 +528,6 @@ try {
     `tako_contents.download_url is not http(s): ${JSON.stringify(tcUrlFirst?.download_url)}`,
   );
   ok(`tako_contents {url, mode:"url"} → download_url present`);
-
-  // ----- d) tako_credit_balance ------------------------------------------
-  // Asserts `credit_balance` is present and either a number or a numeric
-  // string (DRF can serialize DecimalField as either depending on
-  // `coerce_to_string` — see the loose schema in tako_credit_balance.ts).
-  // A rename or removal of the field on the backend produces a red smoke
-  // instead of a green one with `<unset>` printed.
-  const cbResult = await callOk(client, "tako_credit_balance", {});
-  const cbStructured = cbResult.structuredContent as
-    | { details?: Record<string, unknown> }
-    | undefined;
-  assert(cbStructured, "tako_credit_balance missing structuredContent");
-  assert(
-    cbStructured.details && typeof cbStructured.details === "object",
-    "tako_credit_balance.details is not an object",
-  );
-  const balance = cbStructured.details["credit_balance"];
-  // Reject empty / whitespace-only strings explicitly: `Number("")` and
-  // `Number("   ")` both coerce to `0` (which Number.isFinite happily
-  // accepts), which would otherwise let a backend bug return "" and look
-  // like a real `0`-credit balance. DRF's DecimalField won't produce that
-  // in practice, but the check is free.
-  const balanceNumeric =
-    typeof balance === "number"
-      ? balance
-      : typeof balance === "string" &&
-          balance.trim() !== "" &&
-          Number.isFinite(Number(balance))
-        ? Number(balance)
-        : null;
-  assert(
-    balanceNumeric !== null,
-    `tako_credit_balance.details.credit_balance is not a number or numeric string: ${JSON.stringify(balance)}`,
-  );
-  ok(`tako_credit_balance → details.credit_balance=${balanceNumeric}`);
 
   // ----- e) tako_visualize canary (creates a tiny card; CHARGES 1 CREDIT) ----
   const tvResult = await callOk(client, "tako_visualize", {
