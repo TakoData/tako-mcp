@@ -169,7 +169,7 @@ describe("tako_answer handler", () => {
     ]);
 
     const out = await takoAnswer.handler(
-      { query: "obscure query", sources: ["tako"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
+      { query: "obscure query", sources: ["data"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
 
@@ -183,7 +183,7 @@ describe("tako_answer handler", () => {
     mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     const out = await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
+      { query: "test", sources: ["data"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
       CTX,
     ) as Record<string, unknown>;
 
@@ -202,7 +202,7 @@ describe("tako_answer handler", () => {
     ]);
 
     await expect(
-      takoAnswer.handler({ query: "q", sources: ["tako", "web"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false }, CTX),
+      takoAnswer.handler({ query: "q", sources: ["data", "web"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false }, CTX),
     ).rejects.toThrow(/unexpected wire shape/);
   });
 });
@@ -345,10 +345,10 @@ describe("tako_answer input schema", () => {
     expect(parsed.sources).toEqual(["data", "web"]);
   });
 
-  it("accepts the legacy \"tako\" synonym and folds it onto the data key", async () => {
+  it("folds a sources list naming data onto the data source key", async () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
     await takoAnswer.handler(
-      { query: "q", sources: ["tako"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
+      { query: "q", sources: ["data"], include_contents: false, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
       CTX,
     );
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
@@ -371,7 +371,7 @@ describe("tako_answer input schema", () => {
     const fetchMock = mockFetchSequence([jsonResponse(200, FULL_RESPONSE)]);
 
     await takoAnswer.handler(
-      { query: "test", sources: ["tako"], include_contents: false, preview_rows: 50, country_code: "GB", locale: "en-GB", strict: false },
+      { query: "test", sources: ["data"], include_contents: false, preview_rows: 50, country_code: "GB", locale: "en-GB", strict: false },
       CTX,
     );
 
@@ -746,5 +746,87 @@ describe("tako_answer series-in-first-response (the punt-and-retry fix)", () => 
       CTX,
     );
     expect(out.guidance).toBeUndefined();
+  });
+});
+
+describe("tako_answer sources enum", () => {
+  it('rejects the retired "tako" source alias', () => {
+    expect(takoAnswer.inputSchema.safeParse({ query: "q", sources: ["tako"] }).success).toBe(false);
+    expect(takoAnswer.inputSchema.safeParse({ query: "q", sources: ["data"] }).success).toBe(true);
+  });
+});
+
+describe("tako_answer include_contents fallback matches the schema default", () => {
+  // The ?? in the row-cap expression is reached ONLY by a direct handler call
+  // that bypasses the schema (mcp.ts always parses first). It read `?? true`,
+  // so such a call inlined billed rows for a caller who asked for none — the
+  // opposite of the `false` the published schema advertises.
+  // The full live content shape (see the content-shape regression fixture
+  // above), carrying one real row so the cap is observable.
+  const CARD_WITH_ROWS = {
+    answer: "US GDP was about $29 trillion in 2024.",
+    cards: [
+      {
+        card_id: "abc123",
+        title: "US GDP",
+        embed_url: "https://trytako.com/embed/abc123/",
+        content: {
+          content_format: "json_compact",
+          cost: 0.001,
+          data: null,
+          records: null,
+          dataset: {
+            columns: [
+              { name: "date", type: "date" },
+              { name: "v", type: "number" },
+            ],
+            rows: [["2024-01-01", 29]],
+            total_rows: 1,
+            truncated: false,
+            ref: "https://trytako.com/charts/us-gdp",
+            sources: [{ name: "FRED", index: "data" }],
+            provenance: "query",
+          },
+          url: null,
+          expires_at: null,
+          total_rows: 1,
+          truncated: false,
+          export_pricing: null,
+          source_url: "https://trytako.com/charts/us-gdp",
+        },
+      },
+    ],
+    web_results: [],
+    request_id: "req-cap",
+  };
+
+  it("advertises include_contents: false", () => {
+    expect(takoAnswer.inputSchema.parse({ query: "q" }).include_contents).toBe(false);
+  });
+
+  it("inlines no rows when a direct handler call omits include_contents", async () => {
+    mockFetchSequence([jsonResponse(200, CARD_WITH_ROWS)]);
+    // Deliberately omits include_contents — the shape mcp.ts never produces and
+    // the ?? exists for.
+    const out = await takoAnswer.handler(
+      { query: "q", sources: ["data"], preview_rows: 50, country_code: "US", locale: "en-US", strict: false } as never,
+      CTX,
+    );
+    const content = (out.cards[0] as { content?: Record<string, unknown> } | undefined)?.content;
+    expect(content?.dataset).toBeNull();
+    expect(content?.records).toBeNull();
+    expect(content?.data).toBeNull();
+    // The pointer survives so the model still knows rows exist behind the card.
+    expect(content?.total_rows).toBe(1);
+  });
+
+  it("still inlines rows when the caller asks for them", async () => {
+    mockFetchSequence([jsonResponse(200, CARD_WITH_ROWS)]);
+    const out = await takoAnswer.handler(
+      { query: "q", sources: ["data"], include_contents: true, preview_rows: 50, country_code: "US", locale: "en-US", strict: false },
+      CTX,
+    );
+    const content = (out.cards[0] as { content?: { dataset?: { rows?: unknown[] } } } | undefined)?.content;
+    expect(content?.dataset?.rows).toHaveLength(1);
   });
 });

@@ -63,11 +63,11 @@ export const inputSchema = z.object({
   // _loose_array.ts.
   sources: looseArray(
     z
-      .array(z.enum(["data", "web", "tako"]))
+      .array(z.enum(["data", "web"]))
       .min(1)
       .default(["data", "web"])
       .describe(
-        'Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako\'s data graph. ("tako" is a legacy synonym for "data".)',
+        'Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako\'s data graph.',
       ),
     // The label names the file the schema is declared in.
     { field: "tako_agent.sources", commaSeparated: true },
@@ -175,10 +175,10 @@ type AgentInput = z.infer<typeof inputSchema>;
  * Exported for the contract-guard test.
  *
  * The MCP flat `sources` array maps to the backend's `source_indexes` field
- * (a rename). The legacy `"tako"` synonym is folded onto the canonical `"data"`
- * here so the body matches the generated enum (["data","web"]). The `satisfies`
- * annotation is the build-time guard: if the backend request contract changes
- * (new required field, renamed key, changed enum), this line fails to compile.
+ * (a rename); the two enums are now identical, so the list passes straight
+ * through. The `satisfies` annotation is the build-time guard: if the backend
+ * request contract changes (new required field, renamed key, changed enum),
+ * this line fails to compile.
  *
  * Parity note: the generated AnswerAgentRunRequest has `source_indexes` as
  * optional (the backend defaults to ["data","web"] when absent), but we always
@@ -189,7 +189,7 @@ type AgentInput = z.infer<typeof inputSchema>;
 export function buildAgentBody(input: AgentInput): z.input<typeof AnswerAgentRunRequest> {
   const body: z.input<typeof AnswerAgentRunRequest> = {
     query: input.query,
-    source_indexes: input.sources.map((s) => (s === "tako" ? "data" : s)),
+    source_indexes: [...input.sources],
     effort: "medium",
   };
   if (input.thread_id !== undefined) body.thread_id = input.thread_id;
@@ -200,7 +200,7 @@ export function buildAgentBody(input: AgentInput): z.input<typeof AnswerAgentRun
 export async function dispatchAgentRun(
   ctx: ToolContext,
   query: string,
-  sources: Array<"data" | "web" | "tako">,
+  sources: Array<"data" | "web">,
   threadId?: string,
 ): Promise<string> {
   // AnswerAgentRunRequest takes a flat `source_indexes` list (defaults to

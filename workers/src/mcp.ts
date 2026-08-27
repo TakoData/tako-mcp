@@ -830,12 +830,19 @@ function registerTool(
         );
         return authRequiredToolResult(options.origin, options.signInHint);
       }
-      // Anonymous-input gate: a free tool can still carry an input shape
-      // that needs a signed-in connection — `include_contents: true`
-      // inlines billed rows (spec D12). Refused calls are unmetered: the
-      // reject runs before the handler touches Django, and
-      // `isMeteredJsonRpcBody` reads THIS SAME hook so the per-IP limiter
-      // does not charge for a call that never runs.
+      // Anonymous-input gate: a free tool can still carry an input shape that
+      // needs a signed-in connection, so the tool is free but that ONE input is
+      // not. NO TOOL DECLARES THIS HOOK TODAY — `tako_search`'s
+      // `include_contents: true` was the only declarant, and D4 moved rows to
+      // `tako_contents`, which is auth-required outright. `freetier.test.ts`
+      // pins the empty set so a future gate is added deliberately rather than
+      // by accident.
+      //
+      // The branch stays because it is the only UNMETERED refusal path there
+      // is: the reject runs before the handler touches Django, and
+      // `isMeteredJsonRpcBody` reads THIS SAME hook so the per-IP limiter does
+      // not charge for a call that never runs. Rebuilding that later is far
+      // more expensive than keeping ten dormant lines.
       if (callCtx.tier === "free" && tool.anonymousInputRejects !== undefined) {
         const reason = tool.anonymousInputRejects(
           input as Record<string, unknown>,

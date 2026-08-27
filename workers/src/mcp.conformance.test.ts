@@ -374,11 +374,12 @@ describe("realistic payloads validate against the published schema", () => {
         ],
         other_matches: [],
         confident: true,
+        // No node_ids / strict: tako_search takes neither after the D4 split,
+        // and the published schema is strict about additional properties, so a
+        // stale pin here fails conformance rather than shipping silently.
         next_call: {
           tool: "tako_search",
           query: "NVIDIA Corporation Revenue",
-          node_ids: ["mt::revenue::1"],
-          strict: true,
         },
       }),
     ],

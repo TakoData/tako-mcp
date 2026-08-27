@@ -543,11 +543,13 @@ export function buildTieSummary(input: {
  * A directly runnable follow-up fetch, ready to copy.
  *
  * `strict` is not decoration. Measured on staging (2026-07-29): pinning
- * `node_ids` at the default `strict: false` did not steer retrieval at all — a
- * deliberately WRONG node changed nothing, and pinning a metric node without
+ * `node_ids` at the default `strict: false` did not change which card came back
+ * — a deliberately WRONG node changed nothing, and pinning a metric node without
  * strict returned a DIFFERENT metric's card. The same metric node WITH
- * `strict: true` returned exactly that metric's card. A handle without strict
- * is the variant that does nothing.
+ * `strict: true` returned exactly that metric's card. A handle without strict is
+ * the WEAKER variant, not an inert one: the backend applies the pin (a dedicated
+ * MatchBucket plus a deliberately non-dominant score — see pinned_nodes.py), it
+ * just does not outrank the organic winner.
  *
  * `node_ids` carries the METRIC node alone. `strict` is an OR over the pinned
  * nodes, so adding the entity id re-admits every other card for that entity
@@ -564,9 +566,17 @@ export interface NextCall {
    * a handle labelled "run verbatim" that names it is a dead end.
    */
   tool: "tako_search";
+  /**
+   * The EXACT canonical name of each half, which is what recovers cards.
+   *
+   * No pin rides along. `tako_search` takes no `node_ids` / `strict` after the
+   * D4 split, so a handle carrying them would be rejected by the very tool it
+   * names — and the measurement says the name is the better arm anyway: a pin
+   * returned FEWER cards than the same query unpinned on 11 of 20 pairs
+   * (staging 2026-07-31), because the graph holds near-duplicate metric nodes
+   * where only one twin carries cards.
+   */
   query: string;
-  node_ids: string[];
-  strict: boolean;
 }
 
 // A coverage list at or under this size is treated as unambiguous enough for
@@ -582,28 +592,22 @@ function exampleSearch(matches: CoverageMatch[]): NextCall | null {
   const m = matches.find((x) => !x.unavailable && x.coverage.items.length > 0);
   if (!m) return null;
   const first = m.coverage.items[0] as CoverageItem;
-  // Which node is the METRIC depends on what resolved. An entity match's
-  // coverage lists metrics (so the metric is the coverage entry); a metric
-  // match's coverage lists entities (so the metric is the match itself).
-  // Pinning the metric — never the entity — is what makes `strict` precise.
+  // An entity match's coverage lists metrics; a metric match's lists entities.
+  // Both name sources are the graph's own canonical strings, which is what the
+  // handle is for now that no pin rides along.
   const entityMatch = m.coverage.kind === "metrics";
   if (entityMatch) {
     // Both halves come from the SAME match — the entity and one of its own
     // metrics — so the pairing is real.
-    return {
-      tool: "tako_search",
-      query: `${m.name} ${first.name}`,
-      node_ids: [first.node_id],
-      strict: true,
-    };
+    return { tool: "tako_search", query: `${m.name} ${first.name}` };
   }
   // METRIC match: the caller named the measure. Do NOT pair it with
   // coverage.items[0] — a metric's entity list is frequently generic rather
   // than a list of real trackers (`Passenger Cruise Days` lists NVIDIA, Apple,
   // Amazon and Microsoft), which produced "NVIDIA Corporation Passenger Cruise
-  // Days" as something to run verbatim. Query the metric alone and let the pin
-  // do the narrowing; the caller can add an entity themselves.
-  return { tool: "tako_search", query: m.name, node_ids: [m.node_id], strict: true };
+  // Days" as something to run verbatim. Query the metric alone; the caller can
+  // add an entity themselves.
+  return { tool: "tako_search", query: m.name };
 }
 
 /**
@@ -692,44 +696,26 @@ export const toRef = (n: { id: string; name: string; type: string }): ResolvedRe
  * Null when no metric resolved: a handle pointing at a metric we could not
  * find would spend a priced call on a guess.
  */
-export function buildPairNextCall(
-  metricQuery: string,
-  pair: PairResolution,
-  opts?: {
-    /**
-     * Emit the handle WITHOUT the pin. Set on an `unlinked` verdict — the
-     * PINNED metric is not on the entity's own metric list, so the pinned form
-     * is the one we expect to return 0 cards. Scoped to that node, not to the
-     * list: `unlinked` ships beside a routinely non-empty
-     * `entityMetricMatches`, and dropping the pin is right precisely because
-     * the pin is the part with evidence against it. Measured (staging 2026-07-31, 20
-     * handles × 3 repeats): 11 of 20 retrieved FEWER cards pinned than
-     * unpinned, because `strict` is a hard filter over a graph holding
-     * near-duplicate metric nodes where only one twin carries cards (KE-812).
-     * On `unlinked` we skip straight to the form that works rather than
-     * spending the caller's priced call on the one two signals say will miss.
-     */
-    unpinned?: boolean;
-  },
-): NextCall | null {
+export function buildPairNextCall(pair: PairResolution): NextCall | null {
   // No entity → the summary is routing the caller elsewhere (a bare-domain
   // tako_search); a handle here would contradict it.
   if (pair.metric === null || pair.entity === null) return null;
-  // The RESOLVED entity name, not the caller's `q`: it is the canonical form
-  // the graph knows ("Carnival Corporation Ltd." for `q="Carnival"`), which is
-  // what makes the query text line up with the pinned metric node.
-  const subject = pair.entity.name;
-  // `strict` without a pin steers nothing (measured), so the unpinned form
-  // drops both together rather than leaving a flag that does no work.
-  if (opts?.unpinned === true) {
-    return { tool: "tako_search", query: `${subject} ${metricQuery}`, node_ids: [], strict: false };
-  }
-  return {
-    tool: "tako_search",
-    query: `${subject} ${metricQuery}`,
-    node_ids: [pair.metric.node_id],
-    strict: true,
-  };
+  // BOTH halves are the graph's RESOLVED names, never the caller's `q` or
+  // `metric` strings: "Carnival Corporation Ltd." for q="Carnival", "Gross
+  // Margin (%)" for metric="gross margin".
+  //
+  // The metric half used to be the caller's phrase, because the pinned node
+  // carried the precision. With tako_search taking no pin, the canonical name
+  // is the ONLY steering signal left — and it is the arm the measurement
+  // favours: the canonical name recovered cards on 9 of 15 pairs, while a pin
+  // returned FEWER cards than the same query unpinned on 11 of 20 (staging
+  // 2026-07-31, 20 handles × 3 repeats, KE-812) because the graph holds
+  // near-duplicate metric nodes where only one twin carries cards.
+  //
+  // That measurement is also why there is no longer an `unpinned` variant for
+  // the `unlinked` verdict: with no pin on any path, both arms collapsed into
+  // this one.
+  return { tool: "tako_search", query: `${pair.entity.name} ${pair.metric.name}` };
 }
 
 /**
@@ -818,7 +804,7 @@ export function buildPairSummary(input: {
       entityMetricMatches.length > 0
         ? ` The metrics ${oneLine(pair.entity.name)} itself holds nearest to "${metricQuery}": ${entityMetricMatches.map(oneLine).join(", ")}.`
         : "";
-    return `Resolved the entity, but NO metric confidently matches "${metricQuery}" — the closest names Tako holds are shown below and are probably NOT what you asked for.${near} Pick one deliberately (pin its node_id with strict:true), or conclude Tako does not track this measure.`;
+    return `Resolved the entity, but NO metric confidently matches "${metricQuery}" — the closest names Tako holds are shown below and are probably NOT what you asked for.${near} Pick one deliberately and search on its exact name, or conclude Tako does not track this measure.`;
   }
   if (verified === "unlinked") {
     // The failure this whole probe exists to catch: the NAME fits perfectly and
@@ -829,10 +815,10 @@ export function buildPairSummary(input: {
       entityMetricMatches.length > 0
         ? ` The nearest metrics ${oneLine(pair.entity.name)} DOES have: ${entityMetricMatches.map(oneLine).join(", ")}.`
         : "";
-    return `Resolved "${entityQuery}" + "${metricQuery}", but ${oneLine(pair.metric.name)} is NOT on ${oneLine(pair.entity.name)}'s own metric list — the name fits, the graph holds no edge, so a pinned call will probably return 0 cards.${near}${listClause(1)} The next_call below therefore drops the pin. If it is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
+    return `Resolved "${entityQuery}" + "${metricQuery}", but ${oneLine(pair.metric.name)} is NOT on ${oneLine(pair.entity.name)}'s own metric list — the name fits, the graph holds no edge, so a card for this pair is unlikely.${near}${listClause(1)} Run the next_call below anyway — it is the only free way to be sure. If it is empty, stop there: report the gap rather than rephrasing further.`;
   }
   if (verified === "pair") {
-    return `Resolved "${entityQuery}" + "${metricQuery}", and ${oneLine(pair.metric.name)} IS on ${oneLine(pair.entity.name)}'s own metric list — the strongest free confirmation available, though it still does not guarantee a chart exists.${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node.`;
+    return `Resolved "${entityQuery}" + "${metricQuery}", and ${oneLine(pair.metric.name)} IS on ${oneLine(pair.entity.name)}'s own metric list — the strongest free confirmation available, though it still does not guarantee a chart exists.${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, stop there: report the gap rather than rephrasing further.`;
   }
   // The zero-card advice used to read "Tako has no card for this pair — that is
   // the definitive answer, do not rephrase and retry". Measured on staging
@@ -848,15 +834,29 @@ export function buildPairSummary(input: {
   //   "Apple Inc. P/E ratio"       pinned [0,0,0]  unpinned [3,3,3]  -> P/E Annual, 32.55x
   //   "United States CPI"          pinned [0,0,0]  unpinned [3,3,3]  -> 98.7% of GDP
   //
-  // So the retry worth prescribing is not "the same call again" but "the same
-  // query WITHOUT the pin". It stays bounded — one specific retry, still no
-  // rephrase-and-vary loop, which is the thrash the old wording existed to stop
-  // (after a zero-card answer agents called tako_contents 56 times).
+  // That measurement retired the "definitive" wording; the D4 split then retired
+  // the retry that replaced it. No path pins any more, so "the same query without
+  // the pin" IS the next_call, and prescribing it a second time buys a
+  // byte-identical priced search.
+  //
+  // The ADVICE is terminal — one call, then stop. The CLAIM is not, and keeping
+  // those apart is the whole point of the current wording. "There was never a pin
+  // to blame" removes the old mechanism for a false zero; it does not turn one
+  // fuzzy retrieval into proof of absence, and the same measurement put the
+  // canonical name at 9 of 15 pairs, not 15. A conclusive-negative phrasing has
+  // now been removed here three times — e8d5a15 ("stop calling a zero-card pin
+  // definitive"), c287554 ("absence must be established, not assumed"), and this
+  // one, which reinstated it on the new ground above. So: say "report the gap",
+  // never "Tako holds no chart for this pair". Keep the table below: it is the
+  // only record of why `strict` left the simple tool, and the bound it set still
+  // holds — one call, no rephrase-and-vary loop, which is the thrash the old
+  // wording existed to stop (after a zero-card answer agents called tako_contents
+  // 56 times).
   //
   // The run itself was driven by hand against staging and is NOT checked in, so
   // the per-handle table above is the record — treat it as the citation, not as a
   // pointer to a script. Root cause (the near-duplicate metric nodes) is KE-812.
-  return `Resolved "${entityQuery}" + "${metricQuery}".${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, run the SAME query once more with \`node_ids\` removed — the pin is a hard filter and Tako sometimes holds the data under a sibling metric node. If that is also empty, Tako has no card for this pair: report the gap rather than rephrasing further.`;
+  return `Resolved "${entityQuery}" + "${metricQuery}".${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, stop there: report the gap rather than rephrasing further.`;
 }
 
 /** A `q` that looks like a hostname (has a dot, no spaces). */
@@ -923,12 +923,12 @@ export function buildSummary(input: {
   if (handle) {
     blocks.push(
       "",
-      `The exact names are listed under each match above, and their node ids ride in structuredContent.matches[].coverage.items[]. To pull one as a chart or dataset, run the ready-made \`next_call\` verbatim — tako_search with query "${handle.query}", the METRIC node pinned and strict:true — or compose your own entity + metric query the same way.`,
+      `The exact names are listed under each match above, and their node ids ride in structuredContent.matches[].coverage.items[]. To pull one as a chart or dataset, run the ready-made \`next_call\` verbatim — tako_search with query "${handle.query}" — or compose your own entity + metric query the same way.`,
     );
   } else if (example) {
     blocks.push(
       "",
-      `The exact names are listed under each match above. Pick the one you actually need and pull it with tako_search as entity + metric (e.g. "${example.query}"). To land on exactly that metric, pin ITS node id ALONE from structuredContent.matches[].coverage.items[] with strict:true — adding the entity's node id widens the filter back out.`,
+      `The exact names are listed under each match above. Pick the one you actually need and pull it with tako_search as entity + metric (e.g. "${example.query}"). Search on its EXACT name as listed — the canonical name is what recovers cards.`,
     );
   }
 

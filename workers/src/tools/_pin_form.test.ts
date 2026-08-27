@@ -2,8 +2,8 @@
  * Guards ONE invariant across every model-facing surface: the pin form we
  * advertise is the one measured to work.
  *
- * Measured on prod (2026-07-29): a pin at the default `strict:false` does not
- * steer retrieval at all — a deliberately WRONG node changed nothing — and
+ * Measured on prod (2026-07-29): a pin at the default `strict:false` did not
+ * change which card came back — a deliberately WRONG node changed nothing — and
  * because `strict` is an OR over pinned nodes, including the entity's id
  * re-admits every other card for that entity, which once turned "no such card"
  * into a plausible-looking WRONG metric. Only the METRIC node ALONE, with
@@ -99,14 +99,83 @@ describe("advertised pin form", () => {
   it("covers the tools that actually carry pin advice today", () => {
     // Without this, the loops above pass vacuously if a refactor drops the
     // advice entirely — silence is not the same as correctness here.
-    // (`tako_contents` and the card's `values_hint` no longer advise a
-    // pin: their advice routed to `tako_answer`, which is opt-in since
-    // spec D1 — naming an unregistered tool sends the model into "tool
-    // not found".)
+    //
+    // `tako_answer` is the only tool left that both ADVISES a pin and ACCEPTS
+    // one. `tako_search` dropped out with the D4 split: it no longer takes
+    // `node_ids` / `strict`, so pin advice in its description would prescribe
+    // parameters it rejects. (`tako_contents` and the card's `values_hint`
+    // dropped out earlier, when their advice routed to `tako_answer` and answer
+    // went opt-in — naming an unregistered tool sends the model into "tool not
+    // found".)
     const advising = TOOL_REGISTRY.filter((t) => ADVISES_PINNING.test(t.description)).map(
       (t) => t.name,
     );
-    expect(advising).toContain("tako_search");
     expect(advising).toContain("tako_answer");
+    expect(advising).not.toContain("tako_search");
+    // Every tool that advises a pin must also accept one, or the advice is a
+    // phantom parameter. Derived, never hand-listed.
+    //
+    // Checked against the PUBLISHED JSON Schema, not the top-level zod shape:
+    // tako_search_advanced carries node_ids nested inside its `data` source
+    // block, mirroring the API, and a shape-key check called that a phantom.
+    for (const name of advising) {
+      const tool = TOOL_REGISTRY.find((t) => t.name === name);
+      const published = JSON.stringify(
+        z.toJSONSchema(tool!.inputSchema, { io: "input" }),
+      );
+      expect(published.includes('"node_ids"'), `${name} advises a pin it does not accept`).toBe(true);
+    }
+  });
+
+  // The CONVERSE of the rule above, and it catches what that rule structurally
+  // cannot. `ADVISES_PINNING` matches an INSTRUCTION to pin; it doesn't match
+  // prose that merely DESCRIBES one. "both halves resolved and the pinned metric
+  // passed the name test" names no node id, so the loops above read it as
+  // innocent — and two strings of exactly that shape shipped in
+  // tako_available_data's published OUTPUT schema, a channel the field walk
+  // above cannot reach either (it reads takoCardSchema alone). A tool that
+  // cannot accept a pin has no business naming one, whatever the grammar.
+  //
+  // Pin-capability is DERIVED, never listed: a tool accepts a pin iff its
+  // published input schema carries `node_ids`. Nested counts —
+  // tako_search_advanced puts it inside `data`, mirroring the API. Today the
+  // pin-capable set is tako_answer and tako_search_advanced, both opt-in.
+  //
+  // Two deliberate narrowings, each load-bearing:
+  //   `\bstrict`, not `strict` — the unanchored form matches "Restrict web
+  //     results to a category", tako_search_advanced's own `category` text.
+  //   `node_ids`, not `node_id` — the SINGULAR is legitimate everywhere. It is
+  //     the traversal handle tako_graph_related takes and tako_available_data
+  //     emits, and banning it would forbid the correct advice.
+  it("no tool that cannot accept a pin publishes pin vocabulary", () => {
+    const PIN_VOCAB = /\bnode_ids\b|\bstrict\b|\bpin(?:ned|ning|s)?\b/i;
+    const describedIn = (json: string): string[] =>
+      [...json.matchAll(/"description":"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1] as string);
+
+    let checked = 0;
+    for (const tool of TOOL_REGISTRY) {
+      const inputJson = JSON.stringify(z.toJSONSchema(tool.inputSchema, { io: "input" }));
+      if (inputJson.includes('"node_ids"')) continue;
+      checked += 1;
+      const published: Array<[string, string]> = [
+        ["description", tool.description],
+        ...describedIn(inputJson).map((d): [string, string] => ["inputSchema", d]),
+      ];
+      if (tool.outputSchema !== undefined) {
+        const outputJson = JSON.stringify(
+          z.toJSONSchema(tool.outputSchema as z.ZodType, { io: "output" }),
+        );
+        published.push(
+          ...describedIn(outputJson).map((d): [string, string] => ["outputSchema", d]),
+        );
+      }
+      for (const [channel, text] of published) {
+        expect(text, `${tool.name}.${channel} names a pin it cannot accept`).not.toMatch(
+          PIN_VOCAB,
+        );
+      }
+    }
+    // Not vacuous: most of the registry cannot accept a pin.
+    expect(checked).toBeGreaterThan(4);
   });
 });

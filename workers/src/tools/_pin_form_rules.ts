@@ -120,7 +120,7 @@ export function pinFormProblem(
     return "advises pinning every node id on the card (the measured no-op); pin the METRIC node id ALONE";
   }
   if (options.requireStrict && !NAMES_STRICT_TRUE.test(sentence)) {
-    return "advises pinning without naming `strict: true` (strict:false is the default and does not steer retrieval)";
+    return "advises pinning without naming `strict: true` (strict:false only boosts the pinned node, measured as not enough to land the metric)";
   }
   return null;
 }

@@ -18,6 +18,7 @@ import tako_available_data from "./tako_available_data.js";
 import tako_contents from "./tako_contents.js";
 import tako_graph_related from "./tako_graph_related.js";
 import tako_search from "./tako_search.js";
+import tako_search_advanced from "./tako_search_advanced.js";
 import tako_visualize from "./tako_visualize.js";
 
 // Cast at the barrel boundary because function parameters are invariant:
@@ -31,5 +32,6 @@ export const TOOL_REGISTRY: ReadonlyArray<AnyToolModule> = [
   tako_contents as unknown as AnyToolModule,
   tako_graph_related as unknown as AnyToolModule,
   tako_search as unknown as AnyToolModule,
+  tako_search_advanced as unknown as AnyToolModule,
   tako_visualize as unknown as AnyToolModule,
 ];

@@ -75,7 +75,7 @@ export type LooseArrayOptions = {
    * validation error can catch that, because nothing in that path validates
    * URL syntax.
    *
-   * A closed enum has no such hazard: no member of `["data","web","tako"]`
+   * A closed enum has no such hazard: no member of `["data","web"]`
    * contains a comma, so every part either matches a member or fails loudly.
    */
   commaSeparated?: boolean;

@@ -112,9 +112,9 @@ const DESCRIPTION = [
   'When `q` names both an entity and a metric ("US core PCE" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.',
   "On the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.",
   "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).",
-  "Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. To land on exactly one metric, pin THAT node id alone with strict:true and name the entity in the query text; the call then returns that metric's card or nothing. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten (query + the metric node + strict) — run it verbatim.",
+  "Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.",
   "A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.",
-  "This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, retry the same query WITHOUT node_ids before concluding Tako has no data — the pin is a hard filter and the data is often held under a sibling node.",
+  "This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -139,7 +139,7 @@ const inputSchema = z.object({
   // tie with `next_call: null`). A caller raising it to "see more options" is
   // entitled to know it can get a different answer, not just a longer one.
   limit: z.number().int().min(1).max(MAX_CANDIDATES).optional().describe(
-    "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` pins, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
+    "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` names, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
   ),
 });
 
@@ -151,11 +151,12 @@ const resolvedRefSchema = z.object({
   type: z.string(),
 });
 
+// Mirrors `NextCall` in _available_data.ts. No node_ids / strict: tako_search
+// takes neither after the D4 split, and a handle labelled "run verbatim" that
+// the named tool rejects is worse than no handle at all.
 const nextCallSchema = z.object({
   tool: z.enum(["tako_search"]),
   query: z.string(),
-  node_ids: z.array(z.string()),
-  strict: z.boolean(),
 });
 
 const coverageGroupSchema = z.object({
@@ -190,16 +191,21 @@ const coverageMatchSchema = z.object({
 // the slim structuredContent shape (the verdict, the matches with their node
 // ids, and next_call) so hosts that count structuredContent toward context
 // don't pay for the full name lists twice.
-const fullOutputSchema = z.object({
-  found: z.boolean().describe(
-    "Means different things on the two paths, because only one of them can check coverage for free. Without `metric` (discovery): at least one match has live data COVERAGE — not mere node resolution; a resolved node with no coverage, or whose coverage lookup failed, yields false. With `metric` (lookup): the resolved entity HOLDS something matching — the pinned metric is on its own metric list (`verified: pair`), or its metrics contain the caller's phrase. Both names resolving isn't enough: `unlinked` with no matching list yields false. A metric that resolved nowhere globally still yields true when the entity's own list carries the phrase. Read `verified` for what was actually checked. Either way, running `next_call` is what confirms retrievable data exists — and 0 cards from it is NOT conclusive on its own: retry without `node_ids` first, since the pin is a hard filter over a graph that holds near-duplicate metric nodes.",
-  ),
-  verified: z
-    .enum(["coverage", "pair", "unlinked", "resolution"])
-    .optional()
-    .describe(
-      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled (discovery path). `pair`: the metric is on the entity's own metric list — the strongest free evidence available. `unlinked`: the entity's list was checked and the PINNED metric is not on it, so a pinned call will probably return 0 cards; the emitted next_call drops the pin. It is a verdict on that one node, not on the list: `unlinked` with `found: true` means your `metric` phrase did match entries, just not the pinned one, and `coverage` names them. `resolution`: no pair evidence — the check was skipped or failed, so treat it exactly as before. None of these means a chart exists.",
-    ),
+// NO field here carries a `.describe()`, and none may. This schema types the
+// handler's return; `availableDataSlimOutputShape` is what `tools/list`
+// publishes, so only that copy reaches a model — and only that copy is guarded
+// (`_pin_form.test.ts` walks published schemas, so pin vocabulary added here
+// would pass clean while the same string in the slim shape fails).
+//
+// Two hand-maintained copies of the same model-facing prose drift, and this one
+// already did: `next_call` kept a description whose tail said "the entity has
+// few enough metrics that the top one is unambiguous" while the PUBLISHED copy
+// said "Null when no metric resolved" — the accurate half was the one no model
+// could read. The condition now lives in the published copy alone. Read the
+// semantics there.
+export const fullOutputSchema = z.object({
+  found: z.boolean(),
+  verified: z.enum(["coverage", "pair", "unlinked", "resolution"]).optional(),
   query: z.string(),
   summary: z.string(),
   matches: z.array(coverageMatchSchema),
@@ -219,11 +225,7 @@ const fullOutputSchema = z.object({
       coverage_capped: z.boolean().optional(),
     }),
   ),
-  next_call: nextCallSchema
-    .nullable()
-    .describe(
-      "Ready-to-run follow-up: call this tool with exactly this query, node_ids and strict. `node_ids` holds the METRIC node only — strict is an OR over pinned nodes, so adding the entity id would widen the filter back out. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null when `q` named only an entity — pass `metric` to get a handle.",
-    ),
+  next_call: nextCallSchema.nullable(),
   // Lookup path (`metric` supplied) — the resolved pair and its runners-up.
   metric_query: z.string().optional(),
   entity: resolvedRefSchema.nullable().optional(),
@@ -871,20 +873,16 @@ const tako_available_data = {
         }),
         matches,
         other_matches: [],
-        // UNLINKED DROPS THE PIN, it does not withhold the handle. Two
-        // independent signals now say a pinned call will miss, and the measured
-        // pinned-vs-unpinned table (see buildPairSummary) says the unpinned form
-        // frequently lands — so spend the caller's one priced call on the form
-        // that works instead of on the one we expect to fail.
+        // No pinned/unpinned fork any more: the handle never pins, so an
+        // `unlinked` verdict and a confirmed pair produce the same shape. What
+        // `unlinked` still changes is the SUMMARY, which tells the model the
+        // graph holds no edge between the two halves.
         //
         // The `pair.metric !== null` half is DEFENSIVE, not load-bearing:
         // `buildPairNextCall` already returns null on a null metric. It states
         // the precondition where the reader can see it, next to a `found` that
         // can now be true with no metric at all.
-        next_call:
-          pair.metric !== null && pinnedConfident
-            ? buildPairNextCall(metricQuery, pair, { unpinned: verified === "unlinked" })
-            : null,
+        next_call: pair.metric !== null && pinnedConfident ? buildPairNextCall(pair) : null,
         entity: pair.entity,
         metric: pair.metric,
         entity_alternates: pair.entity_alternates,

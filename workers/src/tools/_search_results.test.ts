@@ -9,10 +9,14 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { ContentItem } from "../generated/schemas.js";
+
 import {
+  CONTENT_META_KEYS,
+  CONTENT_PAYLOAD_KEYS,
+  NARROWER_WEB_ATTEMPT,
   buildSearchOutput,
   hoistSourceGlossary,
-  NARROWER_WEB_ATTEMPT,
   orderCardsByUsefulness,
   slimCard,
   slimCardContent,
@@ -345,7 +349,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
   it("attaches the full anti-retry protocol when cards AND web_results are both empty", () => {
-    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false);
     // The load-bearing instruction: do not re-issue reworded searches.
     expect(out.guidance).toMatch(/do not retry/i);
     expect(out.guidance).toMatch(/tako_available_data/);
@@ -355,7 +359,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
     // The common default-source miss: no data card, some web hits. This is
     // exactly the "reword and retry for a chart" loop case, so guidance must
     // not be silently skipped here.
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"], false);
     expect(out.guidance).toMatch(/web_results/);
     // The verdict is scoped to the graph, not to the whole call.
     expect(out.guidance).toMatch(/DATA GRAPH only/);
@@ -369,7 +373,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // carve-out must be explicit — a model reading this cannot be left to infer
   // that web refinement is still allowed.
   it("does not ban web re-searching when zero cards come back with web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"], false);
     const g = out.guidance ?? "";
     expect(g).toContain("Re-searching is NOT banned here");
     // Names the fan-out that wins these questions.
@@ -383,7 +387,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // has zero cards by construction, so the graph verdict below would be built
   // from evidence that does not exist.
   it("renders no graph verdict for a web-only search that DID return web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"]);
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"], false);
     const g = out.guidance ?? "";
     expect(g).toMatch(/WEB source only/);
     expect(g).not.toMatch(/DATA GRAPH only/);
@@ -398,7 +402,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   });
 
   it("tailors the both-empty protocol for a data-only search (web fallback allowed on the single retry)", () => {
-    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"]);
+    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"], false);
     expect(out.guidance).toMatch(/tako_available_data/);
     expect(out.guidance).toMatch(/"web"/);
     // No web-axis carve-out here: the web was never searched, so there is no
@@ -412,7 +416,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // situation, opposite verdict, on the most common Tako-has-nothing path — so it
   // is now one shared constant rather than a sentence in one of the two tools.
   it("allows the same single narrower web attempt tako_answer allows, when web was searched", () => {
-    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false);
     expect(out.guidance).toContain(NARROWER_WEB_ATTEMPT);
     expect(out.guidance).toMatch(/WEB axis only/);
   });
@@ -422,7 +426,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // This branch used to ban that lever — "do NOT retry this query or
   // rephrasings of it" — which left the model with nothing to do at all.
   it("tells a web-only search to refine, and claims nothing about graph coverage", () => {
-    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"]);
+    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"], false);
     const g = out.guidance ?? "";
     expect(g).not.toMatch(/node_id/);
     expect(g).toMatch(/Refine and re-search/i);
@@ -432,13 +436,17 @@ describe("buildSearchOutput — zero-card guidance", () => {
     expect(g).toMatch(/Stop only once/i);
   });
 
-  it("treats the legacy \"tako\" source alias as data", () => {
-    const out = buildSearchOutput([], [], "req-6", null, ENV, ["tako"]);
-    expect(out.guidance).toMatch(/node_id/);
+  it("takes the DATA-verdict branch for a data-source search", () => {
+    // Was "treats the legacy tako alias as data" and keyed on /node_id/ in the
+    // guidance; the alias is gone and so is the pin recipe, so pin the branch
+    // by the verdict it is the only one to state.
+    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false);
+    expect(out.guidance).toMatch(/tako_available_data/);
+    expect(out.guidance).toMatch(/do NOT retry/i);
   });
 
   it("omits guidance when any card is present", () => {
-    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"]);
+    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false);
     expect(out.guidance).toBeUndefined();
   });
 });
@@ -722,7 +730,7 @@ describe("orderCardsByUsefulness", () => {
     const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
     const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00");
     const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00");
-    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"]);
+    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false);
     expect(out.cards[0]?.card_id).toBe("fresh_second");
     // The chart the host renders must not disagree with the document.
     expect(out.pub_id).toBe("fresh_second");
@@ -755,14 +763,172 @@ describe("orderCardsByUsefulness — as-of presence", () => {
   });
 });
 
-describe("zero-card guidance routes back to tako_answer, not tako_contents", () => {
+describe("zero-card guidance routes to the canonical name, never to a pin", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
-  it("names tako_answer's retry and warns off tako_contents", () => {
-    for (const sources of [["data", "web"], ["data"]]) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources).guidance ?? "";
+  it("sends the model to tako_available_data for the exact name", () => {
+    for (const sources of [["data", "web"], ["data"]] as ReadonlyArray<Array<"data" | "web">>) {
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false).guidance ?? "";
       expect(g).toContain("tako_available_data");
-      expect(g).toContain("strict:true");
+      expect(g).toMatch(/canonical name/i);
     }
+  });
+
+  it("never advises a pin on an UNPINNED call — tako_search takes none after the D4 split", () => {
+    // This guidance used to interpolate PINNED_RETRY. Advice for `node_ids` /
+    // `strict` on a tool that rejects both is a phantom parameter, and it is
+    // invisible to phantom_tool.test.ts — that guard reads published schemas
+    // and descriptions, and this is a runtime VALUE.
+    //
+    // `strictPin: false` is what `tako_search` always produces (it cannot send
+    // either field), so this is that tool's every path.
+    for (const sources of [["data", "web"], ["data"], ["web"]] as ReadonlyArray<Array<"data" | "web">>) {
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false).guidance ?? "";
+      expect(g, `sources=${sources.join(",")}`).not.toMatch(/node_ids|strict/i);
+    }
+  });
+
+  it("blames the FILTER, not coverage, when the request carried a strict pin", () => {
+    // Reachable only from tako_search_advanced. Without this branch the model
+    // reads "the data is not covered, rewording will not change that" after a
+    // hard filter returned nothing — a coverage verdict the request cannot
+    // support (KE-812: pinned handles returned FEWER cards on 11 of 20 pairs),
+    // and one that contradicts that tool's own description.
+    const g = buildSearchOutput([], [], "req", null, ENV, ["data", "web"], true).guidance ?? "";
+    expect(g).toMatch(/hard filter/i);
+    expect(g).toMatch(/node_ids/);
+    // The verdict the unpinned branch gives must NOT appear here.
+    expect(g).not.toMatch(/does not cover this query/i);
+    expect(g).not.toMatch(/do NOT retry/i);
+  });
+
+  it("keeps the pin branch off the web-only path, which never applied a data filter", () => {
+    const g = buildSearchOutput([], [], "req", null, ENV, ["web"], true).guidance ?? "";
+    expect(g).not.toMatch(/hard filter/i);
+  });
+});
+
+describe("slimCardContent and the card_json payload", () => {
+  const cardJson = {
+    content_format: "card_json",
+    card_data: { card_type: "timeseries", records: [1, 2, 3] },
+    card_data_schema: { title: "Timeseries", type: "object" },
+    total_rows: 3,
+    cost: 0.01,
+  };
+
+  it("drops card_data when the cap says drop every row", () => {
+    // Before this, card_data was not one of the three destructured payload
+    // keys, so it rode through in `meta` — a "drop all rows" call shipped the
+    // whole rich object anyway.
+    const out = slimCardContent(cardJson as never, null) as Record<string, unknown>;
+    expect(out.card_data).toBeNull();
+    // Metadata survives so the "rows available, call tako_contents" signal does.
+    expect(out.content_format).toBe("card_json");
+    expect(out.total_rows).toBe(3);
+    // card_data_schema is the SHAPE, not the payload: a url-mode or quote
+    // response returns it beside a null card_data, so it must not be dropped.
+    expect(out.card_data_schema).toEqual({ title: "Timeseries", type: "object" });
+  });
+
+  it('keeps card_data verbatim under the "all" cap', () => {
+    const out = slimCardContent(cardJson as never, "all") as Record<string, unknown>;
+    expect(out.card_data).toEqual({ card_type: "timeseries", records: [1, 2, 3] });
+  });
+
+  it('keeps every row payload verbatim under the "all" cap', () => {
+    // "all" is what tako_search_advanced passes: it sends sources.data.max_rows
+    // on the wire, so the backend already applied the caller's cap and a
+    // second cap here could only clamp BELOW what they paid for.
+    const dense = {
+      content_format: "json_compact",
+      cost: 0.01,
+      dataset: {
+        columns: [{ name: "t", type: "datetime" }, { name: "v", type: "number" }],
+        rows: [["d0", 0], ["d1", 1], ["d2", 2]],
+        total_rows: 3,
+        truncated: false,
+        ref: "r",
+        sources: [],
+        provenance: "query",
+      },
+    };
+    const out = slimCardContent(dense as never, "all") as Record<string, unknown>;
+    expect((out.dataset as { rows: unknown[] }).rows).toHaveLength(3);
+  });
+
+  it("still caps a numeric budget to the most-recent rows", () => {
+    const dense = {
+      content_format: "json_records",
+      cost: 0.01,
+      records: [{ t: "2024-01-01", v: 1 }, { t: "2024-02-01", v: 2 }, { t: "2024-03-01", v: 3 }],
+    };
+    const out = slimCardContent(dense as never, 2) as Record<string, unknown>;
+    expect(out.records).toHaveLength(2);
+    expect(out.truncated).toBe(true);
+  });
+});
+
+// The card_data leak was a hand-listed set falling behind a generated one:
+// slimCardContent destructured three payload keys while ContentItem had four, so
+// `rowCap: null` — "drop every row" — shipped the whole card_json object. Adding a
+// fourth literal fixes that instance and leaves the class open, because nothing
+// notices a FIFTH channel.
+//
+// These two tests close it by binding CONTENT_PAYLOAD_KEYS at both ends: to the
+// function's real behaviour, and to the backend's real schema. Neither is
+// checkable by reading the destructure, which is why the classification is a
+// declared const now.
+describe("the payload/metadata split cannot drift", () => {
+  it("slimCardContent nulls every key classified as a payload", () => {
+    // Built per-key rather than all at once: a single object would pass even if
+    // the function only handled one of the four.
+    for (const key of CONTENT_PAYLOAD_KEYS) {
+      const content = { content_format: "json_compact", cost: 1, [key]: { some: "payload" } };
+      const out = slimCardContent(content as unknown as ResultContent, null) as unknown as Record<
+        string,
+        unknown
+      >;
+      expect(out[key], `slimCardContent leaked ${key} at rowCap null`).toBeNull();
+    }
+  });
+
+  it("keeps every metadata key through the same drop", () => {
+    const content = {
+      content_format: "json_compact",
+      cost: 2,
+      total_rows: 300,
+      truncated: true,
+      card_data_schema: { title: "shape" },
+      manifest: [{ name: "t" }],
+      source_url: "https://trytako.com/c/x",
+      data: "rows",
+    };
+    const out = slimCardContent(content as unknown as ResultContent, null) as unknown as Record<
+      string,
+      unknown
+    >;
+    for (const key of ["content_format", "cost", "total_rows", "truncated", "card_data_schema", "manifest", "source_url"]) {
+      expect(out[key], `slimCardContent dropped metadata ${key}`).not.toBeNull();
+    }
+  });
+
+  it("classifies every generated ContentItem key as payload or metadata", () => {
+    // The guard that actually catches a NEW backend channel. A fifth payload key
+    // upstream lands here as an unclassified name, and the author has to decide
+    // which side it belongs on — instead of it defaulting into `meta` and riding
+    // out on a call that asked for no rows.
+    const classified = new Set<string>([...CONTENT_PAYLOAD_KEYS, ...CONTENT_META_KEYS]);
+    const generated = Object.keys(ContentItem.shape);
+    expect(generated.length).toBeGreaterThan(10);
+    const unclassified = generated.filter((k) => !classified.has(k)).sort();
+    expect(
+      unclassified,
+      "new ContentItem key(s): classify as a row payload (add to CONTENT_PAYLOAD_KEYS and the slimCardContent destructure) or as metadata (CONTENT_META_KEYS)",
+    ).toEqual([]);
+    // And nothing classified has disappeared upstream — a stale name here would
+    // make the check above pass while covering a key that no longer exists.
+    const stale = [...classified].filter((k) => !generated.includes(k)).sort();
+    expect(stale, "classified key(s) no longer in ContentItem").toEqual([]);
   });
 });

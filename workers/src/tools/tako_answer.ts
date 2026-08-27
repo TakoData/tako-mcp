@@ -54,9 +54,9 @@ const DESCRIPTION = [
   "",
   "Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.",
   "",
-  "Reach past it for a different job: `tako_search` for breadth, and for values too — it takes the same `include_contents: true`; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.",
+  "Reach past it for a different job: `tako_search` for breadth — it inlines no rows at all, so values there come from `tako_contents` on the cards it finds; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.",
   "",
-  "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin, or a pin without strict, does not steer retrieval). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
+  "Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin widens the filter back out, and a pin without strict only boosts — measured as not enough to land the metric). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.",
   "",
   "Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.",
 ].join("\n");
@@ -74,10 +74,10 @@ const inputSchema = z.object({
   // _loose_array.ts.
   sources: looseArray(
     z
-      .array(z.enum(["data", "web", "tako"]))
+      .array(z.enum(["data", "web"]))
       .min(1)
       .default(["data", "web"])
-      .describe('Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. ("tako" is a legacy synonym for "data".)'),
+      .describe('Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph.'),
     { field: "tako_answer.sources", commaSeparated: true },
   ),
   // Defaults to FALSE even though agent traces argue the other way: the prose
@@ -194,7 +194,7 @@ export function buildAnswerBody(input: Input): z.input<typeof AnswerRequest> {
   // Typed against the contract (not Record<string, …>) so a renamed/added
   // `Sources` key or a new required per-source sub-field breaks compilation here.
   const sources: NonNullable<z.input<typeof AnswerRequest>["sources"]> = {};
-  if (input.sources.includes("data") || input.sources.includes("tako")) {
+  if (input.sources.includes("data")) {
     const data: NonNullable<
       NonNullable<z.input<typeof AnswerRequest>["sources"]>["data"]
     > = { include_contents: input.include_contents ?? false };
@@ -328,8 +328,10 @@ const takoAnswer = {
     // always drop web page text (billed per page — fetched via tako_contents).
     // Slims BOTH model-visible channels at once (content.text +
     // structuredContent are derived from this). The ?? guards direct handler
-    // calls that bypass the schema's defaults.
-    const cap = (input.include_contents ?? true)
+    // calls that bypass the schema's defaults, so it must MATCH the schema
+    // default: `?? true` inlined billed rows for a caller who asked for none,
+    // contradicting the `false` the published schema advertises.
+    const cap = (input.include_contents ?? false)
       ? (input.preview_rows ?? INLINE_PREVIEW_ROW_CAP)
       : null;
     // Order cards most-useful-first (see orderCardsByUsefulness) — the
@@ -349,7 +351,11 @@ const takoAnswer = {
     const { cards, glossary } = hoistSourceGlossary(
       ordered.map((c) => slimCard(c, cap)),
     );
-    const web_results = parsed.data.web_results.map(slimWebResult);
+    // Always false: this tool pins `sources.web.include_contents = false` in
+    // fixedInputs, so the backend returns no page text to keep. Passed
+    // explicitly because slimWebResult's flag is required — a bare
+    // `.map(slimWebResult)` would hand it the array index.
+    const web_results = parsed.data.web_results.map((w) => slimWebResult(w, false));
     return {
       ...parsed.data,
       cards,

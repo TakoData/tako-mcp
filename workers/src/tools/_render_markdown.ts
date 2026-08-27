@@ -55,7 +55,9 @@ export const searchSlimOutputShape = z.looseObject({
   cards: z
     .array(z.looseObject({}))
     .optional()
-    .describe("The data cards — the payload. Each carries its title, description (headline value), facts, and inline rows under `content`."),
+    .describe(
+      "The data cards — the payload. Each carries its title, description (headline value), and facts. Rows ride under `content` only on a call that explicitly asked to inline them; `tako_search` never does, so read a card's rows with `tako_contents` on its url — and only when it is `exportable: true`.",
+    ),
   // The snippet contract lives HERE, not on `webResultSchema.snippet`. That
   // schema is the wire-parse guard and the internal shape; this loose one is
   // what `tools/list` advertises, so a per-element description there reaches
@@ -436,7 +438,7 @@ const resolvedRefShape = z.object({
 
 const coverageItemShape = z.object({
   name: z.string(),
-  node_id: z.string().describe("Pin this in a follow-up's node_ids WITH strict:true."),
+  node_id: z.string().describe("Graph node id. Hand it to tako_graph_related to explore what else the graph holds on this node."),
 });
 
 /** Advertised (slim) structuredContent shape for tako_available_data: the
@@ -447,13 +449,13 @@ export const availableDataSlimOutputShape = z.looseObject({
   found: z
     .boolean()
     .describe(
-      "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): the resolved entity HOLDS something matching — the pinned metric is on its own metric list, or its metrics contain your phrase. Both names resolving isn't enough: a checked list with nothing matching reads false. A metric that resolved nowhere globally still reads true when the entity's own list carries the phrase. Read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that.",
+      "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): the resolved entity HOLDS something matching — the resolved metric is on its own metric list, or its metrics contain your phrase. Both names resolving isn't enough: a checked list with nothing matching reads false. A metric that resolved nowhere globally still reads true when the entity's own list carries the phrase. Read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that.",
     ),
   verified: z
     .enum(["coverage", "pair", "unlinked", "resolution"])
     .optional()
     .describe(
-      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and the PINNED metric is not on it, so pinning it would probably return 0 cards; the emitted next_call therefore drops the pin. It says nothing about the rest of the list — `unlinked` and `found: true` sit together whenever your `metric` phrase matched entries the pinned node is not one of, and `coverage` then names them. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
+      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and the resolved metric is not on it, so a card for this pair is unlikely. It says nothing about the rest of the list — `unlinked` and `found: true` sit together whenever your `metric` phrase matched entries the resolved node is not one of, and `coverage` then names them. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
     ),
   query: z.string(),
   matches: z
@@ -491,7 +493,7 @@ export const availableDataSlimOutputShape = z.looseObject({
       }),
     )
     .describe(
-      "The resolved matches and their coverage, each entry carrying the node id to pin. To fetch a specific metric precisely: call tako_search with node_ids=[<the metric's node_id>] AND strict:true — an entity-only pin without strict does not steer retrieval.",
+      "The resolved matches and their coverage, each entry carrying its canonical name and graph node id. To fetch a specific metric, call tako_search with the EXACT canonical name as the query — the canonical name is what recovers cards. A node id is for traversal via tako_graph_related.",
     ),
   // Optional in the ADVERTISED shape, always present in the emitted value —
   // the same rule `items_truncated` follows: the handler's FULL output carries
@@ -509,18 +511,16 @@ export const availableDataSlimOutputShape = z.looseObject({
     )
     .optional()
     .describe(
-      "The other nodes `q` resolved to, best first, each with the id to pin in a follow-up or to explore with tako_graph_related. coverage_total is present only for candidates that were coverage-checked; the text channel carries their aliases.",
+      "The other nodes `q` resolved to, best first, each with its canonical name to search on and its id to explore with tako_graph_related. coverage_total is present only for candidates that were coverage-checked; the text channel carries their aliases.",
     ),
   next_call: z
     .object({
       tool: z.enum(["tako_search"]),
       query: z.string(),
-      node_ids: z.array(z.string()),
-      strict: z.boolean(),
     })
     .nullable()
     .describe(
-      "Ready-to-run follow-up: call this tool with exactly this query, node_ids and strict. node_ids holds the METRIC node only — strict is an OR over pinned nodes, so adding the entity id widens the filter back out. Null when no metric resolved.",
+      "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null otherwise — pass `metric` to get a handle.",
     ),
   // Lookup path (`metric` supplied): the resolved pair. Optional because the
   // discovery path returns `matches` instead.
@@ -529,7 +529,7 @@ export const availableDataSlimOutputShape = z.looseObject({
   metric: resolvedRefShape
     .nullable()
     .optional()
-    .describe("The metric whose node_id belongs in the follow-up's node_ids."),
+    .describe("The resolved metric, by its canonical graph name — the name the follow-up query uses."),
   entity_alternates: z.array(resolvedRefShape).optional(),
   metric_alternates: z
     .array(resolvedRefShape)
@@ -583,7 +583,7 @@ export interface AvailableDataFullOutput {
     coverage_total?: number | undefined;
     coverage_capped?: boolean | undefined;
   }>;
-  next_call: { tool: "tako_search"; query: string; node_ids: string[]; strict: boolean } | null;
+  next_call: { tool: "tako_search"; query: string } | null;
   /** False when the gate failed open — the matches are low-confidence. */
   confident?: boolean | undefined;
   metric_query?: string | undefined;

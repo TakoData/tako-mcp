@@ -371,8 +371,11 @@ export interface ToolModule<
    * model-facing sentence when the anonymous call must be refused
    * (answered with `authRequiredToolResult`, unmetered upstream);
    * return `undefined` to admit the call. Exists for inputs that are
-   * fine authenticated but priced/gated anonymously — `tako_search`'s
-   * `include_contents: true` is the worked example (spec D12).
+   * fine authenticated but priced/gated anonymously.
+   *
+   * NO TOOL DECLARES ONE TODAY. `tako_search`'s `include_contents: true` was
+   * the worked example until the D4 split removed the parameter. Kept as the
+   * only unmetered-refusal path — see the note in `isMeteredJsonRpcBody`.
    */
   anonymousInputRejects?: (input: Record<string, unknown>) => string | undefined;
   handler: (input: z.infer<InputSchema>, ctx: ToolContext) => Promise<Output>;

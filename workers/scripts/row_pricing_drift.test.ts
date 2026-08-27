@@ -58,7 +58,15 @@ function sourceFiles(dir: string): string[] {
 // coverage check" — 41 characters, and "free" modifying a CALL — into a
 // failure. No threshold separates that from a real violation, because what
 // "free" modifies is not a distance.
-const ROW_WORD = String.raw`(?:rows?|csv)`;
+// ANCHORED, and it must stay anchored. Unanchored, `row` matched inside ordinary
+// words — "th\u0072ow", "g\u0072ow", "na\u0072row", "b\u0072owser" — so any sentence
+// putting one of those within 40 characters of "free" failed as a row-pricing
+// claim. It cost a false failure on slimWebResult's docstring, whose sentence
+// reads "returns it free of charge\") and used to throw the result away": 27
+// characters from `free` to the `row` in `throw`, and nothing to do with rows.
+// The boundaries don't weaken the real catch: "free 20-row preview" still
+// matches, because `-` is a word boundary.
+const ROW_WORD = String.raw`\b(?:rows?|csv)\b`;
 const NEAR_FREE = new RegExp(
   String.raw`(?:\bfree\b[^.]{0,40}?${ROW_WORD}|${ROW_WORD}[^.]{0,40}?\bfree\b)`,
   "i",
@@ -124,6 +132,38 @@ function offendingText(contextLines: readonly string[]): boolean {
   }
   return false;
 }
+
+describe("the row-proximity rule itself", () => {
+  // This guard's whole value is its regex, and the regex has been wrong in both
+  // directions: too narrow (a wrapped claim split across lines) and too broad
+  // (`row` inside `throw`). Pin both directions here, or the next reword of
+  // ROW_WORD lands with no signal either way.
+  it("catches a real free-row claim however it is spelled", () => {
+    for (const claim of [
+      "returns the first 20 rows free of charge",
+      "a free 20-row preview",
+      "the csv is free",
+      "rows are delivered free",
+    ]) {
+      expect(NEAR_FREE.test(claim), claim).toBe(true);
+    }
+  });
+
+  it("doesn't fire on `row` inside an ordinary word", () => {
+    for (const innocent of [
+      'returns it free of charge") and used to throw the result away',
+      "free, and the list can grow without bound",
+      "a free call with a narrow query",
+      "free page text in the browser",
+    ]) {
+      expect(NEAR_FREE.test(innocent), innocent).toBe(false);
+    }
+  });
+
+  it("leaves `free` about a CALL or a TIER alone", () => {
+    expect(NEAR_FREE.test("tako_available_data is free")).toBe(false);
+  });
+});
 
 describe("no copy calls a delivered row free", () => {
   const files = sourceFiles(SRC);

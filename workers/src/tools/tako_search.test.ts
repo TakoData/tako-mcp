@@ -25,8 +25,7 @@ import { z } from "zod";
 
 import type { Env } from "../env.js";
 import { SearchRequest } from "../generated/schemas.js";
-import type { ToolContext } from "./types.js";
-import { INLINE_PREVIEW_ROW_CAP, MAX_PREVIEW_ROWS } from "./_search_results.js";
+import type { AnyToolModule, ToolContext } from "./types.js";
 import tako_search, { buildSearchBody } from "./tako_search.js";
 import {
   bodyOf,
@@ -44,20 +43,13 @@ const CTX: ToolContext = {
   surface: "generic",
 };
 
-// Defaults the handler expects post-zod parse (the MCP framework applies
-// schema defaults before invoking the handler, so direct handler calls
-// must pass the resolved shape — `sources` included). NOTE: the SCHEMA
-// default for include_contents is now `true`; we pin it `false` here so the
-// bulk of the request-mapping tests exercise the pointers-only path — the
-// default-true + row-preview behavior is covered by its own tests below.
+// The one default the handler expects post-zod parse. The MCP framework
+// applies schema defaults before invoking the handler, so a direct handler
+// call must pass the resolved shape — and after the D4 trim `sources` is the
+// only field that has one. Everything else is omitted from the wire body when
+// the caller omits it, so there is nothing to pin here.
 const DEFAULTS = {
-  sources: ["data"] as ("data" | "web" | "tako")[],
-  count: 10,
-  include_contents: false,
-  preview_rows: 20,
-  country_code: "US",
-  locale: "en-US",
-  strict: false,
+  sources: ["data"] as ("data" | "web")[],
 };
 
 afterEach(() => {
@@ -123,173 +115,149 @@ describe("tako_search content-shape regression (format -> content_format)", () =
   });
 });
 
-describe("tako_search input schema", () => {
-  it("defaults count to 10", () => {
-    const parsed = tako_search.inputSchema.safeParse({ query: "x" });
-    expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.count).toBe(10);
+describe("tako_search is the SIMPLE tool (spec D4)", () => {
+  it("exposes exactly query, sources, country_code and locale", () => {
+    expect(Object.keys(tako_search.inputSchema.shape).sort()).toEqual([
+      "country_code",
+      "locale",
+      "query",
+      "sources",
+    ]);
   });
 
-  it("defaults sources to [\"data\",\"web\"]", () => {
-    const parsed = tako_search.inputSchema.safeParse({ query: "x" });
-    expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.sources).toEqual(["data", "web"]);
-  });
-
-  it("defaults include_contents to false (spec D11 — matches the raw v3 API)", () => {
-    const parsed = tako_search.inputSchema.safeParse({ query: "x" });
-    expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.include_contents).toBe(false);
-  });
-
-  it("anonymousInputRejects refuses include_contents: true with both exits, admits everything else", () => {
-    const reason = tako_search.anonymousInputRejects?.({ include_contents: true });
-    expect(reason).toMatch(/retry without include_contents/i);
-    expect(reason).toMatch(/sign in/i);
-    expect(tako_search.anonymousInputRejects?.({})).toBeUndefined();
-    expect(
-      tako_search.anonymousInputRejects?.({ include_contents: false }),
-    ).toBeUndefined();
-  });
-
-  it("accepts the legacy \"tako\" synonym in the sources enum", () => {
-    const parsed = tako_search.inputSchema.safeParse({ query: "x", sources: ["tako"] });
-    expect(parsed.success).toBe(true);
-  });
-
-  it("defaults preview_rows to INLINE_PREVIEW_ROW_CAP and bounds it at 1..MAX_PREVIEW_ROWS", () => {
-    const parsed = tako_search.inputSchema.safeParse({ query: "x" });
-    expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.preview_rows).toBe(INLINE_PREVIEW_ROW_CAP);
-    expect(tako_search.inputSchema.safeParse({ query: "x", preview_rows: MAX_PREVIEW_ROWS }).success).toBe(true);
-    expect(tako_search.inputSchema.safeParse({ query: "x", preview_rows: 0 }).success).toBe(false);
-    expect(tako_search.inputSchema.safeParse({ query: "x", preview_rows: MAX_PREVIEW_ROWS + 1 }).success).toBe(false);
-  });
-
-  it("accepts effort=fast", () => {
-    const parsed = tako_search.inputSchema.safeParse({
+  it("declares no defaults of its own beyond sources", () => {
+    // `sources` keeps a default because the Worker READS it — to pick which
+    // per-source blocks to send and which zero-card guidance branch applies.
+    // It is not a value forwarded to the API.
+    expect(tako_search.inputSchema.parse({ query: "x" })).toEqual({
       query: "x",
-      effort: "fast",
+      sources: ["data", "web"],
     });
-    expect(parsed.success).toBe(true);
   });
 
-  it("accepts effort=instant", () => {
-    const parsed = tako_search.inputSchema.safeParse({
-      query: "x",
-      effort: "instant",
-    });
-    expect(parsed.success).toBe(true);
+  it('rejects the retired "tako" source alias', () => {
+    expect(tako_search.inputSchema.safeParse({ query: "x", sources: ["tako"] }).success).toBe(false);
+    expect(tako_search.inputSchema.safeParse({ query: "x", sources: ["data"] }).success).toBe(true);
   });
 
-  it("rejects effort=deep", () => {
-    const parsed = tako_search.inputSchema.safeParse({
-      query: "x",
-      effort: "deep",
-    });
-    expect(parsed.success).toBe(false);
+  it("runs anonymously with no input gate, because rows come from tako_contents", () => {
+    // The property is absent from the literal type once the tool stops
+    // declaring it, so read it through the erased view the registry uses.
+    const asModule = tako_search as unknown as AnyToolModule;
+    expect(asModule.anonymousInputRejects).toBeUndefined();
+  });
+
+  it("declares exactly one fixed input: the web highlights override", () => {
+    expect(tako_search.fixedInputs).toEqual([
+      {
+        field: "sources.web.highlights",
+        value: "true",
+        note: expect.stringContaining("API default is false") as unknown as string,
+      },
+    ]);
   });
 });
 
-describe("tako_search request body", () => {
-  it("posts to /api/v3/search with a per-source sources object (no flat source_indexes/output_settings)", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
-    ]);
+describe("tako_search request body sends only what the caller asked for", () => {
+  const emptyResponse = () =>
+    mockFetchSequence([jsonResponse(200, { cards: [], web_results: [], request_id: "r" })]);
 
-    await tako_search.handler({ query: "gold price", ...DEFAULTS }, CTX);
+  it("posts to /api/v3/search with a per-source sources object", async () => {
+    const fetchMock = emptyResponse();
+    await tako_search.handler({ query: "gold price", sources: ["data"] }, CTX);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const req = requestFrom(fetchMock.mock.calls[0]);
     expect(new URL(req.url).pathname).toBe("/api/v3/search/");
     const body = await bodyOf(req);
-    expect(body.sources).toEqual({ data: { count: 10, include_contents: false } });
+    expect(body.query).toBe("gold price");
     expect(body.source_indexes).toBeUndefined();
     expect(body.output_settings).toBeUndefined();
-    expect(body.query).toBe("gold price");
   });
 
-  it("maps sources [\"data\",\"web\"] to both keys of the sources object", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
-    ]);
-
-    await tako_search.handler(
-      { query: "x", ...DEFAULTS, sources: ["data", "web"] },
-      CTX,
-    );
+  it("sends each per-source block EMPTY except the one opinionated web override", async () => {
+    // The deleted overrides: count 10 on both sources (API default 5) and
+    // snippet_max_chars 2000 (API default 4000 on /v3/search). Both were tuned
+    // when inlining was free and neither had a rationale in the tree.
+    const fetchMock = emptyResponse();
+    await tako_search.handler({ query: "x", sources: ["data", "web"] }, CTX);
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.sources).toEqual({
-      data: { count: 10, include_contents: false },
-      web: { count: 10, include_contents: false, snippet_max_chars: 2000, highlights: true },
-    });
+    expect(body.sources).toEqual({ data: {}, web: { highlights: true } });
   });
 
-  it("folds the legacy \"tako\" synonym onto the data key", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
-    ]);
-
-    await tako_search.handler({ query: "x", ...DEFAULTS, sources: ["tako"] }, CTX);
+  it("omits the web block entirely on a data-only search", async () => {
+    const fetchMock = emptyResponse();
+    await tako_search.handler({ query: "x", sources: ["data"] }, CTX);
 
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.sources).toEqual({ data: { count: 10, include_contents: false } });
+    expect(body.sources).toEqual({ data: {} });
   });
 
-  it("sets include_contents on the DATA source when requested, but never on web (billed per page)", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
-    ]);
-
-    await tako_search.handler(
-      { query: "x", ...DEFAULTS, sources: ["data", "web"], include_contents: true },
-      CTX,
-    );
-
-    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.sources).toEqual({
-      data: { count: 10, include_contents: true },
-      // web is pinned false regardless of the flag — page text is billed per
-      // page and fetched on demand via tako_contents, never auto-inlined.
-      web: { count: 10, include_contents: false, snippet_max_chars: 2000, highlights: true },
-    });
-  });
-
-  it("omits effort from the body when not provided", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
-    ]);
-
-    await tako_search.handler({ query: "x", ...DEFAULTS }, CTX);
-
-    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
+  it("omits country_code, locale and effort when the caller omits them", () => {
+    const body = buildSearchBody({ query: "x", sources: ["data", "web"] });
+    expect("country_code" in body).toBe(false);
+    expect("locale" in body).toBe(false);
     expect("effort" in body).toBe(false);
   });
 
-  it("passes effort=instant through to the body", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
-    ]);
-
-    await tako_search.handler(
-      { query: "x", ...DEFAULTS, effort: "instant" },
-      CTX,
-    );
-
-    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.effort).toBe("instant");
+  it("passes country_code and locale through when the caller sets them", () => {
+    const body = buildSearchBody({
+      query: "x",
+      sources: ["data"],
+      country_code: "GB",
+      locale: "en-GB",
+    });
+    expect(body.country_code).toBe("GB");
+    expect(body.locale).toBe("en-GB");
   });
 
-  it("maps count into each selected source", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { cards: [], web_results: [], request_id: "r" }),
+  it("never inlines rows: the card keeps its pointer, not its payload", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [
+          {
+            card_id: "abc123",
+            title: "US GDP",
+            webpage_url: "https://trytako.com/charts/us-gdp",
+            content: {
+              content_format: "json_compact",
+              cost: 0.001,
+              data: null,
+              records: null,
+              dataset: {
+                columns: [
+                  { name: "date", type: "date" },
+                  { name: "v", type: "number" },
+                ],
+                rows: [["2024-01-01", 29]],
+                total_rows: 1,
+                truncated: false,
+                ref: "https://trytako.com/charts/us-gdp",
+                sources: [{ name: "FRED", index: "data" }],
+                provenance: "query",
+              },
+              url: null,
+              expires_at: null,
+              total_rows: 1,
+              truncated: false,
+              export_pricing: null,
+              source_url: "https://trytako.com/charts/us-gdp",
+            },
+          },
+        ],
+        web_results: [],
+        request_id: "r-rows",
+      }),
     ]);
 
-    await tako_search.handler({ query: "x", ...DEFAULTS, count: 5 }, CTX);
-
-    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]));
-    expect(body.sources).toEqual({ data: { count: 5, include_contents: false } });
+    const out = await tako_search.handler({ query: "x", sources: ["data"] }, CTX);
+    const content = out.cards[0]?.content as Record<string, unknown> | undefined;
+    expect(content?.dataset).toBeNull();
+    expect(content?.records).toBeNull();
+    expect(content?.data).toBeNull();
+    // The rows-available pointer survives so the model knows to call tako_contents.
+    expect(content?.total_rows).toBe(1);
   });
 });
 
@@ -510,171 +478,31 @@ describe("tako_search widget + contract guard", () => {
   });
 });
 
-describe("tako_search graph grounding", () => {
-  it("maps node_ids + strict into sources.data", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, { cards: [], web_results: [], request_id: "req-g" }),
-    ]);
-
-    await tako_search.handler(
-      {
-        query: "Tesla revenue",
-        sources: ["data"],
-        count: 10,
-        preview_rows: 20,
-        include_contents: false,
-        country_code: "US",
-        locale: "en-US",
-        node_ids: ["tesla-x1", "rev-9"],
-        strict: true,
-      },
-      CTX,
-    );
-
-    const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
-    expect(body.sources).toEqual({
-      data: {
-        count: 10,
-        include_contents: false,
-        node_ids: ["tesla-x1", "rev-9"],
-        strict: true,
-      },
+describe("tako_search takes no graph pin (moved to tako_search_advanced)", () => {
+  it("strips node_ids and strict rather than 400-ing a caller that still sends them", () => {
+    // z.object() strips unknown keys, so a client written against the old
+    // schema keeps working — it just stops pinning. That is the friendlier
+    // break for a pre-launch surface than a -32602 on every call.
+    const parsed = tako_search.inputSchema.parse({
+      query: "q",
+      node_ids: ["tesla-x1"],
+      strict: true,
     });
+    expect(parsed).toEqual({ query: "q", sources: ["data", "web"] });
   });
 
-  it("omits node_ids/strict when not provided", async () => {
+  it("never sends node_ids or strict on the wire", async () => {
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { cards: [], web_results: [], request_id: "req-h" }),
     ]);
-    await tako_search.handler(
-      { query: "q", ...DEFAULTS },
-      CTX,
-    );
+    await tako_search.handler({ query: "q", ...DEFAULTS }, CTX);
     const body = await bodyOf(requestFrom(fetchMock.mock.calls[0]!));
-    expect(body.sources).toEqual({ data: { count: 10, include_contents: false } });
+    expect(body.sources).toEqual({ data: {} });
   });
+});
 
-  it("caps a card's inline row preview to the INLINE_PREVIEW_ROW_CAP most-recent rows when include_contents is on", async () => {
-    mockFetchSequence([
-      jsonResponse(200, {
-        cards: [
-          {
-            card_id: "cpi",
-            title: "US Core CPI",
-            webpage_url: "https://trytako.com/c/cpi",
-            content: {
-              content_format: "json_compact",
-              cost: 0.001,
-              total_rows: 300,
-              truncated: true,
-              dataset: {
-                columns: [{ name: "t", type: "datetime" }, { name: "v", type: "number" }],
-                rows: Array.from({ length: 300 }, (_v, i) => [`d${i}`, i]),
-                total_rows: 300,
-                truncated: true,
-                ref: "cpi-ref",
-                sources: [],
-                provenance: "query",
-              },
-            },
-          },
-        ],
-        web_results: [],
-        request_id: "req-cap",
-      }),
-    ]);
-
-    // include_contents defaults true; call without pinning it false.
-    const out = await tako_search.handler(
-      { query: "cpi", sources: ["data"], count: 10, include_contents: true, preview_rows: INLINE_PREVIEW_ROW_CAP, country_code: "US", locale: "en-US", strict: false },
-      CTX,
-    );
-
-    const ds = (out.cards[0]?.content as { dataset: { rows: unknown[] } }).dataset;
-    expect(ds.rows).toHaveLength(INLINE_PREVIEW_ROW_CAP);
-    // Kept the MOST-RECENT rows (tail of the series).
-    expect(ds.rows[INLINE_PREVIEW_ROW_CAP - 1]).toEqual(["d299", 299]);
-    // Metadata preserved so the model knows more is available (priced).
-    expect((out.cards[0]?.content as Record<string, unknown>).total_rows).toBe(300);
-    expect((out.cards[0]?.content as Record<string, unknown>).truncated).toBe(true);
-  });
-
-  it("preview_rows raises the inline cap per call (50 → 50 most-recent rows survive)", async () => {
-    mockFetchSequence([
-      jsonResponse(200, {
-        cards: [
-          {
-            card_id: "cpi",
-            title: "US Core CPI",
-            webpage_url: "https://trytako.com/c/cpi",
-            content: {
-              content_format: "json_compact",
-              cost: 0.001,
-              total_rows: 300,
-              truncated: true,
-              dataset: {
-                columns: [{ name: "t", type: "datetime" }, { name: "v", type: "number" }],
-                rows: Array.from({ length: 300 }, (_v, i) => [`d${i}`, i]),
-                total_rows: 300,
-                truncated: true,
-                ref: "cpi-ref",
-                sources: [],
-                provenance: "query",
-              },
-            },
-          },
-        ],
-        web_results: [],
-        request_id: "req-cap-50",
-      }),
-    ]);
-
-    const out = await tako_search.handler(
-      { ...DEFAULTS, query: "cpi", include_contents: true, preview_rows: 50 },
-      CTX,
-    );
-
-    const ds = (out.cards[0]?.content as { dataset: { rows: unknown[] } }).dataset;
-    expect(ds.rows).toHaveLength(50);
-    expect(ds.rows[49]).toEqual(["d299", 299]); // still the most-recent tail
-  });
-
-  it("preview_rows is inert when include_contents is false (rows still dropped)", async () => {
-    mockFetchSequence([
-      jsonResponse(200, {
-        cards: [
-          {
-            card_id: "cpi",
-            title: "US Core CPI",
-            content: {
-              content_format: "json_compact",
-              cost: 0.001,
-              total_rows: 300,
-              truncated: true,
-              dataset: {
-                columns: [{ name: "t", type: "datetime" }],
-                rows: [["d0"], ["d1"]],
-                total_rows: 300,
-                truncated: true,
-                ref: "cpi-ref",
-                sources: [],
-                provenance: "query",
-              },
-            },
-          },
-        ],
-        web_results: [],
-        request_id: "req-inert",
-      }),
-    ]);
-    const out = await tako_search.handler(
-      { ...DEFAULTS, query: "cpi", include_contents: false, preview_rows: 250 },
-      CTX,
-    );
-    expect((out.cards[0]?.content as Record<string, unknown>).dataset).toBeNull();
-  });
-
-  it("drops card row data entirely when include_contents is false (pointers-only mode)", async () => {
+describe("tako_search never inlines rows", () => {
+  it("drops card row data on every call — rows are a tako_contents fetch", async () => {
     mockFetchSequence([
       jsonResponse(200, {
         cards: [
@@ -704,10 +532,7 @@ describe("tako_search graph grounding", () => {
       }),
     ]);
 
-    const out = await tako_search.handler(
-      { query: "cpi", ...DEFAULTS, include_contents: false },
-      CTX,
-    );
+    const out = await tako_search.handler({ query: "cpi", ...DEFAULTS }, CTX);
 
     const content = out.cards[0]?.content as Record<string, unknown>;
     expect(content.dataset).toBeNull();
@@ -735,7 +560,7 @@ describe("tako_search graph grounding", () => {
     ]);
 
     const out = await tako_search.handler(
-      { query: "cpi", ...DEFAULTS, sources: ["web"], include_contents: true },
+      { query: "cpi", ...DEFAULTS, sources: ["web"] },
       CTX,
     );
 

@@ -53,11 +53,20 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
 
 /**
  * How to spend the ONE pinned retry. Measured on prod (2026-07-29): a pin at
- * the default `strict:false` did not steer retrieval at all — a deliberately
+ * the default `strict:false` did not change which card came back — a deliberately
  * WRONG node changed nothing, and pinning a metric node without strict
  * returned a DIFFERENT metric's card. The same metric node WITH `strict:true`
  * returned exactly that card. So "pinning its node_ids" alone described the
- * variant that does nothing; this names the one that works.
+ * WEAKER variant; this names the one that works.
+ *
+ * "Weaker", not inert, and the distinction matters to whoever re-reads this:
+ * `s25b_kg_v2_matches/pinned_nodes.py` injects a pinned node with a dedicated
+ * MatchBucket — a guaranteed allocation slot — and PINNED_NODE_MATCH_SCORE = 3.5
+ * against an organic ceiling of ~3.0, unconditional on `strict`. That comment
+ * calls the score "deliberately NOT score-dominant" and "Provisional; tune with
+ * evals". So the reading below is: the pin IS applied, and is simply too weak to
+ * change which card wins. Do not restate it as "the pin does nothing" — the next
+ * author who checks the backend will find the opposite and distrust the rest.
  *
  * Exported because `tako_answer`'s zero-card guidance needs the identical
  * recipe: two tools whose recovery advice drifts apart teach the model two
@@ -84,8 +93,14 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * (pinned vs unpinned, by handle) and in the commit that introduced this hatch;
  * cite those rather than looking for a script to re-run.
  */
+// READER, since the D4 split: `tako_answer` ONLY. `tako_search` took no
+// `node_ids`/`strict` after D4, so its zero-card guidance stopped advising a
+// pin — advice for parameters the tool would reject. Do not reintroduce this
+// into any search guidance; the canonical NAME is that tool's recovery path.
+// `tako_search_advanced` accepts a pin, but it is opt-in and prescribes the
+// form in its own description.
 export const PINNED_RETRY =
-  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false does not steer retrieval at all. If that pinned call returns 0 cards, run it once more with `node_ids` removed before concluding the data is absent: `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards, so the pin itself is sometimes what empties the result";
+  "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false only boosts the node rather than selecting it, which measured as not enough to land the metric. If that pinned call returns 0 cards, run it once more with `node_ids` removed before concluding the data is absent: `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards, so the pin itself is sometimes what empties the result";
 
 /**
  * The same recipe for the card-in-hand case. {@link PINNED_RETRY} sources the
@@ -115,7 +130,7 @@ export const PINNED_RETRY =
  * module would throw ReferenceError on load.
  */
 export const PINNED_FROM_CARD =
-  "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card, or omitting strict, does not steer retrieval";
+  "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card re-admits its other cards, and omitting strict only boosts, which measured as not enough to land the metric";
 
 // Backend TakoCard (api/ga/v3/search/types.py::TakoCard). Loose so a richer
 // backend card doesn't break parsing. Shared by tako_search + tako_answer.
@@ -235,6 +250,14 @@ export const MAX_PREVIEW_ROWS = 250;
 type LooseContent = ResultContent & {
   records?: Array<Record<string, unknown>> | null;
   dataset?: { columns?: unknown; rows?: unknown[] } | null;
+  // card_json's payload (generated `ContentItem.card_data`). Card-type-specific,
+  // so it has no generic row axis to slice — but it IS a row payload for
+  // billing and for context, so it has to be droppable alongside the other
+  // three. Its sibling `card_data_schema` is the SHAPE, not the payload, and
+  // deliberately stays in `meta`: a url-mode or quote response returns it
+  // beside a null `card_data`, so dropping it would lose the only thing those
+  // two shapes carry.
+  card_data?: unknown;
 };
 
 // Column types the backend uses for the temporal axis of a dataset. Detecting
@@ -360,19 +383,61 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * / truncated / export_pricing / url) is always kept so the "N rows available,
  * priced — call tako_contents" signal survives.
  *
- *   capRows === null → drop all rows (the model fetches via tako_contents).
- *   capRows === N    → keep the N most-recent rows (order-aware, a bounded peek).
+ *   capRows === null  → drop all rows (the model fetches via tako_contents).
+ *   capRows === N     → keep the N most-recent rows (order-aware, a bounded peek).
+ *   capRows === "all" → keep what the backend sent, untouched.
+ *
+ * "all" exists for `tako_search_advanced`, which sends `sources.data.max_rows`
+ * on the wire. The backend has therefore already applied the caller's own cap —
+ * including the 2,000-row ceiling the simple tool cannot reach — so a second
+ * cap here could only clamp BELOW what the caller asked and paid for. Passing
+ * `null` there would be worse still: it would discard the account-default rows
+ * of a caller who set include_contents and omitted max_rows.
  */
+/**
+ * The four keys that carry a ROW PAYLOAD, and the ten that carry metadata about
+ * one. Declared rather than left implicit in the destructure below because the
+ * `card_data` leak was exactly this list falling behind the backend: it named
+ * three keys while the generated `ContentItem` had four, so a call asking to drop
+ * every row shipped the whole rich card_json object.
+ *
+ * The destructure stays a destructure — it is type-checked, and a runtime array
+ * cannot drive one — so these consts are bound to reality by two tests instead:
+ * one asserts slimCardContent actually nulls every PAYLOAD key, the other
+ * asserts every `ContentItem` key is classified here. A fifth payload channel
+ * upstream then fails a test rather than silently leaking.
+ *
+ * `card_data_schema` is METADATA on purpose: it is the SHAPE, not the payload,
+ * and a url-mode or quote response returns it beside a null `card_data`, so
+ * dropping it would lose the only thing those two shapes carry.
+ */
+export const CONTENT_PAYLOAD_KEYS = ["data", "records", "dataset", "card_data"] as const;
+export const CONTENT_META_KEYS = [
+  "content_format",
+  "cost",
+  "card_data_schema",
+  "url",
+  "expires_at",
+  "total_rows",
+  "truncated",
+  "export_pricing",
+  "manifest",
+  "source_url",
+] as const;
+
 export function slimCardContent(
   content: ResultContent | null | undefined,
-  capRows: number | null,
+  capRows: number | "all" | null,
 ): ResultContent | null | undefined {
   if (content == null) return content;
-  // Strip the three row-payload keys out; `meta` keeps everything else
-  // (content_format/cost/total_rows/truncated/export_pricing/url/…).
-  const { data: rawData, records, dataset, ...meta } = content as LooseContent;
+  // The backend already applied this caller's cap — see the "all" note above.
+  if (capRows === "all") return content;
+  // Strip the four row-payload keys out; `meta` keeps everything else
+  // (content_format/cost/total_rows/truncated/export_pricing/url/
+  // card_data_schema/…).
+  const { data: rawData, records, dataset, card_data: cardData, ...meta } = content as LooseContent;
   if (capRows === null) {
-    return { ...meta, data: null, records: null, dataset: null } as ResultContent;
+    return { ...meta, data: null, records: null, dataset: null, card_data: null } as ResultContent;
   }
 
   // CSV payload lives in `data` — cap it in place rather than blanking it, so an
@@ -413,6 +478,13 @@ export function slimCardContent(
     data: cappedData,
     records: cappedRecords,
     dataset: cappedDataset,
+    // Passed through, not sliced: the backend truncates card_json to the same
+    // max_rows as every other format, and the object is card-type-specific, so
+    // there is no generic row axis to cut here. Only the null branch above
+    // touches it. Reachable only if a numeric cap is ever paired with
+    // card_json — no caller does that today (the simple tool requests no
+    // content_format and the advanced tool passes "all").
+    card_data: cardData ?? null,
     ...meta,
     truncated: slicedRecords || slicedRows || csvTruncated || meta.truncated || false,
   } as ResultContent;
@@ -473,7 +545,7 @@ function orderCardKeys(card: TakoCard): TakoCard {
  * is only the fallback for older backends. Keys are re-ordered data-first
  * (see CARD_KEY_ORDER). Pure in-memory — no I/O.
  */
-export const slimCard = (card: TakoCard, capRows: number | null): TakoCard => {
+export const slimCard = (card: TakoCard, capRows: number | "all" | null): TakoCard => {
   const exportable = card.exportable ?? card.content != null;
   // Share opt-in on the passthrough embed_url, so the url an agent quotes
   // from the text matches the one the widget renders for the same card —
@@ -576,13 +648,27 @@ export function hoistSourceGlossary(cards: TakoCard[]): {
 }
 
 /**
- * Slim a web result's `content`. Web `content.data` is the page's full
- * extracted text — always dropped: it is billed per page AND is a large prose
- * blob, so it is never auto-inlined. The model pulls it via tako_contents(url)
- * when it actually needs the page text (title/url/snippet stay for citation).
+ * Slim a web result's `content`. Web `content.data` is the page's full extracted
+ * text: a large prose blob, so it is dropped unless the caller ASKED for it on
+ * the wire (`sources.web.include_contents`). Dropping what the caller requested
+ * is the defect this parameter fixes — tako_search_advanced advertises the
+ * generated `include_contents` description ("Tako returns it free of charge")
+ * and used to throw the result away, which is the dishonest-parameter shape spec
+ * D4 exists to remove.
+ *
+ * NOT "billed per page", which the previous version of this comment claimed and
+ * which drove the unconditional drop. That is true of `POST /api/v1/contents`, a
+ * different endpoint. On `/v3/search` the generated WebSourceSettings says the
+ * page text comes back FREE, best-effort. So context size is the only cost, and
+ * the caller who set the flag has already accepted it.
+ *
+ * `keepText` is REQUIRED, deliberately. As a defaulted parameter it would be fed
+ * `.map`'s index by the two existing `.map(slimWebResult)` call sites — keeping
+ * text for every result except the first. Required means tsc rejects the bare
+ * form instead.
  */
-export const slimWebResult = (w: WebResult): WebResult =>
-  w.content == null
+export const slimWebResult = (w: WebResult, keepText: boolean): WebResult =>
+  w.content == null || keepText
     ? w
     : { ...w, content: slimCardContent(w.content, null) };
 
@@ -691,12 +777,10 @@ export type SearchOutput = {
 };
 
 // Which sources a search actually hit, for tailoring zero-result guidance.
-// "tako" is a legacy alias for "data" (see tako_search's sources enum).
 // searchedData is exported for tako_answer's data-gap guidance gate — one
 // definition of "did this request search the data source" across both tools.
-type SearchedSources = readonly string[];
-export const searchedData = (s: SearchedSources): boolean =>
-  s.includes("data") || s.includes("tako");
+export type SearchedSources = ReadonlyArray<"data" | "web">;
+export const searchedData = (s: SearchedSources): boolean => s.includes("data");
 const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
 
 /**
@@ -782,20 +866,18 @@ export const NARROWER_WEB_ATTEMPT =
  * under skills/ and their embedded copies in README.md, each as the
  * "Empty result (zero cards)" bullet. What must stay consistent is the
  * RECIPE — free tako_available_data check → ONE retry on the exact metric
- * NAME, unpinned → stop and answer from the web results — not the phrasing;
+ * NAME → stop and answer from the web results — not the phrasing;
  * pin an invariant here rather than a quoted sentence, so a reworded skill
  * does not silently make this comment a lie. Update all four copies together.
  *
- * WHY THE SKILLS DO NOT PIN, while {@link PINNED_RETRY} here does. Not drift —
- * the same measurement under a tighter budget. `PINNED_RETRY` describes a TWO
- * step sequence (pin correctly; if that comes back empty, drop the pin), which
- * the tool guidance can afford because it is advising a caller with no fixed
- * call budget. The skills cap at 2 priced searches per question, so they have
- * exactly ONE retry to spend and have to pick an arm: measured, 11 of 20 handles
- * retrieve FEWER cards pinned than unpinned, while the canonical NAME helps 9 of
- * 15. So the skills spend their one retry on the name and skip the pin, and
- * mention pinning only for what it is good at — disambiguating a near-duplicate
- * metric once one has actually shown up. Same knowledge, one call instead of two.
+ * NOTHING HERE PINS ANY MORE, and the skills never did. This guidance used to
+ * interpolate {@link PINNED_RETRY}; after the D4 split `tako_search` takes no
+ * `node_ids` / `strict`, so a pin recipe here would prescribe parameters the
+ * tool rejects. The two arms now agree on the canonical NAME, which is also the
+ * arm the measurement favours: 11 of 20 handles retrieved FEWER cards pinned
+ * than unpinned, while the canonical name helped 9 of 15. `PINNED_RETRY` still
+ * exists for `tako_answer`, which kept both parameters — do not route it back
+ * here.
  *
  * {@link REFINE_WEB_FREELY} is deliberately NOT mirrored into those three:
  * they are data-domain skills (equity research, macro indicators, site
@@ -808,7 +890,31 @@ export const NARROWER_WEB_ATTEMPT =
 function buildZeroResultGuidance(
   hasWebResults: boolean,
   sources: SearchedSources,
+  strictPin: boolean,
 ): string {
+  // The pin branch comes FIRST because every branch below reports a verdict
+  // about coverage, and under a hard filter that verdict is unsupported. A
+  // `strict: true` pin returns ONLY cards matching a pinned node, and the graph
+  // holds near-duplicate metric nodes where only one twin carries cards — so
+  // zero cards is evidence about the FILTER, not about what Tako holds. KE-812
+  // measured pinned handles returning FEWER cards than the same query unpinned
+  // on 11 of 20 pairs.
+  //
+  // Reachable only from `tako_search_advanced`: `tako_search` takes no pin, so
+  // `strictPin` is always false there. Without this branch that tool's callers
+  // read "the data is not covered, rewording will not change that" — mid-failure
+  // copy that contradicts the tool's own description, which tells them to drop
+  // `node_ids` and retry.
+  if (strictPin && searchedData(sources)) {
+    return [
+      "No data cards — but this request pinned `node_ids` with `strict: true`, which is a HARD FILTER: only cards matching a pinned node can come back.",
+      "Zero cards here is evidence about the filter, NOT about coverage. The graph holds near-duplicate metric nodes where only one twin carries cards, so a pinned query returned FEWER cards than the same query unpinned on 11 of 20 pairs measured.",
+      "Re-run the SAME query text with `node_ids` dropped before concluding anything. Do not report a coverage gap on the strength of this response.",
+      ...(hasWebResults
+        ? ["Web results did come back — answer from them meanwhile (tako_contents on the most relevant url fetches its full page text)."]
+        : []),
+    ].join(" ");
+  }
   if (hasWebResults) {
     // A web-only search has zero cards BY CONSTRUCTION — the data index was
     // never queried — so the branch below would report a graph verdict from
@@ -833,7 +939,7 @@ function buildZeroResultGuidance(
     return [
       "This search returned web results but no data cards. That is a verdict about the DATA GRAPH only: it does not cover this query, and rewording will not change that.",
       "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
-      `If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, and then ${PINNED_RETRY}.`,
+      "If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, using the EXACT canonical name it returns as the query.",
       REFINE_WEB_FREELY,
     ].join(" ");
   }
@@ -852,8 +958,8 @@ function buildZeroResultGuidance(
   }
   return [
     "No results — do NOT retry this query or rephrasings of it hoping a data card appears; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
-    "Recover in order: (1) call tako_available_data (free) with the entity to learn the exact metric names + node_ids Tako actually has;",
-    `(2) if it confirms coverage, spend your ONE remaining search on that exact name and ${PINNED_RETRY}` +
+    "Recover in order: (1) call tako_available_data (free) with the entity to learn the exact metric NAMES Tako actually has;",
+    "(2) if it confirms coverage, spend your ONE remaining search on that EXACT canonical name — the name is what recovers cards" +
       (searchedWeb(sources)
         ? ";"
         : ' (adding "web" as a fallback source on that same single retry is fine);'),
@@ -1010,7 +1116,8 @@ export function buildSearchOutput(
   requestId: string,
   usage: Usage | null,
   env: Env,
-  searchedSources: readonly string[],
+  searchedSources: SearchedSources,
+  strictPin: boolean,
 ): SearchOutput {
   // Order before anything reads cards[0]: the widget/pub_id fields below lift
   // the TOP card, so the chart the host renders follows the same ordering the
@@ -1033,6 +1140,7 @@ export function buildSearchOutput(
           guidance: buildZeroResultGuidance(
             webResults.length > 0,
             searchedSources,
+            strictPin,
           ),
         }
       : {}),

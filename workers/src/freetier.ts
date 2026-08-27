@@ -124,12 +124,17 @@ export function isMeteredJsonRpcBody(body: unknown): boolean {
   if (typeof params !== "object" || params === null) return false;
   const name = (params as { name?: unknown }).name;
   if (typeof name !== "string" || !FREE_TIER_TOOL_NAMES.has(name)) return false;
-  // A free tool can still carry an input the anonymous tier REFUSES
-  // (`tako_search`'s `include_contents: true` inlines billed rows — spec
-  // D12). `registerTool` answers those with `authRequiredToolResult`
-  // without touching Django, so metering them would let one retrying model
-  // spend its whole minute on refusals. Spec: "Rejected calls stay
-  // unmetered."
+  // A free tool can still carry an input the anonymous tier REFUSES.
+  // `registerTool` answers those with `authRequiredToolResult` without
+  // touching Django, so metering them would let one retrying model spend its
+  // whole minute on refusals. Spec: "Rejected calls stay unmetered."
+  //
+  // NO TOOL DECLARES SUCH A GATE TODAY. The only one was `tako_search`'s
+  // `include_contents: true` (it inlined billed rows onto the shared account),
+  // and the D4 split removed the parameter — rows come from `tako_contents`,
+  // which is auth-required outright. The hook stays because it is the only
+  // unmetered-refusal path there is: the next priced input on a free tool
+  // needs it, and rebuilding it under load is worse than keeping ten lines.
   //
   // The verdict is READ FROM THE TOOL, never re-derived here. The tool's
   // `anonymousInputRejects` is the same function the dispatch gate in

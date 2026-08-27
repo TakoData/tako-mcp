@@ -12,10 +12,13 @@
  * search/answer set `content` via the lenient supports_data_export() while
  * this endpoint gates on the stricter export_safe(), so a content-bearing
  * card can still 403 (the handler maps that to a self-correcting message).
- * A Tako card CSV is capped at a 20-row default in BOTH modes; `max_rows`
- * raises that up to a 2000-row ceiling — there is no uncapped export. Every
- * row delivered is billed per 1k; tako#29572 (2026-08-21) removed the row
- * allowance, so no copy here may describe a row as costless.
+ * A Tako card export returns the WHOLE card by default, up to the backend's
+ * 2000-row ceiling; `max_rows` caps it lower. Both modes bill every row
+ * delivered, per 1k; tako#29572 (2026-08-21) removed the row allowance, so no
+ * copy here may describe a row as costless. (An inline card preview inside a
+ * SEARCH response is a different, much smaller cap — see INLINE_PREVIEW_ROW_CAP
+ * in _search_results.ts. Conflating the two is where the 20-row claim here came
+ * from.)
  * `mode` controls only delivery, not the row count: "inline" (default) returns
  * the (capped) content in the response body — total_rows/truncated report the
  * true size — so the model can read it directly; "url" returns a short-lived
@@ -27,7 +30,13 @@
 import { z } from "zod";
 
 import { DjangoError, DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } from "../django.js";
-import { ContentsDeliveryMode, ContentsRequest, ContentsResponse, TakoDataset } from "../generated/schemas.js";
+import {
+  ContentsDeliveryMode,
+  ContentsFormat,
+  ContentsRequest,
+  ContentsResponse,
+  TakoDataset,
+} from "../generated/schemas.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import { extractPassages } from "./_passages.js";
@@ -38,10 +47,18 @@ import {
 } from "./_render_markdown.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
+// No mention of `include_contents` here, and it cannot be reintroduced. The
+// parenthetical this description used to carry ("and, with include_contents:
+// true, a rows preview") named a parameter that no tool on EITHER of this tool's
+// surfaces accepts: D4 removed it from `tako_search`, and the two tools that
+// still take it (`tako_answer`, `tako_search_advanced`) are both opt-in, which
+// `phantom_tool.test.ts` forbids a default-listed tool from naming. So there is
+// no rewording that keeps the claim — after D4 a search result carries no rows
+// on any reachable path, which is exactly why this tool exists.
 const DESCRIPTION = [
   "Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.",
   "",
-  "Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline (and, with include_contents: true, a rows preview), not the full series.",
+  "Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline, never the rows themselves.",
   "",
   "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.",
   "",
@@ -101,7 +118,7 @@ export const MAX_CONTENTS_URLS = 10;
  */
 export const BATCH_CHAR_BUDGET = 250_000;
 
-const inputSchema = ContentsRequest.pick({ url: true }).extend({
+const inputSchema = z.object({
   // looseArray: a host that sends one URL as a bare string, or the array as
   // JSON text, gets it coerced instead of a -32602. Deliberately NOT
   // `commaSeparated`: the item schema has no url format check, so splitting
@@ -118,26 +135,53 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
       ),
     { field: "tako_contents.urls" },
   ),
-  // Legacy single-URL form, kept so an in-flight caller pinned to the old
-  // schema keeps working. `urls` is the documented shape. Not enforced as
-  // mutually exclusive on purpose: if a caller sends both, `urls` wins and
-  // `url` is ignored, which is friendlier than 400-ing a request we can
-  // serve. At least one is required (the handler rejects neither).
+  // Legacy single-URL form, kept so an in-flight caller pinned to the old schema
+  // keeps working. `urls` is the documented shape.
+  //
+  // This is a HOSTED server: dropping the field breaks live connections at the
+  // moment of deploy, with no version for a client to pin and no deprecation
+  // window served. Removing it is its own change, behind traffic data showing
+  // nothing still sends it — not a rider on the D4 search split, which does not
+  // touch this tool's inputs.
+  //
+  // Not enforced as mutually exclusive on purpose: if a caller sends both,
+  // `urls` wins and `url` is ignored, which is friendlier than 400-ing a request
+  // we can serve. At least one is required — the handler rejects neither, so the
+  // runtime guard below is load-bearing again the moment `urls` is optional.
   url: ContentsRequest.shape.url
     .min(1)
     .optional()
     .describe("Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`."),
   mode: ContentsDeliveryMode
     .default("inline")
-    .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — 20-row default, raise max_rows up to 2,000; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
-  // Serialization of a Tako card's data. parse-don't-cast: reuse the generated
-  // shape (keeps the enum + "csv" default) and re-describe for the MCP surface.
-  // Which output field carries the payload depends on this: csv→data,
-  // json_records→records, json_compact→dataset (see outputSchema/handler).
-  content_format: ContentsRequest.shape.content_format.describe(
-    "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
-  ),
-  // Expose the row cap so an agent can pull more than the 20-row default.
+    .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
+  // Serialization of a Tako card's data. Which output field carries the payload
+  // depends on this: csv→data, json_records→records, json_compact→dataset (see
+  // outputSchema/handler).
+  //
+  // DERIVED from the generated enum, minus the one value this tool cannot
+  // deliver. `itemSchema` has exactly three payload channels and card_json's
+  // payload arrives under `card_data`, which none of them holds — so offering it
+  // here would advertise a format this tool cannot return. Restore it together
+  // with a `card_data` channel on itemSchema, not before. `tako_search_advanced`
+  // DOES offer card_json: its cards carry `content` loosely, so the payload has
+  // somewhere to land there.
+  //
+  // `.exclude()` rather than a literal `z.enum([...])`: a hand-written list
+  // compiles fine when the backend renames a member, and this tool would then
+  // advertise a format the API rejects at runtime. Subtracting from the
+  // generated enum keeps the compile-time link — rename `json_compact` upstream
+  // and this line fails, which is the whole point of parsing rather than casting
+  // everywhere else in this file.
+  content_format: ContentsFormat.exclude(["card_json"])
+    .default("csv")
+    .describe(
+      "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
+    ),
+  // Expose the row cap so an agent can cap a large card, or ask for fewer rows
+  // than the default. The default is NOT 20: omitting max_rows returns the whole
+  // card up to the 2,000-row system ceiling (generated ContentsRequest), which is
+  // what the field description and the file header both now say.
   // Applies in BOTH delivery modes (url mode is capped too — there is no
   // uncapped export). Bound it to the backend's 2,000-row ceiling here so the
   // cap is explicit in the discovery card and over-asks fail fast at the MCP
@@ -149,7 +193,7 @@ const inputSchema = ContentsRequest.pick({ url: true }).extend({
     .lte(2000)
     .optional()
     .describe(
-      "Tako cards only: max CSV rows to return, in either delivery mode. Omit for the 20-row default; raise up to 2,000 to export more. Rows are billed per 1,000 delivered. Ignored for web URLs (use max_chars).",
+      "Tako cards only: max rows to return, in either delivery mode. Omit it to get the whole card, up to the 2,000-row system ceiling; Tako clamps a larger value to that ceiling. Rows are billed per 1,000 delivered, so lower it to spend less. Ignored for web URLs (use max_chars).",
     ),
   // Web-text character cap, passed through to the wire. The backend default is
   // the FULL page text (up to 1M chars ≈ 250k tokens — observed in the wild and
@@ -491,6 +535,9 @@ const takoContents = {
     { field: "query", value: "(stripped from the request)", note: "Passage extraction runs in the Worker; the API has no such field." },
   ],
   async handler(input, ctx): Promise<Output> {
+    // Load-bearing, not defensive: `urls` is OPTIONAL because the deprecated
+    // `url` may carry the request instead, so the schema alone cannot reject an
+    // empty call. A caller who sends neither reaches here with nothing to fetch.
     const targets = input.urls ?? (input.url !== undefined ? [input.url] : []);
     if (targets.length === 0) {
       throw new Error(

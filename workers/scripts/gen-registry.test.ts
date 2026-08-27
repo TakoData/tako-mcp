@@ -8,6 +8,7 @@ import {
   assertChatgptSnapshot,
   assertChatgptSubmissionParity,
   assertLlmsFullCoverage,
+  assertPinAdviceReachableInLlmsFull,
   assertPinFormInDocs,
   buildChatgptSnapshot,
   buildLobehubPlugin,
@@ -441,5 +442,49 @@ describe("buildToolsDoc", () => {
   it("includes both instruction variants verbatim", () => {
     expect(doc).toContain("AUTH TEXT");
     expect(doc).toContain("ANON TEXT");
+  });
+});
+
+// The guard's own corpus exercise is VACUOUS by construction: every
+// pin-advising sentence in llms-full.txt today sits under
+// `### tako_search_advanced` or `### tako_answer`, both pin-capable and
+// therefore skipped, so `registry:check` has never demonstrated it fires. These
+// two cases are the ones its doc comment describes, and they pin the part most
+// likely to be silently wrong — the `split(/^### /m)` section attribution.
+describe("assertPinAdviceReachableInLlmsFull", () => {
+  const PIN_ADVICE =
+    "Pin that card's METRIC node id ALONE with `strict: true` to get the figures.";
+  const section = (tool: string) => `# Tako\n\n### ${tool}\n${PIN_ADVICE}\n`;
+  const PIN_CAPABLE = new Set(["tako_answer", "tako_search_advanced"]);
+
+  it("throws when pin advice sits under a tool that accepts no node_ids", () => {
+    expect(() =>
+      assertPinAdviceReachableInLlmsFull(section("tako_available_data"), PIN_CAPABLE),
+    ).toThrow(/tako_available_data.*accepts no/s);
+  });
+
+  it("accepts the same sentence under a pin-capable tool", () => {
+    expect(() =>
+      assertPinAdviceReachableInLlmsFull(section("tako_answer"), PIN_CAPABLE),
+    ).not.toThrow();
+  });
+
+  it("attributes to the ENCLOSING section, not the whole document", () => {
+    // The failure mode the section split exists to prevent: advice under a
+    // pin-capable heading must not be blamed on a later innocent section, and
+    // advice under an innocent heading must not be excused by an earlier
+    // pin-capable one.
+    const doc = `# Tako\n\n### tako_answer\n${PIN_ADVICE}\n\n### tako_contents\nNothing here.\n`;
+    expect(() => assertPinAdviceReachableInLlmsFull(doc, PIN_CAPABLE)).not.toThrow();
+    const flipped = `# Tako\n\n### tako_answer\nNothing here.\n\n### tako_contents\n${PIN_ADVICE}\n`;
+    expect(() => assertPinAdviceReachableInLlmsFull(flipped, PIN_CAPABLE)).toThrow(
+      /tako_contents/,
+    );
+  });
+
+  it("is inert when no tool accepts a pin, rather than flagging every section", () => {
+    expect(() =>
+      assertPinAdviceReachableInLlmsFull(section("tako_available_data"), new Set()),
+    ).not.toThrow();
   });
 });
