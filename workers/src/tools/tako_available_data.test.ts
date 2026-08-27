@@ -4,7 +4,7 @@ import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import { MAX_COVERAGE_NAMES, MAX_COVERAGE_PAGES, PAGE_LIMIT } from "./_available_data.js";
 import takoSearch from "./tako_search.js";
-import takoAvailableData from "./tako_available_data.js";
+import takoAvailableData, { fullOutputSchema } from "./tako_available_data.js";
 import {
   jsonResponse,
   mockFetchSequence,
@@ -1706,5 +1706,36 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
     expect(out.found).toBe(true);
     expect(out.matches[0]?.coverage.names).toEqual(["Total revenue - Data center"]);
     expect(out.summary).toContain("No metric named like \"data center\" resolved globally");
+  });
+});
+
+// Makes the rule at `fullOutputSchema` enforceable instead of a convention.
+//
+// This schema types the handler's return and is published nowhere;
+// `availableDataSlimOutputShape` is what `tools/list` serves. A `.describe()`
+// here is therefore a second hand-maintained copy of model-facing prose that no
+// model reads and no guard checks — `_pin_form.test.ts` walks published schemas
+// only, so pin vocabulary added here passes clean.
+//
+// It already drifted once, in the direction that costs the most: `next_call`'s
+// unpublished description carried the accurate emit condition ("the entity has
+// few enough metrics that the top one is unambiguous") while the published copy
+// said "Null when no metric resolved", so the correct half was the half no model
+// could read.
+//
+// Derived from the schema shape, never a field list — a hand-written list of
+// fields to check is the same defect one level up, and goes stale the next time
+// the schema gains one.
+describe("fullOutputSchema carries no model-facing prose", () => {
+  const described = Object.entries(fullOutputSchema.shape)
+    .filter(([, field]) => (field as { description?: string }).description !== undefined)
+    .map(([name]) => name);
+
+  it("has fields to check, so the assertion below cannot pass vacuously", () => {
+    expect(Object.keys(fullOutputSchema.shape).length).toBeGreaterThan(5);
+  });
+
+  it("describes nothing — the published slim shape is the only contract", () => {
+    expect(described, "move the text to availableDataSlimOutputShape").toEqual([]);
   });
 });

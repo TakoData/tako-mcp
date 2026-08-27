@@ -520,7 +520,7 @@ export const availableDataSlimOutputShape = z.looseObject({
     })
     .nullable()
     .describe(
-      "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Null when no metric resolved.",
+      "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null otherwise — pass `metric` to get a handle.",
     ),
   // Lookup path (`metric` supplied): the resolved pair. Optional because the
   // discovery path returns `matches` instead.

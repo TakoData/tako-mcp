@@ -191,14 +191,19 @@ const coverageMatchSchema = z.object({
 // the slim structuredContent shape (the verdict, the matches with their node
 // ids, and next_call) so hosts that count structuredContent toward context
 // don't pay for the full name lists twice.
-// `found` and `verified` carry NO `.describe()` here on purpose. This schema
-// types the handler's return; `availableDataSlimOutputShape` is what
-// `tools/list` publishes, so only that copy reaches a model — and only that
-// copy is guarded (`_pin_form.test.ts` walks published schemas, so pin
-// vocabulary added here would pass clean while the same string in the slim
-// shape fails). Two hand-maintained copies of the same model-facing prose
-// drift; the published one is the contract. Read the semantics there.
-const fullOutputSchema = z.object({
+// NO field here carries a `.describe()`, and none may. This schema types the
+// handler's return; `availableDataSlimOutputShape` is what `tools/list`
+// publishes, so only that copy reaches a model — and only that copy is guarded
+// (`_pin_form.test.ts` walks published schemas, so pin vocabulary added here
+// would pass clean while the same string in the slim shape fails).
+//
+// Two hand-maintained copies of the same model-facing prose drift, and this one
+// already did: `next_call` kept a description whose tail said "the entity has
+// few enough metrics that the top one is unambiguous" while the PUBLISHED copy
+// said "Null when no metric resolved" — the accurate half was the one no model
+// could read. The condition now lives in the published copy alone. Read the
+// semantics there.
+export const fullOutputSchema = z.object({
   found: z.boolean(),
   verified: z.enum(["coverage", "pair", "unlinked", "resolution"]).optional(),
   query: z.string(),
@@ -220,11 +225,7 @@ const fullOutputSchema = z.object({
       coverage_capped: z.boolean().optional(),
     }),
   ),
-  next_call: nextCallSchema
-    .nullable()
-    .describe(
-      "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null when `q` named only an entity — pass `metric` to get a handle.",
-    ),
+  next_call: nextCallSchema.nullable(),
   // Lookup path (`metric` supplied) — the resolved pair and its runners-up.
   metric_query: z.string().optional(),
   entity: resolvedRefSchema.nullable().optional(),
