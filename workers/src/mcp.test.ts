@@ -37,6 +37,7 @@ import {
   jsonResponse,
   mockFetchSequence,
   noopSendProgress,
+  TIER_CLAIM,
 } from "./tools/__test_helpers.js";
 import type { ToolContext } from "./tools/types.js";
 
@@ -1430,7 +1431,7 @@ describe("paymentRequiredToolResult", () => {
       body,
     });
 
-  it("names the cause, reset-safe retry semantics, and the surviving free tool", () => {
+  it("names the cause, reset-safe retry semantics, and the surviving free move", () => {
     const result = paymentRequiredToolResult(err402(), false);
     expect(result.isError).toBe(true);
     const text = result.content[0]?.text ?? "";
@@ -1438,7 +1439,14 @@ describe("paymentRequiredToolResult", () => {
     // Reset-safe phrasing: monthly plan credits regrant each cycle, so an
     // unconditional "retrying will fail" would be false across a reset.
     expect(text).toContain("until the account has credits again");
-    expect(text).toContain("tako_available_data");
+    // A CAPABILITY, never a tool name: `?tools=` can leave any tool
+    // unregistered, so naming one here can point the model at something this
+    // connection cannot call. This assertion used to demand
+    // `tako_available_data`.
+    expect(text).toContain("spend no credits");
+    for (const tool of TOOL_REGISTRY) {
+      expect(text, tool.name).not.toContain(tool.name);
+    }
     // The raw upstream framing must not leak — "Django" is an internal.
     expect(text).not.toContain("Django");
     const detail = result._meta["tako/error"] as {
@@ -1508,7 +1516,7 @@ describe("SERVER_INSTRUCTIONS", () => {
     // them, so the anonymous text outlived the state it described and
     // suppressed the tool sign-in had just unlocked. The dispatch gate's
     // `authRequiredToolResult` is the one place this claim is allowed.
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/anonymous|sign(ed)?[ -]in|Tako account/i);
+    expect(SERVER_INSTRUCTIONS).not.toMatch(TIER_CLAIM);
   });
 
   // The instructions sit ABOVE the tool descriptions in the host's system

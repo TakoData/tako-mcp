@@ -1,7 +1,8 @@
 /**
  * The `initialize` instructions: the one string the host puts in the
- * model's system prompt. ONE string for every tier and every surface; only
- * `?tools=` narrows it (by dropping sentences that name unregistered tools).
+ * model's system prompt. ONE string for every tier; what narrows it is the
+ * RESOLVED TOOLSET — `?tools=` and the surface's own default listing — which
+ * drops sentences naming tools this connection does not register.
  *
  * TIER-INVARIANT ON PURPOSE. A free-tier variant used to say "this connection
  * is anonymous: X and Y are the tools that run here" and that `tako_contents`

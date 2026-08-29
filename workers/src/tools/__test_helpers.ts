@@ -85,3 +85,21 @@ export function requestFrom(
 export async function bodyOf(req: Request): Promise<Record<string, unknown>> {
   return (await req.json()) as Record<string, unknown>;
 }
+
+/**
+ * Prose that claims tier-varying availability — "runs anonymously", "sign in
+ * first", "needs a Tako account".
+ *
+ * Hand-written terms, deliberately: the property is semantic, and no type or
+ * enum encodes "this sentence describes WHO may call the tool". What structure
+ * does encode is which tools the claim can be false for — `FREE_TIER_TOOL_NAMES`
+ * is the tier boundary, so only a tool inside it can wrongly tell a model it
+ * needs sign-in. Callers pair this pattern with that set rather than exempting
+ * tools by name.
+ *
+ * It lives here because three suites audit for the same thing
+ * (`_surface.test.ts`, `instructions.test.ts`, `mcp.test.ts`) and three
+ * hand-rolled copies drifted into two different spellings within one PR.
+ */
+export const TIER_CLAIM =
+  /anonymous|sign(ed|ing)?[ -]in|log(ged|ging)? ?in|Tako account|requires? (an )?account|credentials|API key/i;

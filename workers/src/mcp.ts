@@ -1219,7 +1219,11 @@ export function djangoErrorToToolResult(err: DjangoError): {
  * OWNS the exhausted balance, so naming the cause is the actionable answer.
  *
  * States the cause, the retry semantics, and the surviving free move —
- * and deliberately NO remedy. Two different backends emit this 402 with
+ * and deliberately NO remedy. The surviving move names a CAPABILITY, not a
+ * tool: `?tools=` can leave any given tool unregistered, so naming one here
+ * risks pointing the model at something this connection cannot call. ("free"
+ * here means credit-free, which since #272 is not the same as
+ * anonymous-executable — `FREE_TIER_TOOL_NAMES` is search alone.) Two different backends emit this 402 with
  * two different remedies (`subscriptions/decorators.py` in the monorepo):
  * `SubscriptionCreditThrottle` drains MONTHLY plan credits that regrant
  * each cycle (remedy: upgrade the plan, or wait for the reset), while
@@ -1234,7 +1238,7 @@ export function djangoErrorToToolResult(err: DjangoError): {
 export const PAYMENT_REQUIRED_MESSAGE =
   "This Tako account is out of credits, so the call could not run. " +
   "Priced calls will keep failing until the account has credits again; " +
-  "`tako_available_data` is free and still works.";
+  "calls that spend no credits, such as graph exploration, still work.";
 
 /**
  * Model-visible message for an AUTHENTICATED caller whose Tako credential

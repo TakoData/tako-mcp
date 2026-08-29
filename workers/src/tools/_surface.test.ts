@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { TOOL_REGISTRY } from "./_registry.js";
+import { TIER_CLAIM } from "./__test_helpers.js";
 import {
   CHATGPT_TOOL_NAMES,
   FREE_TIER_TOOL_NAMES,
@@ -108,23 +109,33 @@ describe("tool descriptions are tier-invariant", () => {
   // Descriptions (like `initialize` instructions) are loaded by the host once
   // and survive a mid-conversation sign-in, so a tier-varying claim in one
   // outlives the state it describes — the sign-in signal belongs only in the
-  // dispatch-time `authRequiredToolResult` (`mcp.ts`). `tako_contents` is the
-  // one exemption: its sentence ("Requires a signed-in connection; anonymous
-  // calls return sign-in instructions") is TRUE on every tier, because the
-  // tool is auth-required outright.
-  const TIER_CLAIM = /anonymous|signed[- ]in|sign[- ]in|Tako account/i;
+  // dispatch-time `authRequiredToolResult` (`mcp.ts`).
+  //
+  // Which tools the claim can be FALSE for is structural, not a name list:
+  // `FREE_TIER_TOOL_NAMES` IS the tier boundary. A tool outside it never runs
+  // anonymously on any tier, so "requires a signed-in connection" is true
+  // whenever a host reads it — that is why `tako_contents` may say so. A tool
+  // INSIDE it that carries the same sentence tells a model to skip the one
+  // tool anonymous callers have.
 
-  it("no description claims tier-varying availability (tako_contents exempt)", () => {
+  it("no free-tier tool description claims tier-varying availability", () => {
     for (const tool of TOOL_REGISTRY) {
-      if (tool.name === "tako_contents") continue;
+      if (!FREE_TIER_TOOL_NAMES.has(tool.name)) continue;
       expect(TIER_CLAIM.test(tool.description), tool.name).toBe(false);
     }
   });
 
-  it("the tako_contents exemption is still earning its place", () => {
-    // If this fails, the sentence was removed — delete the exemption too.
+  it("covers a tool — an empty free set would pass the audit vacuously", () => {
+    const audited = TOOL_REGISTRY.filter((t) => FREE_TIER_TOOL_NAMES.has(t.name));
+    expect(audited.map((t) => t.name)).toEqual(["tako_search"]);
+  });
+
+  it("the tako_contents sign-in sentence is allowed, and still there", () => {
+    // It reads as a tier claim, and is exempt only because the tool sits
+    // outside the free set. If either half changes, this fails.
     const contents = TOOL_REGISTRY.find((t) => t.name === "tako_contents");
     expect(contents).toBeDefined();
     expect(TIER_CLAIM.test(contents!.description)).toBe(true);
+    expect(FREE_TIER_TOOL_NAMES.has("tako_contents")).toBe(false);
   });
 });

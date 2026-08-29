@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SERVER_INSTRUCTIONS, serverInstructionsFor } from "./instructions.js";
+import { TIER_CLAIM } from "./tools/__test_helpers.js";
 
 describe("instructions module", () => {
   it("serves one string with no tier parameter", () => {
@@ -13,6 +14,6 @@ describe("instructions module", () => {
   it("carries no tier-specific claim", () => {
     // What runs anonymously is answered at dispatch (`authRequiredToolResult`),
     // never in text the host caches in the system prompt.
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/anonymous|sign(ed)?[ -]in|Tako account/i);
+    expect(SERVER_INSTRUCTIONS).not.toMatch(TIER_CLAIM);
   });
 });

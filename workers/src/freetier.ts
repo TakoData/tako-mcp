@@ -36,8 +36,9 @@
  * limiter hit cover an arbitrary number of Django-spending calls. Bodies
  * over `MAX_FREE_TIER_BODY_BYTES` are rejected before being buffered:
  * this parse is new pre-auth surface, so it must not read unbounded
- * unauthenticated input. Design doc:
- * `docs/superpowers/specs/2026-07-26-anonymous-free-tier-design.md`.
+ * unauthenticated input. Architecture: `AGENTS.md` (free tier and metering).
+ * The dated design notes live outside this repo — `docs/superpowers/` is
+ * gitignored, so do not cite a path there and expect a reader to open it.
  *
  * Fail modes, deliberately asymmetric:
  * - Configuration missing → fail CLOSED (`resolveFreeTierConfig` returns
@@ -101,11 +102,11 @@ export function resolveFreeTierConfig(env: Env): FreeTierConfig | null {
 /**
  * Should this JSON-RPC body count against the free-tier PER-IP limit?
  *
- * Only a `tools/call` naming `tako_search` or `tako_available_data` is
- * metered — the only request shape that spends the shared account's Tako
- * credits. Handshake and discovery methods (`initialize`, `tools/list`,
- * notifications, pings) must stay unmetered or clients would burn quota
- * just connecting, and a `tools/call` for any other tool spends no credit
+ * Only a `tools/call` naming a tool in `FREE_TIER_TOOL_NAMES` (today
+ * `tako_search` alone) is metered — the only request shape that spends the
+ * shared account's Tako credits. Handshake and discovery methods
+ * (`initialize`, `tools/list`, notifications, pings) must stay unmetered or
+ * clients would burn quota just connecting, and a `tools/call` for any other tool spends no credit
  * either: the listing is auth-invariant on every surface (spec D4), so a
  * listed auth-required tool like `tako_contents` answers the
  * `authRequiredToolResult` sign-in result from the dispatch gate in `mcp.ts`
@@ -142,8 +143,10 @@ export function isMeteredJsonRpcBody(body: unknown): boolean {
   // An earlier revision inlined "`include_contents` is true" instead, which
   // exempted the input for EVERY free tool: `tako_available_data` ignores
   // the key (its `z.object` strips it) and declares no gate, so an anonymous
-  // caller got its four Django round-trips with no per-IP hit just by adding
-  // a key the tool never reads.
+  // caller got its Django round-trips with no per-IP hit just by adding a key
+  // the tool never reads. (Four round-trips then; the tool fans out to ~9
+  // today, and left the free set for that reason — the hazard was the
+  // re-derivation, not the count.)
   const args = (params as { arguments?: unknown }).arguments;
   const tool = TOOL_REGISTRY.find((candidate) => candidate.name === name);
   if (tool?.anonymousInputRejects !== undefined) {

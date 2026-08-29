@@ -59,12 +59,8 @@ request path) and never by the client's User-Agent:
   `freetier.test.ts` → the "commerce-gated upsell" describe (default-off for every
   producer) and the `/mcp/chatgpt` 401 case in `index.test.ts`.
 
-One more model-visible string lives OUTSIDE `freetier.ts` and is likewise gated per
-client instead of banned outright (`workers/src/mcp.ts`). (There is no longer an
-anonymous `initialize` instructions variant: the `initialize` string is identical on every
-tier, because a host loads it once and a mid-conversation sign-in does not reliably
-refresh it — see `workers/src/instructions.ts`. The anonymous state is stated only in the
-dispatch-time `authRequiredToolResult`.)
+One more model-visible string lives OUTSIDE `freetier.ts` and is likewise gated by
+SURFACE instead of banned outright (`workers/src/mcp.ts`):
 
 - `PAYMENT_REQUIRED_MESSAGE` (+ remedy splice) — an AUTHENTICATED caller's own account out
   of credits (Django 402). Every client gets the factual cause-only message. The remedy
@@ -74,6 +70,12 @@ dispatch-time `authRequiredToolResult`.)
   User-Agent classification is involved, so a reviewer or crawler cannot land on the
   wrong side of it. Enforced by `mcp.test.ts` → "omits ALL remedy copy when commerce
   copy is not allowed" and the `/mcp` vs `/mcp/chatgpt` 402 case in `freetier.test.ts`.
+
+The `initialize` instructions carry no such string any more. There is no anonymous
+variant: the `initialize` text is identical on every tier, because a host loads it once
+and a mid-conversation sign-in does not reliably refresh it — see
+`workers/src/instructions.ts`. A connection's anonymous state is stated only in the
+dispatch-time `authRequiredToolResult`.
 
 Paid functionality on the ChatGPT surface is untouched.
 
