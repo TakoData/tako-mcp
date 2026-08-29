@@ -16,10 +16,21 @@
  *   hosts (claude.ai, ChatGPT, Centaur) egressing from many regions
  *   maximize that fan-out. It still bounds per-colo floods — including
  *   the otherwise-unmetered handshake methods, which need no credential
- *   at all. The genuinely GLOBAL ceiling is Django's Redis-backed
- *   per-user throttles on the free-tier account, which every anonymous
- *   request lands on because they all authenticate as the one
- *   `FREE_TIER_API_KEY` user. Read the live numbers from
+ *   at all. For a request that REACHES Django, the genuinely GLOBAL ceiling
+ *   is its Redis-backed per-user throttles on the free-tier account, which
+ *   such requests all land on because they authenticate as the one
+ *   `FREE_TIER_API_KEY` user.
+ *
+ *   MIND THE GAP: a `tools/call` naming a tool outside `FREE_TIER_TOOL_NAMES`
+ *   reaches neither. It is answered at `mcp.ts` (the pre-dispatch gate, or
+ *   `registerTool`'s) without touching Django, and `isMeteredJsonRpcBody`
+ *   skips the per-IP bucket because it spends nothing — so the per-colo
+ *   bucket, which this same comment calls not a true global ceiling, is its
+ *   only bound. That class grew in this change: every default tool except
+ *   `tako_search` is now in it. The refusals are cheap (no upstream call, no
+ *   credit), which is why this is a note and not an alarm — but size the
+ *   per-colo limit knowing it is what holds them.
+ *   Read the live numbers from
  *   `app/backend/api/throttling/policy.py` in the monorepo rather than from
  *   here: a copy of that table went stale the moment `tako_answer` moved
  *   behind `?tools=answer` (it named answer, which no anonymous connection

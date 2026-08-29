@@ -10,6 +10,7 @@
 import { z } from "zod";
 
 import type { Env } from "../env.js";
+import type { Tier } from "../freetier.js";
 import {
   HTTP_URL_REGEX,
   DEFAULT_DARK_MODE,
@@ -887,11 +888,37 @@ export const NARROWER_WEB_ATTEMPT =
  * data answer at all. Absence from the skills is the intended state, not
  * drift.
  */
+/**
+ * The recovery protocol a zero-card search ships in its own result.
+ *
+ * TIER-BRANCHED, unlike every description and the `initialize` string. Those
+ * ride the host's cached prefix and are read once; this is a tool RESULT,
+ * appended after that prefix and true at the moment the model reads it — the
+ * same slot `authRequiredToolResult` occupies. Branching it costs no prompt
+ * cache: the prefix is byte-identical either way.
+ *
+ * It has to branch, because the authenticated protocol routes through
+ * `tako_available_data` and `tako_contents`, and an anonymous caller has
+ * NEITHER — `tako_search` is the whole anonymous surface. Unbranched, a
+ * zero-result anonymous caller got numbered steps in which every step
+ * answers a sign-in refusal.
+ */
 function buildZeroResultGuidance(
   hasWebResults: boolean,
   sources: SearchedSources,
   strictPin: boolean,
+  tier: Tier,
 ): string {
+  // One sentence, appended wherever the authenticated protocol would have
+  // named a tool this caller cannot reach. The refusal is still the
+  // conversion prompt; this stops us PRESCRIBING it as a step.
+  const anon = tier === "free";
+  // `tako_contents` is auth-required outright, so the "read the page in full"
+  // half of every web sentence is a refusal anonymously. The snippets already
+  // ride in `structuredContent`, so what is left still answers the question.
+  const answerFromWeb = anon
+    ? "Answer from the web_results (their snippets are in structuredContent; reading a page in FULL needs a signed-in connection)."
+    : "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).";
   // The pin branch comes FIRST because every branch below reports a verdict
   // about coverage, and under a hard filter that verdict is unsupported. A
   // `strict: true` pin returns ONLY cards matching a pinned node, and the graph
@@ -911,7 +938,11 @@ function buildZeroResultGuidance(
       "Zero cards here is evidence about the filter, NOT about coverage. The graph holds near-duplicate metric nodes where only one twin carries cards, so a pinned query returned FEWER cards than the same query unpinned on 11 of 20 pairs measured.",
       "Re-run the SAME query text with `node_ids` dropped before concluding anything. Do not report a coverage gap on the strength of this response.",
       ...(hasWebResults
-        ? ["Web results did come back — answer from them meanwhile (tako_contents on the most relevant url fetches its full page text)."]
+        ? [
+            anon
+              ? "Web results did come back — answer from them meanwhile (their snippets are in structuredContent)."
+              : "Web results did come back — answer from them meanwhile (tako_contents on the most relevant url fetches its full page text).",
+          ]
         : []),
     ].join(" ");
   }
@@ -931,15 +962,19 @@ function buildZeroResultGuidance(
     if (!searchedData(sources)) {
       return [
         "This search returned web results. It ran on the WEB source only, so it says NOTHING about whether Tako's data graph covers this — do not report a coverage gap on the strength of it.",
-        "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
+        answerFromWeb,
         "Need more? Refine and re-search freely: prefer SEVERAL narrow queries (one per entity, provider or site) over one broad one.",
-        'If a chart, dataset or proprietary figure is what you actually want, re-run with sources:["data","web"] (same price) or check tako_available_data (free) — that is what answers the coverage question.',
+        anon
+          ? 'If a chart, dataset or proprietary figure is what you actually want, re-run with sources:["data","web"] (same price). The coverage check that answers this directly, tako_available_data, needs a signed-in connection.'
+          : 'If a chart, dataset or proprietary figure is what you actually want, re-run with sources:["data","web"] (same price) or check tako_available_data — that is what answers the coverage question.',
       ].join(" ");
     }
     return [
       "This search returned web results but no data cards. That is a verdict about the DATA GRAPH only: it does not cover this query, and rewording will not change that.",
-      "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).",
-      "If you specifically need a chart or dataset, run tako_available_data (free) once; re-search only if it confirms coverage, using the EXACT canonical name it returns as the query.",
+      answerFromWeb,
+      anon
+        ? "If you specifically need a chart or dataset, the coverage check that would confirm it, tako_available_data, needs a signed-in connection — do not re-search this query blind."
+        : "If you specifically need a chart or dataset, run tako_available_data once; re-search only if it confirms coverage, using the EXACT canonical name it returns as the query.",
       REFINE_WEB_FREELY,
     ].join(" ");
   }
@@ -952,13 +987,27 @@ function buildZeroResultGuidance(
     return [
       "No results from the web for this query. The data source was not searched, so this is NOT a coverage verdict about Tako's graph — it means the query itself came back empty.",
       "Refine and re-search: narrow to one entity, provider or site per query rather than one broad query, or name the specific doc/page you expect to find.",
-      "If a data metric is what you are actually after, check tako_available_data (free) for coverage and run ONE data-source search.",
+      anon
+        ? "If a data metric is what you are actually after, run ONE data-source search; the coverage check that would tell you the exact name first, tako_available_data, needs a signed-in connection."
+        : "If a data metric is what you are actually after, check tako_available_data for coverage and run ONE data-source search.",
       "Stop only once a couple of genuinely different framings have come back empty.",
+    ].join(" ");
+  }
+  // The anonymous protocol cannot open on the coverage check, so it opens on
+  // the one lever that does work — the shape rules — and names the sign-in as
+  // the way to get the canonical name rather than as step (1).
+  if (anon) {
+    return [
+      "No results — do NOT retry this query or rephrasings of it hoping a data card appears; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
+      "Rule out the usual shape mistakes first: one entity + one metric per query (split compound asks into parallel searches), and domains not brand names for website traffic (\"netflix.com\", not \"Netflix\").",
+      "The step that would give you Tako's EXACT metric name for this entity, tako_available_data, needs a signed-in connection; without it, make at most ONE reshaped retry and then answer from other sources.",
+      '— except website-traffic asks: the graph misses long-tail domains SimilarWeb still covers, so there the real coverage test is the one retry itself, as a bare-domain query ("kagi.com monthly visits").',
+      ...(searchedWeb(sources) ? [NARROWER_WEB_ATTEMPT] : []),
     ].join(" ");
   }
   return [
     "No results — do NOT retry this query or rephrasings of it hoping a data card appears; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
-    "Recover in order: (1) call tako_available_data (free) with the entity to learn the exact metric NAMES Tako actually has;",
+    "Recover in order: (1) call tako_available_data with the entity to learn the exact metric NAMES Tako actually has;",
     "(2) if it confirms coverage, spend your ONE remaining search on that EXACT canonical name — the name is what recovers cards" +
       (searchedWeb(sources)
         ? ";"
@@ -1118,6 +1167,7 @@ export function buildSearchOutput(
   env: Env,
   searchedSources: SearchedSources,
   strictPin: boolean,
+  tier: Tier,
 ): SearchOutput {
   // Order before anything reads cards[0]: the widget/pub_id fields below lift
   // the TOP card, so the chart the host renders follows the same ordering the
@@ -1141,6 +1191,7 @@ export function buildSearchOutput(
             webResults.length > 0,
             searchedSources,
             strictPin,
+            tier,
           ),
         }
       : {}),

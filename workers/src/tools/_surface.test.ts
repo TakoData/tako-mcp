@@ -117,6 +117,14 @@ describe("tool descriptions are tier-invariant", () => {
   // whenever a host reads it — that is why `tako_contents` may say so. A tool
   // INSIDE it that carries the same sentence tells a model to skip the one
   // tool anonymous callers have.
+  //
+  // WHAT THIS DOES NOT PROVE: that the anonymous-set cut held. Reverting
+  // `FREE_TIER_TOOL_NAMES` to two tools leaves this block green — it would
+  // simply audit two descriptions instead of one. The assertions that fail on
+  // that revert are the set equality above, `isMeteredJsonRpcBody` in
+  // `freetier.test.ts`, and the `tako_available_data` auth-challenge case in
+  // `mcp.test.ts`. Read green here as "no free tool oversells itself", not as
+  // evidence about the tier boundary.
 
   it("no free-tier tool description claims tier-varying availability", () => {
     for (const tool of TOOL_REGISTRY) {

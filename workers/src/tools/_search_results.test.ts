@@ -349,7 +349,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
   it("attaches the full anti-retry protocol when cards AND web_results are both empty", () => {
-    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false);
+    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false, "authenticated");
     // The load-bearing instruction: do not re-issue reworded searches.
     expect(out.guidance).toMatch(/do not retry/i);
     expect(out.guidance).toMatch(/tako_available_data/);
@@ -359,7 +359,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
     // The common default-source miss: no data card, some web hits. This is
     // exactly the "reword and retry for a chart" loop case, so guidance must
     // not be silently skipped here.
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"], false);
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"], false, "authenticated");
     expect(out.guidance).toMatch(/web_results/);
     // The verdict is scoped to the graph, not to the whole call.
     expect(out.guidance).toMatch(/DATA GRAPH only/);
@@ -373,7 +373,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // carve-out must be explicit — a model reading this cannot be left to infer
   // that web refinement is still allowed.
   it("does not ban web re-searching when zero cards come back with web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"], false);
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"], false, "authenticated");
     const g = out.guidance ?? "";
     expect(g).toContain("Re-searching is NOT banned here");
     // Names the fan-out that wins these questions.
@@ -387,7 +387,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // has zero cards by construction, so the graph verdict below would be built
   // from evidence that does not exist.
   it("renders no graph verdict for a web-only search that DID return web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"], false);
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"], false, "authenticated");
     const g = out.guidance ?? "";
     expect(g).toMatch(/WEB source only/);
     expect(g).not.toMatch(/DATA GRAPH only/);
@@ -402,7 +402,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   });
 
   it("tailors the both-empty protocol for a data-only search (web fallback allowed on the single retry)", () => {
-    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"], false);
+    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"], false, "authenticated");
     expect(out.guidance).toMatch(/tako_available_data/);
     expect(out.guidance).toMatch(/"web"/);
     // No web-axis carve-out here: the web was never searched, so there is no
@@ -416,7 +416,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // situation, opposite verdict, on the most common Tako-has-nothing path — so it
   // is now one shared constant rather than a sentence in one of the two tools.
   it("allows the same single narrower web attempt tako_answer allows, when web was searched", () => {
-    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false);
+    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated");
     expect(out.guidance).toContain(NARROWER_WEB_ATTEMPT);
     expect(out.guidance).toMatch(/WEB axis only/);
   });
@@ -426,7 +426,7 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // This branch used to ban that lever — "do NOT retry this query or
   // rephrasings of it" — which left the model with nothing to do at all.
   it("tells a web-only search to refine, and claims nothing about graph coverage", () => {
-    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"], false);
+    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"], false, "authenticated");
     const g = out.guidance ?? "";
     expect(g).not.toMatch(/node_id/);
     expect(g).toMatch(/Refine and re-search/i);
@@ -440,13 +440,13 @@ describe("buildSearchOutput — zero-card guidance", () => {
     // Was "treats the legacy tako alias as data" and keyed on /node_id/ in the
     // guidance; the alias is gone and so is the pin recipe, so pin the branch
     // by the verdict it is the only one to state.
-    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false);
+    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false, "authenticated");
     expect(out.guidance).toMatch(/tako_available_data/);
     expect(out.guidance).toMatch(/do NOT retry/i);
   });
 
   it("omits guidance when any card is present", () => {
-    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false);
+    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false, "authenticated");
     expect(out.guidance).toBeUndefined();
   });
 });
@@ -730,7 +730,7 @@ describe("orderCardsByUsefulness", () => {
     const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
     const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00");
     const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00");
-    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false);
+    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false, "authenticated");
     expect(out.cards[0]?.card_id).toBe("fresh_second");
     // The chart the host renders must not disagree with the document.
     expect(out.pub_id).toBe("fresh_second");
@@ -763,12 +763,79 @@ describe("orderCardsByUsefulness — as-of presence", () => {
   });
 });
 
+describe("zero-card guidance never prescribes a tool the tier cannot call", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+  // Every source combination `tako_search` can produce, plus the pinned path
+  // `tako_search_advanced` adds. `tako_search` is the WHOLE anonymous surface,
+  // so on the free tier none of these may route through another tool.
+  const SHAPES: ReadonlyArray<{
+    sources: Array<"data" | "web">;
+    web: boolean;
+    pin: boolean;
+  }> = [
+    { sources: ["data", "web"], web: false, pin: false },
+    { sources: ["data", "web"], web: true, pin: false },
+    { sources: ["data"], web: false, pin: false },
+    { sources: ["web"], web: false, pin: false },
+    { sources: ["web"], web: true, pin: false },
+    { sources: ["data", "web"], web: false, pin: true },
+  ];
+
+  const guidanceFor = (
+    shape: (typeof SHAPES)[number],
+    tier: "free" | "authenticated",
+  ): string =>
+    buildSearchOutput(
+      [],
+      shape.web ? [{ title: "t", url: "https://x.com" }] : [],
+      "req",
+      null,
+      ENV,
+      shape.sources,
+      shape.pin,
+      tier,
+    ).guidance ?? "";
+
+  it("names no other tool on the free tier, on any branch", () => {
+    // The bug this pins: all four branches opened with "call
+    // tako_available_data (free)", and three also routed to tako_contents.
+    // An anonymous zero-result caller got a numbered protocol in which every
+    // step answers a sign-in refusal.
+    for (const shape of SHAPES) {
+      const g = guidanceFor(shape, "free");
+      const label = `sources=${shape.sources.join(",")} web=${shape.web} pin=${shape.pin}`;
+      expect(g, label).not.toContain("tako_contents");
+      // tako_available_data may be NAMED as the thing sign-in unlocks, but
+      // never as a step to take now.
+      expect(g, label).not.toMatch(/(call|run|check) tako_available_data/i);
+      expect(g.length, label).toBeGreaterThan(0);
+    }
+  });
+
+  it("still prescribes the full protocol when authenticated", () => {
+    // Guards the other direction: a blanket strip would cost every paying
+    // caller the recovery that keeps them off the retry loop.
+    const g = guidanceFor({ sources: ["data", "web"], web: false, pin: false }, "authenticated");
+    expect(g).toMatch(/call tako_available_data/i);
+    expect(g).toMatch(/canonical name/i);
+  });
+
+  it("keeps the shape rules the anonymous caller CAN act on", () => {
+    // Removing the refusing steps must not leave an empty protocol: the query
+    // shape is the one lever an anonymous caller still has.
+    const g = guidanceFor({ sources: ["data", "web"], web: false, pin: false }, "free");
+    expect(g).toMatch(/one entity \+ one metric/i);
+    expect(g).toMatch(/do NOT retry/i);
+    expect(g).toMatch(/signed-in connection/i);
+  });
+});
+
 describe("zero-card guidance routes to the canonical name, never to a pin", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
   it("sends the model to tako_available_data for the exact name", () => {
     for (const sources of [["data", "web"], ["data"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources, false).guidance ?? "";
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated").guidance ?? "";
       expect(g).toContain("tako_available_data");
       expect(g).toMatch(/canonical name/i);
     }
@@ -783,7 +850,7 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
     // `strictPin: false` is what `tako_search` always produces (it cannot send
     // either field), so this is that tool's every path.
     for (const sources of [["data", "web"], ["data"], ["web"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources, false).guidance ?? "";
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated").guidance ?? "";
       expect(g, `sources=${sources.join(",")}`).not.toMatch(/node_ids|strict/i);
     }
   });
@@ -794,7 +861,7 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
     // hard filter returned nothing — a coverage verdict the request cannot
     // support (KE-812: pinned handles returned FEWER cards on 11 of 20 pairs),
     // and one that contradicts that tool's own description.
-    const g = buildSearchOutput([], [], "req", null, ENV, ["data", "web"], true).guidance ?? "";
+    const g = buildSearchOutput([], [], "req", null, ENV, ["data", "web"], true, "authenticated").guidance ?? "";
     expect(g).toMatch(/hard filter/i);
     expect(g).toMatch(/node_ids/);
     // The verdict the unpinned branch gives must NOT appear here.
@@ -803,7 +870,7 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
   });
 
   it("keeps the pin branch off the web-only path, which never applied a data filter", () => {
-    const g = buildSearchOutput([], [], "req", null, ENV, ["web"], true).guidance ?? "";
+    const g = buildSearchOutput([], [], "req", null, ENV, ["web"], true, "authenticated").guidance ?? "";
     expect(g).not.toMatch(/hard filter/i);
   });
 });

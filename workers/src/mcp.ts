@@ -1218,12 +1218,18 @@ export function djangoErrorToToolResult(err: DjangoError): {
  * an anonymous caller has no account to top up), an authenticated caller
  * OWNS the exhausted balance, so naming the cause is the actionable answer.
  *
- * States the cause, the retry semantics, and the surviving free move —
- * and deliberately NO remedy. The surviving move names a CAPABILITY, not a
- * tool: `?tools=` can leave any given tool unregistered, so naming one here
- * risks pointing the model at something this connection cannot call. ("free"
- * here means credit-free, which since #272 is not the same as
- * anonymous-executable — `FREE_TIER_TOOL_NAMES` is search alone.) Two different backends emit this 402 with
+ * States the cause and the retry semantics, and deliberately NO remedy and
+ * NO surviving move.
+ *
+ * It used to end "`tako_available_data` is free and still works", then
+ * "calls that spend no credits, such as graph exploration, still work". Both
+ * failed the same way: `?tools=` REPLACES the default listing, so a
+ * `?tools=search` connection has neither that tool nor any graph tool, and
+ * the sentence sends the model after something it cannot reach. Naming a
+ * capability instead of a tool does not fix it — the hazard is reachability,
+ * not the spelling. A clause that is true only for some toolsets belongs
+ * behind the resolved set (the way instruction sentences are filtered) or
+ * nowhere; it is not worth that plumbing here, so it is gone. Two different backends emit this 402 with
  * two different remedies (`subscriptions/decorators.py` in the monorepo):
  * `SubscriptionCreditThrottle` drains MONTHLY plan credits that regrant
  * each cycle (remedy: upgrade the plan, or wait for the reset), while
@@ -1237,8 +1243,7 @@ export function djangoErrorToToolResult(err: DjangoError): {
  */
 export const PAYMENT_REQUIRED_MESSAGE =
   "This Tako account is out of credits, so the call could not run. " +
-  "Priced calls will keep failing until the account has credits again; " +
-  "calls that spend no credits, such as graph exploration, still work.";
+  "Priced calls will keep failing until the account has credits again.";
 
 /**
  * Model-visible message for an AUTHENTICATED caller whose Tako credential

@@ -1431,7 +1431,7 @@ describe("paymentRequiredToolResult", () => {
       body,
     });
 
-  it("names the cause, reset-safe retry semantics, and the surviving free move", () => {
+  it("names the cause and reset-safe retry semantics, and prescribes no surviving move", () => {
     const result = paymentRequiredToolResult(err402(), false);
     expect(result.isError).toBe(true);
     const text = result.content[0]?.text ?? "";
@@ -1439,14 +1439,15 @@ describe("paymentRequiredToolResult", () => {
     // Reset-safe phrasing: monthly plan credits regrant each cycle, so an
     // unconditional "retrying will fail" would be false across a reset.
     expect(text).toContain("until the account has credits again");
-    // A CAPABILITY, never a tool name: `?tools=` can leave any tool
-    // unregistered, so naming one here can point the model at something this
-    // connection cannot call. This assertion used to demand
-    // `tako_available_data`.
-    expect(text).toContain("spend no credits");
+    // NO surviving-move clause. Two versions of one shipped — first naming
+    // `tako_available_data`, then "graph exploration" — and both were
+    // unreachable on a `?tools=search` connection, which registers neither.
+    // The hazard is reachability, so neither a tool name nor a capability
+    // phrasing is safe unfiltered.
     for (const tool of TOOL_REGISTRY) {
       expect(text, tool.name).not.toContain(tool.name);
     }
+    expect(text).not.toMatch(/still works?|graph exploration|spend no credits/i);
     // The raw upstream framing must not leak — "Django" is an internal.
     expect(text).not.toContain("Django");
     const detail = result._meta["tako/error"] as {

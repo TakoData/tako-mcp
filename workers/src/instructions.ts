@@ -177,7 +177,12 @@ const TOOL_SENTENCES: readonly ToolSentence[] = [
   },
   {
     tools: ["tako_available_data"],
-    text: "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name.",
+    // NOT "is free". That word reads as "you can call this", and it stayed in
+    // the anonymous instructions after the tool left `FREE_TIER_TOOL_NAMES` —
+    // an anonymous `?tools=available_data` connection shipped this one
+    // sentence and refused every call it invited. The credit axis is not what
+    // a model needs here, so the claim is gone rather than reworded.
+    text: "`tako_available_data` answers what data Tako has on an entity or a metric, including a measure's exact name.",
   },
   {
     tools: ["tako_contents"],

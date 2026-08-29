@@ -29,7 +29,7 @@ Server instructions:
 ```text
 Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.
 
-`tako_search` retrieves the cards and web links. `tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.
+`tako_search` retrieves the cards and web links. `tako_available_data` answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.
 ```
 
 ## `/mcp/chatgpt` — the ChatGPT app surface, OAuth only
@@ -47,7 +47,7 @@ Server instructions:
 ```text
 Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.
 
-`tako_search` retrieves the cards and web links. `tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.
+`tako_search` retrieves the cards and web links. `tako_available_data` answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.
 ```
 
 ## Tools
@@ -570,7 +570,7 @@ Best for: breadth — fanning out many narrow queries in parallel to see what ex
 
 Coverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.
 
-Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today's sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric's exact name, run `tako_available_data` (free) instead of guessing here, then search on the EXACT name it returns — the canonical name is what recovers cards.
+Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today's sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric's exact name, run `tako_available_data` instead of guessing here, then search on the EXACT name it returns — the canonical name is what recovers cards.
 
 Data and web come back together — treat them as one result, not an either/or. Returns: `cards` with chart URLs, plus `web_results`. To read either in full, call `tako_contents` on its url (web urls are always fetchable; a card's rows need `exportable: true`).
 
