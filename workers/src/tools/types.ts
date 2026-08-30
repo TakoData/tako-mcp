@@ -402,11 +402,22 @@ export interface ToolModule<
   /**
    * Optional `structuredContent` slimmer. When present, its return value is
    * reported as the result's `structuredContent` instead of the full output.
-   * Pair it with `renderText`: hosts count `structuredContent` toward model
-   * context, so once the text channel carries the full content (as markdown),
-   * the structured channel must shrink to machine essentials (widget fields,
-   * ids, usage) or the response pays for everything twice. The returned value
-   * MUST conform to the tool's advertised `outputSchema`.
+   * The returned value MUST conform to the tool's advertised `outputSchema`.
+   *
+   * THE LEGACY PATTERN, and optional for that reason. It exists for a tool
+   * whose handler returns more than it advertises: slim to machine essentials
+   * (widget fields, ids, usage) so a host counting both channels does not pay
+   * for everything twice. `tako_available_data`, `tako_agent` and
+   * `tako_contents` still work this way.
+   *
+   * DO NOT ADD ONE TO A MIGRATED TOOL. `tako_search` and
+   * `tako_search_advanced` project their output explicitly, so the handler's
+   * return IS the advertised shape and `pickDeclared` in `mcp.ts` narrows it
+   * per surface — a hook there would be a second, unvalidated shaping step.
+   * Slimming is also no longer the goal on those two: 9 audited harnesses read
+   * `content` only while both submission targets read `structuredContent`
+   * only, so each channel has to be complete on its own (see the module
+   * docstring in `_render_markdown.ts`).
    */
   slimStructured?: (output: Output) => Record<string, unknown>;
   /**

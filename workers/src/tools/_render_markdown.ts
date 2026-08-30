@@ -1,19 +1,31 @@
 /**
- * Markdown renderers for the model-facing text channel of `tako_search` and
- * `tako_search_advanced`, plus the paired `structuredContent` slimmers.
+ * Markdown renderers for the model-facing text channel, the advertised
+ * `structuredContent` shapes for the search tools, and the `slimStructured`
+ * hooks the tools the redesign has not reached yet still use.
  *
  * Why markdown: the consumers of these tools are agents reading text. JSON
  * taxes prose-heavy content twice — escaped newlines/quotes inside snippets,
  * and per-item key repetition (`"title":`, `"url":`, … × N results) — and a
  * truncated JSON string is malformed where a truncated markdown doc just
  * loses its tail. Layout: Tako data cards first, then web results, then the
- * hoisted source notes, so truncating clients lose boilerplate before data.
+ * two reference maps, so truncating clients lose boilerplate before data.
  *
- * The channel split (see `mcp.ts`): `renderText` output becomes
- * `content.text` (everything the model reads); `slimStructured` output
- * becomes `structuredContent` (machine essentials only — widget fields,
- * usage, guidance). Hosts count BOTH toward model context, so the slim side
- * is what keeps markdown from doubling the bill.
+ * BOTH CHANNELS ARE COMPLETE for the search tools, and the duplication is the
+ * decision, not an oversight. The older rule — text carries everything,
+ * `structuredContent` shrinks to machine essentials so a host counting both
+ * does not pay twice — assumed every host reads the text. A 2026-08 audit
+ * measured otherwise: 9 harnesses (Cursor, Vercel AI SDK, OpenCode, Gemini
+ * CLI, Goose, LangChain, OpenAI Agents SDK py+js, Excel/Outlook) feed the
+ * model `content` ONLY, while both submission targets — ChatGPT and Claude
+ * Code — feed it `structuredContent` ONLY. Either channel alone is therefore a
+ * wrong answer on some host. The projection is what makes shipping both
+ * affordable (~31.9k chars -> ~13k per channel), and the "channel parity
+ * (tako_search)" test asserts every projected leaf reaches the text.
+ *
+ * So `tako_search` and `tako_search_advanced` declare NO `slimStructured`
+ * hook: their handler output IS the advertised shape, and `pickDeclared` in
+ * `mcp.ts` does the per-surface narrowing. `tako_available_data`, `tako_agent`
+ * and `tako_contents` still slim, and their hooks live below.
  *
  * `request_id` reaches NEITHER channel, on purpose. It is a server-side
  * correlation id with no use to a model or an end user, and OpenAI's app
@@ -131,6 +143,22 @@ export const searchChatgptOutputShape = z.looseObject({
 // ---------------------------------------------------------------------------
 
 /**
+ * The backtick run that safely fences `text`: longer than any run inside it,
+ * minimum 3.
+ *
+ * Exported because `gen-registry.ts` wraps a WHOLE rendered document in a fence
+ * for `docs/TOOLS.md`, and that wrapper has to out-run whatever {@link fenced}
+ * emitted inside it. A hardcoded four backticks there works only until a
+ * fixture snippet contains a triple-backtick run — then the inner fence closes
+ * the outer one and raw markdown spills into the page.
+ */
+export function fenceRunFor(text: string): string {
+  const runs = text.match(/`+/g);
+  const longest = runs === null ? 0 : Math.max(...runs.map((r) => r.length));
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+/**
  * Fence opaque/untrusted text with a backtick run LONGER than any run inside
  * it (min 3), so the content can neither close the fence early nor forge the
  * document's own framing. JSON-stringification used to provide this boundary
@@ -140,9 +168,7 @@ export const searchChatgptOutputShape = z.looseObject({
  * indistinguishably from our own sections and footer.
  */
 function fenced(text: string, lang = ""): string {
-  const runs = text.match(/`+/g);
-  const longest = runs === null ? 0 : Math.max(...runs.map((r) => r.length));
-  const fence = "`".repeat(Math.max(3, longest + 1));
+  const fence = fenceRunFor(text);
   return `${fence}${lang}\n${text}\n${fence}`;
 }
 
@@ -202,13 +228,21 @@ function renderProjectedCard(c: ProjectedCard): string {
         ? `exportable, ${c.total_rows} rows`
         : "exportable"
       : c.description !== undefined
-        ? "rows locked — value in description above"
+        ? // Names the FIELD, not its position. The same fact reaches
+          // structuredContent, where `description` is a sibling key and nothing
+          // is "above" anything — a positional pointer is only true in one of
+          // the two channels this projection has to serve.
+          "rows locked — the headline value is in this card's `description`"
         : "rows locked",
   );
   lines.push(`- ${access.join(" · ")}`);
   const meta: string[] = [];
   if (c.source !== undefined) meta.push(`source: ${oneLine(c.source)}`);
-  if (c.last_updated !== undefined) meta.push(`updated ${c.last_updated}`);
+  // "refreshed", not "updated": this is Tako's refresh date, not the date the
+  // DATA runs to. A card refreshed today can carry a series ending months ago,
+  // and a bare "updated" in a fact line reads as the latter. The card's
+  // `description` carries the data period.
+  if (c.last_updated !== undefined) meta.push(`refreshed ${c.last_updated}`);
   if (c.relevance !== undefined) meta.push(`relevance ${oneLine(c.relevance)}`);
   if (meta.length > 0) lines.push(`- ${meta.join(" · ")}`);
   if (c.nodes !== undefined && c.nodes.length > 0) {

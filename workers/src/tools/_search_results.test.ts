@@ -14,13 +14,13 @@ import { ContentItem } from "../generated/schemas.js";
 import {
   CONTENT_META_KEYS,
   CONTENT_PAYLOAD_KEYS,
+  NARROWER_WEB_ATTEMPT,
+  buildDataGapGuidance,
   buildReferenceMaps,
   buildSearchOutput,
-  hoistSourceGlossary,
   orderCardsByUsefulness,
   projectCard,
   projectWebResult,
-  slimCard,
   slimCardContent,
 } from "./_search_results.js";
 import type { ResultContent, TakoCard, WebResult } from "./_search_results.js";
@@ -168,187 +168,9 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
   });
 });
 
-// `content` presence is the model-facing "tako_contents will work on this
-// card" signal (the backend's export-safe gate 403s cards without it), so
-// slimming must preserve exactly what the wire said: never fabricate a
-// descriptor on an unexportable card, never drop one from an exportable card.
-describe("slimCard — share opt-in on the passthrough embed_url", () => {
-  // cards[].embed_url is backend passthrough; without the opt-in the SAME
-  // top card carried showShare on the widget-rendered structuredContent url
-  // but not on the copy an agent quotes from the text.
-  it("appends showShare=true to a card's embed_url", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      title: "t",
-      embed_url: "https://trytako.com/embed/c1/",
-    };
-    expect(slimCard(card, null).embed_url).toBe(
-      "https://trytako.com/embed/c1/?showShare=true",
-    );
-  });
-
-  it("leaves a card without an embed_url untouched", () => {
-    const card: TakoCard = { card_id: "c1", title: "t" };
-    expect(slimCard(card, null)).not.toHaveProperty("embed_url");
-  });
-});
-
-describe("slimCard — content presence is the export-eligibility signal", () => {
-  it("does not fabricate a content descriptor on a card without one (not exportable)", () => {
-    const card: TakoCard = { card_id: "c1", title: "t" };
-    expect(slimCard(card, 5)).not.toHaveProperty("content");
-    expect(slimCard(card, null)).not.toHaveProperty("content");
-  });
-
-  it("passes an explicit content: null through unchanged (still not exportable)", () => {
-    const card: TakoCard = { card_id: "c1", content: null };
-    expect(slimCard(card, 5).content).toBeNull();
-    expect(slimCard(card, null).content).toBeNull();
-  });
-
-  it("keeps the content descriptor on an exportable card even in drop-all mode", () => {
-    const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
-    const out = slimCard(card, null);
-    expect(out.content).not.toBeNull();
-    expect(out.content?.total_rows).toBe(1);
-    expect((out.content as { dataset?: unknown }).dataset).toBeNull();
-  });
-
-  it("keeps the content descriptor (with capped rows) in preview mode", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      content: dataset([
-        ["2024-01-01", 1],
-        ["2024-01-02", 2],
-      ]),
-    };
-    const out = slimCard(card, 1);
-    expect(out.content).not.toBeNull();
-    expect(rowsOf(out.content)).toEqual([["2024-01-02", 2]]);
-  });
-});
-
-// The explicit `exportable` boolean is emitted so the model reads "no" from a
-// field instead of having to notice a MISSING key (which it overlooks, then
-// calls tako_contents anyway and 403s). The backend emits it authoritatively
-// since TakoData/tako#27989 (same fail-closed export_safe gate as /contents),
-// so a wire flag passes through untouched — even when it disagrees with
-// content presence. Deriving from `content != null` is only the fallback for
-// older backends that don't emit the flag.
-describe("slimCard — explicit exportable flag", () => {
-  it("passes a backend exportable: true through on a content-bearing card", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      exportable: true,
-      content: dataset([["2024-01-01", 1]]),
-    };
-    expect(slimCard(card, null).exportable).toBe(true);
-    expect(slimCard(card, 5).exportable).toBe(true);
-  });
-
-  it("passes a backend exportable: false through (authoritative) even when content is present", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      exportable: false,
-      content: dataset([["2024-01-01", 1]]),
-    };
-    const out = slimCard(card, 5);
-    expect(out.exportable).toBe(false);
-    // The wire's content descriptor still survives slimming untouched.
-    expect(out.content).not.toBeNull();
-  });
-
-  it("passes a backend exportable: true through even when content is absent", () => {
-    const card: TakoCard = { card_id: "c1", exportable: true };
-    expect(slimCard(card, 5).exportable).toBe(true);
-  });
-
-  it("falls back: marks a card WITHOUT flag or content attribute as exportable: false", () => {
-    const card: TakoCard = { card_id: "c1", title: "t" };
-    expect(slimCard(card, 5).exportable).toBe(false);
-    expect(slimCard(card, null).exportable).toBe(false);
-  });
-
-  it("falls back: marks a flagless card with an explicit content: null as exportable: false", () => {
-    const card: TakoCard = { card_id: "c1", content: null };
-    expect(slimCard(card, 5).exportable).toBe(false);
-    expect(slimCard(card, null).exportable).toBe(false);
-  });
-
-  it("falls back: marks a flagless content-bearing card as exportable: true (both modes)", () => {
-    const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
-    expect(slimCard(card, null).exportable).toBe(true);
-    expect(slimCard(card, 5).exportable).toBe(true);
-  });
-});
-
-// Non-exportable (exportable:false) cards carry no rows anywhere; the
-// values_hint makes the routing (description holds the headline when present)
-// per-card and deterministic instead of a
-// tool-description recall exercise. Wording is neutral ("not exportable"):
-// export_safe() also fails closed on non-licensing causes.
-describe("slimCard — values_hint on gated cards", () => {
-  it("stamps a plain not-exportable hint that routes to NO tool", () => {
-    // The only tool that can recover these figures is `tako_search_advanced`
-    // with `include_answer`, and it is opt-in (spec D1): a hint naming it would
-    // send the model into "tool not found" on the default surface. So the hint
-    // states what IS true (no rows on any path; headline in description) and
-    // advises no call at all. (It named `tako_answer` before the fold deleted
-    // that tool — same rule, same reason.)
-    const card: TakoCard = {
-      card_id: "c1",
-      exportable: false,
-      nodes: [
-        { id: "n1", name: "Entity", type: "entity" },
-        { id: "n2", name: "Metric", type: "metric" },
-      ],
-    };
-    const hint = slimCard(card, 5).values_hint;
-    expect(hint).toContain("not exportable");
-    expect(hint).not.toContain("tako_search_advanced");
-    expect(hint).not.toContain("node_ids");
-    expect(hint).not.toContain("strict");
-  });
-
-  it("points at the headline only when the card actually carries a description", () => {
-    const withDesc: TakoCard = {
-      card_id: "c1",
-      exportable: false,
-      description: "Latest value 59.2%, up 1.1pp",
-    };
-    expect(slimCard(withDesc, 5).values_hint).toContain("headline value is in description");
-    const withoutDesc: TakoCard = { card_id: "c2", exportable: false };
-    expect(slimCard(withoutDesc, 5).values_hint).not.toContain("description");
-    const blankDesc: TakoCard = { card_id: "c3", exportable: false, description: "  " };
-    expect(slimCard(blankDesc, 5).values_hint).not.toContain("description");
-  });
-
-  it("stamps the hint on a fallback-derived gated card (no flag, no content)", () => {
-    const card: TakoCard = { card_id: "c1", title: "t" };
-    expect(slimCard(card, 5).values_hint).toContain("not exportable");
-  });
-
-  it("never stamps a values_hint on an exportable card", () => {
-    const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
-    expect(slimCard(card, 5)).not.toHaveProperty("values_hint");
-  });
-
-  it("orders description and values_hint before the URL/methodology chrome", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      title: "t",
-      exportable: false,
-      description: "Latest value 59.2%, up 1.1pp",
-      webpage_url: "https://trytako.com/card/c1",
-      image_url: "https://trytako.com/card/c1.png",
-    };
-    const keys = Object.keys(slimCard(card, 5) as Record<string, unknown>);
-    expect(keys.indexOf("description")).toBeLessThan(keys.indexOf("webpage_url"));
-    expect(keys.indexOf("values_hint")).toBeLessThan(keys.indexOf("webpage_url"));
-    expect(keys.indexOf("description")).toBeLessThan(keys.indexOf("image_url"));
-  });
-});
-
+// `tako_search`'s call shape: no inlined rows, no web page text. Shared by the
+// buildSearchOutput tests below, which exercise guidance and ordering rather
+// than the `tako_search_advanced` inline path.
 const OPTS = { rowCap: null, keepWebText: false } as const;
 
 describe("buildSearchOutput — zero-card guidance", () => {
@@ -415,13 +237,39 @@ describe("buildSearchOutput — zero-card guidance", () => {
     expect(out.guidance).not.toMatch(/narrower web question/);
   });
 
-  // tako_answer's both-empty branch has always allowed ONE narrower web attempt;
-  // this branch used to end flatly at "stop calling Tako for this question". Same
-  // situation, opposite verdict, on the most common Tako-has-nothing path — so it
-  // is now one shared constant rather than a sentence in one of the two tools.
-  it("allows the same single narrower web attempt tako_answer allows, when web was searched", () => {
-    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated", OPTS);
-    expect(out.guidance).toMatch(/narrower web question/);
+  // THE INVARIANT, checked on BOTH surfaces in one test on purpose. The answer
+  // path has always allowed ONE narrower web attempt; the search path used to
+  // end flatly at "stop calling Tako for this question" — same situation,
+  // opposite verdict, on the most common Tako-has-nothing path, which teaches a
+  // model that reads both that one of them is wrong.
+  //
+  // A string-identity check (`toContain(NARROWER_WEB_ATTEMPT)`) cannot hold this
+  // any more: the search branches are capped at two sentences, so only the
+  // answer path can afford the full sentence and the search path states the
+  // carve-out as a clause. Asserting each side separately would let a future
+  // edit delete either wording with the suite green, so both are asserted here.
+  it("both zero-result surfaces permit exactly one narrower web attempt", () => {
+    const search =
+      buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated", OPTS)
+        .guidance ?? "";
+    const answer = buildDataGapGuidance(false, true);
+    for (const [surface, g] of [
+      ["search", search],
+      ["answer", answer],
+    ] as const) {
+      // "genuinely narrower" is the phrasing BOTH carry. The nouns already
+      // differ — search says "narrower web question", answer says "narrower
+      // question" — which is exactly how far apart two hand-written statements
+      // of one rule drift, and why the invariant is asserted rather than the
+      // string.
+      expect(g, `${surface} drops the narrower-web carve-out`).toMatch(/genuinely narrower/i);
+      expect(g, `${surface} forbids the attempt the other surface allows`).not.toMatch(
+        /do not (re-?search|try) the web/i,
+      );
+    }
+    // The answer path has the budget for the full sentence, and the REASON it
+    // carries ("too broad rather than unanswerable") is what stops the loop.
+    expect(answer).toContain(NARROWER_WEB_ATTEMPT);
   });
 
   // A web-only search that came back empty has NO data verdict to report (the
@@ -454,149 +302,20 @@ describe("buildSearchOutput — zero-card guidance", () => {
 
 describe("payload layout — data serializes before boilerplate", () => {
   // Clients with result-size caps truncate the TAIL of the serialized JSON, so
-  // the failure mode these tests pin is: five cards of source paragraphs
-  // survive while every data point is cut. Key insertion order IS the fix
-  // (JSON.stringify preserves it into content.text and structuredContent).
-
-  const wireCard: TakoCard = {
-    // Deliberately in the backend's wire order: metadata first, content late.
-    card_id: "c1",
-    title: "PANW Revenue",
-    description: "Quarterly revenue for Palo Alto Networks.",
-    semantic_description: "A long retrieval-oriented blob…",
-    webpage_url: "https://tako.com/card/c1",
-    sources: [{ source_name: "Visible Alpha", source_description: "x".repeat(300) }],
-    methodologies: [{ methodology_name: "m", methodology_description: "consensus" }],
-    card_type: "timeseries",
-    content: dataset([
-      ["2025-01-01", 1],
-      ["2025-04-01", 2],
-    ]),
-  } as unknown as TakoCard;
-
-  it("slimCard reorders keys: description + content (the substance) before URL/source chrome", () => {
-    const keys = Object.keys(slimCard(wireCard, 5));
-    const pos = (k: string) => keys.indexOf(k);
-    expect(pos("card_id")).toBe(0);
-    expect(pos("content")).toBeGreaterThan(-1);
-    // description precedes content: on license-gated cards it carries the
-    // headline value, so it must survive truncation alongside the data.
-    expect(pos("description")).toBeLessThan(pos("content"));
-    expect(pos("content")).toBeLessThan(pos("webpage_url"));
-    expect(pos("content")).toBeLessThan(pos("sources"));
-    expect(pos("content")).toBeLessThan(pos("methodologies"));
-    expect(pos("content")).toBeLessThan(pos("semantic_description"));
-    expect(pos("title")).toBeLessThan(pos("content"));
-  });
-
-  it("slimCard keeps unknown keys (after the known ones) — loose passthrough survives reordering", () => {
-    const withUnknown = { ...wireCard, brand_new_field: 42 } as unknown as TakoCard;
-    const out = slimCard(withUnknown, 5) as unknown as Record<string, unknown>;
-    expect(out.brand_new_field).toBe(42);
-  });
+  // the failure mode this pins is: source paragraphs survive while every data
+  // point is cut. Key insertion order IS the fix (JSON.stringify preserves it
+  // into content.text and structuredContent).
+  //
+  // The CARD-level half of this block went with `slimCard`: card key order was
+  // its job, and the projection now decides the order by construction — every
+  // key is written in `projectCard` in the order it should serialize, so there
+  // is nothing left to reorder. `projectCard`'s own describe pins that shape.
 
   it("slimmed content serializes rows before descriptor metadata", () => {
     const out = slimCardContent(dataset([["2025-01-01", 1]]), 5);
     const keys = Object.keys(out as Record<string, unknown>);
     expect(keys.indexOf("dataset")).toBeLessThan(keys.indexOf("content_format"));
     expect(keys.indexOf("dataset")).toBeLessThan(keys.indexOf("cost"));
-  });
-});
-
-describe("hoistSourceGlossary", () => {
-  const para = "Consensus estimates built from detailed sell-side analyst models across sectors. ".repeat(3);
-
-  const cardWithSource = (id: string, description: string): TakoCard =>
-    ({
-      card_id: id,
-      title: id,
-      sources: [{ source_name: "Alpha Source", source_description: description }],
-    }) as unknown as TakoCard;
-
-  it("hoists a repeated long source_description into ONE glossary entry keyed by source_name", () => {
-    const { cards, glossary } = hoistSourceGlossary([
-      cardWithSource("c1", para),
-      cardWithSource("c2", para),
-      cardWithSource("c3", para),
-    ]);
-    expect(glossary).toEqual({ "Alpha Source": para });
-    const out = cards as unknown as Array<{ sources: Array<Record<string, unknown>> }>;
-    for (const c of out) {
-      // The paragraph is gone from every card; the name key survives as the
-      // glossary lookup handle.
-      expect(c.sources[0]).toEqual({ source_name: "Alpha Source" });
-    }
-  });
-
-  it("hoists even a single occurrence (moves boilerplate behind the data)", () => {
-    const { cards, glossary } = hoistSourceGlossary([cardWithSource("c1", para)]);
-    expect(glossary).toEqual({ "Alpha Source": para });
-    expect(
-      (cards as unknown as Array<{ sources: Array<Record<string, unknown>> }>)[0]?.sources[0],
-    ).not.toHaveProperty("source_description");
-  });
-
-  it("leaves short strings inline — hoisting a label costs more than it saves", () => {
-    const { cards, glossary } = hoistSourceGlossary([
-      cardWithSource("c1", "Short label"),
-      cardWithSource("c2", "Short label"),
-    ]);
-    expect(glossary).toBeUndefined();
-    expect(
-      (cards as unknown as Array<{ sources: Array<{ source_description: string }> }>)[1]
-        ?.sources[0]?.source_description,
-    ).toBe("Short label");
-  });
-
-  it("hoists methodology_description keyed by methodology_name", () => {
-    const method = { methodology_name: "consensus", methodology_description: para };
-    const input = [
-      { card_id: "a", methodologies: [method] },
-      { card_id: "b", methodologies: [{ ...method }] },
-    ] as unknown as TakoCard[];
-    const { cards, glossary } = hoistSourceGlossary(input);
-    expect(glossary).toEqual({ consensus: para });
-    const out = cards as unknown as Array<{ methodologies: Array<Record<string, unknown>> }>;
-    expect(out[0]?.methodologies[0]).not.toHaveProperty("methodology_description");
-    expect(out[1]?.methodologies[0]).not.toHaveProperty("methodology_description");
-  });
-
-  it("keeps a same-name entry with DIFFERENT text inline (no information loss)", () => {
-    const other = "A completely different but still paragraph-length source description text. ".repeat(3);
-    const { cards, glossary } = hoistSourceGlossary([
-      cardWithSource("c1", para),
-      cardWithSource("c2", other),
-    ]);
-    expect(glossary).toEqual({ "Alpha Source": para });
-    expect(
-      (cards as unknown as Array<{ sources: Array<{ source_description: string }> }>)[1]
-        ?.sources[0]?.source_description,
-    ).toBe(other);
-  });
-
-  it("leaves entries without a usable name inline", () => {
-    const input = [
-      { card_id: "a", sources: [{ source_description: para }] },
-    ] as unknown as TakoCard[];
-    const { cards, glossary } = hoistSourceGlossary(input);
-    expect(glossary).toBeUndefined();
-    expect(
-      (cards as unknown as Array<{ sources: Array<{ source_description: string }> }>)[0]
-        ?.sources[0]?.source_description,
-    ).toBe(para);
-  });
-
-  it("returns untouched cards by reference and never mutates inputs", () => {
-    const bare = { card_id: "x", title: "no arrays" } as unknown as TakoCard;
-    const hoistable = cardWithSource("c1", para);
-    const { cards } = hoistSourceGlossary([bare, hoistable]);
-    expect(cards[0]).toBe(bare);
-    // The hoisted card is a NEW object; the original stays intact (immutability).
-    expect(cards[1]).not.toBe(hoistable);
-    expect(
-      (hoistable as unknown as { sources: Array<{ source_description: string }> })
-        .sources[0]?.source_description,
-    ).toBe(para);
   });
 });
 
@@ -729,14 +448,19 @@ describe("orderCardsByUsefulness", () => {
 
   it("drives the widget: buildSearchOutput lifts the REORDERED top card", () => {
     const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-    const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00");
-    const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00");
+    // Titles, because the projection drops `card_id` and the two cards are
+    // otherwise identical — without them the projected-card assertion below
+    // compares undefined to undefined and passes on any ordering.
+    const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00", { title: "Stale series" });
+    const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00", { title: "Fresh series" });
     const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false, "authenticated", OPTS);
-    // The projection drops card_id; the widget lift is the observable — it
-    // must follow the REORDERED top card, not the wire order.
+    // The widget lift is one observable: it must follow the REORDERED top card,
+    // not the wire order.
     expect(out.pub_id).toBe("fresh_second");
-    // The chart the host renders must not disagree with the document.
-    expect(out.pub_id).toBe("fresh_second");
+    // And the document is the other. The chart a host renders must not disagree
+    // with the list beneath it, so the first projected card has to be the same
+    // card the widget lifted.
+    expect(out.cards[0]?.title).toBe("Fresh series");
   });
 });
 
@@ -1002,6 +726,16 @@ describe("the payload/metadata split cannot drift", () => {
     const stale = [...classified].filter((k) => !generated.includes(k)).sort();
     expect(stale, "classified key(s) no longer in ContentItem").toEqual([]);
   });
+
+  // projectCard's ROWS_KEYS is CONTENT_PAYLOAD_KEYS plus three metadata names.
+  // The payload half is derived, so it cannot drift; the three metadata names
+  // are written out, so this pins them to the classified set. Without it a
+  // renamed `content_format` would go stale in projectCard alone.
+  it("every metadata key projectCard keeps beside inlined rows is a classified metadata key", () => {
+    const meta = new Set<string>(CONTENT_META_KEYS);
+    const unclassified = ["total_rows", "truncated", "content_format"].filter((k) => !meta.has(k));
+    expect(unclassified, "projectCard keeps a key CONTENT_META_KEYS does not list").toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1069,6 +803,21 @@ describe("projectCard — the nine-field model-facing card", () => {
     expect(out.exportable).toBe(false);
     expect(out.total_rows).toBeUndefined();
     expect(out).not.toHaveProperty("rows");
+  });
+
+  // The published describe says "exportable cards only", and the text channel
+  // prints the count only in the exportable arm — so a locked card carrying a
+  // descriptor must not put one in structuredContent either, or the two
+  // channels disagree about a card nobody can fetch rows for. Unreachable
+  // today (the backend's shared export gate ships `content: null` on locked
+  // cards); this pins the invariant against that changing.
+  it("suppresses total_rows on a locked card even when a descriptor carries one", () => {
+    const locked = {
+      ...wireCard,
+      exportable: false,
+      content: { total_rows: 42, data: null, dataset: null, records: null },
+    } as unknown as TakoCard;
+    expect(projectCard(locked, null).total_rows).toBeUndefined();
   });
 
   it("rows ride ONLY when the caller asked to inline them (advanced path)", () => {
@@ -1169,6 +918,32 @@ describe("buildReferenceMaps — deduped across cards, conflicts never lose text
     });
   });
 
+  // The suffix names the card's WHOLE source string, so it joins against the
+  // card's `source` field. Keyed by `sources[0]` this read "Revenue —
+  // Fiscal.ai", which is the OTHER card's source — a blended definition
+  // attributed to a single source that did not produce it.
+  it("suffixes a multi-source conflict with the card's full source string", () => {
+    const cards = [
+      {
+        card_id: "single",
+        sources: [{ source_name: "Fiscal.ai" }],
+        metric_definitions: [{ name: "Revenue", definition: "Reported revenue." }],
+      },
+      {
+        card_id: "multi",
+        sources: [{ source_name: "Fiscal.ai" }, { source_name: "S&P" }],
+        metric_definitions: [{ name: "Revenue", definition: "Trailing twelve months revenue." }],
+      },
+    ] as unknown as TakoCard[];
+    const { metric_definitions } = buildReferenceMaps(cards);
+    expect(metric_definitions).toEqual({
+      Revenue: "Reported revenue.",
+      "Revenue — Fiscal.ai, S&P": "Trailing twelve months revenue.",
+    });
+    // The suffix is exactly what the card shows, so the lookup resolves.
+    expect(projectCard(cards[1]!, null).source).toBe("Fiscal.ai, S&P");
+  });
+
   it("source_notes merges source_description and methodology paragraphs under the source name", () => {
     const card = {
       card_id: "a",
@@ -1182,5 +957,166 @@ describe("buildReferenceMaps — deduped across cards, conflicts never lose text
   it("omits both maps when the backend sends no paragraphs", () => {
     const bare = { card_id: "a", sources: [{ source_name: "Fiscal.ai" }] } as unknown as TakoCard;
     expect(buildReferenceMaps([bare])).toEqual({});
+  });
+
+  // The join is the whole point: the model reads `source` off a card and looks
+  // it up here. A two-source card shows "Fiscal.ai, S&P", so that is the key —
+  // NOT `methodology_name`, which appears on no card and used to be the key
+  // whenever a card had anything other than exactly one source.
+  it("keys a multi-source card's methodology by the same string projectCard puts in `source`", () => {
+    const card = {
+      card_id: "a",
+      sources: [{ source_name: "Fiscal.ai" }, { source_name: "S&P" }],
+      methodologies: [{ methodology_name: "consensus", methodology_description: "How it blends." }],
+    } as unknown as TakoCard;
+    const { source_notes } = buildReferenceMaps([card]);
+    expect(source_notes).toEqual({ "Fiscal.ai, S&P": "How it blends." });
+    expect(Object.keys(source_notes ?? {})).not.toContain("consensus");
+    // The contract the key exists to satisfy, asserted end to end.
+    expect(projectCard(card, null).source).toBe("Fiscal.ai, S&P");
+  });
+
+  it("drops a methodology on a card that names no source — there is nothing to join to", () => {
+    const card = {
+      card_id: "a",
+      methodologies: [{ methodology_name: "consensus", methodology_description: "How it blends." }],
+    } as unknown as TakoCard;
+    expect(buildReferenceMaps([card])).toEqual({});
+  });
+
+  // Keys are upstream strings, so an Object.prototype member name must behave
+  // like any other key. Before the null-prototype maps, `sourceNotes["toString"]`
+  // read back the inherited function and `existing.includes(text)` threw a
+  // TypeError — failing the call after the backend round-trip was billed, and
+  // invisible to TS because both maps are typed `Record<string, string>`.
+  it.each(["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"])(
+    "treats %s as an ordinary source and metric name",
+    (name) => {
+      const card = {
+        card_id: "a",
+        sources: [{ source_name: name, source_description: "Who the source is." }],
+        metric_definitions: [{ name, definition: "Reported revenue." }],
+      } as unknown as TakoCard;
+      const maps = buildReferenceMaps([card]);
+      expect(maps.source_notes).toEqual({ [name]: "Who the source is." });
+      expect(maps.metric_definitions).toEqual({ [name]: "Reported revenue." });
+    },
+  );
+
+  // THE CONFORMANCE TEST (spec: 2026-08-26-model-facing-surface-redesign,
+  // "Reference prose"). The maps are only worth their bytes if the model can
+  // JOIN them: it reads `source` off a projected card, or a metric name out of
+  // a card's definitions, and looks the string up here. Every other test in
+  // this block inspects a map in isolation, which is how two real join bugs
+  // shipped — a `methodology_name` key that is on no card, and a `sources[0]`
+  // conflict suffix that disagrees with the card's joined `source`.
+  //
+  // "Exactly one entry", as the spec words it, is deliberately relaxed on the
+  // metric side: a same-name-different-text conflict is SUPPOSED to produce a
+  // second entry ("Revenue" and "Revenue — S&P") rather than drop text. The
+  // invariant that survives is two-way reachability — no orphan keys, no
+  // dropped paragraphs.
+  it("every map key traces back to a card, and every card paragraph reaches a key", () => {
+    const cards = [
+      {
+        card_id: "single",
+        sources: [{ source_name: "Fiscal.ai", source_description: "Who Fiscal.ai is." }],
+        metric_definitions: [{ name: "Revenue", definition: "Reported revenue." }],
+        methodologies: [{ methodology_name: "segment", methodology_description: "From the segment note." }],
+      },
+      {
+        card_id: "multi",
+        sources: [{ source_name: "Fiscal.ai" }, { source_name: "S&P", source_description: "Who S&P is." }],
+        metric_definitions: [{ name: "Revenue", definition: "Trailing twelve months revenue." }],
+        methodologies: [{ methodology_name: "blend", methodology_description: "How it blends." }],
+      },
+      { card_id: "bare", sources: [{ source_name: "Xignite" }] },
+    ] as unknown as TakoCard[];
+    const maps = buildReferenceMaps(cards);
+    const notes = maps.source_notes ?? {};
+    const defs = maps.metric_definitions ?? {};
+
+    // FORWARD — the direction with teeth. A key no card carries is prose the
+    // model can read and cannot attribute.
+    //
+    // TWO SETS, deliberately. `cardSourceFields` is what `projectCard` puts in
+    // a card's `source`, and it is the ONLY join target for a metric's conflict
+    // suffix. `noteKeys` is wider because a per-source `source_description`
+    // legitimately files under that one source's own name. Merging them hides
+    // a misattributed metric suffix: "Revenue — Fiscal.ai" on a two-source card
+    // passes a wider check because some OTHER card has Fiscal.ai alone.
+    const cardSourceFields = new Set<string>();
+    const noteKeys = new Set<string>();
+    for (const c of cards) {
+      const projected = projectCard(c, null).source;
+      if (projected !== undefined) {
+        cardSourceFields.add(projected);
+        noteKeys.add(projected);
+      }
+      for (const s of (c as unknown as { sources?: { source_name?: string }[] }).sources ?? []) {
+        if (s.source_name !== undefined) noteKeys.add(s.source_name);
+      }
+    }
+    for (const key of Object.keys(notes)) {
+      expect(noteKeys.has(key), `source_notes key "${key}" is on no card`).toBe(true);
+    }
+
+    // Every (name, definition) pair on a card, with the `source` of the card
+    // that carries it. Checking the suffix against a FLAT set of card sources
+    // is not enough: `sources[0]` produces "Revenue — Fiscal.ai", and some
+    // other single-source card's `source` is "Fiscal.ai", so a flat check
+    // passes while the definition under that key came from a different card.
+    // The suffix has to identify the card the TEXT came from.
+    const definitionOwners = new Map<string, Set<string | undefined>>();
+    const metricNames = new Set<string>();
+    for (const c of cards) {
+      const owner = projectCard(c, null).source;
+      for (const d of (c as unknown as { metric_definitions?: { name: string; definition: string }[] })
+        .metric_definitions ?? []) {
+        metricNames.add(d.name);
+        const owners = definitionOwners.get(d.definition) ?? new Set<string | undefined>();
+        owners.add(owner);
+        definitionOwners.set(d.definition, owners);
+      }
+    }
+    for (const [key, text] of Object.entries(defs)) {
+      // Strip the two disambiguators the conflict rule may append.
+      const base = (key.split(" — ")[0] ?? key).replace(/ \(\d+\)$/, "");
+      expect(metricNames.has(base), `metric_definitions key "${key}" is on no card`).toBe(true);
+      const cut = key.indexOf(" — ");
+      if (cut === -1) continue;
+      const suffix = key.slice(cut + 3);
+      const owners = definitionOwners.get(text) ?? new Set();
+      expect(
+        owners.has(suffix),
+        `metric_definitions key "${key}" names a source that did not produce this definition ` +
+          `(it came from ${[...owners].map((o) => JSON.stringify(o)).join(", ")})`,
+      ).toBe(true);
+    }
+
+    // REVERSE — every paragraph a card carries reaches some entry. Only cards
+    // that name a source can be attributed, which is the #7 rule.
+    const noteText = Object.values(notes).join("\n");
+    for (const c of cards) {
+      const rec = c as unknown as {
+        sources?: { source_name?: string; source_description?: string }[];
+        methodologies?: { methodology_description?: string }[];
+      };
+      const named = (rec.sources ?? []).some((s) => s.source_name !== undefined);
+      for (const s of rec.sources ?? []) {
+        if (s.source_description !== undefined) expect(noteText).toContain(s.source_description);
+      }
+      if (!named) continue;
+      for (const m of rec.methodologies ?? []) {
+        if (m.methodology_description !== undefined) expect(noteText).toContain(m.methodology_description);
+      }
+    }
+    const defText = Object.values(defs).join("\n");
+    for (const c of cards) {
+      for (const d of (c as unknown as { metric_definitions?: { definition: string }[] })
+        .metric_definitions ?? []) {
+        expect(defText).toContain(d.definition);
+      }
+    }
   });
 });

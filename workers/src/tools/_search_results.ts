@@ -157,7 +157,7 @@ export const takoCardSchema = z
       ),
     // Explicit export-eligibility flag. The backend emits it authoritatively
     // (TakoData/tako#27989, computed with the same fail-closed export_safe
-    // gate as /contents); slimCard passes a wire value through and derives
+    // gate as /contents); `projectCard` passes a wire value through and derives
     // from `content` presence only when an older backend omits it. Emitted so
     // the model reads a POSITIVE "no" rather than having to notice a MISSING
     // `content` key, which LLMs routinely overlook — then call tako_contents
@@ -167,15 +167,6 @@ export const takoCardSchema = z
       .optional()
       .describe(
         "Whether this card's underlying data can be fetched with tako_contents. false → NOT exportable: do NOT call tako_contents on this card, use its inline preview/chart. true → eligible, but not a guarantee — a rare card still 403s, so on error fall back rather than retry.",
-      ),
-    // MCP-synthesized routing hint, stamped in slimCard on exportable:false
-    // cards only (never on the wire): tells the model where the values live
-    // instead of letting it burn a doomed tako_contents call.
-    values_hint: z
-      .string()
-      .optional()
-      .describe(
-        "Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — the headline in `description` when the card carries one; the rows themselves cannot be exported on any path.",
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
@@ -494,188 +485,6 @@ export function slimCardContent(
   } as ResultContent;
 }
 
-// Model-facing key order for a card. The backend's wire order leads every
-// card with ~1.5k chars of descriptive metadata (title, description, the full
-// per-source paragraph, methodologies) and puts `content` — the data — near
-// the end; a client with a result-size cap then truncates away exactly the
-// rows include_contents paid to inline. Serialize the identifying essentials
-// and the data first, boilerplate last. Keys absent from the card are
-// skipped; unknown keys keep their relative order after the known ones (so a
-// new backend field degrades to "after the essentials", never "lost").
-const CARD_KEY_ORDER = [
-  "card_id",
-  "title",
-  // `description` rides third: on non-exportable (exportable:false) cards it
-  // IS the data — the backend puts the headline value + % change there — so
-  // it must precede the URL/methodology chrome a truncating client drops.
-  "description",
-  "values_hint",
-  "exportable",
-  "content",
-  "nodes",
-  "card_type",
-  "data_freshness",
-  "relevance_score",
-  "relevance",
-  "metric_definitions",
-  "webpage_url",
-  "image_url",
-  "embed_url",
-  "sources",
-  "methodologies",
-  "source_indexes",
-  "semantic_description",
-] as const;
-
-function orderCardKeys(card: TakoCard): TakoCard {
-  const source = card as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const key of CARD_KEY_ORDER) {
-    if (key in source) out[key] = source[key];
-  }
-  for (const key of Object.keys(source)) {
-    if (!(key in out)) out[key] = source[key];
-  }
-  return out as TakoCard;
-}
-
-/**
- * Immutable: return a new card, slimmed and tagged with an explicit
- * `exportable` flag — a positive boolean so the model reads an explicit "no"
- * instead of having to notice a MISSING `content` key (which LLMs overlook,
- * then call tako_contents anyway and draw a 403). The backend emits the flag
- * authoritatively (TakoData/tako#27989, same fail-closed gate as /contents),
- * so a wire value passes through untouched; deriving from `content` presence
- * is only the fallback for older backends. Keys are re-ordered data-first
- * (see CARD_KEY_ORDER). Pure in-memory — no I/O.
- */
-export const slimCard = (card: TakoCard, capRows: number | "all" | null): TakoCard => {
-  const exportable = card.exportable ?? card.content != null;
-  // Share opt-in on the passthrough embed_url, so the url an agent quotes
-  // from the text matches the one the widget renders for the same card —
-  // see withShareOptIn.
-  const shared =
-    typeof card.embed_url === "string" && card.embed_url !== ""
-      ? { ...card, embed_url: withShareOptIn(card.embed_url) }
-      : card;
-  const slimmed =
-    shared.content == null
-      ? { ...shared, exportable }
-      : { ...shared, exportable, content: slimCardContent(shared.content, capRows) };
-  return orderCardKeys(
-    exportable ? slimmed : { ...slimmed, values_hint: valuesHint(card) },
-  );
-};
-
-// Hint for a non-exportable (exportable:false) card. Such cards carry no
-// rows on any path — `tako_search_advanced` (opt-in since spec D1) is off the
-// default surface, so the hint no longer routes there; naming a tool the
-// connection has not registered sends the model into "tool not found".
-// Wording stays NEUTRAL ("not exportable", not "license-gated"): the
-// backend's export_safe() also fails closed on blank/unresolvable source
-// names and config-alignment errors, and narrating those as a licensing
-// decision would keep real bugs from being reported. The "headline value
-// is in description" clause is asserted only when the card actually
-// carries a description — an unverified pointer is worse than none.
-function valuesHint(card: TakoCard): string {
-  const headline =
-    typeof card.description === "string" && card.description.trim() !== ""
-      ? "; headline value is in description"
-      : "";
-  return `rows not exportable${headline}`;
-}
-
-// Only paragraph-length strings are worth hoisting — moving a short label
-// out of the card would cost more glossary overhead than it saves.
-const GLOSSARY_MIN_CHARS = 120;
-
-/**
- * Hoist per-card source/methodology boilerplate into one top-level glossary.
- * The backend repeats the full source paragraph on EVERY card from that
- * source (five same-source cards → five copies of the same ~1k-char
- * description), which crowds the actual data out of any client-side
- * result-size budget. Each paragraph moves out of the cards into
- * `glossary[name]` (one copy, keyed by the entry's own name field), and the
- * caller serializes the glossary at the END of the output so truncating
- * clients lose boilerplate last, data never. An entry with no usable name, or
- * a same-name entry carrying DIFFERENT text, stays inline — nothing is ever
- * lost. Immutable — untouched cards are returned as-is.
- */
-export function hoistSourceGlossary(cards: TakoCard[]): {
-  cards: TakoCard[];
-  glossary: Record<string, string> | undefined;
-} {
-  const glossary: Record<string, string> = {};
-  const hoistArray = (items: unknown, nameKey: string, textKey: string): unknown => {
-    if (!Array.isArray(items)) return items;
-    let changed = false;
-    const out = items.map((item) => {
-      if (item === null || typeof item !== "object") return item;
-      const rec = item as Record<string, unknown>;
-      const name = rec[nameKey];
-      const text = rec[textKey];
-      if (
-        typeof name !== "string" || name === "" ||
-        typeof text !== "string" || text.length < GLOSSARY_MIN_CHARS
-      ) {
-        return item;
-      }
-      const existing = glossary[name];
-      if (existing !== undefined && existing !== text) return item;
-      glossary[name] = text;
-      changed = true;
-      const { [textKey]: _hoisted, ...rest } = rec;
-      return rest;
-    });
-    return changed ? out : items;
-  };
-  const outCards = cards.map((card) => {
-    const rec = card as Record<string, unknown>;
-    const next: Record<string, unknown> = { ...rec };
-    let changed = false;
-    for (const [arrayKey, nameKey, textKey] of [
-      ["sources", "source_name", "source_description"],
-      ["methodologies", "methodology_name", "methodology_description"],
-    ] as const) {
-      const hoisted = hoistArray(rec[arrayKey], nameKey, textKey);
-      if (hoisted !== rec[arrayKey]) {
-        next[arrayKey] = hoisted;
-        changed = true;
-      }
-    }
-    return changed ? (next as TakoCard) : card;
-  });
-  return {
-    cards: outCards,
-    glossary: Object.keys(glossary).length > 0 ? glossary : undefined,
-  };
-}
-
-/**
- * Slim a web result's `content`. Web `content.data` is the page's full extracted
- * text: a large prose blob, so it is dropped unless the caller ASKED for it on
- * the wire (`sources.web.include_contents`). Dropping what the caller requested
- * is the defect this parameter fixes — tako_search_advanced advertises the
- * generated `include_contents` description ("Tako returns it free of charge")
- * and used to throw the result away, which is the dishonest-parameter shape spec
- * D4 exists to remove.
- *
- * NOT "billed per page", which the previous version of this comment claimed and
- * which drove the unconditional drop. That is true of `POST /api/v1/contents`, a
- * different endpoint. On `/v3/search` the generated WebSourceSettings says the
- * page text comes back FREE, best-effort. So context size is the only cost, and
- * the caller who set the flag has already accepted it.
- *
- * `keepText` is REQUIRED, deliberately. As a defaulted parameter it would be fed
- * `.map`'s index by the two existing `.map(slimWebResult)` call sites — keeping
- * text for every result except the first. Required means tsc rejects the bare
- * form instead.
- */
-export const slimWebResult = (w: WebResult, keepText: boolean): WebResult =>
-  w.content == null || keepText
-    ? w
-    : { ...w, content: slimCardContent(w.content, null) };
-
 // Backend Usage — cost-plus usage for one metered request (mirrors the generated
 // `Usage` in generated/schemas.ts). `total_cost_usd` is the total quoted charge;
 // `compute` (the flat search/answer per-request rate) and `data` (the
@@ -744,7 +553,6 @@ export type TopCardChartFields = {
   [K in keyof AutoChainFields]-?: NonNullable<AutoChainFields[K]>;
 };
 
-
 // ---------------------------------------------------------------------------
 // Model-facing projection (spec: 2026-08-26-model-facing-surface-redesign)
 //
@@ -753,8 +561,14 @@ export type TopCardChartFields = {
 // key cannot leak into the model's context, and the advertised schema can be
 // a real typed card. Wire-drift protection moves from "loose schema" to
 // "explicit mapping + the conformance test in _search_results.test.ts".
-// `slimCard`/`hoistSourceGlossary` remain ONLY for `tako_answer`, which
-// migrates in its own pass.
+//
+// THE PASSTHROUGH SLIMMERS ARE GONE, not parked. `slimCard`, `slimWebResult`
+// and `hoistSourceGlossary` served `tako_answer`, which #273 folded into
+// `tako_search_advanced`; both search tools now share this projection, so the
+// three had no caller left. They were briefly kept "for the answer pass" —
+// a pass that no longer exists. Do not restore one to shortcut a future
+// tool: project explicitly, or the unknown-key leak comes back with it.
+// `slimCardContent` survives because `projectCard` caps inlined rows with it.
 // ---------------------------------------------------------------------------
 
 const nonEmpty = (v: unknown): string | undefined =>
@@ -778,6 +592,23 @@ const sourceNamesOf = (rec: Record<string, unknown>): string[] => {
   }
   return names;
 };
+
+/**
+ * The key a card's reference notes join under — EXACTLY the string
+ * `projectCard` writes into the card's `source` field.
+ *
+ * One derivation, because the join is the whole point of `source_notes` and
+ * `metric_definitions`: the model reads `source` off a card and looks it up in
+ * the map. A key built any other way (a `methodology_name`, or just
+ * `sources[0]` on a two-source card) files the prose under something no card
+ * carries, and the model can see the paragraph but cannot attribute it. The
+ * advertised schema promises "keyed by source name", so this is the promise.
+ *
+ * `undefined` when the card names no source at all — there is nothing to join
+ * to, and the caller drops rather than inventing a key.
+ */
+const sourceKeyOf = (sources: readonly string[]): string | undefined =>
+  sources.length > 0 ? sources.join(", ") : undefined;
 
 export const projectedNodeSchema = z
   .object({ id: z.string(), name: z.string(), type: z.string() })
@@ -814,6 +645,22 @@ export type ProjectedWebResult = {
    *  (`tako_search_advanced` web `include_contents`). */
   content?: Record<string, unknown>;
 };
+
+/**
+ * The keys an inlined `rows` object may carry: every payload channel, plus the
+ * three metadata keys that describe one.
+ *
+ * DERIVED from {@link CONTENT_PAYLOAD_KEYS}, never re-spelled. That constant is
+ * bound to the generated `ContentItem` by a drift test; a literal list here
+ * would not be, so a fifth upstream payload channel would be classified there,
+ * turn the drift test green, and still never reach `tako_search_advanced`'s
+ * inlined rows. That exact drift already shipped once against
+ * `slimCardContent` (see the CONTENT_PAYLOAD_KEYS docstring: three keys against
+ * ContentItem's four).
+ */
+const ROWS_META_KEYS = ["total_rows", "truncated", "content_format"] as const;
+const ROWS_KEYS: readonly string[] = [...CONTENT_PAYLOAD_KEYS, ...ROWS_META_KEYS];
+const PAYLOAD_KEY_SET: ReadonlySet<string> = new Set<string>(CONTENT_PAYLOAD_KEYS);
 
 /** Project one wire card into the model-facing shape. Pure and immutable. */
 export function projectCard(card: TakoCard, capRows: number | "all" | null): ProjectedCard {
@@ -855,7 +702,15 @@ export function projectCard(card: TakoCard, capRows: number | "all" | null): Pro
         : dataset != null && typeof dataset.total_rows === "number"
           ? dataset.total_rows
           : undefined;
-    if (totalRows !== undefined) out.total_rows = totalRows;
+    // GATED ON `exportable`, matching the field's own published describe
+    // ("Rows behind `url` (exportable cards only)"). The text channel renders
+    // the count only in the exportable arm, so a count on a locked card would
+    // sit in structuredContent and nowhere else — a channel-equivalence hole,
+    // against a promise already published to clients. Today the backend's
+    // shared export gate (TakoData/tako#27989) means a locked card ships
+    // `content: null` and never reaches here; the guard is what keeps the two
+    // channels agreeing if that ever changes.
+    if (totalRows !== undefined && out.exportable) out.total_rows = totalRows;
     // Rows ride only when the caller asked to inline them; the null-noise
     // keys and the billing descriptor never do.
     if (capRows !== null) {
@@ -865,11 +720,13 @@ export function projectCard(card: TakoCard, capRows: number | "all" | null): Pro
         | undefined;
       if (capped != null) {
         const rows: Record<string, unknown> = {};
-        for (const key of ["data", "records", "dataset", "card_data", "total_rows", "truncated", "content_format"]) {
+        for (const key of ROWS_KEYS) {
           const v = capped[key];
           if (v !== null && v !== undefined) rows[key] = v;
         }
-        if ("data" in rows || "records" in rows || "dataset" in rows || "card_data" in rows) {
+        // Metadata alone is not rows: a descriptor with a cost quote and no
+        // payload channel would otherwise ship an empty `rows` object.
+        if (Object.keys(rows).some((k) => PAYLOAD_KEY_SET.has(k))) {
           out.rows = rows;
         }
       }
@@ -922,8 +779,15 @@ export function buildReferenceMaps(cards: readonly TakoCard[]): {
   metric_definitions?: Record<string, string>;
   source_notes?: Record<string, string>;
 } {
-  const metricDefs: Record<string, string> = {};
-  const sourceNotes: Record<string, string> = {};
+  // NULL-PROTOTYPE, and the type system cannot enforce it. Every key here is an
+  // upstream string (`source_name`, `methodology_name`, a metric `name`), so a
+  // source called `constructor` or `toString` reads back Object.prototype's
+  // member instead of undefined; `appendNote` then calls `.includes` on a
+  // function and throws, failing the call AFTER the backend round-trip is
+  // billed. Both maps are typed `Record<string, string>`, so `existing` is a
+  // `string` at compile time and every lookup below typechecks.
+  const metricDefs: Record<string, string> = Object.create(null);
+  const sourceNotes: Record<string, string> = Object.create(null);
   const addMetric = (name: string, text: string, source: string | undefined): void => {
     if (metricDefs[name] === undefined) {
       metricDefs[name] = text;
@@ -953,7 +817,14 @@ export function buildReferenceMaps(cards: readonly TakoCard[]): {
         const def = entry as Record<string, unknown>;
         const name = nonEmpty(def.name);
         const text = nonEmpty(def.definition);
-        if (name !== undefined && text !== undefined) addMetric(name, text, sources[0]);
+        // `sourceKeyOf`, never `sources[0]`: the suffix has to name the card's
+        // WHOLE source string. With `sources[0]` a two-source card's definition
+        // filed as "Revenue — Fiscal.ai" while a DIFFERENT, Fiscal.ai-only card
+        // owned the bare "Revenue" — so the suffix attributed a blended
+        // definition to one source that did not produce it. A wrong definition
+        // under a plausible source name is the misquote this map exists to
+        // prevent.
+        if (name !== undefined && text !== undefined) addMetric(name, text, sourceKeyOf(sources));
       }
     }
     if (Array.isArray(rec.sources)) {
@@ -971,9 +842,14 @@ export function buildReferenceMaps(cards: readonly TakoCard[]): {
         const m = entry as Record<string, unknown>;
         const text = nonEmpty(m.methodology_description);
         if (text === undefined) continue;
-        // A methodology belongs to the card, not to one source; merge it
-        // under the source name only when the attribution is unambiguous.
-        const key = sources.length === 1 ? sources[0] : nonEmpty(m.methodology_name);
+        // NEVER `methodology_name` (spec: "bare methodology_name dies"). It
+        // appears on no projected card, so a note filed under it is prose the
+        // model can read and cannot attribute — the exact failure these maps
+        // replaced. A card naming no source has no key at all and the note is
+        // dropped: the paragraph already names its own source (the generated
+        // KnowledgeCardMethodology calls it "the source and what it measures"),
+        // so an unattributable copy adds nothing a reader can act on.
+        const key = sourceKeyOf(sources);
         if (key !== undefined) appendNote(key, text);
       }
     }
@@ -1099,16 +975,31 @@ export const DECOMPOSE_WEB_ASK =
  * The one carve-out on the BOTH-empty stop — nothing from the data graph and
  * nothing from the web.
  *
- * Shared rather than written twice. `tako_answer` carried this sentence inline
- * while `tako_search`'s equivalent branch ended flatly at "stop calling Tako for
- * this question", so on the single most common Tako-has-nothing path the two
- * tools disagreed about whether one narrower web attempt was allowed. That is
- * the same drift {@link PINNED_RETRY} and {@link DECOMPOSE_WEB_ASK} exist to
- * prevent, and it is the reason it belongs in a constant: a model that reads
- * both surfaces learns that one of them is wrong.
+ * It exists because the two surfaces once CONTRADICTED each other here: the
+ * answer path allowed one narrower web attempt while `tako_search`'s equivalent
+ * branch ended flatly at "stop calling Tako for this question" — same
+ * situation, opposite verdict, on the most common Tako-has-nothing path. A
+ * model that reads both surfaces learns that one of them is wrong. Same drift
+ * {@link PINNED_RETRY} and {@link DECOMPOSE_WEB_ASK} exist to prevent.
  *
- * Interpolated only where the web was ACTUALLY searched and came back empty. On
- * a data-only call there is no empty web result to reinterpret — that path tells
+ * ONE INTERPOLATION LEFT, and that is deliberate — do not "fix" it by pushing
+ * this string back into `buildZeroResultGuidance`. Every branch there is capped
+ * at TWO sentences (spec: 2026-08-26-model-facing-surface-redesign, "guidance"
+ * decision), and this is a ~250-char third one; the search path therefore
+ * states the same carve-out as a CLAUSE ("or try one genuinely narrower web
+ * question"). The full sentence stays on the answer path, which has no sentence
+ * budget and needs the reason it carries — an empty web result usually means
+ * the question was too broad, which is the half that actually stops the retry
+ * loop.
+ *
+ * So the guarantee is the INVARIANT, not the string: both surfaces permit
+ * exactly one narrower web attempt, and neither forbids re-searching the web.
+ * "both zero-result surfaces permit exactly one narrower web attempt" in
+ * `_search_results.test.ts` is what holds it — a string-identity test cannot,
+ * now that only one side can afford the sentence.
+ *
+ * Used only where the web was ACTUALLY searched and came back empty. On a
+ * data-only call there is no empty web result to reinterpret — that path tells
  * the caller to search the web at all, which is a different (and cheaper) move.
  */
 export const NARROWER_WEB_ATTEMPT =

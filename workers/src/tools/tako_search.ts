@@ -38,7 +38,9 @@ const DESCRIPTION = [
   "",
   "It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.",
   "",
-  'Best for breadth: fan out several narrow queries in parallel. Each query resolves one entity plus one metric ("Apple revenue", "Nvidia vs AMD gross margin"); compound queries retrieve poorly. To learn what Tako covers, or a metric\'s canonical name, run `tako_available_data` first, then search on the canonical name it returns.',
+  // `Best for:` verbatim: AGENTS.md's tool-description rule, and the form the
+  // other three default tools already use in docs/TOOLS.md.
+  'Best for: breadth — fan out several narrow queries in parallel. Each query resolves one entity plus one metric ("Apple revenue", "Nvidia vs AMD gross margin"); compound queries retrieve poorly. To learn what Tako covers, or a metric\'s canonical name, run `tako_available_data` first, then search on the canonical name it returns.',
 ].join("\n");
 
 const inputSchema = z.object({

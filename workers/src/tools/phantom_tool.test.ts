@@ -317,7 +317,10 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     expect(text).toContain("knowledge graph of live structured data");
   });
 
-  it("the default listing still names all three, unfiltered", () => {
+  // Named by the invariant, not by a count. The assertion compares against
+  // SERVER_INSTRUCTIONS whole, so it never needed a number — and "all three"
+  // went stale the moment `tako_graph_related` made four.
+  it("the default listing names every tool sentence, unfiltered", () => {
     // Guards the other direction: over-filtering would silently strip
     // guidance from every default connection.
     const resolved = resolveToolSet("generic", null);

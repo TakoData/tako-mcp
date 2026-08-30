@@ -522,6 +522,11 @@ describe("web highlights default", () => {
 const cardWithRows = () => ({
   card_id: "abc123",
   title: "US GDP",
+  // `exportable: true` explicitly: the generated TakoCard defaults it to FALSE,
+  // and SearchResponse runs before takoCardSchema, so a card that omits the flag
+  // is classified locked however much `content` it carries — and a locked card
+  // reports no row count (see projectCard).
+  exportable: true,
   webpage_url: "https://trytako.com/charts/us-gdp",
   content: {
     content_format: "json_compact",

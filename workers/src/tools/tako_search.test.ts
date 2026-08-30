@@ -217,6 +217,11 @@ describe("tako_search request body sends only what the caller asked for", () => 
           {
             card_id: "abc123",
             title: "US GDP",
+            // `exportable: true` explicitly: the generated TakoCard defaults it
+            // to FALSE, and SearchResponse runs before takoCardSchema, so a card
+            // that omits the flag is classified locked no matter what `content`
+            // holds — and a locked card reports no row count (see projectCard).
+            exportable: true,
             webpage_url: "https://trytako.com/charts/us-gdp",
             content: {
               content_format: "json_compact",
@@ -509,6 +514,11 @@ describe("tako_search never inlines rows", () => {
           {
             card_id: "cpi",
             title: "US Core CPI",
+            // `exportable: true` explicitly: the generated TakoCard defaults it
+            // to FALSE, and SearchResponse runs before takoCardSchema, so a card
+            // that omits the flag is classified locked no matter what `content`
+            // holds — and a locked card reports no row count (see projectCard).
+            exportable: true,
             webpage_url: "https://trytako.com/c/cpi",
             content: {
               content_format: "json_compact",

@@ -1,11 +1,15 @@
 /**
- * Tests for the markdown renderers + structuredContent slimmers.
+ * Tests for the markdown renderers + the remaining structuredContent slimmers.
  *
- * The renderers are the model-facing text channel — every load-bearing fact
- * (ids, exportable flag, values_hint, chart url, rows, glossary text) must
- * survive into the markdown, because the slim structuredContent no longer
- * carries it. The slimmers are the token guard — they must emit ONLY the
- * machine essentials.
+ * The renderers are the model-facing text channel, and for the search tools it
+ * is COMPLETE, not an index: 9 audited harnesses feed the model `content` only,
+ * so a fact that rides in structuredContent and not in the markdown is invisible
+ * on all of them. "channel parity (tako_search)" is the test that enforces it —
+ * it walks every leaf of the projected output and requires it in the text.
+ *
+ * The tools still declaring a `slimStructured` hook (available_data, agent,
+ * contents) keep the older split, where structured carries machine essentials
+ * only; those slimmers are the token guard for their own tools.
  */
 import { describe, expect, it } from "vitest";
 
@@ -67,7 +71,7 @@ describe("renderSearchMarkdown — the COMPLETE text channel", () => {
     expect(md).toContain("### Tesla Revenue");
     expect(md).toContain("Quarterly revenue for Tesla, Inc.");
     expect(md).toContain("url: https://trytako.com/card/c1 · exportable, 40 rows");
-    expect(md).toContain("source: Example Data Co · updated 2026-07-01 · relevance High");
+    expect(md).toContain("source: Example Data Co · refreshed 2026-07-01 · relevance High");
     expect(md).toContain("`ent_tsla` (Tesla, Inc.)");
     expect(md).toContain("`met_rev` (Revenue)");
   });
@@ -84,7 +88,7 @@ describe("renderSearchMarkdown — the COMPLETE text channel", () => {
     const locked = pCard({ exportable: false });
     delete (locked as Record<string, unknown>).total_rows;
     const md = renderSearchMarkdown(searchOutput({ cards: [locked] }));
-    expect(md).toContain("rows locked — value in description above");
+    expect(md).toContain("rows locked — the headline value is in this card's `description`");
     expect(md).not.toContain("exportable,");
   });
 

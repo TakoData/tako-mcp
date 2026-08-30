@@ -12,13 +12,20 @@ import {
   assertNoPhantomToolsInDocs,
   assertPinAdviceReachableInLlmsFull,
   assertPinFormInDocs,
+  assertProseBudget,
   assertPublishedParametersUsable,
   declaredType,
   buildChatgptSnapshot,
   buildLobehubPlugin,
   buildToolsDoc,
+  DESCRIPTION_MAX_CHARS,
+  DESCRIPTION_MAX_LINES,
+  INSTRUCTIONS_MAX_CHARS,
+  LEGACY_PROSE_CEILINGS,
   LOBEHUB_TOOL_ALLOWLIST,
   MCP_TOOL_ALLOWLIST,
+  PARAM_MAX_CHARS,
+  TOOL_ENTRY_MAX_CHARS,
 } from "./gen-registry.js";
 
 describe("registry guards", () => {
@@ -672,5 +679,119 @@ describe("assertNoPhantomToolsInDocs", () => {
         { path: "llms.txt", text: "tako_answer was removed in the fold." },
       ]),
     ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The prose-budget gate. It is the mechanism that holds the line across six
+// fan-out PRs, so it needs tests that prove it FAILS — a gate nobody has seen
+// reject anything is indistinguishable from a gate that always passes.
+// ---------------------------------------------------------------------------
+
+describe("assertProseBudget", () => {
+  // A tool with no LEGACY_PROSE_CEILINGS row: the D1 caps apply outright.
+  const migrated = (description: string) => [{ name: "tako_new", description }];
+  const params = (descriptions: Record<string, string>) => [
+    {
+      name: "tako_new",
+      parameters: Object.fromEntries(
+        Object.entries(descriptions).map(([k, d]) => [k, { description: d }]),
+      ),
+    },
+  ];
+  const OK = "Does the thing.";
+
+  it("passes a migrated tool inside every cap", () => {
+    expect(() => assertProseBudget(migrated(OK), params({ query: "The query." }), "Short.")).not.toThrow();
+  });
+
+  it("fails a description over the char cap", () => {
+    const long = "x".repeat(DESCRIPTION_MAX_CHARS + 1);
+    expect(() => assertProseBudget(migrated(long), params({}), "Short.")).toThrow(
+      /tako_new: description is \d+ chars/,
+    );
+  });
+
+  it("fails a description over the line cap", () => {
+    const tall = Array.from({ length: DESCRIPTION_MAX_LINES + 1 }, () => "a").join("\n");
+    expect(() => assertProseBudget(migrated(tall), params({}), "Short.")).toThrow(
+      /tako_new: description is \d+ lines/,
+    );
+  });
+
+  it("fails a parameter description over the param cap, naming the parameter", () => {
+    const long = "x".repeat(PARAM_MAX_CHARS + 1);
+    expect(() => assertProseBudget(migrated(OK), params({ sources: long }), "Short.")).toThrow(
+      /tako_new\.sources: parameter description is \d+ chars/,
+    );
+  });
+
+  it("fails when description + every param description exceeds the entry cap", () => {
+    // Each half is legal on its own; only the SUM is over, which is the case a
+    // per-field cap cannot catch.
+    const desc = "x".repeat(DESCRIPTION_MAX_CHARS);
+    const each = "y".repeat(PARAM_MAX_CHARS);
+    const many = Object.fromEntries(
+      Array.from({ length: Math.ceil(TOOL_ENTRY_MAX_CHARS / PARAM_MAX_CHARS) }, (_, i) => [`p${i}`, each]),
+    );
+    expect(() => assertProseBudget(migrated(desc), params(many), "Short.")).toThrow(
+      /tako_new: tool entry is \d+ chars/,
+    );
+  });
+
+  it("fails instructions over their own cap", () => {
+    const long = "x".repeat(INSTRUCTIONS_MAX_CHARS + 1);
+    expect(() => assertProseBudget(migrated(OK), params({}), long)).toThrow(
+      /instructions: \d+ chars/,
+    );
+  });
+
+  // The ratchet. `tako_contents` is a real row; the numbers below are read from
+  // the map rather than restated, so re-baselining a row cannot make these lie.
+  const legacyName = "tako_contents";
+  const ceiling = LEGACY_PROSE_CEILINGS[legacyName]!;
+
+  it("passes a legacy tool sitting exactly at its ceiling", () => {
+    const at = "x".repeat(ceiling.description);
+    expect(() =>
+      assertProseBudget([{ name: legacyName, description: at }], [{ name: legacyName, parameters: {} }], "Short."),
+    ).not.toThrow();
+  });
+
+  it("fails a legacy tool one char over its ceiling", () => {
+    const over = "x".repeat(ceiling.description + 1);
+    expect(() =>
+      assertProseBudget([{ name: legacyName, description: over }], [{ name: legacyName, parameters: {} }], "Short."),
+    ).toThrow(/description grew to \d+ chars \(legacy ceiling/);
+  });
+
+  it("lets legacy prose SHRINK freely — the ratchet is one-directional", () => {
+    expect(() =>
+      assertProseBudget([{ name: legacyName, description: "Tiny." }], [{ name: legacyName, parameters: {} }], "Short."),
+    ).not.toThrow();
+  });
+
+  it("exempts a legacy tool from the line cap the migrated caps impose", () => {
+    // Legacy prose is multi-paragraph by construction. Deleting the row is what
+    // turns the line cap on; until then a tall description must not fail.
+    const tall = Array.from({ length: DESCRIPTION_MAX_LINES + 5 }, () => "a").join("\n");
+    expect(tall.length).toBeLessThanOrEqual(ceiling.description);
+    expect(() =>
+      assertProseBudget([{ name: legacyName, description: tall }], [{ name: legacyName, parameters: {} }], "Short."),
+    ).not.toThrow();
+  });
+
+  // assertProseBudget only ever READS a row through a live tool, so a row for a
+  // deleted tool is unreachable and would sit here forever — and it is the row
+  // a future author trusts when re-baselining. tako_credit_balance (#270) and
+  // tako_answer (#273) were both deleted while this map's spec was being
+  // written, so this is the repo's demonstrated failure mode, not a hypothetical.
+  it("every LEGACY_PROSE_CEILINGS row names a tool that still exists", () => {
+    const live = new Set(TOOL_REGISTRY.map((t) => (t as ToolModule).name));
+    const stale = Object.keys(LEGACY_PROSE_CEILINGS).filter((n) => !live.has(n)).sort();
+    expect(
+      stale,
+      "ratchet row(s) for deleted tool(s) — delete the row, it can never fire again",
+    ).toEqual([]);
   });
 });
