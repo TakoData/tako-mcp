@@ -57,7 +57,9 @@ coverage checks a minute exhausted it for everyone.
 monorepo, not from here.** The table that used to sit in this paragraph
 went stale the moment `tako_answer` moved behind `?tools=answer`: it named
 `_DRF_USER` (`/api/v1/answer/`), an endpoint no anonymous connection can
-reach, because `tako_answer` is opt-in AND absent from
+reach. That tool has since been deleted, which would have staled the copy a
+second time — `/api/v1/answer/` is now reached only through `include_answer`
+on `tako_search_advanced`, which is opt-in AND absent from
 `FREE_TIER_TOOL_NAMES`. `freetier.ts` carries the same pointer for the
 same reason. No policy weighs tool cost — which is why a fan-out tool
 cannot be free: the worst case is that many `tako_search` calls.

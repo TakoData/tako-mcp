@@ -4,7 +4,8 @@ import { z } from "zod";
  * String → array coercion for array-typed tool inputs.
  *
  * WHY: some MCP hosts hand us the array their model meant to send as a
- * STRING. Observed live from OpenBB Copilot on `tako_answer` — the host's own
+ * STRING. Observed live from OpenBB Copilot on `tako_answer` (since deleted in
+ * the answer fold; the coercion is unchanged) — the host's own
  * argument panel displayed `sources` as the two-element array `["data","web"]`
  * while the wire carried the JSON *text* of that array, so the SDK's input
  * validation rejected the call before our handler ever ran:
@@ -54,7 +55,7 @@ import { z } from "zod";
  */
 export type LooseArrayOptions = {
   /**
-   * `"<tool>.<field>"`, e.g. `"tako_answer.sources"` — identifies the coercion
+   * `"<tool>.<field>"`, e.g. `"tako_search.sources"` — identifies the coercion
    * in the Workers Logs line (see `warnCoerced`). Required, not derived: a zod
    * preprocess has no access to the tool it was registered under, and the
    * whole point of the log is knowing WHICH shape reaches which tool.

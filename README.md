@@ -302,8 +302,7 @@ On connect, the server also advertises [MCP server instructions](https://modelco
 
 | Tool | Token | What it's for |
 | ---- | ----- | ------------- |
-| `tako_search_advanced` | `search_advanced` | The v3 search request's retrieval options: per-source `count`, inline rows and `max_rows`, graph pins (`node_ids` + `strict`), web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars`, and `effort: deep`. Same structured payload as `tako_search`, minus the auto-rendered inline chart — `embed_url` is still there to click through. |
-| `tako_answer` | `answer` | One synthesized, citation-backed prose answer. **Not recommended** — your model already synthesizes from `tako_search` results. |
+| `tako_search_advanced` | `search_advanced` | The whole v3 search request body: per-source `count`, inline rows and `max_rows`, graph pins (`node_ids` + `strict`), web `include_domains` / `exclude_domains` / `category` / `snippet_max_chars` / `published_after` / `published_before`, `location`, `timezone`, `include_related`, and `effort: deep`. Set `include_answer: true` for one synthesized, citation-backed answer (and `output_schema` to fill a JSON Schema from the same evidence). `?tools=answer` resolves here. Same structured payload as `tako_search`, minus the auto-rendered inline chart — `embed_url` is still there to click through. |
 | `tako_agent` | `agent` | Tako's **Answer Agent**: multi-step research (~30–90s) across many retrievals, returning a synthesized answer plus chart cards. |
 | `tako_visualize` | `visualize` | Author an embeddable chart/card from your own typed `components` (timeseries, bar, table, financial boxes…). On by default on `/mcp/chatgpt`, the host that renders the widget inline. |
 

@@ -17,30 +17,20 @@
  */
 import { z } from "zod";
 
-import { djangoPost } from "../django.js";
-import { SearchRequest, SearchResponse } from "../generated/schemas.js";
+import { SearchRequest } from "../generated/schemas.js";
 import {
   buildChartAppUiResourceFromOutputPubId,
   buildChartExtraMeta,
   fetchPngContentBlock,
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
-import { logWireGuardFailure } from "./_log.js";
 import {
   renderSearchMarkdown,
   searchSlimOutputShape,
   slimSearchStructured,
 } from "./_render_markdown.js";
-import {
-  buildSearchOutput,
-  hoistSourceGlossary,
-  slimCard,
-  slimWebResult,
-  takoCardSchema,
-  webResultSchema,
-  type SearchedSources,
-  type SearchOutput,
-} from "./_search_results.js";
+import { runSearch } from "./_run_search.js";
+import type { SearchOutput } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -166,91 +156,6 @@ export function buildSearchBody(input: Input): z.input<typeof SearchRequest> {
   return body satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
 }
 
-/**
- * Issue the search and shape the response.
- *
- * Split out of the handler so `tako_search_advanced` reuses it verbatim: both
- * tools hit the same endpoint and return the same shape, and only the request
- * body differs. Keeping one copy means a wire-guard or slimming fix lands on
- * both at once.
- *
- * `rowCap` is the per-card inline row budget: `null` drops every row (what the
- * simple tool passes — it never inlines), "all" keeps what the backend sent
- * (what tako_search_advanced passes — it sends its own max_rows on the wire),
- * a number caps to the N most-recent.
- */
-export async function runSearch(
-  body: z.input<typeof SearchRequest>,
-  sources: SearchedSources,
-  rowCap: number | "all" | null,
-  ctx: ToolContext,
-): Promise<SearchOutput> {
-  // v3 fast/instant is synchronous (~120s sync ceiling). No async/202,
-  // no polling. Zero matches come back as 200 with empty `cards`.
-  const data = await djangoPost<unknown>(ctx.env, ctx.token, "/api/v3/search/", body, { timeoutMs: 130_000 });
-
-  // Wire-contract guard: validate against the generated SearchResponse before
-  // mapping into the normalised MCP output shape.
-  const wireCheck = SearchResponse.safeParse(data);
-  if (!wireCheck.success) {
-    logWireGuardFailure("tako_search", "SearchResponse", wireCheck.error, data);
-    throw new Error(
-      "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
-    );
-  }
-  const wire = wireCheck.data;
-
-  const cards = z.array(takoCardSchema).safeParse(wire.cards ?? []);
-  const webResults = z.array(webResultSchema).safeParse(wire.web_results ?? []);
-  if (!cards.success || !webResults.success) {
-    logWireGuardFailure(
-      "tako_search",
-      cards.success ? "web_results" : "cards",
-      cards.success ? (webResults.success ? undefined : webResults.error) : cards.error,
-      data,
-    );
-    throw new Error(
-      "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
-    );
-  }
-  // Slim the model-facing payload, which shrinks BOTH channels the model sees
-  // (content.text + structuredContent in mcp.ts are both derived from this).
-  //
-  // Web page text is kept only when the REQUEST asked for it. Derived from the
-  // body rather than passed by the caller, so the two tools cannot disagree with
-  // what went on the wire: tako_search never sets sources.web.include_contents,
-  // so it always drops; tako_search_advanced exposes the field, so a caller who
-  // sets it gets what the generated description promises. On /v3/search that
-  // text is free (see slimWebResult), so context is the only cost and the caller
-  // has already accepted it.
-  const keepWebText = body.sources?.web?.include_contents === true;
-  // DERIVED from the wire body for the same reason `keepWebText` is: the two
-  // search tools then cannot disagree with what was actually requested, and
-  // `tako_search` — which takes no pin — gets `false` without naming the concept.
-  // Both halves are required: `strict: true` with an empty `node_ids` is a 400 at
-  // the backend, and a pin without `strict` only boosts, so neither alone makes
-  // zero cards a filter artefact.
-  const strictPin =
-    body.sources?.data?.strict === true && (body.sources?.data?.node_ids?.length ?? 0) > 0;
-  const { cards: slimCards, glossary } = hoistSourceGlossary(
-    cards.data.map((c) => slimCard(c, rowCap)),
-  );
-  const output = buildSearchOutput(
-    slimCards,
-    webResults.data.map((w) => slimWebResult(w, keepWebText)),
-    wire.request_id,
-    wire.usage ?? null,
-    ctx.env,
-    sources,
-    strictPin,
-    // The zero-result protocol routes through tools an anonymous caller does
-    // not have; `buildZeroResultGuidance` branches on this.
-    ctx.tier ?? "authenticated",
-  );
-  // Glossary spreads on LAST so it serializes after the data — truncating
-  // clients then drop boilerplate first.
-  return glossary === undefined ? output : { ...output, sources_glossary: glossary };
-}
 
 const tako_search = {
   name: "tako_search",
@@ -287,7 +192,13 @@ const tako_search = {
     // rowCap null: the simple tool never inlines rows. Rows are a tako_contents
     // call on an `exportable: true` card — the explicit search-then-fetch step
     // that also lets this tool run anonymously.
-    return runSearch(buildSearchBody(input), input.sources, null, ctx);
+    return runSearch(
+      { endpoint: "search", body: buildSearchBody(input) },
+      input.sources,
+      null,
+      ctx,
+      "tako_search",
+    );
   },
   renderText(output, _ctx) {
     void _ctx;

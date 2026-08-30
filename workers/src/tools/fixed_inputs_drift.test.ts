@@ -37,7 +37,6 @@ import { describe, expect, it } from "vitest";
 
 import { TOOL_REGISTRY } from "./_registry.js";
 import tako_agent, { buildAgentBody } from "./tako_agent.js";
-import tako_answer, { buildAnswerBody } from "./tako_answer.js";
 import tako_search, { buildSearchBody } from "./tako_search.js";
 
 type FixedInput = {
@@ -79,14 +78,6 @@ const CASES: ReadonlyArray<{
     body: () =>
       buildSearchBody(
         tako_search.inputSchema.parse({ query: "US GDP", sources: ["data", "web"] }),
-      ),
-  },
-  {
-    name: tako_answer.name,
-    fixedInputs: tako_answer.fixedInputs,
-    body: () =>
-      buildAnswerBody(
-        tako_answer.inputSchema.parse({ query: "US GDP", sources: ["data", "web"] }),
       ),
   },
   {

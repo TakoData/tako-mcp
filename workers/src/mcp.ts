@@ -490,12 +490,19 @@ function registerTool(
     registeredTemplateNames: Set<string>;
   },
 ): void {
-  // SDK's `registerTool` takes `ZodRawShape` (the `.shape` of a z.object),
-  // not a full ZodObject — pull `.shape` here so tool files don't have to.
+  // The FULL zod object, NOT `.shape`. `registerTool` accepts either
+  // (`normalizeObjectSchema` returns a schema instance as-is), but handed a raw
+  // shape the SDK rebuilds it as a plain `z.object` — which STRIPS unknown keys
+  // and drops every object-level check. A tool's `.strict()` and any
+  // `.refine()` then passed their own `safeParse` tests and never ran against a
+  // real call: `tako_search_advanced` promised a -32602 for an unexposed
+  // top-level field and served a silent drop, dispatching the search as if the
+  // field had never been sent. `mcp.test.ts` "object-level schema checks reach
+  // the wire" is the guard.
   const config: Record<string, unknown> = {
     title: tool.annotations.title,
     description: tool.description,
-    inputSchema: tool.inputSchema.shape,
+    inputSchema: tool.inputSchema,
     annotations: toolAnnotationsForSurface(tool, options.surface),
   };
 
@@ -518,6 +525,14 @@ function registerTool(
   };
 
   if (tool.outputSchema !== undefined) {
+    // `.shape` HERE, deliberately, even though `inputSchema` above now passes
+    // the full object. The asymmetry is not an oversight and not half a
+    // migration: every `outputSchema` we ship is a `z.looseObject`, so handing
+    // the SDK the whole schema would publish `additionalProperties` on every
+    // read tool and narrow a contract clients already validate against. The
+    // input fix exists because a tool's `.strict()` and `.refine()` were being
+    // dropped; output schemas declare neither.
+    //
     // Output schemas are optional — only read tools declare them.
     // In practice every `outputSchema` we ship is `z.object(...)`,
     // so `.shape` is defined; if it isn't, we simply don't pass outputSchema.
@@ -1122,7 +1137,7 @@ const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
  * attached where they exist on the error.
  *
  * The discriminant rides on `_meta`, NOT `structuredContent`: read tools
- * (`tako_search`, `tako_answer`, `tako_contents`) declare an `outputSchema`,
+ * (`tako_search`, `tako_search_advanced`, `tako_contents`) declare an `outputSchema`,
  * and spec-compliant MCP clients validate ANY `structuredContent` present on
  * a result against that schema — even when `isError: true` (the SDK's
  * "skip on error" comment notwithstanding; it only skips the *missing*-content

@@ -1,6 +1,7 @@
 /**
- * Shared shapes for the v3 search/answer surface used by `tako_search`
- * and `tako_answer`. The TakoCard + WebResult schemas mirror the backend
+ * Shared shapes for the v3 search/answer surface used by `tako_search` and
+ * `tako_search_advanced` (which reaches /v1/answer via `include_answer`). The
+ * TakoCard + WebResult schemas mirror the backend
  * `app/backend/knowledge/api/ga/v3/search/types.py`. Auto-chain widget
  * fields (pub_id, embed_url, …) are lifted to the output root by
  * `buildSearchOutput` so the chart widget renders the top card inline.
@@ -11,6 +12,7 @@ import { z } from "zod";
 
 import type { Env } from "../env.js";
 import type { Tier } from "../freetier.js";
+import { AnswerStructuredOutputError, RelatedSuggestion } from "../generated/schemas.js";
 import {
   HTTP_URL_REGEX,
   DEFAULT_DARK_MODE,
@@ -69,8 +71,8 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * change which card wins. Do not restate it as "the pin does nothing" — the next
  * author who checks the backend will find the opposite and distrust the rest.
  *
- * Exported because `tako_answer`'s zero-card guidance needs the identical
- * recipe: two tools whose recovery advice drifts apart teach the model two
+ * Exported because the ANSWER path's zero-card guidance needs the identical
+ * recipe: two verdicts whose recovery advice drifts apart teach the model two
  * different pin forms, and only one of them works. One string, one place.
  *
  * THE UNPIN ESCAPE HATCH, and why advice about how to pin ends with advice to
@@ -94,12 +96,13 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * (pinned vs unpinned, by handle) and in the commit that introduced this hatch;
  * cite those rather than looking for a script to re-run.
  */
-// READER, since the D4 split: `tako_answer` ONLY. `tako_search` took no
-// `node_ids`/`strict` after D4, so its zero-card guidance stopped advising a
-// pin — advice for parameters the tool would reject. Do not reintroduce this
-// into any search guidance; the canonical NAME is that tool's recovery path.
-// `tako_search_advanced` accepts a pin, but it is opt-in and prescribes the
-// form in its own description.
+// READER: `tako_search_advanced` ONLY — both its endpoints, since the answer
+// data-gap verdict interpolates this too. `tako_search` took no
+// `node_ids`/`strict` after the D4 split, so its zero-card guidance stopped
+// advising a pin — advice for parameters the tool would reject. Do not
+// reintroduce this into any `tako_search` guidance; the canonical NAME is that
+// tool's recovery path. (The other reader was `tako_answer`, deleted in the
+// answer fold.)
 export const PINNED_RETRY =
   "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false only boosts the node rather than selecting it, which measured as not enough to land the metric. If that pinned call returns 0 cards, run it once more with `node_ids` removed before concluding the data is absent: `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards, so the pin itself is sometimes what empties the result";
 
@@ -134,7 +137,7 @@ export const PINNED_FROM_CARD =
   "pin that card's METRIC node id ALONE (the `mt::` entry in its `nodes`) with strict:true — pinning every node id on the card re-admits its other cards, and omitting strict only boosts, which measured as not enough to land the metric";
 
 // Backend TakoCard (api/ga/v3/search/types.py::TakoCard). Loose so a richer
-// backend card doesn't break parsing. Shared by tako_search + tako_answer.
+// backend card doesn't break parsing. Shared by both search tools.
 export const takoCardSchema = z
   .object({
     card_id: z.string().nullable().optional(),
@@ -565,7 +568,7 @@ export const slimCard = (card: TakoCard, capRows: number | "all" | null): TakoCa
 };
 
 // Hint for a non-exportable (exportable:false) card. Such cards carry no
-// rows on any path — `tako_answer` (opt-in since spec D1) is off the
+// rows on any path — `tako_search_advanced` (opt-in since spec D1) is off the
 // default surface, so the hint no longer routes there; naming a tool the
 // connection has not registered sends the model into "tool not found".
 // Wording stays NEUTRAL ("not exportable", not "license-gated"): the
@@ -694,7 +697,7 @@ export type Usage = z.infer<typeof usageSchema>;
  * `usageSchema` above stays the internal contract (it parses and types the
  * wire, breakdown included, and the breakdown is still EMITTED). This declares
  * just `total_cost_usd` because publishing the nested compute/data objects cost
- * 197 tokens on each of tako_search and tako_answer — ~394 of a 7,235-token
+ * 197 tokens on each of tako_search and the answer tool — ~394 of a 7,235-token
  * connect surface — to describe a per-call cost breakdown no routing decision
  * reads. Loose, so the emitted breakdown still validates: nested loose objects
  * publish permissive `additionalProperties`, unlike the top level which the SDK
@@ -722,7 +725,7 @@ export const autoChainShape = {
 } as const;
 
 // tako_search output: v3 cards + web_results + request_id + the widget
-// fields for the top card. Mirrors tako_answer's {cards, web_results,
+// fields for the top card. Mirrors the answer response's {cards, web_results,
 // request_id} plus the inline-render plumbing.
 /**
  * The six widget fields, all present or the value is `undefined`.
@@ -759,6 +762,13 @@ export const searchOutputShape = {
     .describe(
       "Source/methodology descriptions shared by the cards, keyed by name — hoisted here so each rides once instead of once per card.",
     ),
+  // Follow-up queries, present only when the request set `include_related`.
+  related: z.array(RelatedSuggestion).optional(),
+  // The three /v1/answer fields. Present only on the answer endpoint, which
+  // only `tako_search_advanced` with `include_answer: true` reaches.
+  answer: z.string().optional(),
+  structured_output: z.record(z.string(), z.unknown()).optional(),
+  structured_output_error: AnswerStructuredOutputError.optional(),
   ...autoChainShape,
 } as const;
 
@@ -769,6 +779,10 @@ export type SearchOutput = {
   request_id: string;
   guidance?: string;
   sources_glossary?: Record<string, string>;
+  related?: z.infer<typeof RelatedSuggestion>[];
+  answer?: string;
+  structured_output?: Record<string, unknown>;
+  structured_output_error?: z.infer<typeof AnswerStructuredOutputError>;
   pub_id?: string;
   embed_url?: string;
   image_url?: string;
@@ -778,7 +792,7 @@ export type SearchOutput = {
 };
 
 // Which sources a search actually hit, for tailoring zero-result guidance.
-// searchedData is exported for tako_answer's data-gap guidance gate — one
+// searchedData is exported for the answer path's data-gap guidance gate — one
 // definition of "did this request search the data source" across both tools.
 export type SearchedSources = ReadonlyArray<"data" | "web">;
 export const searchedData = (s: SearchedSources): boolean => s.includes("data");
@@ -810,18 +824,18 @@ const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
  * this, which is the exact precondition `sources`' own description sets for
  * narrowing ("only for content a data graph cannot hold").
  *
- * Exported so `tako_answer`'s data-gap guidance carries the identical
- * carve-out. Two tools whose recovery advice disagrees teach the model that
+ * Exported so the ANSWER path's data-gap guidance carries the identical
+ * carve-out. Two recovery paths whose advice disagrees teach the model that
  * one of them is wrong.
  */
 export const REFINE_WEB_FREELY =
   'Re-searching is NOT banned here — what does not converge is rephrasing to hunt for a data CARD. If what you actually need is web content (docs, reference pages, news, qualitative claims), refine and re-search freely: prefer SEVERAL narrow queries (one per entity, provider or site) over one broad one, and pass sources:["web"] on them, since this response has already shown the graph does not hold it.';
 
 /**
- * The same carve-out for `tako_answer`, where the move is DECOMPOSITION rather
- * than refinement.
+ * The same carve-out for the ANSWER path, where the move is DECOMPOSITION
+ * rather than refinement.
  *
- * `tako_answer` synthesizes one answer per call, so a question spanning several
+ * An answer call synthesizes one answer per call, so a question spanning several
  * entities or providers ("how does each of these APIs handle X") gets one
  * blended answer built from whatever the single retrieval happened to surface.
  * Re-asking the same broad question is the loop that does not converge; asking
@@ -857,6 +871,68 @@ export const NARROWER_WEB_ATTEMPT =
   "One exception to the stop, on the WEB axis only: a genuinely narrower question (one entity, one provider, one site) is worth a single attempt, because an empty web result usually means the question was too broad rather than unanswerable.";
 
 /**
+ * The verdict when a `strict: true` pin returned nothing: about the FILTER, not
+ * about coverage. Shared by BOTH endpoints' zero-card paths — the answer path
+ * reaches it through `tako_search_advanced`, which is the only pin-capable tool.
+ *
+ * IT WINS OVER EVERY OTHER ZERO-CARD VERDICT, and the caller in
+ * `buildSearchOutput` is the one place that ordering lives. Every other verdict
+ * reports something about COVERAGE, and under a hard filter that report is
+ * unsupported: a `strict: true` pin returns only cards matching a pinned node,
+ * and the graph holds near-duplicate metric nodes where only one twin carries
+ * cards. KE-812 measured pinned handles returning FEWER cards than the same
+ * query unpinned on 11 of 20 pairs. Reporting a coverage gap there is
+ * mid-failure copy that contradicts the tool's own description, which tells the
+ * caller to drop `node_ids` and retry.
+ */
+export function strictPinGuidance(hasWebResults: boolean, tier: Tier): string {
+  return [
+    "No data cards — but this request pinned `node_ids` with `strict: true`, which is a HARD FILTER: only cards matching a pinned node can come back.",
+    "Zero cards here is evidence about the filter, NOT about coverage. The graph holds near-duplicate metric nodes where only one twin carries cards, so a pinned query returned FEWER cards than the same query unpinned on 11 of 20 pairs measured.",
+    "Re-run the SAME query text with `node_ids` dropped before concluding anything. Do not report a coverage gap on the strength of this response.",
+    ...(hasWebResults
+      ? [
+          // Tier-branched for the same reason the rest of the zero-card
+          // protocol is (#272): `tako_contents` is auth-required outright, so
+          // prescribing it to an anonymous caller is a step that answers a
+          // refusal. The branch is unreachable today — pinning needs
+          // `tako_search_advanced`, which never executes anonymously — but the
+          // invariant that makes it so lives in `_surface.ts`, not here.
+          tier === "free"
+            ? "Web results did come back — answer from them meanwhile (their snippets are in structuredContent)."
+            : "Web results did come back — answer from them meanwhile (tako_contents on the most relevant url fetches its full page text).",
+        ]
+      : []),
+  ].join(" ");
+}
+
+/**
+ * The zero-data-card verdict for the ANSWER endpoint, worded by whether web
+ * results ground the
+ * answer. With web grounding the prose may be a complete, correct answer
+ * (e.g. "who won the game?") — the verdict must scope itself to the data
+ * index, not read as "this answer failed". Without web grounding it is the
+ * hard anti-retry stop. Both are deterministic (cards.length === 0), never
+ * inferred from the prose.
+ *
+ * `searchedWebToo` is what keeps the no-web-results branch honest. It used to
+ * read "ZERO curated data cards (and no web results)" off `hasWebResults`
+ * alone, so a deliberate `sources: ["data"]` ask — where the web was never
+ * queried — was told the web had come back empty as well, and then told to
+ * treat the metric as absent. Two sources' worth of verdict from one source's
+ * evidence. When web was not searched, the honest recovery is to search it.
+ */
+export function buildDataGapGuidance(hasWebResults: boolean, searchedWebToo: boolean): string {
+  if (!hasWebResults && !searchedWebToo) {
+    return `Data-coverage verdict: ZERO curated data cards ground this answer (machine check: cards.length === 0). This ran with the DATA source only, so nothing here says anything about web coverage — do not read it as "not available anywhere". Cheapest next step: re-ask with sources:["data","web"] (same price) before concluding the figure is unavailable. If you want the proprietary series specifically, confirm coverage once with tako_available_data, then re-ask ONCE — ${PINNED_RETRY} — stating the period you need. Do NOT reach for tako_contents: it returns rows only for an exportable card you already have, and 403s on license-gated ones.`;
+  }
+  if (hasWebResults) {
+    return `Data-coverage note: ZERO curated data cards ground this answer — it is web-grounded only (machine check: cards.length === 0). If the prose answers the question, use it as-is. If you specifically wanted Tako's proprietary series, do NOT rephrase-and-retry the answer call for it (priced, rarely converges): confirm coverage once with tako_available_data, then re-ask ONCE — ${PINNED_RETRY} — and state the period you need in the query. Do NOT reach for tako_contents: it cannot return rows for a card this answer did not cite, and it always 403s on license-gated cards. ${DECOMPOSE_WEB_ASK}`;
+  }
+  return `Data-coverage verdict: ZERO curated data cards AND zero web results ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry the answer call hoping the same question lands a data series; every retry is priced and that loop rarely converges. Recover in ONE step: call tako_available_data to confirm coverage, then re-ask HERE once (${PINNED_RETRY}), stating the period you need in the query. Do NOT reach for tako_contents — it returns rows only for an exportable card you already have, and 403s on license-gated ones. If tako_available_data shows no coverage, the metric is genuinely absent from the graph: say so and use another source. ${NARROWER_WEB_ATTEMPT}`;
+}
+
+/**
  * Recovery protocol for a zero-CARD search. Rewording the same query almost
  * never flips a miss into a hit — misses come from query SHAPE (compound
  * query, brand instead of domain, unresolved entity) or from the data simply
@@ -877,8 +953,8 @@ export const NARROWER_WEB_ATTEMPT =
  * tool rejects. The two arms now agree on the canonical NAME, which is also the
  * arm the measurement favours: 11 of 20 handles retrieved FEWER cards pinned
  * than unpinned, while the canonical name helped 9 of 15. `PINNED_RETRY` still
- * exists for `tako_answer`, which kept both parameters — do not route it back
- * here.
+ * exists for the ANSWER path, which keeps both parameters — do not route it
+ * back here.
  *
  * {@link REFINE_WEB_FREELY} is deliberately NOT mirrored into those three:
  * they are data-domain skills (equity research, macro indicators, site
@@ -902,11 +978,16 @@ export const NARROWER_WEB_ATTEMPT =
  * NEITHER — `tako_search` is the whole anonymous surface. Unbranched, a
  * zero-result anonymous caller got numbered steps in which every step
  * answers a sign-in refusal.
+ *
+ * NO `strictPin` PARAMETER. The pin verdict outranks every branch here, so the
+ * decision lives in `buildSearchOutput`'s ternary, which reaches
+ * `strictPinGuidance` directly and never calls this function under a pin. It
+ * was a parameter once; the sole caller passed a literal `false`, which left
+ * the rule written in two places and a dead branch documented as live.
  */
 function buildZeroResultGuidance(
   hasWebResults: boolean,
   sources: SearchedSources,
-  strictPin: boolean,
   tier: Tier,
 ): string {
   // One sentence, appended wherever the authenticated protocol would have
@@ -919,33 +1000,6 @@ function buildZeroResultGuidance(
   const answerFromWeb = anon
     ? "Answer from the web_results (their snippets are in structuredContent; reading a page in FULL needs a signed-in connection)."
     : "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).";
-  // The pin branch comes FIRST because every branch below reports a verdict
-  // about coverage, and under a hard filter that verdict is unsupported. A
-  // `strict: true` pin returns ONLY cards matching a pinned node, and the graph
-  // holds near-duplicate metric nodes where only one twin carries cards — so
-  // zero cards is evidence about the FILTER, not about what Tako holds. KE-812
-  // measured pinned handles returning FEWER cards than the same query unpinned
-  // on 11 of 20 pairs.
-  //
-  // Reachable only from `tako_search_advanced`: `tako_search` takes no pin, so
-  // `strictPin` is always false there. Without this branch that tool's callers
-  // read "the data is not covered, rewording will not change that" — mid-failure
-  // copy that contradicts the tool's own description, which tells them to drop
-  // `node_ids` and retry.
-  if (strictPin && searchedData(sources)) {
-    return [
-      "No data cards — but this request pinned `node_ids` with `strict: true`, which is a HARD FILTER: only cards matching a pinned node can come back.",
-      "Zero cards here is evidence about the filter, NOT about coverage. The graph holds near-duplicate metric nodes where only one twin carries cards, so a pinned query returned FEWER cards than the same query unpinned on 11 of 20 pairs measured.",
-      "Re-run the SAME query text with `node_ids` dropped before concluding anything. Do not report a coverage gap on the strength of this response.",
-      ...(hasWebResults
-        ? [
-            anon
-              ? "Web results did come back — answer from them meanwhile (their snippets are in structuredContent)."
-              : "Web results did come back — answer from them meanwhile (tako_contents on the most relevant url fetches its full page text).",
-          ]
-        : []),
-    ].join(" ");
-  }
   if (hasWebResults) {
     // A web-only search has zero cards BY CONSTRUCTION — the data index was
     // never queried — so the branch below would report a graph verdict from
@@ -1016,8 +1070,8 @@ function buildZeroResultGuidance(
     '— except website-traffic asks: the graph misses long-tail domains SimilarWeb still covers, so there the real coverage test is the one retry itself, as a bare-domain query ("kagi.com monthly visits").',
     'Rule out the usual shape mistakes before that one retry: one entity + one metric per query (split compound asks into parallel searches), and domains not brand names for website traffic ("netflix.com", not "Netflix").',
     // Only when the web was actually searched and returned nothing — the same
-    // precondition tako_answer's equivalent branch carries, so the two tools give
-    // the identical verdict on the identical situation. When web was NOT
+    // precondition the answer path's equivalent branch carries, so the two paths
+    // give the identical verdict on the identical situation. When web was NOT
     // searched, step (2) above already offers it as a fallback source, which is
     // the cheaper move and would contradict this one.
     ...(searchedWeb(sources) ? [NARROWER_WEB_ATTEMPT] : []),
@@ -1153,6 +1207,17 @@ export function orderCardsByUsefulness(cards: readonly TakoCard[]): TakoCard[] {
     .map((d) => d.card);
 }
 
+/** Wire fields that ride into the output when the request asked for them. */
+export type SearchOutputExtras = {
+  related?: z.infer<typeof RelatedSuggestion>[];
+  // The three /v1/answer fields. `answer` also SWITCHES behavior below: it
+  // picks the data-gap verdict over the search verdict, and it gates the
+  // citation-order check.
+  answer?: string;
+  structured_output?: Record<string, unknown>;
+  structured_output_error?: z.infer<typeof AnswerStructuredOutputError>;
+};
+
 /**
  * Build the tako_search output: the cards + web_results + request_id, plus
  * auto-chain widget fields lifted from the top card when it has a card_id
@@ -1168,16 +1233,37 @@ export function buildSearchOutput(
   searchedSources: SearchedSources,
   strictPin: boolean,
   tier: Tier,
+  extras: SearchOutputExtras = {},
 ): SearchOutput {
   // Order before anything reads cards[0]: the widget/pub_id fields below lift
   // the TOP card, so the chart the host renders follows the same ordering the
   // model reads instead of diverging from it.
-  const cards = orderCardsByUsefulness(rawCards);
+  //
+  // UNLESS the prose cites by position. "[1]" refers to the BACKEND's card
+  // order, so reordering would silently repoint every citation in the answer.
+  // Observed answers carry no positional markers, so this is a safety valve —
+  // but a mis-citation is worse than a stale top card, so the ordering yields.
+  //
+  // THE PATTERN OVER-TRIGGERS, and that is the direction to err in. Any
+  // bracketed digit matches: a quoted array index, a footnote marker copied out
+  // of a cited page. The cost of a false positive is a stale top card; the cost
+  // of a false negative is every citation in the answer pointing at the wrong
+  // source. Do not tighten this into something that can miss a real citation.
+  const citesByPosition = extras.answer !== undefined && /\[\d+\]/.test(extras.answer);
+  const cards = citesByPosition ? [...rawCards] : orderCardsByUsefulness(rawCards);
   const base: SearchOutput = {
     cards,
     web_results: webResults,
     usage,
     request_id: requestId,
+    ...(extras.related !== undefined ? { related: extras.related } : {}),
+    ...(extras.answer !== undefined ? { answer: extras.answer } : {}),
+    ...(extras.structured_output !== undefined
+      ? { structured_output: extras.structured_output }
+      : {}),
+    ...(extras.structured_output_error !== undefined
+      ? { structured_output_error: extras.structured_output_error }
+      : {}),
     // A miss is billed the same as a hit, and models default to
     // rephrase-and-retry loops that never converge — so any zero-CARD
     // response carries its own recovery protocol instead of a bare empty
@@ -1187,12 +1273,17 @@ export function buildSearchOutput(
     // retry loop feeds on.
     ...(cards.length === 0
       ? {
-          guidance: buildZeroResultGuidance(
-            webResults.length > 0,
-            searchedSources,
-            strictPin,
-            tier,
-          ),
+          // Three verdicts, and the order matters. A strict pin makes any
+          // coverage claim unsupported, so it wins on both endpoints. Otherwise
+          // the ANSWER endpoint gets the data-gap wording, which scopes itself
+          // to the data index rather than reading as "this answer failed" —
+          // the prose above it may be a complete, correct web-grounded answer.
+          guidance:
+            strictPin && searchedData(searchedSources)
+              ? strictPinGuidance(webResults.length > 0, tier)
+              : extras.answer !== undefined
+                ? buildDataGapGuidance(webResults.length > 0, searchedSources.includes("web"))
+                : buildZeroResultGuidance(webResults.length > 0, searchedSources, tier),
         }
       : {}),
   };
@@ -1206,10 +1297,10 @@ export function buildSearchOutput(
 /**
  * Widget fields for the top card, or `{}` when there is no renderable card.
  *
- * Shared by `tako_search` and `tako_answer` so a chart renders identically
- * whichever tool produced it. They diverged before this existed: search lifted
- * these fields and answer did not, so an answer's cited card came back as text
- * with no chart even though the card ids were right there in the output.
+ * Shared by `tako_search` and `tako_search_advanced` so a chart renders
+ * identically whichever produced it. They diverged before this existed: search
+ * lifted these fields and answer did not, so an answer's cited card came back as
+ * text with no chart even though the card ids were right there in the output.
  *
  * Only the TOP card gets a chart — the widget renders one, and `pub_id` is
  * singular in the output schema.
@@ -1228,7 +1319,7 @@ export function topCardChartFields(
   // would still satisfy `SearchOutput` while emitting `pub_idd`, or a string
   // `height`, and the host would just see a silently missing field on BOTH
   // tools at once. Tying the return to the same shape both advertised schemas
-  // are built from restores it, and lets `tako_answer`'s hooks read
+  // are built from restores it, and lets the answer path's hooks read
   // `output.image_url` off a typed value instead of casting.
 ): TopCardChartFields | undefined {
   const topCardId = cards[0]?.card_id;

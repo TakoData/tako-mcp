@@ -30,9 +30,9 @@ because the same call already searched the web for it.
 | To know whether *curated* data exists | `tako_available_data` | Coverage names and a `node_id` for `tako_graph_related` traversal. Free and fast, graph only |
 | Full rows, or a web page's text | `tako_contents` | A card's CSV, or any URL's extracted text (pass `query` for just the matching passages). Needs a signed-in connection |
 
-`tako_search` hands you the evidence; you write the conclusion. (`tako_answer`, a prose-answer
-tool, is opt-in — name `answer` in the `?tools=` allowlist — and not recommended: your
-model already synthesizes.)
+`tako_search` hands you the evidence; you write the conclusion. (`include_answer: true` on the
+opt-in `tako_search_advanced` returns a prose answer instead — name `search_advanced` in the
+`?tools=` allowlist — and it is not recommended: your model already synthesizes.)
 
 ## Rules that decide whether retrieval works
 

@@ -281,16 +281,18 @@ describe("slimCard — explicit exportable flag", () => {
 });
 
 // Non-exportable (exportable:false) cards carry no rows anywhere; the
-// values_hint makes the routing (description holds the headline when present;
-// tako_answer for figures) per-card and deterministic instead of a
+// values_hint makes the routing (description holds the headline when present)
+// per-card and deterministic instead of a
 // tool-description recall exercise. Wording is neutral ("not exportable"):
 // export_safe() also fails closed on non-licensing causes.
 describe("slimCard — values_hint on gated cards", () => {
   it("stamps a plain not-exportable hint that routes to NO tool", () => {
-    // `tako_answer` is opt-in (spec D1): a hint naming it would send the
-    // model into "tool not found" on the default surface, so the hint
-    // states what IS true (no rows on any path; headline in description)
-    // and advises no call at all.
+    // The only tool that can recover these figures is `tako_search_advanced`
+    // with `include_answer`, and it is opt-in (spec D1): a hint naming it would
+    // send the model into "tool not found" on the default surface. So the hint
+    // states what IS true (no rows on any path; headline in description) and
+    // advises no call at all. (It named `tako_answer` before the fold deleted
+    // that tool — same rule, same reason.)
     const card: TakoCard = {
       card_id: "c1",
       exportable: false,
@@ -301,7 +303,7 @@ describe("slimCard — values_hint on gated cards", () => {
     };
     const hint = slimCard(card, 5).values_hint;
     expect(hint).toContain("not exportable");
-    expect(hint).not.toContain("tako_answer");
+    expect(hint).not.toContain("tako_search_advanced");
     expect(hint).not.toContain("node_ids");
     expect(hint).not.toContain("strict");
   });
@@ -411,11 +413,12 @@ describe("buildSearchOutput — zero-card guidance", () => {
     expect(out.guidance).not.toContain(NARROWER_WEB_ATTEMPT);
   });
 
-  // tako_answer's both-empty branch has always allowed ONE narrower web attempt;
-  // this branch used to end flatly at "stop calling Tako for this question". Same
-  // situation, opposite verdict, on the most common Tako-has-nothing path — so it
-  // is now one shared constant rather than a sentence in one of the two tools.
-  it("allows the same single narrower web attempt tako_answer allows, when web was searched", () => {
+  // The ANSWER path's both-empty branch has always allowed ONE narrower web
+  // attempt; this branch used to end flatly at "stop calling Tako for this
+  // question". Same situation, opposite verdict, on the most common
+  // Tako-has-nothing path — so it is now one shared constant rather than a
+  // sentence in one of the two verdicts.
+  it("allows the same single narrower web attempt the answer verdict allows, when web was searched", () => {
     const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated");
     expect(out.guidance).toContain(NARROWER_WEB_ATTEMPT);
     expect(out.guidance).toMatch(/WEB axis only/);

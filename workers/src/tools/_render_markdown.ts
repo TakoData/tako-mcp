@@ -1,6 +1,6 @@
 /**
  * Markdown renderers for the model-facing text channel of `tako_search` and
- * `tako_answer`, plus the paired `structuredContent` slimmers.
+ * `tako_search_advanced`, plus the paired `structuredContent` slimmers.
  *
  * Why markdown: the consumers of these tools are agents reading text. JSON
  * taxes prose-heavy content twice — escaped newlines/quotes inside snippets,
@@ -76,57 +76,41 @@ export const searchSlimOutputShape = z.looseObject({
     .string()
     .optional()
     .describe("Present only on a zero-card response: the recovery protocol."),
-  ...autoChainShape,
-});
-
-/** The advertised structuredContent shape for tako_answer. Carries the
- *  synthesized answer and its citations for the same reason as search. */
-export const answerSlimOutputShape = z.looseObject({
-  answer: z.string().optional().describe("The synthesized, citation-backed answer."),
-  cards: z.array(z.looseObject({})).optional().describe("Cards cited by the answer."),
-  // Same reason as search: the advertised element shape is loose, so the
-  // array description is the only slot the model reads. Shorter here because
-  // on answer the snippets are citations behind synthesized prose, not the
-  // thing being triaged — but the non-contiguity warning still applies, since
-  // it is what stops a quote being fabricated across a " … " join.
-  web_results: z
+  // Names no input parameter on purpose. This shape is SHARED by `tako_search`
+  // and `tako_search_advanced`, and only the advanced tool can ask for these —
+  // so naming the parameter here would advertise, on the simple tool, a knob it
+  // does not have (phantom_tool.test.ts fails on exactly that). The advanced
+  // tool's own `include_related` description says how to ask.
+  related: z
     .array(z.looseObject({}))
     .optional()
     .describe(
-      "Web results cited by the answer, each with a `snippet` of the passages selected against the question rather than the page's opening text. A ' … ' inside one marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one continuous sentence. `null` means no relevant passage was found on that page.",
+      "Follow-up queries, each with a `query` to send as the next search request. Present only on a request that asked for them.",
     ),
-  usage: usageAdvertisedSchema
-    .nullable()
-    .describe("Cost-plus usage for this request (null when not metered)."),
-  guidance: z
+  answer: z
     .string()
     .optional()
     .describe(
-      "Present only when the data source grounded zero cards: the deterministic coverage verdict.",
+      "The synthesized, citation-backed answer. Present only on an answer-endpoint call; the cards and web_results are its citations.",
     ),
-  // Same widget fields search advertises. Without them the chart for an
-  // answer's top cited card never renders: the widget reads `embed_url` /
-  // `image_url` / `height` off `structuredContent`, and the SDK rebuilds the
-  // advertised schema strictly at the top level, so fields absent here are
-  // dropped before the host ever sees them.
+  // Neither describe names the input parameter that produces these, for the
+  // same reason `related` does not: this shape is SHARED with `tako_search`,
+  // which cannot send one, and phantom_tool.test.ts fails when a listed tool's
+  // published text names a knob it does not have.
+  structured_output: z
+    .looseObject({})
+    .optional()
+    .describe(
+      "The JSON Schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+    ),
+  structured_output_error: z
+    .looseObject({})
+    .optional()
+    .describe(
+      "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill a schema you supplied.",
+    ),
   ...autoChainShape,
 });
-
-/** tako_answer's full handler output (internal; the advertised schema is
- *  `answerSlimOutputShape` and the full content rides in the markdown). The
- *  index signature + explicit `| undefined` optionals keep it mutually
- *  assignable with the zod-inferred internal shape and the slim advertised
- *  Output under exactOptionalPropertyTypes. */
-export interface AnswerFullOutput {
-  answer: string;
-  cards: TakoCard[];
-  web_results: WebResult[];
-  usage: Usage | null;
-  request_id: string;
-  guidance?: string | undefined;
-  sources_glossary?: Record<string, string> | undefined;
-  [key: string]: unknown;
-}
 
 /**
  * structuredContent for tako_search: the FULL payload.
@@ -141,11 +125,6 @@ export interface AnswerFullOutput {
  * so hosts that count both channels are not billed twice.
  */
 export function slimSearchStructured(o: SearchOutput): Record<string, unknown> {
-  return { ...(o as unknown as Record<string, unknown>) };
-}
-
-/** structuredContent for tako_answer: the full payload, same rationale. */
-export function slimAnswerStructured(o: AnswerFullOutput): Record<string, unknown> {
   return { ...(o as unknown as Record<string, unknown>) };
 }
 
@@ -370,7 +349,20 @@ function renderFooter(usage: Usage | null): string | undefined {
  *  results → source notes → footer. */
 export function renderSearchMarkdown(o: SearchOutput): string {
   const blocks: string[] = [];
+  // The answer leads. A verdict ahead of it reads as "this answer failed"
+  // rather than "the data index has a gap" — the guidance is about coverage,
+  // and the prose above it may be a complete, correct web-grounded answer.
+  if (o.answer !== undefined) blocks.push(o.answer);
   if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
+  if (o.structured_output_error !== undefined) {
+    // Absence with no reason reads as a bug. Naming the code tells the model
+    // the field is missing on purpose and whether retrying could fill it.
+    blocks.push(
+      `> structured_output absent (${oneLine(o.structured_output_error.code)}): ${oneLine(
+        o.structured_output_error.message,
+      )}`,
+    );
+  }
 
   if (o.cards.length > 0) {
     blocks.push(`## Tako Data (${o.cards.length} card${o.cards.length === 1 ? "" : "s"})`);
@@ -384,28 +376,17 @@ export function renderSearchMarkdown(o: SearchOutput): string {
     blocks.push(o.web_results.map((w, i) => renderWebResult(w, i)).join("\n\n---\n\n"));
   }
 
-  const glossary = renderGlossary(o.sources_glossary);
-  if (glossary !== undefined) blocks.push(glossary);
-
-  const footer = renderFooter(o.usage);
-  if (footer !== undefined) blocks.push(footer);
-  return blocks.join("\n\n");
-}
-
-/** The tako_answer text channel: the synthesized answer first, then its
- *  citations (cards + web), source notes, footer. */
-export function renderAnswerMarkdown(o: AnswerFullOutput): string {
-  const blocks: string[] = [o.answer];
-  if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
-
-  if (o.cards.length > 0) {
-    blocks.push(`## Cited Data (${o.cards.length} card${o.cards.length === 1 ? "" : "s"})`);
-    blocks.push(...o.cards.map((c, i) => renderCard(c, i)));
-  }
-
-  if (o.web_results.length > 0) {
-    blocks.push(`## Cited Web (${o.web_results.length})`);
-    blocks.push(o.web_results.map((w, i) => renderWebResult(w, i)).join("\n\n---\n\n"));
+  if (o.related !== undefined && o.related.length > 0) {
+    blocks.push("## Related queries");
+    blocks.push(
+      o.related
+        .map((r) =>
+          typeof r.description === "string" && r.description !== ""
+            ? `- ${oneLine(r.query)} — ${oneLine(r.description)}`
+            : `- ${oneLine(r.query)}`,
+        )
+        .join("\n"),
+    );
   }
 
   const glossary = renderGlossary(o.sources_glossary);

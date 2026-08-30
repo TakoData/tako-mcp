@@ -668,7 +668,7 @@ describe("worker routing", () => {
     // The chatgpt listing is FIXED (spec D2): the five submitted tools, and
     // no tool a caller could otherwise name in `?tools=`.
     expect(names.has("tako_agent")).toBe(false);
-    expect(names.has("tako_answer")).toBe(false);
+    expect(names.has("tako_search_advanced")).toBe(false);
     expect(names.has("tako_search")).toBe(true);
     expect(names.has("tako_available_data")).toBe(true);
     expect(names.has("tako_contents")).toBe(true);
@@ -707,6 +707,16 @@ describe("worker routing", () => {
 
   it("POST /mcp?tools=agent lists ONLY tako_agent — the allowlist replaces the defaults", async () => {
     expect(await listToolNames("https://example.com/mcp?tools=agent")).toEqual(["tako_agent"]);
+  });
+
+  it("POST /mcp?tools=answer lists tako_search_advanced, not the defaults", async () => {
+    // `tako_answer` was folded into the advanced tool. Without the retired-token
+    // map an answer-only connection resolves to nothing, which falls through to
+    // the four-tool DEFAULT listing in silence — the caller asked for synthesis
+    // and gets a surface that cannot do it, with no error anywhere.
+    expect(await listToolNames("https://example.com/mcp?tools=answer")).toEqual([
+      "tako_search_advanced",
+    ]);
   });
 
   it("POST /mcp?tools=search,contents lists exactly those two, prefix optional", async () => {
@@ -832,7 +842,7 @@ describe("worker routing", () => {
 
   it("POST /mcp tools/list actually SERVES the web-snippet contract to the client", async () => {
     // End-to-end counterpart to the unit guards in tako_search.test.ts /
-    // tako_answer.test.ts. Those assert the wording sits on the advertised zod
+    // tako_search_advanced.test.ts. Those assert the wording sits on the advertised zod
     // schema; this asserts it survives `.shape` extraction in mcp.ts and the
     // SDK's zod→JSON-Schema conversion and reaches the wire. Worth a second
     // test because the bug being guarded was precisely a description that
@@ -840,10 +850,10 @@ describe("worker routing", () => {
     // on `webResultSchema`, which is the wire-parse guard, not the advertised
     // schema. A unit test on the zod object alone would not have caught the
     // serialization half of that.
-    // The allowlist names both tools this test reads: `tako_answer` is
+    // The allowlist names both tools this test reads: `tako_search_advanced` is
     // opt-in, and naming it REPLACES the defaults, so `tako_search` has to
     // be named too (spec D1).
-    const res = await SELF.fetch("https://example.com/mcp?tools=search,answer", {
+    const res = await SELF.fetch("https://example.com/mcp?tools=search,search_advanced", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -861,7 +871,7 @@ describe("worker routing", () => {
       };
     };
 
-    for (const name of ["tako_search", "tako_answer"]) {
+    for (const name of ["tako_search", "tako_search_advanced"]) {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool, `${name} missing from tools/list`).toBeDefined();
       const desc = tool?.outputSchema?.properties?.web_results?.description;
@@ -913,11 +923,13 @@ describe("worker routing", () => {
     expect(chatgptDesc).toBe(claudeDesc);
     expect(unknownDesc).toBe(claudeDesc);
 
-    // Promises the inline auto-render. It must NOT reference `tako_answer`
-    // — opt-in since spec D1, so naming it would route models to a tool
-    // the default connection has not registered.
+    // Promises the inline auto-render. It must NOT reference
+    // `tako_search_advanced` — opt-in since spec D1, so naming it would route
+    // models to a tool the default connection has not registered. (It named
+    // `tako_answer` before the answer fold deleted that tool; the rule is the
+    // same, and phantom_tool.test.ts enforces it generally.)
     expect(claudeDesc).toContain("auto-renders inline");
-    expect(claudeDesc).not.toContain("tako_answer");
+    expect(claudeDesc).not.toContain("tako_search_advanced");
 
     // No residue from the removed legacy deep/async machinery.
     expect(claudeDesc).not.toContain("auto-escalation");

@@ -45,13 +45,14 @@ configSchema:
 tools:
   - name: tako_search
     description: Search Tako's knowledge base for charts and live data on any topic
-  - name: tako_answer
+  - name: tako_search_advanced
     description: >-
-      Get a synthesized, citation-backed answer from Tako and/or the web.
-      Opt-in — add the `answer` token to the server URL's ?tools= allowlist,
+      The whole v3 search request body, plus `include_answer: true` for one
+      synthesized, citation-backed answer from Tako and/or the web. Opt-in —
+      add the `search_advanced` token to the server URL's ?tools= allowlist,
       which replaces the default listing, so name the other tools you want too
-      (?tools=search,available_data,contents,answer). Most hosts should prefer tako_search and
-      synthesize the answer themselves.
+      (?tools=search,available_data,contents,search_advanced). Most hosts should
+      prefer tako_search and synthesize the answer themselves.
   - name: tako_contents
     description: Fetch the content behind a result URL (a card's CSV or a page's text)
   - name: tako_visualize

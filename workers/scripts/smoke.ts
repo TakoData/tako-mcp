@@ -23,10 +23,10 @@
  *   5. Per-tool MCP `tools/call` canaries:
  *        a. `tako_search "US GDP"`        — non-empty results (read-only)
  *        a2. `tako_available_data "US GDP"` — summary + a match with node_id (read-only)
- *        b. `tako_answer "US GDP"`        — answer text returned (read-only)
+ *        b. `tako_search_advanced "US GDP" include_answer` — answer text returned (read-only)
  *        c. `tako_contents {url from search}` — inline data (default) + presigned download_url (mode:"url"), both read-only
- *        e. `tako_visualize`              — creates a card (charges 1 credit)
- *   6. Native-card proxy on the card step 5e just created — all three of its
+ *        d. `tako_visualize`              — creates a card (charges 1 credit)
+ *   6. Native-card proxy on the card step 5d just created — all three of its
  *      routes, since the feature is only as live as its weakest one:
  *        - `/embed-html/`: 404 soft-warns (path gated off via `PUBLIC_CDN_URL`),
  *          200 hard-asserts inert content type, a nonzero CDN rewrite, no
@@ -190,9 +190,9 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
 // (c) Authenticated /mcp/chatgpt lists the submitted surface with top-level
 //     securitySchemes and explicit boolean idempotentHint on every tool.
 {
-  // `?tools=agent,answer` on the URL: the chatgpt listing is FIXED at
+  // `?tools=agent,search_advanced` on the URL: the chatgpt listing is FIXED at
   // submission (spec D2), so the param must change nothing here.
-  const res = await fetch(`${baseUrl}/mcp/chatgpt?tools=agent,answer`, {
+  const res = await fetch(`${baseUrl}/mcp/chatgpt?tools=agent,search_advanced`, {
     method: "POST",
     headers: { ...JSON_RPC_HEADERS, authorization: `Bearer ${apiToken}` },
     body: rpc(2, "tools/list", {}),
@@ -271,8 +271,11 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
       id: number,
       name: string,
       args: Record<string, unknown>,
+      tools?: string,
     ): Promise<void> => {
-      const res = await fetch(`${baseUrl}/mcp`, {
+      const url =
+        tools === undefined ? `${baseUrl}/mcp` : `${baseUrl}/mcp?tools=${tools}`;
+      const res = await fetch(url, {
         method: "POST",
         headers: JSON_RPC_HEADERS,
         body: rpc(id, "tools/call", { name, arguments: args }),
@@ -309,6 +312,18 @@ const rpc = (id: number, method: string, params: Record<string, unknown>) =>
     ok("anonymous tako_graph_related → sign-in instructions (auth_required)");
     await authRequiredKind(6, "tako_available_data", { q: "smoke" });
     ok("anonymous tako_available_data → sign-in instructions (auth_required)");
+    // NAME the tool in `?tools=`. `tako_search_advanced` is opt-in, so it is
+    // absent from the default listing every case above uses. On a default
+    // connection the pre-dispatch gate declines to answer at all
+    // (`isToolOnSurface` is false, `mcp.ts`) and the SDK returns tool-not-
+    // found, so this assertion fails on a tool that is behaving correctly.
+    await authRequiredKind(
+      7,
+      "tako_search_advanced",
+      { query: "smoke" },
+      "search_advanced",
+    );
+    ok("anonymous tako_search_advanced → sign-in instructions (auth_required)");
   }
 }
 
@@ -351,7 +366,7 @@ try {
   // with a useful diff if a registry change drops one of them. We don't
   // assert on the *full* tool list because the surface evolves (e.g.
   // explore_knowledge_graph removal in PR #47).
-  const requiredTools = ["tako_search", "tako_answer", "tako_contents", "tako_available_data", "tako_visualize", "tako_graph_related"];
+  const requiredTools = ["tako_search", "tako_search_advanced", "tako_contents", "tako_available_data", "tako_visualize", "tako_graph_related"];
   for (const required of requiredTools) {
     if (!toolNames.includes(required)) {
       fail(
@@ -483,19 +498,26 @@ try {
   );
   ok(`tako_available_data "${CANARY_QUERY}" → ${adStructured.matches.length} matches with node_ids`);
 
-  // ----- b) tako_answer canary ------------------------------------------
-  const taResult = await callOk(client, "tako_answer", {
+  // ----- b) answer-endpoint canary --------------------------------------
+  // `tako_answer` was folded into `tako_search_advanced`: same endpoint, same
+  // synthesis, reached with `include_answer`. This canary is what proves the
+  // fold is live — the answer field only arrives when the request actually hit
+  // /v1/answer and the AnswerResponse guard kept the payload.
+  const taResult = await callOk(client, "tako_search_advanced", {
     query: CANARY_QUERY,
+    include_answer: true,
   });
   const taStructured = taResult.structuredContent as
     | { answer?: string; cards?: unknown[]; web_results?: unknown[] }
     | undefined;
-  assert(taStructured, "tako_answer missing structuredContent");
+  assert(taStructured, "tako_search_advanced missing structuredContent");
   assert(
     typeof taStructured.answer === "string" && taStructured.answer.length > 0,
-    "tako_answer.answer is not a non-empty string",
+    "tako_search_advanced include_answer returned no answer string",
   );
-  ok(`tako_answer "${CANARY_QUERY}" → answer (${taStructured.answer.length} chars)`);
+  ok(
+    `tako_search_advanced include_answer "${CANARY_QUERY}" → answer (${taStructured.answer.length} chars)`,
+  );
 
   // ----- c) tako_contents canary (chained from the top search result) ----
   // Default mode is "inline": the card's CSV comes back in `data` (20-row
@@ -529,7 +551,7 @@ try {
   );
   ok(`tako_contents {url, mode:"url"} → download_url present`);
 
-  // ----- e) tako_visualize canary (creates a tiny card; CHARGES 1 CREDIT) ----
+  // ----- d) tako_visualize canary (creates a tiny card; CHARGES 1 CREDIT) ----
   const tvResult = await callOk(client, "tako_visualize", {
     title: "MCP smoke test",
     components: [

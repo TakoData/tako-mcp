@@ -12,18 +12,15 @@ import { describe, expect, it } from "vitest";
 import {
   availableDataSlimOutputShape,
   renderAgentRunMarkdown,
-  renderAnswerMarkdown,
   renderAvailableDataMarkdown,
   renderContentsText,
   renderGraphRelatedMarkdown,
   renderSearchMarkdown,
   slimAgentRunStructured,
-  slimAnswerStructured,
   slimAvailableDataStructured,
   slimContentsStructured,
   slimSearchStructured,
   STRUCTURED_COVERAGE_ITEMS,
-  type AnswerFullOutput,
 } from "./_render_markdown.js";
 import type { SearchOutput, TakoCard } from "./_search_results.js";
 
@@ -102,7 +99,7 @@ describe("renderSearchMarkdown", () => {
     const gated = card({
       exportable: false,
       content: null,
-      values_hint: "rows not exportable; for specific figures call tako_answer",
+      values_hint: "rows not exportable; for specific figures call tako_search_advanced",
     });
     const md = renderSearchMarkdown(searchOutput({ cards: [gated] }));
     expect(md).toContain("exportable: no");
@@ -265,28 +262,47 @@ describe("upstream-content isolation", () => {
   });
 });
 
-describe("renderAnswerMarkdown", () => {
-  const answerOutput = (over: Partial<AnswerFullOutput> = {}): AnswerFullOutput => ({
-    answer: "Tesla's Q2 2026 revenue was $27.1B.",
-    cards: [card()],
-    web_results: [],
-    usage: { total_cost_usd: 0.009 },
-    request_id: "req-a",
-    ...over,
-  });
+describe("renderSearchMarkdown with an answer", () => {
+  const withAnswer = (over: Partial<SearchOutput> = {}): SearchOutput =>
+    searchOutput({
+      answer: "Tesla's Q2 2026 revenue was $27.1B.",
+      cards: [card()],
+      web_results: [],
+      ...over,
+    });
 
-  it("leads with the synthesized answer, then cited cards", () => {
-    const md = renderAnswerMarkdown(answerOutput());
+  it("leads with the synthesized answer, then the cards", () => {
+    const md = renderSearchMarkdown(withAnswer());
     expect(md.startsWith("Tesla's Q2 2026 revenue was $27.1B.")).toBe(true);
-    expect(md).toContain("## Cited Data (1 card)");
+    expect(md.indexOf("## Tako Data")).toBeGreaterThan(0);
     expect(md).toContain("### 1. Tesla Revenue");
   });
 
   it("renders the data-gap guidance as a blockquote after the answer", () => {
-    const md = renderAnswerMarkdown(
-      answerOutput({ cards: [], guidance: "Data-coverage note: ZERO curated data cards." }),
+    // Order matters: the answer is what the model reads first, and a verdict
+    // ahead of it reads as "this answer failed" rather than "the data index has
+    // a gap".
+    const md = renderSearchMarkdown(
+      withAnswer({ cards: [], guidance: "Data-coverage note: ZERO curated data cards." }),
     );
+    expect(md.indexOf("Tesla's")).toBe(0);
     expect(md).toContain("> Data-coverage note: ZERO curated data cards.");
+  });
+
+  it("names a structured-output failure so the model knows the field is absent on purpose", () => {
+    const md = renderSearchMarkdown(
+      withAnswer({
+        structured_output_error: { code: "arbiter_failed", message: "no evidence for x" },
+      }),
+    );
+    expect(md).toContain("structured_output absent");
+    expect(md).toContain("no evidence for x");
+  });
+
+  it("slimSearchStructured carries the answer and structured_output", () => {
+    const slim = slimSearchStructured(withAnswer({ structured_output: { revenue: 27.1 } }));
+    expect(slim.answer).toBe("Tesla's Q2 2026 revenue was $27.1B.");
+    expect(slim.structured_output).toEqual({ revenue: 27.1 });
   });
 });
 
@@ -301,13 +317,6 @@ describe("structuredContent slimmers", () => {
     expect(slim.pub_id).toBe("p1");
   });
 
-  it("slimAnswerStructured carries the answer and its citations", () => {
-    const slim = slimAnswerStructured({
-      answer: "42", cards: [], web_results: [], usage: null, request_id: "r",
-    } as AnswerFullOutput);
-    expect(slim.answer).toBe("42");
-    expect(slim.cards).toBeDefined();
-  });
 });
 
 describe("renderAvailableDataMarkdown + slim", () => {

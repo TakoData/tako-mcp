@@ -87,3 +87,31 @@ describe("readToolsParam", () => {
     );
   });
 });
+
+describe("retired tool tokens", () => {
+  const KNOWN_WITH_ADVANCED: ReadonlySet<string> = new Set([
+    ...KNOWN,
+    "tako_search_advanced",
+  ]);
+
+  it("maps the retired answer token to tako_search_advanced", () => {
+    // Both spellings, since the prefix is optional.
+    expect(parseToolsParam("answer", KNOWN_WITH_ADVANCED)).toEqual(
+      new Set(["tako_search_advanced"]),
+    );
+    expect(parseToolsParam("tako_answer,search", KNOWN_WITH_ADVANCED)).toEqual(
+      new Set(["tako_search_advanced", "tako_search"]),
+    );
+  });
+
+  it("dedupes when both the retired token and its replacement are named", () => {
+    expect(parseToolsParam("answer,search_advanced", KNOWN_WITH_ADVANCED)).toEqual(
+      new Set(["tako_search_advanced"]),
+    );
+  });
+
+  it("still drops the token when its replacement is not a known tool", () => {
+    // Never invents a name: the map forwards, it does not register.
+    expect(parseToolsParam("answer", KNOWN)).toBeNull();
+  });
+});

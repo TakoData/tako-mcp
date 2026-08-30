@@ -2161,8 +2161,9 @@ const WIDGET_HTML = `<!doctype html>
   // two \`topCardChartFields\` defaults and nothing else, no \`embed_url\`, no
   // \`image_url\`. render()'s no-chart guard reads that as "this call produced
   // no card" and collapses, so a working chart turns into an empty box on
-  // reload. The server is not at fault: a repeat \`tako_answer\` call returns
-  // all ten declared keys (verified against prod), and \`topCardChartFields\`
+  // reload. The server is not at fault: a repeat call returns all ten declared
+  // keys (verified against prod on \`tako_answer\`, the tool the answer path
+  // replaced), and \`topCardChartFields\`
   // emits its six widget fields all-or-nothing, so no server path produces
   // that pair alone.
   //
@@ -3323,7 +3324,7 @@ export function buildChartAppUiResource(
 /**
  * `appUiResource` variant that derives the per-call widget URI from the top
  * card's `pub_id` on the tool OUTPUT (the input is a query/spec, not a pub_id).
- * Shared by tako_search, tako_answer and tako_visualize, which all render a
+ * Shared by tako_search, tako_search_advanced and tako_visualize, which all render a
  * chart widget this way.
  *
  * No top card → `undefined`, NOT the static URI. A chart-less result has
