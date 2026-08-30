@@ -24,7 +24,7 @@ import {
 } from "./freetier.js";
 import { FREE_TIER_TOOL_NAMES } from "./tools/_surface.js";
 import worker from "./index.js";
-import { FREE_TIER_SERVER_INSTRUCTIONS } from "./instructions.js";
+import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { GENERIC_SIGN_IN_HINT } from "./mcp.js";
 import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
 
@@ -96,11 +96,12 @@ const TOOLS_CALL_BODY = {
 };
 
 describe("FREE_TIER_TOOL_NAMES", () => {
-  it("is exactly search and available_data (spec D1/D6)", () => {
-    expect([...FREE_TIER_TOOL_NAMES].sort()).toEqual([
-      "tako_available_data",
-      "tako_search",
-    ]);
+  it("is exactly tako_search", () => {
+    // `tako_available_data` left the set because one call fans out into up to
+    // ~9 credit-free graph requests against the shared account's 180/minute
+    // per-user graph limit (`_surface.ts` records the arithmetic). The tier is
+    // a taste of search; everything else answers sign-in at dispatch.
+    expect([...FREE_TIER_TOOL_NAMES]).toEqual(["tako_search"]);
   });
 });
 
@@ -181,13 +182,15 @@ describe("isMeteredJsonRpcBody", () => {
   });
 
   it("does not meter a tools/call for a non-executable tool (answered without spend)", () => {
-    // tako_answer is opt-in (spec D1) and tako_contents is listed but
-    // auth-required (spec D6): neither executes anonymously, so neither
-    // consumes the per-IP bucket.
+    // tako_answer is opt-in (spec D1); tako_contents, tako_available_data and
+    // tako_graph_related are listed but auth-required (spec D6): none executes
+    // anonymously, so none consumes the per-IP bucket.
     for (const name of [
       "tako_agent",
       "tako_answer",
+      "tako_available_data",
       "tako_contents",
+      "tako_graph_related",
       "no_such_tool",
     ]) {
       expect(
@@ -1062,8 +1065,8 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     // The UA classifier is gone (spec D2). No top-level securitySchemes
     // injection on the generic surface either — that adapter serves only
     // /mcp/chatgpt (asserted in index.test.ts); per-tool schemes still
-    // ride the reverse-DNS `_meta` key, where the two free tools
-    // advertise noauth on an anonymous connection.
+    // ride the reverse-DNS `_meta` key, where the free tool advertises
+    // noauth on an anonymous connection.
     const limiter = fakeLimiter(false);
     const res = await worker.fetch(
       post(TOOLS_LIST_BODY, { "user-agent": "ChatGPT/1.0" }),
@@ -1384,10 +1387,11 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     expect(limiter.keys).toEqual([]);
   });
 
-  it("an anonymous initialize returns the free-tier instructions variant", async () => {
-    // The tier-specific instructions must ride the real HTTP path, not
-    // just `createMcpServer` (covered in mcp.test.ts) — this pins the
-    // wiring in `handleMcpRequest`.
+  it("an anonymous initialize returns the SAME instructions as an authenticated one", async () => {
+    // Pins the tier-invariance on the real HTTP path, not just
+    // `createMcpServer` (covered in mcp.test.ts): the host loads this string
+    // once, so an anonymous variant would outlive a mid-conversation sign-in
+    // (see `instructions.ts`).
     const res = await worker.fetch(
       post(INITIALIZE_BODY),
       freeEnv(fakeLimiter(true)),
@@ -1396,7 +1400,7 @@ describe("free tier end-to-end (worker.fetch with stub env)", () => {
     const body = (await res.json()) as {
       result: { instructions?: string };
     };
-    expect(body.result.instructions).toBe(FREE_TIER_SERVER_INSTRUCTIONS);
+    expect(body.result.instructions).toBe(SERVER_INSTRUCTIONS);
   });
 
   it("free-tier credit exhaustion (Django 402) surfaces as the capacity message, not a billing error", async () => {

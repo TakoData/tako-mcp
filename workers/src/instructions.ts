@@ -1,6 +1,25 @@
 /**
  * The `initialize` instructions: the one string the host puts in the
- * model's system prompt, one variant per TIER (never per surface).
+ * model's system prompt. ONE string for every tier; what narrows it is the
+ * RESOLVED TOOLSET — `?tools=` and the surface's own default listing — which
+ * drops sentences naming tools this connection does not register.
+ *
+ * TIER-INVARIANT ON PURPOSE. A free-tier variant used to say "this connection
+ * is anonymous: X and Y are the tools that run here" and that `tako_contents`
+ * "needs a connection signed in with a Tako account". The host loads
+ * `instructions` ONCE, at `initialize`, and the MCP spec leaves it to the
+ * client whether the string reaches the model at all and whether a sign-in
+ * mid-conversation re-initializes the session and rebuilds the system prompt.
+ * Nothing documents that any host does. So after the user signed in, the
+ * model kept reading the anonymous text and could keep avoiding the very
+ * tool the sign-in unlocked. The variant also guaranteed a prompt-cache miss
+ * at the sign-in boundary — the system prompt is the prefix everything else
+ * caches behind. The sign-in signal now lives ONLY where it is true at the
+ * moment the model reads it: the dispatch-time `authRequiredToolResult` in
+ * `mcp.ts`, which carries the `_meta["mcp/www_authenticate"]` challenge a
+ * host's sign-in UI keys on, and needs no client refresh. Do not reintroduce
+ * anything here (or in a tool description) that is true on one tier and
+ * false on the other.
  *
  * It lives outside `mcp.ts` so `scripts/gen-registry.ts` can render it into
  * `docs/TOOLS.md` without importing the MCP SDK or the tool registry (the
@@ -11,8 +30,6 @@
  * this text reaches every connection, including the ones that do not
  * register that tool.
  */
-import type { Tier } from "./freetier.js";
-
 /**
  * Server-level usage guidance, returned as the MCP `instructions` field on
  * the `initialize` result. Claude hosts (claude.ai, Claude Desktop, Claude
@@ -153,14 +170,19 @@ const SHARED_INSTRUCTION_PARAGRAPHS = [
  */
 type ToolSentence = { readonly tools: readonly string[]; readonly text: string };
 
-const AUTHENTICATED_TOOL_SENTENCES: readonly ToolSentence[] = [
+const TOOL_SENTENCES: readonly ToolSentence[] = [
   {
     tools: ["tako_search"],
     text: "`tako_search` retrieves the cards and web links.",
   },
   {
     tools: ["tako_available_data"],
-    text: "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name.",
+    // NOT "is free". That word reads as "you can call this", and it stayed in
+    // the anonymous instructions after the tool left `FREE_TIER_TOOL_NAMES` —
+    // an anonymous `?tools=available_data` connection shipped this one
+    // sentence and refused every call it invited. The credit axis is not what
+    // a model needs here, so the claim is gone rather than reworded.
+    text: "`tako_available_data` answers what data Tako has on an entity or a metric, including a measure's exact name.",
   },
   {
     tools: ["tako_contents"],
@@ -169,10 +191,10 @@ const AUTHENTICATED_TOOL_SENTENCES: readonly ToolSentence[] = [
 ];
 
 /**
- * Assemble the instructions for a tier from the sentences whose tools survive.
+ * Assemble the instructions from the sentences whose tools survive.
  *
  * `registered === null` means "serve everything" — the value the exported
- * constants below are built from, and what a caller that cannot resolve a
+ * constant below is built from, and what a caller that cannot resolve a
  * toolset gets. When no sentence survives, the shared paragraph stands alone:
  * it names no tool, so it is true on every surface.
  */
@@ -190,65 +212,19 @@ function assembleInstructions(
     : [...SHARED_INSTRUCTION_PARAGRAPHS, "", paragraph].join("\n");
 }
 
-export const SERVER_INSTRUCTIONS = assembleInstructions(
-  AUTHENTICATED_TOOL_SENTENCES,
-  null,
-);
+export const SERVER_INSTRUCTIONS = assembleInstructions(TOOL_SENTENCES, null);
 
 /**
- * Instructions served to ANONYMOUS (free-tier) connections. Identical to
- * `SERVER_INSTRUCTIONS` except the last paragraph: the authenticated text
- * describes `tako_contents` as if it were runnable, but an anonymous call
- * to it answers sign-in instructions (the dispatch gate in
- * `registerTool`). The free variant states which tools actually EXECUTE
- * and that the rest unlocks with a Tako account.
- *
- * The shared paragraphs are spread from one array, not copied, so tuning
- * the cross-tool guidance cannot drift the two tiers apart. Authenticated
- * connections keep `SERVER_INSTRUCTIONS` byte-identical — existing
- * integrations see no change.
- */
-const FREE_TIER_TOOL_SENTENCES: readonly ToolSentence[] = [
-  {
-    tools: ["tako_available_data"],
-    text: "`tako_available_data` is free, and answers what data Tako has on an entity or a metric, including a measure's exact name.",
-  },
-  {
-    // "the tools that run", not "the full toolset": the LISTING is
-    // auth-invariant (spec D4) — `tako_contents` stays listed anonymously —
-    // so a toolset-count claim would be false; what's true is which tools
-    // EXECUTE. Named tools: BOTH, so the sentence drops whenever either is
-    // absent rather than promising a run for something unregistered.
-    tools: ["tako_available_data", "tako_search"],
-    text: "This connection is anonymous: `tako_available_data` and `tako_search` are the tools that run here.",
-  },
-  {
-    // Names `tako_contents` alone now: D4 took `include_contents` off
-    // `tako_search`, so rows are a `tako_contents` call and nothing else on the
-    // free tier gates on a second tool.
-    tools: ["tako_contents"],
-    text: "`tako_contents` — which reads one source in full (an exportable card's rows, or a web page's text by url) — needs a connection signed in with a Tako account.",
-  },
-];
-
-export const FREE_TIER_SERVER_INSTRUCTIONS = assembleInstructions(
-  FREE_TIER_TOOL_SENTENCES,
-  null,
-);
-
-/**
- * The `initialize` instructions for a connection's tier and resolved toolset.
+ * The `initialize` instructions for a connection's resolved toolset.
  *
  * Pass the set `mcp.ts` actually registers (`resolveToolSet(...)`), so a
  * `?tools=` connection is never told about a tool it cannot call. Omitting it
  * serves every sentence, which is correct only when the caller knows the
- * default listing is in force.
+ * default listing is in force. There is no tier parameter — see the module
+ * comment for why there must not be one.
  */
-export function serverInstructionsForTier(
-  tier: Tier,
+export function serverInstructionsFor(
   registered: ReadonlySet<string> | null = null,
 ): string {
-  return tier === "free"
-    ? assembleInstructions(FREE_TIER_TOOL_SENTENCES, registered)
-    : assembleInstructions(AUTHENTICATED_TOOL_SENTENCES, registered);
+  return assembleInstructions(TOOL_SENTENCES, registered);
 }

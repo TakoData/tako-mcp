@@ -16,7 +16,6 @@ import {
 import type { Env } from "./env.js";
 import { FREE_TIER_TOOL_NAMES, resolveToolSet } from "./tools/_surface.js";
 import {
-  FREE_TIER_SERVER_INSTRUCTIONS,
   SERVER_INSTRUCTIONS,
 } from "./instructions.js";
 import {
@@ -38,6 +37,7 @@ import {
   jsonResponse,
   mockFetchSequence,
   noopSendProgress,
+  TIER_CLAIM,
 } from "./tools/__test_helpers.js";
 import type { ToolContext } from "./tools/types.js";
 
@@ -726,13 +726,14 @@ describe("server instructions", () => {
     }
   });
 
-  it("anonymous connections get the free-tier variant that states the actual toolset", async () => {
-    // The authenticated last paragraph describes `tako_contents` as if it
-    // were callable, but the anonymous surface hides it on most clients —
-    // a model given that paragraph calls a tool that "does not exist" and
-    // reads the SDK's unknown-tool error as a server bug. The free variant
-    // must state the anonymous toolset and that the rest unlocks with a
-    // Tako account.
+  it("anonymous connections get the SAME instructions as authenticated ones", async () => {
+    // The host loads `instructions` once at `initialize` and nothing
+    // guarantees it re-reads them after a mid-conversation sign-in, so an
+    // anonymous variant ("X and Y are the tools that run here") would keep
+    // steering a now-signed-in model away from the tools sign-in unlocked,
+    // and would break the prompt cache at the boundary. What runs anonymously
+    // is answered at dispatch (`authRequiredToolResult`, tested below), never
+    // in cached prose.
     const ctx: ToolContext = {
       token: "free-tier-key",
       env: { DJANGO_BASE_URL: "https://staging.trytako.com" },
@@ -750,10 +751,7 @@ describe("server instructions", () => {
     await server.connect(serverTransport);
     await mcpClient.connect(clientTransport);
     try {
-      const instructions = mcpClient.getInstructions();
-      expect(instructions).toBe(FREE_TIER_SERVER_INSTRUCTIONS);
-      expect(instructions).toContain("anonymous");
-      expect(instructions).toContain("Tako account");
+      expect(mcpClient.getInstructions()).toBe(SERVER_INSTRUCTIONS);
     } finally {
       await mcpClient.close();
       await server.close();
@@ -761,7 +759,7 @@ describe("server instructions", () => {
   });
 
   // AT THE CALLER, deliberately. `phantom_tool.test.ts` calls
-  // `serverInstructionsForTier(tier, resolved)` directly, so it proves the
+  // `serverInstructionsFor(resolved)` directly, so it proves the
   // FUNCTION filters — it says nothing about whether `createMcpServer` passes
   // the resolved set in. Delete the `resolveToolSet(...)` argument in `mcp.ts`
   // and every other test in this repo still passes, because both instruction
@@ -953,6 +951,10 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
     // deployed target with free-tier bindings — `wrangler dev` has none, so
     // its anonymous block skips and the assertion never runs locally.
     ["tako_graph_related", { node_id: "ent::anthropic::1" }],
+    // tako_available_data left FREE_TIER_TOOL_NAMES: one call fans out into
+    // up to ~9 graph requests against the shared account's 180/minute
+    // per-user graph limit (`_surface.ts`). Same sign-in result as the rest.
+    ["tako_available_data", { q: "Anthropic" }],
   ] as const)(
     "anonymous generic call to %s returns the www_authenticate challenge WITHOUT executing",
     async (name, args) => {
@@ -966,6 +968,7 @@ describe("auth challenges (ChatGPT link-account flow)", () => {
             "tako_visualize",
             "tako_contents",
             "tako_graph_related",
+            "tako_available_data",
           ]),
           requestOrigin: "https://mcp.example.com",
         },
@@ -1428,7 +1431,7 @@ describe("paymentRequiredToolResult", () => {
       body,
     });
 
-  it("names the cause, reset-safe retry semantics, and the surviving free tool", () => {
+  it("names the cause and reset-safe retry semantics, and prescribes no surviving move", () => {
     const result = paymentRequiredToolResult(err402(), false);
     expect(result.isError).toBe(true);
     const text = result.content[0]?.text ?? "";
@@ -1436,7 +1439,15 @@ describe("paymentRequiredToolResult", () => {
     // Reset-safe phrasing: monthly plan credits regrant each cycle, so an
     // unconditional "retrying will fail" would be false across a reset.
     expect(text).toContain("until the account has credits again");
-    expect(text).toContain("tako_available_data");
+    // NO surviving-move clause. Two versions of one shipped — first naming
+    // `tako_available_data`, then "graph exploration" — and both were
+    // unreachable on a `?tools=search` connection, which registers neither.
+    // The hazard is reachability, so neither a tool name nor a capability
+    // phrasing is safe unfiltered.
+    for (const tool of TOOL_REGISTRY) {
+      expect(text, tool.name).not.toContain(tool.name);
+    }
+    expect(text).not.toMatch(/still works?|graph exploration|spend no credits/i);
     // The raw upstream framing must not leak — "Django" is an internal.
     expect(text).not.toContain("Django");
     const detail = result._meta["tako/error"] as {
@@ -1499,55 +1510,14 @@ describe("SERVER_INSTRUCTIONS", () => {
     // instruction strings on both surfaces.
   });
 
-  it("the free-tier variant shares the cross-tool guidance and differs only in the last paragraph", () => {
-    // The shared paragraphs are spread from one array in `mcp.ts`; this
-    // pins the invariant so a future edit that forks the tiers' guidance
-    // (rather than just the toolset paragraph) fails loudly.
-    const sharedAuth = SERVER_INSTRUCTIONS.split("\n").slice(0, -1);
-    const sharedFree = FREE_TIER_SERVER_INSTRUCTIONS.split("\n").slice(0, -1);
-    expect(sharedFree).toEqual(sharedAuth);
-    expect(FREE_TIER_SERVER_INSTRUCTIONS).not.toBe(SERVER_INSTRUCTIONS);
-  });
-
-  it("the free-tier variant states the anonymous toolset and the account unlock", () => {
-    // All three executable tools named (the model must know what it CAN
-    // call), plus `tako_contents` as the unlock teaser — paired with the
-    // pre-dispatch gate in `handleMcpRequest`, which answers a call to it
-    // with sign-in guidance rather than "tool not found".
-    for (const tool of ["tako_search", "tako_available_data", "tako_contents"]) {
-      expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain(tool);
-    }
-    expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain("anonymous");
-    expect(FREE_TIER_SERVER_INSTRUCTIONS).toContain("Tako account");
-    // No links, no pricing — the same commerce-policy constraint the
-    // free-tier limit messages carry (see freetier.test.ts guards).
-    expect(FREE_TIER_SERVER_INSTRUCTIONS).not.toMatch(/https?:\/\//);
-    expect(FREE_TIER_SERVER_INSTRUCTIONS).not.toMatch(
-      /upgrade|subscri|purchas|\bbuy\b|pricing|\$/i,
-    );
-  });
-
-  it("the free-tier toolset sentence tracks FREE_TIER_TOOL_NAMES exactly", () => {
-    // The sentence is hand-written prose, so nothing structural ties it to
-    // the executable set: adding a fourth free tool (or dropping one)
-    // would leave every other test green while `initialize` ships a false
-    // statement of what runs — injected ABOVE the tool descriptions in
-    // the host system prompt, where it wins disagreements. Same drift
-    // class the env-binding sync test in freetier.test.ts pins.
-    const toolsetParagraph = FREE_TIER_SERVER_INSTRUCTIONS.split("\n").at(-1) ?? "";
-    // Every executable tool must be named…
-    for (const name of FREE_TIER_TOOL_NAMES) {
-      expect(toolsetParagraph).toContain(`\`${name}\``);
-    }
-    // …and no other registry tool may be, except the `tako_contents`
-    // unlock teaser (whose call-time answer is the pre-dispatch gate's
-    // sign-in guidance, so naming it is safe).
-    const allowed = new Set([...FREE_TIER_TOOL_NAMES, "tako_contents"]);
-    for (const tool of TOOL_REGISTRY) {
-      if (!allowed.has(tool.name)) {
-        expect(toolsetParagraph).not.toContain(tool.name);
-      }
-    }
+  it("makes no tier-specific claim — the sign-in signal lives in tool results only", () => {
+    // A free-tier variant used to name "the tools that run here" and say
+    // `tako_contents` needs a Tako account. The host loads instructions once
+    // at `initialize`; a sign-in mid-conversation does not reliably refresh
+    // them, so the anonymous text outlived the state it described and
+    // suppressed the tool sign-in had just unlocked. The dispatch gate's
+    // `authRequiredToolResult` is the one place this claim is allowed.
+    expect(SERVER_INSTRUCTIONS).not.toMatch(TIER_CLAIM);
   });
 
   // The instructions sit ABOVE the tool descriptions in the host's system

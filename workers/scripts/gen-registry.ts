@@ -29,7 +29,6 @@ import {
   PLURAL_UNQUALIFIED,
 } from "../src/tools/_pin_form_rules.js";
 import {
-  FREE_TIER_SERVER_INSTRUCTIONS,
   SERVER_INSTRUCTIONS,
 } from "../src/instructions.js";
 import {
@@ -454,7 +453,7 @@ interface RegistryTool {
 export interface ToolsDocInput {
   modules: ReadonlyArray<ToolModule>;
   registryTools: ReadonlyArray<RegistryTool>;
-  instructions: { authenticated: string; anonymous: string };
+  instructions: string;
   freeTierToolNames: ReadonlySet<string>;
 }
 
@@ -546,10 +545,10 @@ export function buildToolsDoc(input: ToolsDocInput): string {
         out.push(`- \`${m.name}\` — \`?tools=${value}\``);
       }
     }
-    out.push("", "Server instructions (authenticated):", "", "```text", input.instructions.authenticated, "```", "");
-    if (surface === "generic") {
-      out.push("Server instructions (anonymous):", "", "```text", input.instructions.anonymous, "```", "");
-    }
+    // One string for every tier: the host loads it once at `initialize`,
+    // so a per-tier variant would outlive a mid-conversation sign-in (see
+    // `instructions.ts`). Anonymous connections differ only at dispatch.
+    out.push("", "Server instructions:", "", "```text", input.instructions, "```", "");
   }
 
   out.push("## Tools", "");
@@ -1198,10 +1197,7 @@ async function main(): Promise<void> {
   const toolsDoc = buildToolsDoc({
     modules: modules.map((m) => m.tool),
     registryTools,
-    instructions: {
-      authenticated: SERVER_INSTRUCTIONS,
-      anonymous: FREE_TIER_SERVER_INSTRUCTIONS,
-    },
+    instructions: SERVER_INSTRUCTIONS,
     freeTierToolNames: FREE_TIER_TOOL_NAMES,
   });
 

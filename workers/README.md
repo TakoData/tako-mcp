@@ -45,9 +45,13 @@ keying means little for hosted MCP hosts (claude.ai, ChatGPT, and
 similar egress from a handful of platform IPs); it's a fairness layer.
 The **genuinely global ceiling is Django's Redis-backed per-user
 throttling on the free-tier account** — every anonymous request
-authenticates as that one user. Anonymous traffic can only reach two
-tools, so it lands on two policies: `tako_search` on `/api/v3/search/`
-and `tako_available_data` on `/api/v1/graph/*`.
+authenticates as that one user. Anonymous traffic can only reach one
+tool, so it lands on one policy: `tako_search` on `/api/v3/search/`.
+It makes NO graph requests: `tako_available_data` left
+`FREE_TIER_TOOL_NAMES` because one call fans out into up to ~9 credit-free
+`/api/v1/graph/*` requests, and graph is bounded by a per-USER rate limit
+(180/minute) that every anonymous caller shared — about twenty anonymous
+coverage checks a minute exhausted it for everyone.
 
 **Read the live numbers from `app/backend/api/throttling/policy.py` in the
 monorepo, not from here.** The table that used to sit in this paragraph
@@ -55,8 +59,8 @@ went stale the moment `tako_answer` moved behind `?tools=answer`: it named
 `_DRF_USER` (`/api/v1/answer/`), an endpoint no anonymous connection can
 reach, because `tako_answer` is opt-in AND absent from
 `FREE_TIER_TOOL_NAMES`. `freetier.ts` carries the same pointer for the
-same reason. Note no policy weighs tool cost: the worst case is that many
-`tako_search` calls.
+same reason. No policy weighs tool cost — which is why a fan-out tool
+cannot be free: the worst case is that many `tako_search` calls.
 
 ### Measured behaviour
 
@@ -108,23 +112,26 @@ model reads nothing. It just looks broken. Any retune therefore needs a
 measurement of **sessions per minute per colo until handshakes fail**, not
 just admitted-call counts, which cannot see a rejected handshake at all.
 
-Per-call cost is bounded by the tool schemas: the anonymous toolset cannot
-select the expensive `deep` tier (`tako_search` constrains `effort` to
-`["fast", "instant"]`), and anonymous calls never inline billed rows
-(`include_contents: true` is refused before the handler runs).
+Per-call cost is bounded by the tool schema: `tako_search` cannot select
+the expensive `deep` tier (it constrains `effort` to `["fast", "instant"]`)
+and takes no `include_contents`, so anonymous calls never inline billed
+rows.
 
 Behavior when active (the free tier serves `/mcp` only — `/mcp/chatgpt`
 401s anonymous requests before admission):
 
-- Anonymous connections can EXECUTE exactly two tools:
-  `tako_available_data` and `tako_search` (`FREE_TIER_TOOL_NAMES`). The
-  LISTING is auth-invariant — the same four default tools as an
-  authenticated connection — so `tako_contents` and `tako_graph_related`
-  are listed anonymously and answer sign-in instructions plus an
-  `_meta["mcp/www_authenticate"]` challenge at dispatch instead of executing.
+- Anonymous connections can EXECUTE exactly one tool: `tako_search`
+  (`FREE_TIER_TOOL_NAMES`). The LISTING is auth-invariant — the same four
+  default tools as an authenticated connection — so `tako_available_data`,
+  `tako_contents` and `tako_graph_related` are listed anonymously and
+  answer sign-in instructions plus an `_meta["mcp/www_authenticate"]`
+  challenge at dispatch instead of executing. The `initialize`
+  instructions are ALSO auth-invariant: the host loads them once, and a
+  sign-in mid-conversation does not reliably refresh them, so the
+  dispatch-time result is the only place the tier is ever stated.
 - Every anonymous request counts against the global ceiling; the per-IP
-  bucket counts only `tools/call`s naming one of the two free tools
-  (the only requests that spend Tako credits). A `tools/call` for any
+  bucket counts only `tools/call`s naming the free tool
+  (the only request that spends Tako credits). A `tools/call` for any
   other tool burns no per-IP quota: a listed tool answers the sign-in
   result without ever reaching Django, an unlisted one gets "tool not
   found"; `initialize` / `tools/list` never burn it. IPv4 clients are
@@ -231,10 +238,10 @@ config-as-code in `wrangler.jsonc` and deploy with the Worker.
    ```
 5. **Verify on staging:** run `SMOKE_BASE_URL=https://mcp.staging.tako.com
    TAKO_SMOKE_API_TOKEN=... npm run smoke` — it asserts the whole surface
-   split: anonymous `/mcp` lists `tako_available_data`, `tako_contents`,
-   `tako_search` (the User-Agent changes nothing); anonymous `tako_contents`
-   and `tako_search` with `include_contents: true` return the
-   `auth_required` tool error, not results; anonymous `/mcp/chatgpt` is a
+   split: anonymous `/mcp` lists the four default tools (the User-Agent
+   changes nothing); anonymous `tako_available_data`, `tako_contents` and
+   `tako_graph_related` return the `auth_required` tool error, not
+   results; anonymous `/mcp/chatgpt` is a
    401 with a `www-authenticate` challenge; an authenticated
    `/mcp/chatgpt` listing carries top-level `securitySchemes` and logs
    `[mcp] tools/list securitySchemes injected` in `wrangler tail`. Do NOT

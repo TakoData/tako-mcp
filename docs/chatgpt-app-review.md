@@ -59,15 +59,9 @@ request path) and never by the client's User-Agent:
   `freetier.test.ts` → the "commerce-gated upsell" describe (default-off for every
   producer) and the `/mcp/chatgpt` 401 case in `index.test.ts`.
 
-Two more model-visible strings live OUTSIDE `freetier.ts` and are likewise gated per
-client instead of banned outright (`workers/src/mcp.ts`):
+One more model-visible string lives OUTSIDE `freetier.ts` and is likewise gated by
+SURFACE instead of banned outright (`workers/src/mcp.ts`):
 
-- `FREE_TIER_SERVER_INSTRUCTIONS` — the anonymous `initialize` instructions. States which
-  tools run anonymously and that others "become available on a connection authenticated
-  with a Tako account". No links, no pricing, no upgrade wording (enforced by
-  `mcp.test.ts` → "the free-tier variant states the anonymous toolset and the account
-  unlock"). Account *linking* is the flow OpenAI's own Apps SDK auth guide expects, so
-  naming it is not commerce copy.
 - `PAYMENT_REQUIRED_MESSAGE` (+ remedy splice) — an AUTHENTICATED caller's own account out
   of credits (Django 402). Every client gets the factual cause-only message. The remedy
   sentence (spliced from Django's own 402 body — "Upgrade your plan…" / "Add credits…") is
@@ -76,6 +70,12 @@ client instead of banned outright (`workers/src/mcp.ts`):
   User-Agent classification is involved, so a reviewer or crawler cannot land on the
   wrong side of it. Enforced by `mcp.test.ts` → "omits ALL remedy copy when commerce
   copy is not allowed" and the `/mcp` vs `/mcp/chatgpt` 402 case in `freetier.test.ts`.
+
+The `initialize` instructions carry no such string any more. There is no anonymous
+variant: the `initialize` text is identical on every tier, because a host loads it once
+and a mid-conversation sign-in does not reliably refresh it — see
+`workers/src/instructions.ts`. A connection's anonymous state is stated only in the
+dispatch-time `authRequiredToolResult`.
 
 Paid functionality on the ChatGPT surface is untouched.
 

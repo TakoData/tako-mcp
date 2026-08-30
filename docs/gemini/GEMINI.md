@@ -55,8 +55,8 @@ model already synthesizes.)
 
 ## Anonymous use and authentication
 
-With no credentials, `tako_search` and `tako_available_data` run right away (rate-limited,
-on shared capacity). `tako_contents` stays listed and asks you to sign in when called.
+With no credentials, `tako_search` runs right away (rate-limited, on shared capacity).
+Every other tool stays listed and asks you to sign in when called.
 
 Sign in once with `/mcp auth tako` for a browser sign-in under your own account limits; a
 new account gets up to 2,000 free requests. API-key users can instead add an

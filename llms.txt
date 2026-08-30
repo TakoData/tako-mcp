@@ -14,7 +14,7 @@ Connect an MCP client to `https://mcp.tako.com/mcp` (Streamable HTTP). No token 
 - ChatGPT: install the Tako app from the app directory, or hand-add `https://mcp.tako.com/mcp/chatgpt` as a custom connector (that surface is OAuth-only)
 - CI / headless / Roo Code / Warp: send `Authorization: Bearer <TAKO_API_KEY>` on the same URL (keys: tako.com/console/api-keys)
 
-Anonymous connections work immediately: `tako_search` and `tako_available_data` run (rate-limited, shared capacity); `tako_contents` stays listed and answers with sign-in instructions when called.
+Anonymous connections work immediately: `tako_search` runs (rate-limited, shared capacity); every other tool stays listed and answers with sign-in instructions when called.
 
 ## Tools
 

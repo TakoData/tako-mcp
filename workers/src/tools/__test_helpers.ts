@@ -85,3 +85,29 @@ export function requestFrom(
 export async function bodyOf(req: Request): Promise<Record<string, unknown>> {
   return (await req.json()) as Record<string, unknown>;
 }
+
+/**
+ * Prose that claims tier-varying availability — in BOTH directions.
+ *
+ * Denying it ("sign in first", "needs a Tako account") is the obvious half.
+ * GRANTING it is the half that shipped a bug: `free` reads as "you can call
+ * this" to a model, and it stayed true-sounding in three places after
+ * `tako_available_data` left the anonymous set — `tako_search`'s own
+ * description, the `initialize` sentence, and every zero-result recovery
+ * branch. An audit that matched only denying words passed green over all
+ * three. Say "spends no credits" when the credit axis is what you mean; do
+ * not say "free", which conflates it with anonymous-runnable.
+ *
+ * Hand-written terms, deliberately: the property is semantic, and no type or
+ * enum encodes "this sentence describes WHO may call the tool". What structure
+ * does encode is which tools the claim can be false for — `FREE_TIER_TOOL_NAMES`
+ * is the tier boundary, so only a tool inside it can wrongly tell a model it
+ * needs sign-in. Callers pair this pattern with that set rather than exempting
+ * tools by name.
+ *
+ * It lives here because three suites audit for the same thing
+ * (`_surface.test.ts`, `instructions.test.ts`, `mcp.test.ts`) and three
+ * hand-rolled copies drifted into two different spellings within one PR.
+ */
+export const TIER_CLAIM =
+  /anonymous|sign(ed|ing)?[ -]in|log(ged|ging)? ?in|Tako account|requires? (an )?account|credentials|API key|\bfree\b|no charge|at no cost|unlocks?/i;

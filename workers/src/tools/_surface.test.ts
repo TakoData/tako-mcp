@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { TOOL_REGISTRY } from "./_registry.js";
+import { TIER_CLAIM } from "./__test_helpers.js";
 import {
   CHATGPT_TOOL_NAMES,
+  FREE_TIER_TOOL_NAMES,
   GENERIC_DEFAULT_TOOL_NAMES,
   isToolOnSurface,
   resolveToolSet,
@@ -25,6 +27,18 @@ describe("surface membership sets", () => {
       "tako_graph_related",
       "tako_search",
     ]);
+  });
+
+  it("the anonymous executable set is tako_search alone, and a subset of the default listing", () => {
+    // A free tool that is not default-listed would be executable but
+    // invisible; a default tool that is free must be one the shared account
+    // can afford. `tako_available_data` fails the second test (see the
+    // constant's comment) and left the set.
+    expect([...FREE_TIER_TOOL_NAMES]).toEqual(["tako_search"]);
+    for (const name of FREE_TIER_TOOL_NAMES) {
+      expect(GENERIC_DEFAULT_TOOL_NAMES.has(name), name).toBe(true);
+      expect(REGISTRY_NAMES.has(name), name).toBe(true);
+    }
   });
 
   it("chatgpt listing is the five submitted tools (spec D2)", () => {
@@ -88,5 +102,48 @@ describe("toolAnnotationsForSurface", () => {
 
   it("chatgpt serves the Apps-review override", () => {
     expect(toolAnnotationsForSurface(tool, "chatgpt").openWorldHint).toBe(false);
+  });
+});
+
+describe("tool descriptions are tier-invariant", () => {
+  // Descriptions (like `initialize` instructions) are loaded by the host once
+  // and survive a mid-conversation sign-in, so a tier-varying claim in one
+  // outlives the state it describes — the sign-in signal belongs only in the
+  // dispatch-time `authRequiredToolResult` (`mcp.ts`).
+  //
+  // Which tools the claim can be FALSE for is structural, not a name list:
+  // `FREE_TIER_TOOL_NAMES` IS the tier boundary. A tool outside it never runs
+  // anonymously on any tier, so "requires a signed-in connection" is true
+  // whenever a host reads it — that is why `tako_contents` may say so. A tool
+  // INSIDE it that carries the same sentence tells a model to skip the one
+  // tool anonymous callers have.
+  //
+  // WHAT THIS DOES NOT PROVE: that the anonymous-set cut held. Reverting
+  // `FREE_TIER_TOOL_NAMES` to two tools leaves this block green — it would
+  // simply audit two descriptions instead of one. The assertions that fail on
+  // that revert are the set equality above, `isMeteredJsonRpcBody` in
+  // `freetier.test.ts`, and the `tako_available_data` auth-challenge case in
+  // `mcp.test.ts`. Read green here as "no free tool oversells itself", not as
+  // evidence about the tier boundary.
+
+  it("no free-tier tool description claims tier-varying availability", () => {
+    for (const tool of TOOL_REGISTRY) {
+      if (!FREE_TIER_TOOL_NAMES.has(tool.name)) continue;
+      expect(TIER_CLAIM.test(tool.description), tool.name).toBe(false);
+    }
+  });
+
+  it("covers a tool — an empty free set would pass the audit vacuously", () => {
+    const audited = TOOL_REGISTRY.filter((t) => FREE_TIER_TOOL_NAMES.has(t.name));
+    expect(audited.map((t) => t.name)).toEqual(["tako_search"]);
+  });
+
+  it("the tako_contents sign-in sentence is allowed, and still there", () => {
+    // It reads as a tier claim, and is exempt only because the tool sits
+    // outside the free set. If either half changes, this fails.
+    const contents = TOOL_REGISTRY.find((t) => t.name === "tako_contents");
+    expect(contents).toBeDefined();
+    expect(TIER_CLAIM.test(contents!.description)).toBe(true);
+    expect(FREE_TIER_TOOL_NAMES.has("tako_contents")).toBe(false);
   });
 });

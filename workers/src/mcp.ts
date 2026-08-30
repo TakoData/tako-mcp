@@ -41,7 +41,7 @@ import {
   resolveFreeTierConfig,
   type Tier,
 } from "./freetier.js";
-import { serverInstructionsForTier } from "./instructions.js";
+import { serverInstructionsFor } from "./instructions.js";
 import { tryResolveOAuthAccessToken } from "./oauth/access.js";
 import { logToolRequestId } from "./tools/_log.js";
 import { parseToolsParam, readToolsParam } from "./tools/_tools_param.js";
@@ -230,9 +230,10 @@ export function createMcpServer(
       jsonSchemaValidator: JSON_SCHEMA_VALIDATOR,
       // Filter by what this request actually registers: `?tools=` replaces
       // the default listing, so the instructions must not name a tool the
-      // connection cannot call (see `serverInstructionsForTier`).
-      instructions: serverInstructionsForTier(
-        tier,
+      // connection cannot call (see `serverInstructionsFor`). NOT by tier:
+      // the host loads this string once, so a tier-specific variant would
+      // outlive a mid-conversation sign-in (see `instructions.ts`).
+      instructions: serverInstructionsFor(
         resolveToolSet(options.surface, options.requestedToolNames ?? null),
       ),
     },
@@ -1217,8 +1218,18 @@ export function djangoErrorToToolResult(err: DjangoError): {
  * an anonymous caller has no account to top up), an authenticated caller
  * OWNS the exhausted balance, so naming the cause is the actionable answer.
  *
- * States the cause, the retry semantics, and the surviving free move —
- * and deliberately NO remedy. Two different backends emit this 402 with
+ * States the cause and the retry semantics, and deliberately NO remedy and
+ * NO surviving move.
+ *
+ * It used to end "`tako_available_data` is free and still works", then
+ * "calls that spend no credits, such as graph exploration, still work". Both
+ * failed the same way: `?tools=` REPLACES the default listing, so a
+ * `?tools=search` connection has neither that tool nor any graph tool, and
+ * the sentence sends the model after something it cannot reach. Naming a
+ * capability instead of a tool does not fix it — the hazard is reachability,
+ * not the spelling. A clause that is true only for some toolsets belongs
+ * behind the resolved set (the way instruction sentences are filtered) or
+ * nowhere; it is not worth that plumbing here, so it is gone. Two different backends emit this 402 with
  * two different remedies (`subscriptions/decorators.py` in the monorepo):
  * `SubscriptionCreditThrottle` drains MONTHLY plan credits that regrant
  * each cycle (remedy: upgrade the plan, or wait for the reset), while
@@ -1232,8 +1243,7 @@ export function djangoErrorToToolResult(err: DjangoError): {
  */
 export const PAYMENT_REQUIRED_MESSAGE =
   "This Tako account is out of credits, so the call could not run. " +
-  "Priced calls will keep failing until the account has credits again; " +
-  "`tako_available_data` is free and still works.";
+  "Priced calls will keep failing until the account has credits again.";
 
 /**
  * Model-visible message for an AUTHENTICATED caller whose Tako credential

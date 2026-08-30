@@ -11,19 +11,19 @@ describe("securitySchemesForTool", () => {
   const OAUTH2 = { type: "oauth2", scopes: ["mcp"] };
   const ANON_GENERIC = { surface: "generic", tier: "free" } as const;
 
-  it("advertises noauth + oauth2 for the free tools on an ANONYMOUS generic listing", () => {
-    for (const name of ["tako_search", "tako_available_data"]) {
-      expect(securitySchemesForTool(name, ANON_GENERIC)).toEqual([
-        { type: "noauth" },
-        OAUTH2,
-      ]);
-    }
+  it("advertises noauth + oauth2 for the free tool on an ANONYMOUS generic listing", () => {
+    expect(securitySchemesForTool("tako_search", ANON_GENERIC)).toEqual([
+      { type: "noauth" },
+      OAUTH2,
+    ]);
   });
 
   it("advertises oauth2 only for auth-required tools, even anonymously", () => {
     for (const name of [
       "tako_answer",
+      "tako_available_data",
       "tako_contents",
+      "tako_graph_related",
       "tako_visualize",
       "tako_agent",
     ]) {
@@ -32,6 +32,9 @@ describe("securitySchemesForTool", () => {
   });
 
   it("never advertises noauth on AUTHENTICATED connections (the caller is already linked)", () => {
+    // `tako_available_data` earns its place here precisely BECAUSE its
+    // free-set membership flipped in this change: the regression this catches
+    // is a future "advertise noauth for tools that used to be free".
     for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
       expect(
         securitySchemesForTool(name, { surface: "chatgpt", tier: "authenticated" }),

@@ -16,18 +16,29 @@
  *   hosts (claude.ai, ChatGPT, Centaur) egressing from many regions
  *   maximize that fan-out. It still bounds per-colo floods — including
  *   the otherwise-unmetered handshake methods, which need no credential
- *   at all. The genuinely GLOBAL ceiling is Django's Redis-backed
- *   per-user throttles on the free-tier account, which every anonymous
- *   request lands on because they all authenticate as the one
- *   `FREE_TIER_API_KEY` user. Read the live numbers from
+ *   at all. For a request that REACHES Django, the genuinely GLOBAL ceiling
+ *   is its Redis-backed per-user throttles on the free-tier account, which
+ *   such requests all land on because they authenticate as the one
+ *   `FREE_TIER_API_KEY` user.
+ *
+ *   MIND THE GAP: a `tools/call` naming a tool outside `FREE_TIER_TOOL_NAMES`
+ *   reaches neither. It is answered at `mcp.ts` (the pre-dispatch gate, or
+ *   `registerTool`'s) without touching Django, and `isMeteredJsonRpcBody`
+ *   skips the per-IP bucket because it spends nothing — so the per-colo
+ *   bucket, which this same comment calls not a true global ceiling, is its
+ *   only bound. That class grew in this change: every default tool except
+ *   `tako_search` is now in it. The refusals are cheap (no upstream call, no
+ *   credit), which is why this is a note and not an alarm — but size the
+ *   per-colo limit knowing it is what holds them.
+ *   Read the live numbers from
  *   `app/backend/api/throttling/policy.py` in the monorepo rather than from
  *   here: a copy of that table went stale the moment `tako_answer` moved
  *   behind `?tools=answer` (it named answer, which no anonymous connection
- *   can reach, and omitted `tako_available_data`, which every one can).
+ *   can reach), and again when `tako_available_data` left the free set.
  * - A PER-IP bucket (fairness layer) counting only `tools/call`s that name
- *   `tako_search` or `tako_available_data` — the only requests that spend
- *   Tako credits. A call to any other tool spends none and does not burn the
- *   caller's per-IP quota (it still counts per-colo).
+ *   a tool in `FREE_TIER_TOOL_NAMES` — `tako_search`, the one request that
+ *   spends Tako credits. A call to any other tool spends none and does not
+ *   burn the caller's per-IP quota (it still counts per-colo).
  *   Per-IP keying alone means little for hosted hosts (shared egress
  *   IPs), which is why the platform-wide bound lives in Django.
  *
@@ -36,8 +47,9 @@
  * limiter hit cover an arbitrary number of Django-spending calls. Bodies
  * over `MAX_FREE_TIER_BODY_BYTES` are rejected before being buffered:
  * this parse is new pre-auth surface, so it must not read unbounded
- * unauthenticated input. Design doc:
- * `docs/superpowers/specs/2026-07-26-anonymous-free-tier-design.md`.
+ * unauthenticated input. Architecture: `AGENTS.md` (free tier and metering).
+ * The dated design notes live outside this repo — `docs/superpowers/` is
+ * gitignored, so do not cite a path there and expect a reader to open it.
  *
  * Fail modes, deliberately asymmetric:
  * - Configuration missing → fail CLOSED (`resolveFreeTierConfig` returns
@@ -101,11 +113,11 @@ export function resolveFreeTierConfig(env: Env): FreeTierConfig | null {
 /**
  * Should this JSON-RPC body count against the free-tier PER-IP limit?
  *
- * Only a `tools/call` naming `tako_search` or `tako_available_data` is
- * metered — the only request shape that spends the shared account's Tako
- * credits. Handshake and discovery methods (`initialize`, `tools/list`,
- * notifications, pings) must stay unmetered or clients would burn quota
- * just connecting, and a `tools/call` for any other tool spends no credit
+ * Only a `tools/call` naming a tool in `FREE_TIER_TOOL_NAMES` (today
+ * `tako_search` alone) is metered — the only request shape that spends the
+ * shared account's Tako credits. Handshake and discovery methods
+ * (`initialize`, `tools/list`, notifications, pings) must stay unmetered or
+ * clients would burn quota just connecting, and a `tools/call` for any other tool spends no credit
  * either: the listing is auth-invariant on every surface (spec D4), so a
  * listed auth-required tool like `tako_contents` answers the
  * `authRequiredToolResult` sign-in result from the dispatch gate in `mcp.ts`
@@ -142,8 +154,10 @@ export function isMeteredJsonRpcBody(body: unknown): boolean {
   // An earlier revision inlined "`include_contents` is true" instead, which
   // exempted the input for EVERY free tool: `tako_available_data` ignores
   // the key (its `z.object` strips it) and declares no gate, so an anonymous
-  // caller got its four Django round-trips with no per-IP hit just by adding
-  // a key the tool never reads.
+  // caller got its Django round-trips with no per-IP hit just by adding a key
+  // the tool never reads. (Four round-trips then; the tool fans out to ~9
+  // today, and left the free set for that reason — the hazard was the
+  // re-derivation, not the count.)
   const args = (params as { arguments?: unknown }).arguments;
   const tool = TOOL_REGISTRY.find((candidate) => candidate.name === name);
   if (tool?.anonymousInputRejects !== undefined) {
