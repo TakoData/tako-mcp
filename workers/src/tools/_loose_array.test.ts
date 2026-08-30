@@ -199,11 +199,12 @@ describe("registry guard: top-level array inputs", () => {
    * Bump this deliberately: a new array input means wrapping it in
    * `looseArray` and raising the count in the same commit.
    */
-  it("finds all 6 known array-typed input fields", () => {
+  it("finds all 4 known array-typed input fields", () => {
+    // tako_answer's two dropped with the tool. tako_search_advanced adds none:
+    // its array fields (data.node_ids, web.include_domains, …) sit INSIDE the
+    // source blocks, and this guard walks top-level inputs only.
     expect(found.map((f) => `${f.tool.name}.${f.field}`).sort()).toEqual([
       "tako_agent.sources",
-      "tako_answer.node_ids",
-      "tako_answer.sources",
       "tako_contents.urls",
       "tako_search.sources",
       "tako_visualize.components",
@@ -266,7 +267,6 @@ describe("registry guard: top-level array inputs", () => {
  * so the guard's parse assertion measures the coerced field and nothing else.
  */
 const REQUIRED_SIBLINGS: Record<string, Record<string, unknown>> = {
-  tako_answer: { query: "q" },
   tako_search: { query: "q" },
   tako_agent: { query: "q" },
   tako_contents: {},
@@ -279,8 +279,6 @@ const VALID_COMPONENT = {
   config: { title: "Monthly Revenue" },
 };
 const VALID_JSON_TEXT: Record<string, string> = {
-  "tako_answer.sources": '["data","web"]',
-  "tako_answer.node_ids": '["node-1"]',
   "tako_search.sources": '["data","web"]',
   "tako_agent.sources": '["data","web"]',
   "tako_contents.urls": '["https://trytako.com/charts/c1"]',
@@ -305,42 +303,6 @@ describe("shipped fields carry the right opt-ins", () => {
     expect((result.data as { urls: string[] }).urls).toEqual([url]);
   });
 
-  // tako_search dropped node_ids in the D4 split; tako_answer still carries it,
-  // and it is the same opaque-id hazard — a split id pins two nodes that do not
-  // exist.
-  it("tako_answer.node_ids keeps a comma-bearing id as ONE id", () => {
-    const result = shape("tako_answer").safeParse({
-      query: "q",
-      node_ids: "weird,id",
-    });
-    expect(result.success).toBe(true);
-    expect((result.data as { node_ids: string[] }).node_ids).toEqual([
-      "weird,id",
-    ]);
-  });
-
-  it("tako_answer.sources DOES split a comma list (closed enum)", () => {
-    const result = shape("tako_answer").safeParse({
-      query: "q",
-      sources: "data,web",
-    });
-    expect(result.success).toBe(true);
-    expect((result.data as { sources: string[] }).sources).toEqual([
-      "data",
-      "web",
-    ]);
-  });
-
-  it("tako_answer.sources reports the plain type error for an object payload", () => {
-    const result = shape("tako_answer").safeParse({
-      query: "q",
-      sources: '{"data":{},"web":{}}',
-    });
-    expect(result.success).toBe(false);
-    expect(result.error?.issues).toHaveLength(1);
-    expect(result.error?.issues[0]?.path).toEqual(["sources"]);
-    expect(result.error?.issues[0]?.message).toContain("expected array");
-  });
 });
 
 /**

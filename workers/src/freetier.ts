@@ -34,7 +34,8 @@
  *   `app/backend/api/throttling/policy.py` in the monorepo rather than from
  *   here: a copy of that table went stale the moment `tako_answer` moved
  *   behind `?tools=answer` (it named answer, which no anonymous connection
- *   can reach), and again when `tako_available_data` left the free set.
+ *   can reach), again when `tako_available_data` left the free set, and a
+ *   third time when the answer fold deleted `tako_answer` outright.
  * - A PER-IP bucket (fairness layer) counting only `tools/call`s that name
  *   a tool in `FREE_TIER_TOOL_NAMES` — `tako_search`, the one request that
  *   spends Tako credits. A call to any other tool spends none and does not

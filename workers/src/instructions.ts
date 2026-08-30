@@ -92,10 +92,12 @@
  *      `tako_search` being "a CHOICE, not a ranking", and told the next
  *      author to keep its "pick one, don't chain them" phrasing verbatim
  *      because it was the only line here with a measured behavioural effect.
- *      That line is GONE: `tako_answer` is opt-in — a caller reaches it
- *      only by naming it in `?tools=` — so naming it in instructions every
- *      connection reads would point the model at an unregistered tool. Do
- *      not restore it while answer is opt-in.
+ *      That line is GONE and must not come back in any form. `tako_answer`
+ *      was deleted in the answer fold; synthesis is now `include_answer` on
+ *      `tako_search_advanced`, which is opt-in — a caller reaches it only by
+ *      naming it in `?tools=`. Naming either the dead tool or the opt-in one
+ *      in instructions every connection reads points the model at something
+ *      it cannot call.
  *
  * FRAMED AS SUBSTITUTION, not precedence. The opener used to say "reach for
  * Tako BEFORE a generic web search", which concedes that a generic web search

@@ -40,7 +40,12 @@ jobs:
       - name: Regenerate schemas + registry
         run: |
           npm run schemas:gen
-          npm run registry:gen
+          # Tee'd so the commit step can put the parameter summary in the
+          # message. `tako_search_advanced` derives its schema from the
+          # generated components, so a backend field reaches a published tool
+          # through THIS commit and nowhere else — the spec diff shows a schema
+          # change, not which tool grew a parameter.
+          npm run registry:gen | tee "${RUNNER_TEMP}/registry-gen.log"
 
       - name: Verify
         run: |
@@ -79,7 +84,13 @@ jobs:
           # reviewed-surface digest.
           git add workers/src/generated/schemas.ts workers/src/tools/_registry.ts \
             registry/server.json registry/lhm.plugin.json docs/TOOLS.md
+          PARAMS=$(grep '^\[registry:gen\] parameters ' "${RUNNER_TEMP}/registry-gen.log" | sed 's/^\[registry:gen\] parameters //' || true)
           if ! git diff --cached --quiet; then
-            git commit -m "chore: regenerate schemas + registry from synced spec"
+            if [ -n "$PARAMS" ]; then
+              git commit -m "chore: regenerate schemas + registry from synced spec" \
+                -m "Parameter changes on published tools:" -m "$PARAMS"
+            else
+              git commit -m "chore: regenerate schemas + registry from synced spec"
+            fi
             git push origin "HEAD:$HEAD_REF"
           fi

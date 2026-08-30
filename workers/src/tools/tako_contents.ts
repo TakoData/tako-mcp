@@ -50,8 +50,8 @@ import type { ToolContext, ToolModule } from "./types.js";
 // No mention of `include_contents` here, and it cannot be reintroduced. The
 // parenthetical this description used to carry ("and, with include_contents:
 // true, a rows preview") named a parameter that no tool on EITHER of this tool's
-// surfaces accepts: D4 removed it from `tako_search`, and the two tools that
-// still take it (`tako_answer`, `tako_search_advanced`) are both opt-in, which
+// surfaces accepts: D4 removed it from `tako_search`, and the one tool that
+// still takes it (`tako_search_advanced`) is opt-in, which
 // `phantom_tool.test.ts` forbids a default-listed tool from naming. So there is
 // no rewording that keeps the claim — after D4 a search result carries no rows
 // on any reachable path, which is exactly why this tool exists.

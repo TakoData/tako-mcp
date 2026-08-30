@@ -20,7 +20,6 @@ Default listing:
 Opt-in (name them in `?tools=`):
 
 - `tako_agent` — `?tools=available_data,contents,graph_related,search,agent`
-- `tako_answer` — `?tools=available_data,contents,graph_related,search,answer`
 - `tako_search_advanced` — `?tools=available_data,contents,graph_related,search,search_advanced`
 - `tako_visualize` — `?tools=available_data,contents,graph_related,search,visualize`
 
@@ -121,122 +120,6 @@ Annotations:
       "type": "string",
       "format": "uuid",
       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-    }
-  },
-  "required": [
-    "query"
-  ]
-}
-```
-</details>
-
-### tako_answer
-
-**Tako: Answer**
-
-- Listed by default on: none (opt-in on `/mcp`)
-- Runs anonymously (on `/mcp`): no (answers with sign-in instructions)
-
-Description:
-
-One synthesized, citation-backed answer to one specific data question, grounded in the data or web tako cites. This connection opted in with `?tools=answer`: `tako_search` is the default retrieval tool, and a model that synthesizes well from search results does not need this one.
-
-What it adds over retrieval: it reads the cited web pages internally, so their content shapes the answer without a second call, and it returns a coverage verdict. Rows are NOT included unless you set include_contents: true.
-
-Best for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.
-
-Reach past it for a different job: `tako_search` for breadth — it inlines no rows at all, so values there come from `tako_contents` on the cards it finds; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.
-
-Grounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin widens the filter back out, and a pin without strict only boosts — measured as not enough to land the metric). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.
-
-Results arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.
-
-Parameters:
-
-| Name | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `query` | string | yes |  | Natural-language question to answer (e.g. "What was US GDP in 2024?"). Website-traffic data is keyed by domain — ask about "openai.com monthly visits", not "OpenAI website visits". |
-| `sources` | array | no | `["data","web"]` | Source(s) to ground in. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. |
-| `include_contents` | boolean | no | `false` | Set true to inline each cited data card's recent rows alongside the answer (`preview_rows` caps how many; rows are billed per 1k) — the values arrive with the prose, no follow-up fetch. Leave false (the default) for prose + citations only. DATA cards only; cited web pages are never auto-inlined (billed per page — use tako_contents). |
-| `preview_rows` | integer | no | `20` | Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default 20; rows are billed per 1k). For more rows, call tako_contents on the card's url (max_rows up to 2,000, billed per 1k rows). Ignored when include_contents is false. |
-| `country_code` | string | no | `"US"` | ISO country code for localized results. |
-| `locale` | string | no | `"en-US"` | Locale for results. |
-| `node_ids` | array | no |  | Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source. |
-| `strict` | boolean | no | `false` | Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return. |
-
-Fixed request inputs (the caller cannot change these):
-
-- `sources.web.include_contents` = `false` — Web page text is never inlined; call tako_contents on a url.
-- `sources.web.snippet_max_chars` = `2000` — Excerpt cap per web result; the API default on /v1/answer is 1000.
-- `sources.web.highlights` = `true` — Query-relevant highlight passages per web result; the API default is false.
-
-Annotations:
-
-- `/mcp`: title: Tako: Answer; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Answer; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
-
-<details><summary>Published input schema (JSON Schema)</summary>
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {
-    "query": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Natural-language question to answer (e.g. \"What was US GDP in 2024?\"). Website-traffic data is keyed by domain — ask about \"openai.com monthly visits\", not \"OpenAI website visits\"."
-    },
-    "sources": {
-      "default": [
-        "data",
-        "web"
-      ],
-      "description": "Source(s) to ground in. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph.",
-      "minItems": 1,
-      "type": "array",
-      "items": {
-        "type": "string",
-        "enum": [
-          "data",
-          "web"
-        ]
-      }
-    },
-    "include_contents": {
-      "default": false,
-      "description": "Set true to inline each cited data card's recent rows alongside the answer (`preview_rows` caps how many; rows are billed per 1k) — the values arrive with the prose, no follow-up fetch. Leave false (the default) for prose + citations only. DATA cards only; cited web pages are never auto-inlined (billed per page — use tako_contents).",
-      "type": "boolean"
-    },
-    "preview_rows": {
-      "default": 20,
-      "description": "Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default 20; rows are billed per 1k). For more rows, call tako_contents on the card's url (max_rows up to 2,000, billed per 1k rows). Ignored when include_contents is false.",
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 250
-    },
-    "country_code": {
-      "default": "US",
-      "description": "ISO country code for localized results.",
-      "type": "string"
-    },
-    "locale": {
-      "default": "en-US",
-      "description": "Locale for results.",
-      "type": "string"
-    },
-    "node_ids": {
-      "description": "Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source.",
-      "maxItems": 20,
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "strict": {
-      "default": false,
-      "description": "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
-      "type": "boolean"
     }
   },
   "required": [
@@ -653,11 +536,13 @@ The v3 search request's retrieval options: per-source result counts, inline card
 
 Use `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.
 
-Nothing is sent unless you set it, so an omitted field takes the server default named in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.
+Nothing is sent unless you set it, with one exception named below, so an omitted field takes the server default in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.
 
-One consequence to know before switching: `tako_search` forces `web.highlights: true` for you. This tool forces nothing, so an omitted `highlights` takes the server default of false and each web snippet becomes the page's opening text instead of the passages matching your query. Set it unless you want the opening.
+Web snippets are query-relevant highlight passages by default here, as on `tako_search`. Unlike there, you can turn them off: `web.highlights: false` gives you the page's opening text instead.
 
 One field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.
+
+`include_answer: true` runs the answer endpoint instead: one synthesized, citation-backed answer in `answer`, with the retrieved cards and web results as its citations. Every option here applies the same way; the server defaults that differ on that endpoint (web `count` 3, `snippet_max_chars` 1000) are named in each field's description. `output_schema` fills a JSON Schema from the same evidence and returns it as `structured_output`. For values on a card marked `exportable: false`, pin its METRIC node id alone in `data.node_ids` with `strict: true`, set `include_answer: true` and `data.include_contents: true`.
 
 To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.
 
@@ -667,10 +552,16 @@ Parameters:
 |---|---|---|---|---|
 | `query` | string | yes |  | Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool. |
 | `effort` | string ("fast" \\| "instant" \\| "deep") | no |  | Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier. |
+| `location` | object | no |  | Optional coordinates of the end user. Resolves the location for implicit-location queries (for example, weather). An explicit location in the query overrides these coordinates. |
 | `country_code` | string | no |  | ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US. |
 | `locale` | string | no |  | BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. |
+| `timezone` | string | no |  | IANA timezone (for example, 'America/New_York'). |
+| `output_settings` | object | no |  | Settings that control the response shape. |
+| `include_related` | integer | no |  | Applies to POST /v3/search only. Return follow-up query suggestions in `related`. Omit this field to disable them. The value sets the maximum number of suggestions, from 1 to 20. POST /v1/answer accepts this field but ignores it: the answer response has no `related` field. |
 | `data` | object | no |  | Tako data (card) source settings. Include this key — even as an empty object — to search the data graph. |
 | `web` | object | no |  | Web source settings. Include this key — even as an empty object — to search the web. |
+| `include_answer` | boolean | no |  | Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only. |
+| `output_schema` | object | no |  | JSON Schema for structured output. Tako fills it from the same evidence it uses to write `answer`, and returns it in `structured_output`. Requires effort 'fast' or 'deep'; on 'instant' the request returns 400. Supported subset: the object, array, string, number, integer, and boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties: false`. A type may be nullable as `["number", "null"]`, which is how you let Tako signal 'no evidence' rather than filling a zero. `title`, `examples`, `format`, and `default` are accepted and ignored — they constrain nothing. Caps: 16KB total, depth 5, 64 properties, 512 characters per description. Violations return 400. If Tako can't fill the schema, `structured_output` is absent and `structured_output_error` says why — the answer and the cards still return. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -691,6 +582,7 @@ Annotations:
     "query": {
       "type": "string",
       "minLength": 1,
+      "pattern": "\\S",
       "description": "Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool."
     },
     "effort": {
@@ -702,6 +594,36 @@ Annotations:
         "deep"
       ]
     },
+    "location": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "latitude": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90,
+              "description": "Latitude of the end user (degrees, -90 to 90)."
+            },
+            "longitude": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180,
+              "description": "Longitude of the end user (degrees, -180 to 180)."
+            }
+          },
+          "required": [
+            "latitude",
+            "longitude"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Optional coordinates of the end user. Resolves the location for implicit-location queries (for example, weather). An explicit location in the query overrides these coordinates."
+    },
     "country_code": {
       "description": "ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US.",
       "type": "string"
@@ -709,6 +631,59 @@ Annotations:
     "locale": {
       "description": "BCP-47 locale tag for language and formatting. Omit it and the server uses en-US.",
       "type": "string"
+    },
+    "timezone": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "IANA timezone (for example, 'America/New_York')."
+    },
+    "output_settings": {
+      "description": "Settings that control the response shape.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "image_dark_mode": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Whether to render card preview images in dark mode."
+            },
+            "force_refresh": {
+              "type": "boolean",
+              "description": "Instant mode only, and currently informational: on these endpoints, instant (effort='instant') always operates in build-and-refresh mode regardless of this flag. Instant retrieves data for embeds that are missing or stale, then creates or refreshes their static embeds. Embeds that are already fresh (within the refresh cadence) return as-is; Tako does not re-retrieve them. Identical queries therefore reuse the same content-addressed embed and return a stable embed URL."
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "include_related": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Applies to POST /v3/search only. Return follow-up query suggestions in `related`. Omit this field to disable them. The value sets the maximum number of suggestions, from 1 to 20. POST /v1/answer accepts this field but ignores it: the answer response has no `related` field."
     },
     "data": {
       "description": "Tako data (card) source settings. Include this key — even as an empty object — to search the data graph.",
@@ -724,6 +699,24 @@ Annotations:
           "type": "boolean",
           "description": "Inline this source's underlying data directly in the response. For the Tako data source, that is serialized card data (see content_format). For web results, that is the page text."
         },
+        "mode": {
+          "description": "Delivery for inlined card data when include_contents is true. For Tako cards, include_contents always returns the most-recent rows in the response body, up to max_rows, or up to the default inline row cap for your account if you omit max_rows. This field therefore has no effect on Tako cards; it stays for schema stability. total_rows and truncated on the returned content indicate when more data is available. For a presigned download link, call POST /api/v1/contents with mode='url'.",
+          "type": "string",
+          "enum": [
+            "url",
+            "inline"
+          ]
+        },
+        "content_format": {
+          "description": "Serialization for card data: 'json_compact' (default), 'json_records', 'csv', or 'card_json'. The first three return a row-capped preview. 'card_json' returns a rich card-type-specific JSON object under card_data, truncated to the same row cap. Tako bills the rows it returns on every one of the four. A card type with no card_json shape falls back to 'json_compact' for that card.",
+          "type": "string",
+          "enum": [
+            "csv",
+            "json_records",
+            "json_compact",
+            "card_json"
+          ]
+        },
         "max_rows": {
           "anyOf": [
             {
@@ -736,16 +729,6 @@ Annotations:
             }
           ],
           "description": "Maximum number of card data rows to inline when include_contents is true. If you omit this field, Tako returns the default inline row cap for your account (20 rows on the standard plan). That cap is deliberately smaller than the 2,000 rows POST /api/v1/contents returns by default: a search response inlines many cards, so the same number bills once per card. Raise it to inline more rows, up to the 2,000-row system ceiling. Tako clamps a larger value to that ceiling. Every inlined row is billed: a flat per-card baseline fee plus the per-1,000-row rate, the same rate POST /api/v1/contents charges. total_rows and truncated report whether more rows remain. A single response also has a 2,000 billable-row budget and a 20,000-row total budget, both shared across all cards. A later card can therefore return fewer rows than you requested, or no inlined rows at all. Such a card still carries its export_pricing quote, so you can fetch its rows with POST /api/v1/contents."
-        },
-        "content_format": {
-          "description": "Serialization for card data: 'json_compact' (default), 'json_records', 'csv', or 'card_json'. The first three return a row-capped preview. 'card_json' returns a rich card-type-specific JSON object under card_data, truncated to the same row cap. Tako bills the rows it returns on every one of the four. A card type with no card_json shape falls back to 'json_compact' for that card.",
-          "type": "string",
-          "enum": [
-            "csv",
-            "json_records",
-            "json_compact",
-            "card_json"
-          ]
         },
         "node_ids": {
           "maxItems": 20,
@@ -783,22 +766,6 @@ Annotations:
           "type": "boolean",
           "description": "Inline the page text of each web result in the response. Tako returns it free of charge, on a best-effort basis: if a page's text isn't available at search time, content.data is null. To fetch a page directly, use POST /api/v1/contents."
         },
-        "include_domains": {
-          "maxItems": 20,
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Return only results from these domains (bare hosts, for example 'cnn.com'). Max 20."
-        },
-        "exclude_domains": {
-          "maxItems": 20,
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Drop results from these domains (bare hosts, for example 'cnn.com'). Max 20."
-        },
         "category": {
           "anyOf": [
             {
@@ -816,6 +783,22 @@ Annotations:
           ],
           "description": "Restrict web results to a category. 'news' filters to news sources. 'sports' and 'finance' are accepted but have no effect yet. Omit for a general web search."
         },
+        "include_domains": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Return only results from these domains (bare hosts, for example 'cnn.com'). Max 20."
+        },
+        "exclude_domains": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Drop results from these domains (bare hosts, for example 'cnn.com'). Max 20."
+        },
         "snippet_max_chars": {
           "anyOf": [
             {
@@ -829,18 +812,63 @@ Annotations:
           ],
           "description": "Character cap on the text excerpt returned per web result. If you omit this field, the search endpoint applies 4000 and the answer endpoint applies 1000. If you send a value, the server uses that value exactly. The maximum is 20000."
         },
+        "highlights": {
+          "type": "boolean",
+          "description": "Return query-relevant highlight passages as each web result's snippet, instead of the opening text of the page. Highlights usually carry the answer-bearing sentences, and stay within snippet_max_chars. Unless you also set include_contents, Tako requests no page text, so a page with no highlight returns snippet: null. The snippet can also hold more than one passage from different parts of the page, joined by ' … '. Read the snippet as a whole. Do not cut the snippet to a fixed length. Do not quote the snippet as one continuous sentence. Default false."
+        },
         "article_content_max_chars": {
           "type": "integer",
           "minimum": 1,
           "maximum": 1000000,
           "description": "Character cap on the full article text when include_contents is true. Default 30000, maximum 1000000."
         },
-        "highlights": {
-          "type": "boolean",
-          "description": "Return query-relevant highlight passages as each web result's snippet, instead of the opening text of the page. Highlights usually carry the answer-bearing sentences, and stay within snippet_max_chars. Unless you also set include_contents, Tako requests no page text, so a page with no highlight returns snippet: null. The snippet can also hold more than one passage from different parts of the page, joined by ' … '. Read the snippet as a whole. Do not cut the snippet to a fixed length. Do not quote the snippet as one continuous sentence. Default false."
+        "published_after": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Keep only web results published on or after this date (ISO 'YYYY-MM-DD'). Tako applies the date on the provider where possible, and always filters the returned results. Results with no known publication date are kept. Omit for no lower bound."
+        },
+        "published_before": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Keep only web results published on or before this date (ISO 'YYYY-MM-DD'). Results with no known publication date are kept. Omit for no upper bound."
         }
       },
       "additionalProperties": false
+    },
+    "include_answer": {
+      "description": "Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only.",
+      "type": "boolean"
+    },
+    "output_schema": {
+      "anyOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "JSON Schema for structured output. Tako fills it from the same evidence it uses to write `answer`, and returns it in `structured_output`. Requires effort 'fast' or 'deep'; on 'instant' the request returns 400. Supported subset: the object, array, string, number, integer, and boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties: false`. A type may be nullable as `[\"number\", \"null\"]`, which is how you let Tako signal 'no evidence' rather than filling a zero. `title`, `examples`, `format`, and `default` are accepted and ignored — they constrain nothing. Caps: 16KB total, depth 5, 64 properties, 512 characters per description. Violations return 400. If Tako can't fill the schema, `structured_output` is absent and `structured_output_error` says why — the answer and the cards still return."
     }
   },
   "required": [

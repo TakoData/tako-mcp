@@ -562,7 +562,7 @@ export interface NextCall {
    * Always `tako_search`. Kept as a field (not dropped) because it rides in
    * the advertised `structuredContent.next_call`, but narrowed to a single
    * literal so the compiler refuses a handle naming a tool the default
-   * surface does not register — `tako_answer` is `?tools=answer` opt-in, and
+   * surface does not register — `tako_search_advanced` is opt-in, and
    * a handle labelled "run verbatim" that names it is a dead end.
    */
   tool: "tako_search";
@@ -678,8 +678,10 @@ export const toRef = (n: { id: string; name: string; type: string }): ResolvedRe
  * The runnable handle for a resolved pair: `tako_search` with the METRIC node
  * pinned and `strict: true`, the entity named in the query text.
  *
- * `tako_search`, NOT `tako_answer`: answer moved behind `?tools=answer`, so it
- * is registered on neither default surface. This handle reaches the model as
+ * `tako_search`, NOT the answer path: synthesis lives on the opt-in
+ * `tako_search_advanced`, registered on neither default surface (and before the
+ * answer fold it was `tako_answer`, equally off them). This handle reaches the
+ * model as
  * "next_call (run verbatim)", so a name that is not on the surface resolves to
  * the SDK's bare "tool not found" — the discovery path's handle already names
  * tako_search, and the two now agree.

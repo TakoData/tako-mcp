@@ -64,7 +64,7 @@ export interface ToolContext {
    * `embed_url` directly and never reads the baked-in image), and
    * `mcp.ts` uses it to gate which tools each surface lists — the
    * chatgpt surface serves a fixed set (`CHATGPT_TOOL_NAMES` in
-   * `_surface.ts`) that leaves out `tako_agent` and `tako_answer`.
+   * `_surface.ts`) that leaves out `tako_agent` and `tako_search_advanced`.
    *
    * NB: this is a server-instance-level value (set from the request
    * path at server creation), NOT a per-request flag.

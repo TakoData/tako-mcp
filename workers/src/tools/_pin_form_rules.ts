@@ -22,7 +22,7 @@
  * Prose that advises pinning. Deliberately narrow: it matches an instruction to
  * pin, not any mention of the word — descriptions legitimately discuss
  * `node_ids` as a parameter without prescribing a form (e.g. "harvesting node
- * ids and urls to feed tako_answer").
+ * ids and urls to feed the answer call").
  *
  * The stem has to survive the punctuation real prose puts INSIDE it. The broken
  * form's own phrasing is "the card's `nodes` ids" — plural stem, and a backtick

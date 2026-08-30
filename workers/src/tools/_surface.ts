@@ -25,8 +25,8 @@ import type { AnyToolModule, ToolAnnotations } from "./types.js";
 /**
  * Default listing on `/mcp` (spec D3). Search + fetch + the free coverage
  * tool, plus graph exploration. Everything else
- * (`tako_answer`, `tako_agent`, `tako_visualize`) is reachable only by
- * naming it in `?tools=`.
+ * (`tako_search_advanced`, `tako_agent`, `tako_visualize`) is reachable only
+ * by naming it in `?tools=`.
  */
 export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "tako_search",
@@ -41,8 +41,9 @@ export const GENERIC_DEFAULT_TOOL_NAMES: ReadonlySet<string> = new Set([
  * anonymous connections, and a default tool outside this set answers sign-in
  * instructions at dispatch time (see the free-tier gate in `mcp.ts`) instead
  * of executing on the shared account. So an anonymous connection lists four
- * tools and one of them runs. `tako_answer` is opt-in via `?tools=answer`
- * (spec D1) and never executes anonymously.
+ * tools and one of them runs. `tako_search_advanced` is opt-in via
+ * `?tools=search_advanced` (spec D1) and never executes anonymously — it can
+ * bill rows.
  *
  * `tako_available_data` LEFT this set on purpose, and the reason is not
  * credits. Graph calls are credit-free, so the per-IP limiter (which counts

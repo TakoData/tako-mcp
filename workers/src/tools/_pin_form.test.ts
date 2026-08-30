@@ -100,17 +100,19 @@ describe("advertised pin form", () => {
     // Without this, the loops above pass vacuously if a refactor drops the
     // advice entirely — silence is not the same as correctness here.
     //
-    // `tako_answer` is the only tool left that both ADVISES a pin and ACCEPTS
-    // one. `tako_search` dropped out with the D4 split: it no longer takes
-    // `node_ids` / `strict`, so pin advice in its description would prescribe
-    // parameters it rejects. (`tako_contents` and the card's `values_hint`
-    // dropped out earlier, when their advice routed to `tako_answer` and answer
-    // went opt-in — naming an unregistered tool sends the model into "tool not
-    // found".)
+    // `tako_search_advanced` is the only tool left that both ADVISES a pin and
+    // ACCEPTS one. `tako_search` dropped out with the D4 split: it no longer
+    // takes `node_ids` / `strict`, so pin advice in its description would
+    // prescribe parameters it rejects. `tako_answer` was the other one until the
+    // answer fold deleted it; its pin advice — the license-gated values recipe —
+    // moved onto the advanced tool, which reaches the same endpoint through
+    // `include_answer`. (`tako_contents` and the card's `values_hint` dropped out
+    // earlier, when their advice routed to `tako_answer` and answer went opt-in —
+    // naming an unregistered tool sends the model into "tool not found".)
     const advising = TOOL_REGISTRY.filter((t) => ADVISES_PINNING.test(t.description)).map(
       (t) => t.name,
     );
-    expect(advising).toContain("tako_answer");
+    expect(advising).toContain("tako_search_advanced");
     expect(advising).not.toContain("tako_search");
     // Every tool that advises a pin must also accept one, or the advice is a
     // phantom parameter. Derived, never hand-listed.
@@ -138,8 +140,9 @@ describe("advertised pin form", () => {
   //
   // Pin-capability is DERIVED, never listed: a tool accepts a pin iff its
   // published input schema carries `node_ids`. Nested counts —
-  // tako_search_advanced puts it inside `data`, mirroring the API. Today the
-  // pin-capable set is tako_answer and tako_search_advanced, both opt-in.
+  // tako_search_advanced puts it inside `data`, mirroring the API. Today
+  // tako_search_advanced is the ONLY pin-capable tool, and it is opt-in —
+  // `tako_answer` was the other one until the answer fold deleted it.
   //
   // Two deliberate narrowings, each load-bearing:
   //   `\bstrict`, not `strict` — the unanchored form matches "Restrict web

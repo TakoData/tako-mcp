@@ -63,7 +63,7 @@ describe("toolAnnotationsForSurface", () => {
     }
     for (const name of [
       "tako_search",
-      "tako_answer",
+      "tako_search_advanced",
       "tako_available_data",
       "tako_contents",
     ]) {
@@ -88,7 +88,7 @@ describe("toolAnnotationsForSurface", () => {
 });
 
 describe("djangoErrorToToolResult", () => {
-  // Read tools (tako_search/tako_answer/tako_contents) declare an
+  // Read tools (tako_search/tako_search_advanced/tako_contents) declare an
   // `outputSchema`. Spec-compliant MCP clients validate ANY
   // `structuredContent` present on a result against that schema — even when
   // `isError: true` — so attaching the error discriminant as
@@ -1582,9 +1582,10 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect({ obliges, denies }).not.toEqual({ obliges: true, denies: true });
   });
 
-  // `tako_answer` is opt-in (spec D1) — the answer-vs-search routing
-  // paragraph left with it. The instructions must not reference the
-  // opt-in tool at all (see "names every DEFAULT-surface tool" above).
+  // The answer-vs-search routing paragraph left with `tako_answer`, which the
+  // answer fold deleted. Synthesis is now `include_answer` on the opt-in
+  // `tako_search_advanced`, so the instructions must still not reference it
+  // (see "names every DEFAULT-surface tool" above).
 
   // Inverted deliberately. The pin form USED to be asserted here, and the
   // A/B retired it: pinning happened on 12% of runs with the server-level copy
@@ -1669,7 +1670,11 @@ describe("SERVER_INSTRUCTIONS", () => {
  * call instead of:
  *
  *   MCP error -32602: Input validation error: Invalid arguments for tool
- *   tako_answer: [… "expected":"array" … "received string"]
+ *   tako_search: [… "expected":"array" … "received string"]
+ *
+ * The example was observed on `tako_answer`, whose two looseArray fields went
+ * away with the tool in the answer fold; the coercion and this wiring are
+ * unchanged.
  */
 describe("stringified array arguments survive SDK input validation", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
@@ -1689,12 +1694,10 @@ describe("stringified array arguments survive SDK input validation", () => {
       sendProgress: noopSendProgress,
       surface: "generic",
     };
-    // tako_answer is opt-in — list it the way ?tools=search,answer would;
-    // the allowlist replaces the defaults, so name every tool called here.
+    // The allowlist REPLACES the defaults, so name every tool called here.
     const server = createMcpServer(ctx, {
       surface: "generic",
       requestedToolNames: new Set([
-        "tako_answer",
         "tako_search",
         "tako_contents",
         "tako_agent",
@@ -1719,31 +1722,6 @@ describe("stringified array arguments survive SDK input validation", () => {
       await server.close();
     }
   }
-
-  it("tako_answer serves a JSON-text `sources` and forwards both sources upstream", async () => {
-    const fetchMock = mockFetchSequence([
-      jsonResponse(200, {
-        answer: "US GDP was $27.7T in 2023.",
-        cards: [],
-        web_results: [],
-        request_id: "req-1",
-      }),
-    ]);
-
-    const result = await callTool("tako_answer", {
-      query: "What is NVIDIA latest P/E ratio?",
-      sources: '["data","web"]',
-      include_contents: true,
-      preview_rows: 5,
-    });
-
-    expect(result.isError).not.toBe(true);
-    const request = fetchMock.mock.calls[0]?.[0] as Request;
-    const body = (await request.clone().json()) as {
-      sources?: Record<string, unknown>;
-    };
-    expect(Object.keys(body.sources ?? {}).sort()).toEqual(["data", "web"]);
-  });
 
   it("tako_search serves a bare-string `sources`", async () => {
     // node_ids left this tool in the D4 split; `sources` is the only looseArray
@@ -1778,7 +1756,7 @@ describe("stringified array arguments survive SDK input validation", () => {
   it("still rejects an unknown source name, without reaching the backend", async () => {
     const fetchMock = mockFetchSequence([]);
 
-    const result = await callTool("tako_answer", {
+    const result = await callTool("tako_search", {
       query: "x",
       sources: "bing",
     });
@@ -1786,7 +1764,7 @@ describe("stringified array arguments survive SDK input validation", () => {
     expect(result.isError).toBe(true);
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("-32602");
-    expect(text).toContain("tako_answer");
+    expect(text).toContain("tako_search");
     // The enum constraint that failed, and where. zod reports the allowed
     // values rather than the received one, so the option list is the specific
     // thing to pin; "sources" alone would also match an unrelated path.
@@ -1798,3 +1776,63 @@ describe("stringified array arguments survive SDK input validation", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A `.strict()` tool schema must reject an unknown TOP-LEVEL key on the wire,
+ * not only in a unit test.
+ *
+ * `registerTool` takes either a `ZodRawShape` or a full schema. Handed a raw
+ * shape, the SDK rebuilds it as a plain `z.object`, which STRIPS unknown keys
+ * and drops every object-level check — so a tool's `.strict()` and any
+ * `.refine()` passed their own `safeParse` tests and never ran against a real
+ * call. `tako_search_advanced` shipped a header promising a -32602 for an
+ * unexposed top-level field on exactly that basis, and served a silent drop.
+ */
+describe("object-level schema checks reach the wire", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("rejects an unknown top-level key on a strict tool, before any upstream request", async () => {
+    const fetchMock = mockFetchSequence([]);
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: ENV,
+      sendProgress: noopSendProgress,
+      surface: "generic",
+    };
+    const server = createMcpServer(ctx, {
+      surface: "generic",
+      requestedToolNames: new Set(["tako_search_advanced"]),
+    });
+    const mcpClient = new Client(
+      { name: "strict-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    let result: { isError?: boolean; content: Array<{ text?: string }> };
+    try {
+      result = (await mcpClient.callTool({
+        name: "tako_search_advanced",
+        arguments: { query: "US GDP", bogus: 1 },
+      })) as { isError?: boolean; content: Array<{ text?: string }> };
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("-32602");
+    expect(result.content[0]?.text).toContain("bogus");
+    // A stripped key would have run the search for real, and this is the
+    // assertion that catches it: the pre-fix failure was not a wrong error
+    // message, it was a served call reaching the upstream fetch.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+

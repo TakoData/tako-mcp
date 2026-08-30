@@ -4,12 +4,16 @@ import { z } from "zod";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import type { ToolModule } from "../src/tools/types.js";
 import {
+  diffRegistryParameters,
   assertAllToolsDescribed,
   assertChatgptSnapshot,
   assertChatgptSubmissionParity,
   assertLlmsFullCoverage,
+  assertNoPhantomToolsInDocs,
   assertPinAdviceReachableInLlmsFull,
   assertPinFormInDocs,
+  assertPublishedParametersUsable,
+  declaredType,
   buildChatgptSnapshot,
   buildLobehubPlugin,
   buildToolsDoc,
@@ -136,7 +140,7 @@ describe("assertPinFormInDocs", () => {
   it("rejects pinning every node id on the card", () => {
     expect(() =>
       assertPinFormInDocs(
-        doc("Get figures via tako_answer with the card's `nodes` ids pinned and strict: true."),
+        doc("Get figures via tako_search_advanced with the card's `nodes` ids pinned and strict: true."),
       ),
     ).toThrow(/every node id on the card/);
   });
@@ -149,10 +153,10 @@ describe("assertPinFormInDocs", () => {
   // `ADVISES_PINNING`'s stem, which could not span the backtick in "`nodes` ids".
   it("rejects the plural form under any determiner, not just `the`", () => {
     for (const phrasing of [
-      "Get figures via tako_answer with that card's `nodes` ids pinned.",
-      "Get figures via tako_answer with this card's `nodes` ids pinned.",
-      "Get figures via tako_answer with its `nodes` ids pinned.",
-      "Get figures via tako_answer with the cards' nodes ids pinned.",
+      "Get figures via tako_search_advanced with that card's `nodes` ids pinned.",
+      "Get figures via tako_search_advanced with this card's `nodes` ids pinned.",
+      "Get figures via tako_search_advanced with its `nodes` ids pinned.",
+      "Get figures via tako_search_advanced with the cards' nodes ids pinned.",
     ]) {
       expect(() => assertPinFormInDocs(doc(phrasing)), phrasing).toThrow(
         /every node id on the card/,
@@ -167,7 +171,7 @@ describe("assertPinFormInDocs", () => {
   it("does not flag descriptive id prose or the prescribed singular form", () => {
     for (const phrasing of [
       "Use it for breadth and to harvest the node ids and urls it returns.",
-      "Get figures via tako_answer, pinning that card's METRIC node id ALONE with `strict: true`.",
+      "Get figures via tako_search_advanced, pinning that card's METRIC node id ALONE with `strict: true`.",
     ]) {
       expect(() => assertPinFormInDocs(doc(phrasing)), phrasing).not.toThrow();
     }
@@ -448,15 +452,14 @@ describe("buildToolsDoc", () => {
 
 // The guard's own corpus exercise is VACUOUS by construction: every
 // pin-advising sentence in llms-full.txt today sits under
-// `### tako_search_advanced` or `### tako_answer`, both pin-capable and
-// therefore skipped, so `registry:check` has never demonstrated it fires. These
+// `### tako_search_advanced`, which is pin-capable and therefore skipped, so `registry:check` has never demonstrated it fires. These
 // two cases are the ones its doc comment describes, and they pin the part most
 // likely to be silently wrong — the `split(/^### /m)` section attribution.
 describe("assertPinAdviceReachableInLlmsFull", () => {
   const PIN_ADVICE =
     "Pin that card's METRIC node id ALONE with `strict: true` to get the figures.";
   const section = (tool: string) => `# Tako\n\n### ${tool}\n${PIN_ADVICE}\n`;
-  const PIN_CAPABLE = new Set(["tako_answer", "tako_search_advanced"]);
+  const PIN_CAPABLE = new Set(["tako_search_advanced"]);
 
   it("throws when pin advice sits under a tool that accepts no node_ids", () => {
     expect(() =>
@@ -466,7 +469,7 @@ describe("assertPinAdviceReachableInLlmsFull", () => {
 
   it("accepts the same sentence under a pin-capable tool", () => {
     expect(() =>
-      assertPinAdviceReachableInLlmsFull(section("tako_answer"), PIN_CAPABLE),
+      assertPinAdviceReachableInLlmsFull(section("tako_search_advanced"), PIN_CAPABLE),
     ).not.toThrow();
   });
 
@@ -475,9 +478,9 @@ describe("assertPinAdviceReachableInLlmsFull", () => {
     // pin-capable heading must not be blamed on a later innocent section, and
     // advice under an innocent heading must not be excused by an earlier
     // pin-capable one.
-    const doc = `# Tako\n\n### tako_answer\n${PIN_ADVICE}\n\n### tako_contents\nNothing here.\n`;
+    const doc = `# Tako\n\n### tako_search_advanced\n${PIN_ADVICE}\n\n### tako_contents\nNothing here.\n`;
     expect(() => assertPinAdviceReachableInLlmsFull(doc, PIN_CAPABLE)).not.toThrow();
-    const flipped = `# Tako\n\n### tako_answer\nNothing here.\n\n### tako_contents\n${PIN_ADVICE}\n`;
+    const flipped = `# Tako\n\n### tako_search_advanced\nNothing here.\n\n### tako_contents\n${PIN_ADVICE}\n`;
     expect(() => assertPinAdviceReachableInLlmsFull(flipped, PIN_CAPABLE)).toThrow(
       /tako_contents/,
     );
@@ -486,6 +489,188 @@ describe("assertPinAdviceReachableInLlmsFull", () => {
   it("is inert when no tool accepts a pin, rather than flagging every section", () => {
     expect(() =>
       assertPinAdviceReachableInLlmsFull(section("tako_available_data"), new Set()),
+    ).not.toThrow();
+  });
+});
+
+describe("diffRegistryParameters", () => {
+  const committed = {
+    tools: [
+      { name: "tako_search_advanced", parameters: { query: {}, data: {} } },
+      { name: "tako_search", parameters: { query: {} } },
+    ],
+  };
+  const generated = [
+    { name: "tako_search_advanced", parameters: { query: {}, data: {}, web: {} } },
+    { name: "tako_search", parameters: {} },
+    { name: "tako_new", parameters: { q: {} } },
+  ];
+
+  it("names added and removed parameters per tool, and new tools", () => {
+    expect(diffRegistryParameters(committed, generated)).toEqual([
+      "tako_new: new tool (q)",
+      "tako_search: -query",
+      "tako_search_advanced: +web",
+    ]);
+  });
+
+  it("is empty when nothing moved", () => {
+    expect(diffRegistryParameters(committed, committed.tools)).toEqual([]);
+  });
+
+  it("reports a tool that disappeared", () => {
+    expect(diffRegistryParameters(committed, [committed.tools[0]!])).toEqual([
+      "tako_search: tool removed",
+    ]);
+  });
+
+  it("treats an absent committed registry as all-new rather than throwing", () => {
+    // First run in a fresh checkout: server.json may not exist yet.
+    expect(diffRegistryParameters({}, generated)).toEqual([
+      "tako_new: new tool (q)",
+      "tako_search: new tool ()",
+      "tako_search_advanced: new tool (data, query, web)",
+    ]);
+  });
+});
+
+describe("declaredType", () => {
+  it("reads a plain type directly", () => {
+    expect(declaredType({ type: "string" })).toBe("string");
+  });
+
+  it("reads THROUGH a nullable union, which is how the generated schemas emit every nullable field", () => {
+    // `z.union([z.string(), z.null()])`. Reading `prop.type` published
+    // `"type": "unknown"` for `timezone` on the registry card.
+    expect(
+      declaredType({ anyOf: [{ type: "string" }, { type: "null" }] }),
+    ).toBe("string");
+    expect(
+      declaredType({ anyOf: [{ type: "integer" }, { type: "null" }] }),
+    ).toBe("integer");
+    expect(
+      declaredType({ anyOf: [{ type: "object" }, { type: "null" }] }),
+    ).toBe("object");
+  });
+
+  it("handles oneOf the same way", () => {
+    expect(
+      declaredType({ oneOf: [{ type: "number" }, { type: "null" }] }),
+    ).toBe("number");
+  });
+
+  it("stays unknown when the union has more than one non-null branch", () => {
+    // The registry format carries ONE type per parameter, so there is nowhere
+    // to put the second. "unknown" is the honest answer, not a fallback.
+    expect(
+      declaredType({ anyOf: [{ type: "string" }, { type: "number" }] }),
+    ).toBe("unknown");
+  });
+
+  it("stays unknown when nothing declares a type", () => {
+    expect(declaredType({})).toBe("unknown");
+    expect(declaredType({ anyOf: [{ type: "null" }] })).toBe("unknown");
+  });
+});
+
+describe("assertPublishedParametersUsable", () => {
+  const ok = {
+    name: "tako_x",
+    parameters: { query: { type: "string", description: "A query." } },
+  };
+
+  it("passes when every parameter has a type and a description", () => {
+    expect(() => assertPublishedParametersUsable([ok])).not.toThrow();
+  });
+
+  it("names the parameter whose type is unknown", () => {
+    // The five-parameter regression: `z.union([T, z.null()])` emits no
+    // top-level `type`, so the card advertised `"type": "unknown"`.
+    expect(() =>
+      assertPublishedParametersUsable([
+        { name: "tako_x", parameters: { p: { type: "unknown", description: "d" } } },
+      ]),
+    ).toThrow(/tako_x\.p has no usable type/);
+  });
+
+  it("names the parameter whose description is empty", () => {
+    // `output_settings` shipped `"description": ""` because a hand-written
+    // `.describe(x.description ?? "")` read the outer `.optional()` wrapper,
+    // where the generated text does not live.
+    expect(() =>
+      assertPublishedParametersUsable([
+        { name: "tako_x", parameters: { p: { type: "string", description: "" } } },
+      ]),
+    ).toThrow(/tako_x\.p has no description/);
+    expect(() =>
+      assertPublishedParametersUsable([
+        { name: "tako_x", parameters: { p: { type: "string" } } },
+      ]),
+    ).toThrow(/tako_x\.p has no description/);
+  });
+
+  it("passes on the live tool surface", () => {
+    const tools = TOOL_REGISTRY.map((tool) => ({
+      name: tool.name,
+      parameters: Object.fromEntries(
+        Object.entries(
+          (z.toJSONSchema(tool.inputSchema) as { properties?: Record<string, unknown> })
+            .properties ?? {},
+        ).map(([key, raw]) => {
+          const prop = raw as { description?: string };
+          const spec: { type: string; description?: string } = {
+            type: declaredType(raw as Parameters<typeof declaredType>[0]),
+          };
+          if (prop.description !== undefined) spec.description = prop.description;
+          return [key, spec];
+        }),
+      ),
+    }));
+    expect(() => assertPublishedParametersUsable(tools)).not.toThrow();
+  });
+});
+
+describe("assertNoPhantomToolsInDocs", () => {
+  const known = ["tako_search", "tako_search_advanced"];
+
+  it("passes when every named tool is registered", () => {
+    expect(() =>
+      assertNoPhantomToolsInDocs(known, [
+        { path: "llms.txt", text: "Use `tako_search`, then `tako_search_advanced`." },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("fails on a tool that was deleted, which coverage cannot see", () => {
+    // `assertLlmsFullCoverage` only asks whether every REGISTERED tool is
+    // mentioned. `tako_answer` survived its own deletion in two llms-full.txt
+    // lines with coverage green, because the tool that replaced it has a
+    // section of its own.
+    expect(() =>
+      assertNoPhantomToolsInDocs(known, [
+        { path: "llms-full.txt", text: "Opt-in: `tako_answer` (not recommended)." },
+      ]),
+    ).toThrow(/llms-full\.txt names `tako_answer`/);
+  });
+
+  it("names the file, and reports each phantom once", () => {
+    let message = "";
+    try {
+      assertNoPhantomToolsInDocs(known, [
+        { path: "llms.txt", text: "`tako_gone` and `tako_gone` again" },
+      ]);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain("llms.txt names `tako_gone`");
+    expect(message.match(/tako_gone/g)?.length).toBe(1);
+  });
+
+  it("ignores an unbackticked mention, which is prose rather than a claim", () => {
+    expect(() =>
+      assertNoPhantomToolsInDocs(known, [
+        { path: "llms.txt", text: "tako_answer was removed in the fold." },
+      ]),
     ).not.toThrow();
   });
 });

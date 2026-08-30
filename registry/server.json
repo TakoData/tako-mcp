@@ -68,61 +68,6 @@
       }
     },
     {
-      "name": "tako_answer",
-      "description": "One synthesized, citation-backed answer to one specific data question, grounded in the data or web tako cites. This connection opted in with `?tools=answer`: `tako_search` is the default retrieval tool, and a model that synthesizes well from search results does not need this one.\n\nWhat it adds over retrieval: it reads the cited web pages internally, so their content shapes the answer without a second call, and it returns a coverage verdict. Rows are NOT included unless you set include_contents: true.\n\nBest for: a single, self-contained data question with one answer. The `answer` is synthesized from the cited sources; the `cards` are its citations. Also the values channel for non-exportable cards: when a card is `exportable: false` (usually license-gated), ask here with its METRIC node id pinned and strict:true to get the figures.\n\nReach past it for a different job: `tako_search` for breadth — it inlines no rows at all, so values there come from `tako_contents` on the cards it finds; `tako_available_data` when the question is what Tako covers; the Answer Agent for open-ended research.\n\nGrounds over BOTH data and web by default. Run `tako_available_data` first when unsure the data exists — pass `metric` to get the entity+metric pair — then pin the METRIC node id it returns, with strict:true (an entity-only pin widens the filter back out, and a pin without strict only boosts — measured as not enough to land the metric). Set include_contents: true to inline each cited card's recent rows (billed per 1k), so the series arrives with the answer; for full history or a cited page's text, call `tako_contents` on its url.\n\nResults arrive as markdown: the synthesized answer first, then its cited data cards (headline, exportable flag, node ids, a rows-count pointer) and web citations, then source notes. The cited cards' actual rows ride in structuredContent (cards[].content), not the markdown, alongside machine essentials (usage, guidance, chart-widget fields). The top cited card also renders inline as a chart on hosts that support it — do NOT re-post `image_url` or `embed_url` as a markdown image or link, or it renders twice.",
-      "parameters": {
-        "query": {
-          "type": "string",
-          "description": "Natural-language question to answer (e.g. \"What was US GDP in 2024?\"). Website-traffic data is keyed by domain — ask about \"openai.com monthly visits\", not \"OpenAI website visits\".",
-          "required": true
-        },
-        "sources": {
-          "type": "array",
-          "description": "Source(s) to ground in. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph.",
-          "default": [
-            "data",
-            "web"
-          ]
-        },
-        "include_contents": {
-          "type": "boolean",
-          "description": "Set true to inline each cited data card's recent rows alongside the answer (`preview_rows` caps how many; rows are billed per 1k) — the values arrive with the prose, no follow-up fetch. Leave false (the default) for prose + citations only. DATA cards only; cited web pages are never auto-inlined (billed per page — use tako_contents).",
-          "default": false
-        },
-        "preview_rows": {
-          "type": "integer",
-          "description": "Cap on the rows of each cited card's data inlined when include_contents is true — always the N MOST-RECENT rows (default 20; rows are billed per 1k). For more rows, call tako_contents on the card's url (max_rows up to 2,000, billed per 1k rows). Ignored when include_contents is false.",
-          "default": 20
-        },
-        "country_code": {
-          "type": "string",
-          "description": "ISO country code for localized results.",
-          "default": "US"
-        },
-        "locale": {
-          "type": "string",
-          "description": "Locale for results.",
-          "default": "en-US"
-        },
-        "node_ids": {
-          "type": "array",
-          "description": "Graph node ids (from tako_available_data) to PIN into the proprietary data source. Pinned nodes get a strong retrieval boost. Max 20. Applies only to the 'data' source."
-        },
-        "strict": {
-          "type": "boolean",
-          "description": "Hard filter. When true, return ONLY cards matching at least one node in node_ids (which must then be non-empty — empty node_ids + strict is a 400). When false (default), pinned nodes are preferred/boosted but organic results still return.",
-          "default": false
-        }
-      },
-      "annotations": {
-        "title": "Tako: Answer",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": true
-      }
-    },
-    {
       "name": "tako_available_data",
       "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nAsk it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.\n\nWorth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nKnow the measure? Split it: q=\"Carnival\", metric=\"passenger cruise days\" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q=\"Nvidia\", metric=\"data center\" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.\nWhen `q` names both an entity and a metric (\"US core PCE\" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.\nOn the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).\nEach match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.\nA broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.\nThis tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.",
       "parameters": {
@@ -316,7 +261,7 @@
     },
     {
       "name": "tako_search_advanced",
-      "description": "The v3 search request's retrieval options: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.\n\nUse `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.\n\nNothing is sent unless you set it, so an omitted field takes the server default named in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.\n\nOne consequence to know before switching: `tako_search` forces `web.highlights: true` for you. This tool forces nothing, so an omitted `highlights` takes the server default of false and each web snippet becomes the page's opening text instead of the passages matching your query. Set it unless you want the opening.\n\nOne field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.\n\nTo land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
+      "description": "The v3 search request's retrieval options: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.\n\nUse `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.\n\nNothing is sent unless you set it, with one exception named below, so an omitted field takes the server default in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.\n\nWeb snippets are query-relevant highlight passages by default here, as on `tako_search`. Unlike there, you can turn them off: `web.highlights: false` gives you the page's opening text instead.\n\nOne field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.\n\n`include_answer: true` runs the answer endpoint instead: one synthesized, citation-backed answer in `answer`, with the retrieved cards and web results as its citations. Every option here applies the same way; the server defaults that differ on that endpoint (web `count` 3, `snippet_max_chars` 1000) are named in each field's description. `output_schema` fills a JSON Schema from the same evidence and returns it as `structured_output`. For values on a card marked `exportable: false`, pin its METRIC node id alone in `data.node_ids` with `strict: true`, set `include_answer: true` and `data.include_contents: true`.\n\nTo land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
       "parameters": {
         "query": {
           "type": "string",
@@ -332,6 +277,10 @@
             "deep"
           ]
         },
+        "location": {
+          "type": "object",
+          "description": "Optional coordinates of the end user. Resolves the location for implicit-location queries (for example, weather). An explicit location in the query overrides these coordinates."
+        },
         "country_code": {
           "type": "string",
           "description": "ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US."
@@ -340,6 +289,18 @@
           "type": "string",
           "description": "BCP-47 locale tag for language and formatting. Omit it and the server uses en-US."
         },
+        "timezone": {
+          "type": "string",
+          "description": "IANA timezone (for example, 'America/New_York')."
+        },
+        "output_settings": {
+          "type": "object",
+          "description": "Settings that control the response shape."
+        },
+        "include_related": {
+          "type": "integer",
+          "description": "Applies to POST /v3/search only. Return follow-up query suggestions in `related`. Omit this field to disable them. The value sets the maximum number of suggestions, from 1 to 20. POST /v1/answer accepts this field but ignores it: the answer response has no `related` field."
+        },
         "data": {
           "type": "object",
           "description": "Tako data (card) source settings. Include this key — even as an empty object — to search the data graph."
@@ -347,6 +308,14 @@
         "web": {
           "type": "object",
           "description": "Web source settings. Include this key — even as an empty object — to search the web."
+        },
+        "include_answer": {
+          "type": "boolean",
+          "description": "Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only."
+        },
+        "output_schema": {
+          "type": "object",
+          "description": "JSON Schema for structured output. Tako fills it from the same evidence it uses to write `answer`, and returns it in `structured_output`. Requires effort 'fast' or 'deep'; on 'instant' the request returns 400. Supported subset: the object, array, string, number, integer, and boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties: false`. A type may be nullable as `[\"number\", \"null\"]`, which is how you let Tako signal 'no evidence' rather than filling a zero. `title`, `examples`, `format`, and `default` are accepted and ignored — they constrain nothing. Caps: 16KB total, depth 5, 64 properties, 512 characters per description. Violations return 400. If Tako can't fill the schema, `structured_output` is absent and `structured_output_error` says why — the answer and the cards still return."
         }
       },
       "annotations": {

@@ -56,7 +56,6 @@ import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
  */
 export const MCP_TOOL_ALLOWLIST = [
   "tako_agent",
-  "tako_answer",
   "tako_available_data",
   "tako_contents",
   "tako_graph_related",
@@ -138,6 +137,88 @@ export function assertLlmsFullCoverage(
       `llms-full.txt drift — hand-written docs out of sync with tool modules:\n  ${problems.join(
         "\n  ",
       )}\nUpdate llms-full.txt to match the tool surface.`,
+    );
+  }
+}
+
+/**
+ * Assert the connect-time docs name no tool that does not exist.
+ *
+ * `assertLlmsFullCoverage` asks the question in ONE direction: is every
+ * registered tool mentioned. It has no rule against a mention of a tool that
+ * was DELETED, so `tako_answer` survived its own deletion in two places — the
+ * Connecting paragraph's opt-in list and the `tako_agent` fallback sentence —
+ * while coverage stayed green because the replacement tool has a section of its
+ * own. A model reads these two files on connect and would have asked for a tool
+ * the server cannot register.
+ *
+ * PAST-TENSE HISTORY IS WHY THIS IS SCOPED TO `llms*.txt` AND NOT README.
+ * `README.md` legitimately says a field "was removed from `tako_answer`", which
+ * is a changelog note, not an instruction. These two files are uniformly
+ * prescriptive about the live surface, so any tool name in them is a claim that
+ * the tool exists.
+ */
+export function assertNoPhantomToolsInDocs(
+  knownNames: ReadonlyArray<string>,
+  docs: ReadonlyArray<{ path: string; text: string }>,
+): void {
+  const known = new Set(knownNames);
+  const problems: string[] = [];
+  for (const doc of docs) {
+    for (const match of doc.text.matchAll(/`(tako_[a-z0-9_]+)`/g)) {
+      const name = match[1];
+      if (name !== undefined && !known.has(name)) {
+        problems.push(`${doc.path} names \`${name}\`, which no tool module registers`);
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `phantom tool in connect-time docs:\n  ${[...new Set(problems)].join(
+        "\n  ",
+      )}\nA model reads these files on connect. Remove the name or point it at the tool that replaced it.`,
+    );
+  }
+}
+
+/**
+ * Assert every published parameter carries a usable type and description.
+ *
+ * BOTH FAILURES ARE SILENT AND BOTH ALREADY SHIPPED. `output_settings` reached
+ * `registry/server.json` with `"description": ""` because a hand-written
+ * `.describe(x.description ?? "")` read the OUTER `.optional()` wrapper, where
+ * the generated text does not live, and the empty string then beat the
+ * description `flattenParameters` would otherwise have found. Five parameters
+ * reached it with `"type": "unknown"` because `z.union([T, z.null()])` emits no
+ * top-level `type`. Neither shows up in a diff review of a 300-line
+ * `docs/TOOLS.md` regeneration.
+ *
+ * This is the discovery card MCP directories and non-Zod consumers read, so an
+ * untyped or undescribed parameter is invisible to exactly the audience the
+ * card exists for. Fail generation instead.
+ */
+export function assertPublishedParametersUsable(
+  tools: ReadonlyArray<{
+    name: string;
+    parameters: Record<string, { type?: string; description?: string }>;
+  }>,
+): void {
+  const problems: string[] = [];
+  for (const tool of tools) {
+    for (const [param, spec] of Object.entries(tool.parameters)) {
+      if (spec.type === undefined || spec.type === "unknown") {
+        problems.push(`${tool.name}.${param} has no usable type`);
+      }
+      if (spec.description === undefined || spec.description.trim() === "") {
+        problems.push(`${tool.name}.${param} has no description`);
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `published parameter drift — the registry card would advertise unusable parameters:\n  ${problems.join(
+        "\n  ",
+      )}\nGive the field a \`.describe()\` that reads the generated text (unwrap the optional first), or teach \`declaredType\` the shape it emits.`,
     );
   }
 }
@@ -445,6 +526,46 @@ interface RegistryTool {
   annotations: ToolAnnotations;
 }
 
+/**
+ * Parameter-level changes between the committed `server.json` and this run, one
+ * line per tool, sorted.
+ *
+ * Printed in write mode so the regen commit on an `auto/sdk-sync` PR NAMES what
+ * it changed on a published tool. `tako_search_advanced` derives its schema from
+ * the generated components, so a backend field reaches `tools/list` through that
+ * commit and nowhere else — the spec diff shows a schema change, not which tool
+ * grew a parameter.
+ */
+export function diffRegistryParameters(
+  committed: { tools?: ReadonlyArray<{ name: string; parameters: Record<string, unknown> }> },
+  generated: ReadonlyArray<{ name: string; parameters: Record<string, unknown> }>,
+): string[] {
+  const before = new Map(
+    (committed.tools ?? []).map((t) => [t.name, new Set(Object.keys(t.parameters))]),
+  );
+  const lines: string[] = [];
+  for (const tool of generated) {
+    const prev = before.get(tool.name);
+    const keys = Object.keys(tool.parameters).sort();
+    if (prev === undefined) {
+      lines.push(`${tool.name}: new tool (${keys.join(", ")})`);
+      continue;
+    }
+    const added = keys.filter((k) => !prev.has(k)).map((k) => `+${k}`);
+    const removed = [...prev]
+      .filter((k) => !(k in tool.parameters))
+      .sort()
+      .map((k) => `-${k}`);
+    if (added.length + removed.length > 0) {
+      lines.push(`${tool.name}: ${[...added, ...removed].join(" ")}`);
+    }
+  }
+  for (const name of before.keys()) {
+    if (!generated.some((t) => t.name === name)) lines.push(`${name}: tool removed`);
+  }
+  return lines.sort();
+}
+
 // ---------------------------------------------------------------------------
 // docs/TOOLS.md — the tool reference, rendered from the same objects that
 // serve tools/list, so a human reads exactly what the model reads.
@@ -461,8 +582,8 @@ export interface ToolsDocInput {
  * The `?tools=` set an opt-in tool needs to be USABLE: every default tool its
  * own published text names, plus itself.
  *
- * `?tools=` replaces the default listing (spec D1), so `?tools=answer` lists
- * `tako_answer` alone — and `tako_answer`'s description tells the model to
+ * `?tools=` replaces the default listing (spec D1), so `?tools=search_advanced`
+ * lists `tako_search_advanced` alone — and its description tells the model to
  * "Run `tako_available_data` first when unsure the data exists" and to call
  * `tako_contents` on a cited url. A caller who installs against that URL gets
  * a model instructed to call two tools that answer the SDK's bare "tool not
@@ -666,6 +787,34 @@ async function loadToolModules(): Promise<LoadedModule[]> {
 // ---------------------------------------------------------------------------
 
 /**
+ * The declared type, reading THROUGH a nullable union.
+ *
+ * `z.union([T, z.null()])` — how `src/generated/schemas.ts` emits every
+ * nullable and object-valued field — produces
+ * `{"anyOf": [{"type": "..."}, {"type": "null"}]}` with NO top-level `type`.
+ * Reading `prop.type` alone published `"type": "unknown"` for five
+ * `tako_search_advanced` parameters, a plain string (`timezone`) and a bounded
+ * integer (`include_related`) among them, on the discovery card MCP directories
+ * and non-Zod consumers read.
+ *
+ * A union with more than one non-null branch stays "unknown" on purpose: the
+ * registry format carries one type per parameter and has nowhere to put the
+ * rest.
+ */
+export function declaredType(prop: {
+  type?: string;
+  anyOf?: Array<{ type?: string }>;
+  oneOf?: Array<{ type?: string }>;
+}): string {
+  if (prop.type !== undefined) return prop.type;
+  const named = (prop.anyOf ?? prop.oneOf ?? [])
+    .map((branch) => branch.type)
+    .filter((t): t is string => t !== undefined && t !== "null");
+  const only = named.length === 1 ? named[0] : undefined;
+  return only ?? "unknown";
+}
+
+/**
  * Flatten a JSON Schema `object` into the registry's parameter-map format.
  *
  * Current registry format per tool:
@@ -695,12 +844,14 @@ function flattenParameters(
   for (const [name, rawPropSchema] of Object.entries(properties)) {
     const prop = rawPropSchema as {
       type?: string;
+      anyOf?: Array<{ type?: string }>;
+      oneOf?: Array<{ type?: string }>;
       description?: string;
       default?: unknown;
       enum?: unknown[];
     };
     const spec: ParameterSpec = {
-      type: prop.type ?? "unknown",
+      type: declaredType(prop),
     };
     if (prop.description !== undefined) spec.description = prop.description;
     // Forward `enum` so callers reading the registry (LLMs and humans
@@ -1121,12 +1272,26 @@ async function main(): Promise<void> {
 
   const registryTools = modules.map((m) => buildTool(m.tool));
 
+  // 2b. Every advertised parameter must carry a type and a description. Both
+  //     have shipped empty before; see `assertPublishedParametersUsable`.
+  assertPublishedParametersUsable(registryTools);
+
   // 3. llms-full.txt coverage: the hand-written doc must mention every tool,
   //    and any tool with a `### <name>` section must document all its params.
   const llmsFull = readFileSync(LLMS_FULL_PATH, "utf8");
   assertLlmsFullCoverage(registryTools, llmsFull);
   // Same check against the short index, which agents fetch just as readily.
-  assertLlmsFullCoverage(registryTools, readFileSync(LLMS_PATH, "utf8"));
+  const llms = readFileSync(LLMS_PATH, "utf8");
+  assertLlmsFullCoverage(registryTools, llms);
+  // ...and the mirror question coverage cannot ask: does either file name a
+  // tool that no longer exists? See `assertNoPhantomToolsInDocs`.
+  assertNoPhantomToolsInDocs(
+    registryTools.map((t) => t.name),
+    [
+      { path: "llms-full.txt", text: llmsFull },
+      { path: "llms.txt", text: llms },
+    ],
+  );
 
   // 3b. Pin-form: any doc sentence that advises pinning must name the form
   //     measured to work. llms-full.txt is uniformly prescriptive about the
@@ -1244,6 +1409,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Read BEFORE the write: after it, the committed copy is this run's output.
+  const paramDiff = diffRegistryParameters(
+    existsSync(REGISTRY_PATH)
+      ? (JSON.parse(readFileSync(REGISTRY_PATH, "utf8")) as { tools?: [] })
+      : {},
+    registryTools,
+  );
   writeFileSync(REGISTRY_PATH, registryJson);
   writeFileSync(BARREL_PATH, barrel);
   writeFileSync(LOBEHUB_PATH, lobehubJson);
@@ -1252,6 +1424,7 @@ async function main(): Promise<void> {
   console.log(`wrote ${BARREL_PATH}`);
   console.log(`wrote ${LOBEHUB_PATH}`);
   console.log(`wrote ${TOOLS_DOC_PATH}`);
+  for (const line of paramDiff) console.log(`[registry:gen] parameters ${line}`);
   console.log(`(${modules.length} tools)`);
 }
 

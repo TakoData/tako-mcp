@@ -8,7 +8,7 @@
  * so a `safeParse` accepts undeclared keys and every unit test passes — but
  * `registerTool` takes a `ZodRawShape` and the SDK rebuilds it as a STRICT
  * object, so what reaches a client says `additionalProperties: false`. Loose in
- * process, strict on the wire. `tako_answer` and `tako_search` emitted
+ * process, strict on the wire. `tako_answer` (since deleted) and `tako_search` emitted
  * `sources_glossary`, which no advertised schema declares, and the official
  * Python SDK raised
  *
@@ -323,13 +323,24 @@ const usage = () => ({
 describe("realistic payloads validate against the published schema", () => {
   const cases: Array<[string, () => Record<string, unknown>]> = [
     [
-      "tako_answer",
+      // The answer payload now arrives on tako_search_advanced, via
+      // include_answer. It carries the three answer-only fields, so this case
+      // also checks they survive the published schema rather than being
+      // stripped as unknown keys.
+      "tako_search_advanced",
       () => ({
         answer: "Revenue was $60.9B [1].",
         cards: [card()],
         web_results: [],
         usage: usage(),
         request_id: "req-answer",
+        structured_output: { revenue_usd_b: 60.9 },
+        // The other two fields the fold added to the output shape. Checked here
+        // because a field the published schema does not carry is STRIPPED, not
+        // rejected — the same silent-drop failure the per-endpoint wire guard
+        // exists to prevent, one layer out.
+        structured_output_error: { code: "unfillable", message: "No evidence for revenue_usd_b." },
+        related: [{ query: "Nvidia data center revenue", score: 0.9 }],
         // THE regression: attached whenever the cited cards carry source
         // paragraphs, which is why it fired on data-grounded answers only.
         sources_glossary: { "S&P Global": "A long source paragraph." },
@@ -408,10 +419,29 @@ describe("realistic payloads validate against the published schema", () => {
     }
   });
 
+  // Conformance alone cannot see a STRIP: all four fold-added fields are
+  // optional, so a payload that lost them still validates. Assert presence
+  // separately, the same belt-and-braces shape as `sources_glossary` above.
+  it("carries all four fold-added fields through to structuredContent", () => {
+    const structured = structuredContentFor(moduleFor("tako_search_advanced"), {
+      answer: "Revenue was $60.9B [1].",
+      cards: [],
+      web_results: [],
+      usage: usage(),
+      request_id: "r",
+      structured_output: { revenue_usd_b: 60.9 },
+      structured_output_error: { code: "unfillable", message: "No evidence." },
+      related: [{ query: "Nvidia data center revenue", score: 0.9 }],
+    });
+    for (const key of ["answer", "structured_output", "structured_output_error", "related"]) {
+      expect(structured, key).toHaveProperty(key);
+    }
+  });
+
   // The emitted breakdown must survive despite only `total_cost_usd` being
   // advertised — that is the point of keeping the nested schema loose.
   it("keeps the emitted usage breakdown that the advertised shape does not name", () => {
-    const structured = structuredContentFor(moduleFor("tako_answer"), {
+    const structured = structuredContentFor(moduleFor("tako_search_advanced"), {
       answer: "x",
       cards: [],
       web_results: [],

@@ -1,25 +1,17 @@
 /**
- * `tako_search_advanced` — the v3 `POST /api/v3/search` request body's
- * RETRIEVAL options, behind `?tools=search_advanced` on `/mcp`.
+ * `tako_search_advanced` — the v3 `POST /api/v3/search` request body, exposed
+ * whole, behind `?tools=search_advanced` on `/mcp`.
  *
- * NOT the whole body, and the docs must not claim otherwise. Spec D4 says
- * "one-to-one" and then enumerates a subset; this is that subset. Omitted, and
- * the canonical list — every one of these is a -32602, never a silent drop:
- *   top level: `location`, `timezone`, `output_settings`, `include_related`
- *   data:      `mode` (documented no-op for Tako cards; kept upstream for
- *              schema stability, so exposing it would advertise a no-op)
- *   web:       `published_after`, `published_before`
- * Add them to the `.pick()` below when they are wanted; that is the only edit
- * needed. Date-filtered web search is the likeliest ask.
+ * Every field of `SearchRequest`, `DataSourceSettings` and `WebSourceSettings`
+ * is here, derived from the generated schemas so the set cannot drift; the
+ * parity tests in tako_search_advanced.test.ts are the guard. An unknown key at
+ * any level is a -32602 — all three levels are `.strict()`, and mcp.ts registers
+ * the full object, so that holds on the wire and not only in a unit test.
  *
- * The rejection above holds because ALL THREE levels carry `.strict()` — both
- * source blocks and the top-level object. That last one is easy to get wrong in
- * exactly the direction that breaks the claim: a bare `z.object` STRIPS unknown
- * keys, it does not reject them, so for a while this header promised a -32602
- * while the four top-level fields dropped in silence and the generated
- * `docs/TOOLS.md` emitted `additionalProperties: false` on `data` and `web` and
- * nothing at the top. If you relax any level, fix this paragraph and
- * `llms-full.txt` in the same change.
+ * ONE value this tool supplies that the caller did not: `sources.web.highlights`
+ * defaults to true (see `buildAdvancedSearchBody`). It is a DEFAULT, not a fixed
+ * input — `web: {highlights: false}` wins — which is why `fixedInputs` stays
+ * empty.
  *
  * WHY IT IS OPT-IN. `tako_search` is the tool a model should reach for: every
  * option here is a cost, context or latency knob rather than a statement of
@@ -27,11 +19,15 @@
  * be asked for". A caller who needs `effort: deep`, a per-source count, inline
  * rows, a graph pin or a web domain filter names it in the URL.
  *
- * WHY THE SCHEMA IS DERIVED. Both blocks are `.pick()`ed off the generated
- * `DataSourceSettings` / `WebSourceSettings`, so a renamed or retyped backend
- * field fails to compile here instead of drifting into a published schema. The
- * generated `.describe()` text comes with them, which is also why every
- * parameter already states its server-side default in words — the same
+ * WHY THE SCHEMA IS DERIVED. Every level is built from the WHOLE generated
+ * shape — `optionalWithoutDefaults(DataSourceSettings.shape)` and its two
+ * siblings — so a renamed or retyped backend field fails to compile here
+ * instead of drifting into a published schema, and a NEW field arrives without
+ * anyone deciding to admit it. It is deliberately NOT a `.pick()`: the picked
+ * version shipped 18 of 25 fields and six of the omissions appear in no spec
+ * and no plan, which is the gap a curated list produces by construction. The
+ * generated `.describe()` text comes across with the fields, which is also why
+ * every parameter already states its server-side default in words — the same
  * no-defaults rule `tako_search` follows.
  *
  * `optionalWithoutDefaults` is load-bearing, not cosmetic. `.partial()` alone
@@ -48,9 +44,10 @@
  * this tool is never on it" — that is wrong twice over: mcp.ts gates the widget
  * on the SURFACE (`widgetSuppressed = options.surface !== "chatgpt"`) and runs
  * `extraContentBlocks` whenever `ui === undefined`, which on `/mcp` is always;
- * and `tako_answer` is opt-in on `/mcp` and declares both hooks. Listing
- * membership has nothing to do with it, so a future reader must not "restore"
- * the hooks on that reasoning.
+ * and a tool may declare both hooks while opt-in on `/mcp` — `tako_answer` did,
+ * before the answer fold deleted it, and `tako_search` declares them today.
+ * Listing membership has nothing to do with it, so a future reader must not
+ * "restore" the hooks on that reasoning.
  *
  * The actual reason: `extraContentBlocks` fetches the card render and base64s
  * ~170 KB into every result, with no way for the caller to decline. A caller who
@@ -65,8 +62,9 @@
 import { z } from "zod";
 
 import {
+  AnswerRequest,
   DataSourceSettings,
-  SearchEffortLevel,
+  OutputSettings,
   SearchRequest,
   WebSourceSettings,
 } from "../generated/schemas.js";
@@ -76,7 +74,7 @@ import {
   slimSearchStructured,
 } from "./_render_markdown.js";
 import type { SearchOutput } from "./_search_results.js";
-import { runSearch } from "./tako_search.js";
+import { runSearch, type SearchCall, type SearchEndpoint } from "./_run_search.js";
 import type { ToolModule } from "./types.js";
 
 const DESCRIPTION = [
@@ -84,11 +82,13 @@ const DESCRIPTION = [
   "",
   "Use `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.",
   "",
-  "Nothing is sent unless you set it, so an omitted field takes the server default named in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.",
+  "Nothing is sent unless you set it, with one exception named below, so an omitted field takes the server default in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.",
   "",
-  "One consequence to know before switching: `tako_search` forces `web.highlights: true` for you. This tool forces nothing, so an omitted `highlights` takes the server default of false and each web snippet becomes the page's opening text instead of the passages matching your query. Set it unless you want the opening.",
+  "Web snippets are query-relevant highlight passages by default here, as on `tako_search`. Unlike there, you can turn them off: `web.highlights: false` gives you the page's opening text instead.",
   "",
   "One field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.",
+  "",
+  "`include_answer: true` runs the answer endpoint instead: one synthesized, citation-backed answer in `answer`, with the retrieved cards and web results as its citations. Every option here applies the same way; the server defaults that differ on that endpoint (web `count` 3, `snippet_max_chars` 1000) are named in each field's description. `output_schema` fills a JSON Schema from the same evidence and returns it as `structured_output`. For values on a card marked `exportable: false`, pin its METRIC node id alone in `data.node_ids` with `strict: true`, set `include_answer: true` and `data.include_contents: true`.",
   "",
   "To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
 ].join("\n");
@@ -101,6 +101,13 @@ const DESCRIPTION = [
  * `.partial()` on its own leaves `ZodOptional<ZodDefault<T>>`, and the default
  * still fires when the key is absent from a block the caller DID name. That is
  * how `data: {}` came back carrying four values.
+ *
+ * ONE LEVEL ONLY. A field whose VALUE is an object keeps that object's own
+ * generated defaults, and the generated schemas wrap every such field as
+ * `z.union([z.lazy(() => T), z.null()])`, so no amount of unwrapping here
+ * reaches `T`. `output_settings` is the one top-level field that hits this and
+ * it is rebuilt by hand below; `noDefaultsLeak` in the test file is what fails
+ * when the backend adds a second one.
  */
 function optionalWithoutDefaults<T extends z.ZodRawShape>(shape: T): {
   [K in keyof T]: z.ZodOptional<T[K] extends z.ZodDefault<infer Inner> ? Inner : T[K]>;
@@ -114,110 +121,127 @@ function optionalWithoutDefaults<T extends z.ZodRawShape>(shape: T): {
 }
 
 /**
- * The data block. Exactly the fields spec D4 enumerates, picked off the
- * generated settings schema (which is `.strict()`, so a typo fails here rather
- * than 400-ing at the backend).
+ * Both blocks are the WHOLE generated settings schema, every field optional and
+ * stripped of its default. Not a `.pick()`: the picked version shipped 18 of 25
+ * fields, and the seven left out were never decided — six of them appear in no
+ * spec and no plan. Deriving from the full shape is what makes "mirrors the API"
+ * a test (tako_search_advanced.test.ts, "each source block exposes every field")
+ * rather than a header claim.
  *
- * `content_format` keeps `card_json`. `tako_contents` does NOT offer it,
- * because its `itemSchema` has three payload channels and card_json's payload
- * arrives under `card_data`, which none of them holds. Here the payload rides
- * in each card's loosely-typed `content`, so it has somewhere to land — and
+ * `mode` is in. Its generated description already says it is a no-op for Tako
+ * cards; keeping it out would mean keeping a curated list, which is the
+ * mechanism that produced the gap.
+ *
+ * A new backend field flows in through the sync PR: `regenerate.yml` rewrites
+ * `server.json`, `docs/TOOLS.md` and the schema hash, and the sync PR body tells
+ * its reviewer to read that diff. A new REQUIRED field fails the `satisfies` in
+ * `buildAdvancedSearchBody` instead, so a breaking change stays red rather than
+ * auto-shipping.
+ *
+ * `content_format` keeps `card_json`. `tako_contents` does NOT offer it, because
+ * its `itemSchema` has three payload channels and card_json's payload arrives
+ * under `card_data`, which none of them holds. Here the payload rides in each
+ * card's loosely-typed `content`, so it has somewhere to land — and
  * `slimCardContent` knows the key, so a zero-row cap drops it rather than
  * leaking it.
+ *
+ * `article_content_max_chars` is the ONLY bound on `web.include_contents`: the
+ * generated default is 30,000 chars and `count` runs to 20, so
+ * `{include_contents: true, count: 20}` can put ~600 KB (~150k tokens) of page
+ * text into `structuredContent`. Nothing clamps that Worker-side — `runSearch`
+ * keeps the text verbatim once the request asked for it — and because the block
+ * is `.strict()`, withholding the field would leave the caller no lever at all.
+ * `snippet_max_chars` caps the excerpt, not `content.data`.
  */
-const dataBlock = z
-  .object(
-    optionalWithoutDefaults(
-      DataSourceSettings.pick({
-        count: true,
-        include_contents: true,
-        max_rows: true,
-        content_format: true,
-        node_ids: true,
-        strict: true,
-      }).shape,
-    ),
-  )
-  .strict();
+const dataBlock = z.object(optionalWithoutDefaults(DataSourceSettings.shape)).strict();
+const webBlock = z.object(optionalWithoutDefaults(WebSourceSettings.shape)).strict();
+
 
 /**
- * The web block. NOTE the one asymmetry with `tako_search`: that tool declares
- * `sources.web.highlights = true` in `fixedInputs`, this one declares nothing, so
- * an omitted `highlights` here takes the API default of false and snippets become
- * page-opening text. That is correct under the mirror-the-API rule and it is a
- * real downgrade for a caller who moved here for `effort: deep`, so DESCRIPTION
- * says it in words. Don't "fix" it by adding a fixedInput — forcing a value is
- * the thing this tool exists not to do.
- *
- * Spec D4's enumeration, which is a SUBSET of `WebSourceSettings`:
- * `published_after` and `published_before` are deliberately out of this pass.
- * Add them here when they are wanted — the `.pick()` is the only place that
- * needs to change.
- *
- * `article_content_max_chars` is NOT in that deferred set, though D4 grouped it
- * with the two date filters. It is the only bound on `include_contents`, which
- * sits directly above it in the same `.pick()`: the generated default is 30,000
- * chars and `count` runs to 20, so `{include_contents: true, count: 20}` can put
- * ~600 KB (~150k tokens) of page text into `structuredContent`. Nothing clamps
- * that Worker-side — `runSearch` keeps the text verbatim once the request asked
- * for it — and because this block is `.strict()`, withholding the field leaves
- * the caller no lever at all. `snippet_max_chars` caps the excerpt, not
- * `content.data`. Deferring the date filters costs a caller nothing; deferring
- * this one costs them the cap on the payload this tool newly stops discarding.
+ * Top level: every `SearchRequest` field except `sources` (replaced by the two
+ * blocks), optional and default-free. Three keep a hand-written `.describe()`
+ * that names the server default in words — the generated text for
+ * `country_code` and `locale` does not, and this tool's description promises it.
  */
-const webBlock = z
-  .object(
-    optionalWithoutDefaults(
-      WebSourceSettings.pick({
-        count: true,
-        include_contents: true,
-        include_domains: true,
-        exclude_domains: true,
-        category: true,
-        snippet_max_chars: true,
-        article_content_max_chars: true,
-        highlights: true,
-      }).shape,
-    ),
-  )
-  .strict();
+const topLevel = optionalWithoutDefaults(SearchRequest.omit({ query: true, sources: true }).shape);
 
-const inputSchema = z.object({
-  query: z
-    .string()
-    .min(1)
-    .describe("Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool."),
-  effort: SearchEffortLevel.optional().describe(
-    "Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier.",
-  ),
-  country_code: z
-    .string()
-    .optional()
-    .describe("ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US."),
-  locale: z
-    .string()
-    .optional()
-    .describe("BCP-47 locale tag for language and formatting. Omit it and the server uses en-US."),
-  data: dataBlock
-    .optional()
-    .describe("Tako data (card) source settings. Include this key — even as an empty object — to search the data graph."),
-  web: webBlock
-    .optional()
-    .describe("Web source settings. Include this key — even as an empty object — to search the web."),
-})
-  // `.strict()`, matching both source blocks. A bare `z.object` is precisely
-  // what STRIPS unknown keys, so the four unexposed top-level fields
-  // (`location`, `timezone`, `output_settings`, `include_related`) used to
-  // vanish in silence while this file's header and `llms-full.txt` both told
-  // readers they raised a -32602. Rejecting is the better half of that
-  // contradiction to keep: a caller who names a field this tool does not
-  // forward has made a mistake worth hearing about, and the alternative is a
-  // request that quietly does something other than what it says.
-  //
-  // Free to tighten because the tool is NEW in this change — no deployed caller
-  // can be relying on the silent drop. That is the opposite call from
-  // `tako_contents`' deprecated `url`, which is live and therefore kept.
-  .strict();
+/**
+ * `output_settings` rebuilt from `OutputSettings` with its INNER defaults
+ * stripped. Without this, `output_settings: {image_dark_mode: true}` reached the
+ * wire as two values — the generated `force_refresh: false` rode along, chosen
+ * by nobody. That is the `data: {}` bug one level down, and it only became
+ * reachable when the top level stopped being a curated `.pick()`.
+ *
+ * `.strict()` and the generated description are carried across the rebuild: the
+ * source object rejects unknown keys, and the description is the only place the
+ * caller learns `force_refresh` is informational on these endpoints.
+ *
+ * UNWRAP FIRST. The generated `.describe()` sits on the INNER union, not on the
+ * `.optional()` wrapper, so `SearchRequest.shape.output_settings.description` is
+ * `undefined` and the `?? ""` then stamps an EMPTY description on the outermost
+ * schema — which wins over the one `gen-registry` would otherwise unwrap. That
+ * shipped `"output_settings": {"description": ""}` to `registry/server.json` and
+ * a blank cell to `docs/TOOLS.md`, while `timezone`, same shape but with no
+ * hand-written override, kept its text.
+ */
+const outputSettingsBlock = z
+  .object(optionalWithoutDefaults(OutputSettings.shape))
+  .strict()
+  .nullable()
+  .optional()
+  .describe(SearchRequest.shape.output_settings.unwrap().description ?? "");
+
+const inputSchema = z
+  .object({
+    // DERIVED, like every other field here. Re-authoring it as
+    // `z.string().min(1)` dropped the generated `/\S/`, so `query: "   "`
+    // passed the tool schema, went on the wire and came back a paid 400 where a
+    // local -32602 was available. The parity test compares key NAMES, so it
+    // cannot see a constraint go missing.
+    query: SearchRequest.shape.query.describe(
+      "Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool.",
+    ),
+    ...topLevel,
+    effort: topLevel.effort.describe(
+      "Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier.",
+    ),
+    country_code: topLevel.country_code.describe(
+      "ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US.",
+    ),
+    locale: topLevel.locale.describe(
+      "BCP-47 locale tag for language and formatting. Omit it and the server uses en-US.",
+    ),
+    output_settings: outputSettingsBlock,
+    data: dataBlock
+      .optional()
+      .describe("Tako data (card) source settings. Include this key — even as an empty object — to search the data graph."),
+    web: webBlock
+      .optional()
+      .describe("Web source settings. Include this key — even as an empty object — to search the web."),
+    include_answer: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only.",
+      ),
+    // The generated text verbatim: the caps, the supported JSON Schema subset
+    // and the instant-effort 400 are the backend's contract, and the model
+    // reads them here.
+    output_schema: AnswerRequest.shape.output_schema,
+  })
+  // `.strict()` at every level. A bare `z.object` STRIPS unknown keys; this
+  // rejects them, and because mcp.ts registers this object rather than its
+  // `.shape`, the rejection reaches the wire too.
+  .strict()
+  // /v3/search is extra="forbid", so `output_schema` without `include_answer`
+  // is a 400 from the backend naming the field. Catching it here spends
+  // nothing and says what to do instead. This `.refine()` also only runs on the
+  // wire because mcp.ts registers the full object — a raw `.shape` drops it.
+  .refine((v) => v.output_schema == null || v.include_answer === true, {
+    path: ["output_schema"],
+    message:
+      "output_schema applies only to the answer endpoint. Set include_answer: true, or drop output_schema.",
+  });
 
 type Input = z.infer<typeof inputSchema>;
 
@@ -232,21 +256,69 @@ type Output = z.infer<typeof outputSchema>;
  * guard: if the backend request contract changes (new required field, renamed
  * key, changed enum) this line fails to compile — the intended signal.
  */
-export function buildAdvancedSearchBody(input: Input): z.input<typeof SearchRequest> {
+export function endpointFor(input: Input): SearchEndpoint {
+  return input.include_answer === true ? "answer" : "search";
+}
+
+export function buildAdvancedSearchBody(input: Input): z.input<typeof AnswerRequest> {
   const body: z.input<typeof SearchRequest> = { query: input.query };
   if (input.effort !== undefined) body.effort = input.effort;
   if (input.country_code !== undefined) body.country_code = input.country_code;
   if (input.locale !== undefined) body.locale = input.locale;
-  // `sources` is omitted entirely when the caller names neither block: absent
-  // means "search data and web with the server's defaults", while `{}` would be
-  // a different request (an explicit empty source set).
-  if (input.data !== undefined || input.web !== undefined) {
+  if (input.location !== undefined) body.location = input.location;
+  if (input.timezone !== undefined) body.timezone = input.timezone;
+  if (input.output_settings !== undefined) body.output_settings = input.output_settings;
+  if (input.include_related !== undefined) body.include_related = input.include_related;
+  // `highlights` is the ONE value this tool supplies that the caller did not
+  // ask for, and it is a DEFAULT, not a fixed input: spread order lets an
+  // explicit `web.highlights: false` win. It exists because `tako_answer` — the
+  // tool this one replaces — sent it on every call: on /v1/answer the snippet is
+  // the arbiter's grounding text, and a page's opening characters are usually
+  // nav chrome. The backend default stays false on both endpoints, so the
+  // opinion lives here, in one layer, deliberately.
+  //
+  // IT IS ENDPOINT-INDEPENDENT ON PURPOSE. Do not gate it on `endpointFor`.
+  // The arbiter argument above only covers /v1/answer, so gating looks like the
+  // tighter change — but it makes one field mean two things depending on a
+  // sibling flag, and it splits this tool from `tako_search`, which forces
+  // highlights on every call and offers no field to turn them off. A caller
+  // moving between the two tools would get different snippets for the same web
+  // result with nothing in either surface explaining why. Widening the default
+  // to the search path is the deliberate cost of keeping the two consistent;
+  // the caller who wants page-opening text sends `web: {highlights: false}`,
+  // which is one field and which `tako_search` does not offer at all.
+  const web = input.web === undefined ? undefined : { highlights: true, ...input.web };
+  if (input.data !== undefined || web !== undefined) {
     const sources: NonNullable<z.input<typeof SearchRequest>["sources"]> = {};
     if (input.data !== undefined) sources.data = input.data;
-    if (input.web !== undefined) sources.web = input.web;
+    if (web !== undefined) sources.web = web;
     body.sources = sources;
+  } else {
+    // Naming NEITHER block means "both sources with server defaults", which the
+    // backend expresses as an ABSENT `sources` — but reaching the web block at
+    // all means spelling that default set out. It must stay equal to the
+    // backend's own; the `Sources.shape` parity test is the guard. Sending
+    // `{web: {...}}` alone here would be a WEB-ONLY request: Sources includes an
+    // index only if its key is present.
+    body.sources = { data: {}, web: { highlights: true } };
   }
-  return body satisfies z.input<typeof SearchRequest>; // ← build-time guard: backend request drift breaks here
+  body satisfies z.input<typeof SearchRequest>; // ← build-time guard: /v3/search drift breaks here
+  if (endpointFor(input) !== "answer") return body;
+  // TWO guards, not one. In the monorepo `AnswerRequest` subclasses
+  // `SearchRequest`, so the answer body is the search body plus one field — and
+  // a single `satisfies` against the wider type would not notice the two
+  // drifting apart. `SearchRequest` is `.strict()`, so `output_schema` must
+  // never ride the search branch.
+  //
+  // WHAT THIS ACTUALLY CATCHES, so nobody trusts it for more: a NEW REQUIRED
+  // field on either request type, which is the breaking direction and the one
+  // worth failing the build over. It does NOT reliably catch a field being
+  // REMOVED from `AnswerRequest` — TypeScript's excess-property check does not
+  // fire on a spread-only object literal, so `{...body}` would still compile
+  // against the narrower type. The key-set parity test is what covers removal.
+  const answerBody: z.input<typeof AnswerRequest> =
+    input.output_schema == null ? { ...body } : { ...body, output_schema: input.output_schema };
+  return answerBody satisfies z.input<typeof AnswerRequest>; // ← build-time guard: /v1/answer drift breaks here
 }
 
 const tako_search_advanced = {
@@ -270,9 +342,12 @@ const tako_search_advanced = {
     // there. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
-  // Nothing is fixed. Mirroring the API's retrieval options is this tool's job;
-  // the one opinionated override in the surface (web highlights) lives on
-  // `tako_search`, where a caller who wants it off has nowhere else to go.
+  // Nothing is FIXED, and web highlights is the field that tests the
+  // distinction. Both tools supply it — see `buildAdvancedSearchBody` — but
+  // `tako_search` publishes no `highlights` field at all, so its callers cannot
+  // decline; here the field is published and spread order lets
+  // `web: {highlights: false}` win. A fixed input is a value the caller cannot
+  // change. This one they can, so the list stays empty.
   fixedInputs: [],
   async handler(input, ctx): Promise<SearchOutput> {
     const named: Array<"data" | "web"> = [];
@@ -289,7 +364,15 @@ const tako_search_advanced = {
     // discard the account-default rows of a caller who set include_contents and
     // omitted max_rows.
     const rowCap = input.data?.include_contents === true ? "all" : null;
-    return runSearch(buildAdvancedSearchBody(input), searched, rowCap, ctx);
+    // The endpoint and the body as ONE value, so they cannot disagree: both
+    // come from `input`, and `SearchCall` keeps them together from here to the
+    // wire guard.
+    const body = buildAdvancedSearchBody(input);
+    const call: SearchCall =
+      endpointFor(input) === "answer"
+        ? { endpoint: "answer", body }
+        : { endpoint: "search", body };
+    return runSearch(call, searched, rowCap, ctx, "tako_search_advanced");
   },
   renderText(output, _ctx) {
     void _ctx;

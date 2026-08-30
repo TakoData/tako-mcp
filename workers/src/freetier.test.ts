@@ -182,12 +182,12 @@ describe("isMeteredJsonRpcBody", () => {
   });
 
   it("does not meter a tools/call for a non-executable tool (answered without spend)", () => {
-    // tako_answer is opt-in (spec D1); tako_contents, tako_available_data and
-    // tako_graph_related are listed but auth-required (spec D6): none executes
-    // anonymously, so none consumes the per-IP bucket.
+    // tako_search_advanced is opt-in (spec D1); tako_contents,
+    // tako_available_data and tako_graph_related are listed but auth-required
+    // (spec D6): none executes anonymously, so none consumes the per-IP bucket.
     for (const name of [
       "tako_agent",
-      "tako_answer",
+      "tako_search_advanced",
       "tako_available_data",
       "tako_contents",
       "tako_graph_related",

@@ -20,7 +20,7 @@ describe("securitySchemesForTool", () => {
 
   it("advertises oauth2 only for auth-required tools, even anonymously", () => {
     for (const name of [
-      "tako_answer",
+      "tako_search_advanced",
       "tako_available_data",
       "tako_contents",
       "tako_graph_related",
@@ -33,9 +33,9 @@ describe("securitySchemesForTool", () => {
 
   it("never advertises noauth on AUTHENTICATED connections (the caller is already linked)", () => {
     // `tako_available_data` earns its place here precisely BECAUSE its
-    // free-set membership flipped in this change: the regression this catches
-    // is a future "advertise noauth for tools that used to be free".
-    for (const name of ["tako_search", "tako_answer", "tako_available_data"]) {
+    // free-set membership flipped in #272: the regression this catches is a
+    // future "advertise noauth for tools that used to be free".
+    for (const name of ["tako_search", "tako_search_advanced", "tako_available_data"]) {
       expect(
         securitySchemesForTool(name, { surface: "chatgpt", tier: "authenticated" }),
       ).toEqual([OAUTH2]);
