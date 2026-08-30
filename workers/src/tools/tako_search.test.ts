@@ -107,11 +107,9 @@ describe("tako_search content-shape regression (format -> content_format)", () =
 
     expect(out.cards).toHaveLength(1);
     expect(out.web_results).toHaveLength(1);
-    // content is surfaced under the new name; the old `format` key is absent.
-    expect(out.cards[0]?.content?.content_format).toBeNull();
-    expect(
-      (out.cards[0]?.content as Record<string, unknown> | undefined)?.format,
-    ).toBeUndefined();
+    // The projection drops `content` outright on this tool — neither the new
+    // `content_format` key nor the legacy `format` can reach the model.
+    expect(out.cards[0]).not.toHaveProperty("content");
   });
 });
 
@@ -252,12 +250,11 @@ describe("tako_search request body sends only what the caller asked for", () => 
     ]);
 
     const out = await tako_search.handler({ query: "x", sources: ["data"] }, CTX);
-    const content = out.cards[0]?.content as Record<string, unknown> | undefined;
-    expect(content?.dataset).toBeNull();
-    expect(content?.records).toBeNull();
-    expect(content?.data).toBeNull();
-    // The rows-available pointer survives so the model knows to call tako_contents.
-    expect(content?.total_rows).toBe(1);
+    // The projection drops `content` — no row payload channel exists on this
+    // tool — but lifts the row count so the model knows the fetch is worth it.
+    expect(out.cards[0]).not.toHaveProperty("content");
+    expect(out.cards[0]).not.toHaveProperty("rows");
+    expect(out.cards[0]?.total_rows).toBe(1);
   });
 });
 
@@ -283,7 +280,7 @@ describe("tako_search response mapping", () => {
     const out = await tako_search.handler({ query: "x", ...DEFAULTS }, CTX);
 
     expect(out.cards).toHaveLength(1);
-    expect(out.cards[0]?.webpage_url).toBe("https://trytako.com/c/abc");
+    expect(out.cards[0]?.url).toBe("https://trytako.com/c/abc");
     expect(out.request_id).toBe("req-1");
   });
 
@@ -322,11 +319,10 @@ describe("tako_search response mapping", () => {
     // verdict. Assert the absence of every data-axis claim, not a string two
     // branches share.
     const g = out.guidance ?? "";
-    expect(g).toMatch(/WEB source only/);
-    expect(g).toMatch(/refine and re-search/i);
-    expect(g).not.toMatch(/do NOT re-search/i);
+    expect(g).toMatch(/web source only/i);
+    expect(g).not.toMatch(/do not re-?search/i);
     // No verdict about a source that was never queried.
-    expect(g).not.toMatch(/DATA GRAPH only/);
+    expect(g).not.toMatch(/data graph does not cover/i);
     expect(g).not.toMatch(/already shown the graph does not hold it/);
     // No data-axis recovery either: the caller narrowed sources deliberately.
     expect(g).not.toMatch(/node_id/);
@@ -418,17 +414,21 @@ describe("tako_search widget + contract guard", () => {
     // means per-element descriptions are dropped and the array description is
     // the only model-facing slot. Assert against the serialized JSON Schema,
     // because that is what `tools/list` actually ships.
+    // The projection made the element schema REAL (typed fields), so the
+    // contract now lives on `snippet` itself instead of the array wrapper.
     const schema = z.toJSONSchema(tako_search.outputSchema) as {
-      properties?: { web_results?: { description?: string } };
+      properties?: {
+        web_results?: { items?: { properties?: { snippet?: { description?: string } } } };
+      };
     };
     const json = JSON.stringify(schema);
-    const web = schema.properties?.web_results?.description;
+    const snippet = schema.properties?.web_results?.items?.properties?.snippet?.description;
 
-    expect(web).toBeDefined();
+    expect(snippet).toBeDefined();
     // The three properties a reader cannot infer from the value itself.
-    expect(web).toMatch(/selected against/i); // not the page's opening text
-    expect(web).toContain(" … "); // passages may be non-contiguous
-    expect(web).toMatch(/null/); // absence is a legitimate outcome
+    expect(snippet).toMatch(/selected against/i); // not the page's opening text
+    expect(snippet).toContain(" … "); // passages may be non-contiguous
+    expect(snippet).toMatch(/null/); // absence is a legitimate outcome
     // And it has to survive serialization, not just live on the zod object.
     expect(json).toContain("selected against");
   });
@@ -534,13 +534,12 @@ describe("tako_search never inlines rows", () => {
 
     const out = await tako_search.handler({ query: "cpi", ...DEFAULTS }, CTX);
 
-    const content = out.cards[0]?.content as Record<string, unknown>;
-    expect(content.dataset).toBeNull();
-    expect(content.records).toBeNull();
-    expect(content.data).toBeNull();
+    // The projection carries no row channel at all on this tool.
+    expect(out.cards[0]).not.toHaveProperty("content");
+    expect(out.cards[0]).not.toHaveProperty("rows");
     // Pointer + "more available" signal still present.
-    expect(out.cards[0]?.webpage_url).toBe("https://trytako.com/c/cpi");
-    expect(content.total_rows).toBe(300);
+    expect(out.cards[0]?.url).toBe("https://trytako.com/c/cpi");
+    expect(out.cards[0]?.total_rows).toBe(300);
   });
 
   it("always drops inlined web page text (billed per page — fetch via tako_contents)", async () => {
@@ -564,7 +563,9 @@ describe("tako_search never inlines rows", () => {
       CTX,
     );
 
-    expect((out.web_results[0]?.content as Record<string, unknown>).data).toBeNull();
+    // No content key at all: the page text (and its billing descriptor)
+    // never reaches the model on this tool.
+    expect(out.web_results[0]).not.toHaveProperty("content");
     expect(out.web_results[0]?.snippet).toBe("summary");
     expect(out.web_results[0]?.url).toBe("https://example.com/cpi");
   });

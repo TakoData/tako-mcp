@@ -38,6 +38,16 @@ import {
   toolAnnotationsForSurface,
 } from "../src/tools/_surface.js";
 import { TOOL_NAME_PREFIX } from "../src/tools/_tools_param.js";
+import { pickDeclared } from "../src/tools/_pick_declared.js";
+import { outputSchemaForSurface } from "../src/tools/_surface.js";
+import {
+  buildSearchOutput,
+  takoCardSchema,
+  webResultSchema,
+  type Usage,
+} from "../src/tools/_search_results.js";
+import { renderSearchMarkdown } from "../src/tools/_render_markdown.js";
+import type { Env } from "../src/env.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 
@@ -567,6 +577,154 @@ export function diffRegistryParameters(
 }
 
 // ---------------------------------------------------------------------------
+// Prose budgets (spec D1) — enforced at generation, so an over-budget string
+// cannot ship. The numbers exist because hosts CUT, not because short is
+// pretty: Claude Code truncates a tool description at 2,048 chars, and every
+// char of description+params is paid on every request on every host.
+// ---------------------------------------------------------------------------
+
+export const DESCRIPTION_MAX_CHARS = 1_000;
+export const DESCRIPTION_MAX_LINES = 6;
+export const PARAM_MAX_CHARS = 200;
+export const TOOL_ENTRY_MAX_CHARS = 2_000; // description + every param description
+export const INSTRUCTIONS_MAX_CHARS = 900;
+
+/**
+ * The ratchet for tools the redesign has not reached yet: each fan-out PR
+ * rewrites one tool, deletes its row here, and the caps above take over.
+ * A listed tool may SHRINK freely; growing past its recorded ceiling fails
+ * generation, so legacy prose can only move toward the cap. Numbers are the
+ * measured sizes when the gate landed (see the pilot PR).
+ */
+export const LEGACY_PROSE_CEILINGS: Record<
+  string,
+  { description: number; param: number; entry: number }
+> = {
+  // Measured 2026-08-30, the day the gate landed. Delete a row when its
+  // tool's fan-out PR lands the rewrite.
+  tako_agent: { description: 448, param: 489, entry: 1134 },
+  tako_available_data: { description: 2937, param: 484, entry: 4153 },
+  tako_contents: { description: 1097, param: 711, entry: 3630 },
+  tako_graph_related: { description: 1262, param: 150, entry: 1929 },
+  // Re-baselined after #273 folded tako_answer in and exposed the whole
+  // SearchRequest body — the generated param prose is a cross-repo fix
+  // (the tako repo's schema builder), tracked for that tool's fan-out PR.
+  tako_search_advanced: { description: 2611, param: 831, entry: 4860 },
+  tako_visualize: { description: 1427, param: 134, entry: 1820 },
+};
+
+export function assertProseBudget(
+  modules: ReadonlyArray<ToolModule>,
+  registryTools: ReadonlyArray<RegistryTool>,
+  instructions: string,
+): void {
+  const failures: string[] = [];
+  const byName = new Map(registryTools.map((t) => [t.name, t]));
+  for (const m of modules) {
+    const reg = byName.get(m.name);
+    const paramLens = Object.entries(reg?.parameters ?? {}).map(
+      ([name, spec]) => [name, (spec.description ?? "").length] as const,
+    );
+    const maxParam = paramLens.reduce((a, [, len]) => Math.max(a, len), 0);
+    const entry = m.description.length + paramLens.reduce((a, [, len]) => a + len, 0);
+    const legacy = LEGACY_PROSE_CEILINGS[m.name];
+    if (legacy !== undefined) {
+      if (m.description.length > legacy.description)
+        failures.push(
+          `${m.name}: description grew to ${m.description.length} chars (legacy ceiling ${legacy.description}). Legacy prose only shrinks; rewrite it to the ${DESCRIPTION_MAX_CHARS}-char cap instead.`,
+        );
+      if (maxParam > legacy.param)
+        failures.push(
+          `${m.name}: a parameter description grew to ${maxParam} chars (legacy ceiling ${legacy.param}).`,
+        );
+      if (entry > legacy.entry)
+        failures.push(`${m.name}: tool entry grew to ${entry} chars (legacy ceiling ${legacy.entry}).`);
+      continue;
+    }
+    if (m.description.length > DESCRIPTION_MAX_CHARS)
+      failures.push(
+        `${m.name}: description is ${m.description.length} chars (cap ${DESCRIPTION_MAX_CHARS}).`,
+      );
+    const lines = m.description.split("\n").length;
+    if (lines > DESCRIPTION_MAX_LINES)
+      failures.push(`${m.name}: description is ${lines} lines (cap ${DESCRIPTION_MAX_LINES}).`);
+    for (const [name, len] of paramLens) {
+      if (len > PARAM_MAX_CHARS)
+        failures.push(`${m.name}.${name}: parameter description is ${len} chars (cap ${PARAM_MAX_CHARS}).`);
+    }
+    if (entry > TOOL_ENTRY_MAX_CHARS)
+      failures.push(`${m.name}: tool entry is ${entry} chars (cap ${TOOL_ENTRY_MAX_CHARS}).`);
+  }
+  if (instructions.length > INSTRUCTIONS_MAX_CHARS)
+    failures.push(
+      `instructions: ${instructions.length} chars (cap ${INSTRUCTIONS_MAX_CHARS}).`,
+    );
+  if (failures.length > 0) {
+    throw new Error(`[prose-budget] over budget:\n  - ${failures.join("\n  - ")}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sample results for docs/TOOLS.md (spec, "TOOLS.md output rendering"): a
+// small canonical wire fixture per tool runs through the REAL pipeline —
+// projection → pickDeclared → renderText — at generation time, so the samples
+// can never drift from what the model sees; registry:check fails on drift.
+// ---------------------------------------------------------------------------
+
+export interface ToolSample {
+  structured: Record<string, unknown>;
+  text: string;
+}
+
+const SAMPLE_FIXTURE_ENV = {
+  PUBLIC_BASE_URL: "https://tako.com",
+  PUBLIC_API_URL: "https://tako.com",
+  DJANGO_BASE_URL: "https://tako.com",
+} as unknown as Env;
+
+const SEARCH_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_search_sample.json");
+
+function buildSearchSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(SEARCH_SAMPLE_FIXTURE, "utf8")) as {
+    request_id: string;
+    usage: Usage | null;
+    cards: unknown;
+    web_results: unknown;
+  };
+  const cards = z.array(takoCardSchema).parse(raw.cards);
+  const webResults = z.array(webResultSchema).parse(raw.web_results);
+  const output = buildSearchOutput(
+    cards,
+    webResults,
+    raw.request_id,
+    raw.usage,
+    SAMPLE_FIXTURE_ENV,
+    ["data", "web"],
+    false,
+    "authenticated",
+    { rowCap: null, keepWebText: false },
+  );
+  return {
+    // The generic-surface narrowing — what an `/mcp` client's model reads.
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderSearchMarkdown(output),
+  };
+}
+
+export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string, ToolSample> {
+  const samples = new Map<string, ToolSample>();
+  for (const m of modules) {
+    // One builder per migrated tool; fan-out PRs add theirs here with a
+    // fixture under workers/test/fixtures/.
+    if (m.name === "tako_search") samples.set(m.name, buildSearchSample(m));
+  }
+  return samples;
+}
+
+// ---------------------------------------------------------------------------
 // docs/TOOLS.md — the tool reference, rendered from the same objects that
 // serve tools/list, so a human reads exactly what the model reads.
 // ---------------------------------------------------------------------------
@@ -576,6 +734,9 @@ export interface ToolsDocInput {
   registryTools: ReadonlyArray<RegistryTool>;
   instructions: string;
   freeTierToolNames: ReadonlySet<string>;
+  /** Generated sample results (see `buildToolSamples`); tools without an
+   *  entry render schemas only. */
+  samples?: ReadonlyMap<string, ToolSample>;
 }
 
 /**
@@ -729,6 +890,48 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     }
     out.push("", "<details><summary>Published input schema (JSON Schema)</summary>", "", "```json",
       JSON.stringify(z.toJSONSchema(m.inputSchema, { io: "input" }), null, 2), "```", "</details>", "");
+
+    // Result channels — the other half of what the model reads. The schema is
+    // rendered exactly as tools/list advertises it (per surface when the two
+    // differ), and the samples are GENERATED by running the tool's fixture
+    // through the real projection + renderer, so a PR that changes either
+    // shows the model-facing diff right here.
+    const genericSchema = outputSchemaForSurface(m, "generic");
+    const chatgptSchema = outputSchemaForSurface(m, "chatgpt");
+    if (genericSchema !== undefined) {
+      out.push("<details><summary>Published output schema (JSON Schema)</summary>", "", "```json",
+        JSON.stringify(z.toJSONSchema(genericSchema), null, 2), "```");
+      if (chatgptSchema !== genericSchema && chatgptSchema !== undefined) {
+        const genericKeys = new Set(
+          Object.keys((genericSchema as unknown as { shape?: Record<string, unknown> }).shape ?? {}),
+        );
+        const extra = Object.keys(
+          (chatgptSchema as unknown as { shape?: Record<string, unknown> }).shape ?? {},
+        ).filter((k) => !genericKeys.has(k));
+        out.push("", `On \`/mcp/chatgpt\` the schema also declares: ${extra.map((k) => `\`${k}\``).join(", ")} (chart-widget fields; the widget reads them from \`window.openai.toolOutput\`).`);
+      }
+      out.push("</details>", "");
+    }
+    const sample = input.samples?.get(m.name);
+    if (sample !== undefined) {
+      out.push(
+        "<details><summary>Sample result (generated from the checked-in fixture)</summary>",
+        "",
+        "`structuredContent` (as served on `/mcp`):",
+        "",
+        "```json",
+        JSON.stringify(sample.structured, null, 2),
+        "```",
+        "",
+        "`content[0].text`:",
+        "",
+        "````markdown",
+        sample.text,
+        "````",
+        "</details>",
+        "",
+      );
+    }
   }
   return out.join("\n");
 }
@@ -1359,11 +1562,15 @@ async function main(): Promise<void> {
   const lobehubJson = serializeJson(
     buildLobehubPlugin(committedLobehub, String(metadata.version), modules),
   );
+  // The prose-budget gate runs in BOTH modes: an over-budget string fails
+  // registry:check in CI the same way it fails a local registry:gen.
+  assertProseBudget(modules.map((m) => m.tool), registryTools, SERVER_INSTRUCTIONS);
   const toolsDoc = buildToolsDoc({
     modules: modules.map((m) => m.tool),
     registryTools,
     instructions: SERVER_INSTRUCTIONS,
     freeTierToolNames: FREE_TIER_TOOL_NAMES,
+    samples: buildToolSamples(modules.map((m) => m.tool)),
   });
 
   if (checkMode) {

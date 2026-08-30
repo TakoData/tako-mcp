@@ -56,8 +56,10 @@ import {
   FREE_TIER_TOOL_NAMES,
   isToolOnSurface,
   resolveToolSet,
+  outputSchemaForSurface,
   toolAnnotationsForSurface,
 } from "./tools/_surface.js";
+import { pickDeclared } from "./tools/_pick_declared.js";
 import type { AnyToolModule, ToolContext } from "./tools/types.js";
 
 /**
@@ -324,29 +326,6 @@ export function createMcpServer(
 }
 
 /**
- * Keep only the keys the advertised `outputSchema` actually declares.
- *
- * `registerTool` takes a `ZodRawShape`, so the SDK rebuilds our schemas as
- * STRICT `z.object`s and publishes `additionalProperties: false` — the
- * `z.looseObject` looseness we declare them with does not survive
- * registration. Any undeclared key therefore makes a spec-compliant client
- * (the official Python SDK among them) reject the whole result, text block
- * included, on a call the caller has already been billed for.
- */
-function pickDeclared(
-  schema: AnyToolModule["outputSchema"],
-  value: Record<string, unknown>,
-): Record<string, unknown> {
-  const shape = (schema as unknown as { shape?: Record<string, unknown> } | undefined)?.shape;
-  if (shape === undefined) return value;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(shape)) {
-    if (key in value) out[key] = value[key];
-  }
-  return out;
-}
-
-/**
  * The `structuredContent` for a tool result: the tool's `slimStructured`
  * output when it's declared AND conforms to the advertised `outputSchema`.
  *
@@ -524,7 +503,8 @@ function registerTool(
     }),
   };
 
-  if (tool.outputSchema !== undefined) {
+  const surfaceOutputSchema = outputSchemaForSurface(tool, options.surface);
+  if (surfaceOutputSchema !== undefined) {
     // `.shape` HERE, deliberately, even though `inputSchema` above now passes
     // the full object. The asymmetry is not an oversight and not half a
     // migration: every `outputSchema` we ship is a `z.looseObject`, so handing
@@ -533,10 +513,10 @@ function registerTool(
     // input fix exists because a tool's `.strict()` and `.refine()` were being
     // dropped; output schemas declare neither.
     //
-    // Output schemas are optional — only read tools declare them.
-    // In practice every `outputSchema` we ship is `z.object(...)`,
-    // so `.shape` is defined; if it isn't, we simply don't pass outputSchema.
-    const outputShape = (tool.outputSchema as unknown as { shape?: unknown })
+    // Output schemas are optional — only read tools declare them, and the
+    // schema is resolved PER SURFACE: the chatgpt override (widget fields)
+    // never reaches the generic listing.
+    const outputShape = (surfaceOutputSchema as unknown as { shape?: unknown })
       .shape;
     if (outputShape !== undefined) {
       config.outputSchema = outputShape;
@@ -1106,11 +1086,20 @@ function registerTool(
         structuredContent?: Record<string, unknown>;
         _meta?: Record<string, unknown>;
       } = { content };
-      if (tool.outputSchema !== undefined) {
+      if (surfaceOutputSchema !== undefined) {
         // Always present when an outputSchema is advertised: the spec requires
         // it, and the official SDKs throw on its absence just as hard as on a
-        // mismatch (see structuredContentFor's LAST RESORT note).
-        result.structuredContent = structuredContentFor(tool, output);
+        // mismatch (see structuredContentFor's LAST RESORT note). Built
+        // against the SURFACE-resolved schema, so `pickDeclared` strips the
+        // chatgpt-only widget fields from `/mcp` responses by construction.
+        result.structuredContent = structuredContentFor(
+          {
+            name: tool.name,
+            outputSchema: surfaceOutputSchema,
+            ...(tool.slimStructured !== undefined ? { slimStructured: tool.slimStructured } : {}),
+          },
+          output,
+        );
       }
       if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
         result._meta = resultMeta;

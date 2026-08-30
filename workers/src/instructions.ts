@@ -99,14 +99,15 @@
  *      in instructions every connection reads points the model at something
  *      it cannot call.
  *
- * FRAMED AS SUBSTITUTION, not precedence. The opener used to say "reach for
- * Tako BEFORE a generic web search", which concedes that a generic web search
- * is still a step to take, just a later one, and invites the model to do
- * both in sequence. It now says "instead of a separate web search, not
- * alongside one", and leads with the capability that earns it: Tako searches
- * the live web and the data graph in the SAME call. Reported symptom that
- * motivated this (ChatGPT, Aug 2026): web search fired first even when the
- * user named Tako explicitly.
+ * THE SUBSTITUTION LINE IS GONE (Jay, 2026-08-30). "Reach for it instead of
+ * a separate web search, not alongside one" was an unspecified ask with no
+ * measured impact, and it told the model not to use another tool — the exact
+ * pattern both directories' review criteria flag ("do not interfere with the
+ * model calling other tools"). The capability claim ("searches the web and
+ * the data graph in the same call") stays and carries the routing weight.
+ * Watch item: the deleted line existed because ChatGPT fired built-in web
+ * search first even when users named Tako (Aug 2026). If that misrouting
+ * returns, the fallback is a capability-framed line, never the ban.
  *
  * ORDERING, and the one incident this reverses. `tako_available_data` used
  * to be introduced FIRST, ahead of both priced tools, because a version
@@ -154,7 +155,7 @@
  * serve; if misrouting shows up, this hedge is the first thing to restore.
  */
 const SHARED_INSTRUCTION_PARAGRAPHS = [
-  "Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.",
+  "Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.",
 ];
 
 /**
@@ -174,8 +175,14 @@ type ToolSentence = { readonly tools: readonly string[]; readonly text: string }
 
 const TOOL_SENTENCES: readonly ToolSentence[] = [
   {
+    // "finds", pairing with tako_contents "fetches" — the one-verb-per-tool
+    // vocabulary the tool descriptions share (spec, field vocabulary).
     tools: ["tako_search"],
-    text: "`tako_search` retrieves the cards and web links.",
+    text: "`tako_search` finds cards and web links.",
+  },
+  {
+    tools: ["tako_contents"],
+    text: "`tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows.",
   },
   {
     tools: ["tako_available_data"],
@@ -184,11 +191,13 @@ const TOOL_SENTENCES: readonly ToolSentence[] = [
     // an anonymous `?tools=available_data` connection shipped this one
     // sentence and refused every call it invited. The credit axis is not what
     // a model needs here, so the claim is gone rather than reworded.
-    text: "`tako_available_data` answers what data Tako has on an entity or a metric, including a measure's exact name.",
+    // "canonical name", not "exact name": it is the term the tool's own
+    // output uses.
+    text: "`tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name.",
   },
   {
-    tools: ["tako_contents"],
-    text: "`tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.",
+    tools: ["tako_graph_related"],
+    text: "`tako_graph_related` lists a node's related metrics, entities, competitors, and sources.",
   },
 ];
 

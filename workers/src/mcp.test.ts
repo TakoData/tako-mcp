@@ -693,7 +693,7 @@ describe("server instructions", () => {
   // which is where "prefer tako_search over generic web search" has
   // to live to actually influence tool routing. Tool descriptions
   // alone are too buried in the tool list to win that decision.
-  it("advertises tako_search as the preferred route for data questions and a web-search substitute", async () => {
+  it("advertises the one-call web+data capability and names tako_search", async () => {
     const ctx: ToolContext = {
       token: "sk-test",
       env: { DJANGO_BASE_URL: "https://staging.trytako.com" },
@@ -713,9 +713,12 @@ describe("server instructions", () => {
       const instructions = mcpClient.getInstructions();
       expect(instructions).toBeDefined();
       // Anchor phrases, not exact prose: the copy will be tuned, but it
-      // must always name the tool and position it against web search.
+      // must always name the tool and carry the one-call capability claim.
+      // The substitution line ("instead of a separate web search") was
+      // REMOVED deliberately (Jay, 2026-08-30) — do not reassert it.
       expect(instructions).toContain("tako_search");
-      expect(instructions?.toLowerCase()).toContain("web search");
+      expect(instructions?.toLowerCase()).toContain("searches the web");
+      expect(instructions?.toLowerCase()).toContain("in the same call");
       // Authenticated connections (the default) keep the canonical
       // instructions byte-identical — the free-tier variant must never
       // leak to existing integrations.
@@ -796,7 +799,7 @@ describe("server instructions", () => {
       }
       // Filtered, not emptied — the routing guidance that makes a host reach
       // for Tako at all lives in the shared paragraph and must survive.
-      expect(instructions).toContain("proprietary live-data graph");
+      expect(instructions).toContain("knowledge graph of live structured data");
       expect(instructions).not.toBe(SERVER_INSTRUCTIONS);
     } finally {
       await mcpClient.close();
@@ -1626,7 +1629,7 @@ describe("SERVER_INSTRUCTIONS", () => {
   // the argument examples live in the tool's own description now.
   it("names both of tako_available_data's jobs — coverage AND name resolution", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/what data Tako has/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/exact name/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/canonical name/i);
   });
 
   // Parameter-shaped guidance (argument examples, the q+metric split, response

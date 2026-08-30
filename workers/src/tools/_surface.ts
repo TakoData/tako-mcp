@@ -128,3 +128,20 @@ export function toolAnnotationsForSurface(
     ? { ...tool.annotations, ...tool.annotationsBySurface?.chatgpt }
     : { ...tool.annotations };
 }
+
+/**
+ * Resolve the outputSchema a surface advertises (and validates against) for
+ * a tool: the chatgpt override when that surface declares one, the canonical
+ * `outputSchema` everywhere else. The override REPLACES rather than merges —
+ * a zod schema has no field-level merge, and the one user (`tako_search`)
+ * builds the chatgpt schema by spreading the generic shape plus the widget
+ * fields, so the replacement is already a superset by construction.
+ */
+export function outputSchemaForSurface(
+  tool: Pick<AnyToolModule, "outputSchema" | "outputSchemaBySurface">,
+  surface: Surface,
+): AnyToolModule["outputSchema"] {
+  return surface === "chatgpt"
+    ? (tool.outputSchemaBySurface?.chatgpt ?? tool.outputSchema)
+    : tool.outputSchema;
+}

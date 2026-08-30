@@ -37,45 +37,45 @@ import { oneLine } from "./_available_data.js";
 import type { GraphRelatedFacade } from "./_graph.js";
 import {
   autoChainShape,
+  projectedCardShape,
+  projectedWebResultShape,
   usageAdvertisedSchema,
+  type ProjectedCard,
+  type ProjectedWebResult,
   type SearchOutput,
   type TakoCard,
   type Usage,
   type WebResult,
 } from "./_search_results.js";
 
-/** The advertised structuredContent shape for tako_search. Loose so the
- *  handler's full output satisfies it; `cards`/`web_results` are declared
- *  because they ARE the payload a structuredContent-reading client needs —
- *  advertising only the metadata is what made those clients read an empty
- *  envelope. Declared loosely (the card shape is the backend's, and pinning
- *  it here would reintroduce the wire-drift failure `_search_results.ts`
- *  documents). */
-export const searchSlimOutputShape = z.looseObject({
+/** The advertised structuredContent for the search tools: the PROJECTED
+ *  shape, typed field by field, because the projection now controls every
+ *  key (spec: 2026-08-26-model-facing-surface-redesign). Two variants, one
+ *  per surface — the chatgpt one adds the chart widget fields the Apps SDK
+ *  hands to `window.openai.toolOutput`; the generic `/mcp` surface has no
+ *  reader for them, so they are not declared there and `pickDeclared`
+ *  strips them from responses by construction. `request_id` is deliberately
+ *  undeclared on both (OpenAI review). */
+const searchAdvertisedFields = {
   cards: z
-    .array(z.looseObject({}))
-    .optional()
-    .describe(
-      "The data cards — the payload. Each carries its title, description (headline value), and facts. Rows ride under `content` only on a call that explicitly asked to inline them; `tako_search` never does, so read a card's rows with `tako_contents` on its url — and only when it is `exportable: true`.",
-    ),
-  // The snippet contract lives HERE, not on `webResultSchema.snippet`. That
-  // schema is the wire-parse guard and the internal shape; this loose one is
-  // what `tools/list` advertises, so a per-element description there reaches
-  // no client. Element shapes stay loose on purpose (wire-drift protection),
-  // which leaves the array description as the only model-facing slot.
-  web_results: z
-    .array(z.looseObject({}))
-    .optional()
-    .describe(
-      "Web results, each with a `snippet`. A snippet is the passages selected against your query, not the page's opening text, so it usually carries the answer-bearing sentence. A ' … ' inside one marks a discontinuity — either passages joined from different parts of the page, or the page's own ellipsis — so read it as a whole and never quote across it as one continuous sentence. `null` means that page had no relevant passage — its url is still fetchable via tako_contents.",
-    ),
+    .array(projectedCardShape)
+    .describe("The data cards. Rows never ride here on tako_search — fetch an exportable card's rows with tako_contents on its url."),
+  web_results: z.array(projectedWebResultShape).describe("Web results."),
   usage: usageAdvertisedSchema
     .nullable()
     .describe("Cost-plus usage for this request (null when not metered)."),
   guidance: z
     .string()
     .optional()
-    .describe("Present only on a zero-card response: the recovery protocol."),
+    .describe("Zero-card responses only: what this response is evidence about, and the one next action."),
+  metric_definitions: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe("What each metric means (unit, basis, caveats), keyed by metric name, deduped across cards."),
+  source_notes: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe("What each source is and how it builds its data, keyed by source name."),
   // Names no input parameter on purpose. This shape is SHARED by `tako_search`
   // and `tako_search_advanced`, and only the advanced tool can ask for these —
   // so naming the parameter here would advertise, on the simple tool, a knob it
@@ -109,24 +109,22 @@ export const searchSlimOutputShape = z.looseObject({
     .describe(
       "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill a schema you supplied.",
     ),
+} as const;
+
+export const searchSlimOutputShape = z.looseObject(searchAdvertisedFields);
+
+/** chatgpt-surface variant: adds the widget fields `window.openai.toolOutput`
+ *  reads (the widget ignores `cards`/`web_results`). */
+export const searchChatgptOutputShape = z.looseObject({
+  ...searchAdvertisedFields,
   ...autoChainShape,
 });
 
-/**
- * structuredContent for tako_search: the FULL payload.
- *
- * This is the MCP-spec-natural channel — a client that reads structuredContent
- * (the obvious choice when a tool advertises an outputSchema) must find the
- * cards there, not an empty envelope. Slimming this side to metadata made
- * those clients silently perform worse than ones reading the text block.
- *
- * The payload is carried EXACTLY ONCE: `renderText` is a compact index
- * (titles, headline values, pointers) rather than a second copy of the rows,
- * so hosts that count both channels are not billed twice.
- */
-export function slimSearchStructured(o: SearchOutput): Record<string, unknown> {
-  return { ...(o as unknown as Record<string, unknown>) };
-}
+// slimSearchStructured is gone: the explicit projection means the handler's
+// output IS the advertised shape (plus request_id and, on /mcp, the widget
+// fields), and `structuredContentFor`'s pickDeclared narrowing does the rest.
+// The tako_answer slimmers went with the tool (#273 folded it into
+// tako_search_advanced).
 
 // ---------------------------------------------------------------------------
 // Rendering helpers
@@ -157,176 +155,13 @@ type LooseContent = {
   truncated?: boolean | null;
 };
 
-/** One line describing the rows that rode in structuredContent, instead of a
- *  second copy of them. */
-function rowsPointer(content: TakoCard["content"]): string | undefined {
-  if (content == null) return undefined;
-  const c = content as LooseContent;
-  // `|| undefined`, not bare lengths: a channel present but EMPTY (e.g.
-  // `dataset.rows: []`) must fall through to the next one, and `0 ?? x` does
-  // NOT fall through (nullish coalescing only treats null/undefined as
-  // empty) — `0 || x` does. Without this, a card whose dataset channel rides
-  // empty but whose records channel is populated silently drops the pointer
-  // entirely (shown lands on 0 from the first branch, never reaching records).
-  const shown =
-    (Array.isArray(c.dataset?.rows) ? c.dataset.rows.length : undefined) ||
-    (Array.isArray(c.records) ? c.records.length : undefined) ||
-    (typeof c.data === "string" && c.data.trim() !== ""
-      ? Math.max(0, c.data.split("\n").filter((l) => l !== "").length - 1)
-      : undefined);
-  if (shown === undefined || shown === 0) return undefined;
-  const total = c.total_rows ?? undefined;
-  const of = total !== undefined && total > shown ? ` of ${total}` : "";
-  return `data: ${shown}${of} rows in structuredContent.cards[].content (full export via tako_contents).`;
-}
 
-/** Names riding on a card's sources/methodologies arrays (paragraphs live in
- *  the glossary section, keyed by these names). */
-function namesOf(items: unknown, nameKey: string): string[] {
-  if (!Array.isArray(items)) return [];
-  return items
-    .map((i) =>
-      i !== null && typeof i === "object" ? (i as Record<string, unknown>)[nameKey] : undefined,
-    )
-    .filter((n): n is string => typeof n === "string" && n !== "");
-}
 
-type LooseDefinition = { term?: unknown; metric_name?: unknown; name?: unknown; definition?: unknown };
 
-/**
- * A card's as-of date. The backend ships this as an OBJECT
- * (`{"data_as_of": "2026-03-31"}`) on search cards, so a bare
- * `typeof === "string"` test drops it on every real card. The date is the
- * only reliable way to tell a reported actual from a forward projection (a
- * future date) and a fresh series from a stale vintage, so losing it costs
- * the model a correctness check the title alone cannot replace. Accept the
- * string form too — other endpoints send one.
- */
-function freshnessOf(value: unknown): string | undefined {
-  if (typeof value === "string" && value !== "") return value;
-  if (value !== null && typeof value === "object") {
-    const asOf = (value as { data_as_of?: unknown }).data_as_of;
-    if (typeof asOf === "string" && asOf !== "") return asOf;
-  }
-  return undefined;
-}
 
-/**
- * Retrieval relevance. `relevance_score` is the entitlement-gated numeric
- * field; unentitled responses carry the coarse `relevance` string ("High" /
- * "Medium" / "Low") instead. Render whichever is present so the fact never
- * silently vanishes for free-tier callers.
- */
-function relevanceOf(rec: Record<string, unknown>): string | undefined {
-  if (typeof rec.relevance_score === "number") return String(rec.relevance_score);
-  if (typeof rec.relevance === "string" && rec.relevance !== "") return rec.relevance;
-  return undefined;
-}
 
-function renderCard(card: TakoCard, idx: number): string {
-  const rec = card as Record<string, unknown>;
-  const lines: string[] = [];
-  lines.push(`### ${idx + 1}. ${card.title ?? card.card_id ?? "Untitled card"}`);
-  if (typeof card.description === "string" && card.description !== "") {
-    lines.push(card.description);
-  }
 
-  // Retrieval metadata rides too (relevance_score is entitlement-gated —
-  // "only populated for entitled accounts" — so dropping it would silently
-  // remove a paid feature's output).
-  if (
-    typeof rec.semantic_description === "string" &&
-    rec.semantic_description !== "" &&
-    rec.semantic_description !== card.description
-  ) {
-    lines.push(`semantic_description: ${rec.semantic_description}`);
-  }
 
-  const facts: string[] = [];
-  facts.push(`exportable: ${card.exportable === true ? "yes" : "no"}`);
-  const relevance = relevanceOf(rec);
-  if (relevance !== undefined) facts.push(`relevance: ${relevance}`);
-  if (typeof rec.card_type === "string" && rec.card_type !== "") {
-    facts.push(`type: ${rec.card_type}`);
-  }
-  const freshness = freshnessOf(rec.data_freshness);
-  if (freshness !== undefined) facts.push(`freshness: ${freshness}`);
-  const nodes = card.nodes ?? [];
-  if (nodes.length > 0) {
-    facts.push(`nodes: ${nodes.map((n) => `\`${n.id}\` (${n.name})`).join(", ")}`);
-  }
-  const sourceNames = namesOf(rec.sources, "source_name");
-  if (sourceNames.length > 0) facts.push(`source: ${sourceNames.join(", ")}`);
-  // Methodology names must render for the same reason source names do: the
-  // glossary hoists methodology paragraphs keyed by these names, and a
-  // Source Notes entry nothing references is unattributable.
-  const methodologyNames = namesOf(rec.methodologies, "methodology_name");
-  if (methodologyNames.length > 0) facts.push(`methodology: ${methodologyNames.join(", ")}`);
-  const sourceIndexes = Array.isArray(rec.source_indexes)
-    ? rec.source_indexes.filter((s): s is string => typeof s === "string" && s !== "")
-    : [];
-  if (sourceIndexes.length > 0) facts.push(`source_indexes: ${sourceIndexes.join(", ")}`);
-  if (typeof card.webpage_url === "string" && card.webpage_url !== "") {
-    facts.push(`chart: ${card.webpage_url}`);
-  }
-  if (typeof rec.embed_url === "string" && rec.embed_url !== "") {
-    facts.push(`embed: ${rec.embed_url}`);
-  }
-  if (typeof rec.image_url === "string" && rec.image_url !== "") {
-    facts.push(`image: ${rec.image_url}`);
-  }
-  lines.push(facts.join(" · "));
-
-  if (typeof rec.values_hint === "string") lines.push(`values_hint: ${rec.values_hint}`);
-
-  const defs = rec.metric_definitions;
-  if (Array.isArray(defs) && defs.length > 0) {
-    const rendered = defs
-      .map((d) => {
-        if (d === null || typeof d !== "object") return undefined;
-        const ld = d as LooseDefinition;
-        const term = ld.term ?? ld.metric_name ?? ld.name;
-        if (typeof term !== "string" || typeof ld.definition !== "string") return undefined;
-        return `- ${term}: ${ld.definition}`;
-      })
-      .filter((s): s is string => s !== undefined);
-    if (rendered.length > 0) lines.push(rendered.join("\n"));
-  }
-
-  // Rows are NOT duplicated here: the full payload rides in structuredContent
-  // (see slimSearchStructured). Emitting them in both channels would bill the
-  // model twice for the same table on every host that counts content AND
-  // structuredContent. A one-line pointer keeps the text channel a readable
-  // index of what arrived.
-  const rows = rowsPointer(card.content);
-  if (rows !== undefined) lines.push(rows);
-
-  return lines.join("\n");
-}
-
-function renderWebResult(w: WebResult, idx: number): string {
-  // Titles/meta are upstream web content: single-line slots are
-  // newline-flattened so a page can't forge the
-  // document's own sections (see `fenced`).
-  const lines: string[] = [`${idx + 1}. Title: ${oneLine(w.title)}`, `URL: ${w.url}`];
-  const meta: string[] = [];
-  if (typeof w.source_name === "string" && w.source_name !== "") meta.push(oneLine(w.source_name));
-  if (typeof w.publish_date === "string" && w.publish_date !== "") {
-    meta.push(`Published: ${oneLine(w.publish_date)}`);
-  }
-  if (meta.length > 0) lines.push(meta.join(" · "));
-  // Snippet omitted on purpose: it rides verbatim in
-  // structuredContent.web_results. Prose-heavy text is the most expensive
-  // thing to carry twice, and this is the channel that had the duplicate.
-  return lines.join("\n");
-}
-
-function renderGlossary(glossary: Record<string, string> | undefined): string | undefined {
-  if (glossary === undefined) return undefined;
-  const entries = Object.entries(glossary);
-  if (entries.length === 0) return undefined;
-  return ["## Source Notes", ...entries.map(([name, text]) => `**${name}**: ${text}`)].join("\n\n");
-}
 
 /**
  * The one-line trailer: what this call cost, and nothing else.
@@ -338,7 +173,7 @@ function renderGlossary(glossary: Record<string, string> | undefined): string | 
  */
 function renderFooter(usage: Usage | null): string | undefined {
   if (usage === null || typeof usage.total_cost_usd !== "number") return undefined;
-  return `_cost: $${usage.total_cost_usd}_`;
+  return `usage: $${usage.total_cost_usd}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +182,65 @@ function renderFooter(usage: Usage | null): string | undefined {
 
 /** The tako_search text channel: guidance (if any) → data cards → web
  *  results → source notes → footer. */
+// ---------------------------------------------------------------------------
+// tako_search text channel — COMPLETE, not an index (spec, text-channel
+// template). Every projected field renders here: the consensus audit found 9
+// harnesses that feed the model ONLY this channel, so an index without
+// snippets or rows is a wrong answer there. Order: guidance (when present),
+// cards, web results, reference maps LAST (tail-truncating hosts lose prose
+// before data), usage as the final line.
+// ---------------------------------------------------------------------------
+
+function renderProjectedCard(c: ProjectedCard): string {
+  const lines: string[] = [`### ${oneLine(c.title ?? "Untitled card")}`];
+  if (c.description !== undefined) lines.push(c.description);
+  const access: string[] = [];
+  if (c.url !== undefined) access.push(`url: ${c.url}`);
+  access.push(
+    c.exportable
+      ? c.total_rows !== undefined
+        ? `exportable, ${c.total_rows} rows`
+        : "exportable"
+      : c.description !== undefined
+        ? "rows locked — value in description above"
+        : "rows locked",
+  );
+  lines.push(`- ${access.join(" · ")}`);
+  const meta: string[] = [];
+  if (c.source !== undefined) meta.push(`source: ${oneLine(c.source)}`);
+  if (c.last_updated !== undefined) meta.push(`updated ${c.last_updated}`);
+  if (c.relevance !== undefined) meta.push(`relevance ${oneLine(c.relevance)}`);
+  if (meta.length > 0) lines.push(`- ${meta.join(" · ")}`);
+  if (c.nodes !== undefined && c.nodes.length > 0) {
+    lines.push(`- nodes: ${c.nodes.map((n) => `\`${n.id}\` (${oneLine(n.name)})`).join(" · ")}`);
+  }
+  if (c.rows !== undefined) {
+    lines.push(typeof c.rows.data === "string" ? fenced(c.rows.data) : fenced(JSON.stringify(c.rows)));
+  }
+  return lines.join("\n");
+}
+
+function renderProjectedWebResult(w: ProjectedWebResult): string {
+  const meta: string[] = [];
+  if (w.source !== undefined) meta.push(oneLine(w.source));
+  if (typeof w.published === "string") meta.push(w.published);
+  const heading = `### ${oneLine(w.title ?? w.url)}${meta.length > 0 ? ` — ${meta.join(", ")}` : ""}`;
+  const lines: string[] = [heading, w.url];
+  // Snippets and page text are upstream web content rendered verbatim into
+  // this document — fenced so a page cannot forge our own section framing.
+  if (typeof w.snippet === "string" && w.snippet !== "") lines.push(fenced(w.snippet));
+  if (w.content !== undefined && typeof w.content.data === "string") {
+    lines.push(fenced(w.content.data));
+  }
+  return lines.join("\n");
+}
+
+function renderNameMap(title: string, map: Record<string, string>): string {
+  return [`## ${title}`, ...Object.entries(map).map(([name, text]) => `- ${oneLine(name)}: ${text}`)].join(
+    "\n",
+  );
+}
+
 export function renderSearchMarkdown(o: SearchOutput): string {
   const blocks: string[] = [];
   // The answer leads. A verdict ahead of it reads as "this answer failed"
@@ -364,18 +258,25 @@ export function renderSearchMarkdown(o: SearchOutput): string {
     );
   }
 
-  if (o.cards.length > 0) {
-    blocks.push(`## Tako Data (${o.cards.length} card${o.cards.length === 1 ? "" : "s"})`);
-    blocks.push(...o.cards.map((c, i) => renderCard(c, i)));
-  } else if (o.guidance === undefined) {
-    blocks.push("## Tako Data\nNo data cards matched.");
+  blocks.push(`## Data cards (${o.cards.length})`);
+  blocks.push(...o.cards.map(renderProjectedCard));
+  // The top card's chart links: dropped from per-card structured fields, so
+  // the text channel is where a content-only host reads them.
+  if (o.embed_url !== undefined || o.image_url !== undefined) {
+    const links: string[] = [];
+    if (o.embed_url !== undefined) links.push(`embed: ${o.embed_url}`);
+    if (o.image_url !== undefined) links.push(`image: ${o.image_url}`);
+    blocks.push(`Top card chart — ${links.join(" · ")}`);
   }
-
   if (o.web_results.length > 0) {
-    blocks.push(`## Web Results (${o.web_results.length})`);
-    blocks.push(o.web_results.map((w, i) => renderWebResult(w, i)).join("\n\n---\n\n"));
+    blocks.push(`## Web results (${o.web_results.length})`);
+    blocks.push(...o.web_results.map(renderProjectedWebResult));
   }
-
+  if (o.structured_output !== undefined) {
+    // Completeness: content-only hosts must see the filled schema too.
+    blocks.push("## Structured output");
+    blocks.push(fenced(JSON.stringify(o.structured_output, null, 1)));
+  }
   if (o.related !== undefined && o.related.length > 0) {
     blocks.push("## Related queries");
     blocks.push(
@@ -388,10 +289,8 @@ export function renderSearchMarkdown(o: SearchOutput): string {
         .join("\n"),
     );
   }
-
-  const glossary = renderGlossary(o.sources_glossary);
-  if (glossary !== undefined) blocks.push(glossary);
-
+  if (o.metric_definitions !== undefined) blocks.push(renderNameMap("Definitions", o.metric_definitions));
+  if (o.source_notes !== undefined) blocks.push(renderNameMap("Source notes", o.source_notes));
   const footer = renderFooter(o.usage);
   if (footer !== undefined) blocks.push(footer);
   return blocks.join("\n\n");

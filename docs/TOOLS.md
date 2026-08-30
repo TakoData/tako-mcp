@@ -26,9 +26,9 @@ Opt-in (name them in `?tools=`):
 Server instructions:
 
 ```text
-Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.
+Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
 
-`tako_search` retrieves the cards and web links. `tako_available_data` answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.
+`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources.
 ```
 
 ## `/mcp/chatgpt` — the ChatGPT app surface, OAuth only
@@ -44,9 +44,9 @@ Default listing:
 Server instructions:
 
 ```text
-Tako searches the live web AND a proprietary live-data graph in the same call. Reach for it instead of a separate web search, not alongside one. Default sources are data + web, so one Tako call covers a question that mixes a figure with context: finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health.
+Tako searches the web and a proprietary knowledge graph of live structured data in the same call. Default sources are data + web, so one call answers a question that mixes a figure with context. Coverage includes finance, markets, company KPIs, economics, website/app traffic, sports, weather, elections, prediction markets, demographics, energy, real estate, health, and more.
 
-`tako_search` retrieves the cards and web links. `tako_available_data` answers what data Tako has on an entity or a metric, including a measure's exact name. `tako_contents` reads one source in full: an exportable card's rows, or a web page's text by url.
+`tako_search` finds cards and web links. `tako_contents` fetches a url in full: a web page returns its text, and an exportable Tako card returns its data rows. `tako_available_data` answers what data Tako has on an entity or metric, including a metric's canonical name. `tako_graph_related` lists a node's related metrics, entities, competitors, and sources.
 ```
 
 ## Tools
@@ -125,6 +125,69 @@ Annotations:
   "required": [
     "query"
   ]
+}
+```
+</details>
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "description": "queued | running | completed | failed."
+    },
+    "timed_out": {
+      "type": "boolean",
+      "description": "True when the wait window elapsed before a terminal status — poll again with the same run_id."
+    },
+    "thread_id": {
+      "description": "Pass back as thread_id to ask a follow-up in the same conversation.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "run_id",
+    "status",
+    "timed_out"
+  ],
+  "additionalProperties": {}
 }
 ```
 </details>
@@ -232,6 +295,322 @@ Annotations:
 ```
 </details>
 
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "found": {
+      "type": "boolean",
+      "description": "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): the resolved entity HOLDS something matching — the resolved metric is on its own metric list, or its metrics contain your phrase. Both names resolving isn't enough: a checked list with nothing matching reads false. A metric that resolved nowhere globally still reads true when the entity's own list carries the phrase. Read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that."
+    },
+    "verified": {
+      "description": "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and the resolved metric is not on it, so a card for this pair is unlikely. It says nothing about the rest of the list — `unlinked` and `found: true` sit together whenever your `metric` phrase matched entries the resolved node is not one of, and `coverage` then names them. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
+      "type": "string",
+      "enum": [
+        "coverage",
+        "pair",
+        "unlinked",
+        "resolution"
+      ]
+    },
+    "query": {
+      "type": "string"
+    },
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unavailable": {
+            "type": "boolean"
+          },
+          "filter": {
+            "description": "The `metric` phrase this match's coverage was filtered by. Present means `coverage.total` counts only the entries matching it, not the entity's whole list — without it a structured-only reader cannot tell `total: 13` meaning \"13 hits for your phrase\" from `total: 13` meaning \"13 metrics in all\". The text channel distinguishes them; this is how the machine channel does.",
+            "type": "string"
+          },
+          "coverage": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "total": {
+                "type": "number"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "node_id": {
+                      "type": "string",
+                      "description": "Graph node id. Hand it to tako_graph_related to explore what else the graph holds on this node."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "node_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "items_truncated": {
+                "description": "More coverage entries exist than are listed here, so treat an entry you do not see as unconfirmed, not absent. The text channel carries every name that was fetched, and says so when that list was cut too.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "total",
+              "truncated",
+              "items"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "node_id",
+          "name",
+          "type",
+          "coverage"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "The resolved matches and their coverage, each entry carrying its canonical name and graph node id. To fetch a specific metric, call tako_search with the EXACT canonical name as the query — the canonical name is what recovers cards. A node id is for traversal via tako_graph_related."
+    },
+    "candidates": {
+      "description": "The other nodes `q` resolved to, best first, each with its canonical name to search on and its id to explore with tako_graph_related. coverage_total is present only for candidates that were coverage-checked; the text channel carries their aliases.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage_total": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "node_id",
+          "name",
+          "type",
+          "subtype",
+          "label"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "next_call": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "enum": [
+                "tako_search"
+              ]
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "tool",
+            "query"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null otherwise — pass `metric` to get a handle."
+    },
+    "metric_query": {
+      "type": "string"
+    },
+    "entity": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node_id",
+            "name",
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "metric": {
+      "description": "The resolved metric, by its canonical graph name — the name the follow-up query uses.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node_id",
+            "name",
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "entity_alternates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "name",
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "metric_alternates": {
+      "description": "Runners-up. The top metric is right ~80% of the time and the top three ~93-95%, so check these before accepting the primary.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "name",
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "found",
+    "query",
+    "matches",
+    "next_call"
+  ],
+  "additionalProperties": {}
+}
+```
+</details>
+
 ### tako_contents
 
 **Tako: Fetch Contents**
@@ -331,6 +710,233 @@ Annotations:
       "minLength": 1
     }
   }
+}
+```
+</details>
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "dataset": {
+            "type": "object",
+            "properties": {
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "Column name."
+                    },
+                    "type": {
+                      "description": "Logical column type: 'string', 'number', 'boolean', 'date', or 'datetime'. Temporal cells are ISO-8601 strings.",
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "date",
+                        "datetime"
+                      ]
+                    },
+                    "unit": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Structured unit for the column values, e.g. 'USD billions', '%'. Null when unitless."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Typed header entry; `type` is the JSON-facing column type."
+                },
+                "description": "Ordered column headers (name + type), one per position in every row."
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "description": "Row data as positional cell arrays aligned to `columns` order. Cells are string/number/boolean/null; nulls are preserved, never coerced."
+              },
+              "total_rows": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "True total number of rows in the underlying data, before any truncation."
+              },
+              "truncated": {
+                "type": "boolean",
+                "description": "True when `rows` was capped and total_rows exceeds the number returned."
+              },
+              "ref": {
+                "type": "string",
+                "description": "Source URL the dataset was derived from (e.g. the Tako card URL)."
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "Human-readable source name (e.g. 'FRED', 'S&P Global')."
+                    },
+                    "index": {
+                      "default": "data",
+                      "type": "string",
+                      "enum": [
+                        "data",
+                        "web"
+                      ],
+                      "description": "Source index the rows came from: 'data' (Tako) or 'web'."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "index"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Per-dataset provenance entry. `index` names the source index, not a\ncitation display number. It is \"data\" for every dataset today — web\ncontent never fills a dataset slot."
+                },
+                "description": "Provenance for the dataset: the sources the rows were drawn from."
+              },
+              "provenance": {
+                "default": "query",
+                "type": "string",
+                "enum": [
+                  "query",
+                  "web_extraction"
+                ],
+                "description": "How the rows were produced: 'query' (Tako data) or 'web_extraction'."
+              }
+            },
+            "required": [
+              "columns",
+              "rows",
+              "total_rows",
+              "truncated",
+              "ref",
+              "sources",
+              "provenance"
+            ],
+            "additionalProperties": false,
+            "description": "The dataset-slot envelope: exact retrieved rows as positional arrays\nin `columns` order. The rows come directly from the data source; the LLM\nnever transcribes them."
+          },
+          "format": {
+            "type": "string"
+          },
+          "total_rows": {
+            "type": "number"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "download_url": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "source_url": {
+            "type": "string"
+          },
+          "cost": {
+            "type": "number"
+          },
+          "url": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cost",
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "cost": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "results",
+    "cost"
+  ],
+  "additionalProperties": false
 }
 ```
 </details>
@@ -436,6 +1042,308 @@ Annotations:
 ```
 </details>
 
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "relations": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "aliases": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "subtype": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "label": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "total": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "total_capped": {
+                "type": "boolean"
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "kind",
+              "label",
+              "items",
+              "total",
+              "total_capped"
+            ],
+            "additionalProperties": false
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "relation": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "aliases": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "subtype": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "label": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "type",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "total": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "total_capped": {
+              "type": "boolean"
+            },
+            "next_cursor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "key",
+            "kind",
+            "label",
+            "items",
+            "total",
+            "total_capped"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "inferred_labels": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "node"
+  ],
+  "additionalProperties": false
+}
+```
+</details>
+
 ### tako_search
 
 **Tako: Search**
@@ -445,28 +1353,18 @@ Annotations:
 
 Description:
 
-Reconnaissance and chart retrieval across the live web and proprietary data: many results at once, returned as structured cards and web links, and the top card auto-renders inline as a chart.
+Search Tako's data graph and the live web in one call: many results at once, as structured cards plus web results, with the top card rendered inline as a chart.
 
-It locates data; `tako_contents` reads it. Cards carry headline values, node ids and chart links — call `tako_contents` on an `exportable: true` card's url for the rows themselves, and on a web result's url for its full page text.
+It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.
 
-Best for: breadth — fanning out many narrow queries in parallel to see what exists across several entities or metrics; retrieving a chart card when the chart or embed is itself the deliverable; and harvesting node ids and urls to feed `tako_contents`. It is cheap and fast, and built for exactly this fan-out.
-
-Coverage spans economics, finance, company KPIs, demographics, sports, markets, weather, elections, prediction markets, website/app traffic, real estate, energy, health, and more — metrics that sound web-only (e.g. SimilarWeb-style website traffic) are in the data graph.
-
-Each query resolves one entity + one metric ("Apple revenue", "Nvidia vs AMD gross margin"); broad or compound queries ("today's sports + odds") retrieve poorly. When the question is what Tako covers, or you need a metric's exact name, run `tako_available_data` instead of guessing here, then search on the EXACT name it returns — the canonical name is what recovers cards.
-
-Data and web come back together — treat them as one result, not an either/or. Returns: `cards` with chart URLs, plus `web_results`. To read either in full, call `tako_contents` on its url (web urls are always fetchable; a card's rows need `exportable: true`).
-
-Non-exportable cards (`exportable: false`, usually license-gated) return no rows on any path: read the headline value from the card's `description` when it carries one (each such card carries a `values_hint` saying exactly this).
-
-Results arrive as a markdown document: a Tako Data section (per card: headline, exportable flag, node ids, chart link), then Web Results, then source notes. The web results' snippets ride in structuredContent (web_results[].snippet), not the markdown, alongside machine essentials (usage, chart-widget fields).
+Best for breadth: fan out several narrow queries in parallel. Each query resolves one entity plus one metric ("Apple revenue", "Nvidia vs AMD gross margin"); compound queries retrieve poorly. To learn what Tako covers, or a metric's canonical name, run `tako_available_data` first, then search on the canonical name it returns.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `query` | string | yes |  | Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits". |
-| `sources` | array | no | `["data","web"]` | Source(s) to search. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph. |
+| `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
 | `country_code` | string | no |  | ISO 3166-1 alpha-2 country code for localized results. Omit it and the server uses US. Set it to localize for the user. |
 | `locale` | string | no |  | BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. Set it to localize for the user. |
 
@@ -496,7 +1394,7 @@ Annotations:
         "data",
         "web"
       ],
-      "description": "Source(s) to search. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed the proprietary data exists (web is the fallback when it does not). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in the proprietary data graph.",
+      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
       "minItems": 1,
       "type": "array",
       "items": {
@@ -521,6 +1419,341 @@ Annotations:
   ]
 }
 ```
+</details>
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "description": "Headline value and range — often the answer itself.",
+            "type": "string"
+          },
+          "exportable": {
+            "type": "boolean",
+            "description": "true → tako_contents on `url` returns the rows; false → rows are locked, read the headline from `description`."
+          },
+          "url": {
+            "description": "The card page — the tako_contents handle.",
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "last_updated": {
+            "description": "Date Tako last refreshed this card.",
+            "type": "string"
+          },
+          "total_rows": {
+            "description": "Rows behind `url` (exportable cards only).",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "relevance": {
+            "type": "string"
+          },
+          "nodes": {
+            "description": "Graph handles — pass ids to tako_graph_related.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "rows": {
+            "description": "Inlined rows — only when the request asked to inline them.",
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "exportable"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "The data cards. Rows never ride here on tako_search — fetch an exportable card's rows with tako_contents on its url."
+    },
+    "web_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "snippet": {
+            "description": "Passages selected against the query; ' … ' joins non-contiguous passages. null → no relevant passage, url still fetchable.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content": {
+            "description": "Page text — only when the request asked for it.",
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "Web results."
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "total_cost_usd": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total_cost_usd"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cost-plus usage for this request (null when not metered)."
+    },
+    "guidance": {
+      "description": "Zero-card responses only: what this response is evidence about, and the one next action.",
+      "type": "string"
+    },
+    "metric_definitions": {
+      "description": "What each metric means (unit, basis, caveats), keyed by metric name, deduped across cards.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "source_notes": {
+      "description": "What each source is and how it builds its data, keyed by source name.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "related": {
+      "description": "Follow-up queries, each with a `query` to send as the next search request. Present only on a request that asked for them.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {}
+      }
+    },
+    "answer": {
+      "description": "The synthesized, citation-backed answer. Present only on an answer-endpoint call; the cards and web_results are its citations.",
+      "type": "string"
+    },
+    "structured_output": {
+      "description": "The JSON Schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {}
+    },
+    "structured_output_error": {
+      "description": "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill a schema you supplied.",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "cards",
+    "web_results",
+    "usage"
+  ],
+  "additionalProperties": {}
+}
+```
+
+On `/mcp/chatgpt` the schema also declares: `pub_id`, `embed_url`, `image_url`, `dark_mode`, `width`, `height` (chart-widget fields; the widget reads them from `window.openai.toolOutput`).
+</details>
+
+<details><summary>Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "cards": [
+    {
+      "exportable": true,
+      "title": "NVIDIA Corporation Data Center Total Revenues (Quarterly)",
+      "description": "NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.",
+      "url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+      "source": "Fiscal.ai",
+      "last_updated": "2026-08-26",
+      "relevance": "High",
+      "nodes": [
+        {
+          "id": "ent::nvidia_corporation::5ea55992",
+          "name": "NVIDIA Corporation",
+          "type": "entity"
+        },
+        {
+          "id": "mt::total_revenues::8a1f02c3",
+          "name": "Total Revenues (Normalized)",
+          "type": "metric"
+        }
+      ],
+      "total_rows": 26
+    },
+    {
+      "exportable": true,
+      "title": "NVIDIA Corporation Gross Profit Margin (Quarterly)",
+      "description": "NVIDIA Corporation Gross Profit Margin (Quarterly)'s latest value was 72.4% in Apr 2026.",
+      "url": "https://tako.com/card/Kv_Wc1vPaL5yNxTEApAy/",
+      "source": "Fiscal.ai",
+      "last_updated": "2026-08-26",
+      "relevance": "Low",
+      "nodes": [
+        {
+          "id": "ent::nvidia_corporation::5ea55992",
+          "name": "NVIDIA Corporation",
+          "type": "entity"
+        },
+        {
+          "id": "mt::gross_margin::41c9d7aa",
+          "name": "Gross Profit Margin",
+          "type": "metric"
+        }
+      ],
+      "total_rows": 26
+    }
+  ],
+  "web_results": [
+    {
+      "url": "https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-Q1-FY2027/",
+      "title": "NVIDIA Announces Financial Results for First Quarter Fiscal 2027",
+      "snippet": "Record revenue of $81.6 billion, up 85% from a year ago. Record Data Center revenue of $75.2 billion, up 89% from a year ago.",
+      "source": "investor.nvidia.com",
+      "published": null
+    },
+    {
+      "url": "https://www.cnbc.com/2026/08/25/nvidia-earnings-q1-fy2027.html",
+      "title": "Nvidia beats on earnings as data center growth continues",
+      "snippet": "Nvidia reported another record quarter, with data center revenue of $75.2 billion accounting for the bulk of sales. … Management guided above consensus for the July quarter.",
+      "source": "CNBC",
+      "published": "2026-08-25"
+    }
+  ],
+  "usage": {
+    "total_cost_usd": 0.015
+  },
+  "metric_definitions": {
+    "Total Revenues (Normalized)": "Revenue the company reported for this segment, as disclosed in its segment note. The figure covers one segment only, so it does not sum to consolidated total revenue unless the company reports no other segment."
+  },
+  "source_notes": {
+    "Fiscal.ai": "Fiscal.ai standardizes reported financials from company filings into comparable line items. Segment figures are taken from each company's segment note and normalized so the same line item is comparable across companies and periods."
+  }
+}
+```
+
+`content[0].text`:
+
+````markdown
+## Data cards (2)
+
+### NVIDIA Corporation Data Center Total Revenues (Quarterly)
+NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.
+- url: https://tako.com/card/eDLjXb_EieceW6BapkXJ/ · exportable, 26 rows
+- source: Fiscal.ai · updated 2026-08-26 · relevance High
+- nodes: `ent::nvidia_corporation::5ea55992` (NVIDIA Corporation) · `mt::total_revenues::8a1f02c3` (Total Revenues (Normalized))
+
+### NVIDIA Corporation Gross Profit Margin (Quarterly)
+NVIDIA Corporation Gross Profit Margin (Quarterly)'s latest value was 72.4% in Apr 2026.
+- url: https://tako.com/card/Kv_Wc1vPaL5yNxTEApAy/ · exportable, 26 rows
+- source: Fiscal.ai · updated 2026-08-26 · relevance Low
+- nodes: `ent::nvidia_corporation::5ea55992` (NVIDIA Corporation) · `mt::gross_margin::41c9d7aa` (Gross Profit Margin)
+
+Top card chart — embed: https://tako.com/embed/eDLjXb_EieceW6BapkXJ/?dark_mode=auto&showShare=true · image: https://tako.com/api/v1/image/eDLjXb_EieceW6BapkXJ/?dark_mode=true
+
+## Web results (2)
+
+### NVIDIA Announces Financial Results for First Quarter Fiscal 2027 — investor.nvidia.com
+https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-Q1-FY2027/
+```
+Record revenue of $81.6 billion, up 85% from a year ago. Record Data Center revenue of $75.2 billion, up 89% from a year ago.
+```
+
+### Nvidia beats on earnings as data center growth continues — CNBC, 2026-08-25
+https://www.cnbc.com/2026/08/25/nvidia-earnings-q1-fy2027.html
+```
+Nvidia reported another record quarter, with data center revenue of $75.2 billion accounting for the bulk of sales. … Management guided above consensus for the July quarter.
+```
+
+## Definitions
+- Total Revenues (Normalized): Revenue the company reported for this segment, as disclosed in its segment note. The figure covers one segment only, so it does not sum to consolidated total revenue unless the company reports no other segment.
+
+## Source notes
+- Fiscal.ai: Fiscal.ai standardizes reported financials from company filings into comparable line items. Segment figures are taken from each company's segment note and normalized so the same line item is comparable across companies and periods.
+
+usage: $0.015
+````
 </details>
 
 ### tako_search_advanced
@@ -875,6 +2108,216 @@ Annotations:
     "query"
   ],
   "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "description": "Headline value and range — often the answer itself.",
+            "type": "string"
+          },
+          "exportable": {
+            "type": "boolean",
+            "description": "true → tako_contents on `url` returns the rows; false → rows are locked, read the headline from `description`."
+          },
+          "url": {
+            "description": "The card page — the tako_contents handle.",
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "last_updated": {
+            "description": "Date Tako last refreshed this card.",
+            "type": "string"
+          },
+          "total_rows": {
+            "description": "Rows behind `url` (exportable cards only).",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "relevance": {
+            "type": "string"
+          },
+          "nodes": {
+            "description": "Graph handles — pass ids to tako_graph_related.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "rows": {
+            "description": "Inlined rows — only when the request asked to inline them.",
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "exportable"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "The data cards. Rows never ride here on tako_search — fetch an exportable card's rows with tako_contents on its url."
+    },
+    "web_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "snippet": {
+            "description": "Passages selected against the query; ' … ' joins non-contiguous passages. null → no relevant passage, url still fetchable.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content": {
+            "description": "Page text — only when the request asked for it.",
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "Web results."
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "total_cost_usd": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total_cost_usd"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cost-plus usage for this request (null when not metered)."
+    },
+    "guidance": {
+      "description": "Zero-card responses only: what this response is evidence about, and the one next action.",
+      "type": "string"
+    },
+    "metric_definitions": {
+      "description": "What each metric means (unit, basis, caveats), keyed by metric name, deduped across cards.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "source_notes": {
+      "description": "What each source is and how it builds its data, keyed by source name.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "related": {
+      "description": "Follow-up queries, each with a `query` to send as the next search request. Present only on a request that asked for them.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {}
+      }
+    },
+    "answer": {
+      "description": "The synthesized, citation-backed answer. Present only on an answer-endpoint call; the cards and web_results are its citations.",
+      "type": "string"
+    },
+    "structured_output": {
+      "description": "The JSON Schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {}
+    },
+    "structured_output_error": {
+      "description": "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill a schema you supplied.",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "cards",
+    "web_results",
+    "usage"
+  ],
+  "additionalProperties": {}
 }
 ```
 </details>
@@ -1775,6 +3218,52 @@ Annotations:
   "required": [
     "components"
   ]
+}
+```
+</details>
+
+<details><summary>Published output schema (JSON Schema)</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "webpage_url": {
+      "type": "string"
+    },
+    "pub_id": {
+      "type": "string"
+    },
+    "embed_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "image_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "dark_mode": {
+      "type": "boolean"
+    },
+    "width": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "height": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "additionalProperties": false
 }
 ```
 </details>

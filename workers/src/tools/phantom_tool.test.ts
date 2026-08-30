@@ -293,7 +293,7 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
       resolveToolSet("generic", new Set(["tako_agent"])),
     );
     expect(foreignToolNamesIn(text, "")).toEqual([]);
-    expect(text).toContain("proprietary live-data graph");
+    expect(text).toContain("knowledge graph of live structured data");
   });
 
   // POSITIVE, because every case above asserts only an ABSENCE. Over-filtering
@@ -309,12 +309,12 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     // tako_search sentence is "retrieves the cards and web links" since D4 —
     // it used to be "set `include_contents: true`", a parameter the tool no
     // longer takes.
-    expect(text).toContain("`tako_contents` reads one source in full");
-    expect(text).toContain("`tako_search` retrieves the cards and web links");
+    expect(text).toContain("`tako_contents` fetches a url in full");
+    expect(text).toContain("`tako_search` finds cards and web links");
     // Dropped: the one sentence naming a tool the allowlist leaves out.
     expect(text).not.toContain("tako_available_data");
     // And the shared routing paragraph is never a casualty of filtering.
-    expect(text).toContain("proprietary live-data graph");
+    expect(text).toContain("knowledge graph of live structured data");
   });
 
   it("the default listing still names all three, unfiltered", () => {

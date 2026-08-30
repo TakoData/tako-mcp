@@ -319,7 +319,7 @@ claude mcp add tako --transport http "https://mcp.tako.com/mcp?tools=search,avai
 <details>
 <summary><b>Getting values vs. getting pointers</b></summary>
 
-Two tools, one step apart — `tako_search` locates, `tako_contents` reads:
+Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 
 | You want… | Call | What you get back |
 |---|---|---|

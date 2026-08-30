@@ -13,10 +13,7 @@ import { AnswerRequest, AnswerResponse, SearchRequest, SearchResponse } from "..
 import { logWireGuardFailure } from "./_log.js";
 import {
   buildSearchOutput,
-  hoistSourceGlossary,
   type SearchOutputExtras,
-  slimCard,
-  slimWebResult,
   takoCardSchema,
   webResultSchema,
   type SearchedSources,
@@ -129,9 +126,6 @@ export async function runSearch(
   // zero cards a filter artefact.
   const strictPin =
     body.sources?.data?.strict === true && (body.sources?.data?.node_ids?.length ?? 0) > 0;
-  const { cards: slimCards, glossary } = hoistSourceGlossary(
-    cards.data.map((c) => slimCard(c, rowCap)),
-  );
   // Every field is guarded by `!= null` rather than assumed present: on the
   // search endpoint all four are absent, and `AnswerResponse` types three of
   // them as nullable.
@@ -143,9 +137,13 @@ export async function runSearch(
       ? { structured_output_error: wire.structured_output_error }
       : {}),
   };
-  const output = buildSearchOutput(
-    slimCards,
-    webResults.data.map((w) => slimWebResult(w, keepWebText)),
+  // The projection (projectCard/projectWebResult inside buildSearchOutput)
+  // replaced slimCard + hoistSourceGlossary here: raw wire arrays go in, the
+  // nine-field cards, five-field web results and the two deduped reference
+  // maps come out (spec: 2026-08-26-model-facing-surface-redesign).
+  return buildSearchOutput(
+    cards.data,
+    webResults.data,
     wire.request_id,
     wire.usage ?? null,
     ctx.env,
@@ -154,9 +152,7 @@ export async function runSearch(
     // The zero-result protocol routes through tools an anonymous caller does
     // not have; `buildZeroResultGuidance` branches on this (#272).
     ctx.tier ?? "authenticated",
+    { rowCap, keepWebText },
     extras,
   );
-  // Glossary spreads on LAST so it serializes after the data — truncating
-  // clients then drop boilerplate first.
-  return glossary === undefined ? output : { ...output, sources_glossary: glossary };
 }

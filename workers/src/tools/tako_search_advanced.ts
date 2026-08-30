@@ -71,7 +71,6 @@ import {
 import {
   renderSearchMarkdown,
   searchSlimOutputShape,
-  slimSearchStructured,
 } from "./_render_markdown.js";
 import type { SearchOutput } from "./_search_results.js";
 import { runSearch, type SearchCall, type SearchEndpoint } from "./_run_search.js";
@@ -377,9 +376,6 @@ const tako_search_advanced = {
   renderText(output, _ctx) {
     void _ctx;
     return renderSearchMarkdown(output as SearchOutput);
-  },
-  slimStructured(output) {
-    return slimSearchStructured(output as SearchOutput);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

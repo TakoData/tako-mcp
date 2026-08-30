@@ -14,14 +14,16 @@ import { ContentItem } from "../generated/schemas.js";
 import {
   CONTENT_META_KEYS,
   CONTENT_PAYLOAD_KEYS,
-  NARROWER_WEB_ATTEMPT,
+  buildReferenceMaps,
   buildSearchOutput,
   hoistSourceGlossary,
   orderCardsByUsefulness,
+  projectCard,
+  projectWebResult,
   slimCard,
   slimCardContent,
 } from "./_search_results.js";
-import type { ResultContent, TakoCard } from "./_search_results.js";
+import type { ResultContent, TakoCard, WebResult } from "./_search_results.js";
 
 import type { Env } from "../env.js";
 
@@ -347,13 +349,16 @@ describe("slimCard — values_hint on gated cards", () => {
   });
 });
 
+const OPTS = { rowCap: null, keepWebText: false } as const;
+
 describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
   it("attaches the full anti-retry protocol when cards AND web_results are both empty", () => {
-    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false, "authenticated");
-    // The load-bearing instruction: do not re-issue reworded searches.
-    expect(out.guidance).toMatch(/do not retry/i);
+    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false, "authenticated", OPTS);
+    // The load-bearing instruction: rewording does not converge and costs money.
+    expect(out.guidance).toMatch(/rewording alone will not change that/i);
+    expect(out.guidance).toMatch(/every retry is priced/i);
     expect(out.guidance).toMatch(/tako_available_data/);
   });
 
@@ -361,10 +366,10 @@ describe("buildSearchOutput — zero-card guidance", () => {
     // The common default-source miss: no data card, some web hits. This is
     // exactly the "reword and retry for a chart" loop case, so guidance must
     // not be silently skipped here.
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"], false, "authenticated");
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"], false, "authenticated", OPTS);
     expect(out.guidance).toMatch(/web_results/);
     // The verdict is scoped to the graph, not to the whole call.
-    expect(out.guidance).toMatch(/DATA GRAPH only/);
+    expect(out.guidance).toMatch(/data graph does not cover this query/i);
   });
 
   // THE MISFIRE. This branch used to say "do NOT re-search with rephrasings"
@@ -375,25 +380,24 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // carve-out must be explicit — a model reading this cannot be left to infer
   // that web refinement is still allowed.
   it("does not ban web re-searching when zero cards come back with web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"], false, "authenticated");
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"], false, "authenticated", OPTS);
     const g = out.guidance ?? "";
-    expect(g).toContain("Re-searching is NOT banned here");
-    // Names the fan-out that wins these questions.
-    expect(g).toMatch(/SEVERAL narrow queries/);
-    expect(g).toMatch(/one per entity, provider or site/);
-    // Any surviving blanket ban would read as one of these.
-    expect(g).not.toMatch(/do NOT re-search with rephrasings/i);
+    // The two-sentence rewrite keeps the MISFIRE fix by scoping: the no-reword
+    // verdict names the DATA GRAPH, never the call as a whole, so nothing here
+    // reads as a ban on refining a WEB query.
+    expect(g).toMatch(/data graph does not cover this query/i);
+    expect(g).not.toMatch(/do not re-?search/i);
+    expect(g).not.toMatch(/stop calling/i);
   });
 
   // The mirror of buildDataGapGuidance's `searchedWebToo` fix. A web-only search
   // has zero cards by construction, so the graph verdict below would be built
   // from evidence that does not exist.
   it("renders no graph verdict for a web-only search that DID return web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"], false, "authenticated");
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"], false, "authenticated", OPTS);
     const g = out.guidance ?? "";
-    expect(g).toMatch(/WEB source only/);
-    expect(g).not.toMatch(/DATA GRAPH only/);
-    expect(g).not.toMatch(/already shown the graph does not hold it/);
+    expect(g).toMatch(/web source only/i);
+    expect(g).not.toMatch(/data graph does not cover/i);
     // And none of the data-axis recovery, which does not apply to a deliberate
     // web-only narrow.
     expect(g).not.toMatch(/node_id/);
@@ -404,24 +408,20 @@ describe("buildSearchOutput — zero-card guidance", () => {
   });
 
   it("tailors the both-empty protocol for a data-only search (web fallback allowed on the single retry)", () => {
-    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"], false, "authenticated");
+    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"], false, "authenticated", OPTS);
     expect(out.guidance).toMatch(/tako_available_data/);
-    expect(out.guidance).toMatch(/"web"/);
     // No web-axis carve-out here: the web was never searched, so there is no
-    // empty web result to reinterpret. Step (2) already offers web as a fallback
-    // source, and both at once would contradict each other.
-    expect(out.guidance).not.toContain(NARROWER_WEB_ATTEMPT);
+    // empty web result to reinterpret.
+    expect(out.guidance).not.toMatch(/narrower web question/);
   });
 
-  // The ANSWER path's both-empty branch has always allowed ONE narrower web
-  // attempt; this branch used to end flatly at "stop calling Tako for this
-  // question". Same situation, opposite verdict, on the most common
-  // Tako-has-nothing path — so it is now one shared constant rather than a
-  // sentence in one of the two verdicts.
-  it("allows the same single narrower web attempt the answer verdict allows, when web was searched", () => {
-    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated");
-    expect(out.guidance).toContain(NARROWER_WEB_ATTEMPT);
-    expect(out.guidance).toMatch(/WEB axis only/);
+  // tako_answer's both-empty branch has always allowed ONE narrower web attempt;
+  // this branch used to end flatly at "stop calling Tako for this question". Same
+  // situation, opposite verdict, on the most common Tako-has-nothing path — so it
+  // is now one shared constant rather than a sentence in one of the two tools.
+  it("allows the same single narrower web attempt tako_answer allows, when web was searched", () => {
+    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated", OPTS);
+    expect(out.guidance).toMatch(/narrower web question/);
   });
 
   // A web-only search that came back empty has NO data verdict to report (the
@@ -429,27 +429,25 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // This branch used to ban that lever — "do NOT retry this query or
   // rephrasings of it" — which left the model with nothing to do at all.
   it("tells a web-only search to refine, and claims nothing about graph coverage", () => {
-    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"], false, "authenticated");
+    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"], false, "authenticated", OPTS);
     const g = out.guidance ?? "";
     expect(g).not.toMatch(/node_id/);
-    expect(g).toMatch(/Refine and re-search/i);
-    expect(g).toMatch(/NOT a coverage verdict/i);
-    expect(g).not.toMatch(/do NOT retry/i);
-    // Still not an invitation to loop forever.
-    expect(g).toMatch(/Stop only once/i);
+    expect(g).toMatch(/refine to one entity/i);
+    expect(g).toMatch(/says nothing about Tako's coverage/i);
+    expect(g).not.toMatch(/rewording alone will not change/i);
   });
 
   it("takes the DATA-verdict branch for a data-source search", () => {
     // Was "treats the legacy tako alias as data" and keyed on /node_id/ in the
     // guidance; the alias is gone and so is the pin recipe, so pin the branch
     // by the verdict it is the only one to state.
-    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false, "authenticated");
+    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false, "authenticated", OPTS);
     expect(out.guidance).toMatch(/tako_available_data/);
-    expect(out.guidance).toMatch(/do NOT retry/i);
+    expect(out.guidance).toMatch(/every retry is priced/i);
   });
 
   it("omits guidance when any card is present", () => {
-    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false, "authenticated");
+    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false, "authenticated", OPTS);
     expect(out.guidance).toBeUndefined();
   });
 });
@@ -733,8 +731,10 @@ describe("orderCardsByUsefulness", () => {
     const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
     const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00");
     const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00");
-    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false, "authenticated");
-    expect(out.cards[0]?.card_id).toBe("fresh_second");
+    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false, "authenticated", OPTS);
+    // The projection drops card_id; the widget lift is the observable — it
+    // must follow the REORDERED top card, not the wire order.
+    expect(out.pub_id).toBe("fresh_second");
     // The chart the host renders must not disagree with the document.
     expect(out.pub_id).toBe("fresh_second");
   });
@@ -797,6 +797,7 @@ describe("zero-card guidance never prescribes a tool the tier cannot call", () =
       shape.sources,
       shape.pin,
       tier,
+      OPTS,
     ).guidance ?? "";
 
   it("names no other tool on the free tier, on any branch", () => {
@@ -820,7 +821,7 @@ describe("zero-card guidance never prescribes a tool the tier cannot call", () =
     // caller the recovery that keeps them off the retry loop.
     const g = guidanceFor({ sources: ["data", "web"], web: false, pin: false }, "authenticated");
     expect(g).toMatch(/call tako_available_data/i);
-    expect(g).toMatch(/canonical name/i);
+    expect(g).toMatch(/canonical metric name/i);
   });
 
   it("keeps the shape rules the anonymous caller CAN act on", () => {
@@ -828,7 +829,7 @@ describe("zero-card guidance never prescribes a tool the tier cannot call", () =
     // shape is the one lever an anonymous caller still has.
     const g = guidanceFor({ sources: ["data", "web"], web: false, pin: false }, "free");
     expect(g).toMatch(/one entity \+ one metric/i);
-    expect(g).toMatch(/do NOT retry/i);
+    expect(g).toMatch(/rewording alone will not change/i);
     expect(g).toMatch(/signed-in connection/i);
   });
 });
@@ -838,9 +839,9 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
 
   it("sends the model to tako_available_data for the exact name", () => {
     for (const sources of [["data", "web"], ["data"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated").guidance ?? "";
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated", OPTS).guidance ?? "";
       expect(g).toContain("tako_available_data");
-      expect(g).toMatch(/canonical name/i);
+      expect(g).toMatch(/canonical metric name/i);
     }
   });
 
@@ -853,7 +854,7 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
     // `strictPin: false` is what `tako_search` always produces (it cannot send
     // either field), so this is that tool's every path.
     for (const sources of [["data", "web"], ["data"], ["web"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated").guidance ?? "";
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated", OPTS).guidance ?? "";
       expect(g, `sources=${sources.join(",")}`).not.toMatch(/node_ids|strict/i);
     }
   });
@@ -864,16 +865,16 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
     // hard filter returned nothing — a coverage verdict the request cannot
     // support (KE-812: pinned handles returned FEWER cards on 11 of 20 pairs),
     // and one that contradicts that tool's own description.
-    const g = buildSearchOutput([], [], "req", null, ENV, ["data", "web"], true, "authenticated").guidance ?? "";
+    const g = buildSearchOutput([], [], "req", null, ENV, ["data", "web"], true, "authenticated", OPTS).guidance ?? "";
     expect(g).toMatch(/hard filter/i);
     expect(g).toMatch(/node_ids/);
     // The verdict the unpinned branch gives must NOT appear here.
     expect(g).not.toMatch(/does not cover this query/i);
-    expect(g).not.toMatch(/do NOT retry/i);
+    expect(g).not.toMatch(/every retry is priced/i);
   });
 
   it("keeps the pin branch off the web-only path, which never applied a data filter", () => {
-    const g = buildSearchOutput([], [], "req", null, ENV, ["web"], true, "authenticated").guidance ?? "";
+    const g = buildSearchOutput([], [], "req", null, ENV, ["web"], true, "authenticated", OPTS).guidance ?? "";
     expect(g).not.toMatch(/hard filter/i);
   });
 });
@@ -1000,5 +1001,186 @@ describe("the payload/metadata split cannot drift", () => {
     // make the check above pass while covering a key that no longer exists.
     const stale = [...classified].filter((k) => !generated.includes(k)).sort();
     expect(stale, "classified key(s) no longer in ContentItem").toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The model-facing projection (spec: 2026-08-26-model-facing-surface-redesign)
+// ---------------------------------------------------------------------------
+
+describe("projectCard — the nine-field model-facing card", () => {
+  const wireCard = {
+    card_id: "c1",
+    title: "NVIDIA Data Center Revenue",
+    description: "Latest value was $75.2B in Apr 2026.",
+    exportable: true,
+    content: { data: null, records: null, dataset: null, total_rows: 26, truncated: false },
+    nodes: [{ id: "ent::nvidia::1", name: "NVIDIA", type: "entity" }],
+    card_type: "chart",
+    data_freshness: { coverage_end: "2026-04", data_as_of: "2026-04-26", last_updated: "2026-08-26T10:00:00Z" },
+    relevance: "High",
+    webpage_url: "https://tako.com/card/c1/",
+    image_url: "https://tako.com/api/v1/image/c1/",
+    embed_url: "https://tako.com/embed/c1/",
+    sources: [{ source_name: "Fiscal.ai", source_index: "data" }],
+    methodologies: [{ methodology_name: "m" }],
+    source_indexes: ["data"],
+    semantic_description: "restates the title",
+  } as unknown as TakoCard;
+
+  it("maps exactly the projected fields — plumbing and duplicates cannot leak", () => {
+    const out = projectCard(wireCard, null);
+    expect(out).toEqual({
+      exportable: true,
+      title: "NVIDIA Data Center Revenue",
+      description: "Latest value was $75.2B in Apr 2026.",
+      url: "https://tako.com/card/c1/",
+      source: "Fiscal.ai",
+      last_updated: "2026-08-26",
+      relevance: "High",
+      nodes: [{ id: "ent::nvidia::1", name: "NVIDIA", type: "entity" }],
+      total_rows: 26,
+    });
+    // The drops that motivated the projection, asserted by name so a
+    // regression names the field that came back.
+    const keys = Object.keys(out);
+    for (const dropped of [
+      "card_id",
+      "content",
+      "card_type",
+      "semantic_description",
+      "methodologies",
+      "source_indexes",
+      "image_url",
+      "embed_url",
+      "data_freshness",
+    ]) {
+      expect(keys, dropped).not.toContain(dropped);
+    }
+  });
+
+  it("last_updated is date-only", () => {
+    expect(projectCard(wireCard, null).last_updated).toBe("2026-08-26");
+  });
+
+  it("a locked card reports exportable: false and fabricates no row count", () => {
+    const locked = { ...wireCard, exportable: false, content: null } as unknown as TakoCard;
+    const out = projectCard(locked, null);
+    expect(out.exportable).toBe(false);
+    expect(out.total_rows).toBeUndefined();
+    expect(out).not.toHaveProperty("rows");
+  });
+
+  it("rows ride ONLY when the caller asked to inline them (advanced path)", () => {
+    const withRows = {
+      ...wireCard,
+      content: {
+        content_format: "json_compact",
+        cost: 0.002,
+        total_rows: 2,
+        truncated: false,
+        dataset: {
+          columns: [
+            { name: "t", type: "datetime" },
+            { name: "v", type: "number" },
+          ],
+          rows: [
+            ["2026-01-01", 1],
+            ["2026-02-01", 2],
+          ],
+        },
+      },
+    } as unknown as TakoCard;
+    expect(projectCard(withRows, null).rows).toBeUndefined();
+    const inlined = projectCard(withRows, "all");
+    expect(inlined.rows).toBeDefined();
+    const rows = inlined.rows as Record<string, unknown>;
+    expect(rows.dataset).toBeDefined();
+    // Null-noise and billing never ride.
+    expect(rows).not.toHaveProperty("data");
+    expect(rows).not.toHaveProperty("records");
+    expect(rows).not.toHaveProperty("cost");
+  });
+});
+
+describe("projectWebResult", () => {
+  const wire = {
+    title: "NVIDIA announces results",
+    url: "https://investor.nvidia.com/x",
+    snippet: "Record revenue of $81.6 billion.",
+    source_name: "investor.nvidia.com",
+    publish_date: "2026-08-25T12:00:01.000Z",
+    citation_number: null,
+    content: { cost: 0.001, truncated: false, data: null, records: null, dataset: null },
+  } as unknown as WebResult;
+
+  it("maps title/url/snippet/source/published and drops citation_number + content nulls", () => {
+    expect(projectWebResult(wire, false)).toEqual({
+      url: "https://investor.nvidia.com/x",
+      title: "NVIDIA announces results",
+      snippet: "Record revenue of $81.6 billion.",
+      source: "investor.nvidia.com",
+      published: "2026-08-25",
+    });
+  });
+
+  it("keeps a null snippet (page had no relevant passage) and a null published", () => {
+    const nulls = { ...wire, snippet: null, publish_date: null } as unknown as WebResult;
+    const out = projectWebResult(nulls, false);
+    expect(out.snippet).toBeNull();
+    expect(out.published).toBeNull();
+  });
+
+  it("keeps page text only when the request asked for it", () => {
+    const withText = {
+      ...wire,
+      content: { cost: 0.001, truncated: false, data: "full page text", records: null, dataset: null },
+    } as unknown as WebResult;
+    expect(projectWebResult(withText, false).content).toBeUndefined();
+    expect(projectWebResult(withText, true).content).toEqual({ data: "full page text", truncated: false });
+  });
+});
+
+describe("buildReferenceMaps — deduped across cards, conflicts never lose text", () => {
+  const defCard = (id: string, name: string, definition: string, source = "Fiscal.ai") =>
+    ({
+      card_id: id,
+      metric_definitions: [{ name, definition }],
+      sources: [{ source_name: source }],
+    }) as unknown as TakoCard;
+
+  it("one entry per distinct metric definition, however many cards repeat it", () => {
+    const { metric_definitions } = buildReferenceMaps([
+      defCard("a", "Revenue", "Reported revenue."),
+      defCard("b", "Revenue", "Reported revenue."),
+      defCard("c", "Revenue", "Reported revenue."),
+    ]);
+    expect(metric_definitions).toEqual({ Revenue: "Reported revenue." });
+  });
+
+  it("same name + different text disambiguates with the source suffix", () => {
+    const { metric_definitions } = buildReferenceMaps([
+      defCard("a", "Revenue", "Reported revenue.", "Fiscal.ai"),
+      defCard("b", "Revenue", "Trailing twelve months revenue.", "S&P"),
+    ]);
+    expect(metric_definitions).toEqual({
+      Revenue: "Reported revenue.",
+      "Revenue — S&P": "Trailing twelve months revenue.",
+    });
+  });
+
+  it("source_notes merges source_description and methodology paragraphs under the source name", () => {
+    const card = {
+      card_id: "a",
+      sources: [{ source_name: "Fiscal.ai", source_description: "Who the source is." }],
+      methodologies: [{ methodology_name: "m", methodology_description: "How it builds data." }],
+    } as unknown as TakoCard;
+    const { source_notes } = buildReferenceMaps([card]);
+    expect(source_notes).toEqual({ "Fiscal.ai": "Who the source is.\n\nHow it builds data." });
+  });
+
+  it("omits both maps when the backend sends no paragraphs", () => {
+    const bare = { card_id: "a", sources: [{ source_name: "Fiscal.ai" }] } as unknown as TakoCard;
+    expect(buildReferenceMaps([bare])).toEqual({});
   });
 });

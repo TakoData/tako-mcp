@@ -335,6 +335,18 @@ export interface ToolModule<
   description: string;
   inputSchema: InputSchema;
   outputSchema?: z.ZodType<Output>;
+  /**
+   * Optional per-surface outputSchema override, resolved by
+   * `outputSchemaForSurface` in `_surface.ts` (same pattern as
+   * {@link annotationsBySurface}). The canonical `outputSchema` is what
+   * the generic surface advertises and validates against; the chatgpt
+   * override exists for fields only that surface's widget reads (the
+   * chart auto-chain fields on `tako_search`): declaring them only there
+   * means `pickDeclared` strips them from `/mcp` responses without a
+   * per-tool slimming hook, and the generic surface's schema stays free
+   * of plumbing no `/mcp` client reads.
+   */
+  outputSchemaBySurface?: { chatgpt?: z.ZodType };
   annotations: ToolAnnotations;
   /**
    * Optional per-surface annotation overrides, merged over
@@ -466,6 +478,8 @@ export interface AnyToolModule {
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
   outputSchema?: z.ZodType<unknown>;
+  /** Per-surface outputSchema override — see {@link ToolModule.outputSchemaBySurface}. */
+  outputSchemaBySurface?: { chatgpt?: z.ZodType };
   annotations: ToolAnnotations;
   /** Per-surface annotation overrides — see {@link ToolModule.annotationsBySurface}. */
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };
