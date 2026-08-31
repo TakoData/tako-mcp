@@ -1287,8 +1287,8 @@ function buildZeroResultGuidance(
     coverage === "callable"
       ? `Call tako_available_data (free) to learn the canonical metric name and spend one retry on that name${narrowerWeb}; if it shows no coverage, answer from other sources.`
       : coverage === "gated"
-        ? "Make at most one reshaped retry (one entity + one metric; bare domains for website traffic), then answer from other sources — the coverage check, tako_available_data, needs a signed-in connection."
-        : `Make at most one reshaped retry (one entity + one metric; bare domains for website traffic)${narrowerWeb}, then answer from other sources.`;
+        ? "Make at most one reshaped retry (one metric per query; bare domains for website traffic), then answer from other sources — the coverage check, tako_available_data, needs a signed-in connection."
+        : `Make at most one reshaped retry (one metric per query; bare domains for website traffic)${narrowerWeb}, then answer from other sources.`;
   return [
     "No results: either the query shape is off or Tako does not cover this — rewording alone will not change that, and every retry is priced.",
     action,

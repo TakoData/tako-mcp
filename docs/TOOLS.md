@@ -1359,13 +1359,13 @@ Search Tako's data graph and the live web in one call: many results at once, as 
 
 It finds data; `tako_contents` fetches it. Each card carries a headline value, node ids, and a url — pass the url to `tako_contents` for rows (`exportable: true` cards) or a web result's full page text. When `exportable` is false the rows are locked — read the headline value from the card's `description`.
 
-Best for: breadth — fan out several narrow queries in parallel. Each query resolves one entity plus one metric ("Apple revenue", "Nvidia vs AMD gross margin"); compound queries retrieve poorly. To learn what Tako covers, or a metric's canonical name, run `tako_available_data` first, then search on the canonical name it returns.
+Best for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"); several metrics or topics in one query retrieve poorly. To learn what Tako covers, or a metric's canonical name, run `tako_available_data` first, then search on the canonical name it returns.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | yes |  | Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits". |
+| `query` | string | yes |  | Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Double-quote a multi-word name to keep it one entity ("tesla motors" club revenue); an unpaired quote disables quoting. Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits". |
 | `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
 | `country_code` | string | no |  | ISO 3166-1 alpha-2 country code for localized results. Omit it and the server uses US. Set it to localize for the user. |
 | `locale` | string | no |  | BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. Set it to localize for the user. |
@@ -1389,7 +1389,7 @@ Annotations:
     "query": {
       "type": "string",
       "minLength": 1,
-      "description": "Natural-language search query (e.g. \"US GDP growth\", \"Intel vs Nvidia revenue\"). Website-traffic data is keyed by domain — query \"openai.com monthly visits\", not \"OpenAI website visits\"."
+      "description": "Natural-language search query (e.g. \"US GDP growth\", \"Intel vs Nvidia revenue\"). Double-quote a multi-word name to keep it one entity (\"tesla motors\" club revenue); an unpaired quote disables quoting. Website-traffic data is keyed by domain — query \"openai.com monthly visits\", not \"OpenAI website visits\"."
     },
     "sources": {
       "default": [
@@ -1601,31 +1601,6 @@ Annotations:
       "additionalProperties": {
         "type": "string"
       }
-    },
-    "related": {
-      "description": "Follow-up queries, each with a `query` to send as the next search request. Present only on a request that asked for them.",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": {}
-      }
-    },
-    "answer": {
-      "description": "The synthesized, citation-backed answer. Present only on an answer-endpoint call; the cards and web_results are its citations.",
-      "type": "string"
-    },
-    "structured_output": {
-      "description": "The JSON Schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
-      "type": "object",
-      "properties": {},
-      "additionalProperties": {}
-    },
-    "structured_output_error": {
-      "description": "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill a schema you supplied.",
-      "type": "object",
-      "properties": {},
-      "additionalProperties": {}
     }
   },
   "required": [
@@ -1818,31 +1793,6 @@ The chart-widget fields are declared only here; the widget reads them from `wind
       "additionalProperties": {
         "type": "string"
       }
-    },
-    "related": {
-      "description": "Follow-up queries, each with a `query` to send as the next search request. Present only on a request that asked for them.",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": {}
-      }
-    },
-    "answer": {
-      "description": "The synthesized, citation-backed answer. Present only on an answer-endpoint call; the cards and web_results are its citations.",
-      "type": "string"
-    },
-    "structured_output": {
-      "description": "The JSON Schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
-      "type": "object",
-      "properties": {},
-      "additionalProperties": {}
-    },
-    "structured_output_error": {
-      "description": "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill a schema you supplied.",
-      "type": "object",
-      "properties": {},
-      "additionalProperties": {}
     },
     "pub_id": {
       "type": "string"
@@ -2540,7 +2490,7 @@ Annotations:
       }
     },
     "related": {
-      "description": "Follow-up queries, each with a `query` to send as the next search request. Present only on a request that asked for them.",
+      "description": "Follow-up queries, each with a `query` to send as the next search request. Present only when you set include_related.",
       "type": "array",
       "items": {
         "type": "object",
@@ -2549,17 +2499,17 @@ Annotations:
       }
     },
     "answer": {
-      "description": "The synthesized, citation-backed answer. Present only on an answer-endpoint call; the cards and web_results are its citations.",
+      "description": "The synthesized, citation-backed answer. Present only when you set include_answer: true; the cards and web_results are its citations.",
       "type": "string"
     },
     "structured_output": {
-      "description": "The JSON Schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+      "description": "The output_schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
       "type": "object",
       "properties": {},
       "additionalProperties": {}
     },
     "structured_output_error": {
-      "description": "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill a schema you supplied.",
+      "description": "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill an output_schema you supplied.",
       "type": "object",
       "properties": {},
       "additionalProperties": {}

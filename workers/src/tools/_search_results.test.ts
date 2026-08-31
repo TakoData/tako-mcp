@@ -556,7 +556,7 @@ describe("zero-card guidance never prescribes a tool the tier cannot call", () =
     // Removing the refusing steps must not leave an empty protocol: the query
     // shape is the one lever an anonymous caller still has.
     const g = guidanceFor({ sources: ["data", "web"], web: false, pin: false }, "free");
-    expect(g).toMatch(/one entity \+ one metric/i);
+    expect(g).toMatch(/one metric per query/i);
     expect(g).toMatch(/rewording alone will not change/i);
     expect(g).toMatch(/signed-in connection/i);
   });

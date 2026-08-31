@@ -68,7 +68,7 @@ import {
  *  reader for them, so they are not declared there and `pickDeclared`
  *  strips them from responses by construction. `request_id` is deliberately
  *  undeclared on both (OpenAI review). */
-const searchAdvertisedFields = {
+const searchCoreFields = {
   cards: z
     .array(projectedCardShape)
     // Holds on BOTH tools, because this shape is shared (see the `related`
@@ -93,48 +93,62 @@ const searchAdvertisedFields = {
     .record(z.string(), z.string())
     .optional()
     .describe("What each source is and how it builds its data, keyed by source name."),
-  // Names no input parameter on purpose. This shape is SHARED by `tako_search`
-  // and `tako_search_advanced`, and only the advanced tool can ask for these —
-  // so naming the parameter here would advertise, on the simple tool, a knob it
-  // does not have (phantom_tool.test.ts fails on exactly that). The advanced
-  // tool's own `include_related` description says how to ask.
+} as const;
+
+/** The four the ANSWER endpoint adds, declared only on the tool that can reach
+ *  it. `tako_search` hardcodes `endpoint: "search"` (tako_search.ts) and takes
+ *  no `include_related`, so all four are unreachable there — yet it published
+ *  them anyway from #273 until review round two, 885 chars (20%) of its output
+ *  schema describing fields it cannot return, with `answer` promising a
+ *  synthesis and nothing saying how to get one. Output-schema prose pays no
+ *  budget: `assertProseBudget` counts the description and the parameters only.
+ *
+ *  Because these now ship ONLY on `tako_search_advanced`, each describe names
+ *  the knob that produces it. That was banned while the shape was shared —
+ *  `phantom_tool.test.ts` fails a tool whose published text names a knob it
+ *  does not have — and the ban was met by deleting the explanation rather than
+ *  the field. Keep a describe and its knob on the same tool, or the guard
+ *  turns back into a gag. */
+const answerFoldFields = {
   related: z
     .array(z.looseObject({}))
     .optional()
     .describe(
-      "Follow-up queries, each with a `query` to send as the next search request. Present only on a request that asked for them.",
+      "Follow-up queries, each with a `query` to send as the next search request. Present only when you set include_related.",
     ),
   answer: z
     .string()
     .optional()
     .describe(
-      "The synthesized, citation-backed answer. Present only on an answer-endpoint call; the cards and web_results are its citations.",
+      "The synthesized, citation-backed answer. Present only when you set include_answer: true; the cards and web_results are its citations.",
     ),
-  // Neither describe names the input parameter that produces these, for the
-  // same reason `related` does not: this shape is SHARED with `tako_search`,
-  // which cannot send one, and phantom_tool.test.ts fails when a listed tool's
-  // published text names a knob it does not have.
   structured_output: z
     .looseObject({})
     .optional()
     .describe(
-      "The JSON Schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+      "The output_schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
     ),
   structured_output_error: z
     .looseObject({})
     .optional()
     .describe(
-      "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill a schema you supplied.",
+      "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill an output_schema you supplied.",
     ),
 } as const;
 
-export const searchSlimOutputShape = z.looseObject(searchAdvertisedFields);
+export const searchSlimOutputShape = z.looseObject(searchCoreFields);
 
 /** chatgpt-surface variant: adds the widget fields `window.openai.toolOutput`
  *  reads (the widget ignores `cards`/`web_results`). */
 export const searchChatgptOutputShape = z.looseObject({
-  ...searchAdvertisedFields,
+  ...searchCoreFields,
   ...autoChainShape,
+});
+
+/** `tako_search_advanced` only: the core plus the answer endpoint's four. */
+export const searchAdvancedOutputShape = z.looseObject({
+  ...searchCoreFields,
+  ...answerFoldFields,
 });
 
 // slimSearchStructured is gone: the explicit projection means the handler's

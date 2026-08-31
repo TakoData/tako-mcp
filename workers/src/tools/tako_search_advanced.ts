@@ -70,7 +70,7 @@ import {
 } from "../generated/schemas.js";
 import {
   renderSearchMarkdown,
-  searchSlimOutputShape,
+  searchAdvancedOutputShape,
 } from "./_render_markdown.js";
 import type { SearchOutput } from "./_search_results.js";
 import { runSearch, type SearchCall, type SearchEndpoint } from "./_run_search.js";
@@ -244,7 +244,7 @@ const inputSchema = z
 
 type Input = z.infer<typeof inputSchema>;
 
-const outputSchema = searchSlimOutputShape;
+const outputSchema = searchAdvancedOutputShape;
 type Output = z.infer<typeof outputSchema>;
 
 /**

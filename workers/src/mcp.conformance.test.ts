@@ -420,6 +420,40 @@ describe("realistic payloads validate against the published schema", () => {
     }
   });
 
+  // The mirror of the test below, and the one that has teeth: the four
+  // fold-added fields must be declared ONLY on the tool that can produce them.
+  // `tako_search` hardcodes `endpoint: "search"` and takes no
+  // `include_related`, so it can never return any of them — but it published
+  // all four from #273 until review round two, because both tools imported one
+  // shared shape. That cost 885 chars (20%) of its output schema and told the
+  // model `tako_search` returns a synthesized `answer`. Conformance cannot see
+  // this: every one of the four is optional, so a response that never carries
+  // them validates against a schema that declares them.
+  it("declares the four answer-endpoint fields on the advanced tool only", () => {
+    const fold = ["answer", "structured_output", "structured_output_error", "related"];
+    const advanced = publishedOutputJsonSchema(
+      outputSchemaForSurface(moduleFor("tako_search_advanced"), "generic") as NonNullable<
+        ReturnType<typeof outputSchemaForSurface>
+      >,
+    ) as { properties: Record<string, unknown> };
+    for (const key of fold) expect(advanced.properties, key).toHaveProperty(key);
+    // Both surfaces: the chatgpt variant is built by a separate spread, so it
+    // can regain a field the generic one dropped.
+    for (const surface of ["generic", "chatgpt"] as const) {
+      const simple = publishedOutputJsonSchema(
+        outputSchemaForSurface(moduleFor("tako_search"), surface) as NonNullable<
+          ReturnType<typeof outputSchemaForSurface>
+        >,
+      ) as { properties: Record<string, unknown> };
+      for (const key of fold) {
+        expect(simple.properties, `tako_search/${surface} declares ${key}`).not.toHaveProperty(key);
+      }
+      // Not vacuous: the core fields it CAN produce are still there.
+      expect(simple.properties, `tako_search/${surface}`).toHaveProperty("cards");
+      expect(simple.properties, `tako_search/${surface}`).toHaveProperty("guidance");
+    }
+  });
+
   // Conformance alone cannot see a STRIP: all four fold-added fields are
   // optional, so a payload that lost them still validates. Assert presence
   // separately, the same belt-and-braces shape as `sources_glossary` above.

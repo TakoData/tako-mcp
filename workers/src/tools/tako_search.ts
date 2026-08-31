@@ -40,7 +40,7 @@ const DESCRIPTION = [
   "",
   // `Best for:` verbatim: AGENTS.md's tool-description rule, and the form the
   // other three default tools already use in docs/TOOLS.md.
-  'Best for: breadth — fan out several narrow queries in parallel. Each query resolves one entity plus one metric ("Apple revenue", "Nvidia vs AMD gross margin"); compound queries retrieve poorly. To learn what Tako covers, or a metric\'s canonical name, run `tako_available_data` first, then search on the canonical name it returns.',
+  'Best for: breadth — fan out several narrow queries in parallel. Each query resolves one metric — for one entity, or a comparison set ("Apple revenue", "Nvidia vs AMD gross margin"); several metrics or topics in one query retrieve poorly. To learn what Tako covers, or a metric\'s canonical name, run `tako_available_data` first, then search on the canonical name it returns.',
 ].join("\n");
 
 const inputSchema = z.object({
@@ -48,7 +48,7 @@ const inputSchema = z.object({
     .string()
     .min(1)
     .describe(
-      'Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits".',
+      'Natural-language search query (e.g. "US GDP growth", "Intel vs Nvidia revenue"). Double-quote a multi-word name to keep it one entity ("tesla motors" club revenue); an unpaired quote disables quoting. Website-traffic data is keyed by domain — query "openai.com monthly visits", not "OpenAI website visits".',
     ),
   // looseArray: hosts that stringify the array they meant to send (observed
   // from OpenBB Copilot) get it coerced instead of a -32602. `commaSeparated` is

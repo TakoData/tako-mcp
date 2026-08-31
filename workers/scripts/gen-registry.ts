@@ -585,7 +585,15 @@ export function diffRegistryParameters(
 
 export const DESCRIPTION_MAX_CHARS = 1_000;
 export const DESCRIPTION_MAX_LINES = 6;
-export const PARAM_MAX_CHARS = 200;
+// 320, raised from 200 on the pilot's review round. The per-param cap is a
+// SHAPE rule, not a cost rule: what a host pays per request is
+// TOOL_ENTRY_MAX_CHARS, and moving a sentence between the description and a
+// param moves the entry total by zero. This cap exists to stop tool-description
+// prose leaking down into a param, and 320 still forbids that while leaving
+// room for the rules a model needs while it BUILDS the argument — query
+// quoting syntax being the case that forced the number. Raise the entry cap,
+// not this one, if the real complaint is cost.
+export const PARAM_MAX_CHARS = 320;
 export const TOOL_ENTRY_MAX_CHARS = 2_000; // description + every param description
 export const INSTRUCTIONS_MAX_CHARS = 900;
 
