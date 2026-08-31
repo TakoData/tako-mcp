@@ -1,0 +1,37 @@
+{
+  "_note": "Canonical wire fixture for docs/TOOLS.md samples: a GET /api/v1/graph/related MAP response (no `relation` requested). gen-registry runs it through the REAL projectRelated -> renderGraphRelatedMarkdown pipeline. Two groups, because one group cannot show that the map is a list; a long `description` so the sample proves the FOCAL_DESCRIPTION_MAX truncation a reader would otherwise have to take on faith.",
+  "node": {
+    "id": "ent::nvidia_corporation::5ea55992",
+    "type": "entity",
+    "name": "NVIDIA Corporation",
+    "subtype": "Companies",
+    "label": "ORG",
+    "aliases": ["NVDA", "NVIDIA", "NVIDIA Corp"],
+    "description": "NVIDIA Corporation operates as a data center scale AI infrastructure company. The company operates through two segments, Compute & Networking, and Graphics. The Compute & Networking segment provides data center accelerated computing and networking platforms, artificial intelligence solutions and software, and automotive platforms. The Graphics segment offers GeForce GPUs for gaming and PCs."
+  },
+  "relations": [
+    {
+      "key": "metrics",
+      "kind": "data",
+      "label": "Related Metrics",
+      "total": 250,
+      "total_capped": true,
+      "items": [
+        { "id": "mt::evntm_revenue::6bd6c301", "type": "metric", "name": "EV/NTM Revenue", "subtype": null, "label": "METRIC" },
+        { "id": "mt::gross_margin_::9a2b184a", "type": "metric", "name": "Gross Margin (%)", "subtype": null, "label": "METRIC" },
+        { "id": "mt::revenues::0cae208b", "type": "metric", "name": "Revenues", "subtype": null, "label": "METRIC" }
+      ]
+    },
+    {
+      "key": "rel:in_industry",
+      "kind": "related",
+      "label": "In industry",
+      "total": 2,
+      "total_capped": false,
+      "items": [
+        { "id": "ent::semiconductor::5534d404", "type": "entity", "name": "Semiconductor", "subtype": "Industries", "label": null },
+        { "id": "ent::ai_and_machine_learn::7b0b41d5", "type": "entity", "name": "AI and Machine Learning", "subtype": "Industries", "label": null }
+      ]
+    }
+  ]
+}

@@ -27,23 +27,33 @@ import { djangoGet } from "../django.js";
 import {
   ALTERNATES_SHOWN,
   buildMatch,
-  buildTieSummary,
   candidateMatch,
   candidateRef,
   DEFAULT_CANDIDATES,
   MAX_CANDIDATES,
   buildNextCall,
   buildPairNextCall,
-  buildPairSummary,
-  buildSummary,
   coverageKindFor,
+  COVERAGE_ITEMS_SHOWN,
+  guidanceEntityUnresolved,
+  guidanceLowConfidence,
+  guidanceMetricUnresolved,
+  guidanceNoCoverage,
+  guidanceNoMatch,
+  guidanceSwapped,
+  guidanceTie,
+  guidanceUnavailable,
+  guidanceUnlinked,
+  projectCandidate,
+  projectMatch,
+  projectRef,
+  searchToolFor,
   RENDER_FULL_N,
   SELECT_TOP_N,
   SHELL_COVERAGE_MAX,
   hasLiveCoverage,
   isDomainShaped,
   oneLine,
-  MAX_COVERAGE_NAMES,
   MAX_COVERAGE_PAGES,
   metricListMatch,
   PAGE_LIMIT,
@@ -53,7 +63,13 @@ import {
   resolvedOnlyMatch,
   unavailableMatch,
 } from "./_available_data.js";
-import type { CoverageMatch, OtherMatch, PairResolution, ResolvedRef } from "./_available_data.js";
+import type {
+  AvailableDataOutput,
+  CoverageMatch,
+  OtherMatch,
+  PairResolution,
+  ResolvedRef,
+} from "./_available_data.js";
 import { confidentMatch, gateCandidates, mentionedWhole, sameTokens } from "./_match_gate.js";
 import {
   PAIR_ENTITY_PROBES,
@@ -71,8 +87,6 @@ import {
 import {
   availableDataSlimOutputShape,
   renderAvailableDataMarkdown,
-  slimAvailableDataStructured,
-  type AvailableDataFullOutput,
 } from "./_render_markdown.js";
 import type { graphNodeSchema, graphRelationSchema } from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
@@ -98,37 +112,25 @@ const NER_LABELS = [
 // (9 of 15) stands and predates that rule; any replacement example has to be
 // re-measured against the equality gate before it goes in here.
 const DESCRIPTION = [
-  "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.",
+  "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under. Free and fast.",
   "",
-  "Ask it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.",
+  "Ask it when the question is coverage itself, or before a priced search when you need a metric's canonical name. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.",
   "",
-  "Worth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).",
-  "",
-  "Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).",
-  "",
-  "Tips:",
-  'Know the measure? Split it: q="Carnival", metric="passenger cruise days" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q="Nvidia", metric="data center" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.',
-  "One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.",
-  'When `q` names both an entity and a metric ("US core PCE" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.',
-  "On the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.",
-  "Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).",
-  "Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.",
-  "A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.",
-  "This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.",
+  "Search on the canonical names it returns, not your own phrasing; that is what recovers cards. A name here means the graph tracks it, not that a card exists, so if the follow-up search comes back empty, report the gap instead of rephrasing. Hand a node id to `tako_graph_related` to see what else connects to it.",
 ].join("\n");
 
 const inputSchema = z.object({
   q: z.string().min(2).describe(
-    'The NAME of the entity (or metric) to look up, min 2 chars — e.g. "Carnival", "United States", "Nvidia". Put the measure in `metric`, not here.',
+    'The entity or metric to look up by name — "Carnival", "United States", "Nvidia". Put the measure in `metric`, not here.',
   ),
   metric: z.string().min(2).optional().describe(
-    'The measure you want, when you already know it — e.g. "gross margin", "passenger cruise days", "capex". Supplying it is the FAST path: the tool resolves the entity+metric pair directly and hands back a runnable next_call, instead of listing every metric the entity has. Omit it only to browse what exists.',
+    'The measure, when you already know it — "gross margin", "capex". Supplying it resolves the entity+metric pair directly; omit it to browse everything the entity has.',
   ),
   types: z.enum(["entity", "metric"]).optional().describe(
-    'Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both.',
+    "Narrow resolution to one kind, an entity or a metric. Omit to resolve both.",
   ),
   label: z.enum(NER_LABELS).optional().describe(
-    "NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`.",
+    "NER label to prefer for `q` — a boost, not a filter. Set it when you can categorize the term: company → ORG, place → GPE, person → PERSON. It never applies to `metric`.",
   ),
   // `limit` is NOT a display knob. It sizes every `graph/search` this tool
   // runs, including the `metric` probe, and two later steps scan the whole
@@ -137,110 +139,73 @@ const inputSchema = z.object({
   // `topOfEachKind` can surface a metric that only appears deep in the list
   // (so `limit` decides whether the same `q` answers confidently or returns a
   // tie with `next_call: null`). A caller raising it to "see more options" is
-  // entitled to know it can get a different answer, not just a longer one.
+  // entitled to know it can get a different answer, not just a longer one —
+  // which is the half of the old 484-char describe that survived the cut.
   limit: z.number().int().min(1).max(MAX_CANDIDATES).optional().describe(
-    "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` names, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
+    "How many candidates to resolve for each of `q` and `metric`. Raising it widens what the tool considers, not just what it shows: a deeper metric can become the one `next_call` names.",
   ),
 });
 
 type Input = z.infer<typeof inputSchema>;
 
-const resolvedRefSchema = z.object({
-  node_id: z.string(),
-  name: z.string(),
-  type: z.string(),
-});
-
-// Mirrors `NextCall` in _available_data.ts. No node_ids / strict: tako_search
-// takes neither after the D4 split, and a handle labelled "run verbatim" that
-// the named tool rejects is worse than no handle at all.
-const nextCallSchema = z.object({
-  tool: z.enum(["tako_search"]),
-  query: z.string(),
-});
-
-const coverageGroupSchema = z.object({
-  kind: z.enum(["metrics", "entities"]),
-  // name + node_id pairs (canonical) and the names-only projection the text
-  // channel renders. See CoverageItem in _available_data.ts for why the id
-  // must survive: a pinned follow-up is only precise with the node id.
-  items: z.array(z.object({ name: z.string(), node_id: z.string() })),
-  names: z.array(z.string()),
-  total: z.number().int(),
-  truncated: z.boolean(),
-  capped: z.boolean(),
-});
-
-const coverageMatchSchema = z.object({
-  node_id: z.string(),
-  name: z.string(),
-  type: z.string(),
-  subtype: z.string().nullable(),
-  label: z.string().nullable(),
-  aliases: z.array(z.string()),
-  unavailable: z.boolean().optional(),
-  // Set by `metricListMatch` when the list was scoped by the caller's `metric`
-  // phrase; the pair renderer reads it to say what the list is filtered to.
-  filter: z.string().optional(),
-  coverage: coverageGroupSchema,
-});
-
-// INTERNAL full output shape (types the handler's return value). NOT the
-// advertised schema: the summary + coverage-name lists reach the model as
-// rendered markdown (renderText below), and the ADVERTISED outputSchema is
-// the slim structuredContent shape (the verdict, the matches with their node
-// ids, and next_call) so hosts that count structuredContent toward context
-// don't pay for the full name lists twice.
-// NO field here carries a `.describe()`, and none may. This schema types the
-// handler's return; `availableDataSlimOutputShape` is what `tools/list`
-// publishes, so only that copy reaches a model — and only that copy is guarded
-// (`_pin_form.test.ts` walks published schemas, so pin vocabulary added here
-// would pass clean while the same string in the slim shape fails).
-//
-// Two hand-maintained copies of the same model-facing prose drift, and this one
-// already did: `next_call` kept a description whose tail said "the entity has
-// few enough metrics that the top one is unambiguous" while the PUBLISHED copy
-// said "Null when no metric resolved" — the accurate half was the one no model
-// could read. The condition now lives in the published copy alone. Read the
-// semantics there.
-export const fullOutputSchema = z.object({
-  found: z.boolean(),
-  verified: z.enum(["coverage", "pair", "unlinked", "resolution"]).optional(),
-  query: z.string(),
-  summary: z.string(),
-  matches: z.array(coverageMatchSchema),
-  confident: z.boolean().optional(),
-  other_matches: z.array(
-    z.object({
-      node_id: z.string(),
-      name: z.string(),
-      type: z.string(),
-      subtype: z.string().nullable(),
-      label: z.string().nullable(),
-      aliases: z.array(z.string()),
-      // Present for candidates that were coverage-probed but not rendered in
-      // full — enough to switch to one without re-running the tool.
-      coverage_total: z.number().int().optional(),
-      // True when the server stopped counting — `coverage_total` is a floor.
-      coverage_capped: z.boolean().optional(),
-    }),
-  ),
-  next_call: nextCallSchema.nullable(),
-  // Lookup path (`metric` supplied) — the resolved pair and its runners-up.
-  metric_query: z.string().optional(),
-  entity: resolvedRefSchema.nullable().optional(),
-  metric: resolvedRefSchema.nullable().optional(),
-  entity_alternates: z.array(resolvedRefSchema).optional(),
-  metric_alternates: z.array(resolvedRefSchema).optional(),
-});
-type FullOutput = z.infer<typeof fullOutputSchema>;
-
-// Advertised (slim) schema — see the fullOutputSchema comment above.
+// The ADVERTISED output schema: the PROJECTED shape (`projectMatch` /
+// `projectCandidate` in `_available_data.ts`), typed field by field. The
+// handler returns that projection directly, so there is no second
+// hand-maintained copy of the shape to drift — the pair of schemas this
+// replaced already had: `next_call`'s internal describe claimed one condition
+// while the published copy claimed another, and the accurate half was the one
+// no model could read.
 const outputSchema = availableDataSlimOutputShape;
 type Output = z.infer<typeof outputSchema>;
 
 const searchShape = z.object(graphSearchOutputShape);
 const relatedShape = z.object(graphRelatedOutputShape);
+
+/**
+ * The lookup path's verdicts. Three of them, in the order they foreclose each
+ * other: no entity to look anything up on, no metric that matched, or a pair
+ * the graph holds no edge between. A confirmed pair gets NONE — `verified:
+ * "pair"` already states it, and "run next_call verbatim" is a static lesson
+ * that lives in the tool description.
+ */
+function guidanceForPair(
+  pair: PairResolution,
+  entityQuery: string,
+  metricQuery: string,
+  metricConfident: boolean,
+  verified: PairVerdict | undefined,
+  searchTool: "tako_search" | "tako_search_advanced" | null,
+): { guidance?: string } {
+  if (pair.entity === null) {
+    return { guidance: guidanceEntityUnresolved(entityQuery, searchTool) };
+  }
+  if (pair.metric === null || !metricConfident) {
+    return { guidance: guidanceMetricUnresolved(pair.entity.name, metricQuery) };
+  }
+  if (verified === "unlinked") {
+    return { guidance: guidanceUnlinked(pair.entity.name, pair.metric.name) };
+  }
+  return {};
+}
+
+/**
+ * The two discovery-path verdicts the fields cannot state on their own.
+ *
+ * A drilled node with `total: 0` and a drilled node whose lookup FAILED both
+ * serialize as an empty coverage list, and the difference decides what the
+ * caller does next — report a gap, or retry. Everything else on this path is
+ * the fields speaking for themselves, so it gets no guidance at all.
+ */
+function guidanceForDrilled(
+  matches: readonly CoverageMatch[],
+  searchTool: "tako_search" | "tako_search_advanced" | null,
+): { guidance?: string } {
+  const first = matches[0];
+  if (first === undefined) return {};
+  if (first.unavailable === true) return { guidance: guidanceUnavailable(first.name) };
+  if (matches.some(hasLiveCoverage)) return {};
+  return { guidance: guidanceNoCoverage(first.name, first.coverage.kind, searchTool) };
+}
 
 const tako_available_data = {
   name: "tako_available_data",
@@ -273,8 +238,8 @@ const tako_available_data = {
       field: "graph/related limit (coverage drill)",
       value: String(PAGE_LIMIT),
       note:
-        `Page size for the rendered coverage list; paging stops at ${MAX_COVERAGE_NAMES} names ` +
-        `or ${MAX_COVERAGE_PAGES} pages.`,
+        `Page size for the coverage drill; ${MAX_COVERAGE_PAGES} page is fetched and the ` +
+        `headline-first slice of ${COVERAGE_ITEMS_SHOWN} entries is what both channels render.`,
     },
     {
       field: "graph/related limit (candidate probes)",
@@ -286,9 +251,11 @@ const tako_available_data = {
         `probe. A shell rank-0 costs one more drill.`,
     },
   ],
-  // Declared as the FULL internal shape (assignable to the slim advertised
-  // Output via its loose index signature) so tests and hooks keep real types.
-  async handler(input: Input, ctx): Promise<FullOutput> {
+  async handler(input: Input, ctx): Promise<AvailableDataOutput> {
+    // The search tool THIS connection registers, resolved once. Every handle
+    // and every guidance sentence below names it rather than a constant —
+    // `?tools=available_data,search_advanced` registers no `tako_search`.
+    const searchTool = searchToolFor(ctx.registeredTools);
     // One `graph/search` probe. Extracted because the LOOKUP path runs two of
     // them (entity + metric) in parallel; the discovery path runs one.
     //
@@ -413,7 +380,7 @@ const tako_available_data = {
               // bug must degrade to a shorter list, never an infinite loop.
               cursor = page.items.length === 0 || next === cursor ? null : next;
               // pages < MAX_COVERAGE_PAGES is the hard round-trip ceiling.
-            } while (cursor !== null && items.length < MAX_COVERAGE_NAMES && pages < MAX_COVERAGE_PAGES);
+            } while (cursor !== null && items.length < COVERAGE_ITEMS_SHOWN && pages < MAX_COVERAGE_PAGES);
             return buildMatch(node, group === null ? null : { ...group, items });
           } catch (err) {
             console.warn(
@@ -635,16 +602,12 @@ const tako_available_data = {
         // no next_call, so nothing downstream acts on the unusable pair.
         return {
           found: false,
-          query: input.q,
-          metric_query: metricQuery,
-          summary: `The arguments look swapped: "${oneLine(input.q)}" resolves to a METRIC (${oneLine(qUntyped[0]?.name ?? "?")}) and "${oneLine(metricQuery)}" to an ENTITY (${oneLine(metricUntyped[0]?.name ?? "?")}). Nothing was looked up. Re-run with them the other way round: q="${oneLine(metricQuery)}", metric="${oneLine(input.q)}".`,
+          guidance: guidanceSwapped(input.q, metricQuery),
           matches: [],
-          other_matches: [],
+          candidates: [],
           next_call: null,
           entity: null,
           metric: null,
-          entity_alternates: [],
-          metric_alternates: [],
         };
       }
       // The ENTITY half does NOT fail open here. On the discovery path a
@@ -829,21 +792,13 @@ const tako_available_data = {
         return {
           found: drilled.some(hasLiveCoverage),
           verified: "coverage",
-          query: input.q,
-          metric_query: metricQuery,
-          summary: buildPairSummary({
-            entityQuery: input.q,
-            metricQuery,
-            pair,
-            domainShaped: isDomainShaped(input.q),
-          }),
-          matches: drilled,
-          other_matches: [],
+          guidance: guidanceMetricUnresolved(pair.entity.name, metricQuery),
+          matches: drilled.map(projectMatch),
+          candidates: [],
           next_call: null,
-          entity: pair.entity,
+          entity: projectRef(pair.entity),
           metric: null,
-          entity_alternates: pair.entity_alternates,
-          metric_alternates: [],
+          entity_candidates: pair.entity_alternates.map(projectRef),
         };
       }
 
@@ -858,35 +813,31 @@ const tako_available_data = {
           (listMatch !== null ||
             (pair.metric !== null && pinnedConfident && verified !== "unlinked")),
         ...(pair.entity === null ? {} : { verified }),
-        query: input.q,
-        metric_query: metricQuery,
-        summary: buildPairSummary({
-          entityQuery: input.q,
-          metricQuery,
+        ...guidanceForPair(
           pair,
-          domainShaped: isDomainShaped(input.q),
-          metricConfident: pinnedConfident,
-          verified: pair.entity === null ? undefined : verified,
-          entityMetricMatches: entityMetricMatches.map((n) => n.name),
-          metricList: listNames,
-          metricListCapped: !listComplete,
-        }),
-        matches,
-        other_matches: [],
+          input.q,
+          metricQuery,
+          pinnedConfident,
+          pair.entity === null ? undefined : verified,
+          searchTool,
+        ),
+        matches: matches.map(projectMatch),
+        candidates: [],
         // No pinned/unpinned fork any more: the handle never pins, so an
         // `unlinked` verdict and a confirmed pair produce the same shape. What
-        // `unlinked` still changes is the SUMMARY, which tells the model the
-        // graph holds no edge between the two halves.
+        // `unlinked` still changes is the `guidance` above, which tells the
+        // model the graph holds no edge between the two halves.
         //
         // The `pair.metric !== null` half is DEFENSIVE, not load-bearing:
         // `buildPairNextCall` already returns null on a null metric. It states
         // the precondition where the reader can see it, next to a `found` that
         // can now be true with no metric at all.
-        next_call: pair.metric !== null && pinnedConfident ? buildPairNextCall(pair) : null,
-        entity: pair.entity,
-        metric: pair.metric,
-        entity_alternates: pair.entity_alternates,
-        metric_alternates: pair.metric_alternates,
+        next_call:
+          pair.metric !== null && pinnedConfident ? buildPairNextCall(pair, searchTool) : null,
+        entity: pair.entity === null ? null : projectRef(pair.entity),
+        metric: pair.metric === null ? null : projectRef(pair.metric),
+        entity_candidates: pair.entity_alternates.map(projectRef),
+        metric_candidates: pair.metric_alternates.map(projectRef),
       };
     }
 
@@ -898,10 +849,9 @@ const tako_available_data = {
     if (results.length === 0) {
       return {
         found: false,
-        query: input.q,
-        summary: buildSummary({ query: input.q, matches: [], otherMatches: [] }),
+        guidance: guidanceNoMatch(input.q, searchTool),
         matches: [],
-        other_matches: [],
+        candidates: [],
         next_call: null,
       };
     }
@@ -928,16 +878,14 @@ const tako_available_data = {
         // Nothing was drilled here — these nodes are resolutions the summary is
         // about to disclaim, so claiming a coverage check would overstate it.
         verified: "resolution",
-        confident: false,
-        query: input.q,
-        summary: buildSummary({
-          confident: false,
-          query: input.q,
-          matches: resolvedOnly,
-          otherMatches: unlisted,
-        }),
-        matches: resolvedOnly,
-        other_matches: unlisted,
+        guidance: guidanceLowConfidence(input.q, searchTool),
+        // `matches` stays EMPTY here. These nodes were resolved and then
+        // disclaimed, and shipping them as matches is what let the structured
+        // channel report coverage on a response whose prose said the names are
+        // "almost certainly NOT what you asked for". They ride as candidates,
+        // which is what they are, in both channels.
+        matches: [],
+        candidates: [...resolvedOnly.map(projectMatch), ...unlisted.map(projectCandidate)],
         // No vetted target, so no runnable handle — a priced call must not be
         // spent on a resolution we just disclaimed.
         next_call: null,
@@ -1017,16 +965,9 @@ const tako_available_data = {
         return {
           found: true,
           verified: "coverage",
-          confident: true,
-          query: input.q,
-          summary: buildTieSummary({
-            query: input.q,
-            entity: entityMatch,
-            metric: metricMatch,
-            otherMatches: tieOthers,
-          }),
-          matches: [entityMatch, metricMatch],
-          other_matches: tieOthers,
+          guidance: guidanceTie(input.q, entityMatch.name, metricMatch.name),
+          matches: [entityMatch, metricMatch].map(projectMatch),
+          candidates: tieOthers.map(projectCandidate),
           next_call: null,
         };
       }
@@ -1144,28 +1085,22 @@ const tako_available_data = {
       // `found` carries the outcome. True for a drilled node with zero coverage
       // too: that is a real, checked answer.
       verified: "coverage",
-      confident: true,
-      query: input.q,
-      summary: buildSummary({
-        query: input.q,
-        matches,
-        otherMatches: other_matches,
-      }),
-      matches,
-      other_matches,
+      // Only where the fields cannot state the verdict: a drilled node that
+      // genuinely holds nothing, or one whose lookup failed. The happy path
+      // gets no guidance — `matches` and `coverage` already say it.
+      ...guidanceForDrilled(matches, searchTool),
+      matches: matches.map(projectMatch),
+      candidates: other_matches.map(projectCandidate),
       // The discovery-to-fetch handle: agents that stop at prose re-derive a
       // query and often miss; this is the same example the summary names, in
       // directly runnable form. Gated on a coverage list small enough to make
       // the target unambiguous — see buildNextCall.
-      next_call: buildNextCall(matches),
+      next_call: buildNextCall(matches, searchTool),
     };
   },
   renderText(output, _ctx) {
     void _ctx;
-    return renderAvailableDataMarkdown(output as unknown as AvailableDataFullOutput);
-  },
-  slimStructured(output) {
-    return slimAvailableDataStructured(output as unknown as AvailableDataFullOutput);
+    return renderAvailableDataMarkdown(output as AvailableDataOutput);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

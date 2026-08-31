@@ -17,7 +17,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  availableDataSlimOutputShape,
   renderAgentRunMarkdown,
   renderAvailableDataMarkdown,
   renderContentsText,
@@ -25,12 +24,12 @@ import {
   renderSearchMarkdown,
   renderVisualizeMarkdown,
   slimAgentRunStructured,
-  slimAvailableDataStructured,
-  STRUCTURED_COVERAGE_ITEMS,
   type VisualizeOutput,
 } from "./_render_markdown.js";
+import { projectRelated } from "./_graph.js";
 import { buildSearchOutput } from "./_search_results.js";
 import { buildVisualizeOutput } from "./tako_visualize.js";
+import type { AvailableDataOutput, ProjectedMatch } from "./_available_data.js";
 import type { ProjectedCard, SearchOutput, TakoCard, WebResult } from "./_search_results.js";
 import type { Env } from "../env.js";
 
@@ -295,147 +294,148 @@ describe("renderSearchMarkdown with an answer (include_answer path)", () => {
     expect(md).toContain("27.1");
   });
 });
-
-describe("renderAvailableDataMarkdown + slim", () => {
-  const output = {
+describe("renderAvailableDataMarkdown", () => {
+  const match = (over: Partial<ProjectedMatch> = {}): ProjectedMatch => ({
+    id: "ent::nvda::1",
+    name: "NVIDIA Corporation",
+    type: "entity",
+    kind: "Companies",
+    aliases: ["NVDA"],
+    coverage: {
+      total: 250,
+      total_capped: true,
+      truncated: true,
+      items: [
+        { name: "Revenues", id: "mt::rev::1" },
+        { name: "Gross Margin (%)", id: "mt::gm::1" },
+      ],
+    },
+    ...over,
+  });
+  const out = (over: Partial<AvailableDataOutput> = {}): AvailableDataOutput => ({
     found: true,
-    query: "Tesla",
-    summary: "Tako's proprietary data has live coverage of 1 match for \"Tesla\":",
-    matches: [
-      {
-        node_id: "ent_tsla",
-        name: "Tesla, Inc.",
-        type: "entity",
-        subtype: "Companies",
-        label: "ORG",
-        aliases: ["Tesla"],
-        coverage: {
-          kind: "metrics",
-          items: [
-            { name: "Revenue", node_id: "mt_rev" },
-            { name: "Gross Margin", node_id: "mt_gm" },
-          ],
-          names: ["Revenue", "Gross Margin"],
-          total: 187,
-          truncated: true,
-          capped: false,
-        },
-      },
-    ],
-    other_matches: [
-      { node_id: "ent_x", name: "Tesla Energy", type: "entity", subtype: "Companies", label: "ORG", aliases: [], coverage_total: 3, coverage_capped: false },
-    ],
-    next_call: { tool: "tako_search" as const, query: "Tesla, Inc. Revenue", node_ids: ["mt_rev"], strict: true },
-  };
-
-  it("renders summary, coverage names with node id, truncation note, and next_call fence", () => {
-    const md = renderAvailableDataMarkdown(output);
-    expect(md.startsWith("Tako's proprietary data")).toBe(true);
-    expect(md).toContain("**Tesla, Inc.** (`ent_tsla`) — metrics (187 total):");
-    expect(md).toContain("Revenue, Gross Margin");
-    expect(md).toContain("…and 185 more not shown (treat a name you don't see as unconfirmed, not absent).");
-    expect(md).toContain('```json\n{"tool":"tako_search"');
+    verified: "coverage",
+    matches: [match()],
+    candidates: [],
+    next_call: null,
+    ...over,
   });
 
-  // structuredContent used to be {found, query, next_call} — with next_call
-  // null on every real query, that left the machine channel carrying a bare
-  // boolean while the node ids the follow-up needs sat in prose. The ids are
-  // the whole point of the discovery step, so they must be here.
-  it("carries matches with their node ids in structuredContent", () => {
-    const slim = slimAvailableDataStructured(output);
-    expect(Object.keys(slim).sort()).toEqual(["candidates", "found", "matches", "next_call", "query"]);
-    const matches = slim.matches as Array<Record<string, unknown>>;
-    expect(matches[0]?.node_id).toBe("ent_tsla");
-    expect(slim.candidates).toEqual([
-      { node_id: "ent_x", name: "Tesla Energy", type: "entity", subtype: "Companies", label: "ORG", coverage_total: 3 },
-    ]);
-    expect(matches[0]).toMatchObject({ subtype: "Companies", label: "ORG" });
-    const coverage = matches[0]?.coverage as Record<string, unknown>;
-    expect(coverage.items).toEqual([
-      { name: "Revenue", node_id: "mt_rev" },
-      { name: "Gross Margin", node_id: "mt_gm" },
-    ]);
-    // TRUE, and it used to be false. This fixture carries `total: 187` beside
-    // two items, and the text channel prints "…and 185 more not shown" — the
-    // flag was derived from the slice alone (`2 > 5`), so the one field a
-    // structured-only reader has for "is this the whole list" said yes while
-    // 185 entries were missing. Same defect the tie path showed with
-    // `items: []` beside `total: 15`.
-    expect(coverage.items_truncated).toBe(true);
-    // The name list stays a text-channel job; the structured channel does not
-    // re-ship it.
-    expect(coverage).not.toHaveProperty("names");
+  it("renders the coverage list with every entry's name AND its id", () => {
+    const md = renderAvailableDataMarkdown(out());
+    expect(md).toContain("### NVIDIA Corporation — entity · Companies");
+    expect(md).toContain("- `ent::nvda::1`");
+    expect(md).toContain("- aliases: NVDA");
+    expect(md).toContain(
+      "metrics (250+ total, 2 listed): Revenues `mt::rev::1` · Gross Margin (%) `mt::gm::1`",
+    );
   });
 
-  // The tie path builds its matches with `candidateMatch`, which emits
-  // `items: []` beside a real `total` — it never drilled a list. Deriving the
-  // flag from the slice made that `0 > 5` → false, so the one field a
-  // structured-only reader has for "is this the whole list" said yes next to
-  // `total: 15, truncated: true`, and the tie path's text channel carries no
-  // name list either.
-  it("flags a tie-path match, whose coverage was counted but never listed, as truncated", () => {
-    const tie = {
-      ...output,
-      matches: [
-        {
-          ...output.matches[0]!,
-          coverage: { kind: "metrics" as const, items: [], names: [], total: 15, truncated: true, capped: false },
-        },
-      ],
-    };
-    const coverage = (slimAvailableDataStructured(tie).matches as Array<Record<string, unknown>>)[0]
-      ?.coverage as Record<string, unknown>;
-    expect(coverage.items).toEqual([]);
-    expect(coverage.items_truncated).toBe(true);
+  it("a cut list says so, and points at the FREE recovery — never the web", () => {
+    // A name past the cap reads as absent otherwise, which is the one reading
+    // this tool must never invite. The line used to send the model to the web;
+    // `metric` filters the same list for nothing.
+    const md = renderAvailableDataMarkdown(out());
+    expect(md).toContain("treat a name you don't see as unconfirmed, not absent");
+    expect(md).toContain("pass `metric` with a phrase to filter this list");
   });
 
-  // Both paths emit `metric_query` and both can emit `metric: null`, so without
-  // `filter` a structured reader cannot tell `total: 13` meaning "13 metrics
-  // matching your phrase" from `total: 13` meaning "13 metrics in all". The
-  // text channel prints `metrics containing "data center" (13)`; this is the
-  // machine channel's half of that.
-  it("carries the browse filter into structuredContent, and omits it when none ran", () => {
-    const filtered = {
-      ...output,
-      matches: [{ ...output.matches[0]!, filter: "data center" }],
-    };
-    const m = (slimAvailableDataStructured(filtered).matches as Array<Record<string, unknown>>)[0];
-    expect(m?.filter).toBe("data center");
-    const unfiltered = (slimAvailableDataStructured(output).matches as Array<Record<string, unknown>>)[0];
-    expect(unfiltered).not.toHaveProperty("filter");
+  it("a complete list carries no warning — the clause has to stay earned", () => {
+    const md = renderAvailableDataMarkdown(
+      out({
+        matches: [
+          match({
+            coverage: { total: 2, total_capped: false, items: [{ name: "Revenues", id: "mt::rev::1" }] },
+          }),
+        ],
+      }),
+    );
+    expect(md).not.toContain("unconfirmed");
   });
 
-  it("caps structured coverage items and flags the cut", () => {
-    const many = {
-      ...output,
-      matches: [
-        {
-          ...output.matches[0]!,
-          coverage: {
-            ...output.matches[0]!.coverage,
-            items: Array.from({ length: STRUCTURED_COVERAGE_ITEMS + 5 }, (_v, i) => ({
-              name: `m${i}`,
-              node_id: `mt_${i}`,
-            })),
-          },
-        },
-      ],
-    };
-    const coverage = (slimAvailableDataStructured(many).matches as Array<Record<string, unknown>>)[0]
-      ?.coverage as Record<string, unknown>;
-    expect((coverage.items as unknown[]).length).toBe(STRUCTURED_COVERAGE_ITEMS);
-    expect(coverage.items_truncated).toBe(true);
+  it("counted-but-unlisted coverage never reads as a gap", () => {
+    // The tie path counts a node's coverage without listing it, so
+    // `total: 15, items: []` must not render as "none".
+    const md = renderAvailableDataMarkdown(
+      out({ matches: [match({ coverage: { total: 15, total_capped: false } })] }),
+    );
+    expect(md).toContain("metrics: 15 total, none listed");
+    expect(md).not.toContain("metrics: none");
   });
 
-  // The slimmer's output must satisfy the ADVERTISED schema or mcp.ts logs a
-  // conformance failure and falls back to serving the full output — which
-  // would silently undo the slimming.
-  it("conforms to the advertised slim schema", () => {
-    expect(
-      availableDataSlimOutputShape.safeParse(slimAvailableDataStructured(output)).success,
-    ).toBe(true);
+  it("a genuinely empty list DOES read as none", () => {
+    const md = renderAvailableDataMarkdown(
+      out({ matches: [match({ coverage: { total: 0, total_capped: false } })] }),
+    );
+    expect(md).toContain("metrics: none");
+  });
+
+  it("a filtered list says what it is filtered to, so `total` is readable", () => {
+    const md = renderAvailableDataMarkdown(
+      out({
+        matches: [
+          match({
+            filter: "data center",
+            coverage: {
+              total: 13, total_capped: false, truncated: true,
+              items: [{ name: "Total revenue - Data center", id: "mt::dc::1" }],
+            },
+          }),
+        ],
+      }),
+    );
+    expect(md).toContain('metrics containing "data center" (13 total, 1 listed)');
+  });
+
+  it("an unavailable match says the lookup failed, not that the data is missing", () => {
+    const md = renderAvailableDataMarkdown(
+      out({ matches: [match({ unavailable: true, coverage: { total: 0, total_capped: false } })] }),
+    );
+    expect(md).toContain("coverage unavailable");
+    expect(md).not.toContain("metrics: none");
+  });
+
+  it("guidance leads, and the resolved pair leads the matches on the lookup path", () => {
+    const md = renderAvailableDataMarkdown(
+      out({
+        guidance: "A verdict. An action.",
+        verified: "unlinked",
+        entity: { id: "ent::carnival::1", name: "Carnival, Inc." },
+        metric: { id: "mt::pcd::1", name: "Passenger Cruise Days" },
+        metric_candidates: [{ id: "mt::cpcd::1", name: "Consolidated Passenger Cruise Days" }],
+      }),
+    );
+    expect(md.startsWith("> A verdict. An action.")).toBe(true);
+    expect(md).toContain("verified: unlinked");
+    expect(md).toContain("- entity: Carnival, Inc. `ent::carnival::1`");
+    expect(md).toContain("- metric: Passenger Cruise Days `mt::pcd::1`");
+    expect(md).toContain("- metric candidates: Consolidated Passenger Cruise Days `mt::cpcd::1`");
+    expect(md.indexOf("## Pair")).toBeLessThan(md.indexOf("## Matches"));
+  });
+
+  it("candidates carry a count only when probed, and the noun agrees in number", () => {
+    const md = renderAvailableDataMarkdown(
+      out({
+        candidates: [
+          { id: "ent::a::1", name: "Probed", type: "entity", kind: "Companies", coverage: { total: 1, total_capped: false } },
+          { id: "mt::b::1", name: "Metric node", type: "metric", coverage: { total: 250, total_capped: true } },
+          { id: "ent::c::1", name: "Unprobed", type: "entity" },
+        ],
+      }),
+    );
+    expect(md).toContain("- Probed — entity · Companies — `ent::a::1` — 1 metric\n");
+    expect(md).toContain("- Metric node — metric — `mt::b::1` — 250+ entities");
+    expect(md).toContain("- Unprobed — entity — `ent::c::1`");
+  });
+
+  it("renders the handle with the tool it names, so a structured-only reader can run it", () => {
+    const md = renderAvailableDataMarkdown(
+      out({ next_call: { tool: "tako_search_advanced", query: "NVIDIA Corporation Revenues" } }),
+    );
+    expect(md).toContain("## Next call\ntako_search_advanced: NVIDIA Corporation Revenues");
   });
 });
+
 
 describe("renderAgentRunMarkdown + slim", () => {
   const completed = {
@@ -695,12 +695,16 @@ describe("channel parity (tako_contents)", () => {
 });
 
 describe("renderGraphRelatedMarkdown", () => {
-  const node = { id: "ent::anthropic::1", type: "entity", name: "Anthropic PBC", subtype: "Companies", label: "ORG",
-    aliases: ["Anthropic"], description: "AI safety company." };
+  const wire = {
+    id: "ent::anthropic::1", type: "entity", name: "Anthropic PBC",
+    subtype: "Companies", label: "ORG", aliases: ["Anthropic"], description: "AI safety company.",
+  };
+  const render = (r: Parameters<typeof projectRelated>[0]): string =>
+    renderGraphRelatedMarkdown(projectRelated(r));
 
-  it("overview: focal header, then one line per group with key, label, total, and preview names", () => {
-    const md = renderGraphRelatedMarkdown({
-      node,
+  it("map: focal header, then one line per group with key, label, total, and preview names", () => {
+    const md = render({
+      node: wire,
       relations: [
         { key: "rel:competes_with", kind: "related", label: "Competes with", total: 179, total_capped: false,
           items: [{ id: "a", type: "entity", name: "OpenAI" }, { id: "b", type: "entity", name: "Cohere" }, { id: "c", type: "entity", name: "Mistral" }] },
@@ -708,42 +712,47 @@ describe("renderGraphRelatedMarkdown", () => {
           items: [{ id: "m1", type: "metric", name: "Valuation" }, { id: "m2", type: "metric", name: "Revenue" }] },
       ],
     });
-    expect(md.startsWith("**Anthropic PBC** (`ent::anthropic::1`) — entity · Companies · ORG")).toBe(true);
-    expect(md).toContain("aliases: Anthropic");
-    expect(md).toContain("AI safety company.");
-    // 179 behind a 3-item preview: names orient, the drill carries the ids.
+    expect(md.startsWith("# Anthropic PBC")).toBe(true);
+    expect(md).toContain("- `ent::anthropic::1` · entity · Companies");
+    expect(md).toContain("- aliases: Anthropic");
+    // 179 behind a 3-name preview: names orient, the drill carries the ids.
     expect(md).toContain("- `rel:competes_with` — Competes with — 179: OpenAI, Cohere, Mistral, …");
-    // The whole group fits the preview, so its ids ride along: the overview is
-    // the answer for that group and no drill is needed.
-    expect(md).toContain("- `metrics` — Metrics — 2: Valuation (`m1`), Revenue (`m2`)");
+    // A complete group carries no ellipsis — and no ids either. The map is
+    // names only in BOTH channels now, which is what keeps them equal.
+    expect(md).toContain("- `metrics` — Metrics — 2: Valuation, Revenue");
+    expect(md).not.toContain("`m1`");
+  });
+
+  it("reference prose LAST: the node blurb renders after the map, never before", () => {
+    const md = render({ node: wire, relations: [] });
+    expect(md).toContain("## About\nAI safety company.");
+    expect(md.indexOf("# Anthropic PBC")).toBeLessThan(md.indexOf("## About"));
   });
 
   it("drill: one line per item with id and kind, empty page says so", () => {
-    const md = renderGraphRelatedMarkdown({
-      node,
+    const md = render({
+      node: wire,
       relation: { key: "metrics", kind: "data", label: "Metrics", total: 0, total_capped: false, items: [], next_cursor: null },
     });
-    expect(md).toContain("`metrics` — Metrics — 0 total, 0 on this page");
+    expect(md).toContain("## `metrics` — Metrics (0 total, 0 on this page)");
     expect(md).toContain("_none_");
   });
 
-  it("overview: an empty relations array says so, and a group's cursor rides its line", () => {
-    expect(renderGraphRelatedMarkdown({ node, relations: [] })).toContain("No related nodes.");
-    const md = renderGraphRelatedMarkdown({
-      node,
+  it("map: an empty relations array says so, and a group's cursor rides its line", () => {
+    expect(render({ node: wire, relations: [] })).toContain("No related nodes.");
+    const md = render({
+      node: wire,
       relations: [
         { key: "metrics", kind: "data", label: "Metrics", total: 40, total_capped: true, next_cursor: "cur::2",
           items: [{ id: "m1", type: "metric", name: "Valuation" }] },
       ],
     });
-    expect(md).toContain('more: `relation: "metrics"`, cursor "cur::2"');
+    expect(md).toContain('cursor "cur::2"');
+    expect(md).toContain("Metrics — 40+:");
   });
 
   it("flattens newlines in upstream names", () => {
-    const md = renderGraphRelatedMarkdown({
-      node: { ...node, name: "Evil\n## Header" },
-      relations: [],
-    });
+    const md = render({ node: { ...wire, name: "Evil\n## Header" }, relations: [] });
     expect(md).not.toContain("\n## Header");
   });
 
@@ -753,74 +762,20 @@ describe("renderGraphRelatedMarkdown", () => {
   // focal header ALONE: a name and an id, and nothing about the group the
   // caller asked for, which reads as a truncated result rather than an answer.
   it("says something on a null relation and a null relations, never just the header", () => {
-    const drilled = renderGraphRelatedMarkdown({ node, relation: null });
-    expect(drilled).toContain("**Anthropic PBC**");
+    const drilled = render({ node: wire, relation: null });
+    expect(drilled).toContain("# Anthropic PBC");
     expect(drilled).toContain("That relation has no items for this node.");
     // The distinction the key would carry, stated without it: an unknown key
     // and a genuinely empty group are the same response on the wire.
     expect(drilled).toContain("An unknown relation key is NOT an error");
 
-    // A null relations map is the overview's version of `relations: []`.
-    expect(renderGraphRelatedMarkdown({ node, relations: null })).toContain("No related nodes.");
+    // A null relations map is the map's version of `relations: []`.
+    expect(render({ node: wire, relations: null })).toContain("No related nodes.");
     // Neither key present at all — the shape both are optional in.
-    expect(renderGraphRelatedMarkdown({ node })).toContain("No related nodes.");
+    expect(render({ node: wire })).toContain("No related nodes.");
   });
 });
 
-describe("renderAvailableDataMarkdown — lookup path with a metric list", () => {
-  it("prints the pair rows, then the entity's filtered metric list with ids, then next_call", () => {
-    const md = renderAvailableDataMarkdown({
-      found: true, verified: "resolution", query: "Nvidia", metric_query: "data center",
-      summary: "SUMMARY",
-      entity: { node_id: "ent::nvda::1", name: "NVIDIA Corporation", type: "entity" },
-      metric: { node_id: "mt::rev::1", name: "Revenues", type: "metric" },
-      entity_alternates: [], metric_alternates: [],
-      matches: [{
-        node_id: "ent::nvda::1", name: "NVIDIA Corporation", type: "entity", subtype: "Companies", label: "ORG", aliases: [],
-        filter: "data center",
-        coverage: { kind: "metrics", items: [{ name: "Total revenue - Data center", node_id: "mt::dc::1" }], names: ["Total revenue - Data center"], total: 1, truncated: false, capped: false },
-      }],
-      other_matches: [], next_call: null,
-    });
-    expect(md.startsWith("SUMMARY")).toBe(true);
-    expect(md).toContain("entity  NVIDIA Corporation  `ent::nvda::1`");
-    expect(md).toContain('**NVIDIA Corporation** (`ent::nvda::1`) — metrics containing "data center" (1):\nTotal revenue - Data center');
-    expect(md).not.toContain("next_call");
-    // A COMPLETE list carries no warning — the clause has to stay earned.
-    expect(md).not.toContain("unconfirmed");
-  });
-
-  // The lookup route owns every `metric_query`, including the fall-through
-  // FULL drill. Without the warning a name past MAX_COVERAGE_NAMES reads as
-  // absent, which is the one reading this tool must never invite.
-  const withCoverage = (filter: string | undefined, coverage: object) => ({
-    found: true, verified: "coverage", query: "q", metric_query: "quantum flux",
-    summary: "SUMMARY", other_matches: [], next_call: null,
-    matches: [{
-      node_id: "ent::crocs::1", name: "Crocs, Inc.", type: "entity",
-      subtype: "Companies", label: "ORG", aliases: [],
-      ...(filter === undefined ? {} : { filter }),
-      coverage: { kind: "metrics", items: [], names: ["Revenues", "Gross Margin"], ...coverage },
-    }],
-  });
-
-  it("counts the remainder when the fall-through drill was capped", () => {
-    const md = renderAvailableDataMarkdown(
-      withCoverage(undefined, { total: 400, truncated: true, capped: true }) as never,
-    );
-    expect(md).toContain(
-      "…and 398 more not shown (treat a name you don't see as unconfirmed, not absent).",
-    );
-  });
-
-  it("warns without a count when a FILTERED page was cut — `total` counts the hits, not the remainder", () => {
-    const md = renderAvailableDataMarkdown(
-      withCoverage("backlog", { total: 2, truncated: true, capped: true }) as never,
-    );
-    expect(md).toContain("…this list was cut, so treat a name you don't see as unconfirmed, not absent.");
-    expect(md).not.toContain("more not shown");
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Channel parity — the equivalence rule from the text-channel template:
@@ -1073,3 +1028,73 @@ describe("channel parity (tako_visualize)", () => {
     }
   });
 });
+// The same equivalence rule for the two graph tools. Written as one walker per
+// tool rather than a shared helper because each has its own exemptions, and a
+// shared one would grow a flag per caller.
+
+describe("channel parity (tako_available_data)", () => {
+  it("every leaf value of the projected output appears in the rendered text", () => {
+    const output: AvailableDataOutput = {
+      found: true,
+      verified: "unlinked",
+      guidance: "A verdict sentence. An action sentence.",
+      matches: [
+        {
+          id: "ent::nvda::1", name: "NVIDIA Corporation", type: "entity", kind: "Companies",
+          aliases: ["NVDA", "NVIDIA"], filter: "data center",
+          coverage: {
+            total: 13, total_capped: true, truncated: true,
+            items: [{ name: "Total revenue - Data center", id: "mt::dc::1" }],
+          },
+        },
+      ],
+      candidates: [
+        { id: "ent::ven::1", name: "Nvidia Ventures", type: "entity", kind: "Companies", coverage: { total: 5, total_capped: false } },
+      ],
+      next_call: { tool: "tako_search", query: "NVIDIA Corporation Revenues" },
+      entity: { id: "ent::nvda::1", name: "NVIDIA Corporation" },
+      metric: { id: "mt::dc::1", name: "Total revenue - Data center" },
+      entity_candidates: [{ id: "ent::ven::1", name: "Nvidia Ventures" }],
+      metric_candidates: [{ id: "mt::dc2::1", name: "Data center growth" }],
+    };
+    const md = renderAvailableDataMarkdown(output);
+    for (const leaf of leavesOf(output)) {
+      expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
+    }
+  });
+});
+
+describe("channel parity (tako_graph_related)", () => {
+  it("every leaf value of the projected output appears in the rendered text", () => {
+    const output = projectRelated({
+      node: {
+        id: "ent::nvda::1", type: "entity", name: "NVIDIA Corporation",
+        subtype: "Companies", label: "ORG", aliases: ["NVDA"], description: "A chip company.",
+      },
+      relations: [
+        {
+          key: "rel:in_industry", kind: "related", label: "In industry", total: 2, total_capped: false,
+          items: [
+            { id: "ent::semi::1", type: "entity", name: "Semiconductor", subtype: "Industries" },
+            { id: "ent::ai::1", type: "entity", name: "AI and Machine Learning", subtype: "Industries" },
+          ],
+          next_cursor: "cur::1",
+        },
+      ],
+    });
+    const md = renderGraphRelatedMarkdown(output);
+    for (const leaf of leavesOf(output)) {
+      expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
+    }
+  });
+});
+
+/** Every string and number leaf of a projected output, in document order. */
+function leavesOf(v: unknown, acc: string[] = []): string[] {
+  if (v === null || v === undefined) return acc;
+  if (typeof v === "string") acc.push(v);
+  else if (typeof v === "number") acc.push(String(v));
+  else if (Array.isArray(v)) v.forEach((x) => leavesOf(x, acc));
+  else if (typeof v === "object") Object.values(v).forEach((x) => leavesOf(x, acc));
+  return acc;
+}

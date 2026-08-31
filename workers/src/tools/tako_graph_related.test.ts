@@ -4,9 +4,12 @@ import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
 import {
   FIXED_RELATION_KEYS,
+  FOCAL_DESCRIPTION_MAX,
   graphNodeSchema,
   graphRelatedOutputShape,
   graphRelationSchema,
+  OVERVIEW_PREVIEW_N,
+  projectRelated,
 } from "./_graph.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 import takoGraphRelated from "./tako_graph_related.js";
@@ -133,11 +136,14 @@ describe("tako_graph_related", () => {
       }),
     ]);
 
+    // The point of the loose facade: an off-enum `kind`, `subtype` and
+    // `label` all survive the wire guard. The group's `kind` is then dropped
+    // by the projection (nothing renders it), and the item's off-enum subtype
+    // survives as its `kind` — a new EntityClassName must reach the model,
+    // not throw.
     const out = await takoGraphRelated.handler({ node_id: "tesla-x1" }, CTX);
-    expect(out.relations?.[0]?.kind).toBe("source");
-    expect(out.relations?.[0]?.items[0]?.subtype).toBe("Brand New Entity Class");
-    expect(out.relations?.[0]?.items[0]?.label).toBe("NEW_NER_LABEL");
-    expect(out.relations?.[0]?.items[0]).not.toHaveProperty("description");
+    expect(out.relations?.[0]).not.toHaveProperty("kind");
+    expect(out.relations?.[0]?.preview).toEqual(["Some Source"]);
   });
 
   it("maps a 404 into a node_id-focused message that distinguishes it from a bad relation", async () => {
@@ -165,11 +171,10 @@ describe("tako_graph_related", () => {
       }),
     ]);
     const out = await takoGraphRelated.handler({ node_id: "tesla-x1" }, CTX);
-    expect(out.relations?.[0]?.items).toHaveLength(3);
-    expect(out.relations?.[0]?.items[0]).toEqual({ id: "ent::c0::1", type: "entity", name: "Competitor 0", subtype: "Companies", label: "ORG" });
+    expect(out.relations?.[0]?.preview).toEqual(["Competitor 0", "Competitor 1", "Competitor 2"]);
     expect(out.relations?.[0]?.total).toBe(40);
-    expect(out.relations?.[1]?.items).toHaveLength(3);
-    expect(out.node.description?.length).toBe(601); // FOCAL_DESCRIPTION_MAX + the ellipsis
+    expect(out.relations?.[1]?.preview).toHaveLength(3);
+    expect(out.node.description?.length).toBe(FOCAL_DESCRIPTION_MAX + 1); // the cap plus the ellipsis
     expect(out.node.aliases).toEqual(["TSLA"]);
     // The payload the model reads: under 2k for a two-group overview that came in at ~60k.
     const text = takoGraphRelated.renderText(out, CTX);
@@ -177,7 +182,7 @@ describe("tako_graph_related", () => {
     expect(text).toContain("`rel:competes_with` — Competes with — 40:");
     expect(text).toContain("Competitor 0, Competitor 1, Competitor 2, …");
     expect(text).toContain("`metrics` — Metrics — 250+:");
-    expect(text).toContain('relation: "<key>"');
+    expect(text).toContain("Pass `relation` with a key to page one group");
   });
 
   it("overview stays LINEAR in group count — the two-group bound above does not cover a wide node", async () => {
@@ -227,28 +232,31 @@ describe("tako_graph_related", () => {
     ]);
     const out = await takoGraphRelated.handler({ node_id: "tesla-x1", relation: "metrics" }, CTX);
     expect(out.relation?.items).toHaveLength(50);
-    expect(out.relation?.items[0]).toEqual({ id: "mt::m0::1", type: "metric", name: "Metric 0" });
+    expect(out.relation?.items?.[0]).toEqual({ id: "mt::m0::1", name: "Metric 0" });
     const text = takoGraphRelated.renderText(out, CTX);
-    expect(text).toContain("`metrics` — Metrics — 250+ total, 50 on this page; more: pass cursor \"cur-2\"");
-    expect(text).toContain("- Metric 0 (`mt::m0::1`)");
+    expect(text).toContain("## `metrics` — Metrics (250+ total, 50 on this page)");
+    expect(text).toContain('More: pass cursor "cur-2".');
+    expect(text).toContain("- Metric 0 `mt::m0::1`");
   });
 });
 
-describe("tako_graph_related output slimming", () => {
-  // Shaped after the measured overview in the design spike: every related
-  // item arrives carrying the FULL node record, and the description is what
-  // makes the payload 82,741 chars for Nvidia at `limit: 5` (~849/item).
-  const fatItem = (n: number) => ({
-    id: `ent::co${n}`,
+
+describe("tako_graph_related output projection", () => {
+  const fatItem = (i: number) => ({
+    id: `ent::co${i}::1`,
     type: "entity",
-    name: `Competitor ${n}`,
-    subtype: "Company",
+    name: `Competitor ${i}`,
+    subtype: "Companies",
     label: "ORG",
-    aliases: [`Comp ${n}`, `C${n} Inc.`, `C${n} Corporation`],
+    aliases: [`C${i}`],
     description: "X".repeat(800),
   });
+
   const fatOverview = {
-    node: { id: "ent::nvda", type: "entity", name: "NVIDIA", description: "Y".repeat(400) },
+    node: {
+      id: "ent::nvda", type: "entity", name: "NVIDIA", subtype: "Companies", label: "ORG",
+      aliases: ["NVDA"], description: "Y".repeat(400),
+    },
     relations: [
       {
         key: "rel:competes_with", kind: "related", label: "Competes with",
@@ -263,98 +271,67 @@ describe("tako_graph_related output slimming", () => {
     ],
   };
 
-  it("drops description and aliases from related items", () => {
-    const slim = takoGraphRelated.slimStructured(fatOverview as never) as {
-      relations: { items: Record<string, unknown>[] }[];
-    };
-    for (const group of slim.relations) {
-      for (const item of group.items) {
-        expect(item).not.toHaveProperty("description");
-        expect(item).not.toHaveProperty("aliases");
-        // The identity fields the model needs to make a follow-up call survive.
-        expect(item.id).toBeTruthy();
-        expect(item.name).toBeTruthy();
-        expect(item.type).toBeTruthy();
-      }
+  it("the map previews names only — no ids, no descriptions, no aliases", () => {
+    const out = projectRelated(fatOverview as never);
+    for (const group of out.relations ?? []) {
+      expect(group).not.toHaveProperty("items");
+      expect(group.preview).toHaveLength(OVERVIEW_PREVIEW_N);
+      for (const name of group.preview ?? []) expect(typeof name).toBe("string");
     }
+    expect(JSON.stringify(out.relations)).not.toContain("ent::co0");
+    expect(JSON.stringify(out)).not.toContain("X".repeat(50));
   });
 
-  it("keeps the top-level node's own description — one record, the one asked for", () => {
-    const slim = takoGraphRelated.slimStructured(fatOverview as never) as {
-      node: { description?: string };
-    };
-    expect(slim.node.description).toBe("Y".repeat(400));
+  it("keeps the focal node's own description, truncated — one record, the one asked for", () => {
+    const out = projectRelated(fatOverview as never);
+    // 400 chars in, FOCAL_DESCRIPTION_MAX out plus the ellipsis: the blurb is
+    // paid for in BOTH channels, so the bound is 300, not the old 600.
+    expect(out.node.description?.length).toBe(FOCAL_DESCRIPTION_MAX + 1);
   });
 
   it("preserves paging metadata so the model can still drill", () => {
-    const slim = takoGraphRelated.slimStructured(fatOverview as never) as {
-      relations: { key: string; total: number; total_capped: boolean; next_cursor: string | null }[];
-    };
-    expect(slim.relations[1]).toMatchObject({
+    const out = projectRelated(fatOverview as never);
+    expect(out.relations?.[1]).toMatchObject({
       key: "metrics", total: 40, total_capped: true, next_cursor: "cur::2",
     });
   });
 
-  it("still conforms to the advertised outputSchema", () => {
-    // The whole reason the reduction is possible without a schema change:
-    // `description` and `aliases` are optional on graphNodeSchema.
-    const slim = takoGraphRelated.slimStructured(fatOverview as never);
-    expect(takoGraphRelated.outputSchema.safeParse(slim).success).toBe(true);
+  it("conforms to the advertised outputSchema", () => {
+    expect(takoGraphRelated.outputSchema.safeParse(projectRelated(fatOverview as never)).success).toBe(true);
   });
 
   it("cuts the payload by at least 5x", () => {
-    // Measured on this fixture: 29,534 -> 3,494 chars, an 8.4x cut. The bound
-    // is 5x so the test tracks "descriptions are gone" rather than the exact
-    // fixture size; drop the `description` omission and it fails at ~1.1x.
+    // Measured on this fixture: descriptions and per-item ids are what go.
+    // The bound is 5x so the test tracks the drops rather than a fixture size.
     const full = JSON.stringify(fatOverview).length;
-    const slim = JSON.stringify(takoGraphRelated.slimStructured(fatOverview as never)).length;
+    const projected = JSON.stringify(projectRelated(fatOverview as never)).length;
     expect(full).toBeGreaterThan(25_000);
-    expect(slim * 5).toBeLessThan(full);
+    expect(projected * 5).toBeLessThan(full);
   });
 
   it("renderText replaces the JSON dump on the text channel", () => {
-    // Without `renderText`, mcp.ts stringifies the FULL output for the model's
-    // text channel — the slim above would fix `structuredContent` only, and
-    // the 83k would still arrive pretty-printed. Both hooks are required.
-    const text = takoGraphRelated.renderText(fatOverview as never, undefined as never);
+    // Without `renderText`, mcp.ts stringifies the whole output for the text
+    // channel. Both the projection and the renderer are required.
+    const out = projectRelated(fatOverview as never);
+    const text = takoGraphRelated.renderText(out, undefined as never);
     expect(text.length * 10).toBeLessThan(JSON.stringify(fatOverview, null, 2).length);
     expect(text).toContain("NVIDIA");
     expect(text).toContain("Competitor 0");
     expect(text).not.toContain("X".repeat(50));
-    // This fixture's first group is COMPLETE (20 items, total 20), so the
-    // overview carries its ids and the model can act without drilling.
-    expect(text).toContain("ent::co0");
-    // On the real path the handler has already previewed each group to three
-    // items, so a 20-item group is no longer complete: names orient, and the
-    // ids ride the drill, which prints one line per item.
-    const slimmed = takoGraphRelated.slimStructured(fatOverview as never);
-    const slimText = takoGraphRelated.renderText(slimmed as never, undefined as never);
-    expect(slimText).not.toContain("ent::co0");
-    const drill = takoGraphRelated.renderText(
-      { node: fatOverview.node, relation: fatOverview.relations[1] } as never,
-      undefined as never,
-    );
-    expect(drill).toContain("ent::co100");
+    // Names orient; the ids ride the drill, which prints one line per item.
+    expect(text).not.toContain("ent::co0::1");
   });
 
   it("renderText surfaces the cursor for a capped group", () => {
-    const text = takoGraphRelated.renderText(fatOverview as never, undefined as never);
+    const text = takoGraphRelated.renderText(projectRelated(fatOverview as never), undefined as never);
     expect(text).toContain("cur::2");
-    expect(text).toContain('relation: "metrics"');
   });
 
-  // The `N of M` / `N of M+` marker is the ONLY thing telling the model whether
-  // a group is complete. Without it a 10-of-40 page reads as the whole set and
+  // The total plus its `+` is the ONLY thing telling the model whether a group
+  // is complete. Without it a 3-name preview of 40 reads as the whole set and
   // the model stops drilling — a silent wrong answer, not a visible failure.
-  // `cur::2` and `relation: "metrics"` (asserted above) survive its removal.
   it("renderText marks each group complete or truncated", () => {
-    const text = takoGraphRelated.renderText(fatOverview as never, undefined as never);
-    // The marker moved from "N of M" to the group total plus an ellipsis when
-    // items remain, because the overview now previews a fixed three per group
-    // and "3 of 40" would say more about OVERVIEW_PREVIEW_N than about the
-    // graph. The invariant above is unchanged: complete and truncated must
-    // stay distinguishable at a glance.
-    //
+    const text = takoGraphRelated.renderText(projectRelated(fatOverview as never), undefined as never);
     // Complete: total 20, not capped — no trailing `+`.
     expect(text).toContain("Competes with — 20:");
     expect(text).not.toContain("Competes with — 20+");
@@ -364,11 +341,9 @@ describe("tako_graph_related output slimming", () => {
     expect(text).toContain("…");
   });
 
-  // THE DRILL, which every fixture above skips. `relations` is the overview;
-  // `relation` (singular) is the paginated drill at `limit: 100` of full node
-  // records — the largest response this tool returns, and the one the slimming
-  // exists for. Both hooks branch on it (`slimStructured` and
-  // `renderRelatedMarkdown`), and neither branch ran in any test.
+  // THE DRILL. `relations` is the map; `relation` (singular) is the paginated
+  // page of full node records — the largest response this tool returns, and
+  // the one the projection exists for. Both branches must be covered.
   const fatDrill = {
     node: { id: "ent::nvda", type: "entity", name: "NVIDIA", description: "Y".repeat(400) },
     relation: {
@@ -378,48 +353,52 @@ describe("tako_graph_related output slimming", () => {
     },
   };
 
-  it("slimStructured slims the drilled relation, not just the overview", () => {
-    const slim = takoGraphRelated.slimStructured(fatDrill as never) as {
-      relation: {
-        key: string; total: number; total_capped: boolean; next_cursor: string | null;
-        items: Record<string, unknown>[];
-      };
-      relations?: unknown;
-    };
-    // The overview key must not appear — the branches are exclusive.
-    expect(slim.relations).toBeUndefined();
-    expect(slim.relation.items).toHaveLength(100);
-    for (const item of slim.relation.items) {
+  it("projects the drilled relation, not just the map — items keep their ids", () => {
+    const out = projectRelated(fatDrill as never);
+    // The map key must not appear — the branches are exclusive.
+    expect(out.relations).toBeUndefined();
+    expect(out.relation?.items).toHaveLength(100);
+    expect(out.relation).not.toHaveProperty("preview");
+    for (const item of out.relation?.items ?? []) {
       expect(item).not.toHaveProperty("description");
       expect(item).not.toHaveProperty("aliases");
+      expect(item).not.toHaveProperty("type");
+      expect(item).not.toHaveProperty("label");
       expect(item.id).toBeTruthy();
     }
     // Paging metadata survives, or the caller cannot fetch page 2.
-    expect(slim.relation).toMatchObject({
+    expect(out.relation).toMatchObject({
       key: "metrics", total: 250, total_capped: true, next_cursor: "cur::9",
     });
-    expect(takoGraphRelated.outputSchema.safeParse(slim).success).toBe(true);
+    expect(takoGraphRelated.outputSchema.safeParse(out).success).toBe(true);
   });
 
   it("renderText renders the drilled relation and cuts it hardest", () => {
-    const text = takoGraphRelated.renderText(fatDrill as never, undefined as never);
+    const text = takoGraphRelated.renderText(projectRelated(fatDrill as never), undefined as never);
     expect(text).toContain("Metrics");
     // The drill splits what "100 of 250+" packed into one phrase: the group's
     // true total, and how much of it this page carries.
     expect(text).toContain("250+ total, 100 on this page");
     expect(text).toContain("cur::9");
-    expect(text).toContain("ent::co200");
+    expect(text).toContain("ent::co200::1");
     expect(text).not.toContain("X".repeat(50));
-    // 100 items x ~849 chars is the worst case the slimming was added for.
+    // 100 items x ~849 chars is the worst case the projection was added for.
     expect(text.length * 10).toBeLessThan(JSON.stringify(fatDrill, null, 2).length);
   });
 
-  it("renderText handles an empty overview", () => {
+  it("renderText handles an empty map", () => {
     const text = takoGraphRelated.renderText(
-      { node: { id: "n1", type: "entity", name: "Nobody" }, relations: [] } as never,
+      { node: { id: "n1", type: "entity", name: "Nobody" }, relations: [] },
       undefined as never,
     );
     expect(text).toContain("No related nodes.");
+  });
+
+  // Reference prose LAST (spec, text-channel template): a tail-truncating host
+  // must lose the blurb before it loses the map.
+  it("renders the node description after the relations, never before", () => {
+    const text = takoGraphRelated.renderText(projectRelated(fatOverview as never), undefined as never);
+    expect(text.indexOf("## About")).toBeGreaterThan(text.indexOf("## Relations"));
   });
 });
 
@@ -434,8 +413,13 @@ describe("tako_graph_related description is derived from the API's own relation 
   });
 
   it("names every fixed key the API emits and no other bare key", () => {
+    // The key LIST moved out of the description and into the `relation`
+    // describe (spec D2.4: the schema carries the enum, the description says
+    // when to set it). It is still model-visible, still derived, still
+    // guarded — just on the parameter now.
+    const relationDescribe = takoGraphRelated.inputSchema.shape.relation.description ?? "";
     for (const key of FIXED_RELATION_KEYS) {
-      expect(takoGraphRelated.description, key).toContain(`\`${key}\``);
+      expect(relationDescribe, key).toContain(key);
     }
     // Any other backticked single-word key in the description would be a phantom
     // relation the model tries and gets empty items for.
@@ -457,7 +441,10 @@ describe("tako_graph_related description is derived from the API's own relation 
     expect(bare.filter((k) => !known.has(k))).toEqual([]);
   });
 
-  it("says plainly that q is a substring match", () => {
-    expect(takoGraphRelated.description).toMatch(/`q` is a case-insensitive SUBSTRING match/);
+  it("says plainly that q is a substring match, in its own describe", () => {
+    // The sentence moved out of the DESCRIPTION and into the parameter (spec
+    // D5: the description names a parameter only to route). It still has to
+    // exist somewhere the model reads.
+    expect(takoGraphRelated.inputSchema.shape.q.description).toMatch(/[Cc]ase-insensitive substring/);
   });
 });

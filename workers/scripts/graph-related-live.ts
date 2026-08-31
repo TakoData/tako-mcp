@@ -47,22 +47,26 @@ async function rawChars(query: Record<string, string>): Promise<number> {
 
 for (const name of CASES) {
   const resolved = await takoAvailableData.handler({ q: name, types: "entity" }, ctx);
-  const nodeId = resolved.matches[0]?.node_id;
+  const nodeId = resolved.matches[0]?.id;
   if (nodeId === undefined) {
     console.log(`${name}: no entity resolved`);
     continue;
   }
-  for (const input of [{ node_id: nodeId }, { node_id: nodeId, relation: "metrics" }]) {
+  const inputs: Array<{ node_id: string; relation?: string }> = [
+    { node_id: nodeId },
+    { node_id: nodeId, relation: "metrics" },
+  ];
+  for (const input of inputs) {
     const mode = "relation" in input ? "drill:metrics" : "overview";
     // One slow node must not cost the whole measurement: staging times out at
     // 15s on the widest overviews, which is itself a result worth printing.
     try {
-      const raw = await rawChars(input);
+      const raw = await rawChars(input as unknown as Record<string, string>);
       const out = await takoGraphRelated.handler(input, ctx);
       const text = takoGraphRelated.renderText(out, ctx);
       const structured = JSON.stringify(out);
       console.log(
-        `${name} [${mode}] raw=${raw} text=${text.length} structured=${structured.length} groups=${out.relations?.length ?? "-"} items=${out.relation?.items.length ?? "-"}`,
+        `${name} [${mode}] raw=${raw} text=${text.length} structured=${structured.length} groups=${out.relations?.length ?? "-"} items=${out.relation?.items?.length ?? "-"}`,
       );
     } catch (err) {
       console.log(`${name} [${mode}] FAILED: ${err instanceof Error ? err.message : String(err)}`);
