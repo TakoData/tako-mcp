@@ -29,7 +29,19 @@ import {
 import { projectRelated } from "./_graph.js";
 import { buildSearchOutput } from "./_search_results.js";
 import { buildVisualizeOutput } from "./tako_visualize.js";
+import {
+  buildMatch,
+  candidateMatch,
+  candidateRef,
+  metricListMatch,
+  projectCandidate,
+  projectMatch,
+  projectRef,
+  resolvedOnlyMatch,
+  unavailableMatch,
+} from "./_available_data.js";
 import type { AvailableDataOutput, ProjectedMatch } from "./_available_data.js";
+import type { GraphNodeFacade, GraphRelationFacade } from "./_graph.js";
 import type { ProjectedCard, SearchOutput, TakoCard, WebResult } from "./_search_results.js";
 import type { Env } from "../env.js";
 
@@ -1033,34 +1045,143 @@ describe("channel parity (tako_visualize)", () => {
 // shared one would grow a flag per caller.
 
 describe("channel parity (tako_available_data)", () => {
-  it("every leaf value of the projected output appears in the rendered text", () => {
-    const output: AvailableDataOutput = {
-      found: true,
-      verified: "unlinked",
-      guidance: "A verdict sentence. An action sentence.",
-      matches: [
-        {
-          id: "ent::nvda::1", name: "NVIDIA Corporation", type: "entity", kind: "Companies",
-          aliases: ["NVDA", "NVIDIA"], filter: "data center",
-          coverage: {
-            total: 13, total_capped: true, truncated: true,
-            items: [{ name: "Total revenue - Data center", id: "mt::dc::1" }],
-          },
-        },
-      ],
-      candidates: [
-        { id: "ent::ven::1", name: "Nvidia Ventures", type: "entity", kind: "Companies", coverage: { total: 5, total_capped: false } },
-      ],
-      next_call: { tool: "tako_search", query: "NVIDIA Corporation Revenues" },
-      entity: { id: "ent::nvda::1", name: "NVIDIA Corporation" },
-      metric: { id: "mt::dc::1", name: "Total revenue - Data center" },
-      entity_candidates: [{ id: "ent::ven::1", name: "Nvidia Ventures" }],
-      metric_candidates: [{ id: "mt::dc2::1", name: "Data center growth" }],
-    };
+  // EVERY CASE IS BUILT BY THE REAL PROJECTIONS, never as a projected literal
+  // — the reason the tako_search parity test above states, and this test is
+  // where it was learned the second time. A literal covers only the fields it
+  // happens to set, so `projectMatch` shipping candidate `aliases` on the
+  // disclaimed branch (fixed 2026-08-31) and the metric-filter path skipping
+  // COVERAGE_ITEMS_SHOWN both went green here. One case per branch the
+  // orchestrator can return, because the branches differ in which fields the
+  // projection emits at all.
+  const NVDA: GraphNodeFacade = {
+    id: "ent::nvda::1", type: "entity", name: "NVIDIA Corporation",
+    subtype: "Companies", label: "ORG", aliases: ["NVDA", "NVIDIA"],
+  };
+  const VENTURES: GraphNodeFacade = {
+    id: "ent::ven::1", type: "entity", name: "Nvidia Ventures", subtype: "Companies", label: "ORG",
+  };
+  const DC: GraphNodeFacade = { id: "mt::dc::1", type: "metric", name: "Total revenue - Data center" };
+  const GROWTH: GraphNodeFacade = { id: "mt::dc2::1", type: "metric", name: "Data center growth" };
+  const METRICS: GraphRelationFacade = {
+    key: "metrics", kind: "data", label: "Metrics",
+    items: [DC, GROWTH], total: 13, total_capped: true,
+  };
+
+  // Third element: leaves this branch deliberately does NOT print, each with
+  // the reason. An exemption is a decision, so it is written down here
+  // rather than by weakening the walk for every case.
+  const CASES: ReadonlyArray<{
+    label: string;
+    output: AvailableDataOutput;
+    exempt?: readonly string[];
+  }> = [
+    {
+      label: "drilled match with probed candidates",
+      output: {
+        found: true,
+        verified: "coverage",
+        matches: [projectMatch(buildMatch(NVDA, METRICS))],
+        candidates: [projectCandidate({ ...candidateRef(VENTURES), coverage_total: 5, coverage_capped: false })],
+        next_call: { tool: "tako_search", query: "NVIDIA Corporation Revenues" },
+      },
+    },
+    {
+      label: "coverage lookup failed",
+      output: {
+        found: false,
+        verified: "coverage",
+        guidance: "A verdict sentence. Retry once.",
+        matches: [projectMatch(unavailableMatch(NVDA))],
+        candidates: [],
+        next_call: null,
+      },
+      // `coverage.total` is 0 and the renderer prints "coverage unavailable"
+      // in place of a count: "0 metrics" beside a failed lookup reads as a
+      // gap in the data, which is the one thing this branch must not say.
+      // Structured carries `unavailable: true` for the same distinction.
+      exempt: ["0"],
+    },
+    {
+      label: "counted but unlisted",
+      output: {
+        found: true,
+        verified: "coverage",
+        matches: [projectMatch(candidateMatch(NVDA, { total: 250, capped: true }))],
+        candidates: [projectCandidate(candidateRef(GROWTH))],
+        next_call: null,
+      },
+    },
+    {
+      label: "disclaimed, resolved only",
+      output: {
+        found: false,
+        verified: "resolution",
+        guidance: "A verdict sentence. Search the web instead.",
+        matches: [],
+        candidates: [
+          projectCandidate({
+            ...resolvedOnlyMatch(NVDA),
+            coverage_total: 0,
+            coverage_capped: false,
+          }),
+          projectCandidate(candidateRef(VENTURES)),
+        ],
+        next_call: null,
+      },
+    },
+    {
+      label: "metric-filtered list",
+      output: {
+        found: true,
+        verified: "pair",
+        matches: [projectMatch(metricListMatch(NVDA, [DC, GROWTH], false, "data center"))],
+        candidates: [],
+        next_call: { tool: "tako_search_advanced", query: "NVIDIA Corporation Total revenue - Data center" },
+      },
+    },
+    {
+      label: "lookup pair with runners-up",
+      output: {
+        found: true,
+        verified: "unlinked",
+        guidance: "A verdict sentence. An action sentence.",
+        matches: [],
+        candidates: [],
+        next_call: null,
+        entity: projectRef({ node_id: NVDA.id, name: NVDA.name, type: NVDA.type }),
+        metric: projectRef({ node_id: DC.id, name: DC.name, type: DC.type }),
+        entity_candidates: [projectRef({ node_id: VENTURES.id, name: VENTURES.name, type: VENTURES.type })],
+        metric_candidates: [projectRef({ node_id: GROWTH.id, name: GROWTH.name, type: GROWTH.type })],
+      },
+    },
+  ];
+
+  it.each(CASES)("$label: every leaf of the projected output appears in the rendered text", ({ output, exempt }) => {
     const md = renderAvailableDataMarkdown(output);
     for (const leaf of leavesOf(output)) {
+      if (exempt?.includes(leaf) === true) continue;
       expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
     }
+  });
+
+  it("says the coverage lookup failed rather than printing a zero count", () => {
+    const md = renderAvailableDataMarkdown({
+      found: false, verified: "coverage", matches: [projectMatch(unavailableMatch(NVDA))],
+      candidates: [], next_call: null,
+    });
+    expect(md).toContain("coverage unavailable");
+  });
+
+  // `found` is a BOOLEAN, so the walk above cannot see it (see `leavesOf`).
+  // It is the routing verdict a caller narrows `sources` on, and it is not
+  // derivable from the rest of the document: on the pair path it turns on a
+  // `pinnedConfident` this text never names. Both values must print.
+  it("states `found` in the text channel, in both directions", () => {
+    const at = (found: boolean): AvailableDataOutput => ({
+      found, verified: "coverage", matches: [], candidates: [], next_call: null,
+    });
+    expect(renderAvailableDataMarkdown(at(true))).toContain("found: yes");
+    expect(renderAvailableDataMarkdown(at(false))).toContain("found: no");
   });
 });
 
@@ -1089,7 +1210,20 @@ describe("channel parity (tako_graph_related)", () => {
   });
 });
 
-/** Every string and number leaf of a projected output, in document order. */
+/**
+ * Every string and number leaf of a projected output, in document order.
+ *
+ * BOOLEANS ARE OUT OF REACH OF THIS WALK, and each one therefore needs its own
+ * test. They have no single rendered form: `found` is a stated fact and prints
+ * a word either way, while `truncated` and `total_capped` are flags whose
+ * false value renders as ABSENCE (`groupTotal` prints `+` only when true).
+ * Collecting them as "yes"/"no" was tried on 2026-08-31 and fails the
+ * graph_related parity case for exactly that reason.
+ *
+ * The gap is not academic: `tako_available_data.found` — the routing verdict a
+ * caller narrows `sources` on — reached `structuredContent` and no text branch,
+ * and every test here passed.
+ */
 function leavesOf(v: unknown, acc: string[] = []): string[] {
   if (v === null || v === undefined) return acc;
   if (typeof v === "string") acc.push(v);

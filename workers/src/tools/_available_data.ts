@@ -2,10 +2,10 @@
  * Pure selection + formatting helpers for `tako_available_data`.
  *
  * `tako_available_data` resolves a name to graph node(s) and, for each, reports
- * what data Tako has for it — as a natural-language "Tako has data on X"
- * summary. Everything network-free lives here so it can be unit-tested in
- * isolation; the tool module (`tako_available_data.ts`) only orchestrates the
- * fetches and calls these.
+ * what data Tako has for it. Everything network-free lives here so it can be
+ * unit-tested in isolation; the tool module (`tako_available_data.ts`) only
+ * orchestrates the fetches and calls these. The markdown rendering lives in
+ * `_render_markdown.ts`, not here.
  *
  * Coverage is type-aware, because the graph models the two node kinds
  * differently:
@@ -77,14 +77,6 @@ export const SHELL_COVERAGE_MAX = 5;
 // The tool paginates with the cursor, so this is a request-shaping knob, not
 // a cap on what the agent sees.
 export const PAGE_LIMIT = 100;
-// Ceiling on the coverage name list across all fetched pages. Coverage names
-// are the tool's primary payload — each is a term the agent reuses in a
-// follow-up tako_search — so the drill paginates well past the old one-page
-// window (which buried anything behind the backend's fixed, boilerplate-first
-// order). Matched to the server's OWN counting cap (graph/related stops
-// counting related items at 250 and reports `total_capped`) rather than set
-// tighter, so this is a genuine ceiling, not a second, lower cap layered on
-// top of the server's: a node at or under 250 gets its COMPLETE coverage list.
 // How many coverage entries reach the model — the SAME number in both
 // channels (spec, text-channel template: nothing renders that structured does
 // not carry). It used to be 250 in text and 25 in structuredContent, so the
@@ -132,7 +124,7 @@ export const MAX_COVERAGE_PAGES = 1;
  */
 export const MAX_CANDIDATES = 20;
 export const DEFAULT_CANDIDATES = 10;
-/** Aliases shown per candidate line — enough to recognise a ticker or abbreviation. */
+/** Aliases shown per candidate line — enough to recognize a ticker or abbreviation. */
 export const ALIASES_SHOWN = 3;
 
 // Metric names that read as internal/accounting plumbing rather than the
@@ -405,13 +397,16 @@ export function metricListMatch(
   complete: boolean,
   filter: string,
 ): CoverageMatch {
-  const items: CoverageItem[] = list.map((n) => ({ name: n.name, node_id: n.id }));
+  const hits: CoverageItem[] = list.map((n) => ({ name: n.name, node_id: n.id }));
+  const items = hits.slice(0, COVERAGE_ITEMS_SHOWN);
   return {
     ...candidateRef(node),
     filter,
     coverage: {
       kind: "metrics", items,
-      total: items.length, truncated: !complete, capped: !complete,
+      total: hits.length,
+      truncated: !complete || items.length < hits.length,
+      capped: !complete,
     },
   };
 }
@@ -468,7 +463,7 @@ export function guidanceNoMatch(query: string, searchTool: string | null): strin
 
 /**
  * Names resolved but the gate rejected them all. The candidates still ship —
- * a model may recognise one — so the verdict has to say what they are, or a
+ * a model may recognize one — so the verdict has to say what they are, or a
  * near-spelling reads as an answer.
  */
 export function guidanceLowConfidence(query: string, searchTool: string | null): string {
@@ -485,10 +480,18 @@ export function guidanceTie(query: string, entityName: string, metricName: strin
 }
 
 /** The pair resolved but the graph holds no edge between the halves. */
-export function guidanceUnlinked(entityName: string, metricName: string): string {
+export function guidanceUnlinked(
+  entityName: string,
+  metricName: string,
+  searchTool: string | null,
+): string {
+  const action =
+    searchTool === null
+      ? "Report the pair as unconfirmed rather than rephrasing."
+      : "Run `next_call` anyway to be sure, and say Tako has no card for the pair if it comes back empty.";
   return `${oneLine(metricName)} is not on ${oneLine(
     entityName,
-  )}'s own metric list, so a card for this pair is unlikely. Run \`next_call\` anyway — it is the only free way to be sure — and report the gap if it comes back empty.`;
+  )}'s own metric list, so a card for this pair is unlikely. ${action}`;
 }
 
 /** The entity half did not resolve, so there is nothing to look a metric up on. */
@@ -511,13 +514,13 @@ export function guidanceMetricUnresolved(entityName: string, metricQuery: string
 export function guidanceNoCoverage(name: string, kind: CoverageKind, searchTool: string | null): string {
   const what = kind === "entities" ? "is not tracked against any entity yet" : "has no metrics yet";
   return `${oneLine(name)} resolved, but it ${what}. ${
-    searchTool === null ? "Report the gap rather than rephrasing." : `Search the web with \`${searchTool}\` rather than rephrasing.`
+    searchTool === null ? "Say Tako holds no data for it rather than rephrasing." : `Search the web with \`${searchTool}\` rather than rephrasing.`
   }`;
 }
 
 /** The coverage lookup failed. Transient, and the caller can retry. */
 export function guidanceUnavailable(name: string): string {
-  return `${oneLine(name)} resolved, but Tako could not load its coverage just now. Retry once; this is transient, not a gap in the data.`;
+  return `${oneLine(name)} resolved, but Tako couldn't load its coverage. Retry once; this is transient, not a gap in the data.`;
 }
 
 /** The arguments look swapped, so nothing was looked up. */
@@ -556,7 +559,8 @@ export interface NextCall {
    */
   tool: "tako_search" | "tako_search_advanced";
   /**
-   * The EXACT canonical name of each half, which is what recovers cards.
+   * The EXACT canonical name of each half. `tako_search` matches the graph's
+   * own names, so the caller's phrasing is the thing that misses.
    *
    * No pin rides along. `tako_search` takes no `node_ids` / `strict` after the
    * D4 split, so a handle carrying them would be rejected by the very tool it
@@ -697,7 +701,7 @@ export function buildPairNextCall(
   // The metric half used to be the caller's phrase, because the pinned node
   // carried the precision. With tako_search taking no pin, the canonical name
   // is the ONLY steering signal left — and it is the arm the measurement
-  // favours: the canonical name recovered cards on 9 of 15 pairs, while a pin
+  // favors: the canonical name recovered cards on 9 of 15 pairs, while a pin
   // returned FEWER cards than the same query unpinned on 11 of 20 (staging
   // 2026-07-31, 20 handles × 3 repeats, KE-812) because the graph holds
   // near-duplicate metric nodes where only one twin carries cards.
@@ -782,7 +786,7 @@ function kindOf(c: { type: string; subtype: string | null; label: string | null 
 }
 
 /**
- * A candidate: enough to recognise it, search it, and explore it.
+ * A candidate: enough to recognize it, search it, and explore it.
  *
  * `aliases` are DROPPED here and kept only on `matches`. They used to render
  * in the text channel and not in the structured one, so the two channels

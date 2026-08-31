@@ -69,7 +69,7 @@
     },
     {
       "name": "tako_available_data",
-      "description": "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under. Free and fast.\n\nAsk it when the question is coverage itself, or before a priced search when you need a metric's canonical name. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.\n\nSearch on the canonical names it returns, not your own phrasing; that is what recovers cards. A name here means the graph tracks it, not that a card exists, so if the follow-up search comes back empty, report the gap instead of rephrasing. Hand a node id to `tako_graph_related` to see what else connects to it.",
+      "description": "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.\n\nBest for: coverage questions themselves, or a metric's canonical name before a priced search. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.\n\nSearch on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.",
       "parameters": {
         "q": {
           "type": "string",
@@ -150,7 +150,7 @@
     },
     {
       "name": "tako_graph_related",
-      "description": "Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources. Free.\n\nTwo modes. Pass `node_id` alone for the map: every relation group with its key, label, total, and its first 3 names. Pass `relation` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.\n\nResolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.",
+      "description": "Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.\n\nTwo modes. Pass `node_id` alone for the map: every relation group with its key, label, total, and its first 3 names. Pass `relation` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.\n\nBest for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.",
       "parameters": {
         "node_id": {
           "type": "string",

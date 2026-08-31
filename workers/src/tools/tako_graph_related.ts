@@ -31,11 +31,11 @@ const NER_LABELS = [
 ] as const;
 
 const DESCRIPTION = [
-  "Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources. Free.",
+  "Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.",
   "",
   `Two modes. Pass \`node_id\` alone for the map: every relation group with its key, label, total, and its first ${String(OVERVIEW_PREVIEW_N)} names. Pass \`relation\` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.`,
   "",
-  "Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.",
+  "Best for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.",
 ].join("\n");
 
 const inputSchema = z.object({

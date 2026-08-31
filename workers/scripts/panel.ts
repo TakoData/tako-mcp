@@ -270,13 +270,14 @@ async function callTool(
  * This is the single most useful thing the panel reports. The whole
  * discovery-to-fetch design rests on the model running the emitted handle
  * VERBATIM — and the failure mode is silent: the model reads the handle, then
- * issues its own almost-identical call without `strict`, which is the variant
- * measured to do nothing. Watching for that is the difference between "the
+ * issues its own almost-identical call, rephrasing the canonical name the
+ * handle carries. The name is the whole steering signal now that `next_call`
+ * pins nothing, so watching for that is the difference between "the
  * instructions look right" and "the instructions work".
  */
 interface PendingHandle {
   fromTool: string;
-  call: { tool?: string; query?: string; node_ids?: string[]; strict?: boolean };
+  call: { tool?: string; query?: string };
 }
 
 type Adherence = "verbatim" | "deviated" | "ignored" | null;
@@ -292,14 +293,11 @@ function checkAdherence(
   if (toolName !== want.tool) {
     return { adherence: "ignored", detail: `handle named ${String(want.tool)}, model called ${toolName}` };
   }
+  // `query` is the ONLY field to compare: `next_call` is `{tool, query}` and
+  // carries no pin, so a `node_ids`/`strict` check here would compare two
+  // absent values and report agreement it never established.
   const diffs: string[] = [];
   if (args.query !== want.query) diffs.push(`query: wanted ${JSON.stringify(want.query)}, sent ${JSON.stringify(args.query)}`);
-  const sentIds = Array.isArray(args.node_ids) ? (args.node_ids as string[]) : [];
-  const wantIds = want.node_ids ?? [];
-  if (JSON.stringify(sentIds) !== JSON.stringify(wantIds)) {
-    diffs.push(`node_ids: wanted ${JSON.stringify(wantIds)}, sent ${JSON.stringify(sentIds)}`);
-  }
-  if (args.strict !== want.strict) diffs.push(`strict: wanted ${String(want.strict)}, sent ${String(args.strict)}`);
   return diffs.length === 0
     ? { adherence: "verbatim", detail: "ran the emitted handle exactly" }
     : { adherence: "deviated", detail: diffs.join("; ") };

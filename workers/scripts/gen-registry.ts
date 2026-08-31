@@ -67,6 +67,7 @@ import { buildVisualizeOutput } from "../src/tools/tako_visualize.js";
 import { ThinVizCard } from "../src/generated/schemas.js";
 import {
   buildMatch,
+  buildNextCall,
   candidateRef,
   projectCandidate,
   projectMatch,
@@ -925,8 +926,11 @@ function buildAvailableDataSample(tool: ToolModule): ToolSample {
     verified: "coverage" as const,
     matches: [projectMatch(match)],
     candidates: candidates.map(projectCandidate),
-    // The default toolset, which is what a reader of the docs is on.
-    next_call: { tool: searchToolFor(undefined) ?? "tako_search", query: `${match.name} Revenues` },
+    // GENERATED, never hand-written: `buildNextCall` owns the gate that
+    // decides whether a handle is emitted at all (NEXT_CALL_MAX_NAMES), so a
+    // literal here would document a handle the tool would have withheld.
+    // `undefined` is the default toolset, which is what a reader of the docs is on.
+    next_call: buildNextCall([match], searchToolFor(undefined)),
   };
   return {
     structured: pickDeclared(
@@ -1044,7 +1048,7 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     "",
     "## Choosing tools with `?tools=`",
     "",
-    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming `tako_search`, so a listing without it gives the model a call it cannot run. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
+    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
     "",
   );
 

@@ -2,7 +2,7 @@
  * `tako_available_data` — the one-shot "what data does Tako have on X?" tool.
  *
  * Runs graph/search → graph/related as a single free, low-latency pipeline and
- * returns a natural-language coverage summary. It is the entry point that
+ * reports what data Tako holds. It is the entry point that
  * RESOLVES a name to a node; `tako_graph_related` is the one primitive left,
  * for drilling into a node this tool already resolved.
  *
@@ -16,8 +16,9 @@
  * hits come back as a list. The drill is type-aware: an entity node → its
  * `metrics` (the data Tako holds); a metric node → the `entities` it is tracked
  * across (its coverage). Drilling `relation=metrics` on a metric node returns
- * empty, so the split avoids a false "no data" answer. No LLM call — the prose
- * is built deterministically in `_available_data.ts`. Per-node failures are
+ * empty, so the split avoids a false "no data" answer. No LLM call — the
+ * projection is built here, and `_render_markdown.ts` renders it. Per-node
+ * failures are
  * isolated so one bad node never sinks the whole answer. Validated against the
  * loose `_graph.ts` facades (not the strict generated schema, whose enums drift).
  */
@@ -112,11 +113,11 @@ const NER_LABELS = [
 // (9 of 15) stands and predates that rule; any replacement example has to be
 // re-measured against the equality gate before it goes in here.
 const DESCRIPTION = [
-  "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under. Free and fast.",
+  "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.",
   "",
-  "Ask it when the question is coverage itself, or before a priced search when you need a metric's canonical name. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.",
+  "Best for: coverage questions themselves, or a metric's canonical name before a priced search. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.",
   "",
-  "Search on the canonical names it returns, not your own phrasing; that is what recovers cards. A name here means the graph tracks it, not that a card exists, so if the follow-up search comes back empty, report the gap instead of rephrasing. Hand a node id to `tako_graph_related` to see what else connects to it.",
+  "Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -135,7 +136,8 @@ const inputSchema = z.object({
   // `limit` is NOT a display knob. It sizes every `graph/search` this tool
   // runs, including the `metric` probe, and two later steps scan the whole
   // widened list rather than its head: `exactIdx` promotes an exact-name metric
-  // to rank 0 (so `limit` decides which metric `next_call` pins), and
+  // to rank 0 (so `limit` decides which metric `next_call` NAMES — it carries
+  // no pin, only the canonical name), and
   // `topOfEachKind` can surface a metric that only appears deep in the list
   // (so `limit` decides whether the same `q` answers confidently or returns a
   // tie with `next_call: null`). A caller raising it to "see more options" is
@@ -183,7 +185,7 @@ function guidanceForPair(
     return { guidance: guidanceMetricUnresolved(pair.entity.name, metricQuery) };
   }
   if (verified === "unlinked") {
-    return { guidance: guidanceUnlinked(pair.entity.name, pair.metric.name) };
+    return { guidance: guidanceUnlinked(pair.entity.name, pair.metric.name, searchTool) };
   }
   return {};
 }
@@ -314,14 +316,14 @@ const tako_available_data = {
     // above). A single-relation drill returns just that group (in `relation`),
     // smaller and faster than the full overview.
     //
-    // The drill PAGINATES (cursor, PAGE_LIMIT per page) up to
-    // MAX_COVERAGE_NAMES so the coverage list is COMPLETE, not a first-page
-    // window: a broad entity's page 1 is dominated by generic
-    // normalized-accounting names in the backend's fixed order, so a
-    // single-page fetch made anything past it ("Net charges-off …" behind 250
-    // boilerplate metrics) undiscoverable. A later-page failure keeps the
-    // pages already fetched (partial names beat "unavailable"); only a
-    // first-page failure degrades the node to unavailable.
+    // ONE page (MAX_COVERAGE_PAGES), because COVERAGE_ITEMS_SHOWN (25) is
+    // sliced from a PAGE_LIMIT (100) pool that already overshoots it — the
+    // three further pages this used to fetch bought 225 names no channel
+    // renders. The slice is taken after a headline-first reorder, so the
+    // generic normalized-accounting names the backend puts first are what a
+    // cut drops. `total`/`total_capped` come off the page itself, so a cut
+    // list still reports how much exists. A first-page failure degrades the
+    // node to unavailable; there are no later pages to lose.
     const drillMatches = (nodes: GraphNode[]): Promise<CoverageMatch[]> =>
       Promise.all(
         nodes.map(async (node) => {
@@ -654,9 +656,9 @@ const tako_available_data = {
             ]
           : metricHits;
       const metrics = orderedHits.map(toRef);
-      // THE NODE WE PIN IS THE NODE THAT MUST PASS. Confidence is judged on
-      // rank 0 — the candidate `pair.metric` takes and `next_call` pins — and
-      // nothing else.
+      // THE NODE RANK 0 SELECTS IS THE NODE THAT MUST PASS. Confidence is
+      // judged on rank 0 — the candidate `pair.metric` takes, and so the
+      // metric `next_call` NAMES — and nothing else.
       //
       // This used to be `.some()` over the shown window (primary + alternates),
       // which meant a confident SIBLING licensed a runnable, priced handle for a
@@ -684,10 +686,9 @@ const tako_available_data = {
       // stays (~86% top-1, ~100% top-3 over 44 cases).
       //
       // So when rank 0 is unvetted the handle is WITHHELD rather than
-      // redirected: the summary switches to the "nothing is pinned, pick one
-      // deliberately" branch with the entity's own matching metrics and their
-      // node ids still visible, which is the recovery the live agent performed
-      // by itself.
+      // redirected: `next_call` is null and the entity's own matching metrics
+      // stay visible with their ids, leaving the caller to pick one
+      // deliberately — the recovery the live agent performed by itself.
       //
       // Retire in favour of the real fix once `graph/search` carries a
       // relevance score (KE-805): score the candidates, pin the best. TAKO-3754.
@@ -885,7 +886,12 @@ const tako_available_data = {
         // "almost certainly NOT what you asked for". They ride as candidates,
         // which is what they are, in both channels.
         matches: [],
-        candidates: [...resolvedOnly.map(projectMatch), ...unlisted.map(projectCandidate)],
+        candidates: [
+          ...resolvedOnly.map((m) =>
+            projectCandidate({ ...m, coverage_total: m.coverage.total, coverage_capped: m.coverage.capped }),
+          ),
+          ...unlisted.map(projectCandidate),
+        ],
         // No vetted target, so no runnable handle — a priced call must not be
         // spent on a resolution we just disclaimed.
         next_call: null,

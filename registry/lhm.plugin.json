@@ -20,7 +20,7 @@
   "tools": [
     {
       "name": "tako_available_data",
-      "description": "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under. Free and fast.\n\nAsk it when the question is coverage itself, or before a priced search when you need a metric's canonical name. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.\n\nSearch on the canonical names it returns, not your own phrasing; that is what recovers cards. A name here means the graph tracks it, not that a card exists, so if the follow-up search comes back empty, report the gap instead of rephrasing. Hand a node id to `tako_graph_related` to see what else connects to it.",
+      "description": "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.\n\nBest for: coverage questions themselves, or a metric's canonical name before a priced search. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.\n\nSearch on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",

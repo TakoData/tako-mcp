@@ -8,7 +8,7 @@ This page is rendered from the same objects the server publishes on `tools/list`
 
 ## Choosing tools with `?tools=`
 
-On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming `tako_search`, so a listing without it gives the model a call it cannot run. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.
+On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.
 
 ## `/mcp` — the generic surface, every client
 
@@ -203,11 +203,11 @@ Annotations:
 
 Description:
 
-Find what data Tako holds on an entity or a metric, and the canonical name it holds it under. Free and fast.
+Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.
 
-Ask it when the question is coverage itself, or before a priced search when you need a metric's canonical name. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.
+Best for: coverage questions themselves, or a metric's canonical name before a priced search. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.
 
-Search on the canonical names it returns, not your own phrasing; that is what recovers cards. A name here means the graph tracks it, not that a card exists, so if the follow-up search comes back empty, report the gap instead of rephrasing. Hand a node id to `tako_graph_related` to see what else connects to it.
+Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.
 
 Parameters:
 
@@ -339,15 +339,14 @@ Annotations:
             "type": "boolean"
           },
           "filter": {
+            "description": "The `metric` phrase that narrowed this list. When set, `total` counts only matching entries.",
             "type": "string"
           },
           "coverage": {
             "type": "object",
             "properties": {
               "total": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991,
+                "type": "number",
                 "description": "Entries in all, not entries listed."
               },
               "total_capped": {
@@ -421,9 +420,7 @@ Annotations:
             "type": "object",
             "properties": {
               "total": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "number"
               },
               "total_capped": {
                 "type": "boolean",
@@ -632,6 +629,7 @@ Annotations:
 `content[0].text`:
 
 ```markdown
+found: yes
 verified: coverage
 
 ## Matches (1)
@@ -921,11 +919,11 @@ usage: $0.0052
 
 Description:
 
-Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources. Free.
+Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.
 
 Two modes. Pass `node_id` alone for the map: every relation group with its key, label, total, and its first 3 names. Pass `relation` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.
 
-Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.
+Best for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.
 
 Parameters:
 
@@ -1065,9 +1063,7 @@ Annotations:
             "type": "string"
           },
           "total": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "type": "number"
           },
           "total_capped": {
             "type": "boolean",
@@ -1082,7 +1078,7 @@ Annotations:
             "items": {
               "type": "string"
             },
-            "description": "The group's first few names."
+            "description": "The group's first 3 names."
           }
         },
         "required": [
@@ -1109,9 +1105,7 @@ Annotations:
               "type": "string"
             },
             "total": {
-              "type": "integer",
-              "minimum": -9007199254740991,
-              "maximum": 9007199254740991
+              "type": "number"
             },
             "total_capped": {
               "type": "boolean",

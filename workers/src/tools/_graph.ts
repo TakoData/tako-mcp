@@ -167,7 +167,10 @@ export const projectedFocalNodeShape = z.looseObject({
 const relationGroupFields = {
   key: z.string().describe("Pass back as `relation` to page it."),
   label: z.string(),
-  total: z.number().int(),
+  // No `.int()`: the SDK publishes it as the JS safe-integer bounds, ~53 chars
+  // twice over (this group is spread into both the map and the drill shape)
+  // for a range no relation count can violate.
+  total: z.number(),
   total_capped: z.boolean().describe("`total` is a floor."),
   next_cursor: z.string().optional().describe("Pass back as `cursor`."),
 } as const;
@@ -175,7 +178,7 @@ const relationGroupFields = {
 /** A group on the map: names only. */
 export const projectedRelationPreviewShape = z.looseObject({
   ...relationGroupFields,
-  preview: z.array(z.string()).describe("The group's first few names."),
+  preview: z.array(z.string()).describe(`The group's first ${String(OVERVIEW_PREVIEW_N)} names.`),
 });
 
 /** A drilled group: the page, with an id per item. */
@@ -286,7 +289,7 @@ const NER_LABEL_LIST =
  *
  * Grounded ONLY in the documented graph contract (`openapi/sdk.yaml`:
  * search → 400/503, related → 400/404/503) and the
- * live-verified behaviours recorded in the tako-graph-agent skill:
+ * live-verified behaviors recorded in the tako-graph-agent skill:
  *   - 401 → key missing/invalid, or a key used against the wrong environment
  *     (a prod key is rejected on staging and vice-versa).
  *   - 400 → a bad parameter; on search that is almost always an off-enum

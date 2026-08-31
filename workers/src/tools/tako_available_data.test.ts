@@ -416,7 +416,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "Alpha" }, CTX);
     expect(out.found).toBe(false);
-    expect(out.guidance).toContain("could not load its coverage");
+    expect(out.guidance).toContain("couldn't load its coverage");
     expect(out.matches.every((m) => m.unavailable)).toBe(true);
   });
 
@@ -642,7 +642,7 @@ describe("tako_available_data", () => {
     expect(out.next_call).toBeNull();
   });
 
-  it("stops on the cursor landing items exactly at MAX_COVERAGE_NAMES with more available", async () => {
+  it("fetches one page and stops, even with a cursor and more available", async () => {
     const p1 = drill(
       "a", "A", "metrics",
       Array.from({ length: PAGE_LIMIT }, (_, i) => `M1-${i}`), 400, false, "c2",
@@ -653,7 +653,7 @@ describe("tako_available_data", () => {
       jsonResponse(200, drill("a", "A", "metrics", ["never-fetched"], 400)),
     ]);
     const out = await takoAvailableData.handler({ q: "a" }, CTX);
-    expect(fetchMock.mock.calls).toHaveLength(2); // count-cap stops the loop, not the cursor
+    expect(fetchMock.mock.calls).toHaveLength(2); // MAX_COVERAGE_PAGES stops the loop — not the cursor, and not the item count
     expect(out.matches[0]?.coverage.items).toHaveLength(COVERAGE_ITEMS_SHOWN);
     expect(out.matches[0]?.coverage.truncated).toBe(true);
     expect(out.matches[0]?.coverage.total).toBe(400);

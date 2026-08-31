@@ -2,9 +2,9 @@
   "note": "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot",
   "tools": {
     "tako_available_data": {
-      "description_sha256": "21d26b32293d4f81b3a4f5f335664ef0055f17b7bd2b4eb358a3d34551d60f08",
+      "description_sha256": "9ebd853338d122ab8e22e283d8a687760eb4e57a18b9433fd9655bc7a168c8e1",
       "input_schema_sha256": "62b5b9b65737867143e3c2844053afeeee8346f95a92b64133709ca0a3e8e3d1",
-      "output_schema_sha256": "84608444f6477bd9e20ed037848585f6a6699ed2655b7047cde2d86adc69ad6f"
+      "output_schema_sha256": "c99944f017b8b94928982d9ac00ed9cd33680441d1d6d60bd50d1e9ec1303270"
     },
     "tako_contents": {
       "description_sha256": "278336d9293351cf5a3265dd9b8f7cdc886987bc0ba6dcfbcff823d07a9004a7",
@@ -12,9 +12,9 @@
       "output_schema_sha256": "e30ca69995f4c6d58f70e19269a8e4c679cdcc582beaca8d98bc8f19e0a4f6f9"
     },
     "tako_graph_related": {
-      "description_sha256": "55f2ba5e4c5755a8d5e6ca3f0fabf5ab39ed04cb440b3884eb85ac7bae8e8d65",
+      "description_sha256": "f7f773f8e1fcd95d305b33daa3fcb682c3caafbcee9df6d4888620bc1ef47001",
       "input_schema_sha256": "142389dbe63e3f426f5402ef30cde838a8b5de4b99c744354eb0fa6682b4325e",
-      "output_schema_sha256": "14c08d07fb02311d8f091ca257c459c9a5eedc7450fac52474d827a74f59d832"
+      "output_schema_sha256": "3569c618ed16c5e390812f9e4f3e10859fd2fc0b38bf44535b5ed097a9a70b26"
     },
     "tako_search": {
       "description_sha256": "61a7e902d8b3026d79bc5a77f367610c6ffa8ab157366cf120e8fa33c49aa658",

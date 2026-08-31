@@ -26,8 +26,9 @@
  * `tako_visualize` declare NO `slimStructured` hook: their handler output IS
  * the advertised shape, and `pickDeclared` in `mcp.ts` does the per-surface
  * narrowing.
- * `tako_available_data` and `tako_agent` still slim, with the two helpers in
- * this module; `tako_graph_related` slims with its own function.
+ * `tako_agent` is the last tool that still slims, with the helper in this
+ * module. `tako_available_data` and `tako_graph_related` joined the others:
+ * their handlers return the projected shape directly.
  *
  * `request_id` reaches NEITHER channel, on purpose. It is a server-side
  * correlation id with no use to a model or an end user, and OpenAI's app
@@ -546,7 +547,7 @@ const coverageItemShape = z.object({
 
 /** What a DRILLED node holds: the counts plus the listed entries. */
 const coverageShape = z.looseObject({
-  total: z.number().int().describe("Entries in all, not entries listed."),
+  total: z.number().describe("Entries in all, not entries listed."),
   total_capped: z.boolean().describe("`total` is a floor."),
   truncated: z.boolean().optional().describe("More entries exist than are listed."),
   items: z.array(coverageItemShape).optional().describe("Headline-first."),
@@ -556,7 +557,7 @@ const coverageShape = z.looseObject({
  *  size, never for its list, so declaring `items` here would advertise a field
  *  no candidate can carry — and cost the whole item schema a second time. */
 const coverageCountShape = z.looseObject({
-  total: z.number().int(),
+  total: z.number(),
   total_capped: z.boolean().describe("`total` is a floor."),
 });
 
@@ -585,7 +586,7 @@ export const availableDataSlimOutputShape = z.looseObject({
     ),
   guidance: z.string().optional().describe("The verdict, and the one next action."),
   matches: z
-    .array(z.looseObject({ ...candidateFields, aliases: z.array(z.string()).optional(), unavailable: z.boolean().optional(), filter: z.string().optional(), coverage: coverageShape }))
+    .array(z.looseObject({ ...candidateFields, aliases: z.array(z.string()).optional(), unavailable: z.boolean().optional(), filter: z.string().optional().describe("The `metric` phrase that narrowed this list. When set, `total` counts only matching entries."), coverage: coverageShape }))
     .describe("The nodes whose coverage was drilled, best first."),
   candidates: z
     .array(z.looseObject({ ...candidateFields, coverage: coverageCountShape.optional() }))
@@ -678,7 +679,15 @@ const refList = (refs: readonly ProjectedRef[]): string =>
 export function renderAvailableDataMarkdown(o: AvailableDataOutput): string {
   const blocks: string[] = [];
   if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
-  if (o.verified !== undefined) blocks.push(`verified: ${o.verified}`);
+  // `found` renders even though the fields around it imply it. Recovering it
+  // from text alone takes a different inference per branch — discount the
+  // candidate coverage counts on the disclaimed branch, read the wording of
+  // `guidanceMetricUnresolved` on the pair branch, where `found` turns on a
+  // `pinnedConfident` this document never names. Both channels carry the whole
+  // answer (spec D3), and the parity walker cannot enforce that for a boolean.
+  const facts = [`found: ${o.found ? "yes" : "no"}`];
+  if (o.verified !== undefined) facts.push(`verified: ${o.verified}`);
+  blocks.push(facts.join("\n"));
 
   // The resolved pair leads on the lookup path: it is the answer, and the
   // matches below it are the supporting list.
@@ -782,7 +791,7 @@ export function renderGraphRelatedMarkdown(o: ProjectedRelated): string {
 
   // Reference prose last (spec, text-channel template): a tail-truncating host
   // (OpenCode 50 KB, Gemini CLI 40k chars) loses the blurb before the map.
-  if (o.node.description !== undefined) blocks.push(`## About\n${o.node.description}`);
+  if (o.node.description !== undefined) blocks.push(`## About\n${oneLine(o.node.description)}`);
   return blocks.join("\n\n");
 }
 

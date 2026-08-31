@@ -101,8 +101,7 @@ async function discovery(): Promise<void> {
     const text = takoAvailableData.renderText?.(out, ctx) ?? "";
     const shown = out.matches
       .map((m) => {
-        const kind = [m.subtype, m.label].filter((x) => x !== null && x !== "").join(", ");
-        return `${m.name} (${kind}) ${m.type} ${m.coverage.total}${m.coverage.capped ? "+" : ""}`;
+        return `${m.name} (${m.kind ?? ""}) ${m.type} ${m.coverage.total}${m.coverage.total_capped ? "+" : ""}`;
       })
       .join(" | ");
     console.log(

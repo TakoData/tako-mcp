@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildMatch,
-  buildNextCall,
   candidateMatch,
   coverageKindFor,
   COVERAGE_ITEMS_SHOWN,
@@ -225,7 +224,8 @@ describe("guidance branches", () => {
     ["no match", guidanceNoMatch("zzzz", "tako_search")],
     ["low confidence", guidanceLowConfidence("zzzz", "tako_search")],
     ["tie", guidanceTie("US core PCE", "Core", "Core PCE Price Index")],
-    ["unlinked", guidanceUnlinked("Carnival, Inc.", "Passenger Cruise Days")],
+    ["unlinked", guidanceUnlinked("Carnival, Inc.", "Passenger Cruise Days", "tako_search")],
+    ["unlinked, no search tool", guidanceUnlinked("Carnival, Inc.", "Passenger Cruise Days", null)],
     ["metric unresolved", guidanceMetricUnresolved("NVIDIA Corporation", "widgets")],
     ["no coverage", guidanceNoCoverage("Nvidia Ventures", "metrics", "tako_search")],
     ["unavailable", guidanceUnavailable("Nvidia Ventures")],

@@ -38,9 +38,9 @@ const ctx: ToolContext = {
 };
 const CASES = names.length > 0 ? names : ["Anthropic", "NVIDIA", "Duolingo", "Crocs", "Nigeria", "Bhutan"];
 
-async function rawChars(query: Record<string, string>): Promise<number> {
+async function rawChars(query: Record<string, string | undefined>): Promise<number> {
   const url = new URL("/api/v1/graph/related", BASE);
-  for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+  for (const [k, v] of Object.entries(query)) if (v !== undefined) url.searchParams.set(k, v);
   const r = await fetch(url, { headers: { "X-API-Key": TOKEN as string } });
   return (await r.text()).length;
 }
@@ -61,7 +61,7 @@ for (const name of CASES) {
     // One slow node must not cost the whole measurement: staging times out at
     // 15s on the widest overviews, which is itself a result worth printing.
     try {
-      const raw = await rawChars(input as unknown as Record<string, string>);
+      const raw = await rawChars(input);
       const out = await takoGraphRelated.handler(input, ctx);
       const text = takoGraphRelated.renderText(out, ctx);
       const structured = JSON.stringify(out);
