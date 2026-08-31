@@ -31,6 +31,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { structuredContentFor } from "./mcp.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import { outputSchemaForSurface, publishedOutputJsonSchema } from "./tools/_surface.js";
 import type { AnyToolModule } from "./tools/types.js";
 
 const AUTH_HEADER = "Bearer conformance-test-token";
@@ -543,4 +544,57 @@ describe("the sweep sees into union branches, not just objects and arrays", () =
     };
     expect(bannedKeysIn(schema, "t", banned)).toEqual([]);
   });
+});
+
+/**
+ * `docs/TOOLS.md` renders each tool's output schema under a heading that
+ * promises the bytes a client receives. It got that wrong in the one field
+ * that already shipped a bug: the page rendered the `z.looseObject` directly,
+ * giving `"additionalProperties": {}`, while `mcp.ts` hands the SDK `.shape`
+ * and the SDK republishes it strict — `false`, which is why `_pick_declared.ts`
+ * exists at all.
+ *
+ * `publishedOutputJsonSchema` is now the doc's single source, so this asserts
+ * it against a REAL server on BOTH surfaces. Without this the helper is just a
+ * second guess at what the SDK does, and the chatgpt surface — the one whose
+ * widget reads `structuredContent`, and where a mistake costs a resubmission —
+ * had no published-schema coverage of any kind.
+ */
+describe("docs/TOOLS.md renders the schema the wire actually carries", () => {
+  const surfaces = [
+    // `?tools=` is ignored on chatgpt (fixed listing), so only /mcp takes it.
+    { surface: "generic" as const, path: `/mcp${ALL_TOOLS_QUERY}` },
+    { surface: "chatgpt" as const, path: "/mcp/chatgpt" },
+  ];
+
+  for (const { surface, path } of surfaces) {
+    it(`${surface}: every published output schema equals publishedOutputJsonSchema`, async () => {
+      const res = await SELF.fetch(`https://example.com${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: AUTH_HEADER,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        result: { tools: Array<{ name: string; outputSchema?: unknown }> };
+      };
+      const withSchema = body.result.tools.filter((t) => t.outputSchema !== undefined);
+      // Non-vacuity: a listing that published no output schema at all would
+      // otherwise satisfy the loop below.
+      expect(withSchema.length, `${surface} published no output schemas`).toBeGreaterThan(0);
+
+      for (const tool of withSchema) {
+        const declared = outputSchemaForSurface(moduleFor(tool.name), surface);
+        expect(declared, `${tool.name} publishes a schema it does not declare`).toBeDefined();
+        expect(
+          tool.outputSchema,
+          `${tool.name} on ${surface}: docs/TOOLS.md would render a schema the wire does not carry`,
+        ).toEqual(publishedOutputJsonSchema(declared as NonNullable<typeof declared>));
+      }
+    });
+  }
 });

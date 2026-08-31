@@ -39,7 +39,7 @@ import {
 } from "../src/tools/_surface.js";
 import { TOOL_NAME_PREFIX } from "../src/tools/_tools_param.js";
 import { pickDeclared } from "../src/tools/_pick_declared.js";
-import { outputSchemaForSurface } from "../src/tools/_surface.js";
+import { outputSchemaForSurface, publishedOutputJsonSchema } from "../src/tools/_surface.js";
 import {
   buildSearchOutput,
   takoCardSchema,
@@ -912,17 +912,24 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     const chatgptSchema = outputSchemaForSurface(m, "chatgpt");
     if (genericSchema !== undefined) {
       out.push("<details><summary>wire — Published output schema (JSON Schema)</summary>", "", "```json",
-        JSON.stringify(z.toJSONSchema(genericSchema), null, 2), "```");
+        JSON.stringify(publishedOutputJsonSchema(genericSchema), null, 2), "```", "</details>", "");
       if (chatgptSchema !== genericSchema && chatgptSchema !== undefined) {
-        const genericKeys = new Set(
-          Object.keys((genericSchema as unknown as { shape?: Record<string, unknown> }).shape ?? {}),
+        // A SCHEMA, not a sentence listing the extra field names. This is the
+        // surface OpenAI reviews, and a reader cannot check a widget contract
+        // against prose. Only one tool has a divergent surface today, so this
+        // costs one extra block in the page.
+        out.push(
+          "<details><summary>wire — Published output schema on `/mcp/chatgpt` (JSON Schema)</summary>",
+          "",
+          "The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction.",
+          "",
+          "```json",
+          JSON.stringify(publishedOutputJsonSchema(chatgptSchema), null, 2),
+          "```",
+          "</details>",
+          "",
         );
-        const extra = Object.keys(
-          (chatgptSchema as unknown as { shape?: Record<string, unknown> }).shape ?? {},
-        ).filter((k) => !genericKeys.has(k));
-        out.push("", `On \`/mcp/chatgpt\` the schema also declares: ${extra.map((k) => `\`${k}\``).join(", ")} (chart-widget fields; the widget reads them from \`window.openai.toolOutput\`).`);
       }
-      out.push("</details>", "");
     }
     const sample = input.samples?.get(m.name);
     if (sample !== undefined) {
@@ -1158,19 +1165,31 @@ function stableStringify(value: unknown): string {
 
 interface ChatgptSnapshot {
   note: string;
-  tools: Record<string, { description_sha256: string; input_schema_sha256: string }>;
+  tools: Record<
+    string,
+    { description_sha256: string; input_schema_sha256: string; output_schema_sha256?: string }
+  >;
 }
 
 const SNAPSHOT_NOTE =
-  "The description and input schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
+  "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
 
 /** The snapshot for the tools on the fixed chatgpt surface, serialized. */
 export function buildChatgptSnapshot(
-  tools: ReadonlyArray<Pick<ToolModule, "name" | "description" | "inputSchema">>,
+  tools: ReadonlyArray<
+    Pick<ToolModule, "name" | "description" | "inputSchema" | "outputSchema" | "outputSchemaBySurface">
+  >,
 ): string {
   const snapshot: ChatgptSnapshot = { note: SNAPSHOT_NOTE, tools: {} };
   for (const tool of tools) {
     if (!isToolOnSurface(tool.name, "chatgpt", null)) continue;
+    // The OUTPUT schema is surface-specific now (`outputSchemaBySurface`), so
+    // without this digest the one part of the ChatGPT contract that only
+    // ChatGPT reads — the six widget fields its bundle takes from
+    // `window.openai.toolOutput` — could change with no snapshot diff and no
+    // resubmission prompt. Hashed in its WIRE form and key-sorted, for the
+    // same two reasons the input digest documents.
+    const outputSchema = outputSchemaForSurface(tool, "chatgpt");
     snapshot.tools[tool.name] = {
       description_sha256: sha256(tool.description),
       // Key-SORTED before hashing: `z.toJSONSchema` emits keys in whatever
@@ -1180,6 +1199,9 @@ export function buildChatgptSnapshot(
       // resubmission order for text nobody edited. Sorting makes the digest
       // depend on the schema's content, which is what OpenAI reviewed.
       input_schema_sha256: sha256(stableStringify(z.toJSONSchema(tool.inputSchema, { io: "input" }))),
+      ...(outputSchema !== undefined
+        ? { output_schema_sha256: sha256(stableStringify(publishedOutputJsonSchema(outputSchema))) }
+        : {}),
     };
   }
   return serializeJson(snapshot);
@@ -1192,7 +1214,9 @@ export function buildChatgptSnapshot(
  * and that check cannot see — the description and the input schema.
  */
 export function assertChatgptSnapshot(
-  tools: ReadonlyArray<Pick<ToolModule, "name" | "description" | "inputSchema">>,
+  tools: ReadonlyArray<
+    Pick<ToolModule, "name" | "description" | "inputSchema" | "outputSchema" | "outputSchemaBySurface">
+  >,
   snapshotJson: string,
 ): void {
   const accepted = JSON.parse(snapshotJson) as ChatgptSnapshot;
@@ -1209,6 +1233,9 @@ export function assertChatgptSnapshot(
     }
     if (was.input_schema_sha256 !== hashes.input_schema_sha256) {
       problems.push(`tool "${name}" input_schema changed since the accepted snapshot`);
+    }
+    if (was.output_schema_sha256 !== hashes.output_schema_sha256) {
+      problems.push(`tool "${name}" output_schema changed since the accepted snapshot`);
     }
   }
   for (const name of Object.keys(accepted.tools)) {

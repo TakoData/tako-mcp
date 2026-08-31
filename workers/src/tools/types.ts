@@ -102,6 +102,27 @@ export interface ToolContext {
    * must degrade rather than assume.
    */
   origin?: string | undefined;
+  /**
+   * The tool names THIS connection registered — `resolveToolSet(surface,
+   * requestedToolNames)`, stamped by `registerTool` from the same call that
+   * decided which tools to register, so the two can never disagree.
+   *
+   * A tool RESULT that names another tool is an instruction the model acts on,
+   * and `?tools=` REPLACES the defaults (spec D1): `?tools=search` registers
+   * `tako_search` alone. The zero-result guidance branched on tier only, so a
+   * signed-in caller on that connection was told to "call tako_available_data
+   * (free)" — a tool the connection never registered, whose call resolves to
+   * the SDK's bare "tool not found". Tier is not the predicate; capability is.
+   *
+   * `instructions.ts` filters the `initialize` string the same way. The two
+   * differ only in timing: instructions are assembled once per connection,
+   * this is read per call.
+   *
+   * `undefined` for non-HTTP callers (tests, direct handler invocation).
+   * Consumers must degrade to naming nothing conditional rather than assume
+   * a tool is present.
+   */
+  registeredTools?: ReadonlySet<string> | undefined;
 }
 
 /**

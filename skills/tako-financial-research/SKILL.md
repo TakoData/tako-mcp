@@ -36,7 +36,7 @@ Reliably NOT in the data graph, and where web carries the answer instead: forwar
 ## Reading a result
 Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
 
-Field names depend on the response format, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them on a facts line (`exportable · relevance · type · freshness · nodes · source · chart · embed`); a JSON response uses `exportable`, `relevance`, `card_type`, `data_freshness.data_as_of`, `nodes`, `sources[].source_name`, `webpage_url` and `embed_url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
 
 ## Pick the right card (Critical)
 A search returns several cards and **#0 is frequently not what was asked for**. The relevance fact does not rescue you: the correct card is routinely tagged `Low` while an off-intent card is `High`. Tako auto-renders #0, so if the right card is elsewhere, reference it explicitly by linking its title to the card's chart URL and say it is the authoritative one. Walk this checklist before quoting any number:

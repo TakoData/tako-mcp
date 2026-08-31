@@ -71,7 +71,12 @@ import {
 const searchAdvertisedFields = {
   cards: z
     .array(projectedCardShape)
-    .describe("The data cards. Rows never ride here on tako_search — fetch an exportable card's rows with tako_contents on its url."),
+    // Holds on BOTH tools, because this shape is shared (see the `related`
+    // comment below for the same rule). `tako_search_advanced` with
+    // `include_contents: true` sets rowCap "all" and DOES inline rows, so an
+    // unqualified "fetch the rows with tako_contents" here sent that caller
+    // into a priced refetch of rows it had already paid to inline.
+    .describe("The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."),
   web_results: z.array(projectedWebResultShape).describe("Web results."),
   usage: usageAdvertisedSchema
     .nullable()
@@ -154,7 +159,16 @@ export const searchChatgptOutputShape = z.looseObject({
  */
 export function fenceRunFor(text: string): string {
   const runs = text.match(/`+/g);
-  const longest = runs === null ? 0 : Math.max(...runs.map((r) => r.length));
+  // `reduce`, NEVER `Math.max(...runs)`. The spread passes one argument per
+  // backtick run, and `text` here is unbounded attacker-controlled page text —
+  // `projectWebResult` copies `content.data` verbatim with no length cap.
+  // Measured under node: fine at 100k runs, `RangeError: Maximum call stack
+  // size exceeded` at 200k, and workerd's stack is smaller. The throw is not
+  // contained either: `mcp.ts` catches a failed `renderText` and falls back to
+  // `JSON.stringify(output)`, which ships `request_id` — the one field this
+  // module's docstring says reaches NEITHER channel — and unfences the
+  // document.
+  const longest = runs === null ? 0 : runs.reduce((max, r) => Math.max(max, r.length), 0);
   return "`".repeat(Math.max(3, longest + 1));
 }
 
@@ -179,7 +193,47 @@ type LooseContent = {
   dataset?: { columns?: unknown; rows?: unknown[] } | null;
   total_rows?: number | null;
   truncated?: boolean | null;
+  /** Per-column descriptors, in column order — the ONLY carrier of a
+   *  column's unit. See `renderColumnManifest`. */
+  manifest?: Array<{
+    name?: string | null;
+    metric?: string | null;
+    entity?: string | null;
+    unit?: string | null;
+  }> | null;
 };
+
+/**
+ * The units line for inlined rows.
+ *
+ * Without it a json_records inline reads `[{"col": 12.4}]` and nothing on
+ * either channel says whether 12.4 is USD, USD billions or a percent — the
+ * generated `ColumnDescriptor` is the only place `unit`, `metric` and
+ * `entity` exist, and the CSV branch fences the payload alone.
+ *
+ * One line for the whole manifest, `name — metric, entity, unit`, dropping
+ * whichever parts a producer left unset. `undefined` when no column carries
+ * anything worth printing, so a manifest of bare names adds no line.
+ */
+function renderColumnManifest(manifest: NonNullable<LooseContent["manifest"]>): string | undefined {
+  const cols = manifest
+    .map((c) => {
+      const parts = [c.metric, c.entity, c.unit].filter(
+        (v): v is string => typeof v === "string" && v !== "",
+      );
+      const name = typeof c.name === "string" && c.name !== "" ? c.name : undefined;
+      if (parts.length === 0) return name;
+      return name === undefined ? parts.join(", ") : `${name} — ${parts.join(", ")}`;
+    })
+    .filter((v): v is string => v !== undefined)
+    .map(oneLine);
+  if (cols.length === 0) return undefined;
+  // Only worth a line when at least one column said more than its own header.
+  const informative = manifest.some((c) =>
+    [c.metric, c.entity, c.unit].some((v) => typeof v === "string" && v !== ""),
+  );
+  return informative ? `- columns: ${cols.join(" · ")}` : undefined;
+}
 
 
 
@@ -219,7 +273,11 @@ function renderFooter(usage: Usage | null): string | undefined {
 
 function renderProjectedCard(c: ProjectedCard): string {
   const lines: string[] = [`### ${oneLine(c.title ?? "Untitled card")}`];
-  if (c.description !== undefined) lines.push(c.description);
+  // `oneLine`, for the same reason the reference maps flatten their values: a
+  // description was the one card field neither flattened nor fenced, so a
+  // newline followed by `## ` in upstream prose opened a heading in this
+  // document.
+  if (c.description !== undefined) lines.push(oneLine(c.description));
   const access: string[] = [];
   if (c.url !== undefined) access.push(`url: ${c.url}`);
   access.push(
@@ -238,10 +296,11 @@ function renderProjectedCard(c: ProjectedCard): string {
   lines.push(`- ${access.join(" · ")}`);
   const meta: string[] = [];
   if (c.source !== undefined) meta.push(`source: ${oneLine(c.source)}`);
+  // "data through", first, because it is the one a reader judging currency
+  // needs — a card refreshed today can carry a series ending months ago.
+  if (c.coverage_end !== undefined) meta.push(`data through ${c.coverage_end}`);
   // "refreshed", not "updated": this is Tako's refresh date, not the date the
-  // DATA runs to. A card refreshed today can carry a series ending months ago,
-  // and a bare "updated" in a fact line reads as the latter. The card's
-  // `description` carries the data period.
+  // DATA runs to, and a bare "updated" in a fact line reads as the latter.
   if (c.last_updated !== undefined) meta.push(`refreshed ${c.last_updated}`);
   if (c.relevance !== undefined) meta.push(`relevance ${oneLine(c.relevance)}`);
   if (meta.length > 0) lines.push(`- ${meta.join(" · ")}`);
@@ -249,7 +308,29 @@ function renderProjectedCard(c: ProjectedCard): string {
     lines.push(`- nodes: ${c.nodes.map((n) => `\`${n.id}\` (${oneLine(n.name)})`).join(" · ")}`);
   }
   if (c.rows !== undefined) {
-    lines.push(typeof c.rows.data === "string" ? fenced(c.rows.data) : fenced(JSON.stringify(c.rows)));
+    if (typeof c.rows.data === "string") {
+      // The string branch fences `data` ALONE, so the descriptor keys beside it
+      // reach structuredContent and nothing else — `truncated: true` most of
+      // all, which tells the model the rows it is reading are cut. The JSON
+      // branch below stringifies the whole object and never had the gap. Both
+      // keys are dropped from the line when absent, so a card with neither
+      // renders exactly as before.
+      const desc: string[] = [];
+      if (typeof c.rows.content_format === "string") desc.push(`format: ${c.rows.content_format}`);
+      if (c.rows.truncated === true) desc.push("TRUNCATED — these are not all the rows");
+      if (desc.length > 0) lines.push(`- rows: ${desc.join(" · ")}`);
+      const columns = Array.isArray(c.rows.manifest)
+        ? renderColumnManifest(c.rows.manifest)
+        : undefined;
+      if (columns !== undefined) lines.push(columns);
+      lines.push(fenced(c.rows.data));
+    } else {
+      const columns = Array.isArray(c.rows.manifest)
+        ? renderColumnManifest(c.rows.manifest)
+        : undefined;
+      if (columns !== undefined) lines.push(columns);
+      lines.push(fenced(JSON.stringify(c.rows)));
+    }
   }
   return lines.join("\n");
 }
@@ -270,9 +351,17 @@ function renderProjectedWebResult(w: ProjectedWebResult): string {
 }
 
 function renderNameMap(title: string, map: Record<string, string>): string {
-  return [`## ${title}`, ...Object.entries(map).map(([name, text]) => `- ${oneLine(name)}: ${text}`)].join(
-    "\n",
-  );
+  // FLATTEN THE VALUE, not just the key. `appendNote` joins paragraphs with a
+  // blank line, so a note carrying both a source_description and a
+  // methodology_description used to render its second paragraph as a
+  // top-level block — a paragraph starting `## ` then sat between the list and
+  // the `usage: $` footer, indistinguishable from this document's own framing.
+  // The projection itself produces that input: a multi-source card files two
+  // source descriptions plus a methodology under one key.
+  return [
+    `## ${title}`,
+    ...Object.entries(map).map(([name, text]) => `- ${oneLine(name)}: ${oneLine(text)}`),
+  ].join("\n");
 }
 
 export function renderSearchMarkdown(o: SearchOutput): string {

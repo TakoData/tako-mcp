@@ -1839,3 +1839,63 @@ describe("object-level schema checks reach the wire", () => {
   });
 });
 
+
+/**
+ * The PUBLISHED output schema, per surface.
+ *
+ * `outputSchemaBySurface` had no test at all: reverting
+ * `outputSchemaForSurface(tool, options.surface)` in `mcp.ts` to a bare
+ * `tool.outputSchema` left all 1267 tests green while stripping the six
+ * widget fields out of the `structuredContent` ChatGPT's bundle reads via
+ * `window.openai.toolOutput` — a silently broken chart on the one surface
+ * that costs an app resubmission to fix.
+ *
+ * `tools/list` over a real server, not the module constant, because the SDK
+ * republishes the schema and the surface is chosen inside `registerTool`.
+ */
+describe("published outputSchema per surface", () => {
+  const WIDGET_FIELDS = ["pub_id", "embed_url", "image_url", "dark_mode", "width", "height"] as const;
+
+  async function searchOutputProperties(surface: Surface): Promise<string[]> {
+    const server = createMcpServer(
+      { token: "sk-test", env: { DJANGO_BASE_URL: "https://staging.trytako.com" }, sendProgress: noopSendProgress, surface },
+      { surface },
+    );
+    const mcpClient = new Client(
+      { name: "surface-schema-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      const listed = await mcpClient.listTools();
+      const search = listed.tools.find((t) => t.name === "tako_search");
+      expect(search?.outputSchema, "tako_search publishes no outputSchema").toBeDefined();
+      return Object.keys(
+        (search?.outputSchema as { properties?: Record<string, unknown> }).properties ?? {},
+      );
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  }
+
+  it("declares the widget fields on chatgpt, where a widget reads them", async () => {
+    const props = await searchOutputProperties("chatgpt");
+    for (const field of WIDGET_FIELDS) {
+      expect(props, `chatgpt outputSchema is missing ${field}`).toContain(field);
+    }
+  });
+
+  it("omits them on generic, where pickDeclared strips them by construction", async () => {
+    const props = await searchOutputProperties("generic");
+    for (const field of WIDGET_FIELDS) {
+      expect(props, `generic outputSchema declares widget field ${field}`).not.toContain(field);
+    }
+    // Not an empty schema — the projected fields are on BOTH surfaces, so a
+    // schema that lost everything would pass the loop above.
+    expect(props).toContain("cards");
+    expect(props).toContain("web_results");
+  });
+});

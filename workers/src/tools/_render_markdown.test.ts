@@ -25,7 +25,9 @@ import {
   slimContentsStructured,
   STRUCTURED_COVERAGE_ITEMS,
 } from "./_render_markdown.js";
-import type { ProjectedCard, SearchOutput, TakoCard } from "./_search_results.js";
+import { buildSearchOutput } from "./_search_results.js";
+import type { ProjectedCard, SearchOutput, TakoCard, WebResult } from "./_search_results.js";
+import type { Env } from "../env.js";
 
 const pCard = (over: Partial<ProjectedCard> = {}): ProjectedCard => ({
   title: "Tesla Revenue",
@@ -170,6 +172,48 @@ describe("upstream-content isolation", () => {
     // The wrapper fence must be LONGER than the 3-backtick run the snippet
     // carries, so the embedded ``` cannot close it.
     expect(md).toMatch(/````[\s\S]*## Fake Section[\s\S]*````/);
+  });
+
+  it("fences a page with more backtick runs than an argument list can hold", () => {
+    // `Math.max(...runs)` spreads ONE ARGUMENT PER RUN, so this input threw
+    // `RangeError: Maximum call stack size exceeded` — measured fine at 100k
+    // runs and throwing at 200k under node, with workerd's stack smaller
+    // still. The throw does not stay local: `mcp.ts` catches a failed
+    // `renderText` and falls back to `JSON.stringify(output)`, which ships
+    // `request_id` and unfences the whole document.
+    //
+    // 200_000 is the measured threshold, not a round number — drop it and the
+    // test passes against the spread it exists to forbid.
+    const dense = "a`".repeat(200_000);
+    const md = renderSearchMarkdown(
+      searchOutput({ web_results: [{ title: "t", url: "https://e.com", snippet: dense }] }),
+    );
+    expect(md).toContain("```");
+    expect(md).not.toContain("req-1");
+  });
+
+  it("flattens reference-map values and card descriptions so upstream prose cannot forge a heading", () => {
+    // The projection GENERATES this input: a multi-source card files two
+    // source descriptions plus a methodology under one key, joined by a blank
+    // line. Unflattened, the second paragraph rendered as a top-level block
+    // between the list and the `usage: $` footer.
+    const forged = "Who Example Co is.\n\n## Forged heading\nSecond paragraph.";
+    const md = renderSearchMarkdown(
+      searchOutput({
+        cards: [pCard({ description: "Headline.\n\n## Forged card heading" })],
+        source_notes: { "Example Co": forged },
+        metric_definitions: { Revenue: forged },
+      }),
+    );
+    // The text still ships — the channel is complete — but no line STARTS a
+    // heading, which is what makes it framing rather than content.
+    expect(md).toContain("## Forged heading");
+    for (const line of md.split("\n")) {
+      expect(line.startsWith("## Forged heading"), `forged heading opened a block: ${line}`).toBe(false);
+      expect(line.startsWith("## Forged card heading"), `forged card heading opened a block: ${line}`).toBe(
+        false,
+      );
+    }
   });
 
   it("never puts upstream page text in the text channel at all", () => {
@@ -681,11 +725,77 @@ describe("renderAvailableDataMarkdown — lookup path with a metric list", () =>
 // ---------------------------------------------------------------------------
 
 describe("channel parity (tako_search)", () => {
+  // THE FIXTURE COMES FROM `buildSearchOutput`, not from a hand-written
+  // literal, and that is the whole point of this test.
+  //
+  // A hand-built fixture covers only the fields the fixture happens to set, so
+  // the walk silently stopped at the edges of `pCard()`: no rows, no web
+  // `content`, no `related`, and no `embed_url`/`image_url`. Deleting the
+  // entire top-card chart-links block from `renderSearchMarkdown` left all
+  // 1267 tests green — while on `/mcp`, `pickDeclared` strips those fields
+  // from structuredContent, so that block is the ONLY channel they reach.
+  //
+  // Running the real projection means a field added to `projectCard` and left
+  // out of the renderer fails here without anyone remembering to widen a
+  // literal.
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+  const wireCard = {
+    card_id: "c1",
+    title: "Tesla Revenue",
+    description: "Quarterly revenue for Tesla, Inc.",
+    exportable: true,
+    webpage_url: "https://trytako.com/card/c1",
+    image_url: "https://trytako.com/api/v1/image/c1/",
+    embed_url: "https://trytako.com/embed/c1/",
+    relevance: "High",
+    data_freshness: { coverage_end: "2025-03", last_updated: "2026-07-01T00:00:00Z" },
+    sources: [{ source_name: "Example Data Co", source_description: "A long source paragraph." }],
+    metric_definitions: [{ name: "Revenue", definition: "Reported revenue for the period." }],
+    nodes: [
+      { id: "ent::tsla::1", name: "Tesla, Inc.", type: "entity" },
+      { id: "mt::revenue::1", name: "Revenue", type: "metric" },
+    ],
+    content: {
+      data: "date,revenue\n2026-06-30,27100000000\n",
+      total_rows: 40,
+      truncated: false,
+      content_format: "csv",
+      manifest: [
+        { name: "date", dtype: "datetime" },
+        { name: "revenue", metric: "Total Revenue", entity: "Tesla, Inc.", unit: "USD" },
+      ],
+    },
+  } as unknown as TakoCard;
+  const wireWeb = {
+    title: "Tesla Q2 earnings",
+    url: "https://example.com/tsla",
+    snippet: "Revenue rose 6% to $27.1B in the quarter.",
+    source_name: "Example News",
+    publish_date: "2026-07-20",
+    content: { data: "Full page text for the quarter.", truncated: false },
+  } as unknown as WebResult;
+
   it("every leaf value of the projected output appears in the rendered text", () => {
-    const output = searchOutput({
-      metric_definitions: { Revenue: "Reported revenue for the period." },
-      source_notes: { "Example Data Co": "A long source paragraph." },
-    });
+    const output = buildSearchOutput(
+      [wireCard],
+      [wireWeb],
+      "req-1",
+      { total_cost_usd: 0.007 },
+      ENV,
+      ["data", "web"],
+      false,
+      "authenticated",
+      { rowCap: "all", keepWebText: true },
+      { related: [{ query: "Tesla margin", description: "Gross margin by quarter." }] },
+    );
+    // The projection has to have produced the wide shape this test exists to
+    // walk. Without this the whole test passes vacuously the day a projection
+    // change empties one of these.
+    expect(output.embed_url, "no widget lift — the chart-links block goes uncovered").toBeDefined();
+    expect(output.cards[0]?.rows, "no inlined rows to walk").toBeDefined();
+    expect(output.web_results[0]?.content, "no web page text to walk").toBeDefined();
+    expect(output.related, "no related queries to walk").toBeDefined();
+
     const md = renderSearchMarkdown(output);
     const leaves: string[] = [];
     const walk = (v: unknown): void => {
@@ -695,19 +805,58 @@ describe("channel parity (tako_search)", () => {
       else if (Array.isArray(v)) v.forEach(walk);
       else if (typeof v === "object") Object.values(v).forEach(walk);
     };
-    // request_id is deliberately NOT part of the model-facing contract, and
-    // usage renders as its formatted dollar line. A node's `type` is exempt:
-    // the id prefix (`ent::` / `mt::`) carries it in text, so rendering the
-    // word again buys nothing.
-    const { request_id: _rid, usage, ...modelFacing } = output;
-    const withoutNodeType = {
+    // request_id is deliberately NOT part of the model-facing contract.
+    //
+    // `usage` is checked as its formatted dollar line only. The nested
+    // `compute` / `data` breakdown is EMITTED but never advertised, and that
+    // asymmetry is deliberate and costed at `_search_results.ts:504` —
+    // publishing the nested objects spent 197 tokens per tool describing a
+    // per-call cost breakdown no routing decision reads. So the breakdown
+    // reaching structuredContent and not the text channel is the accepted
+    // trade, not a parity gap to fix here.
+    //
+    // A node's `type` is exempt: the id prefix (`ent::` / `mt::`) carries it
+    // in text, so rendering the word again buys nothing.
+    //
+    // `pub_id`, `dark_mode`, `width` and `height` are widget RENDERING knobs,
+    // not facts about the data — `window.openai.toolOutput` reads them and a
+    // reader gains nothing from "900" in prose. `embed_url` and `image_url`
+    // stay IN scope deliberately: they are the chart a content-only host can
+    // still open, and the top-card chart-links block is their only channel
+    // there.
+    const {
+      request_id: _rid,
+      usage,
+      pub_id: _pid,
+      dark_mode: _dm,
+      width: _w,
+      height: _h,
+      ...modelFacing
+    } = output;
+    // A column's `dtype` is exempt for the same reason a node's `type` is:
+    // "datetime" beside a fenced column of dates tells the reader nothing the
+    // values do not. `unit`, `metric` and `entity` are NOT exempt — they are
+    // the whole reason `manifest` rides here, and a number with no unit is
+    // the misquote this exists to prevent.
+    const stripped = {
       ...modelFacing,
       cards: modelFacing.cards.map((c) => ({
         ...c,
         nodes: c.nodes?.map(({ type: _t, ...n }) => n),
+        rows:
+          c.rows === undefined
+            ? undefined
+            : {
+                ...c.rows,
+                manifest: Array.isArray(c.rows.manifest)
+                  ? (c.rows.manifest as Array<Record<string, unknown>>).map(
+                      ({ dtype: _dt, ...col }) => col,
+                    )
+                  : c.rows.manifest,
+              },
       })),
     };
-    walk(withoutNodeType);
+    walk(stripped);
     if (usage?.total_cost_usd !== undefined) leaves.push(`$${usage.total_cost_usd}`);
     for (const leaf of leaves) {
       expect(md, `text channel is missing: ${leaf}`).toContain(leaf);

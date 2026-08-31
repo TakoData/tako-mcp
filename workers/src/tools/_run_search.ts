@@ -156,7 +156,11 @@ export async function runSearch(
     // The zero-result protocol routes through tools an anonymous caller does
     // not have; `buildZeroResultGuidance` branches on this (#272).
     ctx.tier ?? "authenticated",
-    { rowCap, keepWebText },
+    // `registeredTools`: the zero-result guidance names a recovery tool only
+    // when THIS connection registered it. `?tools=` replaces the defaults, so
+    // a signed-in `?tools=search` caller has neither tako_available_data nor
+    // tako_contents and tier alone cannot tell.
+    { rowCap, keepWebText, registeredTools: ctx.registeredTools },
     extras,
   );
 }

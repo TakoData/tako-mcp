@@ -344,7 +344,7 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 1. User asks: *"Compare US CPI, core CPI, PCE, and core PCE inflation."*
 2. Agent fires **four** narrow `tako_search` calls concurrently — one per entity+metric
 3. Each returns a card with headline values (top result renders inline as a chart)
-4. Agent synthesizes the four results, calling `tako_contents` on a card's `webpage_url` if it needs full rows (when the card is `exportable: true`)
+4. Agent synthesizes the four results, calling `tako_contents` on a card's `url` if it needs full rows (when the card is `exportable: true`)
 </details>
 
 ## Agent Skills
@@ -404,7 +404,7 @@ Reliably NOT in the data graph, and where web carries the answer instead: forwar
 ## Reading a result
 Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
 
-Field names depend on the response format, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them on a facts line (`exportable · relevance · type · freshness · nodes · source · chart · embed`); a JSON response uses `exportable`, `relevance`, `card_type`, `data_freshness.data_as_of`, `nodes`, `sources[].source_name`, `webpage_url` and `embed_url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
 
 ## Pick the right card (Critical)
 A search returns several cards and **#0 is frequently not what was asked for**. The relevance fact does not rescue you: the correct card is routinely tagged `Low` while an off-intent card is `High`. Tako auto-renders #0, so if the right card is elsewhere, reference it explicitly by linking its title to the card's chart URL and say it is the authoritative one. Walk this checklist before quoting any number:
@@ -493,7 +493,7 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts. All 
 ## Reading a result
 Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
 
-Field names depend on the response format, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them on a facts line (`exportable · relevance · type · freshness · nodes · source · chart · embed`); a JSON response uses `exportable`, `relevance`, `card_type`, `data_freshness.data_as_of`, `nodes`, `sources[].source_name`, `webpage_url` and `embed_url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
 
 ## Pick the right card (Critical)
 - **Verify by title, not by `nodes`.** Traffic cards list only the metric in `nodes` (`Visits`); the domain never appears there, so the entity check that works elsewhere in Tako is useless here. Confirm the domain in the card's title.
@@ -578,7 +578,7 @@ Tako serves macro indicators as interactive, citation-backed charts. All tools b
 ## Reading a result
 Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
 
-Field names depend on the response format, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them on a facts line (`exportable · relevance · type · freshness · nodes · source · chart · embed`); a JSON response uses `exportable`, `relevance`, `card_type`, `data_freshness.data_as_of`, `nodes`, `sources[].source_name`, `webpage_url` and `embed_url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
 
 ## Pick the right card (Critical)
 Tako auto-renders #0, and for macro the **least-specific or stalest card often ranks first**. the relevance fact is unreliable: the correct card is frequently tagged `Low`. If the right card isn't #0, reference it by linking its title to the card's chart URL and say it is the authoritative one. Check, in order:

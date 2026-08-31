@@ -268,6 +268,10 @@ export function createMcpServer(
   // registers.
   const surface = options.surface;
   const requestedToolNames = options.requestedToolNames ?? null;
+  // Resolved ONCE, and handed to every tool: `registerTool` stamps it onto
+  // the per-call context so a tool result cannot name a tool this loop did
+  // not register. Same call that drives `isToolOnSurface` below.
+  const registeredTools = resolveToolSet(surface, requestedToolNames);
 
   for (const tool of TOOL_REGISTRY) {
     // Deliberately tier-blind: the listing is auth-invariant (spec D4);
@@ -278,6 +282,7 @@ export function createMcpServer(
     registerTool(server, tool, ctx, {
       surface,
       tier,
+      registeredTools,
       // Commerce copy (billing remedies, account pointers) is allowed on
       // the generic surface for every client (spec D5); the chatgpt
       // surface never carries it — OpenAI's app guidelines ban
@@ -437,6 +442,14 @@ function registerTool(
      * Consumed by the 402 mapping in the catch below.
      */
     commerceCopyAllowed: boolean;
+    /**
+     * The tools THIS connection registered — the resolved set, not the raw
+     * `?tools=` param. Stamped onto every `callCtx` so a tool RESULT can
+     * check whether the tool it is about to name is reachable: `?tools=`
+     * REPLACES the defaults, so a signed-in `?tools=search` connection has
+     * `tako_search` alone and tier cannot tell you that.
+     */
+    registeredTools: ReadonlySet<string>;
     /**
      * Request origin (e.g. `https://mcp.tako.com`) used to build the
      * `resource_metadata` URL in `_meta["mcp/www_authenticate"]`
@@ -812,6 +825,11 @@ function registerTool(
         surface: options.surface,
         tier: options.tier,
         origin: options.origin,
+        // Same resolution that decided which tools to register, for the same
+        // reason `tier` is stamped here: a tool result that names a tool this
+        // connection did not register is an instruction the model cannot
+        // follow.
+        registeredTools: options.registeredTools,
       };
       // Free-tier dispatch gate: the listing is auth-invariant (spec D4),
       // so an auth-required tool (`tako_contents`) IS listed on an

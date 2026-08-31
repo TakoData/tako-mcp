@@ -8,6 +8,9 @@
  * and the CSV content_format guard (both previously untested).
  */
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+
+import { TOOL_REGISTRY } from "./_registry.js";
 
 import { ContentItem } from "../generated/schemas.js";
 
@@ -15,6 +18,7 @@ import {
   CONTENT_META_KEYS,
   CONTENT_PAYLOAD_KEYS,
   NARROWER_WEB_ATTEMPT,
+  ROWS_META_KEYS,
   buildDataGapGuidance,
   buildReferenceMaps,
   buildSearchOutput,
@@ -729,11 +733,15 @@ describe("the payload/metadata split cannot drift", () => {
 
   // projectCard's ROWS_KEYS is CONTENT_PAYLOAD_KEYS plus three metadata names.
   // The payload half is derived, so it cannot drift; the three metadata names
-  // are written out, so this pins them to the classified set. Without it a
-  // renamed `content_format` would go stale in projectCard alone.
+  // are written out, so this pins them to the classified set.
+  //
+  // IMPORT the constant, never retype it. The literal list this used to carry
+  // made the guard vacuous in the one direction it exists for: renaming the
+  // real `content_format` to `format` dropped it from every inlined `rows`
+  // object and all 1267 tests still passed.
   it("every metadata key projectCard keeps beside inlined rows is a classified metadata key", () => {
     const meta = new Set<string>(CONTENT_META_KEYS);
-    const unclassified = ["total_rows", "truncated", "content_format"].filter((k) => !meta.has(k));
+    const unclassified = ROWS_META_KEYS.filter((k) => !meta.has(k));
     expect(unclassified, "projectCard keeps a key CONTENT_META_KEYS does not list").toEqual([]);
   });
 });
@@ -770,6 +778,7 @@ describe("projectCard — the nine-field model-facing card", () => {
       description: "Latest value was $75.2B in Apr 2026.",
       url: "https://tako.com/card/c1/",
       source: "Fiscal.ai",
+      coverage_end: "2026-04",
       last_updated: "2026-08-26",
       relevance: "High",
       nodes: [{ id: "ent::nvidia::1", name: "NVIDIA", type: "entity" }],
@@ -791,6 +800,20 @@ describe("projectCard — the nine-field model-facing card", () => {
     ]) {
       expect(keys, dropped).not.toContain(dropped);
     }
+  });
+
+  // The numeric arm is an ENTITLEMENT, and it had no test: deleting it and
+  // keeping `nonEmpty(rec.relevance)` alone left all 1267 green, so a paid
+  // account's score could be dropped silently. No fixture in this file or
+  // tako_search.test.ts sets `relevance_score`, which is why these two exist.
+  it("prefers the entitled numeric relevance_score over the coarse string", () => {
+    const out = projectCard({ ...wireCard, relevance_score: 4.5 } as unknown as TakoCard, null);
+    expect(out.relevance).toBe("4.5");
+  });
+
+  it("falls back to the coarse relevance string when relevance_score is absent", () => {
+    const out = projectCard(wireCard, null);
+    expect(out.relevance).toBe("High");
   });
 
   it("last_updated is date-only", () => {
@@ -849,6 +872,29 @@ describe("projectCard — the nine-field model-facing card", () => {
     expect(rows).not.toHaveProperty("data");
     expect(rows).not.toHaveProperty("records");
     expect(rows).not.toHaveProperty("cost");
+  });
+
+  // Asserted DIRECTLY, because the channel-parity walk structurally cannot
+  // catch a dropped field: it walks the projected output, so removing
+  // `manifest` from the projection removes the leaf AND the requirement to
+  // render it, and the walk stays green.
+  it("keeps the column manifest beside inlined rows — the only carrier of a unit", () => {
+    const withRows = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_records",
+        cost: 0.01,
+        total_rows: 1,
+        truncated: false,
+        records: [{ revenue: 12.4 }],
+        manifest: [{ name: "revenue", metric: "Total Revenue", entity: "Tesla, Inc.", unit: "USD" }],
+      },
+    } as unknown as TakoCard;
+    const rows = projectCard(withRows, "all").rows as Record<string, unknown>;
+    expect(rows.manifest, "inlined rows arrived with no unit").toEqual([
+      { name: "revenue", metric: "Total Revenue", entity: "Tesla, Inc.", unit: "USD" },
+    ]);
   });
 });
 
@@ -1039,23 +1085,16 @@ describe("buildReferenceMaps — deduped across cards, conflicts never lose text
     // FORWARD — the direction with teeth. A key no card carries is prose the
     // model can read and cannot attribute.
     //
-    // TWO SETS, deliberately. `cardSourceFields` is what `projectCard` puts in
-    // a card's `source`, and it is the ONLY join target for a metric's conflict
-    // suffix. `noteKeys` is wider because a per-source `source_description`
-    // legitimately files under that one source's own name. Merging them hides
-    // a misattributed metric suffix: "Revenue — Fiscal.ai" on a two-source card
-    // passes a wider check because some OTHER card has Fiscal.ai alone.
-    const cardSourceFields = new Set<string>();
+    // ONE set, built from `projectCard` itself: a card carries exactly one
+    // source field and it is the joined list, so that string is the only join
+    // target there is. An earlier version of this test also admitted each bare
+    // `source_name` — which is what let a two-source card file "Fiscal.ai" and
+    // "S&P" beside the "Fiscal.ai, S&P" the card actually carries, with the
+    // model able to read both descriptions and reach neither.
     const noteKeys = new Set<string>();
     for (const c of cards) {
       const projected = projectCard(c, null).source;
-      if (projected !== undefined) {
-        cardSourceFields.add(projected);
-        noteKeys.add(projected);
-      }
-      for (const s of (c as unknown as { sources?: { source_name?: string }[] }).sources ?? []) {
-        if (s.source_name !== undefined) noteKeys.add(s.source_name);
-      }
+      if (projected !== undefined) noteKeys.add(projected);
     }
     for (const key of Object.keys(notes)) {
       expect(noteKeys.has(key), `source_notes key "${key}" is on no card`).toBe(true);
@@ -1119,4 +1158,66 @@ describe("buildReferenceMaps — deduped across cards, conflicts never lose text
       }
     }
   });
+});
+
+/**
+ * The published snippet contract.
+ *
+ * `95b8bb0` established what this description must carry, `f5fd69d` measured
+ * the case and settled the wording: never assert the CAUSE of a `' … '` (a
+ * consumer cannot tell a backend join from the page's own ellipsis — the arm
+ * that structurally cannot carry a join still reported 2 of 260), always keep
+ * the ACTION. This branch then shipped the inverse — cause asserted, action
+ * dropped — and nothing failed, because no test read the string.
+ *
+ * Asserted on the PUBLISHED JSON Schema, and on every tool that publishes a
+ * `snippet`, so moving the description between the array and the element (this
+ * has happened once already) cannot drop it silently.
+ */
+describe("the published snippet contract", () => {
+  const snippetDescriptions = (schema: unknown): string[] => {
+    const found: string[] = [];
+    const walk = (node: unknown): void => {
+      if (node === null || typeof node !== "object") return;
+      const obj = node as Record<string, unknown>;
+      const props = obj.properties;
+      if (props !== null && typeof props === "object") {
+        const snippet = (props as Record<string, unknown>).snippet as
+          | { description?: unknown }
+          | undefined;
+        if (snippet !== undefined && typeof snippet.description === "string") {
+          found.push(snippet.description);
+        }
+      }
+      for (const value of Object.values(obj)) walk(value);
+    };
+    walk(schema);
+    return found;
+  };
+
+  const publishing = TOOL_REGISTRY.filter(
+    (t) =>
+      t.outputSchema !== undefined &&
+      snippetDescriptions(z.toJSONSchema(t.outputSchema as z.ZodType, { io: "output" })).length > 0,
+  );
+
+  it("finds tools that publish a snippet, so the checks below are not vacuous", () => {
+    expect(publishing.length).toBeGreaterThan(0);
+  });
+
+  for (const tool of publishing) {
+    it(`${tool.name} keeps the actionable clause, not a claim about the cause`, () => {
+      for (const description of snippetDescriptions(
+        z.toJSONSchema(tool.outputSchema as z.ZodType, { io: "output" }),
+      )) {
+        // The ACTION, in whatever words: a reader must be told not to read
+        // across the separator as one continuous sentence.
+        expect(description, `${tool.name} snippet drops the "do not quote across" clause`).toMatch(
+          /never quote across|not.{0,20}quote.{0,20}across/i,
+        );
+        // And `null` stays a documented outcome, not an error.
+        expect(description, `${tool.name} snippet drops the null contract`).toMatch(/null/);
+      }
+    });
+  }
 });

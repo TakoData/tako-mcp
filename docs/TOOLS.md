@@ -135,7 +135,7 @@ Annotations:
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "run_id": {
@@ -189,7 +189,7 @@ Annotations:
     "status",
     "timed_out"
   ],
-  "additionalProperties": {}
+  "additionalProperties": false
 }
 ```
 </details>
@@ -301,7 +301,7 @@ Annotations:
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "found": {
@@ -608,7 +608,7 @@ Annotations:
     "matches",
     "next_call"
   ],
-  "additionalProperties": {}
+  "additionalProperties": false
 }
 ```
 </details>
@@ -720,7 +720,7 @@ Annotations:
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "results": {
@@ -1048,7 +1048,7 @@ Annotations:
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "node": {
@@ -1427,7 +1427,7 @@ Annotations:
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "cards": {
@@ -1453,8 +1453,12 @@ Annotations:
           "source": {
             "type": "string"
           },
+          "coverage_end": {
+            "description": "Where the DATA ends — use this, not `last_updated`, to judge whether a figure is current. Reduced ISO precision at the series' own granularity (\"2026\", \"2026-06\", \"2026-06-30\"), and it can be in the future on a card with projections.",
+            "type": "string"
+          },
           "last_updated": {
-            "description": "Date Tako last refreshed this card.",
+            "description": "Date Tako last refreshed this card — NOT where its data ends.",
             "type": "string"
           },
           "total_rows": {
@@ -1464,6 +1468,7 @@ Annotations:
             "maximum": 9007199254740991
           },
           "relevance": {
+            "description": "Either a 1.0-5.0 score as a string (\"4.5\", 5.0 = exact match) on entitled accounts, or a coarse word (\"High\"). Higher is more relevant in both forms.",
             "type": "string"
           },
           "nodes": {
@@ -1502,7 +1507,7 @@ Annotations:
         ],
         "additionalProperties": {}
       },
-      "description": "The data cards. Rows never ride here on tako_search — fetch an exportable card's rows with tako_contents on its url."
+      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."
     },
     "web_results": {
       "type": "array",
@@ -1516,7 +1521,7 @@ Annotations:
             "type": "string"
           },
           "snippet": {
-            "description": "Passages selected against the query; ' … ' joins non-contiguous passages. null → no relevant passage, url still fetchable.",
+            "description": "Passages selected against the query. A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence. null → no relevant passage, url still fetchable.",
             "anyOf": [
               {
                 "type": "string"
@@ -1628,11 +1633,250 @@ Annotations:
     "web_results",
     "usage"
   ],
-  "additionalProperties": {}
+  "additionalProperties": false
 }
 ```
+</details>
 
-On `/mcp/chatgpt` the schema also declares: `pub_id`, `embed_url`, `image_url`, `dark_mode`, `width`, `height` (chart-widget fields; the widget reads them from `window.openai.toolOutput`).
+<details><summary>wire — Published output schema on `/mcp/chatgpt` (JSON Schema)</summary>
+
+The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction.
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "description": "Headline value and range — often the answer itself.",
+            "type": "string"
+          },
+          "exportable": {
+            "type": "boolean",
+            "description": "true → tako_contents on `url` returns the rows; false → rows are locked, read the headline from `description`."
+          },
+          "url": {
+            "description": "The card page — the tako_contents handle.",
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "coverage_end": {
+            "description": "Where the DATA ends — use this, not `last_updated`, to judge whether a figure is current. Reduced ISO precision at the series' own granularity (\"2026\", \"2026-06\", \"2026-06-30\"), and it can be in the future on a card with projections.",
+            "type": "string"
+          },
+          "last_updated": {
+            "description": "Date Tako last refreshed this card — NOT where its data ends.",
+            "type": "string"
+          },
+          "total_rows": {
+            "description": "Rows behind `url` (exportable cards only).",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "relevance": {
+            "description": "Either a 1.0-5.0 score as a string (\"4.5\", 5.0 = exact match) on entitled accounts, or a coarse word (\"High\"). Higher is more relevant in both forms.",
+            "type": "string"
+          },
+          "nodes": {
+            "description": "Graph handles — pass ids to tako_graph_related.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "rows": {
+            "description": "Inlined rows — only when the request asked to inline them.",
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "exportable"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."
+    },
+    "web_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "snippet": {
+            "description": "Passages selected against the query. A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence. null → no relevant passage, url still fetchable.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content": {
+            "description": "Page text — only when the request asked for it.",
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "Web results."
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "total_cost_usd": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total_cost_usd"
+          ],
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cost-plus usage for this request (null when not metered)."
+    },
+    "guidance": {
+      "description": "Zero-card responses only: what this response is evidence about, and the one next action.",
+      "type": "string"
+    },
+    "metric_definitions": {
+      "description": "What each metric means (unit, basis, caveats), keyed by metric name, deduped across cards.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "source_notes": {
+      "description": "What each source is and how it builds its data, keyed by source name.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "related": {
+      "description": "Follow-up queries, each with a `query` to send as the next search request. Present only on a request that asked for them.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {}
+      }
+    },
+    "answer": {
+      "description": "The synthesized, citation-backed answer. Present only on an answer-endpoint call; the cards and web_results are its citations.",
+      "type": "string"
+    },
+    "structured_output": {
+      "description": "The JSON Schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {}
+    },
+    "structured_output_error": {
+      "description": "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill a schema you supplied.",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {}
+    },
+    "pub_id": {
+      "type": "string"
+    },
+    "embed_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "image_url": {
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "dark_mode": {
+      "type": "boolean"
+    },
+    "width": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "height": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "cards",
+    "web_results",
+    "usage"
+  ],
+  "additionalProperties": false
+}
+```
 </details>
 
 <details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
@@ -1648,6 +1892,7 @@ On `/mcp/chatgpt` the schema also declares: `pub_id`, `embed_url`, `image_url`, 
       "description": "NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.",
       "url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
       "source": "Fiscal.ai",
+      "coverage_end": "2026-04",
       "last_updated": "2026-08-26",
       "relevance": "High",
       "nodes": [
@@ -1670,6 +1915,7 @@ On `/mcp/chatgpt` the schema also declares: `pub_id`, `embed_url`, `image_url`, 
       "description": "NVIDIA Corporation Gross Profit Margin (Quarterly)'s latest value was 72.4% in Apr 2026.",
       "url": "https://tako.com/card/Kv_Wc1vPaL5yNxTEApAy/",
       "source": "Fiscal.ai",
+      "coverage_end": "2026-04",
       "last_updated": "2026-08-26",
       "relevance": "Low",
       "nodes": [
@@ -1723,13 +1969,13 @@ On `/mcp/chatgpt` the schema also declares: `pub_id`, `embed_url`, `image_url`, 
 ### NVIDIA Corporation Data Center Total Revenues (Quarterly)
 NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.
 - url: https://tako.com/card/eDLjXb_EieceW6BapkXJ/ · exportable, 26 rows
-- source: Fiscal.ai · refreshed 2026-08-26 · relevance High
+- source: Fiscal.ai · data through 2026-04 · refreshed 2026-08-26 · relevance High
 - nodes: `ent::nvidia_corporation::5ea55992` (NVIDIA Corporation) · `mt::total_revenues::8a1f02c3` (Total Revenues (Normalized))
 
 ### NVIDIA Corporation Gross Profit Margin (Quarterly)
 NVIDIA Corporation Gross Profit Margin (Quarterly)'s latest value was 72.4% in Apr 2026.
 - url: https://tako.com/card/Kv_Wc1vPaL5yNxTEApAy/ · exportable, 26 rows
-- source: Fiscal.ai · refreshed 2026-08-26 · relevance Low
+- source: Fiscal.ai · data through 2026-04 · refreshed 2026-08-26 · relevance Low
 - nodes: `ent::nvidia_corporation::5ea55992` (NVIDIA Corporation) · `mt::gross_margin::41c9d7aa` (Gross Profit Margin)
 
 Top card chart — embed: https://tako.com/embed/eDLjXb_EieceW6BapkXJ/?dark_mode=auto&showShare=true · image: https://tako.com/api/v1/image/eDLjXb_EieceW6BapkXJ/?dark_mode=true
@@ -2118,7 +2364,7 @@ Annotations:
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "cards": {
@@ -2144,8 +2390,12 @@ Annotations:
           "source": {
             "type": "string"
           },
+          "coverage_end": {
+            "description": "Where the DATA ends — use this, not `last_updated`, to judge whether a figure is current. Reduced ISO precision at the series' own granularity (\"2026\", \"2026-06\", \"2026-06-30\"), and it can be in the future on a card with projections.",
+            "type": "string"
+          },
           "last_updated": {
-            "description": "Date Tako last refreshed this card.",
+            "description": "Date Tako last refreshed this card — NOT where its data ends.",
             "type": "string"
           },
           "total_rows": {
@@ -2155,6 +2405,7 @@ Annotations:
             "maximum": 9007199254740991
           },
           "relevance": {
+            "description": "Either a 1.0-5.0 score as a string (\"4.5\", 5.0 = exact match) on entitled accounts, or a coarse word (\"High\"). Higher is more relevant in both forms.",
             "type": "string"
           },
           "nodes": {
@@ -2193,7 +2444,7 @@ Annotations:
         ],
         "additionalProperties": {}
       },
-      "description": "The data cards. Rows never ride here on tako_search — fetch an exportable card's rows with tako_contents on its url."
+      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."
     },
     "web_results": {
       "type": "array",
@@ -2207,7 +2458,7 @@ Annotations:
             "type": "string"
           },
           "snippet": {
-            "description": "Passages selected against the query; ' … ' joins non-contiguous passages. null → no relevant passage, url still fetchable.",
+            "description": "Passages selected against the query. A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence. null → no relevant passage, url still fetchable.",
             "anyOf": [
               {
                 "type": "string"
@@ -2319,7 +2570,7 @@ Annotations:
     "web_results",
     "usage"
   ],
-  "additionalProperties": {}
+  "additionalProperties": false
 }
 ```
 </details>
@@ -3228,7 +3479,7 @@ Annotations:
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
     "title": {
