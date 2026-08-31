@@ -6,7 +6,9 @@ import {
   serverInstructionsFor,
 } from "../instructions.js";
 import { TOOL_REGISTRY } from "./_registry.js";
-import { isToolOnSurface, resolveToolSet } from "./_surface.js";
+import { buildSearchOutput } from "./_search_results.js";
+import type { Env } from "../env.js";
+import { isToolOnSurface, outputSchemaForSurface, resolveToolSet } from "./_surface.js";
 import type { Surface } from "../surface.js";
 
 /**
@@ -32,18 +34,28 @@ const ALL_TOOL_NAMES: ReadonlySet<string> = new Set(
   TOOL_REGISTRY.map((t) => t.name),
 );
 
-/** Every model-visible string a tool publishes on `tools/list`. */
-function publishedText(tool: (typeof TOOL_REGISTRY)[number]): string {
+/**
+ * Every model-visible string a tool publishes on `tools/list` FOR ONE SURFACE.
+ *
+ * The output schema is surface-specific (`outputSchemaBySurface`), so scanning
+ * `tool.outputSchema` alone leaves the chatgpt-only fields unscanned — and a
+ * `.describe()` on a widget field steers the model exactly like any other
+ * published prose. Generic is the default for the callers that are not
+ * themselves surface-scoped.
+ */
+function publishedText(
+  tool: (typeof TOOL_REGISTRY)[number],
+  surface: Surface = "generic",
+): string {
   const parts: string[] = [tool.description];
   // Serialize through the same `z.toJSONSchema` the MCP SDK publishes, so
   // field `.describe()` text AND enum literals are both in scope — an enum
   // value naming a tool steers the model exactly like prose does.
   parts.push(JSON.stringify(z.toJSONSchema(tool.inputSchema, { io: "input" })));
-  if (tool.outputSchema !== undefined) {
+  const outputSchema = outputSchemaForSurface(tool, surface);
+  if (outputSchema !== undefined) {
     parts.push(
-      JSON.stringify(
-        z.toJSONSchema(tool.outputSchema as z.ZodType, { io: "output" }),
-      ),
+      JSON.stringify(z.toJSONSchema(outputSchema as z.ZodType, { io: "output" })),
     );
   }
   return parts.join("\n");
@@ -160,7 +172,7 @@ describe("no listed tool names a parameter that is off its surface", () => {
 
       it(`${tool.name} on ${surface}${via} names only parameters reachable there`, () => {
         const named = unreachable.filter((p) =>
-          new RegExp(`\\b${p}\\b`).test(publishedText(tool)),
+          new RegExp(`\\b${p}\\b`).test(publishedText(tool, surface)),
         );
         expect(named, `${tool.name} names off-surface parameters`).toEqual([]);
       });
@@ -185,7 +197,7 @@ describe("no listed tool names a tool that is off its surface", () => {
     for (const tool of listed) {
       it(`${tool.name} on ${surface} names only tools on that surface`, () => {
         const offSurface = foreignToolNamesIn(
-          publishedText(tool),
+          publishedText(tool, surface),
           tool.name,
         ).filter((name) => !isToolOnSurface(name, surface, null));
         expect(offSurface, `${tool.name} (${surface}) names off-surface tools`).toEqual([]);
@@ -207,7 +219,7 @@ describe("no opt-in tool names a tool outside the defaults plus itself", () => {
     if (defaults.has(tool.name)) continue; // default-listed; covered above
     const reachable = new Set([...defaults, tool.name]);
     it(`${tool.name} (opt-in) names only default tools or itself`, () => {
-      const offSurface = foreignToolNamesIn(publishedText(tool), tool.name).filter(
+      const offSurface = foreignToolNamesIn(publishedText(tool, surface), tool.name).filter(
         (name) => !reachable.has(name),
       );
       expect(offSurface, `${tool.name} (opt-in) names unreachable tools`).toEqual([]);
@@ -293,7 +305,7 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
       resolveToolSet("generic", new Set(["tako_agent"])),
     );
     expect(foreignToolNamesIn(text, "")).toEqual([]);
-    expect(text).toContain("proprietary live-data graph");
+    expect(text).toContain("knowledge graph of live structured data");
   });
 
   // POSITIVE, because every case above asserts only an ABSENCE. Over-filtering
@@ -309,18 +321,92 @@ describe("server instructions name no tool outside the resolved ?tools= set", ()
     // tako_search sentence is "retrieves the cards and web links" since D4 —
     // it used to be "set `include_contents: true`", a parameter the tool no
     // longer takes.
-    expect(text).toContain("`tako_contents` reads one source in full");
-    expect(text).toContain("`tako_search` retrieves the cards and web links");
+    expect(text).toContain("`tako_contents` fetches a url in full");
+    expect(text).toContain("`tako_search` finds cards and web links");
     // Dropped: the one sentence naming a tool the allowlist leaves out.
     expect(text).not.toContain("tako_available_data");
     // And the shared routing paragraph is never a casualty of filtering.
-    expect(text).toContain("proprietary live-data graph");
+    expect(text).toContain("knowledge graph of live structured data");
   });
 
-  it("the default listing still names all three, unfiltered", () => {
+  // Named by the invariant, not by a count. The assertion compares against
+  // SERVER_INSTRUCTIONS whole, so it never needed a number — and "all three"
+  // went stale the moment `tako_graph_related` made four.
+  it("the default listing names every tool sentence, unfiltered", () => {
     // Guards the other direction: over-filtering would silently strip
     // guidance from every default connection.
     const resolved = resolveToolSet("generic", null);
     expect(serverInstructionsFor(resolved)).toBe(SERVER_INSTRUCTIONS);
   });
+});
+
+/**
+ * The same rule, applied to a tool RESULT rather than a description.
+ *
+ * Everything above scans `tools/list` text, which is why the zero-result
+ * guidance escaped: it is built per call, and it branched on TIER
+ * (`tier === "free"`) as a proxy for "can this connection call
+ * tako_available_data". Tier is not that predicate. `?tools=` REPLACES the
+ * defaults (spec D1), so a SIGNED-IN `?tools=search` connection registers
+ * `tako_search` alone, took the authenticated arm, and read "Call
+ * tako_available_data (free) to learn the canonical metric name" — a call
+ * that resolves to the SDK's bare "tool not found".
+ *
+ * Every branch is enumerated rather than sampled: the guidance has four
+ * shapes on the search path plus three on the answer path, and the bug lived
+ * in exactly one of them.
+ */
+describe("zero-result guidance names no tool the connection lacks", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://example.invalid" };
+
+  // The tool sets a real connection can resolve: each surface's defaults, and
+  // — on generic, the only surface `?tools=` reaches — each single-tool
+  // allowlist, which is the narrowest thing an operator can ask for.
+  const connections: Array<{ label: string; surface: Surface; requested: ReadonlySet<string> | null }> = [
+    { label: "generic defaults", surface: "generic", requested: null },
+    { label: "chatgpt", surface: "chatgpt", requested: null },
+    ...TOOL_REGISTRY.map((t) => ({
+      label: `generic ?tools=${t.name}`,
+      surface: "generic" as Surface,
+      requested: new Set([t.name]) as ReadonlySet<string>,
+    })),
+  ];
+
+  for (const { label, surface, requested } of connections) {
+    const registered = resolveToolSet(surface, requested);
+
+    it(`${label} — every tool named in guidance is registered`, () => {
+      for (const tier of ["free", "authenticated"] as const) {
+        for (const sources of [["data"], ["web"], ["data", "web"]] as const) {
+          for (const webResults of [[], [{ title: "t", url: "https://e.com" }]] as const) {
+            for (const extras of [{}, { answer: "Some synthesized prose." }] as const) {
+              const out = buildSearchOutput(
+                [],
+                webResults as never,
+                "req-1",
+                null,
+                ENV,
+                [...sources],
+                false,
+                tier,
+                { rowCap: null, keepWebText: false, registeredTools: registered },
+                extras,
+              );
+              const guidance = out.guidance;
+              expect(guidance, "a zero-card response must carry guidance").toBeDefined();
+              const named = [...ALL_TOOL_NAMES].filter((name) =>
+                new RegExp(`\\b${name}\\b`).test(guidance ?? ""),
+              );
+              const unreachable = named.filter((name) => !registered.has(name));
+              expect(
+                unreachable,
+                `${label} / ${tier} / sources=${sources.join("+")} / web=${webResults.length} / ` +
+                  `${extras.answer === undefined ? "search" : "answer"}: guidance names unregistered tool(s)`,
+              ).toEqual([]);
+            }
+          }
+        }
+      }
+    });
+  }
 });

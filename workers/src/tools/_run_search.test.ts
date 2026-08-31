@@ -107,7 +107,7 @@ describe("runSearch on the answer endpoint", () => {
       CTX,
       "tako_search_advanced",
     );
-    expect(out.guidance).toContain("HARD FILTER");
+    expect(out.guidance).toContain("hard filter");
     expect(out.guidance).not.toContain("ZERO curated data cards");
   });
 
@@ -146,7 +146,8 @@ describe("runSearch on the answer endpoint", () => {
     ]);
     const out = await runSearch({ endpoint: "answer", body: { query: "q" } }, ["data"], null, CTX, "tako_search_advanced");
     // [1] refers to `stale`; reordering would silently repoint the citation.
-    expect(out.cards.map((c) => c.card_id)).toEqual(["stale", "fresh"]);
+    // Projected cards carry no card_id — the title is the identity here.
+    expect(out.cards.map((c) => c.title)).toEqual(["Stale", "Fresh"]);
   });
 
   it("orders by usefulness when the prose carries no positional markers", async () => {
@@ -163,7 +164,7 @@ describe("runSearch on the answer endpoint", () => {
       }),
     ]);
     const out = await runSearch({ endpoint: "answer", body: { query: "q" } }, ["data"], null, CTX, "tako_search_advanced");
-    expect(out.cards.map((c) => c.card_id)).toEqual(["fresh", "stale"]);
+    expect(out.cards.map((c) => c.title)).toEqual(["Fresh", "Stale"]);
   });
 });
 

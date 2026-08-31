@@ -31,6 +31,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { structuredContentFor } from "./mcp.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
+import { outputSchemaForSurface, publishedOutputJsonSchema } from "./tools/_surface.js";
 import type { AnyToolModule } from "./tools/types.js";
 
 const AUTH_HEADER = "Bearer conformance-test-token";
@@ -419,6 +420,40 @@ describe("realistic payloads validate against the published schema", () => {
     }
   });
 
+  // The mirror of the test below, and the one that has teeth: the four
+  // fold-added fields must be declared ONLY on the tool that can produce them.
+  // `tako_search` hardcodes `endpoint: "search"` and takes no
+  // `include_related`, so it can never return any of them — but it published
+  // all four from #273 until review round two, because both tools imported one
+  // shared shape. That cost 885 chars (20%) of its output schema and told the
+  // model `tako_search` returns a synthesized `answer`. Conformance cannot see
+  // this: every one of the four is optional, so a response that never carries
+  // them validates against a schema that declares them.
+  it("declares the four answer-endpoint fields on the advanced tool only", () => {
+    const fold = ["answer", "structured_output", "structured_output_error", "related"];
+    const advanced = publishedOutputJsonSchema(
+      outputSchemaForSurface(moduleFor("tako_search_advanced"), "generic") as NonNullable<
+        ReturnType<typeof outputSchemaForSurface>
+      >,
+    ) as { properties: Record<string, unknown> };
+    for (const key of fold) expect(advanced.properties, key).toHaveProperty(key);
+    // Both surfaces: the chatgpt variant is built by a separate spread, so it
+    // can regain a field the generic one dropped.
+    for (const surface of ["generic", "chatgpt"] as const) {
+      const simple = publishedOutputJsonSchema(
+        outputSchemaForSurface(moduleFor("tako_search"), surface) as NonNullable<
+          ReturnType<typeof outputSchemaForSurface>
+        >,
+      ) as { properties: Record<string, unknown> };
+      for (const key of fold) {
+        expect(simple.properties, `tako_search/${surface} declares ${key}`).not.toHaveProperty(key);
+      }
+      // Not vacuous: the core fields it CAN produce are still there.
+      expect(simple.properties, `tako_search/${surface}`).toHaveProperty("cards");
+      expect(simple.properties, `tako_search/${surface}`).toHaveProperty("guidance");
+    }
+  });
+
   // Conformance alone cannot see a STRIP: all four fold-added fields are
   // optional, so a payload that lost them still validates. Assert presence
   // separately, the same belt-and-braces shape as `sources_glossary` above.
@@ -543,4 +578,57 @@ describe("the sweep sees into union branches, not just objects and arrays", () =
     };
     expect(bannedKeysIn(schema, "t", banned)).toEqual([]);
   });
+});
+
+/**
+ * `docs/TOOLS.md` renders each tool's output schema under a heading that
+ * promises the bytes a client receives. It got that wrong in the one field
+ * that already shipped a bug: the page rendered the `z.looseObject` directly,
+ * giving `"additionalProperties": {}`, while `mcp.ts` hands the SDK `.shape`
+ * and the SDK republishes it strict — `false`, which is why `_pick_declared.ts`
+ * exists at all.
+ *
+ * `publishedOutputJsonSchema` is now the doc's single source, so this asserts
+ * it against a REAL server on BOTH surfaces. Without this the helper is just a
+ * second guess at what the SDK does, and the chatgpt surface — the one whose
+ * widget reads `structuredContent`, and where a mistake costs a resubmission —
+ * had no published-schema coverage of any kind.
+ */
+describe("docs/TOOLS.md renders the schema the wire actually carries", () => {
+  const surfaces = [
+    // `?tools=` is ignored on chatgpt (fixed listing), so only /mcp takes it.
+    { surface: "generic" as const, path: `/mcp${ALL_TOOLS_QUERY}` },
+    { surface: "chatgpt" as const, path: "/mcp/chatgpt" },
+  ];
+
+  for (const { surface, path } of surfaces) {
+    it(`${surface}: every published output schema equals publishedOutputJsonSchema`, async () => {
+      const res = await SELF.fetch(`https://example.com${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: AUTH_HEADER,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        result: { tools: Array<{ name: string; outputSchema?: unknown }> };
+      };
+      const withSchema = body.result.tools.filter((t) => t.outputSchema !== undefined);
+      // Non-vacuity: a listing that published no output schema at all would
+      // otherwise satisfy the loop below.
+      expect(withSchema.length, `${surface} published no output schemas`).toBeGreaterThan(0);
+
+      for (const tool of withSchema) {
+        const declared = outputSchemaForSurface(moduleFor(tool.name), surface);
+        expect(declared, `${tool.name} publishes a schema it does not declare`).toBeDefined();
+        expect(
+          tool.outputSchema,
+          `${tool.name} on ${surface}: docs/TOOLS.md would render a schema the wire does not carry`,
+        ).toEqual(publishedOutputJsonSchema(declared as NonNullable<typeof declared>));
+      }
+    });
+  }
 });

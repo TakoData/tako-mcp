@@ -32,7 +32,7 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts. All 
 ## Reading a result
 Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
 
-Field names depend on the response format, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them on a facts line (`exportable · relevance · type · freshness · nodes · source · chart · embed`); a JSON response uses `exportable`, `relevance`, `card_type`, `data_freshness.data_as_of`, `nodes`, `sources[].source_name`, `webpage_url` and `embed_url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
 
 ## Pick the right card (Critical)
 - **Verify by title, not by `nodes`.** Traffic cards list only the metric in `nodes` (`Visits`); the domain never appears there, so the entity check that works elsewhere in Tako is useless here. Confirm the domain in the card's title.

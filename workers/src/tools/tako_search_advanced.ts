@@ -70,8 +70,7 @@ import {
 } from "../generated/schemas.js";
 import {
   renderSearchMarkdown,
-  searchSlimOutputShape,
-  slimSearchStructured,
+  searchAdvancedOutputShape,
 } from "./_render_markdown.js";
 import type { SearchOutput } from "./_search_results.js";
 import { runSearch, type SearchCall, type SearchEndpoint } from "./_run_search.js";
@@ -245,7 +244,7 @@ const inputSchema = z
 
 type Input = z.infer<typeof inputSchema>;
 
-const outputSchema = searchSlimOutputShape;
+const outputSchema = searchAdvancedOutputShape;
 type Output = z.infer<typeof outputSchema>;
 
 /**
@@ -377,9 +376,6 @@ const tako_search_advanced = {
   renderText(output, _ctx) {
     void _ctx;
     return renderSearchMarkdown(output as SearchOutput);
-  },
-  slimStructured(output) {
-    return slimSearchStructured(output as SearchOutput);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

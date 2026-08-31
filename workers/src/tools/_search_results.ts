@@ -157,7 +157,7 @@ export const takoCardSchema = z
       ),
     // Explicit export-eligibility flag. The backend emits it authoritatively
     // (TakoData/tako#27989, computed with the same fail-closed export_safe
-    // gate as /contents); slimCard passes a wire value through and derives
+    // gate as /contents); `projectCard` passes a wire value through and derives
     // from `content` presence only when an older backend omits it. Emitted so
     // the model reads a POSITIVE "no" rather than having to notice a MISSING
     // `content` key, which LLMs routinely overlook — then call tako_contents
@@ -167,15 +167,6 @@ export const takoCardSchema = z
       .optional()
       .describe(
         "Whether this card's underlying data can be fetched with tako_contents. false → NOT exportable: do NOT call tako_contents on this card, use its inline preview/chart. true → eligible, but not a guarantee — a rare card still 403s, so on error fall back rather than retry.",
-      ),
-    // MCP-synthesized routing hint, stamped in slimCard on exportable:false
-    // cards only (never on the wire): tells the model where the values live
-    // instead of letting it burn a doomed tako_contents call.
-    values_hint: z
-      .string()
-      .optional()
-      .describe(
-        "Present only on non-exportable (exportable:false, usually license-gated) cards: where this card's values live — the headline in `description` when the card carries one; the rows themselves cannot be exported on any path.",
       ),
     // Graph nodes (entities/metrics) this card was built from, returned by the
     // backend by default. Slim shape (id/name/type) — pass these ids into
@@ -494,188 +485,6 @@ export function slimCardContent(
   } as ResultContent;
 }
 
-// Model-facing key order for a card. The backend's wire order leads every
-// card with ~1.5k chars of descriptive metadata (title, description, the full
-// per-source paragraph, methodologies) and puts `content` — the data — near
-// the end; a client with a result-size cap then truncates away exactly the
-// rows include_contents paid to inline. Serialize the identifying essentials
-// and the data first, boilerplate last. Keys absent from the card are
-// skipped; unknown keys keep their relative order after the known ones (so a
-// new backend field degrades to "after the essentials", never "lost").
-const CARD_KEY_ORDER = [
-  "card_id",
-  "title",
-  // `description` rides third: on non-exportable (exportable:false) cards it
-  // IS the data — the backend puts the headline value + % change there — so
-  // it must precede the URL/methodology chrome a truncating client drops.
-  "description",
-  "values_hint",
-  "exportable",
-  "content",
-  "nodes",
-  "card_type",
-  "data_freshness",
-  "relevance_score",
-  "relevance",
-  "metric_definitions",
-  "webpage_url",
-  "image_url",
-  "embed_url",
-  "sources",
-  "methodologies",
-  "source_indexes",
-  "semantic_description",
-] as const;
-
-function orderCardKeys(card: TakoCard): TakoCard {
-  const source = card as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const key of CARD_KEY_ORDER) {
-    if (key in source) out[key] = source[key];
-  }
-  for (const key of Object.keys(source)) {
-    if (!(key in out)) out[key] = source[key];
-  }
-  return out as TakoCard;
-}
-
-/**
- * Immutable: return a new card, slimmed and tagged with an explicit
- * `exportable` flag — a positive boolean so the model reads an explicit "no"
- * instead of having to notice a MISSING `content` key (which LLMs overlook,
- * then call tako_contents anyway and draw a 403). The backend emits the flag
- * authoritatively (TakoData/tako#27989, same fail-closed gate as /contents),
- * so a wire value passes through untouched; deriving from `content` presence
- * is only the fallback for older backends. Keys are re-ordered data-first
- * (see CARD_KEY_ORDER). Pure in-memory — no I/O.
- */
-export const slimCard = (card: TakoCard, capRows: number | "all" | null): TakoCard => {
-  const exportable = card.exportable ?? card.content != null;
-  // Share opt-in on the passthrough embed_url, so the url an agent quotes
-  // from the text matches the one the widget renders for the same card —
-  // see withShareOptIn.
-  const shared =
-    typeof card.embed_url === "string" && card.embed_url !== ""
-      ? { ...card, embed_url: withShareOptIn(card.embed_url) }
-      : card;
-  const slimmed =
-    shared.content == null
-      ? { ...shared, exportable }
-      : { ...shared, exportable, content: slimCardContent(shared.content, capRows) };
-  return orderCardKeys(
-    exportable ? slimmed : { ...slimmed, values_hint: valuesHint(card) },
-  );
-};
-
-// Hint for a non-exportable (exportable:false) card. Such cards carry no
-// rows on any path — `tako_search_advanced` (opt-in since spec D1) is off the
-// default surface, so the hint no longer routes there; naming a tool the
-// connection has not registered sends the model into "tool not found".
-// Wording stays NEUTRAL ("not exportable", not "license-gated"): the
-// backend's export_safe() also fails closed on blank/unresolvable source
-// names and config-alignment errors, and narrating those as a licensing
-// decision would keep real bugs from being reported. The "headline value
-// is in description" clause is asserted only when the card actually
-// carries a description — an unverified pointer is worse than none.
-function valuesHint(card: TakoCard): string {
-  const headline =
-    typeof card.description === "string" && card.description.trim() !== ""
-      ? "; headline value is in description"
-      : "";
-  return `rows not exportable${headline}`;
-}
-
-// Only paragraph-length strings are worth hoisting — moving a short label
-// out of the card would cost more glossary overhead than it saves.
-const GLOSSARY_MIN_CHARS = 120;
-
-/**
- * Hoist per-card source/methodology boilerplate into one top-level glossary.
- * The backend repeats the full source paragraph on EVERY card from that
- * source (five same-source cards → five copies of the same ~1k-char
- * description), which crowds the actual data out of any client-side
- * result-size budget. Each paragraph moves out of the cards into
- * `glossary[name]` (one copy, keyed by the entry's own name field), and the
- * caller serializes the glossary at the END of the output so truncating
- * clients lose boilerplate last, data never. An entry with no usable name, or
- * a same-name entry carrying DIFFERENT text, stays inline — nothing is ever
- * lost. Immutable — untouched cards are returned as-is.
- */
-export function hoistSourceGlossary(cards: TakoCard[]): {
-  cards: TakoCard[];
-  glossary: Record<string, string> | undefined;
-} {
-  const glossary: Record<string, string> = {};
-  const hoistArray = (items: unknown, nameKey: string, textKey: string): unknown => {
-    if (!Array.isArray(items)) return items;
-    let changed = false;
-    const out = items.map((item) => {
-      if (item === null || typeof item !== "object") return item;
-      const rec = item as Record<string, unknown>;
-      const name = rec[nameKey];
-      const text = rec[textKey];
-      if (
-        typeof name !== "string" || name === "" ||
-        typeof text !== "string" || text.length < GLOSSARY_MIN_CHARS
-      ) {
-        return item;
-      }
-      const existing = glossary[name];
-      if (existing !== undefined && existing !== text) return item;
-      glossary[name] = text;
-      changed = true;
-      const { [textKey]: _hoisted, ...rest } = rec;
-      return rest;
-    });
-    return changed ? out : items;
-  };
-  const outCards = cards.map((card) => {
-    const rec = card as Record<string, unknown>;
-    const next: Record<string, unknown> = { ...rec };
-    let changed = false;
-    for (const [arrayKey, nameKey, textKey] of [
-      ["sources", "source_name", "source_description"],
-      ["methodologies", "methodology_name", "methodology_description"],
-    ] as const) {
-      const hoisted = hoistArray(rec[arrayKey], nameKey, textKey);
-      if (hoisted !== rec[arrayKey]) {
-        next[arrayKey] = hoisted;
-        changed = true;
-      }
-    }
-    return changed ? (next as TakoCard) : card;
-  });
-  return {
-    cards: outCards,
-    glossary: Object.keys(glossary).length > 0 ? glossary : undefined,
-  };
-}
-
-/**
- * Slim a web result's `content`. Web `content.data` is the page's full extracted
- * text: a large prose blob, so it is dropped unless the caller ASKED for it on
- * the wire (`sources.web.include_contents`). Dropping what the caller requested
- * is the defect this parameter fixes — tako_search_advanced advertises the
- * generated `include_contents` description ("Tako returns it free of charge")
- * and used to throw the result away, which is the dishonest-parameter shape spec
- * D4 exists to remove.
- *
- * NOT "billed per page", which the previous version of this comment claimed and
- * which drove the unconditional drop. That is true of `POST /api/v1/contents`, a
- * different endpoint. On `/v3/search` the generated WebSourceSettings says the
- * page text comes back FREE, best-effort. So context size is the only cost, and
- * the caller who set the flag has already accepted it.
- *
- * `keepText` is REQUIRED, deliberately. As a defaulted parameter it would be fed
- * `.map`'s index by the two existing `.map(slimWebResult)` call sites — keeping
- * text for every result except the first. Required means tsc rejects the bare
- * form instead.
- */
-export const slimWebResult = (w: WebResult, keepText: boolean): WebResult =>
-  w.content == null || keepText
-    ? w
-    : { ...w, content: slimCardContent(w.content, null) };
-
 // Backend Usage — cost-plus usage for one metered request (mirrors the generated
 // `Usage` in generated/schemas.ts). `total_cost_usd` is the total quoted charge;
 // `compute` (the flat search/answer per-request rate) and `data` (the
@@ -744,24 +553,426 @@ export type TopCardChartFields = {
   [K in keyof AutoChainFields]-?: NonNullable<AutoChainFields[K]>;
 };
 
+// ---------------------------------------------------------------------------
+// Model-facing projection (spec: 2026-08-26-model-facing-surface-redesign)
+//
+// The projection REPLACES the passthrough-plus-loose-schema pattern for the
+// search tools: every field below is mapped on purpose, so an unknown backend
+// key cannot leak into the model's context, and the advertised schema can be
+// a real typed card. Wire-drift protection moves from "loose schema" to
+// "explicit mapping + the conformance test in _search_results.test.ts".
+//
+// THE PASSTHROUGH SLIMMERS ARE GONE, not parked. `slimCard`, `slimWebResult`
+// and `hoistSourceGlossary` served `tako_answer`, which #273 folded into
+// `tako_search_advanced`; both search tools now share this projection, so the
+// three had no caller left. They were briefly kept "for the answer pass" —
+// a pass that no longer exists. Do not restore one to shortcut a future
+// tool: project explicitly, or the unknown-key leak comes back with it.
+// `slimCardContent` survives because `projectCard` caps inlined rows with it.
+// ---------------------------------------------------------------------------
+
+const nonEmpty = (v: unknown): string | undefined =>
+  typeof v === "string" && v.trim() !== "" ? v : undefined;
+
+// Date-only per the field vocabulary: recency matters, time-of-day doesn't.
+const dateOnly = (v: unknown): string | undefined => {
+  const s = nonEmpty(v);
+  if (s === undefined) return undefined;
+  const m = /^\d{4}-\d{2}-\d{2}/.exec(s);
+  return m ? m[0] : s;
+};
+
+const sourceNamesOf = (rec: Record<string, unknown>): string[] => {
+  if (!Array.isArray(rec.sources)) return [];
+  const names: string[] = [];
+  for (const entry of rec.sources) {
+    if (entry === null || typeof entry !== "object") continue;
+    const name = nonEmpty((entry as Record<string, unknown>).source_name);
+    if (name !== undefined && !names.includes(name)) names.push(name);
+  }
+  return names;
+};
+
+/**
+ * The key a card's reference notes join under — EXACTLY the string
+ * `projectCard` writes into the card's `source` field.
+ *
+ * One derivation, because the join is the whole point of `source_notes` and
+ * `metric_definitions`: the model reads `source` off a card and looks it up in
+ * the map. A key built any other way (a `methodology_name`, or just
+ * `sources[0]` on a two-source card) files the prose under something no card
+ * carries, and the model can see the paragraph but cannot attribute it. The
+ * advertised schema promises "keyed by source name", so this is the promise.
+ *
+ * `undefined` when the card names no source at all — there is nothing to join
+ * to, and the caller drops rather than inventing a key.
+ */
+const sourceKeyOf = (sources: readonly string[]): string | undefined =>
+  sources.length > 0 ? sources.join(", ") : undefined;
+
+export const projectedNodeSchema = z
+  .object({ id: z.string(), name: z.string(), type: z.string() })
+  .loose();
+export type ProjectedNode = z.infer<typeof projectedNodeSchema>;
+
+/** The model-facing card: ten fields, every one with a reader. */
+export type ProjectedCard = {
+  title?: string;
+  /** The headline value + range — on many cards this IS the answer. */
+  description?: string;
+  exportable: boolean;
+  /** The one URL — the `tako_contents` handle. */
+  url?: string;
+  source?: string;
+  /** Where the DATA ends. The field that answers "is this the latest
+   *  figure?" — `last_updated` does not: a card refreshed today can end in
+   *  2024. Reduced ISO precision, at the series' own granularity ("2026",
+   *  "2026-06", "2026-06-30"), so do not parse it as a full date. */
+  coverage_end?: string;
+  last_updated?: string;
+  total_rows?: number;
+  relevance?: string;
+  nodes?: ProjectedNode[];
+  /** Inlined rows — present ONLY when the request asked to inline
+   *  (`tako_search_advanced` with `include_contents`); `tako_search`
+   *  never sets it. */
+  rows?: Record<string, unknown>;
+};
+
+export type ProjectedWebResult = {
+  title?: string;
+  url: string;
+  /** Query-selected passages; `null` when the page had no relevant one. */
+  snippet?: string | null;
+  source?: string;
+  published?: string | null;
+  /** Page text — present ONLY when the request asked for it
+   *  (`tako_search_advanced` web `include_contents`). */
+  content?: Record<string, unknown>;
+};
+
+/**
+ * The keys an inlined `rows` object may carry: every payload channel, plus the
+ * three metadata keys that describe one.
+ *
+ * DERIVED from {@link CONTENT_PAYLOAD_KEYS}, never re-spelled. That constant is
+ * bound to the generated `ContentItem` by a drift test; a literal list here
+ * would not be, so a fifth upstream payload channel would be classified there,
+ * turn the drift test green, and still never reach `tako_search_advanced`'s
+ * inlined rows. That exact drift already shipped once against
+ * `slimCardContent` (see the CONTENT_PAYLOAD_KEYS docstring: three keys against
+ * ContentItem's four).
+ */
+// Exported for the drift guard ONLY. A test that retypes these names instead
+// of importing them pins nothing: renaming `content_format` here to `format`
+// — which drops it from every `rows` object `tako_search_advanced` inlines —
+// left all 1267 tests green.
+//
+// `manifest` is on this list because it is the ONLY carrier of per-column
+// `unit`, `metric` and `entity`. `slimCardContent` already classifies it as
+// metadata to keep, and this loop used to filter it back out — so a
+// json_records inline arrived as `[{"col": 12.4}]` with nothing saying
+// whether 12.4 is USD, USD billions or a percent.
+export const ROWS_META_KEYS = ["total_rows", "truncated", "content_format", "manifest"] as const;
+const ROWS_KEYS: readonly string[] = [...CONTENT_PAYLOAD_KEYS, ...ROWS_META_KEYS];
+const PAYLOAD_KEY_SET: ReadonlySet<string> = new Set<string>(CONTENT_PAYLOAD_KEYS);
+
+/** Project one wire card into the model-facing shape. Pure and immutable. */
+export function projectCard(card: TakoCard, capRows: number | "all" | null): ProjectedCard {
+  const rec = card as Record<string, unknown>;
+  const out: ProjectedCard = { exportable: card.exportable ?? card.content != null };
+  const title = nonEmpty(card.title);
+  if (title !== undefined) out.title = title;
+  const description = nonEmpty(card.description);
+  if (description !== undefined) out.description = description;
+  const url = nonEmpty(card.webpage_url);
+  if (url !== undefined) out.url = url;
+  const sources = sourceNamesOf(rec);
+  if (sources.length > 0) out.source = sources.join(", ");
+  const freshness = rec.data_freshness;
+  if (freshness !== null && typeof freshness === "object") {
+    const f = freshness as Record<string, unknown>;
+    // BOTH dates, because they answer different questions and every member of
+    // `DataFreshness` is optional AND nullable. Reading `last_updated` alone
+    // left a card shipping `{coverage_end: "2026-06", last_updated: null}` with
+    // no freshness at all, and left every other card claiming a refresh date
+    // where the model needed the coverage date: a card refreshed today can end
+    // in 2024, so `last_updated` cannot answer "is this the latest figure?".
+    //
+    // `dateOnly` passes reduced precision through untouched (its regex needs a
+    // full YYYY-MM-DD), which is required here — `coverage_end` reports at the
+    // series' own granularity.
+    const coverageEnd = dateOnly(f.coverage_end);
+    if (coverageEnd !== undefined) out.coverage_end = coverageEnd;
+    const updated = dateOnly(f.last_updated);
+    if (updated !== undefined) out.last_updated = updated;
+  }
+  // One relevance field: the entitled numeric relevance_score when present
+  // (dropping it would silently remove a paid feature's output), else the
+  // coarse "High"/"Low" string every account gets.
+  const relevanceScore = rec.relevance_score;
+  const relevance =
+    typeof relevanceScore === "number" ? String(relevanceScore) : nonEmpty(rec.relevance);
+  if (relevance !== undefined) out.relevance = relevance;
+  if (Array.isArray(card.nodes) && card.nodes.length > 0) {
+    out.nodes = card.nodes.map((n) => ({ id: n.id, name: n.name, type: n.type }));
+  }
+  // total_rows is lifted OUT of `content` so the count survives the drop of
+  // the export descriptor. Locked cards ship `content: null`, so no count
+  // exists to report there — by design (a fabricated 0 would read as "no
+  // data exists" when the truth is "data you can't have").
+  const content = card.content as Record<string, unknown> | null | undefined;
+  if (content != null) {
+    const dataset = content.dataset as Record<string, unknown> | null | undefined;
+    const totalRows =
+      typeof content.total_rows === "number"
+        ? content.total_rows
+        : dataset != null && typeof dataset.total_rows === "number"
+          ? dataset.total_rows
+          : undefined;
+    // GATED ON `exportable`, matching the field's own published describe
+    // ("Rows behind `url` (exportable cards only)"). The text channel renders
+    // the count only in the exportable arm, so a count on a locked card would
+    // sit in structuredContent and nowhere else — a channel-equivalence hole,
+    // against a promise already published to clients. Today the backend's
+    // shared export gate (TakoData/tako#27989) means a locked card ships
+    // `content: null` and never reaches here; the guard is what keeps the two
+    // channels agreeing if that ever changes.
+    if (totalRows !== undefined && out.exportable) out.total_rows = totalRows;
+    // Rows ride only when the caller asked to inline them; the null-noise
+    // keys and the billing descriptor never do.
+    if (capRows !== null) {
+      const capped = slimCardContent(card.content, capRows) as
+        | Record<string, unknown>
+        | null
+        | undefined;
+      if (capped != null) {
+        const rows: Record<string, unknown> = {};
+        for (const key of ROWS_KEYS) {
+          const v = capped[key];
+          if (v !== null && v !== undefined) rows[key] = v;
+        }
+        // Metadata alone is not rows: a descriptor with a cost quote and no
+        // payload channel would otherwise ship an empty `rows` object.
+        if (Object.keys(rows).some((k) => PAYLOAD_KEY_SET.has(k))) {
+          out.rows = rows;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** Project one wire web result into the model-facing shape. */
+export function projectWebResult(w: WebResult, keepWebText: boolean): ProjectedWebResult {
+  const rec = w as Record<string, unknown>;
+  const out: ProjectedWebResult = { url: w.url };
+  const title = nonEmpty(w.title);
+  if (title !== undefined) out.title = title;
+  if (w.snippet !== undefined) out.snippet = w.snippet ?? null;
+  const source = nonEmpty(rec.source_name);
+  if (source !== undefined) out.source = source;
+  if (rec.publish_date !== undefined) out.published = dateOnly(rec.publish_date) ?? null;
+  if (keepWebText) {
+    const content = rec.content as Record<string, unknown> | null | undefined;
+    if (content != null) {
+      const kept: Record<string, unknown> = {};
+      for (const key of ["data", "truncated"]) {
+        const v = content[key];
+        if (v !== null && v !== undefined) kept[key] = v;
+      }
+      if ("data" in kept) out.content = kept;
+    }
+  }
+  return out;
+}
+
+/**
+ * The two reference-prose maps, deduped ACROSS cards (spec, "Per-tool shape"):
+ *
+ *   - `metric_definitions`: what each metric MEANS — the misquote-preventer
+ *     (unit, basis, the "segment revenue ≠ total revenue" caveat). Keyed by
+ *     the metric name the cards already carry; a same-name-different-text
+ *     conflict disambiguates the key with the card's source ("Revenue —
+ *     Fiscal.ai") so text is never dropped.
+ *   - `source_notes`: who a source is and how it builds its data — the
+ *     source_description and methodology_description paragraphs merged under
+ *     `sourceKeyOf`, the card's whole `source` string. Same-key different
+ *     text joins with a blank line.
+ *
+ * Both serialize LAST in both channels so truncating hosts lose reference
+ * prose before data. Empty maps are omitted (the backend sends paragraphs on
+ * some sources only).
+ */
+export function buildReferenceMaps(cards: readonly TakoCard[]): {
+  metric_definitions?: Record<string, string>;
+  source_notes?: Record<string, string>;
+} {
+  // NULL-PROTOTYPE, and the type system cannot enforce it. Every key here is an
+  // upstream string (`source_name`, `methodology_name`, a metric `name`), so a
+  // source called `constructor` or `toString` reads back Object.prototype's
+  // member instead of undefined; `appendNote` then calls `.includes` on a
+  // function and throws, failing the call AFTER the backend round-trip is
+  // billed. Both maps are typed `Record<string, string>`, so `existing` is a
+  // `string` at compile time and every lookup below typechecks.
+  const metricDefs: Record<string, string> = Object.create(null);
+  const sourceNotes: Record<string, string> = Object.create(null);
+  const addMetric = (name: string, text: string, source: string | undefined): void => {
+    if (metricDefs[name] === undefined) {
+      metricDefs[name] = text;
+      return;
+    }
+    if (metricDefs[name] === text) return;
+    const preferred = source !== undefined ? `${name} — ${source}` : undefined;
+    if (preferred !== undefined && (metricDefs[preferred] === undefined || metricDefs[preferred] === text)) {
+      metricDefs[preferred] = text;
+      return;
+    }
+    let i = 2;
+    while (metricDefs[`${name} (${i})`] !== undefined && metricDefs[`${name} (${i})`] !== text) i += 1;
+    metricDefs[`${name} (${i})`] = text;
+  };
+  const appendNote = (key: string, text: string): void => {
+    const existing = sourceNotes[key];
+    if (existing === undefined) sourceNotes[key] = text;
+    else if (!existing.includes(text)) sourceNotes[key] = `${existing}\n\n${text}`;
+  };
+  for (const card of cards) {
+    const rec = card as Record<string, unknown>;
+    const sources = sourceNamesOf(rec);
+    if (Array.isArray(rec.metric_definitions)) {
+      for (const entry of rec.metric_definitions) {
+        if (entry === null || typeof entry !== "object") continue;
+        const def = entry as Record<string, unknown>;
+        const name = nonEmpty(def.name);
+        const text = nonEmpty(def.definition);
+        // `sourceKeyOf`, never `sources[0]`: the suffix has to name the card's
+        // WHOLE source string. With `sources[0]` a two-source card's definition
+        // filed as "Revenue — Fiscal.ai" while a DIFFERENT, Fiscal.ai-only card
+        // owned the bare "Revenue" — so the suffix attributed a blended
+        // definition to one source that did not produce it. A wrong definition
+        // under a plausible source name is the misquote this map exists to
+        // prevent.
+        if (name !== undefined && text !== undefined) addMetric(name, text, sourceKeyOf(sources));
+      }
+    }
+    if (Array.isArray(rec.sources)) {
+      for (const entry of rec.sources) {
+        if (entry === null || typeof entry !== "object") continue;
+        const src = entry as Record<string, unknown>;
+        const name = nonEmpty(src.source_name);
+        const text = nonEmpty(src.source_description);
+        // `sourceKeyOf`, never the bare `source_name`. A card carries ONE
+        // source field and it is the joined list, so on a two-source card a
+        // note filed under "Fiscal.ai" is prose no card can reach: the map
+        // held "Fiscal.ai", "S&P Global" AND "Fiscal.ai, S&P Global", and the
+        // only key `source` matched carried the methodology alone, with both
+        // source descriptions unattributable.
+        //
+        // The name moves into the VALUE when the key names more than one
+        // source: two descriptions under one key otherwise merge into a blob
+        // with nothing saying which source each sentence is about. Generated
+        // `TakoCardSource.source_description` is "The description of the
+        // source" and does not promise to name it.
+        const key = sourceKeyOf(sources);
+        if (name !== undefined && text !== undefined && key !== undefined) {
+          appendNote(key, sources.length > 1 ? `${name}: ${text}` : text);
+        }
+      }
+    }
+    if (Array.isArray(rec.methodologies)) {
+      for (const entry of rec.methodologies) {
+        if (entry === null || typeof entry !== "object") continue;
+        const m = entry as Record<string, unknown>;
+        const text = nonEmpty(m.methodology_description);
+        if (text === undefined) continue;
+        // NEVER `methodology_name` (spec: "bare methodology_name dies"). It
+        // appears on no projected card, so a note filed under it is prose the
+        // model can read and cannot attribute — the exact failure these maps
+        // replaced. A card naming no source has no key at all and the note is
+        // dropped: the paragraph already names its own source (the generated
+        // KnowledgeCardMethodology calls it "the source and what it measures"),
+        // so an unattributable copy adds nothing a reader can act on.
+        const key = sourceKeyOf(sources);
+        if (key !== undefined) appendNote(key, text);
+      }
+    }
+  }
+  const out: { metric_definitions?: Record<string, string>; source_notes?: Record<string, string> } = {};
+  if (Object.keys(metricDefs).length > 0) out.metric_definitions = metricDefs;
+  if (Object.keys(sourceNotes).length > 0) out.source_notes = sourceNotes;
+  return out;
+}
+
+// The PROJECTED card/web-result element schemas — real typed shapes, since
+// the projection controls every key. Elements stay `.loose()` as a belt
+// (an added projection field ships before its schema line in a bad merge),
+// but the projection, not this schema, is the drift guard now.
+export const projectedCardShape = z.looseObject({
+  title: z.string().optional(),
+  description: z.string().optional().describe("Headline value and range — often the answer itself."),
+  exportable: z.boolean().describe("true → tako_contents on `url` returns the rows; false → rows are locked, read the headline from `description`."),
+  url: z.string().optional().describe("The card page — the tako_contents handle."),
+  source: z.string().optional(),
+  coverage_end: z
+    .string()
+    .optional()
+    .describe(
+      'Where the DATA ends — use this, not `last_updated`, to judge whether a figure is current. Reduced ISO precision at the series\' own granularity ("2026", "2026-06", "2026-06-30"), and it can be in the future on a card with projections.',
+    ),
+  last_updated: z.string().optional().describe("Date Tako last refreshed this card — NOT where its data ends."),
+  total_rows: z.number().int().optional().describe("Rows behind `url` (exportable cards only)."),
+  // TWO forms in one string field, and the model has to be told which it got:
+  // entitled accounts get the numeric score ("4.5" on a 1.0-5.0 scale, 5.0 =
+  // exact match), every other account gets the coarse word. Undescribed, "3"
+  // reads as a rank or a count beside a neighbouring card's "High".
+  relevance: z
+    .string()
+    .optional()
+    .describe('Either a 1.0-5.0 score as a string ("4.5", 5.0 = exact match) on entitled accounts, or a coarse word ("High"). Higher is more relevant in both forms.'),
+  nodes: z.array(projectedNodeSchema).optional().describe("Graph handles — pass ids to tako_graph_related."),
+  rows: z.looseObject({}).optional().describe("Inlined rows — only when the request asked to inline them."),
+});
+export const projectedWebResultShape = z.looseObject({
+  title: z.string().optional(),
+  url: z.string(),
+  snippet: z
+    .string()
+    .nullable()
+    .optional()
+    // NEVER assert the cause, always keep the action. `f5fd69d` measured this:
+    // the backend emits `" … "` in one place, but a source page's own ellipsis
+    // survives cleaning and is indistinguishable from it — the text arm, which
+    // structurally cannot carry a backend join, still reported 2 of 260. Zero
+    // joins were confirmed in that run. A consumer cannot tell the two apart
+    // either, so the contract names the discontinuity and what to do about it.
+    // "the published snippet contract" in _search_results.test.ts pins the
+    // actionable clause; three commits have now moved this string.
+    .describe(
+      "Passages selected against the query. A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence. null → no relevant passage, url still fetchable.",
+    ),
+  source: z.string().optional(),
+  published: z.string().nullable().optional(),
+  content: z.looseObject({}).optional().describe("Page text — only when the request asked for it."),
+});
+
 export const searchOutputShape = {
-  cards: z.array(takoCardSchema),
-  web_results: z.array(webResultSchema),
+  cards: z.array(projectedCardShape),
+  web_results: z.array(projectedWebResultShape),
   // Cost-plus usage for this request (null when it was not metered/billed).
   usage: usageSchema.nullable(),
   request_id: z.string(),
-  // Present ONLY on a zero-result response: tells the model how to recover
-  // without burning priced calls on reworded retries.
+  // Present ONLY on a zero-result response: the verdict (which corpora this
+  // response is evidence about) and the one next action.
   guidance: z.string().optional(),
-  // Source/methodology paragraphs hoisted out of the cards (one copy each,
-  // keyed by name). The caller appends this AFTER every other field so
-  // truncating clients lose boilerplate last.
-  sources_glossary: z
+  metric_definitions: z
     .record(z.string(), z.string())
     .optional()
-    .describe(
-      "Source/methodology descriptions shared by the cards, keyed by name — hoisted here so each rides once instead of once per card.",
-    ),
+    .describe("What each metric means (unit, basis, caveats), keyed by the metric name the cards carry."),
+  source_notes: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe("What each source is and how it builds its data, keyed by a card's `source` field verbatim."),
   // Follow-up queries, present only when the request set `include_related`.
   related: z.array(RelatedSuggestion).optional(),
   // The three /v1/answer fields. Present only on the answer endpoint, which
@@ -773,12 +984,13 @@ export const searchOutputShape = {
 } as const;
 
 export type SearchOutput = {
-  cards: TakoCard[];
-  web_results: WebResult[];
+  cards: ProjectedCard[];
+  web_results: ProjectedWebResult[];
   usage: Usage | null;
   request_id: string;
   guidance?: string;
-  sources_glossary?: Record<string, string>;
+  metric_definitions?: Record<string, string>;
+  source_notes?: Record<string, string>;
   related?: z.infer<typeof RelatedSuggestion>[];
   answer?: string;
   structured_output?: Record<string, unknown>;
@@ -798,38 +1010,13 @@ export type SearchedSources = ReadonlyArray<"data" | "web">;
 export const searchedData = (s: SearchedSources): boolean => s.includes("data");
 const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
 
-/**
- * The WEB axis carve-out — the other half of the anti-retry rule.
- *
- * "Do not rephrase and retry" was measured on DATA queries, where rewording
- * almost never flips a miss into a hit and every attempt is priced. It was
- * then written as advice about the whole call, which made it misfire on
- * questions the data graph was never going to answer: a zero-card
- * `tako_search` told the model "the data graph does not cover this — do NOT
- * re-search with rephrasings" even when the question was a docs or reference
- * lookup whose answer is entirely on the web, and where re-searching per
- * entity or per provider is precisely the strategy that works. Measured
- * against the field, a competing web-search MCP wins those questions with
- * 5-6 targeted calls per question; our own guidance was telling the model to
- * stop after one.
- *
- * So the ban is scoped to what it was measured on. Rephrasing to hunt for a
- * CARD does not converge. Refining a WEB query does, and fanning out narrow
- * queries beats one broad one — the same rule the tool descriptions already
- * give for the data side ("one entity + one metric per query"), applied to
- * the web side.
- *
- * `sources: ["web"]` on those follow-ups is not a guess: a response carrying
- * web results and zero cards has just DEMONSTRATED the graph does not hold
- * this, which is the exact precondition `sources`' own description sets for
- * narrowing ("only for content a data graph cannot hold").
- *
- * Exported so the ANSWER path's data-gap guidance carries the identical
- * carve-out. Two recovery paths whose advice disagrees teach the model that
- * one of them is wrong.
- */
-export const REFINE_WEB_FREELY =
-  'Re-searching is NOT banned here — what does not converge is rephrasing to hunt for a data CARD. If what you actually need is web content (docs, reference pages, news, qualitative claims), refine and re-search freely: prefer SEVERAL narrow queries (one per entity, provider or site) over one broad one, and pass sources:["web"] on them, since this response has already shown the graph does not hold it.';
+// REFINE_WEB_FREELY was deleted with the two-sentence guidance rewrite: its
+// carve-out ("refining a WEB query converges; hunting for a CARD does not")
+// is now scoped into each branch's verdict sentence, and the fan-out-narrow-
+// queries lesson lives in the tool description. The measured incident that
+// created it (a blanket no-re-search ban losing docs questions to a
+// competing web-search MCP by 5-6 targeted calls) stays the reason the
+// verdicts blame the DATA GRAPH, never re-searching as such.
 
 /**
  * The same carve-out for the ANSWER path, where the move is DECOMPOSITION
@@ -855,16 +1042,31 @@ export const DECOMPOSE_WEB_ASK =
  * The one carve-out on the BOTH-empty stop — nothing from the data graph and
  * nothing from the web.
  *
- * Shared rather than written twice. `tako_answer` carried this sentence inline
- * while `tako_search`'s equivalent branch ended flatly at "stop calling Tako for
- * this question", so on the single most common Tako-has-nothing path the two
- * tools disagreed about whether one narrower web attempt was allowed. That is
- * the same drift {@link PINNED_RETRY} and {@link DECOMPOSE_WEB_ASK} exist to
- * prevent, and it is the reason it belongs in a constant: a model that reads
- * both surfaces learns that one of them is wrong.
+ * It exists because the two surfaces once CONTRADICTED each other here: the
+ * answer path allowed one narrower web attempt while `tako_search`'s equivalent
+ * branch ended flatly at "stop calling Tako for this question" — same
+ * situation, opposite verdict, on the most common Tako-has-nothing path. A
+ * model that reads both surfaces learns that one of them is wrong. Same drift
+ * {@link PINNED_RETRY} and {@link DECOMPOSE_WEB_ASK} exist to prevent.
  *
- * Interpolated only where the web was ACTUALLY searched and came back empty. On
- * a data-only call there is no empty web result to reinterpret — that path tells
+ * ONE INTERPOLATION LEFT, and that is deliberate — do not "fix" it by pushing
+ * this string back into `buildZeroResultGuidance`. Every branch there is capped
+ * at TWO sentences (spec: 2026-08-26-model-facing-surface-redesign, "guidance"
+ * decision), and this is a ~250-char third one; the search path therefore
+ * states the same carve-out as a CLAUSE ("or try one genuinely narrower web
+ * question"). The full sentence stays on the answer path, which has no sentence
+ * budget and needs the reason it carries — an empty web result usually means
+ * the question was too broad, which is the half that actually stops the retry
+ * loop.
+ *
+ * So the guarantee is the INVARIANT, not the string: both surfaces permit
+ * exactly one narrower web attempt, and neither forbids re-searching the web.
+ * "both zero-result surfaces permit exactly one narrower web attempt" in
+ * `_search_results.test.ts` is what holds it — a string-identity test cannot,
+ * now that only one side can afford the sentence.
+ *
+ * Used only where the web was ACTUALLY searched and came back empty. On a
+ * data-only call there is no empty web result to reinterpret — that path tells
  * the caller to search the web at all, which is a different (and cheaper) move.
  */
 export const NARROWER_WEB_ATTEMPT =
@@ -885,24 +1087,18 @@ export const NARROWER_WEB_ATTEMPT =
  * mid-failure copy that contradicts the tool's own description, which tells the
  * caller to drop `node_ids` and retry.
  */
-export function strictPinGuidance(hasWebResults: boolean, tier: Tier): string {
+export function strictPinGuidance(tier: Tier): string {
+  // Two sentences (spec, "guidance" decision): the verdict and the one next
+  // action. Under a `strict: true` pin, zero cards is evidence about the
+  // FILTER, not coverage — KE-812 measured pinned handles returning FEWER
+  // cards than the same query unpinned on 11 of 20 pairs. Reachable only from
+  // `tako_search_advanced`, which never executes anonymously — `tier` stays a
+  // parameter so this signature cannot silently diverge from the other
+  // branches if that invariant (held in `_surface.ts`) ever moves.
+  void tier;
   return [
-    "No data cards — but this request pinned `node_ids` with `strict: true`, which is a HARD FILTER: only cards matching a pinned node can come back.",
-    "Zero cards here is evidence about the filter, NOT about coverage. The graph holds near-duplicate metric nodes where only one twin carries cards, so a pinned query returned FEWER cards than the same query unpinned on 11 of 20 pairs measured.",
-    "Re-run the SAME query text with `node_ids` dropped before concluding anything. Do not report a coverage gap on the strength of this response.",
-    ...(hasWebResults
-      ? [
-          // Tier-branched for the same reason the rest of the zero-card
-          // protocol is (#272): `tako_contents` is auth-required outright, so
-          // prescribing it to an anonymous caller is a step that answers a
-          // refusal. The branch is unreachable today — pinning needs
-          // `tako_search_advanced`, which never executes anonymously — but the
-          // invariant that makes it so lives in `_surface.ts`, not here.
-          tier === "free"
-            ? "Web results did come back — answer from them meanwhile (their snippets are in structuredContent)."
-            : "Web results did come back — answer from them meanwhile (tako_contents on the most relevant url fetches its full page text).",
-        ]
-      : []),
+    "No data cards, but this request pinned `node_ids` with `strict: true` — a hard filter — so zero cards is evidence about the filter, not about coverage.",
+    "Re-run the same query text without `node_ids` before concluding anything.",
   ].join(" ");
 }
 
@@ -922,14 +1118,44 @@ export function strictPinGuidance(hasWebResults: boolean, tier: Tier): string {
  * treat the metric as absent. Two sources' worth of verdict from one source's
  * evidence. When web was not searched, the honest recovery is to search it.
  */
-export function buildDataGapGuidance(hasWebResults: boolean, searchedWebToo: boolean): string {
+export function buildDataGapGuidance(
+  hasWebResults: boolean,
+  searchedWebToo: boolean,
+  registered?: ReadonlySet<string>,
+): string {
+  // A tool RESULT that names a tool is an instruction the model acts on, and
+  // `?tools=` REPLACES the defaults — `?tools=answer` registers
+  // `tako_search_advanced` ALONE, so on the connection that reaches this
+  // function most often, BOTH tools named below are unregistered and every
+  // recovery step here resolved to the SDK's bare "tool not found".
+  const has = (name: string): boolean => registered === undefined || registered.has(name);
+  const coverage = has("tako_available_data");
+  const contents = has("tako_contents");
+  // Each optional clause carries its own leading space, so dropping one
+  // leaves no double space behind.
+  const confirmFirst = coverage ? "confirm coverage once with tako_available_data, then " : "";
   if (!hasWebResults && !searchedWebToo) {
-    return `Data-coverage verdict: ZERO curated data cards ground this answer (machine check: cards.length === 0). This ran with the DATA source only, so nothing here says anything about web coverage — do not read it as "not available anywhere". Cheapest next step: re-ask with sources:["data","web"] (same price) before concluding the figure is unavailable. If you want the proprietary series specifically, confirm coverage once with tako_available_data, then re-ask ONCE — ${PINNED_RETRY} — stating the period you need. Do NOT reach for tako_contents: it returns rows only for an exportable card you already have, and 403s on license-gated ones.`;
+    const noContents = contents
+      ? " Do NOT reach for tako_contents: it returns rows only for an exportable card you already have, and 403s on license-gated ones."
+      : "";
+    return `Data-coverage verdict: ZERO curated data cards ground this answer (machine check: cards.length === 0). This ran with the DATA source only, so nothing here says anything about web coverage — do not read it as "not available anywhere". Cheapest next step: re-ask with sources:["data","web"] (same price) before concluding the figure is unavailable. If you want the proprietary series specifically, ${confirmFirst}re-ask ONCE — ${PINNED_RETRY} — stating the period you need.${noContents}`;
   }
   if (hasWebResults) {
-    return `Data-coverage note: ZERO curated data cards ground this answer — it is web-grounded only (machine check: cards.length === 0). If the prose answers the question, use it as-is. If you specifically wanted Tako's proprietary series, do NOT rephrase-and-retry the answer call for it (priced, rarely converges): confirm coverage once with tako_available_data, then re-ask ONCE — ${PINNED_RETRY} — and state the period you need in the query. Do NOT reach for tako_contents: it cannot return rows for a card this answer did not cite, and it always 403s on license-gated cards. ${DECOMPOSE_WEB_ASK}`;
+    const noContents = contents
+      ? " Do NOT reach for tako_contents: it cannot return rows for a card this answer did not cite, and it always 403s on license-gated cards."
+      : "";
+    return `Data-coverage note: ZERO curated data cards ground this answer — it is web-grounded only (machine check: cards.length === 0). If the prose answers the question, use it as-is. If you specifically wanted Tako's proprietary series, do NOT rephrase-and-retry the answer call for it (priced, rarely converges): ${confirmFirst}re-ask ONCE — ${PINNED_RETRY} — and state the period you need in the query.${noContents} ${DECOMPOSE_WEB_ASK}`;
   }
-  return `Data-coverage verdict: ZERO curated data cards AND zero web results ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry the answer call hoping the same question lands a data series; every retry is priced and that loop rarely converges. Recover in ONE step: call tako_available_data to confirm coverage, then re-ask HERE once (${PINNED_RETRY}), stating the period you need in the query. Do NOT reach for tako_contents — it returns rows only for an exportable card you already have, and 403s on license-gated ones. If tako_available_data shows no coverage, the metric is genuinely absent from the graph: say so and use another source. ${NARROWER_WEB_ATTEMPT}`;
+  const recover = coverage
+    ? `Recover in ONE step: call tako_available_data to confirm coverage, then re-ask HERE once (${PINNED_RETRY}), stating the period you need in the query.`
+    : `Recover in ONE step: re-ask HERE once (${PINNED_RETRY}), stating the period you need in the query.`;
+  const noContents = contents
+    ? " Do NOT reach for tako_contents — it returns rows only for an exportable card you already have, and 403s on license-gated ones."
+    : "";
+  const verdict = coverage
+    ? " If tako_available_data shows no coverage, the metric is genuinely absent from the graph: say so and use another source."
+    : " If that retry also comes back empty, the metric is genuinely absent from the graph: say so and use another source.";
+  return `Data-coverage verdict: ZERO curated data cards AND zero web results ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry the answer call hoping the same question lands a data series; every retry is priced and that loop rarely converges. ${recover}${noContents}${verdict} ${NARROWER_WEB_ATTEMPT}`;
 }
 
 /**
@@ -956,7 +1182,7 @@ export function buildDataGapGuidance(hasWebResults: boolean, searchedWebToo: boo
  * exists for the ANSWER path, which keeps both parameters — do not route it
  * back here.
  *
- * {@link REFINE_WEB_FREELY} is deliberately NOT mirrored into those three:
+ * The web-axis carve-out is deliberately NOT mirrored into those three:
  * they are data-domain skills (equity research, macro indicators, site
  * traffic) whose questions are metric lookups by construction, so the
  * data-axis recipe is the whole story there. The carve-out matters for the
@@ -989,92 +1215,83 @@ function buildZeroResultGuidance(
   hasWebResults: boolean,
   sources: SearchedSources,
   tier: Tier,
+  registered?: ReadonlySet<string>,
 ): string {
-  // One sentence, appended wherever the authenticated protocol would have
-  // named a tool this caller cannot reach. The refusal is still the
-  // conversion prompt; this stops us PRESCRIBING it as a step.
-  const anon = tier === "free";
-  // `tako_contents` is auth-required outright, so the "read the page in full"
-  // half of every web sentence is a refusal anonymously. The snippets already
-  // ride in `structuredContent`, so what is left still answers the question.
-  const answerFromWeb = anon
-    ? "Answer from the web_results (their snippets are in structuredContent; reading a page in FULL needs a signed-in connection)."
-    : "Answer from the web_results (tako_contents on the most relevant url fetches its full page text).";
+  // Every branch is exactly TWO sentences: the verdict (which corpora this
+  // response is evidence about) and the one next action (spec:
+  // 2026-08-26-model-facing-surface-redesign-design.md, "guidance" decision).
+  // Static lessons — query shape, domains-not-brands, the coverage-check-first
+  // recipe — live in the tool description and are NOT repeated here.
+  //
+  // THREE STATES PER TOOL, not two, and tier is only one of them. This
+  // branched on `tier === "free"` alone, which is the wrong predicate: a
+  // SIGNED-IN `?tools=search` caller registers `tako_search` and nothing else
+  // (`?tools=` replaces the defaults, spec D1), took the authenticated arm,
+  // and was told to "call tako_available_data (free)" — a tool that
+  // connection never registered, whose call resolves to the SDK's bare "tool
+  // not found".
+  //
+  //   "callable" — registered and executable now: name it as the next step.
+  //   "gated"    — registered but auth-required on the free tier: the refusal
+  //                itself is the conversion prompt, so name it AND say so.
+  //   "absent"   — not on this connection at all: never name it.
+  //
+  // `registered === undefined` means a caller with no registration
+  // information (tests, direct handler calls); it degrades to tier-only,
+  // which is the behavior before the registered set existed.
+  const reach = (name: string): "callable" | "gated" | "absent" => {
+    if (registered !== undefined && !registered.has(name)) return "absent";
+    return tier === "free" ? "gated" : "callable";
+  };
+  const coverage = reach("tako_available_data");
+  const contents = reach("tako_contents");
+  // The strict-pin case never reaches this function: `buildSearchOutput`
+  // dispatches it to `strictPinGuidance` first, because under a hard filter
+  // every verdict below is unsupported.
   if (hasWebResults) {
-    // A web-only search has zero cards BY CONSTRUCTION — the data index was
-    // never queried — so the branch below would report a graph verdict from
-    // evidence that does not exist, and `REFINE_WEB_FREELY` would close with
-    // "this response has already shown the graph does not hold it", which it has
-    // not. That is precisely the defect `buildDataGapGuidance` fixes via
-    // `searchedWebToo`, in the mirror direction: one source's outcome reported as
-    // two sources' worth of verdict.
-    //
-    // Nothing on the data axis belongs here either — no coverage check, no pin
-    // recipe — because the caller narrowed the sources deliberately. The one
-    // useful data-side sentence is how to GET a coverage answer, which is the
-    // cheap re-ask.
     if (!searchedData(sources)) {
+      // Web-only search: zero cards BY CONSTRUCTION — no data verdict exists.
       return [
-        "This search returned web results. It ran on the WEB source only, so it says NOTHING about whether Tako's data graph covers this — do not report a coverage gap on the strength of it.",
-        answerFromWeb,
-        "Need more? Refine and re-search freely: prefer SEVERAL narrow queries (one per entity, provider or site) over one broad one.",
-        anon
-          ? 'If a chart, dataset or proprietary figure is what you actually want, re-run with sources:["data","web"] (same price). The coverage check that answers this directly, tako_available_data, needs a signed-in connection.'
-          : 'If a chart, dataset or proprietary figure is what you actually want, re-run with sources:["data","web"] (same price) or check tako_available_data — that is what answers the coverage question.',
+        "This search ran on the web source only, so it says nothing about whether Tako's data graph covers this.",
+        coverage === "callable"
+          ? 'Answer from the web_results; if you want a chart or dataset, re-run with sources:["data","web"] (same price) or check tako_available_data (free).'
+          : 'Answer from the web_results; if you want a chart or dataset, re-run with sources:["data","web"] (same price).',
       ].join(" ");
     }
+    const readPage =
+      contents === "callable"
+        ? "tako_contents on the most relevant url fetches its full page text"
+        : contents === "gated"
+          ? "their snippets are in the result; reading a page in full needs a signed-in connection"
+          : "their snippets are in the result";
+    const thenCoverage =
+      coverage === "callable"
+        ? "; if you specifically need a chart or dataset, run tako_available_data (free) once and re-search only on the canonical name it returns."
+        : ".";
     return [
-      "This search returned web results but no data cards. That is a verdict about the DATA GRAPH only: it does not cover this query, and rewording will not change that.",
-      answerFromWeb,
-      anon
-        ? "If you specifically need a chart or dataset, the coverage check that would confirm it, tako_available_data, needs a signed-in connection — do not re-search this query blind."
-        : "If you specifically need a chart or dataset, run tako_available_data once; re-search only if it confirms coverage, using the EXACT canonical name it returns as the query.",
-      REFINE_WEB_FREELY,
+      "No data cards: the data graph does not cover this query, and rewording alone will not change that.",
+      `Answer from the web_results (${readPage})${thenCoverage}`,
     ].join(" ");
   }
   if (!searchedData(sources)) {
-    // Web-only search, nothing back. There is no data verdict to report here —
-    // the data source was never queried — and a bare "do not retry" was simply
-    // wrong: on a web-only query, the QUERY is the only lever there is, so
-    // refining it is the whole recovery. This branch used to ban the one move
-    // available.
+    // Web-only search, nothing back: the query is the only lever there is.
     return [
-      "No results from the web for this query. The data source was not searched, so this is NOT a coverage verdict about Tako's graph — it means the query itself came back empty.",
-      "Refine and re-search: narrow to one entity, provider or site per query rather than one broad query, or name the specific doc/page you expect to find.",
-      anon
-        ? "If a data metric is what you are actually after, run ONE data-source search; the coverage check that would tell you the exact name first, tako_available_data, needs a signed-in connection."
-        : "If a data metric is what you are actually after, check tako_available_data for coverage and run ONE data-source search.",
-      "Stop only once a couple of genuinely different framings have come back empty.",
+      "The web returned nothing for this query, and the data source was not searched, so this says nothing about Tako's coverage.",
+      coverage === "callable"
+        ? "Refine to one entity, provider, or site per query and re-search; for a data metric, check tako_available_data (free) first."
+        : "Refine to one entity, provider, or site per query and re-search.",
     ].join(" ");
   }
-  // The anonymous protocol cannot open on the coverage check, so it opens on
-  // the one lever that does work — the shape rules — and names the sign-in as
-  // the way to get the canonical name rather than as step (1).
-  if (anon) {
-    return [
-      "No results — do NOT retry this query or rephrasings of it hoping a data card appears; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
-      "Rule out the usual shape mistakes first: one entity + one metric per query (split compound asks into parallel searches), and domains not brand names for website traffic (\"netflix.com\", not \"Netflix\").",
-      "The step that would give you Tako's EXACT metric name for this entity, tako_available_data, needs a signed-in connection; without it, make at most ONE reshaped retry and then answer from other sources.",
-      '— except website-traffic asks: the graph misses long-tail domains SimilarWeb still covers, so there the real coverage test is the one retry itself, as a bare-domain query ("kagi.com monthly visits").',
-      ...(searchedWeb(sources) ? [NARROWER_WEB_ATTEMPT] : []),
-    ].join(" ");
-  }
+  const narrowerWeb = searchedWeb(sources) ? ", or try one genuinely narrower web question" : "";
+  const action =
+    coverage === "callable"
+      ? `Call tako_available_data (free) to learn the canonical metric name and spend one retry on that name${narrowerWeb}; if it shows no coverage, answer from other sources.`
+      : coverage === "gated"
+        ? "Make at most one reshaped retry (one metric per query; bare domains for website traffic), then answer from other sources — the coverage check, tako_available_data, needs a signed-in connection."
+        : `Make at most one reshaped retry (one metric per query; bare domains for website traffic)${narrowerWeb}, then answer from other sources.`;
   return [
-    "No results — do NOT retry this query or rephrasings of it hoping a data card appears; every search is priced, and empty means the query shape is off or the data is not covered, not that the wording was unlucky.",
-    "Recover in order: (1) call tako_available_data with the entity to learn the exact metric NAMES Tako actually has;",
-    "(2) if it confirms coverage, spend your ONE remaining search on that EXACT canonical name — the name is what recovers cards" +
-      (searchedWeb(sources)
-        ? ";"
-        : ' (adding "web" as a fallback source on that same single retry is fine);'),
-    "(3) if it shows no coverage, stop calling Tako for this question and answer from other sources",
-    '— except website-traffic asks: the graph misses long-tail domains SimilarWeb still covers, so there the real coverage test is the one retry itself, as a bare-domain query ("kagi.com monthly visits").',
-    'Rule out the usual shape mistakes before that one retry: one entity + one metric per query (split compound asks into parallel searches), and domains not brand names for website traffic ("netflix.com", not "Netflix").',
-    // Only when the web was actually searched and returned nothing — the same
-    // precondition the answer path's equivalent branch carries, so the two paths
-    // give the identical verdict on the identical situation. When web was NOT
-    // searched, step (2) above already offers it as a fallback source, which is
-    // the cheaper move and would contradict this one.
-    ...(searchedWeb(sources) ? [NARROWER_WEB_ATTEMPT] : []),
+    "No results: either the query shape is off or Tako does not cover this — rewording alone will not change that, and every retry is priced.",
+    action,
   ].join(" ");
 }
 
@@ -1233,11 +1450,26 @@ export function buildSearchOutput(
   searchedSources: SearchedSources,
   strictPin: boolean,
   tier: Tier,
+  opts: {
+    /** Per-card inline row budget: `null` drops every row (tako_search),
+     *  "all" keeps what the backend sent, a number caps to the N most
+     *  recent (tako_search_advanced). */
+    rowCap: number | "all" | null;
+    /** Keep web page text — true only when the request set
+     *  `sources.web.include_contents` (tako_search_advanced). */
+    keepWebText: boolean;
+    /** The tool names THIS connection registered (`ctx.registeredTools`).
+     *  The zero-result guidance names a recovery tool only when the
+     *  connection can actually call it — `?tools=` replaces the defaults, so
+     *  tier alone is not the predicate. Omitted by non-HTTP callers, which
+     *  degrades to tier-only. */
+    registeredTools?: ReadonlySet<string> | undefined;
+  },
   extras: SearchOutputExtras = {},
 ): SearchOutput {
-  // Order before anything reads cards[0]: the widget/pub_id fields below lift
-  // the TOP card, so the chart the host renders follows the same ordering the
-  // model reads instead of diverging from it.
+  // Order BEFORE projecting: the widget fields lift the TOP card, and the
+  // projection drops `card_id`, so both the chart lift and the reference
+  // maps read the raw ordered cards.
   //
   // UNLESS the prose cites by position. "[1]" refers to the BACKEND's card
   // order, so reordering would silently repoint every citation in the answer.
@@ -1250,10 +1482,13 @@ export function buildSearchOutput(
   // of a false negative is every citation in the answer pointing at the wrong
   // source. Do not tighten this into something that can miss a real citation.
   const citesByPosition = extras.answer !== undefined && /\[\d+\]/.test(extras.answer);
-  const cards = citesByPosition ? [...rawCards] : orderCardsByUsefulness(rawCards);
+  const ordered = citesByPosition ? [...rawCards] : orderCardsByUsefulness(rawCards);
+  const maps = buildReferenceMaps(ordered);
+  const cards = ordered.map((c) => projectCard(c, opts.rowCap));
+  const web = webResults.map((w) => projectWebResult(w, opts.keepWebText));
   const base: SearchOutput = {
     cards,
-    web_results: webResults,
+    web_results: web,
     usage,
     request_id: requestId,
     ...(extras.related !== undefined ? { related: extras.related } : {}),
@@ -1266,11 +1501,10 @@ export function buildSearchOutput(
       : {}),
     // A miss is billed the same as a hit, and models default to
     // rephrase-and-retry loops that never converge — so any zero-CARD
-    // response carries its own recovery protocol instead of a bare empty
-    // array. Keyed on cards (not cards AND web) because the default
-    // ["data","web"] search almost always returns some web links: gating on
-    // both would skip the guidance in exactly the chart-less case the
-    // retry loop feeds on.
+    // response carries its own recovery verdict. Keyed on cards (not cards
+    // AND web) because the default ["data","web"] search almost always
+    // returns some web links: gating on both would skip the guidance in
+    // exactly the chart-less case the retry loop feeds on.
     ...(cards.length === 0
       ? {
           // Three verdicts, and the order matters. A strict pin makes any
@@ -1280,17 +1514,31 @@ export function buildSearchOutput(
           // the prose above it may be a complete, correct web-grounded answer.
           guidance:
             strictPin && searchedData(searchedSources)
-              ? strictPinGuidance(webResults.length > 0, tier)
+              ? strictPinGuidance(tier)
               : extras.answer !== undefined
-                ? buildDataGapGuidance(webResults.length > 0, searchedSources.includes("web"))
-                : buildZeroResultGuidance(webResults.length > 0, searchedSources, tier),
+                ? buildDataGapGuidance(
+                    webResults.length > 0,
+                    searchedSources.includes("web"),
+                    opts.registeredTools,
+                  )
+                : buildZeroResultGuidance(
+                    webResults.length > 0,
+                    searchedSources,
+                    tier,
+                    opts.registeredTools,
+                  ),
         }
       : {}),
+    // Reference maps LAST so tail-truncating hosts lose prose before data.
+    ...(maps.metric_definitions !== undefined
+      ? { metric_definitions: maps.metric_definitions }
+      : {}),
+    ...(maps.source_notes !== undefined ? { source_notes: maps.source_notes } : {}),
   };
   // Branch rather than `...(x ?? {})`: spreading a union of the full field set
   // and `{}` makes every key optional again, which is exactly the widening
   // `exactOptionalPropertyTypes` rejects against `SearchOutput`.
-  const chart = topCardChartFields(cards, env);
+  const chart = topCardChartFields(ordered, env);
   return chart === undefined ? base : { ...base, ...chart };
 }
 

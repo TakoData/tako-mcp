@@ -13,10 +13,7 @@ import { AnswerRequest, AnswerResponse, SearchRequest, SearchResponse } from "..
 import { logWireGuardFailure } from "./_log.js";
 import {
   buildSearchOutput,
-  hoistSourceGlossary,
   type SearchOutputExtras,
-  slimCard,
-  slimWebResult,
   takoCardSchema,
   webResultSchema,
   type SearchedSources,
@@ -110,16 +107,18 @@ export async function runSearch(
       "Tako search endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
     );
   }
-  // Slim the model-facing payload, which shrinks BOTH channels the model sees
-  // (content.text + structuredContent in mcp.ts are both derived from this).
+  // Two switches for the projection below. Both channels the model sees
+  // (content.text + structuredContent in mcp.ts) are derived from its output,
+  // so a field dropped here is dropped everywhere.
   //
   // Web page text is kept only when the REQUEST asked for it. Derived from the
   // body rather than passed by the caller, so the two tools cannot disagree with
   // what went on the wire: tako_search never sets sources.web.include_contents,
   // so it always drops; tako_search_advanced exposes the field, so a caller who
   // sets it gets what the generated description promises. On /v3/search that
-  // text is free (see slimWebResult), so context is the only cost and the caller
-  // has already accepted it.
+  // text is FREE — the generated WebSourceSettings says so, and it is
+  // `POST /api/v1/contents` that bills per page — so context is the only cost,
+  // and the caller who set the flag has already accepted it.
   const keepWebText = body.sources?.web?.include_contents === true;
   // DERIVED from the wire body for the same reason `keepWebText` is: the two
   // search tools then cannot disagree with what was actually requested, and
@@ -129,9 +128,6 @@ export async function runSearch(
   // zero cards a filter artefact.
   const strictPin =
     body.sources?.data?.strict === true && (body.sources?.data?.node_ids?.length ?? 0) > 0;
-  const { cards: slimCards, glossary } = hoistSourceGlossary(
-    cards.data.map((c) => slimCard(c, rowCap)),
-  );
   // Every field is guarded by `!= null` rather than assumed present: on the
   // search endpoint all four are absent, and `AnswerResponse` types three of
   // them as nullable.
@@ -143,9 +139,15 @@ export async function runSearch(
       ? { structured_output_error: wire.structured_output_error }
       : {}),
   };
-  const output = buildSearchOutput(
-    slimCards,
-    webResults.data.map((w) => slimWebResult(w, keepWebText)),
+  // Raw wire arrays go in; the nine-field cards, five-field web results and the
+  // two deduped reference maps come out. The projection
+  // (projectCard/projectWebResult inside buildSearchOutput) is the ONLY shaping
+  // step now — the passthrough slimmers it replaced are deleted, so there is no
+  // second path a future caller can pick by mistake
+  // (spec: 2026-08-26-model-facing-surface-redesign).
+  return buildSearchOutput(
+    cards.data,
+    webResults.data,
     wire.request_id,
     wire.usage ?? null,
     ctx.env,
@@ -154,9 +156,11 @@ export async function runSearch(
     // The zero-result protocol routes through tools an anonymous caller does
     // not have; `buildZeroResultGuidance` branches on this (#272).
     ctx.tier ?? "authenticated",
+    // `registeredTools`: the zero-result guidance names a recovery tool only
+    // when THIS connection registered it. `?tools=` replaces the defaults, so
+    // a signed-in `?tools=search` caller has neither tako_available_data nor
+    // tako_contents and tier alone cannot tell.
+    { rowCap, keepWebText, registeredTools: ctx.registeredTools },
     extras,
   );
-  // Glossary spreads on LAST so it serializes after the data — truncating
-  // clients then drop boilerplate first.
-  return glossary === undefined ? output : { ...output, sources_glossary: glossary };
 }

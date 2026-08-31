@@ -4,9 +4,9 @@
  *
  * Extracted from `_pin_form.test.ts` because that guard reads only
  * `TOOL_REGISTRY[].description`, and the broken form kept surviving in surfaces
- * it cannot see. Both survivors of the last sweep were outside it: the
- * `values_hint` field `.describe()` (published inside tako_search's
- * outputSchema) and `llms-full.txt`. The docs guard in
+ * it cannot see. Both survivors of the last sweep were outside it: a field
+ * `.describe()` published inside tako_search's outputSchema (the since-deleted
+ * `values_hint`) and `llms-full.txt`. The docs guard in
  * `scripts/gen-registry.ts` now applies the SAME two patterns, and it can only
  * stay the same by importing them — a second hand-written copy is how the
  * advice drifted in the first place.

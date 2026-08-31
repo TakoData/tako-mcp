@@ -102,6 +102,27 @@ export interface ToolContext {
    * must degrade rather than assume.
    */
   origin?: string | undefined;
+  /**
+   * The tool names THIS connection registered — `resolveToolSet(surface,
+   * requestedToolNames)`, stamped by `registerTool` from the same call that
+   * decided which tools to register, so the two can never disagree.
+   *
+   * A tool RESULT that names another tool is an instruction the model acts on,
+   * and `?tools=` REPLACES the defaults (spec D1): `?tools=search` registers
+   * `tako_search` alone. The zero-result guidance branched on tier only, so a
+   * signed-in caller on that connection was told to "call tako_available_data
+   * (free)" — a tool the connection never registered, whose call resolves to
+   * the SDK's bare "tool not found". Tier is not the predicate; capability is.
+   *
+   * `instructions.ts` filters the `initialize` string the same way. The two
+   * differ only in timing: instructions are assembled once per connection,
+   * this is read per call.
+   *
+   * `undefined` for non-HTTP callers (tests, direct handler invocation).
+   * Consumers must degrade to naming nothing conditional rather than assume
+   * a tool is present.
+   */
+  registeredTools?: ReadonlySet<string> | undefined;
 }
 
 /**
@@ -335,6 +356,18 @@ export interface ToolModule<
   description: string;
   inputSchema: InputSchema;
   outputSchema?: z.ZodType<Output>;
+  /**
+   * Optional per-surface outputSchema override, resolved by
+   * `outputSchemaForSurface` in `_surface.ts` (same pattern as
+   * {@link annotationsBySurface}). The canonical `outputSchema` is what
+   * the generic surface advertises and validates against; the chatgpt
+   * override exists for fields only that surface's widget reads (the
+   * chart auto-chain fields on `tako_search`): declaring them only there
+   * means `pickDeclared` strips them from `/mcp` responses without a
+   * per-tool slimming hook, and the generic surface's schema stays free
+   * of plumbing no `/mcp` client reads.
+   */
+  outputSchemaBySurface?: { chatgpt?: z.ZodType };
   annotations: ToolAnnotations;
   /**
    * Optional per-surface annotation overrides, merged over
@@ -390,11 +423,22 @@ export interface ToolModule<
   /**
    * Optional `structuredContent` slimmer. When present, its return value is
    * reported as the result's `structuredContent` instead of the full output.
-   * Pair it with `renderText`: hosts count `structuredContent` toward model
-   * context, so once the text channel carries the full content (as markdown),
-   * the structured channel must shrink to machine essentials (widget fields,
-   * ids, usage) or the response pays for everything twice. The returned value
-   * MUST conform to the tool's advertised `outputSchema`.
+   * The returned value MUST conform to the tool's advertised `outputSchema`.
+   *
+   * THE LEGACY PATTERN, and optional for that reason. It exists for a tool
+   * whose handler returns more than it advertises: slim to machine essentials
+   * (widget fields, ids, usage) so a host counting both channels does not pay
+   * for everything twice. `tako_available_data`, `tako_agent` and
+   * `tako_contents` still work this way.
+   *
+   * DO NOT ADD ONE TO A MIGRATED TOOL. `tako_search` and
+   * `tako_search_advanced` project their output explicitly, so the handler's
+   * return IS the advertised shape and `pickDeclared` in `mcp.ts` narrows it
+   * per surface — a hook there would be a second, unvalidated shaping step.
+   * Slimming is also no longer the goal on those two: 9 audited harnesses read
+   * `content` only while both submission targets read `structuredContent`
+   * only, so each channel has to be complete on its own (see the module
+   * docstring in `_render_markdown.ts`).
    */
   slimStructured?: (output: Output) => Record<string, unknown>;
   /**
@@ -466,6 +510,8 @@ export interface AnyToolModule {
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
   outputSchema?: z.ZodType<unknown>;
+  /** Per-surface outputSchema override — see {@link ToolModule.outputSchemaBySurface}. */
+  outputSchemaBySurface?: { chatgpt?: z.ZodType };
   annotations: ToolAnnotations;
   /** Per-surface annotation overrides — see {@link ToolModule.annotationsBySurface}. */
   annotationsBySurface?: { chatgpt?: Partial<ToolAnnotations> };

@@ -401,10 +401,9 @@ describe("web include_contents is honoured, not advertised and dropped", () => {
       tako_search_advanced.inputSchema.parse({ query: "nvda", web: {} }),
       CTX,
     );
-    const content = out.web_results[0]?.content as { data?: unknown } | null | undefined;
-    expect(content?.data).toBeNull();
-    // The citation fields survive the drop — that is the whole point of slimming
-    // rather than deleting `content`.
+    // No content key at all: the projection drops the channel when the wire
+    // wasn't asked for it. The citation fields survive.
+    expect(out.web_results[0]).not.toHaveProperty("content");
     expect(out.web_results[0]?.url).toBe("https://example.com/nvda");
     expect(out.web_results[0]?.snippet).toBe("Data center revenue rose…");
   });
@@ -412,8 +411,7 @@ describe("web include_contents is honoured, not advertised and dropped", () => {
   it("tako_search always drops it — the simple tool cannot request it", async () => {
     mockFetchSequence([searchResponse()]);
     const out = await tako_search.handler({ query: "nvda", sources: ["data", "web"] }, CTX);
-    const content = out.web_results[0]?.content as { data?: unknown } | null | undefined;
-    expect(content?.data).toBeNull();
+    expect(out.web_results[0]).not.toHaveProperty("content");
   });
 });
 
@@ -524,6 +522,11 @@ describe("web highlights default", () => {
 const cardWithRows = () => ({
   card_id: "abc123",
   title: "US GDP",
+  // `exportable: true` explicitly: the generated TakoCard defaults it to FALSE,
+  // and SearchResponse runs before takoCardSchema, so a card that omits the flag
+  // is classified locked however much `content` it carries — and a locked card
+  // reports no row count (see projectCard).
+  exportable: true,
   webpage_url: "https://trytako.com/charts/us-gdp",
   content: {
     content_format: "json_compact",
@@ -555,8 +558,9 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
   const searchResponse = () =>
     jsonResponse(200, { cards: [cardWithRows()], web_results: [], request_id: "req-data" });
 
-  const datasetOf = (out: { cards: Array<{ content?: unknown }> }) =>
-    (out.cards[0]?.content as { dataset?: unknown } | null | undefined)?.dataset;
+  // Rows now ride under the projected `rows` field (only when requested).
+  const datasetOf = (out: { cards: Array<{ rows?: Record<string, unknown> }> }) =>
+    (out.cards[0]?.rows as { dataset?: unknown } | undefined)?.dataset;
 
   it("keeps card rows when the caller sets data.include_contents", async () => {
     mockFetchSequence([searchResponse()]);
@@ -573,16 +577,16 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
       tako_search_advanced.inputSchema.parse({ query: "us gdp", data: {} }),
       CTX,
     );
-    expect(datasetOf(out)).toBeNull();
-    // total_rows is METADATA, not a payload channel: it survives the drop so the
-    // model still knows rows exist and can fetch them with tako_contents.
-    expect((out.cards[0]?.content as { total_rows?: unknown })?.total_rows).toBe(1);
+    expect(datasetOf(out)).toBeUndefined();
+    // total_rows is METADATA, not a payload channel: the projection lifts it
+    // to the card so the model still knows rows exist and can fetch them.
+    expect(out.cards[0]?.total_rows).toBe(1);
   });
 
   it("tako_search always drops them — the simple tool cannot request them", async () => {
     mockFetchSequence([searchResponse()]);
     const out = await tako_search.handler({ query: "us gdp", sources: ["data"] }, CTX);
-    expect(datasetOf(out)).toBeNull();
+    expect(datasetOf(out)).toBeUndefined();
   });
 });
 
@@ -754,7 +758,7 @@ describe("include_answer selects the endpoint", () => {
       }),
       CTX,
     );
-    const ds = (out.cards[0]?.content as { dataset: { rows: unknown[] } }).dataset;
+    const ds = (out.cards[0]?.rows as { dataset: { rows: unknown[] } }).dataset;
     expect(ds.rows).toHaveLength(3);
     expect(out.guidance).toBeUndefined();
   });

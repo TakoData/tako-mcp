@@ -3024,7 +3024,9 @@ export function buildChartUrls(
  * Append the card-share opt-in to an embed url that lacks it.
  *
  * For urls the MCP does NOT build: `cards[].embed_url` is backend passthrough
- * (search/answer via `slimCard`, the agent verbatim), and without this the
+ * (the agent verbatim; on the search tools the per-card copy is gone since the
+ * projection, so `topCardChartFields` is the one caller left there), and
+ * without this the
  * SAME top card carried the opt-in on the widget-rendered
  * `structuredContent.embed_url` but not on the copy an agent quotes from the
  * text — two different urls for one card. Idempotent, and a caller (or a

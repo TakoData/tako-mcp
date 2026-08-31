@@ -19,6 +19,8 @@
  * The leading underscore keeps this file out of the tool-module scan in
  * `gen-registry.ts` (it is NOT a `ToolModule`).
  */
+import { z } from "zod";
+
 import type { Surface } from "../surface.js";
 import type { AnyToolModule, ToolAnnotations } from "./types.js";
 
@@ -127,4 +129,51 @@ export function toolAnnotationsForSurface(
   return surface === "chatgpt"
     ? { ...tool.annotations, ...tool.annotationsBySurface?.chatgpt }
     : { ...tool.annotations };
+}
+
+/**
+ * Resolve the outputSchema a surface advertises (and validates against) for
+ * a tool: the chatgpt override when that surface declares one, the canonical
+ * `outputSchema` everywhere else. The override REPLACES rather than merges —
+ * a zod schema has no field-level merge, and the one user (`tako_search`)
+ * builds the chatgpt schema by spreading the generic shape plus the widget
+ * fields, so the replacement is already a superset by construction.
+ */
+export function outputSchemaForSurface(
+  tool: Pick<AnyToolModule, "outputSchema" | "outputSchemaBySurface">,
+  surface: Surface,
+): AnyToolModule["outputSchema"] {
+  return surface === "chatgpt"
+    ? (tool.outputSchemaBySurface?.chatgpt ?? tool.outputSchema)
+    : tool.outputSchema;
+}
+
+/**
+ * The output schema EXACTLY as `tools/list` publishes it.
+ *
+ * `z.object(schema.shape)`, never `z.toJSONSchema(schema)` on the schema
+ * itself. Every output schema we declare is a `z.looseObject`, but `mcp.ts`
+ * hands the SDK `.shape` and the SDK rebuilds it — so the wire carries
+ * `"additionalProperties": false` while the loose schema serializes to `{}`.
+ * `docs/TOOLS.md` rendered the loose form under a heading promising the wire,
+ * getting wrong the one field that already shipped a bug: strict clients
+ * rejecting an entire result over an undeclared key, which is why
+ * `_pick_declared.ts` exists.
+ *
+ * `target: "draft-7"` for the same reason, and it is not cosmetic: the SDK
+ * publishes `"$schema": "http://json-schema.org/draft-07/schema#"` while zod
+ * defaults to 2020-12, and the dialects disagree about more than the URL
+ * (`$defs` vs `definitions`, nullable encoding) as soon as a schema grows a
+ * reference. The page said draft 2020-12 under a heading promising the wire.
+ *
+ * `mcp.conformance.test.ts` asserts this equals what a real server publishes,
+ * on both surfaces. That assertion is the only thing keeping this a mirror of
+ * the SDK rather than a second guess at it.
+ */
+export function publishedOutputJsonSchema(
+  schema: NonNullable<AnyToolModule["outputSchema"]>,
+): unknown {
+  return z.toJSONSchema(z.object((schema as unknown as { shape: z.ZodRawShape }).shape), {
+    target: "draft-7",
+  });
 }

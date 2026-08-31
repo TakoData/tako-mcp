@@ -38,6 +38,16 @@ import {
   toolAnnotationsForSurface,
 } from "../src/tools/_surface.js";
 import { TOOL_NAME_PREFIX } from "../src/tools/_tools_param.js";
+import { pickDeclared } from "../src/tools/_pick_declared.js";
+import { outputSchemaForSurface, publishedOutputJsonSchema } from "../src/tools/_surface.js";
+import {
+  buildSearchOutput,
+  takoCardSchema,
+  webResultSchema,
+  type Usage,
+} from "../src/tools/_search_results.js";
+import { fenceRunFor, renderSearchMarkdown } from "../src/tools/_render_markdown.js";
+import type { Env } from "../src/env.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
 
@@ -567,6 +577,172 @@ export function diffRegistryParameters(
 }
 
 // ---------------------------------------------------------------------------
+// Prose budgets (spec D1) — enforced at generation, so an over-budget string
+// cannot ship. The numbers exist because hosts CUT, not because short is
+// pretty: Claude Code truncates a tool description at 2,048 chars, and every
+// char of description+params is paid on every request on every host.
+// ---------------------------------------------------------------------------
+
+export const DESCRIPTION_MAX_CHARS = 1_000;
+export const DESCRIPTION_MAX_LINES = 6;
+// 320, raised from 200 on the pilot's review round. The per-param cap is a
+// SHAPE rule, not a cost rule: what a host pays per request is
+// TOOL_ENTRY_MAX_CHARS, and moving a sentence between the description and a
+// param moves the entry total by zero. This cap exists to stop tool-description
+// prose leaking down into a param, and 320 still forbids that while leaving
+// room for the rules a model needs while it BUILDS the argument — query
+// quoting syntax being the case that forced the number. Raise the entry cap,
+// not this one, if the real complaint is cost.
+export const PARAM_MAX_CHARS = 320;
+export const TOOL_ENTRY_MAX_CHARS = 2_000; // description + every param description
+export const INSTRUCTIONS_MAX_CHARS = 900;
+
+/**
+ * The ratchet for tools the redesign has not reached yet: each fan-out PR
+ * rewrites one tool, deletes its row here, and the caps above take over.
+ * A listed tool may SHRINK freely; growing past its recorded ceiling fails
+ * generation, so legacy prose can only move toward the cap. Numbers are the
+ * measured sizes when the gate landed (see the pilot PR).
+ */
+export const LEGACY_PROSE_CEILINGS: Record<
+  string,
+  { description: number; param: number; entry: number }
+> = {
+  // Measured 2026-08-30, the day the gate landed. Delete a row when its
+  // tool's fan-out PR lands the rewrite.
+  tako_agent: { description: 448, param: 489, entry: 1134 },
+  tako_available_data: { description: 2937, param: 484, entry: 4153 },
+  tako_contents: { description: 1097, param: 711, entry: 3630 },
+  tako_graph_related: { description: 1262, param: 150, entry: 1929 },
+  // Re-baselined after #273 folded tako_answer in and exposed the whole
+  // SearchRequest body — the generated param prose is a cross-repo fix
+  // (the tako repo's schema builder), tracked for that tool's fan-out PR.
+  tako_search_advanced: { description: 2611, param: 831, entry: 4860 },
+  tako_visualize: { description: 1427, param: 134, entry: 1820 },
+};
+
+export function assertProseBudget(
+  // Narrowed to the fields this reads, like every sibling assert helper: the
+  // gate is testable with a plain literal instead of a cast of a whole
+  // ToolModule, and the signature states what it actually inspects.
+  modules: ReadonlyArray<Pick<ToolModule, "name" | "description">>,
+  registryTools: ReadonlyArray<{
+    name: string;
+    parameters: Record<string, { description?: string }>;
+  }>,
+  instructions: string,
+): void {
+  const failures: string[] = [];
+  const byName = new Map(registryTools.map((t) => [t.name, t]));
+  for (const m of modules) {
+    const reg = byName.get(m.name);
+    const paramLens = Object.entries(reg?.parameters ?? {}).map(
+      ([name, spec]) => [name, (spec.description ?? "").length] as const,
+    );
+    const maxParam = paramLens.reduce((a, [, len]) => Math.max(a, len), 0);
+    const entry = m.description.length + paramLens.reduce((a, [, len]) => a + len, 0);
+    const legacy = LEGACY_PROSE_CEILINGS[m.name];
+    if (legacy !== undefined) {
+      if (m.description.length > legacy.description)
+        failures.push(
+          `${m.name}: description grew to ${m.description.length} chars (legacy ceiling ${legacy.description}). Legacy prose only shrinks; rewrite it to the ${DESCRIPTION_MAX_CHARS}-char cap instead.`,
+        );
+      if (maxParam > legacy.param)
+        failures.push(
+          `${m.name}: a parameter description grew to ${maxParam} chars (legacy ceiling ${legacy.param}).`,
+        );
+      if (entry > legacy.entry)
+        failures.push(`${m.name}: tool entry grew to ${entry} chars (legacy ceiling ${legacy.entry}).`);
+      // A ratcheted tool is exempt from the LINE cap and the per-param cap too,
+      // not just the char ceilings: legacy prose is multi-paragraph by
+      // construction, and those two caps only become meaningful once the tool
+      // has been rewritten. Deleting the row is what turns them on.
+      continue;
+    }
+    if (m.description.length > DESCRIPTION_MAX_CHARS)
+      failures.push(
+        `${m.name}: description is ${m.description.length} chars (cap ${DESCRIPTION_MAX_CHARS}).`,
+      );
+    const lines = m.description.split("\n").length;
+    if (lines > DESCRIPTION_MAX_LINES)
+      failures.push(`${m.name}: description is ${lines} lines (cap ${DESCRIPTION_MAX_LINES}).`);
+    for (const [name, len] of paramLens) {
+      if (len > PARAM_MAX_CHARS)
+        failures.push(`${m.name}.${name}: parameter description is ${len} chars (cap ${PARAM_MAX_CHARS}).`);
+    }
+    if (entry > TOOL_ENTRY_MAX_CHARS)
+      failures.push(`${m.name}: tool entry is ${entry} chars (cap ${TOOL_ENTRY_MAX_CHARS}).`);
+  }
+  if (instructions.length > INSTRUCTIONS_MAX_CHARS)
+    failures.push(
+      `instructions: ${instructions.length} chars (cap ${INSTRUCTIONS_MAX_CHARS}).`,
+    );
+  if (failures.length > 0) {
+    throw new Error(`[prose-budget] over budget:\n  - ${failures.join("\n  - ")}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sample results for docs/TOOLS.md (spec, "TOOLS.md output rendering"): a
+// small canonical wire fixture per tool runs through the REAL pipeline —
+// projection → pickDeclared → renderText — at generation time, so the samples
+// can never drift from what the model sees; registry:check fails on drift.
+// ---------------------------------------------------------------------------
+
+export interface ToolSample {
+  structured: Record<string, unknown>;
+  text: string;
+}
+
+const SAMPLE_FIXTURE_ENV = {
+  PUBLIC_BASE_URL: "https://tako.com",
+  PUBLIC_API_URL: "https://tako.com",
+  DJANGO_BASE_URL: "https://tako.com",
+} as unknown as Env;
+
+const SEARCH_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_search_sample.json");
+
+function buildSearchSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(SEARCH_SAMPLE_FIXTURE, "utf8")) as {
+    request_id: string;
+    usage: Usage | null;
+    cards: unknown;
+    web_results: unknown;
+  };
+  const cards = z.array(takoCardSchema).parse(raw.cards);
+  const webResults = z.array(webResultSchema).parse(raw.web_results);
+  const output = buildSearchOutput(
+    cards,
+    webResults,
+    raw.request_id,
+    raw.usage,
+    SAMPLE_FIXTURE_ENV,
+    ["data", "web"],
+    false,
+    "authenticated",
+    { rowCap: null, keepWebText: false },
+  );
+  return {
+    // The generic-surface narrowing — what an `/mcp` client's model reads.
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderSearchMarkdown(output),
+  };
+}
+
+export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string, ToolSample> {
+  const samples = new Map<string, ToolSample>();
+  for (const m of modules) {
+    // One builder per migrated tool; fan-out PRs add theirs here with a
+    // fixture under workers/test/fixtures/.
+    if (m.name === "tako_search") samples.set(m.name, buildSearchSample(m));
+  }
+  return samples;
+}
+
+// ---------------------------------------------------------------------------
 // docs/TOOLS.md — the tool reference, rendered from the same objects that
 // serve tools/list, so a human reads exactly what the model reads.
 // ---------------------------------------------------------------------------
@@ -576,6 +752,9 @@ export interface ToolsDocInput {
   registryTools: ReadonlyArray<RegistryTool>;
   instructions: string;
   freeTierToolNames: ReadonlySet<string>;
+  /** Generated sample results (see `buildToolSamples`); tools without an
+   *  entry render schemas only. */
+  samples?: ReadonlyMap<string, ToolSample>;
 }
 
 /**
@@ -638,7 +817,9 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     "",
     "# Tako MCP tools",
     "",
-    "This page is rendered from the same objects the server publishes on `tools/list`. Every description, parameter description, and annotation below is byte-for-byte what the model reads. Host-level `_meta` (security schemes, widget bindings) is not shown.",
+    "This page is rendered from the same objects the server publishes on `tools/list`.",
+    "",
+    "**What here is wire text, and what is not.** Blocks marked _wire_ — tool descriptions, parameter descriptions, annotations, server instructions, and the published input and output schemas — are byte-for-byte what a client receives. Blocks marked _illustrative_ are not: a sample result is generated by running a checked-in fixture through the real projection and renderer, so it tracks the code and `registry:check` fails when it drifts, but no call ever returned it. A live `/mcp` result also carries an inline chart PNG and `_meta` fields that the samples leave out, so do not size a payload from one. Host-level `_meta` (security schemes, widget bindings) is not shown anywhere on this page.",
     "",
     "## Choosing tools with `?tools=`",
     "",
@@ -727,8 +908,63 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     for (const { surface, path } of SURFACE_PATHS) {
       out.push(`- \`${path}\`: ${renderAnnotations(toolAnnotationsForSurface(m, surface))}`);
     }
-    out.push("", "<details><summary>Published input schema (JSON Schema)</summary>", "", "```json",
+    out.push("", "<details><summary>wire — Published input schema (JSON Schema)</summary>", "", "```json",
       JSON.stringify(z.toJSONSchema(m.inputSchema, { io: "input" }), null, 2), "```", "</details>", "");
+
+    // Result channels — the other half of what the model reads. The schema is
+    // rendered exactly as tools/list advertises it (per surface when the two
+    // differ), and the samples are GENERATED by running the tool's fixture
+    // through the real projection + renderer, so a PR that changes either
+    // shows the model-facing diff right here.
+    const genericSchema = outputSchemaForSurface(m, "generic");
+    const chatgptSchema = outputSchemaForSurface(m, "chatgpt");
+    if (genericSchema !== undefined) {
+      out.push("<details><summary>wire — Published output schema (JSON Schema)</summary>", "", "```json",
+        JSON.stringify(publishedOutputJsonSchema(genericSchema), null, 2), "```", "</details>", "");
+      if (chatgptSchema !== genericSchema && chatgptSchema !== undefined) {
+        // A SCHEMA, not a sentence listing the extra field names. This is the
+        // surface OpenAI reviews, and a reader cannot check a widget contract
+        // against prose. Only one tool has a divergent surface today, so this
+        // costs one extra block in the page.
+        out.push(
+          "<details><summary>wire — Published output schema on `/mcp/chatgpt` (JSON Schema)</summary>",
+          "",
+          "The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction.",
+          "",
+          "```json",
+          JSON.stringify(publishedOutputJsonSchema(chatgptSchema), null, 2),
+          "```",
+          "</details>",
+          "",
+        );
+      }
+    }
+    const sample = input.samples?.get(m.name);
+    if (sample !== undefined) {
+      // The wrapper run is COMPUTED, never a literal: `renderSearchMarkdown`
+      // fences web snippets with `fenceRunFor`, so a fixture snippet holding a
+      // triple-backtick run makes the inner fence four backticks — which would
+      // close a hardcoded ```` wrapper early and spill raw markdown into the
+      // page. Same helper both sides, so they cannot disagree.
+      const wrap = fenceRunFor(sample.text);
+      out.push(
+        "<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>",
+        "",
+        "`structuredContent` (as served on `/mcp`):",
+        "",
+        "```json",
+        JSON.stringify(sample.structured, null, 2),
+        "```",
+        "",
+        "`content[0].text`:",
+        "",
+        `${wrap}markdown`,
+        sample.text,
+        wrap,
+        "</details>",
+        "",
+      );
+    }
   }
   return out.join("\n");
 }
@@ -937,19 +1173,31 @@ function stableStringify(value: unknown): string {
 
 interface ChatgptSnapshot {
   note: string;
-  tools: Record<string, { description_sha256: string; input_schema_sha256: string }>;
+  tools: Record<
+    string,
+    { description_sha256: string; input_schema_sha256: string; output_schema_sha256?: string }
+  >;
 }
 
 const SNAPSHOT_NOTE =
-  "The description and input schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
+  "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot";
 
 /** The snapshot for the tools on the fixed chatgpt surface, serialized. */
 export function buildChatgptSnapshot(
-  tools: ReadonlyArray<Pick<ToolModule, "name" | "description" | "inputSchema">>,
+  tools: ReadonlyArray<
+    Pick<ToolModule, "name" | "description" | "inputSchema" | "outputSchema" | "outputSchemaBySurface">
+  >,
 ): string {
   const snapshot: ChatgptSnapshot = { note: SNAPSHOT_NOTE, tools: {} };
   for (const tool of tools) {
     if (!isToolOnSurface(tool.name, "chatgpt", null)) continue;
+    // The OUTPUT schema is surface-specific now (`outputSchemaBySurface`), so
+    // without this digest the one part of the ChatGPT contract that only
+    // ChatGPT reads — the six widget fields its bundle takes from
+    // `window.openai.toolOutput` — could change with no snapshot diff and no
+    // resubmission prompt. Hashed in its WIRE form and key-sorted, for the
+    // same two reasons the input digest documents.
+    const outputSchema = outputSchemaForSurface(tool, "chatgpt");
     snapshot.tools[tool.name] = {
       description_sha256: sha256(tool.description),
       // Key-SORTED before hashing: `z.toJSONSchema` emits keys in whatever
@@ -959,6 +1207,9 @@ export function buildChatgptSnapshot(
       // resubmission order for text nobody edited. Sorting makes the digest
       // depend on the schema's content, which is what OpenAI reviewed.
       input_schema_sha256: sha256(stableStringify(z.toJSONSchema(tool.inputSchema, { io: "input" }))),
+      ...(outputSchema !== undefined
+        ? { output_schema_sha256: sha256(stableStringify(publishedOutputJsonSchema(outputSchema))) }
+        : {}),
     };
   }
   return serializeJson(snapshot);
@@ -971,7 +1222,9 @@ export function buildChatgptSnapshot(
  * and that check cannot see — the description and the input schema.
  */
 export function assertChatgptSnapshot(
-  tools: ReadonlyArray<Pick<ToolModule, "name" | "description" | "inputSchema">>,
+  tools: ReadonlyArray<
+    Pick<ToolModule, "name" | "description" | "inputSchema" | "outputSchema" | "outputSchemaBySurface">
+  >,
   snapshotJson: string,
 ): void {
   const accepted = JSON.parse(snapshotJson) as ChatgptSnapshot;
@@ -988,6 +1241,9 @@ export function assertChatgptSnapshot(
     }
     if (was.input_schema_sha256 !== hashes.input_schema_sha256) {
       problems.push(`tool "${name}" input_schema changed since the accepted snapshot`);
+    }
+    if (was.output_schema_sha256 !== hashes.output_schema_sha256) {
+      problems.push(`tool "${name}" output_schema changed since the accepted snapshot`);
     }
   }
   for (const name of Object.keys(accepted.tools)) {
@@ -1359,11 +1615,15 @@ async function main(): Promise<void> {
   const lobehubJson = serializeJson(
     buildLobehubPlugin(committedLobehub, String(metadata.version), modules),
   );
+  // The prose-budget gate runs in BOTH modes: an over-budget string fails
+  // registry:check in CI the same way it fails a local registry:gen.
+  assertProseBudget(modules.map((m) => m.tool), registryTools, SERVER_INSTRUCTIONS);
   const toolsDoc = buildToolsDoc({
     modules: modules.map((m) => m.tool),
     registryTools,
     instructions: SERVER_INSTRUCTIONS,
     freeTierToolNames: FREE_TIER_TOOL_NAMES,
+    samples: buildToolSamples(modules.map((m) => m.tool)),
   });
 
   if (checkMode) {

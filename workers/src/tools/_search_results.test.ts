@@ -8,6 +8,9 @@
  * and the CSV content_format guard (both previously untested).
  */
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+
+import { TOOL_REGISTRY } from "./_registry.js";
 
 import { ContentItem } from "../generated/schemas.js";
 
@@ -15,13 +18,16 @@ import {
   CONTENT_META_KEYS,
   CONTENT_PAYLOAD_KEYS,
   NARROWER_WEB_ATTEMPT,
+  ROWS_META_KEYS,
+  buildDataGapGuidance,
+  buildReferenceMaps,
   buildSearchOutput,
-  hoistSourceGlossary,
   orderCardsByUsefulness,
-  slimCard,
+  projectCard,
+  projectWebResult,
   slimCardContent,
 } from "./_search_results.js";
-import type { ResultContent, TakoCard } from "./_search_results.js";
+import type { ResultContent, TakoCard, WebResult } from "./_search_results.js";
 
 import type { Env } from "../env.js";
 
@@ -166,194 +172,19 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
   });
 });
 
-// `content` presence is the model-facing "tako_contents will work on this
-// card" signal (the backend's export-safe gate 403s cards without it), so
-// slimming must preserve exactly what the wire said: never fabricate a
-// descriptor on an unexportable card, never drop one from an exportable card.
-describe("slimCard — share opt-in on the passthrough embed_url", () => {
-  // cards[].embed_url is backend passthrough; without the opt-in the SAME
-  // top card carried showShare on the widget-rendered structuredContent url
-  // but not on the copy an agent quotes from the text.
-  it("appends showShare=true to a card's embed_url", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      title: "t",
-      embed_url: "https://trytako.com/embed/c1/",
-    };
-    expect(slimCard(card, null).embed_url).toBe(
-      "https://trytako.com/embed/c1/?showShare=true",
-    );
-  });
-
-  it("leaves a card without an embed_url untouched", () => {
-    const card: TakoCard = { card_id: "c1", title: "t" };
-    expect(slimCard(card, null)).not.toHaveProperty("embed_url");
-  });
-});
-
-describe("slimCard — content presence is the export-eligibility signal", () => {
-  it("does not fabricate a content descriptor on a card without one (not exportable)", () => {
-    const card: TakoCard = { card_id: "c1", title: "t" };
-    expect(slimCard(card, 5)).not.toHaveProperty("content");
-    expect(slimCard(card, null)).not.toHaveProperty("content");
-  });
-
-  it("passes an explicit content: null through unchanged (still not exportable)", () => {
-    const card: TakoCard = { card_id: "c1", content: null };
-    expect(slimCard(card, 5).content).toBeNull();
-    expect(slimCard(card, null).content).toBeNull();
-  });
-
-  it("keeps the content descriptor on an exportable card even in drop-all mode", () => {
-    const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
-    const out = slimCard(card, null);
-    expect(out.content).not.toBeNull();
-    expect(out.content?.total_rows).toBe(1);
-    expect((out.content as { dataset?: unknown }).dataset).toBeNull();
-  });
-
-  it("keeps the content descriptor (with capped rows) in preview mode", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      content: dataset([
-        ["2024-01-01", 1],
-        ["2024-01-02", 2],
-      ]),
-    };
-    const out = slimCard(card, 1);
-    expect(out.content).not.toBeNull();
-    expect(rowsOf(out.content)).toEqual([["2024-01-02", 2]]);
-  });
-});
-
-// The explicit `exportable` boolean is emitted so the model reads "no" from a
-// field instead of having to notice a MISSING key (which it overlooks, then
-// calls tako_contents anyway and 403s). The backend emits it authoritatively
-// since TakoData/tako#27989 (same fail-closed export_safe gate as /contents),
-// so a wire flag passes through untouched — even when it disagrees with
-// content presence. Deriving from `content != null` is only the fallback for
-// older backends that don't emit the flag.
-describe("slimCard — explicit exportable flag", () => {
-  it("passes a backend exportable: true through on a content-bearing card", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      exportable: true,
-      content: dataset([["2024-01-01", 1]]),
-    };
-    expect(slimCard(card, null).exportable).toBe(true);
-    expect(slimCard(card, 5).exportable).toBe(true);
-  });
-
-  it("passes a backend exportable: false through (authoritative) even when content is present", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      exportable: false,
-      content: dataset([["2024-01-01", 1]]),
-    };
-    const out = slimCard(card, 5);
-    expect(out.exportable).toBe(false);
-    // The wire's content descriptor still survives slimming untouched.
-    expect(out.content).not.toBeNull();
-  });
-
-  it("passes a backend exportable: true through even when content is absent", () => {
-    const card: TakoCard = { card_id: "c1", exportable: true };
-    expect(slimCard(card, 5).exportable).toBe(true);
-  });
-
-  it("falls back: marks a card WITHOUT flag or content attribute as exportable: false", () => {
-    const card: TakoCard = { card_id: "c1", title: "t" };
-    expect(slimCard(card, 5).exportable).toBe(false);
-    expect(slimCard(card, null).exportable).toBe(false);
-  });
-
-  it("falls back: marks a flagless card with an explicit content: null as exportable: false", () => {
-    const card: TakoCard = { card_id: "c1", content: null };
-    expect(slimCard(card, 5).exportable).toBe(false);
-    expect(slimCard(card, null).exportable).toBe(false);
-  });
-
-  it("falls back: marks a flagless content-bearing card as exportable: true (both modes)", () => {
-    const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
-    expect(slimCard(card, null).exportable).toBe(true);
-    expect(slimCard(card, 5).exportable).toBe(true);
-  });
-});
-
-// Non-exportable (exportable:false) cards carry no rows anywhere; the
-// values_hint makes the routing (description holds the headline when present)
-// per-card and deterministic instead of a
-// tool-description recall exercise. Wording is neutral ("not exportable"):
-// export_safe() also fails closed on non-licensing causes.
-describe("slimCard — values_hint on gated cards", () => {
-  it("stamps a plain not-exportable hint that routes to NO tool", () => {
-    // The only tool that can recover these figures is `tako_search_advanced`
-    // with `include_answer`, and it is opt-in (spec D1): a hint naming it would
-    // send the model into "tool not found" on the default surface. So the hint
-    // states what IS true (no rows on any path; headline in description) and
-    // advises no call at all. (It named `tako_answer` before the fold deleted
-    // that tool — same rule, same reason.)
-    const card: TakoCard = {
-      card_id: "c1",
-      exportable: false,
-      nodes: [
-        { id: "n1", name: "Entity", type: "entity" },
-        { id: "n2", name: "Metric", type: "metric" },
-      ],
-    };
-    const hint = slimCard(card, 5).values_hint;
-    expect(hint).toContain("not exportable");
-    expect(hint).not.toContain("tako_search_advanced");
-    expect(hint).not.toContain("node_ids");
-    expect(hint).not.toContain("strict");
-  });
-
-  it("points at the headline only when the card actually carries a description", () => {
-    const withDesc: TakoCard = {
-      card_id: "c1",
-      exportable: false,
-      description: "Latest value 59.2%, up 1.1pp",
-    };
-    expect(slimCard(withDesc, 5).values_hint).toContain("headline value is in description");
-    const withoutDesc: TakoCard = { card_id: "c2", exportable: false };
-    expect(slimCard(withoutDesc, 5).values_hint).not.toContain("description");
-    const blankDesc: TakoCard = { card_id: "c3", exportable: false, description: "  " };
-    expect(slimCard(blankDesc, 5).values_hint).not.toContain("description");
-  });
-
-  it("stamps the hint on a fallback-derived gated card (no flag, no content)", () => {
-    const card: TakoCard = { card_id: "c1", title: "t" };
-    expect(slimCard(card, 5).values_hint).toContain("not exportable");
-  });
-
-  it("never stamps a values_hint on an exportable card", () => {
-    const card: TakoCard = { card_id: "c1", content: dataset([["2024-01-01", 1]]) };
-    expect(slimCard(card, 5)).not.toHaveProperty("values_hint");
-  });
-
-  it("orders description and values_hint before the URL/methodology chrome", () => {
-    const card: TakoCard = {
-      card_id: "c1",
-      title: "t",
-      exportable: false,
-      description: "Latest value 59.2%, up 1.1pp",
-      webpage_url: "https://trytako.com/card/c1",
-      image_url: "https://trytako.com/card/c1.png",
-    };
-    const keys = Object.keys(slimCard(card, 5) as Record<string, unknown>);
-    expect(keys.indexOf("description")).toBeLessThan(keys.indexOf("webpage_url"));
-    expect(keys.indexOf("values_hint")).toBeLessThan(keys.indexOf("webpage_url"));
-    expect(keys.indexOf("description")).toBeLessThan(keys.indexOf("image_url"));
-  });
-});
+// `tako_search`'s call shape: no inlined rows, no web page text. Shared by the
+// buildSearchOutput tests below, which exercise guidance and ordering rather
+// than the `tako_search_advanced` inline path.
+const OPTS = { rowCap: null, keepWebText: false } as const;
 
 describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 
   it("attaches the full anti-retry protocol when cards AND web_results are both empty", () => {
-    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false, "authenticated");
-    // The load-bearing instruction: do not re-issue reworded searches.
-    expect(out.guidance).toMatch(/do not retry/i);
+    const out = buildSearchOutput([], [], "req-1", null, ENV, ["data", "web"], false, "authenticated", OPTS);
+    // The load-bearing instruction: rewording does not converge and costs money.
+    expect(out.guidance).toMatch(/rewording alone will not change that/i);
+    expect(out.guidance).toMatch(/every retry is priced/i);
     expect(out.guidance).toMatch(/tako_available_data/);
   });
 
@@ -361,10 +192,10 @@ describe("buildSearchOutput — zero-card guidance", () => {
     // The common default-source miss: no data card, some web hits. This is
     // exactly the "reword and retry for a chart" loop case, so guidance must
     // not be silently skipped here.
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"], false, "authenticated");
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3", null, ENV, ["data", "web"], false, "authenticated", OPTS);
     expect(out.guidance).toMatch(/web_results/);
     // The verdict is scoped to the graph, not to the whole call.
-    expect(out.guidance).toMatch(/DATA GRAPH only/);
+    expect(out.guidance).toMatch(/data graph does not cover this query/i);
   });
 
   // THE MISFIRE. This branch used to say "do NOT re-search with rephrasings"
@@ -375,25 +206,24 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // carve-out must be explicit — a model reading this cannot be left to infer
   // that web refinement is still allowed.
   it("does not ban web re-searching when zero cards come back with web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"], false, "authenticated");
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3b", null, ENV, ["data", "web"], false, "authenticated", OPTS);
     const g = out.guidance ?? "";
-    expect(g).toContain("Re-searching is NOT banned here");
-    // Names the fan-out that wins these questions.
-    expect(g).toMatch(/SEVERAL narrow queries/);
-    expect(g).toMatch(/one per entity, provider or site/);
-    // Any surviving blanket ban would read as one of these.
-    expect(g).not.toMatch(/do NOT re-search with rephrasings/i);
+    // The two-sentence rewrite keeps the MISFIRE fix by scoping: the no-reword
+    // verdict names the DATA GRAPH, never the call as a whole, so nothing here
+    // reads as a ban on refining a WEB query.
+    expect(g).toMatch(/data graph does not cover this query/i);
+    expect(g).not.toMatch(/do not re-?search/i);
+    expect(g).not.toMatch(/stop calling/i);
   });
 
   // The mirror of buildDataGapGuidance's `searchedWebToo` fix. A web-only search
   // has zero cards by construction, so the graph verdict below would be built
   // from evidence that does not exist.
   it("renders no graph verdict for a web-only search that DID return web results", () => {
-    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"], false, "authenticated");
+    const out = buildSearchOutput([], [{ title: "t", url: "https://x.com" }], "req-3c", null, ENV, ["web"], false, "authenticated", OPTS);
     const g = out.guidance ?? "";
-    expect(g).toMatch(/WEB source only/);
-    expect(g).not.toMatch(/DATA GRAPH only/);
-    expect(g).not.toMatch(/already shown the graph does not hold it/);
+    expect(g).toMatch(/web source only/i);
+    expect(g).not.toMatch(/data graph does not cover/i);
     // And none of the data-axis recovery, which does not apply to a deliberate
     // web-only narrow.
     expect(g).not.toMatch(/node_id/);
@@ -404,24 +234,46 @@ describe("buildSearchOutput — zero-card guidance", () => {
   });
 
   it("tailors the both-empty protocol for a data-only search (web fallback allowed on the single retry)", () => {
-    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"], false, "authenticated");
+    const out = buildSearchOutput([], [], "req-4", null, ENV, ["data"], false, "authenticated", OPTS);
     expect(out.guidance).toMatch(/tako_available_data/);
-    expect(out.guidance).toMatch(/"web"/);
     // No web-axis carve-out here: the web was never searched, so there is no
-    // empty web result to reinterpret. Step (2) already offers web as a fallback
-    // source, and both at once would contradict each other.
-    expect(out.guidance).not.toContain(NARROWER_WEB_ATTEMPT);
+    // empty web result to reinterpret.
+    expect(out.guidance).not.toMatch(/narrower web question/);
   });
 
-  // The ANSWER path's both-empty branch has always allowed ONE narrower web
-  // attempt; this branch used to end flatly at "stop calling Tako for this
-  // question". Same situation, opposite verdict, on the most common
-  // Tako-has-nothing path — so it is now one shared constant rather than a
-  // sentence in one of the two verdicts.
-  it("allows the same single narrower web attempt the answer verdict allows, when web was searched", () => {
-    const out = buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated");
-    expect(out.guidance).toContain(NARROWER_WEB_ATTEMPT);
-    expect(out.guidance).toMatch(/WEB axis only/);
+  // THE INVARIANT, checked on BOTH surfaces in one test on purpose. The answer
+  // path has always allowed ONE narrower web attempt; the search path used to
+  // end flatly at "stop calling Tako for this question" — same situation,
+  // opposite verdict, on the most common Tako-has-nothing path, which teaches a
+  // model that reads both that one of them is wrong.
+  //
+  // A string-identity check (`toContain(NARROWER_WEB_ATTEMPT)`) cannot hold this
+  // any more: the search branches are capped at two sentences, so only the
+  // answer path can afford the full sentence and the search path states the
+  // carve-out as a clause. Asserting each side separately would let a future
+  // edit delete either wording with the suite green, so both are asserted here.
+  it("both zero-result surfaces permit exactly one narrower web attempt", () => {
+    const search =
+      buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated", OPTS)
+        .guidance ?? "";
+    const answer = buildDataGapGuidance(false, true);
+    for (const [surface, g] of [
+      ["search", search],
+      ["answer", answer],
+    ] as const) {
+      // "genuinely narrower" is the phrasing BOTH carry. The nouns already
+      // differ — search says "narrower web question", answer says "narrower
+      // question" — which is exactly how far apart two hand-written statements
+      // of one rule drift, and why the invariant is asserted rather than the
+      // string.
+      expect(g, `${surface} drops the narrower-web carve-out`).toMatch(/genuinely narrower/i);
+      expect(g, `${surface} forbids the attempt the other surface allows`).not.toMatch(
+        /do not (re-?search|try) the web/i,
+      );
+    }
+    // The answer path has the budget for the full sentence, and the REASON it
+    // carries ("too broad rather than unanswerable") is what stops the loop.
+    expect(answer).toContain(NARROWER_WEB_ATTEMPT);
   });
 
   // A web-only search that came back empty has NO data verdict to report (the
@@ -429,176 +281,45 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // This branch used to ban that lever — "do NOT retry this query or
   // rephrasings of it" — which left the model with nothing to do at all.
   it("tells a web-only search to refine, and claims nothing about graph coverage", () => {
-    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"], false, "authenticated");
+    const out = buildSearchOutput([], [], "req-5", null, ENV, ["web"], false, "authenticated", OPTS);
     const g = out.guidance ?? "";
     expect(g).not.toMatch(/node_id/);
-    expect(g).toMatch(/Refine and re-search/i);
-    expect(g).toMatch(/NOT a coverage verdict/i);
-    expect(g).not.toMatch(/do NOT retry/i);
-    // Still not an invitation to loop forever.
-    expect(g).toMatch(/Stop only once/i);
+    expect(g).toMatch(/refine to one entity/i);
+    expect(g).toMatch(/says nothing about Tako's coverage/i);
+    expect(g).not.toMatch(/rewording alone will not change/i);
   });
 
   it("takes the DATA-verdict branch for a data-source search", () => {
     // Was "treats the legacy tako alias as data" and keyed on /node_id/ in the
     // guidance; the alias is gone and so is the pin recipe, so pin the branch
     // by the verdict it is the only one to state.
-    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false, "authenticated");
+    const out = buildSearchOutput([], [], "req-6", null, ENV, ["data"], false, "authenticated", OPTS);
     expect(out.guidance).toMatch(/tako_available_data/);
-    expect(out.guidance).toMatch(/do NOT retry/i);
+    expect(out.guidance).toMatch(/every retry is priced/i);
   });
 
   it("omits guidance when any card is present", () => {
-    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false, "authenticated");
+    const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false, "authenticated", OPTS);
     expect(out.guidance).toBeUndefined();
   });
 });
 
 describe("payload layout — data serializes before boilerplate", () => {
   // Clients with result-size caps truncate the TAIL of the serialized JSON, so
-  // the failure mode these tests pin is: five cards of source paragraphs
-  // survive while every data point is cut. Key insertion order IS the fix
-  // (JSON.stringify preserves it into content.text and structuredContent).
-
-  const wireCard: TakoCard = {
-    // Deliberately in the backend's wire order: metadata first, content late.
-    card_id: "c1",
-    title: "PANW Revenue",
-    description: "Quarterly revenue for Palo Alto Networks.",
-    semantic_description: "A long retrieval-oriented blob…",
-    webpage_url: "https://tako.com/card/c1",
-    sources: [{ source_name: "Visible Alpha", source_description: "x".repeat(300) }],
-    methodologies: [{ methodology_name: "m", methodology_description: "consensus" }],
-    card_type: "timeseries",
-    content: dataset([
-      ["2025-01-01", 1],
-      ["2025-04-01", 2],
-    ]),
-  } as unknown as TakoCard;
-
-  it("slimCard reorders keys: description + content (the substance) before URL/source chrome", () => {
-    const keys = Object.keys(slimCard(wireCard, 5));
-    const pos = (k: string) => keys.indexOf(k);
-    expect(pos("card_id")).toBe(0);
-    expect(pos("content")).toBeGreaterThan(-1);
-    // description precedes content: on license-gated cards it carries the
-    // headline value, so it must survive truncation alongside the data.
-    expect(pos("description")).toBeLessThan(pos("content"));
-    expect(pos("content")).toBeLessThan(pos("webpage_url"));
-    expect(pos("content")).toBeLessThan(pos("sources"));
-    expect(pos("content")).toBeLessThan(pos("methodologies"));
-    expect(pos("content")).toBeLessThan(pos("semantic_description"));
-    expect(pos("title")).toBeLessThan(pos("content"));
-  });
-
-  it("slimCard keeps unknown keys (after the known ones) — loose passthrough survives reordering", () => {
-    const withUnknown = { ...wireCard, brand_new_field: 42 } as unknown as TakoCard;
-    const out = slimCard(withUnknown, 5) as unknown as Record<string, unknown>;
-    expect(out.brand_new_field).toBe(42);
-  });
+  // the failure mode this pins is: source paragraphs survive while every data
+  // point is cut. Key insertion order IS the fix (JSON.stringify preserves it
+  // into content.text and structuredContent).
+  //
+  // The CARD-level half of this block went with `slimCard`: card key order was
+  // its job, and the projection now decides the order by construction — every
+  // key is written in `projectCard` in the order it should serialize, so there
+  // is nothing left to reorder. `projectCard`'s own describe pins that shape.
 
   it("slimmed content serializes rows before descriptor metadata", () => {
     const out = slimCardContent(dataset([["2025-01-01", 1]]), 5);
     const keys = Object.keys(out as Record<string, unknown>);
     expect(keys.indexOf("dataset")).toBeLessThan(keys.indexOf("content_format"));
     expect(keys.indexOf("dataset")).toBeLessThan(keys.indexOf("cost"));
-  });
-});
-
-describe("hoistSourceGlossary", () => {
-  const para = "Consensus estimates built from detailed sell-side analyst models across sectors. ".repeat(3);
-
-  const cardWithSource = (id: string, description: string): TakoCard =>
-    ({
-      card_id: id,
-      title: id,
-      sources: [{ source_name: "Alpha Source", source_description: description }],
-    }) as unknown as TakoCard;
-
-  it("hoists a repeated long source_description into ONE glossary entry keyed by source_name", () => {
-    const { cards, glossary } = hoistSourceGlossary([
-      cardWithSource("c1", para),
-      cardWithSource("c2", para),
-      cardWithSource("c3", para),
-    ]);
-    expect(glossary).toEqual({ "Alpha Source": para });
-    const out = cards as unknown as Array<{ sources: Array<Record<string, unknown>> }>;
-    for (const c of out) {
-      // The paragraph is gone from every card; the name key survives as the
-      // glossary lookup handle.
-      expect(c.sources[0]).toEqual({ source_name: "Alpha Source" });
-    }
-  });
-
-  it("hoists even a single occurrence (moves boilerplate behind the data)", () => {
-    const { cards, glossary } = hoistSourceGlossary([cardWithSource("c1", para)]);
-    expect(glossary).toEqual({ "Alpha Source": para });
-    expect(
-      (cards as unknown as Array<{ sources: Array<Record<string, unknown>> }>)[0]?.sources[0],
-    ).not.toHaveProperty("source_description");
-  });
-
-  it("leaves short strings inline — hoisting a label costs more than it saves", () => {
-    const { cards, glossary } = hoistSourceGlossary([
-      cardWithSource("c1", "Short label"),
-      cardWithSource("c2", "Short label"),
-    ]);
-    expect(glossary).toBeUndefined();
-    expect(
-      (cards as unknown as Array<{ sources: Array<{ source_description: string }> }>)[1]
-        ?.sources[0]?.source_description,
-    ).toBe("Short label");
-  });
-
-  it("hoists methodology_description keyed by methodology_name", () => {
-    const method = { methodology_name: "consensus", methodology_description: para };
-    const input = [
-      { card_id: "a", methodologies: [method] },
-      { card_id: "b", methodologies: [{ ...method }] },
-    ] as unknown as TakoCard[];
-    const { cards, glossary } = hoistSourceGlossary(input);
-    expect(glossary).toEqual({ consensus: para });
-    const out = cards as unknown as Array<{ methodologies: Array<Record<string, unknown>> }>;
-    expect(out[0]?.methodologies[0]).not.toHaveProperty("methodology_description");
-    expect(out[1]?.methodologies[0]).not.toHaveProperty("methodology_description");
-  });
-
-  it("keeps a same-name entry with DIFFERENT text inline (no information loss)", () => {
-    const other = "A completely different but still paragraph-length source description text. ".repeat(3);
-    const { cards, glossary } = hoistSourceGlossary([
-      cardWithSource("c1", para),
-      cardWithSource("c2", other),
-    ]);
-    expect(glossary).toEqual({ "Alpha Source": para });
-    expect(
-      (cards as unknown as Array<{ sources: Array<{ source_description: string }> }>)[1]
-        ?.sources[0]?.source_description,
-    ).toBe(other);
-  });
-
-  it("leaves entries without a usable name inline", () => {
-    const input = [
-      { card_id: "a", sources: [{ source_description: para }] },
-    ] as unknown as TakoCard[];
-    const { cards, glossary } = hoistSourceGlossary(input);
-    expect(glossary).toBeUndefined();
-    expect(
-      (cards as unknown as Array<{ sources: Array<{ source_description: string }> }>)[0]
-        ?.sources[0]?.source_description,
-    ).toBe(para);
-  });
-
-  it("returns untouched cards by reference and never mutates inputs", () => {
-    const bare = { card_id: "x", title: "no arrays" } as unknown as TakoCard;
-    const hoistable = cardWithSource("c1", para);
-    const { cards } = hoistSourceGlossary([bare, hoistable]);
-    expect(cards[0]).toBe(bare);
-    // The hoisted card is a NEW object; the original stays intact (immutability).
-    expect(cards[1]).not.toBe(hoistable);
-    expect(
-      (hoistable as unknown as { sources: Array<{ source_description: string }> })
-        .sources[0]?.source_description,
-    ).toBe(para);
   });
 });
 
@@ -731,12 +452,19 @@ describe("orderCardsByUsefulness", () => {
 
   it("drives the widget: buildSearchOutput lifts the REORDERED top card", () => {
     const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
-    const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00");
-    const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00");
-    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false, "authenticated");
-    expect(out.cards[0]?.card_id).toBe("fresh_second");
-    // The chart the host renders must not disagree with the document.
+    // Titles, because the projection drops `card_id` and the two cards are
+    // otherwise identical — without them the projected-card assertion below
+    // compares undefined to undefined and passes on any ordering.
+    const stale = seriesCard("stale_top", "2024-01-01T00:00:00+00:00", { title: "Stale series" });
+    const fresh = seriesCard("fresh_second", "2026-06-01T00:00:00+00:00", { title: "Fresh series" });
+    const out = buildSearchOutput([stale, fresh], [], "req-order", null, ENV, ["data"], false, "authenticated", OPTS);
+    // The widget lift is one observable: it must follow the REORDERED top card,
+    // not the wire order.
     expect(out.pub_id).toBe("fresh_second");
+    // And the document is the other. The chart a host renders must not disagree
+    // with the list beneath it, so the first projected card has to be the same
+    // card the widget lifted.
+    expect(out.cards[0]?.title).toBe("Fresh series");
   });
 });
 
@@ -797,6 +525,7 @@ describe("zero-card guidance never prescribes a tool the tier cannot call", () =
       shape.sources,
       shape.pin,
       tier,
+      OPTS,
     ).guidance ?? "";
 
   it("names no other tool on the free tier, on any branch", () => {
@@ -820,15 +549,15 @@ describe("zero-card guidance never prescribes a tool the tier cannot call", () =
     // caller the recovery that keeps them off the retry loop.
     const g = guidanceFor({ sources: ["data", "web"], web: false, pin: false }, "authenticated");
     expect(g).toMatch(/call tako_available_data/i);
-    expect(g).toMatch(/canonical name/i);
+    expect(g).toMatch(/canonical metric name/i);
   });
 
   it("keeps the shape rules the anonymous caller CAN act on", () => {
     // Removing the refusing steps must not leave an empty protocol: the query
     // shape is the one lever an anonymous caller still has.
     const g = guidanceFor({ sources: ["data", "web"], web: false, pin: false }, "free");
-    expect(g).toMatch(/one entity \+ one metric/i);
-    expect(g).toMatch(/do NOT retry/i);
+    expect(g).toMatch(/one metric per query/i);
+    expect(g).toMatch(/rewording alone will not change/i);
     expect(g).toMatch(/signed-in connection/i);
   });
 });
@@ -838,9 +567,9 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
 
   it("sends the model to tako_available_data for the exact name", () => {
     for (const sources of [["data", "web"], ["data"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated").guidance ?? "";
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated", OPTS).guidance ?? "";
       expect(g).toContain("tako_available_data");
-      expect(g).toMatch(/canonical name/i);
+      expect(g).toMatch(/canonical metric name/i);
     }
   });
 
@@ -853,7 +582,7 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
     // `strictPin: false` is what `tako_search` always produces (it cannot send
     // either field), so this is that tool's every path.
     for (const sources of [["data", "web"], ["data"], ["web"]] as ReadonlyArray<Array<"data" | "web">>) {
-      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated").guidance ?? "";
+      const g = buildSearchOutput([], [], "req", null, ENV, sources, false, "authenticated", OPTS).guidance ?? "";
       expect(g, `sources=${sources.join(",")}`).not.toMatch(/node_ids|strict/i);
     }
   });
@@ -864,16 +593,16 @@ describe("zero-card guidance routes to the canonical name, never to a pin", () =
     // hard filter returned nothing — a coverage verdict the request cannot
     // support (KE-812: pinned handles returned FEWER cards on 11 of 20 pairs),
     // and one that contradicts that tool's own description.
-    const g = buildSearchOutput([], [], "req", null, ENV, ["data", "web"], true, "authenticated").guidance ?? "";
+    const g = buildSearchOutput([], [], "req", null, ENV, ["data", "web"], true, "authenticated", OPTS).guidance ?? "";
     expect(g).toMatch(/hard filter/i);
     expect(g).toMatch(/node_ids/);
     // The verdict the unpinned branch gives must NOT appear here.
     expect(g).not.toMatch(/does not cover this query/i);
-    expect(g).not.toMatch(/do NOT retry/i);
+    expect(g).not.toMatch(/every retry is priced/i);
   });
 
   it("keeps the pin branch off the web-only path, which never applied a data filter", () => {
-    const g = buildSearchOutput([], [], "req", null, ENV, ["web"], true, "authenticated").guidance ?? "";
+    const g = buildSearchOutput([], [], "req", null, ENV, ["web"], true, "authenticated", OPTS).guidance ?? "";
     expect(g).not.toMatch(/hard filter/i);
   });
 });
@@ -1001,4 +730,494 @@ describe("the payload/metadata split cannot drift", () => {
     const stale = [...classified].filter((k) => !generated.includes(k)).sort();
     expect(stale, "classified key(s) no longer in ContentItem").toEqual([]);
   });
+
+  // projectCard's ROWS_KEYS is CONTENT_PAYLOAD_KEYS plus three metadata names.
+  // The payload half is derived, so it cannot drift; the three metadata names
+  // are written out, so this pins them to the classified set.
+  //
+  // IMPORT the constant, never retype it. The literal list this used to carry
+  // made the guard vacuous in the one direction it exists for: renaming the
+  // real `content_format` to `format` dropped it from every inlined `rows`
+  // object and all 1267 tests still passed.
+  it("every metadata key projectCard keeps beside inlined rows is a classified metadata key", () => {
+    const meta = new Set<string>(CONTENT_META_KEYS);
+    const unclassified = ROWS_META_KEYS.filter((k) => !meta.has(k));
+    expect(unclassified, "projectCard keeps a key CONTENT_META_KEYS does not list").toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The model-facing projection (spec: 2026-08-26-model-facing-surface-redesign)
+// ---------------------------------------------------------------------------
+
+describe("projectCard — the nine-field model-facing card", () => {
+  const wireCard = {
+    card_id: "c1",
+    title: "NVIDIA Data Center Revenue",
+    description: "Latest value was $75.2B in Apr 2026.",
+    exportable: true,
+    content: { data: null, records: null, dataset: null, total_rows: 26, truncated: false },
+    nodes: [{ id: "ent::nvidia::1", name: "NVIDIA", type: "entity" }],
+    card_type: "chart",
+    data_freshness: { coverage_end: "2026-04", data_as_of: "2026-04-26", last_updated: "2026-08-26T10:00:00Z" },
+    relevance: "High",
+    webpage_url: "https://tako.com/card/c1/",
+    image_url: "https://tako.com/api/v1/image/c1/",
+    embed_url: "https://tako.com/embed/c1/",
+    sources: [{ source_name: "Fiscal.ai", source_index: "data" }],
+    methodologies: [{ methodology_name: "m" }],
+    source_indexes: ["data"],
+    semantic_description: "restates the title",
+  } as unknown as TakoCard;
+
+  it("maps exactly the projected fields — plumbing and duplicates cannot leak", () => {
+    const out = projectCard(wireCard, null);
+    expect(out).toEqual({
+      exportable: true,
+      title: "NVIDIA Data Center Revenue",
+      description: "Latest value was $75.2B in Apr 2026.",
+      url: "https://tako.com/card/c1/",
+      source: "Fiscal.ai",
+      coverage_end: "2026-04",
+      last_updated: "2026-08-26",
+      relevance: "High",
+      nodes: [{ id: "ent::nvidia::1", name: "NVIDIA", type: "entity" }],
+      total_rows: 26,
+    });
+    // The drops that motivated the projection, asserted by name so a
+    // regression names the field that came back.
+    const keys = Object.keys(out);
+    for (const dropped of [
+      "card_id",
+      "content",
+      "card_type",
+      "semantic_description",
+      "methodologies",
+      "source_indexes",
+      "image_url",
+      "embed_url",
+      "data_freshness",
+    ]) {
+      expect(keys, dropped).not.toContain(dropped);
+    }
+  });
+
+  // The numeric arm is an ENTITLEMENT, and it had no test: deleting it and
+  // keeping `nonEmpty(rec.relevance)` alone left all 1267 green, so a paid
+  // account's score could be dropped silently. No fixture in this file or
+  // tako_search.test.ts sets `relevance_score`, which is why these two exist.
+  it("prefers the entitled numeric relevance_score over the coarse string", () => {
+    const out = projectCard({ ...wireCard, relevance_score: 4.5 } as unknown as TakoCard, null);
+    expect(out.relevance).toBe("4.5");
+  });
+
+  it("falls back to the coarse relevance string when relevance_score is absent", () => {
+    const out = projectCard(wireCard, null);
+    expect(out.relevance).toBe("High");
+  });
+
+  it("last_updated is date-only", () => {
+    expect(projectCard(wireCard, null).last_updated).toBe("2026-08-26");
+  });
+
+  it("a locked card reports exportable: false and fabricates no row count", () => {
+    const locked = { ...wireCard, exportable: false, content: null } as unknown as TakoCard;
+    const out = projectCard(locked, null);
+    expect(out.exportable).toBe(false);
+    expect(out.total_rows).toBeUndefined();
+    expect(out).not.toHaveProperty("rows");
+  });
+
+  // The published describe says "exportable cards only", and the text channel
+  // prints the count only in the exportable arm — so a locked card carrying a
+  // descriptor must not put one in structuredContent either, or the two
+  // channels disagree about a card nobody can fetch rows for. Unreachable
+  // today (the backend's shared export gate ships `content: null` on locked
+  // cards); this pins the invariant against that changing.
+  it("suppresses total_rows on a locked card even when a descriptor carries one", () => {
+    const locked = {
+      ...wireCard,
+      exportable: false,
+      content: { total_rows: 42, data: null, dataset: null, records: null },
+    } as unknown as TakoCard;
+    expect(projectCard(locked, null).total_rows).toBeUndefined();
+  });
+
+  it("rows ride ONLY when the caller asked to inline them (advanced path)", () => {
+    const withRows = {
+      ...wireCard,
+      content: {
+        content_format: "json_compact",
+        cost: 0.002,
+        total_rows: 2,
+        truncated: false,
+        dataset: {
+          columns: [
+            { name: "t", type: "datetime" },
+            { name: "v", type: "number" },
+          ],
+          rows: [
+            ["2026-01-01", 1],
+            ["2026-02-01", 2],
+          ],
+        },
+      },
+    } as unknown as TakoCard;
+    expect(projectCard(withRows, null).rows).toBeUndefined();
+    const inlined = projectCard(withRows, "all");
+    expect(inlined.rows).toBeDefined();
+    const rows = inlined.rows as Record<string, unknown>;
+    expect(rows.dataset).toBeDefined();
+    // Null-noise and billing never ride.
+    expect(rows).not.toHaveProperty("data");
+    expect(rows).not.toHaveProperty("records");
+    expect(rows).not.toHaveProperty("cost");
+  });
+
+  // Asserted DIRECTLY, because the channel-parity walk structurally cannot
+  // catch a dropped field: it walks the projected output, so removing
+  // `manifest` from the projection removes the leaf AND the requirement to
+  // render it, and the walk stays green.
+  it("keeps the column manifest beside inlined rows — the only carrier of a unit", () => {
+    const withRows = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_records",
+        cost: 0.01,
+        total_rows: 1,
+        truncated: false,
+        records: [{ revenue: 12.4 }],
+        manifest: [{ name: "revenue", metric: "Total Revenue", entity: "Tesla, Inc.", unit: "USD" }],
+      },
+    } as unknown as TakoCard;
+    const rows = projectCard(withRows, "all").rows as Record<string, unknown>;
+    expect(rows.manifest, "inlined rows arrived with no unit").toEqual([
+      { name: "revenue", metric: "Total Revenue", entity: "Tesla, Inc.", unit: "USD" },
+    ]);
+  });
+});
+
+describe("projectWebResult", () => {
+  const wire = {
+    title: "NVIDIA announces results",
+    url: "https://investor.nvidia.com/x",
+    snippet: "Record revenue of $81.6 billion.",
+    source_name: "investor.nvidia.com",
+    publish_date: "2026-08-25T12:00:01.000Z",
+    citation_number: null,
+    content: { cost: 0.001, truncated: false, data: null, records: null, dataset: null },
+  } as unknown as WebResult;
+
+  it("maps title/url/snippet/source/published and drops citation_number + content nulls", () => {
+    expect(projectWebResult(wire, false)).toEqual({
+      url: "https://investor.nvidia.com/x",
+      title: "NVIDIA announces results",
+      snippet: "Record revenue of $81.6 billion.",
+      source: "investor.nvidia.com",
+      published: "2026-08-25",
+    });
+  });
+
+  it("keeps a null snippet (page had no relevant passage) and a null published", () => {
+    const nulls = { ...wire, snippet: null, publish_date: null } as unknown as WebResult;
+    const out = projectWebResult(nulls, false);
+    expect(out.snippet).toBeNull();
+    expect(out.published).toBeNull();
+  });
+
+  it("keeps page text only when the request asked for it", () => {
+    const withText = {
+      ...wire,
+      content: { cost: 0.001, truncated: false, data: "full page text", records: null, dataset: null },
+    } as unknown as WebResult;
+    expect(projectWebResult(withText, false).content).toBeUndefined();
+    expect(projectWebResult(withText, true).content).toEqual({ data: "full page text", truncated: false });
+  });
+});
+
+describe("buildReferenceMaps — deduped across cards, conflicts never lose text", () => {
+  const defCard = (id: string, name: string, definition: string, source = "Fiscal.ai") =>
+    ({
+      card_id: id,
+      metric_definitions: [{ name, definition }],
+      sources: [{ source_name: source }],
+    }) as unknown as TakoCard;
+
+  it("one entry per distinct metric definition, however many cards repeat it", () => {
+    const { metric_definitions } = buildReferenceMaps([
+      defCard("a", "Revenue", "Reported revenue."),
+      defCard("b", "Revenue", "Reported revenue."),
+      defCard("c", "Revenue", "Reported revenue."),
+    ]);
+    expect(metric_definitions).toEqual({ Revenue: "Reported revenue." });
+  });
+
+  it("same name + different text disambiguates with the source suffix", () => {
+    const { metric_definitions } = buildReferenceMaps([
+      defCard("a", "Revenue", "Reported revenue.", "Fiscal.ai"),
+      defCard("b", "Revenue", "Trailing twelve months revenue.", "S&P"),
+    ]);
+    expect(metric_definitions).toEqual({
+      Revenue: "Reported revenue.",
+      "Revenue — S&P": "Trailing twelve months revenue.",
+    });
+  });
+
+  // The suffix names the card's WHOLE source string, so it joins against the
+  // card's `source` field. Keyed by `sources[0]` this read "Revenue —
+  // Fiscal.ai", which is the OTHER card's source — a blended definition
+  // attributed to a single source that did not produce it.
+  it("suffixes a multi-source conflict with the card's full source string", () => {
+    const cards = [
+      {
+        card_id: "single",
+        sources: [{ source_name: "Fiscal.ai" }],
+        metric_definitions: [{ name: "Revenue", definition: "Reported revenue." }],
+      },
+      {
+        card_id: "multi",
+        sources: [{ source_name: "Fiscal.ai" }, { source_name: "S&P" }],
+        metric_definitions: [{ name: "Revenue", definition: "Trailing twelve months revenue." }],
+      },
+    ] as unknown as TakoCard[];
+    const { metric_definitions } = buildReferenceMaps(cards);
+    expect(metric_definitions).toEqual({
+      Revenue: "Reported revenue.",
+      "Revenue — Fiscal.ai, S&P": "Trailing twelve months revenue.",
+    });
+    // The suffix is exactly what the card shows, so the lookup resolves.
+    expect(projectCard(cards[1]!, null).source).toBe("Fiscal.ai, S&P");
+  });
+
+  it("source_notes merges source_description and methodology paragraphs under the source name", () => {
+    const card = {
+      card_id: "a",
+      sources: [{ source_name: "Fiscal.ai", source_description: "Who the source is." }],
+      methodologies: [{ methodology_name: "m", methodology_description: "How it builds data." }],
+    } as unknown as TakoCard;
+    const { source_notes } = buildReferenceMaps([card]);
+    expect(source_notes).toEqual({ "Fiscal.ai": "Who the source is.\n\nHow it builds data." });
+  });
+
+  it("omits both maps when the backend sends no paragraphs", () => {
+    const bare = { card_id: "a", sources: [{ source_name: "Fiscal.ai" }] } as unknown as TakoCard;
+    expect(buildReferenceMaps([bare])).toEqual({});
+  });
+
+  // The join is the whole point: the model reads `source` off a card and looks
+  // it up here. A two-source card shows "Fiscal.ai, S&P", so that is the key —
+  // NOT `methodology_name`, which appears on no card and used to be the key
+  // whenever a card had anything other than exactly one source.
+  it("keys a multi-source card's methodology by the same string projectCard puts in `source`", () => {
+    const card = {
+      card_id: "a",
+      sources: [{ source_name: "Fiscal.ai" }, { source_name: "S&P" }],
+      methodologies: [{ methodology_name: "consensus", methodology_description: "How it blends." }],
+    } as unknown as TakoCard;
+    const { source_notes } = buildReferenceMaps([card]);
+    expect(source_notes).toEqual({ "Fiscal.ai, S&P": "How it blends." });
+    expect(Object.keys(source_notes ?? {})).not.toContain("consensus");
+    // The contract the key exists to satisfy, asserted end to end.
+    expect(projectCard(card, null).source).toBe("Fiscal.ai, S&P");
+  });
+
+  it("drops a methodology on a card that names no source — there is nothing to join to", () => {
+    const card = {
+      card_id: "a",
+      methodologies: [{ methodology_name: "consensus", methodology_description: "How it blends." }],
+    } as unknown as TakoCard;
+    expect(buildReferenceMaps([card])).toEqual({});
+  });
+
+  // Keys are upstream strings, so an Object.prototype member name must behave
+  // like any other key. Before the null-prototype maps, `sourceNotes["toString"]`
+  // read back the inherited function and `existing.includes(text)` threw a
+  // TypeError — failing the call after the backend round-trip was billed, and
+  // invisible to TS because both maps are typed `Record<string, string>`.
+  it.each(["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"])(
+    "treats %s as an ordinary source and metric name",
+    (name) => {
+      const card = {
+        card_id: "a",
+        sources: [{ source_name: name, source_description: "Who the source is." }],
+        metric_definitions: [{ name, definition: "Reported revenue." }],
+      } as unknown as TakoCard;
+      const maps = buildReferenceMaps([card]);
+      expect(maps.source_notes).toEqual({ [name]: "Who the source is." });
+      expect(maps.metric_definitions).toEqual({ [name]: "Reported revenue." });
+    },
+  );
+
+  // THE CONFORMANCE TEST (spec: 2026-08-26-model-facing-surface-redesign,
+  // "Reference prose"). The maps are only worth their bytes if the model can
+  // JOIN them: it reads `source` off a projected card, or a metric name out of
+  // a card's definitions, and looks the string up here. Every other test in
+  // this block inspects a map in isolation, which is how two real join bugs
+  // shipped — a `methodology_name` key that is on no card, and a `sources[0]`
+  // conflict suffix that disagrees with the card's joined `source`.
+  //
+  // "Exactly one entry", as the spec words it, is deliberately relaxed on the
+  // metric side: a same-name-different-text conflict is SUPPOSED to produce a
+  // second entry ("Revenue" and "Revenue — S&P") rather than drop text. The
+  // invariant that survives is two-way reachability — no orphan keys, no
+  // dropped paragraphs.
+  it("every map key traces back to a card, and every card paragraph reaches a key", () => {
+    const cards = [
+      {
+        card_id: "single",
+        sources: [{ source_name: "Fiscal.ai", source_description: "Who Fiscal.ai is." }],
+        metric_definitions: [{ name: "Revenue", definition: "Reported revenue." }],
+        methodologies: [{ methodology_name: "segment", methodology_description: "From the segment note." }],
+      },
+      {
+        card_id: "multi",
+        sources: [{ source_name: "Fiscal.ai" }, { source_name: "S&P", source_description: "Who S&P is." }],
+        metric_definitions: [{ name: "Revenue", definition: "Trailing twelve months revenue." }],
+        methodologies: [{ methodology_name: "blend", methodology_description: "How it blends." }],
+      },
+      { card_id: "bare", sources: [{ source_name: "Xignite" }] },
+    ] as unknown as TakoCard[];
+    const maps = buildReferenceMaps(cards);
+    const notes = maps.source_notes ?? {};
+    const defs = maps.metric_definitions ?? {};
+
+    // FORWARD — the direction with teeth. A key no card carries is prose the
+    // model can read and cannot attribute.
+    //
+    // ONE set, built from `projectCard` itself: a card carries exactly one
+    // source field and it is the joined list, so that string is the only join
+    // target there is. An earlier version of this test also admitted each bare
+    // `source_name` — which is what let a two-source card file "Fiscal.ai" and
+    // "S&P" beside the "Fiscal.ai, S&P" the card actually carries, with the
+    // model able to read both descriptions and reach neither.
+    const noteKeys = new Set<string>();
+    for (const c of cards) {
+      const projected = projectCard(c, null).source;
+      if (projected !== undefined) noteKeys.add(projected);
+    }
+    for (const key of Object.keys(notes)) {
+      expect(noteKeys.has(key), `source_notes key "${key}" is on no card`).toBe(true);
+    }
+
+    // Every (name, definition) pair on a card, with the `source` of the card
+    // that carries it. Checking the suffix against a FLAT set of card sources
+    // is not enough: `sources[0]` produces "Revenue — Fiscal.ai", and some
+    // other single-source card's `source` is "Fiscal.ai", so a flat check
+    // passes while the definition under that key came from a different card.
+    // The suffix has to identify the card the TEXT came from.
+    const definitionOwners = new Map<string, Set<string | undefined>>();
+    const metricNames = new Set<string>();
+    for (const c of cards) {
+      const owner = projectCard(c, null).source;
+      for (const d of (c as unknown as { metric_definitions?: { name: string; definition: string }[] })
+        .metric_definitions ?? []) {
+        metricNames.add(d.name);
+        const owners = definitionOwners.get(d.definition) ?? new Set<string | undefined>();
+        owners.add(owner);
+        definitionOwners.set(d.definition, owners);
+      }
+    }
+    for (const [key, text] of Object.entries(defs)) {
+      // Strip the two disambiguators the conflict rule may append.
+      const base = (key.split(" — ")[0] ?? key).replace(/ \(\d+\)$/, "");
+      expect(metricNames.has(base), `metric_definitions key "${key}" is on no card`).toBe(true);
+      const cut = key.indexOf(" — ");
+      if (cut === -1) continue;
+      const suffix = key.slice(cut + 3);
+      const owners = definitionOwners.get(text) ?? new Set();
+      expect(
+        owners.has(suffix),
+        `metric_definitions key "${key}" names a source that did not produce this definition ` +
+          `(it came from ${[...owners].map((o) => JSON.stringify(o)).join(", ")})`,
+      ).toBe(true);
+    }
+
+    // REVERSE — every paragraph a card carries reaches some entry. Only cards
+    // that name a source can be attributed, which is the #7 rule.
+    const noteText = Object.values(notes).join("\n");
+    for (const c of cards) {
+      const rec = c as unknown as {
+        sources?: { source_name?: string; source_description?: string }[];
+        methodologies?: { methodology_description?: string }[];
+      };
+      const named = (rec.sources ?? []).some((s) => s.source_name !== undefined);
+      for (const s of rec.sources ?? []) {
+        if (s.source_description !== undefined) expect(noteText).toContain(s.source_description);
+      }
+      if (!named) continue;
+      for (const m of rec.methodologies ?? []) {
+        if (m.methodology_description !== undefined) expect(noteText).toContain(m.methodology_description);
+      }
+    }
+    const defText = Object.values(defs).join("\n");
+    for (const c of cards) {
+      for (const d of (c as unknown as { metric_definitions?: { definition: string }[] })
+        .metric_definitions ?? []) {
+        expect(defText).toContain(d.definition);
+      }
+    }
+  });
+});
+
+/**
+ * The published snippet contract.
+ *
+ * `95b8bb0` established what this description must carry, `f5fd69d` measured
+ * the case and settled the wording: never assert the CAUSE of a `' … '` (a
+ * consumer cannot tell a backend join from the page's own ellipsis — the arm
+ * that structurally cannot carry a join still reported 2 of 260), always keep
+ * the ACTION. This branch then shipped the inverse — cause asserted, action
+ * dropped — and nothing failed, because no test read the string.
+ *
+ * Asserted on the PUBLISHED JSON Schema, and on every tool that publishes a
+ * `snippet`, so moving the description between the array and the element (this
+ * has happened once already) cannot drop it silently.
+ */
+describe("the published snippet contract", () => {
+  const snippetDescriptions = (schema: unknown): string[] => {
+    const found: string[] = [];
+    const walk = (node: unknown): void => {
+      if (node === null || typeof node !== "object") return;
+      const obj = node as Record<string, unknown>;
+      const props = obj.properties;
+      if (props !== null && typeof props === "object") {
+        const snippet = (props as Record<string, unknown>).snippet as
+          | { description?: unknown }
+          | undefined;
+        if (snippet !== undefined && typeof snippet.description === "string") {
+          found.push(snippet.description);
+        }
+      }
+      for (const value of Object.values(obj)) walk(value);
+    };
+    walk(schema);
+    return found;
+  };
+
+  const publishing = TOOL_REGISTRY.filter(
+    (t) =>
+      t.outputSchema !== undefined &&
+      snippetDescriptions(z.toJSONSchema(t.outputSchema as z.ZodType, { io: "output" })).length > 0,
+  );
+
+  it("finds tools that publish a snippet, so the checks below are not vacuous", () => {
+    expect(publishing.length).toBeGreaterThan(0);
+  });
+
+  for (const tool of publishing) {
+    it(`${tool.name} keeps the actionable clause, not a claim about the cause`, () => {
+      for (const description of snippetDescriptions(
+        z.toJSONSchema(tool.outputSchema as z.ZodType, { io: "output" }),
+      )) {
+        // The ACTION, in whatever words: a reader must be told not to read
+        // across the separator as one continuous sentence.
+        expect(description, `${tool.name} snippet drops the "do not quote across" clause`).toMatch(
+          /never quote across|not.{0,20}quote.{0,20}across/i,
+        );
+        // And `null` stays a documented outcome, not an error.
+        expect(description, `${tool.name} snippet drops the null contract`).toMatch(/null/);
+      }
+    });
+  }
 });

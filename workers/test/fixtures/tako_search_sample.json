@@ -1,0 +1,91 @@
+{
+  "__comment": "Canonical tako_search wire fixture for the generated docs/TOOLS.md samples (spec: 2026-08-26-model-facing-surface-redesign, 'TOOLS.md output rendering'). Shape mirrors POST /api/v3/search: cards[] and web_results[] as the backend sends them. Deliberately small — 2 exportable cards, 2 web results — so the rendered samples stay readable. Regenerating TOOLS.md runs this through the real projection + renderer; do not hand-edit the samples there.",
+  "request_id": "req_fixture",
+  "usage": { "total_cost_usd": 0.015 },
+  "cards": [
+    {
+      "card_id": "eDLjXb_EieceW6BapkXJ",
+      "title": "NVIDIA Corporation Data Center Total Revenues (Quarterly)",
+      "description": "NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.",
+      "exportable": true,
+      "content": {
+        "data": null,
+        "records": null,
+        "dataset": null,
+        "total_rows": 26,
+        "truncated": false
+      },
+      "nodes": [
+        { "id": "ent::nvidia_corporation::5ea55992", "name": "NVIDIA Corporation", "type": "entity" },
+        { "id": "mt::total_revenues::8a1f02c3", "name": "Total Revenues (Normalized)", "type": "metric" }
+      ],
+      "card_type": "chart",
+      "data_freshness": { "coverage_end": "2026-04", "data_as_of": "2026-04-26", "last_updated": "2026-08-26" },
+      "relevance": "High",
+      "metric_definitions": [
+        {
+          "name": "Total Revenues (Normalized)",
+          "definition": "Revenue the company reported for this segment, as disclosed in its segment note. The figure covers one segment only, so it does not sum to consolidated total revenue unless the company reports no other segment."
+        }
+      ],
+      "webpage_url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+      "image_url": "https://tako.com/api/v1/image/eDLjXb_EieceW6BapkXJ/",
+      "embed_url": "https://tako.com/embed/eDLjXb_EieceW6BapkXJ/",
+      "sources": [
+        {
+          "source_name": "Fiscal.ai",
+          "source_index": "data",
+          "source_description": "Fiscal.ai standardizes reported financials from company filings into comparable line items. Segment figures are taken from each company's segment note and normalized so the same line item is comparable across companies and periods."
+        }
+      ],
+      "methodologies": [{ "methodology_name": "Where the Data Comes From - Fiscal.ai" }],
+      "source_indexes": ["data"],
+      "semantic_description": "NVIDIA Corporation Data Center Revenue (Quarterly). Bar chart of 1 series. Source: Fiscal.ai."
+    },
+    {
+      "card_id": "Kv_Wc1vPaL5yNxTEApAy",
+      "title": "NVIDIA Corporation Gross Profit Margin (Quarterly)",
+      "description": "NVIDIA Corporation Gross Profit Margin (Quarterly)'s latest value was 72.4% in Apr 2026.",
+      "exportable": true,
+      "content": {
+        "data": null,
+        "records": null,
+        "dataset": null,
+        "total_rows": 26,
+        "truncated": false
+      },
+      "nodes": [
+        { "id": "ent::nvidia_corporation::5ea55992", "name": "NVIDIA Corporation", "type": "entity" },
+        { "id": "mt::gross_margin::41c9d7aa", "name": "Gross Profit Margin", "type": "metric" }
+      ],
+      "card_type": "chart",
+      "data_freshness": { "coverage_end": "2026-04", "data_as_of": "2026-04-26", "last_updated": "2026-08-26" },
+      "relevance": "Low",
+      "webpage_url": "https://tako.com/card/Kv_Wc1vPaL5yNxTEApAy/",
+      "image_url": "https://tako.com/api/v1/image/Kv_Wc1vPaL5yNxTEApAy/",
+      "embed_url": "https://tako.com/embed/Kv_Wc1vPaL5yNxTEApAy/",
+      "sources": [{ "source_name": "Fiscal.ai", "source_index": "data" }],
+      "source_indexes": ["data"]
+    }
+  ],
+  "web_results": [
+    {
+      "title": "NVIDIA Announces Financial Results for First Quarter Fiscal 2027",
+      "url": "https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-Q1-FY2027/",
+      "snippet": "Record revenue of $81.6 billion, up 85% from a year ago. Record Data Center revenue of $75.2 billion, up 89% from a year ago.",
+      "source_name": "investor.nvidia.com",
+      "publish_date": null,
+      "citation_number": null,
+      "content": { "cost": 0.001, "truncated": false, "data": null, "records": null, "dataset": null }
+    },
+    {
+      "title": "Nvidia beats on earnings as data center growth continues",
+      "url": "https://www.cnbc.com/2026/08/25/nvidia-earnings-q1-fy2027.html",
+      "snippet": "Nvidia reported another record quarter, with data center revenue of $75.2 billion accounting for the bulk of sales. … Management guided above consensus for the July quarter.",
+      "source_name": "CNBC",
+      "publish_date": "2026-08-25T12:00:01.000Z",
+      "citation_number": null,
+      "content": { "cost": 0.001, "truncated": false, "data": null, "records": null, "dataset": null }
+    }
+  ]
+}

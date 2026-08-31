@@ -866,19 +866,33 @@ describe("worker routing", () => {
       result: {
         tools: Array<{
           name: string;
-          outputSchema?: { properties?: { web_results?: { description?: string } } };
+          outputSchema?: {
+            properties?: {
+              web_results?: {
+                description?: string;
+                items?: { properties?: { snippet?: { description?: string } } };
+              };
+            };
+          };
         }>;
       };
     };
 
-    for (const name of ["tako_search", "tako_search_advanced"]) {
+    // Both search tools serve the TYPED projected element schema, so the
+    // contract rides on `snippet` itself (the loose-wrapper fallback covers
+    // any tool that has not migrated yet).
+    const snippetDescFor = (name: string): string | undefined => {
       const tool = body.result.tools.find((t) => t.name === name);
       expect(tool, `${name} missing from tools/list`).toBeDefined();
-      const desc = tool?.outputSchema?.properties?.web_results?.description;
+      const web = tool?.outputSchema?.properties?.web_results;
+      return web?.items?.properties?.snippet?.description ?? web?.description;
+    };
+    for (const name of ["tako_search", "tako_search_advanced"]) {
+      const desc = snippetDescFor(name);
       // The three things a client cannot infer from a snippet's value alone:
       // it is query-selected rather than the page opening, it may be
       // non-contiguous, and absence is legitimate.
-      expect(desc, `${name} serves no web_results description`).toBeDefined();
+      expect(desc, `${name} serves no snippet contract`).toBeDefined();
       expect(desc).toMatch(/selected against/i);
       expect(desc).toContain(" … ");
       expect(desc).toMatch(/null/);
@@ -923,12 +937,10 @@ describe("worker routing", () => {
     expect(chatgptDesc).toBe(claudeDesc);
     expect(unknownDesc).toBe(claudeDesc);
 
-    // Promises the inline auto-render. It must NOT reference
+    // Promises the inline chart render. It must NOT reference
     // `tako_search_advanced` — opt-in since spec D1, so naming it would route
-    // models to a tool the default connection has not registered. (It named
-    // `tako_answer` before the answer fold deleted that tool; the rule is the
-    // same, and phantom_tool.test.ts enforces it generally.)
-    expect(claudeDesc).toContain("auto-renders inline");
+    // models to a tool the default connection has not registered.
+    expect(claudeDesc).toContain("rendered inline as a chart");
     expect(claudeDesc).not.toContain("tako_search_advanced");
 
     // No residue from the removed legacy deep/async machinery.

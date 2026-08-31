@@ -56,8 +56,10 @@ import {
   FREE_TIER_TOOL_NAMES,
   isToolOnSurface,
   resolveToolSet,
+  outputSchemaForSurface,
   toolAnnotationsForSurface,
 } from "./tools/_surface.js";
+import { pickDeclared } from "./tools/_pick_declared.js";
 import type { AnyToolModule, ToolContext } from "./tools/types.js";
 
 /**
@@ -266,6 +268,10 @@ export function createMcpServer(
   // registers.
   const surface = options.surface;
   const requestedToolNames = options.requestedToolNames ?? null;
+  // Resolved ONCE, and handed to every tool: `registerTool` stamps it onto
+  // the per-call context so a tool result cannot name a tool this loop did
+  // not register. Same call that drives `isToolOnSurface` below.
+  const registeredTools = resolveToolSet(surface, requestedToolNames);
 
   for (const tool of TOOL_REGISTRY) {
     // Deliberately tier-blind: the listing is auth-invariant (spec D4);
@@ -276,6 +282,7 @@ export function createMcpServer(
     registerTool(server, tool, ctx, {
       surface,
       tier,
+      registeredTools,
       // Commerce copy (billing remedies, account pointers) is allowed on
       // the generic surface for every client (spec D5); the chatgpt
       // surface never carries it — OpenAI's app guidelines ban
@@ -321,29 +328,6 @@ export function createMcpServer(
   }
 
   return server;
-}
-
-/**
- * Keep only the keys the advertised `outputSchema` actually declares.
- *
- * `registerTool` takes a `ZodRawShape`, so the SDK rebuilds our schemas as
- * STRICT `z.object`s and publishes `additionalProperties: false` — the
- * `z.looseObject` looseness we declare them with does not survive
- * registration. Any undeclared key therefore makes a spec-compliant client
- * (the official Python SDK among them) reject the whole result, text block
- * included, on a call the caller has already been billed for.
- */
-function pickDeclared(
-  schema: AnyToolModule["outputSchema"],
-  value: Record<string, unknown>,
-): Record<string, unknown> {
-  const shape = (schema as unknown as { shape?: Record<string, unknown> } | undefined)?.shape;
-  if (shape === undefined) return value;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(shape)) {
-    if (key in value) out[key] = value[key];
-  }
-  return out;
 }
 
 /**
@@ -459,6 +443,14 @@ function registerTool(
      */
     commerceCopyAllowed: boolean;
     /**
+     * The tools THIS connection registered — the resolved set, not the raw
+     * `?tools=` param. Stamped onto every `callCtx` so a tool RESULT can
+     * check whether the tool it is about to name is reachable: `?tools=`
+     * REPLACES the defaults, so a signed-in `?tools=search` connection has
+     * `tako_search` alone and tier cannot tell you that.
+     */
+    registeredTools: ReadonlySet<string>;
+    /**
      * Request origin (e.g. `https://mcp.tako.com`) used to build the
      * `resource_metadata` URL in `_meta["mcp/www_authenticate"]`
      * challenges. `undefined` in tests / non-HTTP contexts — the
@@ -524,7 +516,8 @@ function registerTool(
     }),
   };
 
-  if (tool.outputSchema !== undefined) {
+  const surfaceOutputSchema = outputSchemaForSurface(tool, options.surface);
+  if (surfaceOutputSchema !== undefined) {
     // `.shape` HERE, deliberately, even though `inputSchema` above now passes
     // the full object. The asymmetry is not an oversight and not half a
     // migration: every `outputSchema` we ship is a `z.looseObject`, so handing
@@ -533,10 +526,10 @@ function registerTool(
     // input fix exists because a tool's `.strict()` and `.refine()` were being
     // dropped; output schemas declare neither.
     //
-    // Output schemas are optional — only read tools declare them.
-    // In practice every `outputSchema` we ship is `z.object(...)`,
-    // so `.shape` is defined; if it isn't, we simply don't pass outputSchema.
-    const outputShape = (tool.outputSchema as unknown as { shape?: unknown })
+    // Output schemas are optional — only read tools declare them, and the
+    // schema is resolved PER SURFACE: the chatgpt override (widget fields)
+    // never reaches the generic listing.
+    const outputShape = (surfaceOutputSchema as unknown as { shape?: unknown })
       .shape;
     if (outputShape !== undefined) {
       config.outputSchema = outputShape;
@@ -832,6 +825,11 @@ function registerTool(
         surface: options.surface,
         tier: options.tier,
         origin: options.origin,
+        // Same resolution that decided which tools to register, for the same
+        // reason `tier` is stamped here: a tool result that names a tool this
+        // connection did not register is an instruction the model cannot
+        // follow.
+        registeredTools: options.registeredTools,
       };
       // Free-tier dispatch gate: the listing is auth-invariant (spec D4),
       // so an auth-required tool (`tako_contents`) IS listed on an
@@ -1106,11 +1104,20 @@ function registerTool(
         structuredContent?: Record<string, unknown>;
         _meta?: Record<string, unknown>;
       } = { content };
-      if (tool.outputSchema !== undefined) {
+      if (surfaceOutputSchema !== undefined) {
         // Always present when an outputSchema is advertised: the spec requires
         // it, and the official SDKs throw on its absence just as hard as on a
-        // mismatch (see structuredContentFor's LAST RESORT note).
-        result.structuredContent = structuredContentFor(tool, output);
+        // mismatch (see structuredContentFor's LAST RESORT note). Built
+        // against the SURFACE-resolved schema, so `pickDeclared` strips the
+        // chatgpt-only widget fields from `/mcp` responses by construction.
+        result.structuredContent = structuredContentFor(
+          {
+            name: tool.name,
+            outputSchema: surfaceOutputSchema,
+            ...(tool.slimStructured !== undefined ? { slimStructured: tool.slimStructured } : {}),
+          },
+          output,
+        );
       }
       if (resultMeta !== undefined && Object.keys(resultMeta).length > 0) {
         result._meta = resultMeta;

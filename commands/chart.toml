@@ -14,5 +14,5 @@ Then report, in this order:
 3. The source, and the **Open in Tako** link so the chart can be opened or embedded.
 
 If a card is `exportable: true` and you need the full rows to describe the shape of the
-series accurately, call `tako_contents` on its `webpage_url`.
+series accurately, call `tako_contents` on its `url`.
 """
