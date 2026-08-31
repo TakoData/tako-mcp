@@ -1,191 +1,177 @@
 /**
- * `tako_contents` — fetch the downloadable content behind one or more result
- * URLs (1-10 per call — see `MAX_CONTENTS_URLS` — fanned out as concurrent
- * subrequests; each URL is billed independently and one URL's failure never
- * fails the others).
- * Wraps `POST /api/v1/contents`. A Tako card URL resolves to the card's data —
- * CSV by default, or JSON via `content_format` (json_records → `records`,
- * json_compact → `dataset`); any other URL resolves to the page's extracted
- * text. Not every card is exportable: the backend's export-safe gate 403s
- * cards without exportable data, so the tool description tells the model to
- * check `content` presence first. That check is necessary, not sufficient —
- * search/answer set `content` via the lenient supports_data_export() while
- * this endpoint gates on the stricter export_safe(), so a content-bearing
- * card can still 403 (the handler maps that to a self-correcting message).
+ * `tako_contents` — fetch what is behind a result url in full: a web page's
+ * extracted text, or an exportable Tako card's data rows. Wraps
+ * `POST /api/v1/contents`, one subrequest per url, fanned out concurrently;
+ * each url is billed independently and one url's failure never fails the rest.
+ *
+ * Both result channels carry the whole payload (spec:
+ * 2026-08-26-model-facing-surface-redesign, D3). The projection and the
+ * advertised shape live in `_contents.ts`, the text rendering in
+ * `_render_markdown.ts`; the note there records what the old
+ * payload-in-structured-only split cost on the hosts that read `content`.
+ *
+ * Delivery and serialization are no longer the caller's decision. `mode` and
+ * `content_format` are gone from the input surface: every call is `inline`
+ * (the MCP-ergonomics divergence from the backend's `url` default — an agent
+ * wants to read the data, and a 5-minute presigned S3 link is 1,560 chars a
+ * model cannot use) and every card comes back as `json_compact`, projected to
+ * one `rows` shape. That is why `data`, `records`, `dataset` and `format` are
+ * gone from the output too.
+ *
  * A Tako card export returns the WHOLE card by default, up to the backend's
- * 2000-row ceiling; `max_rows` caps it lower. Both modes bill every row
- * delivered, per 1k; tako#29572 (2026-08-21) removed the row allowance, so no
- * copy here may describe a row as costless. (An inline card preview inside a
- * SEARCH response is a different, much smaller cap — see INLINE_PREVIEW_ROW_CAP
- * in _search_results.ts. Conflating the two is where the 20-row claim here came
- * from.)
- * `mode` controls only delivery, not the row count: "inline" (default) returns
- * the (capped) content in the response body — total_rows/truncated report the
- * true size — so the model can read it directly; "url" returns a short-lived
- * presigned download URL to the same capped CSV instead. The "inline" default is
- * an intentional
- * MCP-ergonomics divergence from the backend default ("url") — an agent almost
- * always wants to read the data, not hand back a link.
+ * 2,000-row ceiling; `max_rows` caps it lower. Every row delivered bills per
+ * 1,000 — tako#29572 (2026-08-21) removed the row allowance, so no copy here
+ * may describe a row as costless. An inline card preview inside a SEARCH
+ * response is a different, much smaller cap (`INLINE_PREVIEW_ROW_CAP` in
+ * `_search_results.ts`); conflating the two is where a stale 20-row claim here
+ * came from.
+ *
+ * Not every card is exportable. The backend's export gate 403s cards
+ * without exportable data, and it is STRICTER than the `exportable` flag
+ * search sets (`supports_data_export()` vs `export_safe()`), so an
+ * `exportable: true` card can still refuse — which is why the description
+ * tells the model to read the headline rather than retry.
  */
 import { z } from "zod";
 
 import { DjangoError, DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } from "../django.js";
+import { ContentsRequest, ContentsResponse } from "../generated/schemas.js";
 import {
-  ContentsDeliveryMode,
-  ContentsFormat,
-  ContentsRequest,
-  ContentsResponse,
-  TakoDataset,
-} from "../generated/schemas.js";
+  contentsOutputShape,
+  contentsUsage,
+  projectContentsItem,
+  type ContentsOutput,
+  type ProjectedContentsItem,
+} from "./_contents.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
-import { extractPassages } from "./_passages.js";
-import {
-  renderContentsText,
-  slimContentsStructured,
-  type ContentsBatchLike,
-} from "./_render_markdown.js";
+import { renderContentsText } from "./_render_markdown.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
-// No mention of `include_contents` here, and it cannot be reintroduced. The
-// parenthetical this description used to carry ("and, with include_contents:
-// true, a rows preview") named a parameter that no tool on EITHER of this tool's
-// surfaces accepts: D4 removed it from `tako_search`, and the one tool that
-// still takes it (`tako_search_advanced`) is opt-in, which
-// `phantom_tool.test.ts` forbids a default-listed tool from naming. So there is
-// no rewording that keeps the claim — after D4 a search result carries no rows
-// on any reachable path, which is exactly why this tool exists.
-const DESCRIPTION = [
-  "Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.",
-  "",
-  "Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline, never the rows themselves.",
-  "",
-  "Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.",
-  "",
-  "Web URLs always work — so this is also the fallback path when tako_search surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
-].join("\n");
-
-// Curate the input from the contract explicitly: `.pick` only the fields we
-// expose (so a new field added to ContentsRequest in the synced spec does NOT
-// silently join the MCP input surface), then re-describe them for the MCP
-// surface — including the one documented divergence (default mode → inline),
-// the `max_rows` row cap, and the `content_format` serialization.
-/** Max URLs per call. The backend takes one URL per request, so a batch
- *  fans out to N subrequests; this bounds both the Workers subrequest budget
- *  and the bill a single call can run up. */
+/** Max urls per call. The backend takes one url per request, so a batch fans
+ *  out to N subrequests; this bounds both the Workers subrequest budget and
+ *  the bill a single call can run up. */
 export const MAX_CONTENTS_URLS = 10;
+
 /**
  * Per-call ceiling on TOTAL default (caller did not set `max_chars`) web-text
- * characters across a batch, divided evenly across the URLs being fetched.
+ * characters across a batch, divided evenly across the urls being fetched.
  *
- * Single-URL calls are unaffected: `Math.min(100_000, floor(200_000 / 1))` is
+ * Single-url calls are unaffected: `Math.min(100_000, floor(250_000 / 1))` is
  * still 100_000, the existing default. The problem is purely a batch one —
- * the 100_000-per-URL default exists specifically because the backend's own
- * default (up to 1,000,000 chars / ~250k tokens) was "observed in the wild
- * and unreadable for any client" (see the `max_chars` schema comment below),
- * but that guard was written before batching existed: at `MAX_CONTENTS_URLS`
- * (10), 10 unrelated web pages defaulting to 100k chars each reconstructs the
- * exact ~250k-token blowup the 100k default was added to prevent, just
- * spread across urls instead of one. Dividing a fixed total budget across the
- * batch keeps that ceiling meaningful regardless of how many URLs a call
- * fans out to.
+ * the 100_000-per-url default exists because the backend's own default (the
+ * full page, up to 1,000,000 chars / ~250k tokens) was observed in the wild
+ * and unreadable for any client, but that guard was written before batching:
+ * at `MAX_CONTENTS_URLS` (10), ten pages defaulting to 100k each rebuilds the
+ * exact ~250k-token blowup the 100k default prevents, spread across urls.
+ * Dividing a fixed total across the batch keeps that ceiling meaningful
+ * however many urls a call fans out to.
  *
- * ⚠️ Judgment call: 250_000 is still a picked starting number, not a
- * measured one, but it's chosen to hold the total roughly flat against the
- * single-URL default rather than scale it up — a `BATCH_CHAR_BUDGET` batch
- * call costs about the same total context as one large single-URL call did
- * before batching existed, split thinner across more urls, not a bigger
- * total budget just because more urls were named. 2-URL batches are
- * unaffected (250_000 / 2 = 125_000 > the 100k single-URL default, so
- * `Math.min` below still floors at 100k); a 10-URL batch lands at 25k
- * chars/page (~6k tokens), plenty for typical news/press-release pages,
- * tight for a dense filing — which is exactly the case where a caller
- * should fetch that one url alone, use `query` (passages bypass this split
- * entirely — see fetchOne), or set `max_chars` explicitly.
+ * ⚠️ Judgment call: 250_000 is a picked starting number, not a measured one,
+ * chosen to hold the total roughly FLAT against the single-url default rather
+ * than scale it up. A 10-url batch lands at 25k chars/page (~6k tokens) —
+ * plenty for a news page, tight for a dense filing, which is exactly the case
+ * where a caller should fetch that url alone, set `query` (passages bypass
+ * this split entirely — see `fetchOne`), or set `max_chars` explicitly.
+ *
+ * It did NOT move when both channels started carrying the payload, and the
+ * reasoning matters to whoever revisits it: duplication doubles WIRE bytes,
+ * not model context — 14 of the 17 harnesses in the consensus audit feed the
+ * model exactly one channel, so chars-per-url in context are unchanged for
+ * them. Only Hermes, Cline and Eve read both, and they pay 2× on every field
+ * of every tool. Halving this to protect three hosts would thin every other
+ * host's batch fetch to 12.5k chars/page.
  *
  * `fetchOne` logs (`console.warn`, grep "batch max_chars cap bit") whenever
- * this DERIVED cap actually cuts a page — i.e. a signal for whether 250_000
- * needs to move, without waiting on someone to notice a truncated batch
- * result and file it. Tune against that once it's had traffic, not from
- * this comment's arithmetic alone.
+ * this DERIVED cap actually cuts a page — the signal for whether 250_000
+ * needs to move, rather than waiting for someone to notice a truncated batch.
  *
- * It bounds only the SILENT DEFAULT — a caller that explicitly sets
- * `max_chars` keeps that value as-is (multiplied by however many URLs they
- * batch), consistent with this tool's over-asks-fail-fast-not-silently-
- * clamped design for `max_rows` — an explicit ask is the caller's
- * deliberate, informed choice, not a default any URL count should be
- * silently overriding.
+ * It bounds only the SILENT DEFAULT: a caller that sets `max_chars` keeps that
+ * value as-is, multiplied by however many urls they batch. An explicit ask is
+ * the caller's informed choice, not a default any url count should override.
  */
 export const BATCH_CHAR_BUDGET = 250_000;
 
+// No mention of `include_contents` here, and it cannot be reintroduced: no tool
+// on either of this tool's surfaces accepts it. D4 removed it from
+// `tako_search`, and the one tool that still takes it
+// (`tako_search_advanced`) is opt-in, which `phantom_tool.test.ts` forbids a
+// default-listed tool from naming. After D4 a search result carries no rows on
+// any reachable path, which is exactly why this tool exists.
+//
+// NO "needs a signed-in connection" line. `FREE_TIER_TOOL_NAMES`
+// (`_surface.ts`) holds `tako_search` alone, so four of the five default tools
+// are auth-gated at dispatch and a sentence here would read as a property that
+// distinguishes this one. The dispatch gate states it where it applies
+// (`GENERIC_SIGN_IN_HINT`), and a search that found no card already branches on
+// reachability before naming this tool (`_search_results.ts`). #274 deleted the
+// mirror claim — "`tako_available_data` is free" — from the instructions for
+// the same reason: the credit-and-auth axis is not what a model routes on.
+//
+// NO recovery for a locked card either, beyond the precondition. "Read the
+// headline from the card's `description`" is what the 403 `modelGuidance`
+// below says, and D3 puts license-gated recovery in the result, once, where
+// the model reads it at the moment it applies. The description carries the
+// precondition; the guidance carries what to do when the precondition held and
+// the export gate refused anyway.
+//
+// NO routing sentence for "search returned web results but no card". It reads
+// as a condition ON fetching a web result, and the condition is false — you
+// fetch a page whenever you need its text, card or no card. `instructions.ts`
+// owns tool routing, and `_search_results.ts`'s zero-card guidance already
+// names this tool only when the connection can actually call it.
+const DESCRIPTION = [
+  `Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to ${MAX_CONTENTS_URLS} urls in one call — each one is billed and fails on its own.`,
+  "",
+  "Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to get back only the passages that match.",
+  "",
+  // `Best for:` last, the shape the other four default tools use (AGENTS.md's
+  // tool-description rule; compare `tako_search`).
+  "Best for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.",
+].join("\n");
+
 const inputSchema = z.object({
-  // looseArray: a host that sends one URL as a bare string, or the array as
+  // looseArray: a host that sends one url as a bare string, or the array as
   // JSON text, gets it coerced instead of a -32602. Deliberately NOT
   // `commaSeparated`: the item schema has no url format check, so splitting
   // 'https://en.wikipedia.org/wiki/Washington,_D.C.' would pass validation as
   // two urls and bill two fetches for the wrong pages. See _loose_array.ts.
+  //
+  // REQUIRED, which it could not be while the deprecated single-url `url`
+  // field existed — that field is why the handler used to carry a runtime
+  // "at least one url" guard the schema should have owned. Dropping it moved
+  // the check back into the schema: a caller that sends the old shape reads
+  // one validation error naming `urls` and retries on the same turn, which is
+  // what makes removing an alias safe on a hosted server whose clients are
+  // models rather than compiled code.
+  //
+  // The item is a plain `z.string()`, NOT `ContentsRequest.shape.url`. That
+  // generated schema carries a 150-char description asserting "A Tako card URL
+  // yields a CSV of the card's data" — false since this tool started requesting
+  // `json_compact`, and it publishes into the input schema (and from there into
+  // `registry/server.json` and `docs/TOOLS.md`) where `flattenParameters` never
+  // shows it, so no prose budget catches it. Fixing it upstream is the tako
+  // repo's schema builder; not inheriting it is this file's call. Nothing is
+  // lost as a contract link: `buildContentsBody`'s
+  // `satisfies z.input<typeof ContentsRequest>` is what breaks on a renamed or
+  // retyped `url`, and it covers the whole body rather than one field.
   urls: looseArray(
     z
-      .array(ContentsRequest.shape.url.min(1))
+      .array(z.string().min(1))
       .min(1)
       .max(MAX_CONTENTS_URLS)
-      .optional()
       .describe(
-        `The result URLs to fetch, 1-${MAX_CONTENTS_URLS} per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an \`error\` instead of a payload).`,
+        // The count and the cap live in the schema (`min`/`max` above) and the
+        // batch instruction lives in the description. What only this line can
+        // say is why batching pays.
+        "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips.",
       ),
     { field: "tako_contents.urls" },
   ),
-  // Legacy single-URL form, kept so an in-flight caller pinned to the old schema
-  // keeps working. `urls` is the documented shape.
-  //
-  // This is a HOSTED server: dropping the field breaks live connections at the
-  // moment of deploy, with no version for a client to pin and no deprecation
-  // window served. Removing it is its own change, behind traffic data showing
-  // nothing still sends it — not a rider on the D4 search split, which does not
-  // touch this tool's inputs.
-  //
-  // Not enforced as mutually exclusive on purpose: if a caller sends both,
-  // `urls` wins and `url` is ignored, which is friendlier than 400-ing a request
-  // we can serve. At least one is required — the handler rejects neither, so the
-  // runtime guard below is load-bearing again the moment `urls` is optional.
-  url: ContentsRequest.shape.url
-    .min(1)
-    .optional()
-    .describe("Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`."),
-  mode: ContentsDeliveryMode
-    .default("inline")
-    .describe('Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file.'),
-  // Serialization of a Tako card's data. Which output field carries the payload
-  // depends on this: csv→data, json_records→records, json_compact→dataset (see
-  // outputSchema/handler).
-  //
-  // DERIVED from the generated enum, minus the one value this tool cannot
-  // deliver. `itemSchema` has exactly three payload channels and card_json's
-  // payload arrives under `card_data`, which none of them holds — so offering it
-  // here would advertise a format this tool cannot return. Restore it together
-  // with a `card_data` channel on itemSchema, not before. `tako_search_advanced`
-  // DOES offer card_json: its cards carry `content` loosely, so the payload has
-  // somewhere to land there.
-  //
-  // `.exclude()` rather than a literal `z.enum([...])`: a hand-written list
-  // compiles fine when the backend renames a member, and this tool would then
-  // advertise a format the API rejects at runtime. Subtracting from the
-  // generated enum keeps the compile-time link — rename `json_compact` upstream
-  // and this line fails, which is the whole point of parsing rather than casting
-  // everywhere else in this file.
-  content_format: ContentsFormat.exclude(["card_json"])
-    .default("csv")
-    .describe(
-      "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
-    ),
-  // Expose the row cap so an agent can cap a large card, or ask for fewer rows
-  // than the default. The default is NOT 20: omitting max_rows returns the whole
-  // card up to the 2,000-row system ceiling (generated ContentsRequest), which is
-  // what the field description and the file header both now say.
-  // Applies in BOTH delivery modes (url mode is capped too — there is no
-  // uncapped export). Bound it to the backend's 2,000-row ceiling here so the
-  // cap is explicit in the discovery card and over-asks fail fast at the MCP
-  // layer instead of being silently clamped server-side.
+  // Bounded to the backend's 2,000-row ceiling here so the cap is explicit in
+  // the discovery card and an over-ask fails fast at the MCP layer instead of
+  // being silently clamped server-side. The default is NOT 20: omitting it
+  // returns the whole card up to that ceiling.
   max_rows: z
     .number()
     .int()
@@ -193,30 +179,11 @@ const inputSchema = z.object({
     .lte(2000)
     .optional()
     .describe(
-      "Tako cards only: max rows to return, in either delivery mode. Omit it to get the whole card, up to the 2,000-row system ceiling; Tako clamps a larger value to that ceiling. Rows are billed per 1,000 delivered, so lower it to spend less. Ignored for web URLs (use max_chars).",
+      "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough.",
     ),
-  // Web-text character cap, passed through to the wire. The backend default is
-  // the FULL page text (up to 1M chars ≈ 250k tokens — observed in the wild and
-  // unreadable for any client), so the HANDLER defaults it DOWN to a
-  // context-sized 100k — but only where the text reaches the model:
-  //   inline, no query → 100k, SPLIT ACROSS THE BATCH when batching (see
-  //                      BATCH_CHAR_BUDGET) so N urls defaulting to 100k each
-  //                      doesn't reconstruct the ~250k-token blowup this cap
-  //                      exists to prevent, just spread across urls instead
-  //                      of one (billing is per page regardless, so the cap
-  //                      only trims what reaches you — an explicit max_chars
-  //                      is NEVER split, only this silent default is)
-  //   inline + query   → pinned to the 1M ceiling (passages scan the FULL
-  //                      text; a capped scan would turn "term at char 300k"
-  //                      into a false "deterministic miss") — not subject to
-  //                      the batch split either, since extractPassages trims
-  //                      the final output far below whatever was fetched
-  //   url mode         → omitted (nothing reaches the model; the cap would
-  //                      truncate the downloaded FILE and, because max_chars
-  //                      is part of the backend's S3 cache key, bust every
-  //                      previously cached page)
-  // Kept .optional() with NO zod default so the handler can tell "caller
-  // asked for this cap" from "caller said nothing".
+  // Kept `.optional()` with NO zod default so `fetchOne` can tell "caller asked
+  // for this cap" from "caller said nothing" — only the second is split across
+  // a batch, and only the second is pinned to the ceiling when `query` is set.
   max_chars: z
     .number()
     .int()
@@ -224,94 +191,24 @@ const inputSchema = z.object({
     .lte(1_000_000)
     .optional()
     .describe(
-      "Web URLs only: character cap on the extracted page text (max 1,000,000 = full text). Inline fetches default to 100,000 PER URL when fetching one url, less when batching several (a shared per-call character budget split across the batch — set this explicitly to opt out and get the full 100,000, or more, per url regardless of batch size). Billing is per page regardless, so the cap only trims what reaches you, and `truncated: true` reports a cut. Raise it when you need a full long document inline. In url mode the downloaded file is the full text unless you set this (an explicit value caps the file too). Ignored when `query` is set (passages always scan the full text) and for Tako card URLs (use max_rows).",
+      "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut.",
     ),
-  // MCP-layer feature, deliberately NOT part of the wire body (the handler
-  // strips it): the worker fetches the page text and slices out the passages
-  // around matches, so a long-document fetch is one wave, not
-  // fetch → cover-page → refetch.
+  // An MCP-layer feature, deliberately NOT a wire field (`fetchOne` strips it):
+  // the Worker fetches the page text and slices out the passages around the
+  // matches, so a long-document read is one wave, not
+  // fetch → cover page → refetch.
   query: z
     .string()
     .min(1)
     .optional()
     .describe(
-      'Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query="RevPAR" against a hotel earnings page. The FULL page text is always scanned (max_chars is ignored). The `note` field summarizes the matches; a no-match note says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode.',
+      "Web pages only: return the passages around matches of this phrase instead of the whole page. The full page is always scanned, so no match means the phrase isn't there.",
     ),
 });
 
-// NOTE: The generated ContentsResponse wraps items in a nested `contents` array
-// and uses `url` for the presigned download URL, while the current tool output
-// presents a single flat item with `download_url`. These shapes are incompatible,
-// so we keep the hand-written output schema to preserve the shipped API contract
-// for MCP consumers. The raw wire is validated against the generated
-// ContentsResponse (in the handler) before it is mapped into this flat shape.
-// Minimal-envelope output: every field is omitted when it carries nothing —
-// a web-page fetch is essentially {data, cost}, matching how a model actually
-// reads it, instead of ten fields of nulls around one payload.
-const itemSchema = z.object({
-  // Passage-extraction summary (present only when `query` was used): match
-  // count + how to get the full text. Kept OUT of `data` so `data` is pure
-  // page text.
-  note: z.string().optional(),
-  // The payload — exactly one channel is present per inline call:
-  //   web page text or card csv → `data`
-  //   json_records             → `records` (one object per row)
-  //   json_compact             → `dataset` (compact columns+rows TakoDataset)
-  // All absent in "url" mode (the payload is behind download_url instead).
-  data: z.string().optional(),
-  records: z
-    .array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])))
-    .optional(),
-  // Reuses the generated schema (parse-don't-cast).
-  dataset: TakoDataset.optional(),
-  // Tako cards only: the serialization of the payload (csv / json_records /
-  // json_compact). Absent for web page text.
-  format: z.string().optional(),
-  // Tako cards only: the TRUE row count behind the returned window.
-  total_rows: z.number().optional(),
-  // Present (true) only when part of the content was cut — by the row cap,
-  // max_chars, or passage extraction. Absent means complete.
-  truncated: z.boolean().optional(),
-  // "url" mode only: presigned download link + expiry.
-  download_url: z.string().optional(),
-  expires_at: z.string().optional(),
-  // Present only when the fetched URL differs from the requested one (redirect).
-  source_url: z.string().optional(),
-  // USD actually charged for this artifact. Web text is metered per page; a
-  // Tako-card CSV bills a per-1,000-row rate on every row delivered (the free
-  // row allowance was removed in tako#29572, 2026-08-21). Surfaced so the
-  // agent can report the cost.
-  cost: z.number(),
-});
-
-type ContentItemOutput = z.infer<typeof itemSchema>;
-
-// Batch envelope. `results` is positionally aligned with the requested urls,
-// so results[i] always describes urls[i] — including the failures, which carry
-// `error` in place of a payload rather than being dropped (a compacted array
-// would silently re-map every index after the first failure).
-const outputSchema = z.object({
-  results: z.array(
-    itemSchema.extend({
-      // Which requested URL this entry is for — the array is positional, but
-      // an explicit url survives reordering and truncation downstream.
-      url: z.string(),
-      // Present INSTEAD of a payload when this URL alone failed. The other
-      // entries are unaffected.
-      error: z.string().optional(),
-    }),
-  ),
-  // Sum of the per-item costs actually charged across the batch.
-  cost: z.number(),
-});
-
-type Output = z.infer<typeof outputSchema>;
-
-/** Fetch ONE url. Throws on failure so the caller can decide whether a single
- *  URL's error degrades to an entry or fails the whole batch. */
 type Input = z.infer<typeof inputSchema>;
 
-/** One URL's failure, as text the model can act on. Prefers the
+/** One url's failure, as text the model can act on. Prefers the
  *  self-correcting `modelGuidance` any DjangoError path attaches (403/404
  *  today), so a gated card inside a batch still explains itself instead of
  *  surfacing a bare status. Gated on `DjangoError` — the base class every
@@ -320,10 +217,8 @@ type Input = z.infer<typeof inputSchema>;
  *  DjangoBadRequestError, DjangoTimeoutError, DjangoResponseParseError; see
  *  django.ts). Gating on the subclass silently dropped 404's modelGuidance
  *  and, for the rest, leaked `Django returned <status> for POST
- *  /api/v1/contents/` (the internal path) into model-visible text — the
- *  single-URL path never had this bug because an unmatched reason there
- *  re-throws whole into djangoErrorToToolResult instead of being stringified
- *  here. `body` lives on most but not all subclasses (DjangoTimeoutError and
+ *  /api/v1/contents/` (the internal path) into model-visible text. `body`
+ *  lives on most but not all subclasses (DjangoTimeoutError and
  *  DjangoResponseParseError carry no response body), hence the guard. */
 function errorText(reason: unknown): string {
   if (reason instanceof DjangoError) {
@@ -333,190 +228,180 @@ function errorText(reason: unknown): string {
     const status = reason.status !== undefined ? String(reason.status) : "transport error";
     return `Fetch failed (${status}${detail !== undefined ? `: ${detail}` : ""}).`;
   }
-  return reason instanceof Error ? reason.message : String(reason);
+  if (reason instanceof ContentsFetchError) return reason.message;
+  // Anything else is a bug, not a fetch outcome. Its message is unreviewed
+  // text on a model-visible surface, so it stays in the log.
+  console.warn(`[tako] tako_contents unexpected failure kind=${reason instanceof Error ? reason.name : typeof reason}`);
+  return "Fetch failed for this url. Retry once; if it persists, flag it to the Tako team.";
 }
 
+/** The single-url default web-text cap. `BATCH_CHAR_BUDGET` divides down from
+ *  here, so a one-url call is unaffected by the batch split. */
+export const DEFAULT_MAX_CHARS = 100_000;
+
+/** The per-url share of the batch's default character budget. */
+function perUrlCharCap(batchSize: number): number {
+  return Math.max(1, Math.floor(BATCH_CHAR_BUDGET / batchSize));
+}
+
+/** The cap a caller who set no `max_chars` gets, for a batch of this size.
+ *
+ *  Exported because `gen-registry.ts` needs the same number to build the
+ *  `docs/TOOLS.md` sample. It used to re-derive the expression by hand, so
+ *  moving `BATCH_CHAR_BUDGET` published a sample the server would not produce. */
+export function defaultMaxChars(batchSize: number): number {
+  return Math.min(DEFAULT_MAX_CHARS, perUrlCharCap(batchSize));
+}
+
+/** Our own aborts, as opposed to a transport failure or a bug. `errorText`
+ *  renders these verbatim and everything else generically, so a `TypeError`
+ *  thrown inside the projection cannot reach a model as batch entry text. */
+export class ContentsFetchError extends Error {}
+
+/**
+ * The wire body for ONE url. Exported for the `fixedInputs` drift guard, which
+ * asserts the `mode` and `content_format` rows this tool publishes are really
+ * what the handler sends — the declaration is hand-written and nothing else
+ * links it to the body.
+ *
+ * `query` never goes on the wire (the backend's extra="forbid" would 400 it);
+ * `mode` and `content_format` always do, because the backend defaults to "url"
+ * and "csv" and this tool serves neither.
+ *
+ * The effective character cap: `query` pins the ceiling so passages scan the
+ * whole page — a capped scan turns "term at char 300k" into a false
+ * "deterministic miss" — and the batch split does not apply there, since
+ * `extractPassages` trims the output far below whatever was fetched. A plain
+ * fetch with no caller cap defaults to 100k, split across the batch. An
+ * EXPLICIT `max_chars` is left untouched at any batch size.
+ */
+export function buildContentsBody(
+  url: string,
+  input: Input,
+  batchSize: number,
+): z.input<typeof ContentsRequest> & { max_chars: number } {
+  const maxChars =
+    input.query !== undefined
+      ? 1_000_000
+      : input.max_chars ?? defaultMaxChars(batchSize);
+  // `satisfies` sits on the LITERAL, not on the variable. Object-literal
+  // freshness is lost on assignment, so `const body = {…}; return body
+  // satisfies T` type-checks a key the target no longer declares — which is
+  // the drift that matters here: a backend that renames `mode` or
+  // `content_format` would keep receiving the dead key and silently serve its
+  // own "url" / "csv" defaults, and the whole one-delivery-one-serialization
+  // design rides on those two.
+  const body = {
+    url,
+    mode: "inline" as const,
+    content_format: "json_compact" as const,
+    max_chars: maxChars,
+    ...(input.max_rows !== undefined ? { max_rows: input.max_rows } : {}),
+  } satisfies z.input<typeof ContentsRequest>; // ← build-time guard: backend request drift breaks here
+  return body;
+}
+
+/** Fetch ONE url. Throws on failure so the caller can decide whether a single
+ *  url's error degrades to an entry or fails the whole batch. */
 async function fetchOne(
   url: string,
   input: Input,
   ctx: ToolContext,
   batchSize: number,
-): Promise<ContentItemOutput> {
-  // `query`/`urls` are MCP-layer knobs, NOT wire fields — strip them or the
-  // backend's extra="forbid" 400s the request. The rest conforms to the
-  // generated ContentsRequest contract (url + mode + optional max_rows).
-  const { query: passageQuery, max_chars: maxCharsAsked, urls: _urls, url: _url, ...rest } = input;
-  void _urls;
-  void _url;
-  const inline = input.mode !== "url";
-  // Effective web-text cap (see the max_chars schema comment for the full
-  // rationale): query pins the ceiling so passages scan the whole page (the
-  // BATCH_CHAR_BUDGET split doesn't apply here — extractPassages trims the
-  // final output far below whatever the backend fetches, so this branch
-  // never reaches the multi-URL blowup BATCH_CHAR_BUDGET guards against);
-  // plain inline with NO caller-set max_chars defaults to 100k, split evenly
-  // across the batch (see BATCH_CHAR_BUDGET) so a 10-URL default batch
-  // doesn't silently reconstruct the ~250k-token blowup that default exists
-  // to prevent; an EXPLICIT caller max_chars is left untouched regardless of
-  // batch size (the caller's deliberate choice, not a default); url mode
-  // sends nothing unless the caller set a cap explicitly — an undefined here
-  // both leaves the wire field off and disables the derived-truncation check
-  // below.
-  const perUrlDefaultCap = Math.max(1, Math.floor(BATCH_CHAR_BUDGET / batchSize));
-  const maxChars =
-    inline && passageQuery !== undefined
-      ? 1_000_000
-      : maxCharsAsked ?? (inline ? Math.min(100_000, perUrlDefaultCap) : undefined);
-  const body = {
-    ...rest,
-    url,
-    ...(maxChars !== undefined ? { max_chars: maxChars } : {}),
-  };
-  void (body satisfies z.input<typeof ContentsRequest>);
+): Promise<ProjectedContentsItem> {
+  const body = buildContentsBody(url, input, batchSize);
+  const maxChars = body.max_chars;
   let raw: unknown;
   try {
-    raw = await djangoPost<unknown>(
-      ctx.env,
-      ctx.token,
-      "/api/v1/contents/",
-      body,
-      { timeoutMs: 60_000 },
-    );
+    raw = await djangoPost<unknown>(ctx.env, ctx.token, "/api/v1/contents/", body, {
+      timeoutMs: 60_000,
+    });
   } catch (err) {
-    // Map the two "this URL has no exportable content" statuses to
-    // self-correcting messages so the model stops retrying and falls back
-    // to the card's preview/metadata. Per the OpenAPI contract: 403 is the
-    // export-safe gate (e.g. protected-source export); 404 is "does not
-    // exist or has no exportable data". Both are framed as the LIKELY
-    // cause — not asserted fact — since 403 in particular can have other
-    // causes (cf. _graph.ts, where a 403 on /v1/graph is an edge block,
-    // not a query problem). The backend's detail is spliced in only when
-    // extractErrorDetail recognises a structured envelope — a raw slice
-    // would flood the model text with an edge/WAF HTML block page.
+    // Map the two "this url has no exportable content" statuses to
+    // self-correcting messages so the model stops retrying and reads the card's
+    // headline instead. Per the OpenAPI contract: 403 is the export gate,
+    // 404 is "does not exist or has no exportable data". Two sentences each —
+    // verdict, then the one action (spec: guidance is two sentences per
+    // branch). Both are framed as the LIKELY cause, not asserted fact, since a
+    // 403 can have other causes. The backend's detail is spliced in only when
+    // `extractErrorDetail` recognises a structured envelope — a raw slice would
+    // flood the model with an edge/WAF HTML block page.
     //
-    // Note the 403 message does NOT claim the card lacked a `content`
-    // attribute: the search/answer adapter sets `content` via the lenient
-    // supports_data_export(), while this endpoint gates on the stricter
-    // export_safe() — so the card that lands here may well have carried
-    // one (presence is necessary for export, not sufficient).
-    // Attach a self-correcting message via `modelGuidance` and re-throw the
-    // ORIGINAL DjangoError (rather than a plain Error). registerTool then
-    // routes it through djangoErrorToToolResult, so contents 403/404 keep the
-    // same `_meta["tako/error"]` envelope (kind/status/body) every other tool
-    // emits, while the model still sees the guidance in the text channel.
-    // The guidance already splices the recognised backend detail, so
-    // djangoErrorToToolResult uses it verbatim (no second splice).
+    // The 403 message does NOT claim the card lacked a `content` attribute:
+    // search sets that via the lenient `supports_data_export()` while this
+    // endpoint gates on the stricter `export_safe()`, so the card that lands
+    // here may well have carried one.
+    //
+    // Attached via `modelGuidance` on the ORIGINAL DjangoError, re-thrown whole:
+    // `registerTool` then routes it through `djangoErrorToToolResult`, so a
+    // contents 403/404 keeps the same `_meta["tako/error"]` envelope every
+    // other tool emits while the model still reads the guidance in the text
+    // channel.
     if (err instanceof DjangoHttpError && err.status === 403) {
       const detail = extractErrorDetail(err.body);
-      err.modelGuidance = `The contents endpoint refused this export (403${detail !== undefined ? `: ${detail}` : ""}). For a Tako card this usually means the export gate rejected it as unexportable — possible even for an \`exportable: true\` card, since that flag is necessary for export but does not guarantee it. Don't retry or rephrase; use the card's title, inline preview, and chart instead. Never call tako_contents on a card whose result had \`exportable: false\` (equivalently, a missing or null \`content\` attribute).`;
+      err.modelGuidance = `Tako's export gate refused this card${detail !== undefined ? ` (${detail})` : ""}, so its rows can't be returned on any path — an \`exportable: true\` card can still land here. Read the headline value from the card's \`description\` instead of retrying.`;
       throw err;
     }
     if (err instanceof DjangoNotFoundError) {
       const detail = extractErrorDetail(err.body);
-      err.modelGuidance = `The contents endpoint found nothing downloadable at that URL (404${detail !== undefined ? `: ${detail}` : ""}). The resource may not exist or has no exportable data. Check the URL came from a search/answer result verbatim; for a Tako card, only ones whose result had \`exportable: true\` (a non-null \`content\` attribute) are exportable.`;
+      err.modelGuidance = `Nothing downloadable exists at that url${detail !== undefined ? ` (${detail})` : ""}. Check the url came verbatim from a search result, and fetch only cards marked \`exportable: true\`.`;
       throw err;
     }
     throw err;
   }
-  // Validate the raw wire response against the generated ContentsResponse so
-  // backend drift (renamed fields, restructured contents array) throws here
-  // instead of silently mapping to nulls downstream.
+  // Validate the raw wire response against the generated ContentsResponse so a
+  // restructured `contents` array throws here rather than projecting to
+  // nothing. It does NOT catch a renamed payload field: every one of them is
+  // `.optional()` on the generated `ContentItem`, so an item that lost
+  // `dataset` still parses. `projectContentsItem`'s empty-payload branch is
+  // what turns that into a readable error instead of a billed blank.
   const wireResult = ContentsResponse.safeParse(raw);
   if (!wireResult.success) {
     // Zod detail goes to the server log only — the raw issue dump is
     // upstream-echoed content and noise for the model (Safety Rules).
     logWireGuardFailure("tako_contents", "ContentsResponse", wireResult.error, raw);
-    throw new Error(
+    throw new ContentsFetchError(
       "Tako contents endpoint returned an unexpected wire shape. Retry once; if it persists, flag it to the Tako team.",
     );
   }
-  const wire = wireResult.data;
-  const item = wire.contents?.[0];
+  const item = wireResult.data.contents?.[0];
   if (!item) {
     logWireGuardFailure("tako_contents", "empty-contents", undefined, raw);
-    throw new Error(
-      "Tako contents endpoint returned no downloadable content for that URL.",
+    throw new ContentsFetchError("Tako contents endpoint returned no downloadable content for that url.");
+  }
+  const projected = projectContentsItem(item, url, {
+    ...(input.query !== undefined ? { passageQuery: input.query } : {}),
+    effectiveMaxChars: maxChars,
+  });
+  // Observability for tuning BATCH_CHAR_BUDGET (a guessed starting number —
+  // see its doc comment): only when the DERIVED default actually bit, i.e.
+  // batching drove the per-url cap below the single-url 100k default AND the
+  // page was long enough to reach it. An explicit caller cap getting cut is
+  // normal and not logged.
+  if (
+    projected.truncated === true &&
+    projected.text !== undefined &&
+    input.max_chars === undefined &&
+    input.query === undefined &&
+    defaultMaxChars(batchSize) < DEFAULT_MAX_CHARS
+  ) {
+    console.warn(
+      `[tako] tako_contents batch max_chars cap bit tool=tako_contents batch_size=${batchSize} per_url_cap=${perUrlCharCap(batchSize)}`,
     );
   }
-  // Passage extraction (web text + inline mode only): replace the full page
-  // text with the windows around the query's matches, and surface the match
-  // summary as `note`. Card payloads (content_format "csv"/"json_*") and
-  // url-mode responses (no inline data) pass through untouched. Billing is
-  // unchanged — the full text was fetched; this only slims what reaches the
-  // model. Web text is identified by a MISSING content_format (cards always
-  // carry one).
-  let dataText = item.data ?? undefined;
-  let note: string | undefined;
-  let cut = item.truncated ?? false;
-  // Derive `truncated` for capped web text: the backend's `truncated` flag
-  // is rows-only (never set on the web route), so a page cut at max_chars
-  // would otherwise arrive with no truncation signal at all — and the
-  // minimal envelope reads absence as "complete". Length AT the cap is
-  // treated as cut; the false positive (a page exactly cap-length) is
-  // vanishingly rare next to the guaranteed false "complete" on every long
-  // page. Web text is identified by a missing content_format (cards always
-  // carry one).
-  if (
-    item.content_format == null &&
-    typeof dataText === "string" &&
-    maxChars !== undefined &&
-    dataText.length >= maxChars
-  ) {
-    cut = true;
-    // Observability for tuning BATCH_CHAR_BUDGET (currently a guessed
-    // starting number, not a measured one — see its doc comment): only
-    // when the DERIVED default actually bit (batching drove the per-url
-    // cap below the single-URL 100k default) AND the page was long enough
-    // to hit it. An explicit caller max_chars getting cut is normal,
-    // expected behavior and not logged here.
-    if (maxCharsAsked === undefined && perUrlDefaultCap < 100_000) {
-      console.warn(
-        `[tako] tako_contents batch max_chars cap bit tool=tako_contents batch_size=${batchSize} per_url_cap=${perUrlDefaultCap}`,
-      );
-    }
-  }
-  if (
-    passageQuery !== undefined &&
-    item.content_format == null &&
-    typeof dataText === "string"
-  ) {
-    const extracted = extractPassages(dataText, passageQuery);
-    dataText = extracted.data;
-    note = extracted.note;
-    cut = cut || extracted.truncated;
-  }
-  // Minimal envelope: include a field only when it carries something. Key
-  // order is payload-first (note explains data, so it leads), metadata last —
-  // truncating clients then lose the trailing chrome, never the content. A
-  // web fetch is {data, cost}; url mode is {download_url, expires_at, cost};
-  // source_url only rides when the fetch was redirected off the requested url.
-  const parsed = itemSchema.safeParse({
-    ...(note !== undefined ? { note } : {}),
-    ...(dataText !== undefined ? { data: dataText } : {}),
-    ...(item.records != null ? { records: item.records } : {}),
-    ...(item.dataset != null ? { dataset: item.dataset } : {}),
-    ...(item.content_format != null ? { format: item.content_format } : {}),
-    ...(item.total_rows != null ? { total_rows: item.total_rows } : {}),
-    ...(cut ? { truncated: true } : {}),
-    ...(item.url != null ? { download_url: item.url } : {}),
-    ...(item.expires_at != null ? { expires_at: item.expires_at } : {}),
-    ...(item.source_url != null && item.source_url !== url
-      ? { source_url: item.source_url }
-      : {}),
-    cost: item.cost ?? 0,
-  });
-  if (!parsed.success) {
-    logWireGuardFailure("tako_contents", "output-normalise", parsed.error, raw);
-    throw new Error("Tako contents endpoint returned an unexpected shape.");
-  }
-  return parsed.data;
+  return projected;
 }
 
 const takoContents = {
   name: "tako_contents",
   description: DESCRIPTION,
   inputSchema,
-  outputSchema,
+  // The ADVERTISED output IS the projected shape (`_contents.ts`), typed field
+  // by field: the handler builds every key, so nothing needs a loose stub and
+  // no undeclared wire key can reach a strict client. The wire guard stays the
+  // generated `ContentsResponse` safeParse above. No per-surface variant — no
+  // widget reads this tool's output on any surface.
+  outputSchema: contentsOutputShape,
   annotations: {
     title: "Tako: Fetch Contents",
     readOnlyHint: true,
@@ -531,61 +416,61 @@ const takoContents = {
     chatgpt: { openWorldHint: false },
   },
   fixedInputs: [
-    { field: "max_chars (when omitted)", value: "min(100000, 250000 / batch size)", note: "Per-url character cap for inline web text; 1,000,000 when query is set; omitted in url mode." },
-    { field: "query", value: "(stripped from the request)", note: "Passage extraction runs in the Worker; the API has no such field." },
+    {
+      field: "mode",
+      value: '"inline"',
+      note: "The content comes back in the response to read. The API default is a presigned download link, which a model cannot use.",
+    },
+    {
+      field: "content_format",
+      value: '"json_compact"',
+      note: "One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.",
+    },
+    {
+      field: "max_chars (when omitted)",
+      value: `min(${DEFAULT_MAX_CHARS}, ${BATCH_CHAR_BUDGET} / batch size)`,
+      note: "Per-url character cap for web text; 1,000,000 when `query` is set, so passages scan the whole page.",
+    },
+    {
+      field: "query",
+      value: "(stripped from the request)",
+      note: "Passage extraction runs in the Worker; the API has no such field.",
+    },
   ],
-  async handler(input, ctx): Promise<Output> {
-    // Load-bearing, not defensive: `urls` is OPTIONAL because the deprecated
-    // `url` may carry the request instead, so the schema alone cannot reject an
-    // empty call. A caller who sends neither reaches here with nothing to fetch.
-    const targets = input.urls ?? (input.url !== undefined ? [input.url] : []);
-    if (targets.length === 0) {
-      throw new Error(
-        "tako_contents needs at least one URL: pass `urls: [\"…\"]` (1-" +
-          MAX_CONTENTS_URLS +
-          " per call).",
-      );
-    }
+  async handler(input, ctx): Promise<ContentsOutput> {
+    const targets = input.urls;
     // Fan out: the backend takes ONE url per request, so a batch is N
-    // subrequests issued concurrently. allSettled, not all — one URL's 403
-    // (a license-gated card) must not discard the pages that did resolve.
+    // subrequests issued concurrently. allSettled, not all — one url's 403 (a
+    // license-gated card) must not discard the pages that did resolve.
     const settled = await Promise.allSettled(
       targets.map((u) => fetchOne(u, input, ctx, targets.length)),
     );
-    const results = settled.map((s, i) => {
+    const results: ProjectedContentsItem[] = settled.map((s, i) => {
       const url = targets[i] as string;
-      if (s.status === "fulfilled") return { ...s.value, url };
-      return { url, cost: 0, error: errorText(s.reason) };
+      if (s.status === "fulfilled") return s.value;
+      return { url, error: errorText(s.reason), cost: 0 };
     });
-    // Every URL failed: there is no partial payload worth returning, so
-    // re-throw the first failure. That keeps the single-URL path behaving
-    // exactly as before — DjangoHttpError with its self-correcting
-    // `modelGuidance` still reaches registerTool's error envelope.
+    // Every url failed: there is no partial payload worth returning, so
+    // re-throw the first failure. That keeps the single-url path behaving as
+    // before — a DjangoHttpError with its self-correcting `modelGuidance`
+    // still reaches registerTool's error envelope.
     const firstFailure = settled.find((s) => s.status === "rejected");
     if (firstFailure !== undefined && results.every((r) => r.error !== undefined)) {
       throw (firstFailure as PromiseRejectedResult).reason;
     }
-    const parsedBatch = outputSchema.safeParse({
-      results,
-      cost: results.reduce((sum, r) => sum + (r.cost ?? 0), 0),
-    });
-    if (!parsedBatch.success) {
-      logWireGuardFailure("tako_contents", "output-normalise", parsedBatch.error, results);
-      throw new Error("Tako contents endpoint returned an unexpected shape.");
+    const parsed = contentsOutputShape.safeParse({ results, usage: contentsUsage(results) });
+    if (!parsed.success) {
+      logWireGuardFailure("tako_contents", "output-projection", parsed.error, results);
+      throw new ContentsFetchError("Tako contents endpoint returned an unexpected shape.");
     }
-    return parsedBatch.data;
+    return parsed.data;
   },
-  // The payload (page text / csv / json) reaches the model as plain text —
-  // this is where the JSON-escaping tax on 100k-char pages dies — and
-  // structuredContent keeps only the metadata. The all-optional outputSchema
-  // already validates the slim subset.
   renderText(output, _ctx) {
     void _ctx;
-    return renderContentsText(output as unknown as ContentsBatchLike);
+    return renderContentsText(output as ContentsOutput);
   },
-  slimStructured(output) {
-    return slimContentsStructured(output as unknown as ContentsBatchLike);
-  },
-} satisfies ToolModule<typeof inputSchema, Output>;
+  // No slimStructured hook: the handler's output IS the advertised shape, so
+  // `structuredContentFor`'s pickDeclared narrowing is the whole job.
+} satisfies ToolModule<typeof inputSchema, ContentsOutput>;
 
 export default takoContents;

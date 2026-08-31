@@ -429,10 +429,10 @@ export interface ToolModule<
    * whose handler returns more than it advertises: slim to machine essentials
    * (widget fields, ids, usage) so a host counting both channels does not pay
    * for everything twice. `tako_available_data`, `tako_agent` and
-   * `tako_contents` still work this way.
+   * `tako_graph_related` still work this way.
    *
-   * DO NOT ADD ONE TO A MIGRATED TOOL. `tako_search` and
-   * `tako_search_advanced` project their output explicitly, so the handler's
+   * DO NOT ADD ONE TO A MIGRATED TOOL. `tako_search`, `tako_search_advanced`
+   * and `tako_contents` project their output explicitly, so the handler's
    * return IS the advertised shape and `pickDeclared` in `mcp.ts` narrows it
    * per surface — a hook there would be a second, unvalidated shaping step.
    * Slimming is also no longer the goal on those two: 9 audited harnesses read

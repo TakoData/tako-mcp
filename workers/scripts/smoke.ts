@@ -24,7 +24,7 @@
  *        a. `tako_search "US GDP"`        — non-empty results (read-only)
  *        a2. `tako_available_data "US GDP"` — summary + a match with node_id (read-only)
  *        b. `tako_search_advanced "US GDP" include_answer` — answer text returned (read-only)
- *        c. `tako_contents {url from search}` — inline data (default) + presigned download_url (mode:"url"), both read-only
+ *        c. `tako_contents {urls}` — a card's rows in BOTH channels, then a web url's page text (read-only)
  *        d. `tako_visualize`              — creates a card (charges 1 credit)
  *   6. Native-card proxy on the card step 5d just created — all three of its
  *      routes, since the feature is only as live as its weakest one:
@@ -520,36 +520,50 @@ try {
   );
 
   // ----- c) tako_contents canary (chained from the top search result) ----
-  // Default mode is "inline": the card's CSV comes back in `data` (20-row
-  // default; raise max_rows up to 2,000), with download_url null.
-  const tcInline = await callOk(client, "tako_contents", { url: topResultUrl });
+  // One delivery, one serialization: every call is inline json_compact, so the
+  // card's rows come back as `results[0].rows` — `mode`, `content_format` and
+  // the deprecated single `url` are off the input surface. Both channels carry
+  // the payload now, so the text block is asserted too: it was a POINTER at
+  // structuredContent until the model-facing surface redesign, which is the
+  // whole result on a host that reads only `content`.
+  const tcInline = await callOk(client, "tako_contents", { urls: [topResultUrl] });
   // tako_contents is BATCHED: the payload rides in `results[]`, one entry per
-  // requested url, with `cost` at the envelope root. Reading `.data` off the
-  // root predates that change and always came back undefined.
-  const tcInlineStructured = tcInline.structuredContent as
-    | { cost?: number; results?: Array<{ data?: string | null; total_rows?: number | null; download_url?: string | null }> }
+  // requested url. Reading `.data` off the root predates that change and always
+  // came back undefined.
+  const tcStructured = tcInline.structuredContent as
+    | {
+        usage?: { total_cost_usd?: number };
+        results?: Array<{ rows?: { columns?: string[]; rows?: unknown[]; total_rows?: number } }>;
+      }
     | undefined;
-  assert(tcInlineStructured, "tako_contents (inline) missing structuredContent");
-  const tcFirst = tcInlineStructured.results?.[0];
+  assert(tcStructured, "tako_contents missing structuredContent");
+  const tcRows = tcStructured.results?.[0]?.rows;
   assert(
-    typeof tcFirst?.data === "string" && tcFirst.data.length > 0,
-    `tako_contents inline mode returned no data: ${JSON.stringify(tcInlineStructured)?.slice(0, 160)}`,
+    Array.isArray(tcRows?.columns) && tcRows.columns.length > 0 && Array.isArray(tcRows?.rows) && tcRows.rows.length > 0,
+    `tako_contents returned no rows: ${JSON.stringify(tcStructured)?.slice(0, 200)}`,
   );
-  ok(`tako_contents {url} → inline data present (${tcFirst?.total_rows ?? "?"} rows)`);
+  const tcBlocks = (tcInline.content ?? []) as Array<{ type?: string; text?: string }>;
+  const tcText = tcBlocks.find((b) => b.type === "text")?.text ?? "";
+  assert(
+    tcText.includes(JSON.stringify(tcRows)),
+    `tako_contents text channel does not carry the rows verbatim (${tcText.length} chars)`,
+  );
+  ok(
+    `tako_contents {urls} → ${tcRows.rows.length} rows of ${tcRows.total_rows ?? "?"} in both channels`,
+  );
 
-  // mode:"url" returns a short-lived presigned download link instead.
-  const tcUrl = await callOk(client, "tako_contents", { url: topResultUrl, mode: "url" });
-  const tcUrlStructured = tcUrl.structuredContent as
-    | { results?: Array<{ download_url?: string | null }> }
-    | undefined;
-  assert(tcUrlStructured, "tako_contents (url) missing structuredContent");
-  const tcUrlFirst = tcUrlStructured.results?.[0];
+  // A web url returns page text through the same shape.
+  const tcWeb = await callOk(client, "tako_contents", {
+    urls: ["https://example.com/"],
+    max_chars: 5000,
+  });
+  const tcWebFirst = (tcWeb.structuredContent as { results?: Array<{ text?: string }> } | undefined)
+    ?.results?.[0];
   assert(
-    typeof tcUrlFirst?.download_url === "string" &&
-      /^https?:\/\//.test(tcUrlFirst.download_url),
-    `tako_contents.download_url is not http(s): ${JSON.stringify(tcUrlFirst?.download_url)}`,
+    typeof tcWebFirst?.text === "string" && tcWebFirst.text.length > 0,
+    "tako_contents returned no page text for a web url",
   );
-  ok(`tako_contents {url, mode:"url"} → download_url present`);
+  ok(`tako_contents {urls: [web]} → page text present (${tcWebFirst.text.length} chars)`);
 
   // ----- d) tako_visualize canary (creates a tiny card; CHARGES 1 CREDIT) ----
   const tvResult = await callOk(client, "tako_visualize", {

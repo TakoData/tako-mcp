@@ -28,7 +28,7 @@ because the same call already searched the web for it.
 | To see what exists, or a chart | `tako_search` | Data cards with headline values and an inline chart, plus web results with excerpts |
 | The values themselves | `tako_contents` on an `exportable: true` card's url | The card's rows, up to 2,000, billed per 1k delivered |
 | To know whether *curated* data exists | `tako_available_data` | Coverage names and a `node_id` for `tako_graph_related` traversal. Free and fast, graph only |
-| Full rows, or a web page's text | `tako_contents` | A card's CSV, or any URL's extracted text (pass `query` for just the matching passages). Needs a signed-in connection |
+| Full rows, or a web page's text | `tako_contents` | A card's data rows, or any url's extracted text (pass `query` for only the matching passages). Needs a signed-in connection |
 
 `tako_search` hands you the evidence; you write the conclusion. (`include_answer: true` on the
 opt-in `tako_search_advanced` returns a prose answer instead — name `search_advanced` in the

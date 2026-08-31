@@ -7,9 +7,9 @@
       "output_schema_sha256": "f15b40a6a4c88e4f7227f7dd221b018b1a25ea0cdf6eb46dfaffe822a8b71d61"
     },
     "tako_contents": {
-      "description_sha256": "e17f146f6496cd733529490cc88cc369baf93a6faa7656740c1fb77c10ea6bc3",
-      "input_schema_sha256": "8d866a8cae9fda126bf557044ca4894fb5252c2484840a264ebbffda287389d5",
-      "output_schema_sha256": "8806aa9f0a7cda0b25a3660c69a5c8dba05b4db023ea74e42561955b3b9c6b83"
+      "description_sha256": "278336d9293351cf5a3265dd9b8f7cdc886987bc0ba6dcfbcff823d07a9004a7",
+      "input_schema_sha256": "daaa4a61b19eca41ce64203426ce515f2e2d4afad16a25c15c9a23b0b9546a4f",
+      "output_schema_sha256": "e30ca69995f4c6d58f70e19269a8e4c679cdcc582beaca8d98bc8f19e0a4f6f9"
     },
     "tako_graph_related": {
       "description_sha256": "085cae2163f05894a054e7ce3cccb86c04e5e31ae6074419df3d230e1af4f7d7",
