@@ -23,9 +23,11 @@ import {
   renderContentsText,
   renderGraphRelatedMarkdown,
   renderSearchMarkdown,
+  renderVisualizeMarkdown,
   slimAgentRunStructured,
   slimAvailableDataStructured,
   STRUCTURED_COVERAGE_ITEMS,
+  type VisualizeOutput,
 } from "./_render_markdown.js";
 import { buildSearchOutput } from "./_search_results.js";
 import type { ProjectedCard, SearchOutput, TakoCard, WebResult } from "./_search_results.js";
@@ -962,6 +964,68 @@ describe("channel parity (tako_search)", () => {
     if (usage?.total_cost_usd !== undefined) leaves.push(`$${usage.total_cost_usd}`);
     for (const leaf of leaves) {
       expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tako_visualize
+// ---------------------------------------------------------------------------
+
+const visualizeOutput = (over: Partial<VisualizeOutput> = {}): VisualizeOutput => ({
+  title: "Regional Sales",
+  url: "https://trytako.com/card/p1/",
+  embed_url: "https://trytako.com/embed/p1/?dark_mode=auto&showShare=true",
+  image_url: "https://trytako.com/api/v1/image/p1/?dark_mode=true",
+  pub_id: "p1",
+  dark_mode: true,
+  width: 900,
+  height: 720,
+  ...over,
+});
+
+describe("renderVisualizeMarkdown", () => {
+  it("renders the card and its three urls", () => {
+    const md = renderVisualizeMarkdown(visualizeOutput());
+    expect(md).toBe(
+      [
+        "## Card created — Regional Sales",
+        "",
+        "- url: https://trytako.com/card/p1/",
+        "- embed: https://trytako.com/embed/p1/?dark_mode=auto&showShare=true",
+        "- image: https://trytako.com/api/v1/image/p1/?dark_mode=true",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps the heading standalone when the backend returns no title", () => {
+    const { title: _t, ...untitled } = visualizeOutput();
+    const md = renderVisualizeMarkdown(untitled);
+    expect(md.split("\n")[0]).toBe("## Card created");
+    // The em dash is the separator, so a missing title must not leave a
+    // dangling one.
+    expect(md).not.toContain("—");
+  });
+
+  it("flattens a newline in a caller-supplied title into the heading line", () => {
+    const md = renderVisualizeMarkdown(visualizeOutput({ title: "Regional\nSales" }));
+    expect(md.split("\n")[0]).toBe("## Card created — Regional Sales");
+  });
+});
+
+// The same equivalence rule as tako_search, on a tool whose whole result is
+// four fields: a `/mcp` host that reads only `content` must still get the card
+// it just published.
+describe("channel parity (tako_visualize)", () => {
+  it("every field the generic surface advertises appears in the rendered text", () => {
+    const output = visualizeOutput();
+    const md = renderVisualizeMarkdown(output);
+    // The four widget-only fields are declared on /mcp/chatgpt alone and are
+    // render knobs, not facts about the card — the same exemption the search
+    // parity test makes for them.
+    const { pub_id: _p, dark_mode: _d, width: _w, height: _h, ...modelFacing } = output;
+    for (const value of Object.values(modelFacing)) {
+      expect(md, `text channel is missing: ${String(value)}`).toContain(String(value));
     }
   });
 });

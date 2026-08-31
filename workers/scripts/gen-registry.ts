@@ -46,7 +46,12 @@ import {
   webResultSchema,
   type Usage,
 } from "../src/tools/_search_results.js";
-import { fenceRunFor, renderContentsText, renderSearchMarkdown } from "../src/tools/_render_markdown.js";
+import {
+  fenceRunFor,
+  renderContentsText,
+  renderSearchMarkdown,
+  renderVisualizeMarkdown,
+} from "../src/tools/_render_markdown.js";
 import {
   contentsOutputShape,
   contentsUsage,
@@ -55,6 +60,9 @@ import {
   type ProjectedContentsItem,
 } from "../src/tools/_contents.js";
 import { defaultMaxChars } from "../src/tools/tako_contents.js";
+import { DEFAULT_HEIGHT } from "../src/tools/_chart_widget.js";
+import { buildVisualizeOutput } from "../src/tools/tako_visualize.js";
+import { ThinVizCard } from "../src/generated/schemas.js";
 import type { Env } from "../src/env.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
@@ -663,7 +671,6 @@ export const LEGACY_PROSE_CEILINGS: Record<
   // SearchRequest body — the generated param prose is a cross-repo fix
   // (the tako repo's schema builder), tracked for that tool's fan-out PR.
   tako_search_advanced: { description: 2611, param: 831, entry: 4860 },
-  tako_visualize: { description: 1427, param: 134, entry: 1820 },
 };
 
 export function assertProseBudget(
@@ -826,6 +833,28 @@ function buildContentsSample(tool: ToolModule): ToolSample {
   };
 }
 
+const VISUALIZE_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_visualize_sample.json");
+
+/**
+ * The `tako_visualize` sample: the fixture's create-response wire item through
+ * `buildVisualizeOutput` — the one place the advertised fields are built — and
+ * the same renderer the handler declares.
+ */
+function buildVisualizeSample(tool: ToolModule): ToolSample {
+  const wire = ThinVizCard.parse(
+    JSON.parse(readFileSync(VISUALIZE_SAMPLE_FIXTURE, "utf8")) as unknown,
+  );
+  const output = buildVisualizeOutput(wire, wire.card_id ?? "", SAMPLE_FIXTURE_ENV, DEFAULT_HEIGHT);
+  return {
+    // The generic-surface narrowing — what an `/mcp` client's model reads.
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderVisualizeMarkdown(output),
+  };
+}
+
 export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string, ToolSample> {
   const samples = new Map<string, ToolSample>();
   for (const m of modules) {
@@ -833,6 +862,7 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
     // fixture under workers/test/fixtures/.
     if (m.name === "tako_search") samples.set(m.name, buildSearchSample(m));
     if (m.name === "tako_contents") samples.set(m.name, buildContentsSample(m));
+    if (m.name === "tako_visualize") samples.set(m.name, buildVisualizeSample(m));
   }
   return samples;
 }

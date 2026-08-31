@@ -96,14 +96,21 @@ describe("tako_visualize handler", () => {
     expect(Array.isArray(body.components)).toBe(true);
     expect((body.components as unknown[]).length).toBe(2);
 
-    // card fields surfaced
-    expect(out.webpage_url).toBe("https://staging.trytako.com/charts/card_abc123");
+    // card fields surfaced. `url`, not the wire's `webpage_url`: one name for
+    // one thing across the surface (a tako_search card's `url`, the url
+    // tako_contents takes).
+    expect(out.url).toBe("https://staging.trytako.com/charts/card_abc123");
     // The id reaches the caller ONCE, as `pub_id` — the name the widget
     // resolves the chart through. `card_id` is deliberately not advertised
     // (see the outputSchema): it carried the identical string under a second,
     // internal-sounding name, which is the duplication OpenAI's review asks to
     // drop.
     expect("card_id" in out).toBe(false);
+    expect("webpage_url" in out).toBe(false);
+    // The caller's own `description` comes back from the backend unchanged, so
+    // the projection drops it: a field the model wrote one turn earlier tells
+    // it nothing.
+    expect("description" in out).toBe(false);
     // widget fields lifted for inline render
     expect(out.pub_id).toBe("card_abc123");
     expect(out.embed_url).toMatch(/^https?:\/\//);

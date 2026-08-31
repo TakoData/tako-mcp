@@ -1,0 +1,12 @@
+{
+  "__comment": "Canonical tako_visualize wire fixture for the generated docs/TOOLS.md samples (spec: 2026-08-26-model-facing-surface-redesign, 'TOOLS.md output rendering'). Shape mirrors the POST /api/v1/thin_viz/create/ response — a ThinVizCard. The nulls are on purpose: the wire carries the remaining KnowledgeCard fields empty, and the projection has to drop them. Regenerating TOOLS.md runs this through the real projection + renderer; do not hand-edit the samples there.",
+  "card_id": "eDLjXb_EieceW6BapkXJ",
+  "title": "Regional Sales",
+  "description": "Revenue by region, FY2026",
+  "webpage_url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+  "image_url": "https://tako.com/api/v1/image/eDLjXb_EieceW6BapkXJ/",
+  "embed_url": "https://tako.com/embed/eDLjXb_EieceW6BapkXJ/",
+  "card_type": "bar",
+  "visualization_data": null,
+  "embed_mode": "post"
+}

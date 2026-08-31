@@ -587,19 +587,24 @@ try {
       JSON.stringify(tvParsed.error?.issues ?? []).slice(0, 400),
   );
   const tvStructured = tvParsed.data;
-  // `pub_id`, not `card_id` — PR #210 dropped `card_id` from the schema
-  // (OpenAI app review: one id in front of the model, not two) and `pub_id`
-  // carries the identical string. Both are `.optional()` in `autoChainShape`,
-  // so the parse above cannot assert presence; these two do.
-  assert(
-    typeof tvStructured.pub_id === "string" && tvStructured.pub_id.length > 0,
-    "tako_visualize returned no pub_id",
-  );
+  // `embed_url` is `.optional()` in the advertised shape, so the parse above
+  // cannot assert presence; this does.
   assert(
     typeof tvStructured.embed_url === "string" && /^https?:\/\//.test(tvStructured.embed_url),
     `tako_visualize.embed_url is not http(s): ${JSON.stringify(tvStructured?.embed_url)}`,
   );
-  ok(`tako_visualize → pub_id ${tvStructured.pub_id}`);
+  // Read back out of `embed_url`, because this smoke runs against `/mcp`, where
+  // `pub_id` is no longer advertised: it is a widget field and the widget is
+  // suppressed on the generic surface (spec: model-facing surface redesign).
+  // The id is still THERE — `buildChartUrls` writes it into the path — and the
+  // three checks below (embed-html proxy, data-proxy shim, write gate) all
+  // need it, so recovering it beats re-adding a key no model reads.
+  const tvPubId = /\/embed\/([^/?]+)/.exec(tvStructured.embed_url)?.[1];
+  assert(
+    tvPubId !== undefined && tvPubId.length > 0,
+    `tako_visualize.embed_url carries no pub_id: ${JSON.stringify(tvStructured.embed_url)}`,
+  );
+  ok(`tako_visualize → pub_id ${tvPubId}`);
 
   // -------------------------------------------------------------------------
   // 6. Native-card proxy — the interactive/themed chart path on claude.ai
@@ -636,14 +641,14 @@ try {
   // between creating a card and its embed page existing, which is not something
   // to redden a deploy over.
   const nativeRes = await fetch(
-    `${baseUrl}/embed-html/${encodeURIComponent(tvStructured.pub_id)}`,
+    `${baseUrl}/embed-html/${encodeURIComponent(tvPubId)}`,
   );
   const nativeBody = await nativeRes.text();
   if (nativeRes.status === 404) {
     if (nativeBody.includes("chart not found")) {
       console.warn(
         `[warn] /embed-html/ → 404 "chart not found": the route is LIVE, but ` +
-          `card ${tvStructured.pub_id} did not resolve upstream (likely lag ` +
+          `card ${tvPubId} did not resolve upstream (likely lag ` +
           `between creating it and its embed page existing).`,
       );
     } else {
@@ -764,7 +769,7 @@ try {
     // which is exactly what shipped and what a user reported.
     //
     // Two distinct things to check, because either alone passes while broken:
-    const dataUrl = `${baseUrl}${EMBED_DATA_PREFIX}${tvStructured.pub_id}`;
+    const dataUrl = `${baseUrl}${EMBED_DATA_PREFIX}${tvPubId}`;
     assert(
       nativeBody.includes(dataUrl),
       `/embed-html/ served a page with no data-proxy shim pointing at ` +
@@ -854,7 +859,7 @@ try {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           ...config.params,
-          pub_id: tvStructured.pub_id,
+          pub_id: tvPubId,
           dark_mode: false,
         }),
       });

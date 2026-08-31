@@ -1,7 +1,7 @@
 /**
  * Markdown renderers for the model-facing text channel, the advertised
- * `structuredContent` shapes for the search tools, and the `slimStructured`
- * hooks the tools the redesign has not reached yet still use.
+ * `structuredContent` shapes for the tools the redesign has migrated, and the
+ * `slimStructured` hooks the ones it has not reached yet still use.
  *
  * Why markdown: the consumers of these tools are agents reading text. JSON
  * taxes prose-heavy content twice — escaped newlines/quotes inside snippets,
@@ -22,9 +22,10 @@
  * affordable (~31.9k chars -> ~13k per channel), and the "channel parity
  * (tako_search)" test asserts every projected leaf reaches the text.
  *
- * So `tako_search`, `tako_search_advanced` and `tako_contents` declare NO
- * `slimStructured` hook: their handler output IS the advertised shape, and
- * `pickDeclared` in `mcp.ts` does the per-surface narrowing.
+ * So `tako_search`, `tako_search_advanced`, `tako_contents` and
+ * `tako_visualize` declare NO `slimStructured` hook: their handler output IS
+ * the advertised shape, and `pickDeclared` in `mcp.ts` does the per-surface
+ * narrowing.
  * `tako_available_data` and `tako_agent` still slim, with the two helpers in
  * this module; `tako_graph_related` slims with its own function.
  *
@@ -152,6 +153,83 @@ export const searchAdvancedOutputShape = z.looseObject({
   ...searchCoreFields,
   ...answerFoldFields,
 });
+
+// ---------------------------------------------------------------------------
+// tako_visualize
+// ---------------------------------------------------------------------------
+
+/** The advertised structuredContent for `tako_visualize`: the card the call
+ *  just created, addressed three ways.
+ *
+ *  `embed_url` and `image_url` are declared on BOTH surfaces, which is a
+ *  deliberate departure from `tako_search`. There the six widget fields were
+ *  the TOP CARD's render plumbing and each card carried its own `url`, so
+ *  dropping them from `/mcp` cost the model nothing. Here the created card IS
+ *  the entire result: drop them and a structured-only host (Claude Code,
+ *  Codex, VS Code — 5 of the 17 audited) receives a title and no way to show
+ *  or link the chart it just published.
+ *
+ *  `pub_id`, `dark_mode`, `width` and `height` stay chatgpt-only. The widget
+ *  is their sole reader (`_chart_widget.ts` reads them off
+ *  `window.openai.toolOutput`) and it is suppressed on `/mcp`, where the chart
+ *  ships as a PNG content block instead (`widgetSuppressed` in `mcp.ts`).
+ *  `card_id` is advertised nowhere: `pub_id` carries the identical string. */
+const visualizeCoreFields = {
+  title: z
+    .string()
+    .optional()
+    .describe("The card's title: the one you supplied, or its `header` component's title."),
+  // `url`, not the wire's `webpage_url`: this is the same thing a tako_search
+  // card calls `url` and the same thing tako_contents takes as `url` (spec D2,
+  // one name for one thing).
+  url: z.string().optional().describe("The card's page on Tako."),
+  embed_url: autoChainShape.embed_url.describe("The card as a page to embed in an iframe."),
+  image_url: autoChainShape.image_url.describe("A PNG rendering of the card."),
+} as const;
+
+/** The four fields only the chatgpt widget reads. */
+const visualizeWidgetFields = {
+  pub_id: autoChainShape.pub_id,
+  dark_mode: autoChainShape.dark_mode,
+  width: autoChainShape.width,
+  height: autoChainShape.height,
+} as const;
+
+export const visualizeOutputShape = z.looseObject(visualizeCoreFields);
+
+/** chatgpt-surface variant: adds the widget fields `window.openai.toolOutput`
+ *  reads. */
+export const visualizeChatgptOutputShape = z.looseObject({
+  ...visualizeCoreFields,
+  ...visualizeWidgetFields,
+});
+
+/** The handler's full output — every field either surface can advertise. */
+export type VisualizeOutput = z.infer<typeof visualizeChatgptOutputShape>;
+
+/**
+ * The tako_visualize text channel. Four fields, so the whole document is a
+ * heading and a fact list — but it is a COMPLETE one: every field the
+ * projection emits renders here, because 9 of the audited harnesses feed the
+ * model this channel and nothing else, and on those a missing `embed_url` is
+ * a card the model cannot hand back.
+ *
+ * No `guidance`. The tool has one outcome — every failure throws — and the
+ * public-and-permanent disclosure belongs in the description, before the call,
+ * where the model can still stop. Repeating it here would bill every caller
+ * for a warning that arrives too late to act on.
+ */
+export function renderVisualizeMarkdown(o: VisualizeOutput): string {
+  const lines: string[] = [
+    o.title === undefined ? "## Card created" : `## Card created — ${oneLine(o.title)}`,
+  ];
+  const facts: string[] = [];
+  if (o.url !== undefined) facts.push(`- url: ${o.url}`);
+  if (o.embed_url !== undefined) facts.push(`- embed: ${o.embed_url}`);
+  if (o.image_url !== undefined) facts.push(`- image: ${o.image_url}`);
+  if (facts.length > 0) lines.push("", ...facts);
+  return lines.join("\n");
+}
 
 // slimSearchStructured is gone: the explicit projection means the handler's
 // output IS the advertised shape (plus request_id and, on /mcp, the widget

@@ -431,11 +431,12 @@ export interface ToolModule<
    * for everything twice. `tako_available_data`, `tako_agent` and
    * `tako_graph_related` still work this way.
    *
-   * DO NOT ADD ONE TO A MIGRATED TOOL. `tako_search`, `tako_search_advanced`
-   * and `tako_contents` project their output explicitly, so the handler's
-   * return IS the advertised shape and `pickDeclared` in `mcp.ts` narrows it
-   * per surface — a hook there would be a second, unvalidated shaping step.
-   * Slimming is also no longer the goal on those two: 9 audited harnesses read
+   * DO NOT ADD ONE TO A MIGRATED TOOL. `tako_search`, `tako_search_advanced`,
+   * `tako_contents` and `tako_visualize` project their output explicitly, so
+   * the handler's return IS the advertised shape and `pickDeclared` in
+   * `mcp.ts` narrows it per surface — a hook there would be a second,
+   * unvalidated shaping step.
+   * Slimming is also no longer the goal on those four: 9 audited harnesses read
    * `content` only while both submission targets read `structuredContent`
    * only, so each channel has to be complete on its own (see the module
    * docstring in `_render_markdown.ts`).
