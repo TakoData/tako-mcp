@@ -622,29 +622,26 @@ Annotations:
 
 Description:
 
-Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.
+Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own. Needs a signed-in connection.
 
-Best for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline, never the rows themselves.
+Fetch only cards `tako_search` marked `exportable: true`; locked cards return no rows on any path, so read the headline value from the card's `description` instead. Rows bill per 1,000 delivered — set `max_rows` when you need only the recent ones.
 
-Precondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.
-
-Web URLs always work — so this is also the fallback path when tako_search surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.
+For a long page such as a filing or an annual report, set `query` and get back only the passages that match, in one call. When a search returned web results but no fitting data card, fetch a web result's url here.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `urls` | array | no |  | The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload). |
-| `url` | string | no |  | Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`. |
-| `mode` | string ("url" \\| "inline") | no | `"inline"` | Delivery only — does NOT change the row cap: "inline" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; "url" returns a short-lived presigned download_url to the same capped file. |
-| `content_format` | string ("csv" \\| "json_records" \\| "json_compact") | no | `"csv"` | Tako cards only — serialization of the returned data: "csv" (default, returned as text in `data`), "json_records" (array of row objects in `records`), or "json_compact" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`). |
-| `max_rows` | integer | no |  | Tako cards only: max rows to return, in either delivery mode. Omit it to get the whole card, up to the 2,000-row system ceiling; Tako clamps a larger value to that ceiling. Rows are billed per 1,000 delivered, so lower it to spend less. Ignored for web URLs (use max_chars). |
-| `max_chars` | integer | no |  | Web URLs only: character cap on the extracted page text (max 1,000,000 = full text). Inline fetches default to 100,000 PER URL when fetching one url, less when batching several (a shared per-call character budget split across the batch — set this explicitly to opt out and get the full 100,000, or more, per url regardless of batch size). Billing is per page regardless, so the cap only trims what reaches you, and `truncated: true` reports a cut. Raise it when you need a full long document inline. In url mode the downloaded file is the full text unless you set this (an explicit value caps the file too). Ignored when `query` is set (passages always scan the full text) and for Tako card URLs (use max_rows). |
-| `query` | string | no |  | Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query="RevPAR" against a hotel earnings page. The FULL page text is always scanned (max_chars is ignored). The `note` field summarizes the matches; a no-match note says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode. |
+| `urls` | array | yes |  | The urls to fetch, 1-10 per call: a Tako card url or a web result url. Batch them — one call for 8 urls costs the same as 8 calls and saves 7 round trips. |
+| `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough. |
+| `max_chars` | integer | no |  | Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. |
+| `query` | string | no |  | Web pages only: return the passages around matches of this phrase instead of the whole page. The full page is always scanned, so no match means the phrase isn't there. |
 
 Fixed request inputs (the caller cannot change these):
 
-- `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for inline web text; 1,000,000 when query is set; omitted in url mode.
+- `mode` = `"inline"` — The content comes back in the response to read. The API default is a presigned download link, which a model cannot use.
+- `content_format` = `"json_compact"` — One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.
+- `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for web text; 1,000,000 when `query` is set, so passages scan the whole page.
 - `query` = `(stripped from the request)` — Passage extraction runs in the Worker; the API has no such field.
 
 Annotations:
@@ -660,58 +657,36 @@ Annotations:
   "type": "object",
   "properties": {
     "urls": {
-      "description": "The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload).",
       "minItems": 1,
       "maxItems": 10,
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1,
-        "description": "The result URL to fetch downloadable content for (a TakoCard.webpage_url or a WebResult.url). A Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted text."
-      }
-    },
-    "url": {
-      "description": "Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`.",
-      "type": "string",
-      "minLength": 1
-    },
-    "mode": {
-      "default": "inline",
-      "description": "Delivery only — does NOT change the row cap: \"inline\" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url to the same capped file.",
-      "type": "string",
-      "enum": [
-        "url",
-        "inline"
-      ]
-    },
-    "content_format": {
-      "default": "csv",
-      "description": "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
-      "type": "string",
-      "enum": [
-        "csv",
-        "json_records",
-        "json_compact"
-      ]
+        "minLength": 1
+      },
+      "description": "The urls to fetch, 1-10 per call: a Tako card url or a web result url. Batch them — one call for 8 urls costs the same as 8 calls and saves 7 round trips."
     },
     "max_rows": {
-      "description": "Tako cards only: max rows to return, in either delivery mode. Omit it to get the whole card, up to the 2,000-row system ceiling; Tako clamps a larger value to that ceiling. Rows are billed per 1,000 delivered, so lower it to spend less. Ignored for web URLs (use max_chars).",
+      "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough.",
       "type": "integer",
       "minimum": 1,
       "maximum": 2000
     },
     "max_chars": {
-      "description": "Web URLs only: character cap on the extracted page text (max 1,000,000 = full text). Inline fetches default to 100,000 PER URL when fetching one url, less when batching several (a shared per-call character budget split across the batch — set this explicitly to opt out and get the full 100,000, or more, per url regardless of batch size). Billing is per page regardless, so the cap only trims what reaches you, and `truncated: true` reports a cut. Raise it when you need a full long document inline. In url mode the downloaded file is the full text unless you set this (an explicit value caps the file too). Ignored when `query` is set (passages always scan the full text) and for Tako card URLs (use max_rows).",
+      "description": "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut.",
       "type": "integer",
       "minimum": 1,
       "maximum": 1000000
     },
     "query": {
-      "description": "Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query=\"RevPAR\" against a hotel earnings page. The FULL page text is always scanned (max_chars is ignored). The `note` field summarizes the matches; a no-match note says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode.",
+      "description": "Web pages only: return the passages around matches of this phrase instead of the whole page. The full page is always scanned, so no match means the phrase isn't there.",
       "type": "string",
       "minLength": 1
     }
-  }
+  },
+  "required": [
+    "urls"
+  ]
 }
 ```
 </details>
@@ -728,219 +703,175 @@ Annotations:
       "items": {
         "type": "object",
         "properties": {
-          "note": {
-            "type": "string"
+          "url": {
+            "type": "string",
+            "description": "The url this entry is for."
           },
-          "data": {
-            "type": "string"
-          },
-          "records": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "propertyNames": {
-                "type": "string"
-              },
-              "additionalProperties": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            }
-          },
-          "dataset": {
+          "rows": {
+            "description": "Tako cards only: the card's data.",
             "type": "object",
             "properties": {
               "columns": {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "properties": {
-                    "name": {
-                      "type": "string",
-                      "description": "Column name."
-                    },
-                    "type": {
-                      "description": "Logical column type: 'string', 'number', 'boolean', 'date', or 'datetime'. Temporal cells are ISO-8601 strings.",
-                      "type": "string",
-                      "enum": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "date",
-                        "datetime"
-                      ]
-                    },
-                    "unit": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "Structured unit for the column values, e.g. 'USD billions', '%'. Null when unitless."
-                    }
-                  },
-                  "required": [
-                    "name",
-                    "type"
-                  ],
-                  "additionalProperties": false,
-                  "description": "Typed header entry; `type` is the JSON-facing column type."
+                  "type": "string"
                 },
-                "description": "Ordered column headers (name + type), one per position in every row."
+                "description": "Column names, in row order; the unit is in the name."
               },
               "rows": {
                 "type": "array",
                 "items": {
                   "type": "array",
-                  "items": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991
-                      },
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
+                  "items": {}
                 },
-                "description": "Row data as positional cell arrays aligned to `columns` order. Cells are string/number/boolean/null; nulls are preserved, never coerced."
+                "description": "Positional cells; a missing cell is null."
               },
               "total_rows": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991,
-                "description": "True total number of rows in the underlying data, before any truncation."
-              },
-              "truncated": {
-                "type": "boolean",
-                "description": "True when `rows` was capped and total_rows exceeds the number returned."
-              },
-              "ref": {
-                "type": "string",
-                "description": "Source URL the dataset was derived from (e.g. the Tako card URL)."
-              },
-              "sources": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "name": {
-                      "type": "string",
-                      "description": "Human-readable source name (e.g. 'FRED', 'S&P Global')."
-                    },
-                    "index": {
-                      "default": "data",
-                      "type": "string",
-                      "enum": [
-                        "data",
-                        "web"
-                      ],
-                      "description": "Source index the rows came from: 'data' (Tako) or 'web'."
-                    }
-                  },
-                  "required": [
-                    "name",
-                    "index"
-                  ],
-                  "additionalProperties": false,
-                  "description": "Per-dataset provenance entry. `index` names the source index, not a\ncitation display number. It is \"data\" for every dataset today — web\ncontent never fills a dataset slot."
-                },
-                "description": "Provenance for the dataset: the sources the rows were drawn from."
-              },
-              "provenance": {
-                "default": "query",
-                "type": "string",
-                "enum": [
-                  "query",
-                  "web_extraction"
-                ],
-                "description": "How the rows were produced: 'query' (Tako data) or 'web_extraction'."
+                "description": "Rows behind the card, before `max_rows`.",
+                "type": "number"
               }
             },
             "required": [
               "columns",
-              "rows",
-              "total_rows",
-              "truncated",
-              "ref",
-              "sources",
-              "provenance"
+              "rows"
             ],
-            "additionalProperties": false,
-            "description": "The dataset-slot envelope: exact retrieved rows as positional arrays\nin `columns` order. The rows come directly from the data source; the LLM\nnever transcribes them."
+            "additionalProperties": false
           },
-          "format": {
+          "text": {
+            "description": "Web pages only: the page text.",
             "type": "string"
           },
-          "total_rows": {
-            "type": "number"
+          "note": {
+            "description": "What the `query` match found.",
+            "type": "string"
           },
           "truncated": {
+            "description": "Part of this payload was cut.",
             "type": "boolean"
           },
-          "download_url": {
-            "type": "string"
-          },
-          "expires_at": {
-            "type": "string"
-          },
           "source_url": {
+            "description": "Where a redirect landed.",
             "type": "string"
           },
           "cost": {
-            "type": "number"
-          },
-          "url": {
-            "type": "string"
+            "type": "number",
+            "description": "USD billed for this url."
           },
           "error": {
+            "description": "Why this url alone failed; the others are unaffected.",
             "type": "string"
           }
         },
         "required": [
-          "cost",
-          "url"
+          "url",
+          "cost"
         ],
-        "additionalProperties": false
-      }
+        "additionalProperties": {}
+      },
+      "description": "One per requested url, in order."
     },
-    "cost": {
-      "type": "number"
+    "usage": {
+      "type": "object",
+      "properties": {
+        "total_cost_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "total_cost_usd"
+      ],
+      "additionalProperties": {},
+      "description": "What this request cost."
     }
   },
   "required": [
     "results",
-    "cost"
+    "usage"
   ],
   "additionalProperties": false
 }
 ```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "results": [
+    {
+      "url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+      "rows": {
+        "columns": [
+          "Timestamp",
+          "Data Center Total Revenues (Normalized) (USD)",
+          "Gaming Total Revenues (Normalized) (USD)"
+        ],
+        "rows": [
+          [
+            "2025-10-26T00:00:00+00:00",
+            57006000000,
+            4265000000
+          ],
+          [
+            "2026-01-25T00:00:00+00:00",
+            65873000000,
+            null
+          ],
+          [
+            "2026-04-26T00:00:00+00:00",
+            75246000000,
+            4483000000
+          ]
+        ],
+        "total_rows": 26
+      },
+      "truncated": true,
+      "cost": 0.0042
+    },
+    {
+      "url": "https://example.com/newsroom/data-center-record",
+      "text": "PRESS RELEASE\nApril 26, 2026\n\n# Data Center revenue sets another record\n\nData Center revenue of $75.2 billion was up 14% from the prior quarter and up 32% from a year ago. Gaming revenue of $4.5 billion was up 5% from a year ago.\n\n\"Demand for accelerated computing continued to outpace supply through the quarter,\" the company said.",
+      "cost": 0.001
+    }
+  ],
+  "usage": {
+    "total_cost_usd": 0.0052
+  }
+}
+```
+
+`content[0].text`:
+
+````markdown
+## Contents (2 urls)
+
+### 1. https://tako.com/card/eDLjXb_EieceW6BapkXJ/
+
+```json
+{"columns":["Timestamp","Data Center Total Revenues (Normalized) (USD)","Gaming Total Revenues (Normalized) (USD)"],"rows":[["2025-10-26T00:00:00+00:00",57006000000,4265000000],["2026-01-25T00:00:00+00:00",65873000000,null],["2026-04-26T00:00:00+00:00",75246000000,4483000000]],"total_rows":26}
+```
+
+- truncated · cost: $0.0042
+
+### 2. https://example.com/newsroom/data-center-record
+
+```
+PRESS RELEASE
+April 26, 2026
+
+# Data Center revenue sets another record
+
+Data Center revenue of $75.2 billion was up 14% from the prior quarter and up 32% from a year ago. Gaming revenue of $4.5 billion was up 5% from a year ago.
+
+"Demand for accelerated computing continued to outpace supply through the quarter," the company said.
+```
+
+- cost: $0.001
+
+usage: $0.0052
+````
 </details>
 
 ### tako_graph_related

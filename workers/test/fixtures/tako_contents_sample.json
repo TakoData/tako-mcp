@@ -1,0 +1,41 @@
+{
+  "__comment": "Canonical tako_contents wire fixture for the generated docs/TOOLS.md samples (spec: 2026-08-26-model-facing-surface-redesign, 'TOOLS.md output rendering'). One entry per requested url, each `item` shaped as POST /api/v1/contents returns it in contents[0]. Two urls on purpose — an exportable Tako card and a web page — so one sample shows both payload kinds and the batch envelope. The card's dataset carries a null cell, which is why the tool asks for json_compact instead of the cheaper CSV. Regenerating TOOLS.md runs this through the real projection + renderer; do not hand-edit the samples there.",
+  "urls": [
+    {
+      "url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+      "item": {
+        "content_format": "json_compact",
+        "dataset": {
+          "columns": [
+            { "name": "Timestamp", "type": "datetime", "unit": null },
+            { "name": "Data Center Total Revenues (Normalized)", "type": "number", "unit": "USD" },
+            { "name": "Gaming Total Revenues (Normalized) (USD)", "type": "number", "unit": "USD" }
+          ],
+          "rows": [
+            ["2025-10-26T00:00:00+00:00", 57006000000, 4265000000],
+            ["2026-01-25T00:00:00+00:00", 65873000000, null],
+            ["2026-04-26T00:00:00+00:00", 75246000000, 4483000000]
+          ],
+          "total_rows": 26,
+          "truncated": true,
+          "ref": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+          "sources": [{ "name": "Fiscal.ai", "index": "data" }],
+          "provenance": "query"
+        },
+        "total_rows": 26,
+        "truncated": true,
+        "cost": 0.0042,
+        "source_url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/"
+      }
+    },
+    {
+      "url": "https://example.com/newsroom/data-center-record",
+      "item": {
+        "content_format": null,
+        "data": "PRESS RELEASE\nApril 26, 2026\n\n# Data Center revenue sets another record\n\nData Center revenue of $75.2 billion was up 14% from the prior quarter and up 32% from a year ago. Gaming revenue of $4.5 billion was up 5% from a year ago.\n\n\"Demand for accelerated computing continued to outpace supply through the quarter,\" the company said.",
+        "cost": 0.001,
+        "source_url": "https://example.com/newsroom/data-center-record"
+      }
+    }
+  ]
+}

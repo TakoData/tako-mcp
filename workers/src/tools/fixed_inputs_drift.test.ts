@@ -37,6 +37,7 @@ import { describe, expect, it } from "vitest";
 
 import { TOOL_REGISTRY } from "./_registry.js";
 import tako_agent, { buildAgentBody } from "./tako_agent.js";
+import tako_contents, { buildContentsBody } from "./tako_contents.js";
 import tako_search, { buildSearchBody } from "./tako_search.js";
 
 type FixedInput = {
@@ -84,6 +85,22 @@ const CASES: ReadonlyArray<{
     name: tako_agent.name,
     fixedInputs: tako_agent.fixedInputs,
     body: () => buildAgentBody(tako_agent.inputSchema.parse({ query: "US GDP" })),
+  },
+  {
+    name: tako_contents.name,
+    fixedInputs: tako_contents.fixedInputs,
+    // batchSize 1, which is the `max_chars (when omitted)` row's own case:
+    // min(100000, 250000 / 1) → the 100k single-url default. That row is not
+    // checkable (its value is an expression, not JSON), but the two rows that
+    // ARE — `mode` and `content_format` — are the ones this tool decides on the
+    // caller's behalf, so a silent revert to the backend's "url"/"csv"
+    // defaults would publish a doc claim the server no longer honors.
+    body: () =>
+      buildContentsBody(
+        "https://tako.com/card/abc",
+        tako_contents.inputSchema.parse({ urls: ["https://tako.com/card/abc"] }),
+        1,
+      ),
   },
 ];
 

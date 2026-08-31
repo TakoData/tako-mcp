@@ -746,9 +746,19 @@ describe("assertProseBudget", () => {
     );
   });
 
-  // The ratchet. `tako_contents` is a real row; the numbers below are read from
-  // the map rather than restated, so re-baselining a row cannot make these lie.
-  const legacyName = "tako_contents";
+  // The ratchet. Both the row's NAME and its numbers are read from the map
+  // rather than restated: re-baselining a row cannot make these lie, and the
+  // fan-out PR that deletes a row does not have to come back and repoint these
+  // tests. Naming one row here broke this file the first time a fan-out landed
+  // — `tako_contents` was the hardcoded pick, and deleting its row (which is
+  // exactly what a migration is supposed to do) failed three tests that have
+  // nothing to do with that tool.
+  const legacyNames = Object.keys(LEGACY_PROSE_CEILINGS).sort();
+  // When the last row goes, every tool is migrated and the ratchet is dead
+  // code — delete it and this block together rather than leaving assertions
+  // that silently cover nothing.
+  expect(legacyNames.length, "LEGACY_PROSE_CEILINGS is empty — delete the ratchet and these tests").toBeGreaterThan(0);
+  const legacyName = legacyNames[0] as string;
   const ceiling = LEGACY_PROSE_CEILINGS[legacyName]!;
 
   it("passes a legacy tool sitting exactly at its ceiling", () => {

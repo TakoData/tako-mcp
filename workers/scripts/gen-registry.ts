@@ -46,7 +46,15 @@ import {
   webResultSchema,
   type Usage,
 } from "../src/tools/_search_results.js";
-import { fenceRunFor, renderSearchMarkdown } from "../src/tools/_render_markdown.js";
+import { fenceRunFor, renderContentsText, renderSearchMarkdown } from "../src/tools/_render_markdown.js";
+import {
+  contentsOutputShape,
+  contentsUsage,
+  projectContentsItem,
+  type ContentsWireItem,
+  type ProjectedContentsItem,
+} from "../src/tools/_contents.js";
+import { BATCH_CHAR_BUDGET } from "../src/tools/tako_contents.js";
 import type { Env } from "../src/env.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
@@ -612,7 +620,6 @@ export const LEGACY_PROSE_CEILINGS: Record<
   // tool's fan-out PR lands the rewrite.
   tako_agent: { description: 448, param: 489, entry: 1134 },
   tako_available_data: { description: 2937, param: 484, entry: 4153 },
-  tako_contents: { description: 1097, param: 711, entry: 3630 },
   tako_graph_related: { description: 1262, param: 150, entry: 1929 },
   // Re-baselined after #273 folded tako_answer in and exposed the whole
   // SearchRequest body — the generated param prose is a cross-repo fix
@@ -732,12 +739,41 @@ function buildSearchSample(tool: ToolModule): ToolSample {
   };
 }
 
+const CONTENTS_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_contents_sample.json");
+
+/**
+ * The `tako_contents` sample: the fixture's per-url wire items through the real
+ * projection and renderer. Two urls, so one sample shows a Tako card's rows, a
+ * web page's text, and the batch envelope.
+ *
+ * `effectiveMaxChars` is derived the way `fetchOne` derives it rather than
+ * pinned, so the sample keeps telling the truth if `BATCH_CHAR_BUDGET` moves.
+ */
+function buildContentsSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(CONTENTS_SAMPLE_FIXTURE, "utf8")) as {
+    urls: Array<{ url: string; item: ContentsWireItem }>;
+  };
+  const effectiveMaxChars = Math.min(100_000, Math.floor(BATCH_CHAR_BUDGET / raw.urls.length));
+  const results: ProjectedContentsItem[] = raw.urls.map(({ url, item }) =>
+    projectContentsItem(item, url, { effectiveMaxChars }),
+  );
+  const output = contentsOutputShape.parse({ results, usage: contentsUsage(results) });
+  return {
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderContentsText(output),
+  };
+}
+
 export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string, ToolSample> {
   const samples = new Map<string, ToolSample>();
   for (const m of modules) {
     // One builder per migrated tool; fan-out PRs add theirs here with a
     // fixture under workers/test/fixtures/.
     if (m.name === "tako_search") samples.set(m.name, buildSearchSample(m));
+    if (m.name === "tako_contents") samples.set(m.name, buildContentsSample(m));
   }
   return samples;
 }

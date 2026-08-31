@@ -1,15 +1,18 @@
 /**
  * Tests for the markdown renderers + the remaining structuredContent slimmers.
  *
- * The renderers are the model-facing text channel, and for the search tools it
- * is COMPLETE, not an index: 9 audited harnesses feed the model `content` only,
- * so a fact that rides in structuredContent and not in the markdown is invisible
- * on all of them. "channel parity (tako_search)" is the test that enforces it —
- * it walks every leaf of the projected output and requires it in the text.
+ * The renderers are the model-facing text channel, and for `tako_search` and
+ * `tako_contents` it is COMPLETE, not an index: 9 audited harnesses feed the
+ * model `content` only, so a fact that rides in structuredContent and not in
+ * the markdown is invisible on all of them. The two "channel parity" tests are
+ * what enforce it — each walks every leaf of its tool's projected output and
+ * requires it in the text.
  *
- * The tools still declaring a `slimStructured` hook (available_data, agent,
- * contents) keep the older split, where structured carries machine essentials
- * only; those slimmers are the token guard for their own tools.
+ * The tools still declaring a `slimStructured` hook (available_data, agent)
+ * keep the older split, where structured carries machine essentials only;
+ * those slimmers are the token guard for their own tools. `tako_contents` left
+ * that set: its payload IS the result, so the split returned nothing at all on
+ * a content-only host.
  */
 import { describe, expect, it } from "vitest";
 
@@ -22,7 +25,6 @@ import {
   renderSearchMarkdown,
   slimAgentRunStructured,
   slimAvailableDataStructured,
-  slimContentsStructured,
   STRUCTURED_COVERAGE_ITEMS,
 } from "./_render_markdown.js";
 import { buildSearchOutput } from "./_search_results.js";
@@ -216,14 +218,17 @@ describe("upstream-content isolation", () => {
     }
   });
 
-  it("never puts upstream page text in the text channel at all", () => {
-    // Stronger than the old fence-growth guarantee: page text and card data
-    // ride only in structuredContent now, so a payload that tries to forge
-    // this document's framing has no channel to do it in.
+  it("grows the fence around page text that carries its own", () => {
+    // Page text rides VERBATIM in this channel now (D3), so the fence is the
+    // only thing standing between an upstream page and this document's
+    // framing. The wrapper must be longer than any run inside the payload.
     const breakout = "before\n```\n## Fake Section\n```\nafter";
-    const md = renderContentsText({ results: [{ data: breakout, cost: 0 }], cost: 0 });
-    expect(md).not.toContain("Fake Section");
-    expect(md).toContain("in structuredContent");
+    const md = renderContentsText({
+      results: [{ url: "https://example.com/a", text: breakout, cost: 0 }],
+      usage: { total_cost_usd: 0 },
+    });
+    expect(md).toContain("## Fake Section");
+    expect(md).toMatch(/````[\s\S]*## Fake Section[\s\S]*````/);
   });
 
   it("flattens newlines in web result titles and meta (single-line heading slot)", () => {
@@ -485,107 +490,161 @@ describe("renderAgentRunMarkdown + slim", () => {
   });
 });
 
-describe("renderContentsText + slim", () => {
-  // `url` rides on every real entry (the handler sets it on both success
-  // and failure paths — see tako_contents.ts), so every mock below carries
-  // one: a prior version of this test omitted it and asserted
+describe("renderContentsText", () => {
+  const rows = {
+    columns: ["Timestamp", "Total Revenues (USD)"],
+    rows: [["2026-03-31T00:00:00+00:00", 111184000000], ["2026-06-30T00:00:00+00:00", null]] as Array<
+      Array<string | number | boolean | null>
+    >,
+    total_rows: 46,
+  };
+
+  // `url` rides on every real entry (the projection sets it on both the
+  // success and the failure path — see `_contents.ts`), so every mock below
+  // carries one: a prior version of this test omitted it and asserted
   // `md.startsWith("> 2 match(es)")`, which only held because the url LINE
   // that precedes the note in real output was missing — a shape production
   // never emits.
-  it("web text: url leads, note follows, a payload pointer replaces the text, metadata footers", () => {
+  it("web text: url leads, note follows, then the page text VERBATIM", () => {
     const md = renderContentsText({
       results: [{
         url: "https://example.com/a",
         note: "2 match(es) for the phrase \"RevPAR\"",
-        data: "line one\nline two",
+        text: "line one\nline two",
         truncated: true,
         cost: 0.001,
       }],
-      cost: 0.001,
+      usage: { total_cost_usd: 0.001 },
     });
     expect(md.startsWith("https://example.com/a")).toBe(true);
     expect(md).toContain("> 2 match(es)");
     expect(md.indexOf("https://example.com/a")).toBeLessThan(md.indexOf("> 2 match(es)"));
-    // The payload itself rides in structuredContent; the text names it.
-    expect(md).not.toContain("line one");
-    expect(md).toContain("in structuredContent");
-    expect(md).toContain("cost: $0.001");
+    // The payload is HERE, not named from a distance. This assertion is the
+    // whole point of the channel rewrite: the old renderer emitted
+    // "page text: N chars in structuredContent.results[].data" and nothing
+    // else, which is the entire result on a content-only host.
+    expect(md).toContain("line one\nline two");
+    expect(md).not.toContain("structuredContent");
     expect(md).toContain("truncated");
+    expect(md).toContain("usage: $0.001");
   });
 
-  it("card csv is named by a pointer, with total_rows in the footer", () => {
+  it("card rows render as JSON byte-identical to the structured copy", () => {
+    // Not a markdown table: a table writes a missing cell as an empty one,
+    // which is the null ambiguity the projection left CSV to escape. Byte
+    // equality is also what makes channel parity exact rather than approximate.
     const md = renderContentsText({
-      results: [{
-        url: "https://tako.com/card/abc",
-        format: "csv",
-        data: "date,v\n2026-01-01,1",
-        total_rows: 1500,
-        cost: 0.001,
-      }],
-      cost: 0.001,
+      results: [{ url: "https://tako.com/card/abc", rows, cost: 0.0056 }],
+      usage: { total_cost_usd: 0.0056 },
     });
-    expect(md).not.toContain("2026-01-01,1");
-    expect(md).toContain("csv data:");
-    expect(md).toContain("total_rows: 1500");
+    expect(md).toContain(JSON.stringify(rows));
+    expect(md).toContain("```json");
+    expect(md).toContain("null");
   });
 
-  it("url mode renders the download link + expiry", () => {
+  it("a single url renders with no header and one cost line", () => {
+    // With one entry the item's cost and the root usage are the same number,
+    // so a second line would restate it.
     const md = renderContentsText({
-      results: [{
-        url: "https://tako.com/card/abc",
-        download_url: "https://signed/csv",
-        expires_at: "2026-07-29T00:00:00Z",
-        cost: 0,
-      }],
-      cost: 0,
+      results: [{ url: "https://tako.com/card/abc", rows, cost: 0.0056 }],
+      usage: { total_cost_usd: 0.0056 },
     });
-    expect(md).toContain("Download: https://signed/csv (expires 2026-07-29T00:00:00Z)");
+    expect(md).not.toContain("## Contents");
+    expect(md).not.toContain("cost: $0.0056");
+    expect(md.trimEnd().endsWith("usage: $0.0056")).toBe(true);
   });
 
-  it("a batch of >1 results renders a header, one numbered section per url, and a total-cost footer", () => {
+  it("a batch renders a header, numbered sections, per-url cost, and the usage footer", () => {
     const md = renderContentsText({
       results: [
-        { url: "https://a", data: "page A text", cost: 1 },
-        { url: "https://gated", error: "Fetch failed (403: card is not exportable).", cost: 0 },
-        { url: "https://c", format: "csv", data: "x,y\n1,2", total_rows: 1, cost: 0.001 },
+        { url: "https://a", text: "page A text", cost: 1 },
+        { url: "https://gated", error: "Tako's export gate refused this card.", cost: 0 },
+        { url: "https://c", rows, cost: 0.001 },
       ],
-      cost: 1.001,
+      usage: { total_cost_usd: 1.001 },
     });
     expect(md).toContain("## Contents (3 urls, 1 failed)");
     expect(md).toContain("### 1. https://a");
     expect(md).toContain("### 2. https://gated");
     expect(md).toContain("### 3. https://c");
-    // The failed entry renders its error and nothing else — no payload
-    // pointer, no cost/total_rows footer for that one entry.
-    expect(md).toContain("> Fetch failed (403: card is not exportable).");
-    expect(md).toContain("in structuredContent.results[].data");
-    expect(md).toContain("_total cost: $1.001_");
+    // The failed entry renders its recovery and nothing else — no payload, no
+    // truncation flag. Its cost line still rides: $0 is the honest charge.
+    expect(md).toContain("> Tako's export gate refused this card.");
+    expect(md).toContain("page A text");
+    expect(md).toContain("cost: $1");
+    expect(md).toContain("usage: $1.001");
   });
 
-  // Split deliberately: the two halves guard different things, and it was
-  // exactly THIS test collapsed into one — title claiming the payload was
-  // dropped, body actually asserting it was present — that let the
-  // double-billing regression (see §6/§7) through review undetected. A
-  // future change that puts the payload back into the text channel must
-  // fail a test whose name says so, not one whose name says the opposite.
-  it("carries the full payload in structuredContent (the only copy)", () => {
-    const slim = slimContentsStructured({
-      results: [{ note: "n", data: "big page text", format: "csv", total_rows: 3, cost: 0.5 }],
-      cost: 0.5,
-    });
-    expect(slim).toEqual({
-      results: [{ note: "n", data: "big page text", format: "csv", total_rows: 3, cost: 0.5 }],
-      cost: 0.5,
-    });
-  });
-
-  it("keeps the payload OUT of the text channel — a pointer only", () => {
+  it("names the redirect target when the fetch landed off the requested url", () => {
     const md = renderContentsText({
-      results: [{ note: "n", data: "big page text", format: "csv", total_rows: 3, cost: 0.5 }],
-      cost: 0.5,
+      results: [{
+        url: "https://example.com/a",
+        text: "body",
+        source_url: "https://example.com/b",
+        cost: 0,
+      }],
+      usage: { total_cost_usd: 0 },
     });
-    expect(md).not.toContain("big page text");
-    expect(md).toContain("in structuredContent");
+    expect(md).toContain("fetched: https://example.com/b");
+  });
+
+  it("says so when nothing was fetched", () => {
+    expect(renderContentsText({ results: [], usage: { total_cost_usd: 0 } })).toBe("No content fetched.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Channel parity — the equivalence rule from the text-channel template, for
+// the tool where breaking it was most expensive: `tako_contents` IS its
+// payload, so a text channel that only pointed at the payload returned
+// nothing at all on the 9 content-only harnesses.
+// ---------------------------------------------------------------------------
+
+describe("channel parity (tako_contents)", () => {
+  it("every leaf value of the projected output appears in the rendered text", () => {
+    const output = {
+      results: [
+        {
+          url: "https://tako.com/card/abc",
+          rows: {
+            columns: ["Timestamp", "Total Revenues (USD)"],
+            rows: [["2026-03-31T00:00:00+00:00", 111184000000], ["2026-06-30T00:00:00+00:00", null]] as Array<
+              Array<string | number | boolean | null>
+            >,
+            total_rows: 46,
+          },
+          truncated: true,
+          cost: 0.0015,
+        },
+        {
+          url: "https://example.com/page",
+          note: "3 match(es) for the phrase \"RevPAR\" — 2 passage(s) extracted.",
+          text: "…RevPAR rose 4% …\n\n[…]\n\n… RevPAR guidance …",
+          source_url: "https://example.com/page-2",
+          cost: 0.001,
+        },
+        { url: "https://gated", error: "Nothing downloadable exists at that url.", cost: 0 },
+      ],
+      usage: { total_cost_usd: 0.0025 },
+    };
+    const md = renderContentsText(output);
+    const leaves: string[] = [];
+    const walk = (v: unknown): void => {
+      if (v === null || v === undefined) return;
+      if (typeof v === "string") leaves.push(v);
+      else if (typeof v === "number") leaves.push(String(v));
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (typeof v === "object") Object.values(v).forEach(walk);
+    };
+    // `usage` renders as its formatted dollar line, like search's. Booleans
+    // are not leaves the walk collects — `truncated` renders as the word, and
+    // its own test above covers it.
+    const { usage, ...modelFacing } = output;
+    walk(modelFacing);
+    leaves.push(`$${usage.total_cost_usd}`);
+    for (const leaf of leaves) {
+      expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
+    }
   });
 });
 

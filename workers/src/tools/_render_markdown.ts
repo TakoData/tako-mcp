@@ -46,6 +46,7 @@ import { z } from "zod";
 // controls. Defined next to the summary builder that needs the same guarantee,
 // so the two channels cannot drift into flattening differently.
 import { oneLine } from "./_available_data.js";
+import type { ContentsOutput, ProjectedContentsItem } from "./_contents.js";
 import type { GraphRelatedFacade } from "./_graph.js";
 import {
   autoChainShape,
@@ -1035,96 +1036,62 @@ export function renderAgentRunMarkdown(run: AgentRunLike): string {
 }
 
 // ---------------------------------------------------------------------------
-// tako_contents
+// tako_contents text channel — COMPLETE, not an index (spec, text-channel
+// template). It used to emit a POINTER at the payload
+// ("page text: 2120 chars in structuredContent.results[].data", 150 chars
+// against 2,284 structured, measured on prod 2026-08-30), which is the whole
+// result on the 9 harnesses that feed the model `content` only.
+//
+// Card rows render as `JSON.stringify(item.rows)` — BYTE-IDENTICAL to what
+// `structuredContent` carries, since both serialize the same projected object
+// in the same key order. That is what makes channel parity exact here rather
+// than approximate, and it is why the rows are not re-rendered as a markdown
+// table: a table writes a missing cell as an empty one, which is the null
+// ambiguity the projection switched off CSV to escape (see `_contents.ts`).
 // ---------------------------------------------------------------------------
 
-export interface ContentsOutputLike {
-  note?: string | undefined;
-  data?: string | undefined;
-  records?: Array<Record<string, unknown>> | undefined;
-  dataset?: unknown;
-  format?: string | undefined;
-  total_rows?: number | undefined;
-  truncated?: boolean | undefined;
-  download_url?: string | undefined;
-  expires_at?: string | undefined;
-  source_url?: string | undefined;
-  cost: number;
-  [key: string]: unknown;
-}
-
-/** The batch envelope: one entry per requested url, positionally aligned. */
-export interface ContentsBatchLike {
-  results: ContentsOutputLike[];
-  cost: number;
-  [key: string]: unknown;
-}
-
-/** structuredContent for tako_contents: the full batch INCLUDING each item's
- *  payload. This is the ONLY copy — `renderContentsText` emits a pointer, not
- *  a duplicate, for the same reason search cards get `rowsPointer()`. */
-export function slimContentsStructured(o: ContentsBatchLike): Record<string, unknown> {
-  return { ...(o as unknown as Record<string, unknown>) };
-}
-
-/** One line naming the payload that rode in structuredContent, in place of a
- *  second copy of it. */
-function payloadPointer(o: ContentsOutputLike): string | undefined {
-  if (typeof o.data === "string" && o.data !== "") {
-    const kind = o.format === undefined ? "page text" : `${o.format} data`;
-    return `${kind}: ${o.data.length} chars in structuredContent.results[].data`;
+/** One requested url: anchor, the note that explains the payload, the payload,
+ *  then the chrome — the same order the projected object uses, so a host that
+ *  truncates either channel loses the same thing. */
+function renderContentsItem(item: ProjectedContentsItem, showCost: boolean): string {
+  const blocks: string[] = [oneLine(item.url)];
+  // A failed url renders as its reason and nothing else; the other entries are
+  // untouched, so the model reads N-1 payloads plus one recovery.
+  if (item.error !== undefined) {
+    blocks.push(`> ${oneLine(item.error)}`);
+  } else {
+    if (item.note !== undefined) blocks.push(`> ${oneLine(item.note)}`);
+    if (item.rows !== undefined) blocks.push(fenced(JSON.stringify(item.rows), "json"));
+    // Page text is upstream content rendered verbatim into our own document —
+    // fenced so a page ending in "## Contents (1 url)" cannot forge the framing.
+    if (item.text !== undefined) blocks.push(fenced(item.text));
   }
-  if (Array.isArray(o.records)) {
-    return `${o.records.length} records in structuredContent.results[].records`;
-  }
-  if (o.dataset !== undefined) return "dataset in structuredContent.results[].dataset";
-  return undefined;
-}
-
-function renderContentsItem(o: ContentsOutputLike): string {
-  const blocks: string[] = [];
-  // A failed url in a batch renders as its error and nothing else — the other
-  // entries are untouched, so the model reads N-1 payloads plus one reason.
-  if (typeof o.error === "string") {
-    return `${oneLine(String(o.url ?? ""))}\n\n> ${o.error}`;
-  }
-  if (o.url !== undefined) blocks.push(oneLine(String(o.url)));
-  if (o.note !== undefined) blocks.push(`> ${o.note}`);
-
-  if (o.download_url !== undefined) {
-    blocks.push(
-      `Download: ${o.download_url}${o.expires_at !== undefined ? ` (expires ${o.expires_at})` : ""}`,
-    );
-  }
-
-  // The payload rides in structuredContent, NOT here. Emitting it in both
-  // channels would ship the same page text twice on every call — up to 10
-  // urls x a 100k-char inline cap — which is the exact doubling this module
-  // removes for search cards via rowsPointer(). A pointer keeps the text
-  // channel a readable index of what arrived.
-  const payload = payloadPointer(o);
-  if (payload !== undefined) blocks.push(payload);
-
-  const meta: string[] = [`cost: $${o.cost}`];
-  if (o.total_rows !== undefined) meta.push(`total_rows: ${o.total_rows}`);
-  if (o.truncated === true) meta.push("truncated");
-  if (o.source_url !== undefined) meta.push(`source_url: ${o.source_url}`);
-  blocks.push(`_${meta.join(" · ")}_`);
-
+  const meta: string[] = [];
+  if (item.truncated === true) meta.push("truncated");
+  if (item.source_url !== undefined) meta.push(`fetched: ${oneLine(item.source_url)}`);
+  if (showCost) meta.push(`cost: $${item.cost}`);
+  if (meta.length > 0) blocks.push(`- ${meta.join(" · ")}`);
   return blocks.join("\n\n");
 }
 
-/** tako_contents as text: one section per requested url, each naming its
- *  payload with a `payloadPointer()` line (the payload itself rides only in
- *  structuredContent — see `slimContentsStructured`), led by the passage
- *  note and trailed by a one-line metadata footer. A single-url call renders
- *  as one section, so the batch shape costs nothing in the common case. */
-export function renderContentsText(o: ContentsBatchLike): string {
+/**
+ * `tako_contents` as text: one section per requested url, each carrying its
+ * whole payload, then `usage` as the final line.
+ *
+ * A single-url call — the common case — renders with no `##` header and no
+ * per-item cost line: with one entry the item's `cost` and the root `usage`
+ * are the same number, so one line says it. A batch shows both, because
+ * knowing WHICH url was expensive is the fact a caller acts on.
+ */
+export function renderContentsText(o: ContentsOutput): string {
   const items = o.results ?? [];
   if (items.length === 0) return "No content fetched.";
-  if (items.length === 1) return renderContentsItem(items[0] as ContentsOutputLike);
-  const failed = items.filter((r) => typeof r.error === "string").length;
+  const footer = `usage: $${o.usage.total_cost_usd}`;
+  if (items.length === 1) {
+    return [renderContentsItem(items[0] as ProjectedContentsItem, false), footer].join("\n\n");
+  }
+  const failed = items.filter((r) => r.error !== undefined).length;
   const header = `## Contents (${items.length} urls${failed > 0 ? `, ${failed} failed` : ""})`;
-  const sections = items.map((r, i) => `### ${i + 1}. ${renderContentsItem(r)}`);
-  return [header, ...sections, `_total cost: $${o.cost}_`].join("\n\n");
+  const sections = items.map((r, i) => `### ${i + 1}. ${renderContentsItem(r, true)}`);
+  return [header, ...sections, footer].join("\n\n");
 }

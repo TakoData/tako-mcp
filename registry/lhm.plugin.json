@@ -74,64 +74,42 @@
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the real content behind result URLs (1-10 per call) from tako_search — the rows behind a Tako card, or a web page's full text. Requires a signed-in connection; anonymous calls return sign-in instructions.\n\nBest for: getting the full data to compute over or quote after `tako_search` — a search result carries only a chart and headline, never the rows themselves.\n\nPrecondition (Tako cards): non-exportable cards (`exportable: false`, usually license-gated) ALWAYS 403 — this tool can never return their rows, and retrying will not change that. Their headline value lives in the card's `description`. Call this tool only on `exportable: true` cards; even then a rare card 403s — read the headline instead, do not retry here.\n\nWeb URLs always work — so this is also the fallback path when tako_search surfaced relevant `web_results` but no fitting Tako data card: pass the web result's url here to read its full page text. Looking for one figure or section in a long page (a filing, a report)? Pass `query` to get just the matching passages in ONE call instead of wading through the full text.",
+      "description": "Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own. Needs a signed-in connection.\n\nFetch only cards `tako_search` marked `exportable: true`; locked cards return no rows on any path, so read the headline value from the card's `description` instead. Rows bill per 1,000 delivered — set `max_rows` when you need only the recent ones.\n\nFor a long page such as a filing or an annual report, set `query` and get back only the passages that match, in one call. When a search returned web results but no fitting data card, fetch a web result's url here.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "urls": {
-            "description": "The result URLs to fetch, 1-10 per call (a TakoCard chart URL or a web result url). Batch them: fetching 8 filings in ONE call costs the same as 8 calls but saves 7 round trips, and every extra round trip re-sends the whole conversation as input tokens. Each URL is fetched and BILLED independently; one URL failing does not fail the others (its entry carries an `error` instead of a payload).",
             "minItems": 1,
             "maxItems": 10,
             "type": "array",
             "items": {
               "type": "string",
-              "minLength": 1,
-              "description": "The result URL to fetch downloadable content for (a TakoCard.webpage_url or a WebResult.url). A Tako card URL yields a CSV of the card's data; any other URL yields the page's extracted text."
-            }
-          },
-          "url": {
-            "description": "Deprecated single-URL form — use `urls` instead. Equivalent to `urls: [url]`.",
-            "type": "string",
-            "minLength": 1
-          },
-          "mode": {
-            "default": "inline",
-            "description": "Delivery only — does NOT change the row cap: \"inline\" (default) returns the content in the response body (a Tako card — the whole card up to the 2,000-row ceiling, or fewer if you set max_rows; total_rows/truncated report truncation — or web text) so you can read it directly; \"url\" returns a short-lived presigned download_url to the same capped file.",
-            "type": "string",
-            "enum": [
-              "url",
-              "inline"
-            ]
-          },
-          "content_format": {
-            "default": "csv",
-            "description": "Tako cards only — serialization of the returned data: \"csv\" (default, returned as text in `data`), \"json_records\" (array of row objects in `records`), or \"json_compact\" (compact columns+rows TakoDataset in `dataset`). Ignored for web URLs (always text in `data`).",
-            "type": "string",
-            "enum": [
-              "csv",
-              "json_records",
-              "json_compact"
-            ]
+              "minLength": 1
+            },
+            "description": "The urls to fetch, 1-10 per call: a Tako card url or a web result url. Batch them — one call for 8 urls costs the same as 8 calls and saves 7 round trips."
           },
           "max_rows": {
-            "description": "Tako cards only: max rows to return, in either delivery mode. Omit it to get the whole card, up to the 2,000-row system ceiling; Tako clamps a larger value to that ceiling. Rows are billed per 1,000 delivered, so lower it to spend less. Ignored for web URLs (use max_chars).",
+            "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough.",
             "type": "integer",
             "minimum": 1,
             "maximum": 2000
           },
           "max_chars": {
-            "description": "Web URLs only: character cap on the extracted page text (max 1,000,000 = full text). Inline fetches default to 100,000 PER URL when fetching one url, less when batching several (a shared per-call character budget split across the batch — set this explicitly to opt out and get the full 100,000, or more, per url regardless of batch size). Billing is per page regardless, so the cap only trims what reaches you, and `truncated: true` reports a cut. Raise it when you need a full long document inline. In url mode the downloaded file is the full text unless you set this (an explicit value caps the file too). Ignored when `query` is set (passages always scan the full text) and for Tako card URLs (use max_rows).",
+            "description": "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut.",
             "type": "integer",
             "minimum": 1,
             "maximum": 1000000
           },
           "query": {
-            "description": "Web URLs + inline mode only: return just the passages around case-insensitive matches of this query (full phrase first, per-word fallback) instead of the full page text — e.g. query=\"RevPAR\" against a hotel earnings page. The FULL page text is always scanned (max_chars is ignored). The `note` field summarizes the matches; a no-match note says so explicitly (deterministic miss — try another url, not another wording). Ignored for Tako card URLs and in url mode.",
+            "description": "Web pages only: return the passages around matches of this phrase instead of the whole page. The full page is always scanned, so no match means the phrase isn't there.",
             "type": "string",
             "minLength": 1
           }
-        }
+        },
+        "required": [
+          "urls"
+        ]
       }
     },
     {
