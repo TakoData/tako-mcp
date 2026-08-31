@@ -52,6 +52,7 @@ import type { ContentsOutput, ProjectedContentsItem } from "./_contents.js";
 import type { GraphRelatedFacade } from "./_graph.js";
 import {
   autoChainShape,
+  nonEmpty,
   projectedCardShape,
   projectedWebResultShape,
   usageAdvertisedSchema,
@@ -220,13 +221,19 @@ export type VisualizeOutput = z.infer<typeof visualizeChatgptOutputShape>;
  * for a warning that arrives too late to act on.
  */
 export function renderVisualizeMarkdown(o: VisualizeOutput): string {
+  // Guarded on the RENDERED value, not on `undefined`: the em dash is the
+  // separator, so a title that flattens to nothing must not leave one
+  // dangling, and a bare `- url: ` line is worse than no line. The projection
+  // drops empty strings now, but this function is exported and its type
+  // permits one.
+  const title = o.title === undefined ? "" : oneLine(o.title);
   const lines: string[] = [
-    o.title === undefined ? "## Card created" : `## Card created — ${oneLine(o.title)}`,
+    title === "" ? "## Card created" : `## Card created — ${title}`,
   ];
   const facts: string[] = [];
-  if (o.url !== undefined) facts.push(`- url: ${o.url}`);
-  if (o.embed_url !== undefined) facts.push(`- embed: ${o.embed_url}`);
-  if (o.image_url !== undefined) facts.push(`- image: ${o.image_url}`);
+  if (nonEmpty(o.url) !== undefined) facts.push(`- url: ${o.url}`);
+  if (nonEmpty(o.embed_url) !== undefined) facts.push(`- embed: ${o.embed_url}`);
+  if (nonEmpty(o.image_url) !== undefined) facts.push(`- image: ${o.image_url}`);
   if (facts.length > 0) lines.push("", ...facts);
   return lines.join("\n");
 }

@@ -6,12 +6,13 @@
  *
  * The created card auto-renders inline as a chart: the backend returns a
  * `card_id` (+ embed/image URLs), which the tool lifts into the same widget
- * fields `tako_search` uses, sharing `_chart_widget.ts`.
+ * fields `tako_search` uses, sharing `_chart_widget.ts`. Those widget fields
+ * are advertised on `/mcp/chatgpt` alone, where a widget reads them; on `/mcp`
+ * the widget is suppressed and the chart ships as a PNG content block instead.
  *
  * This is the one tool on the surface that WRITES, and what it writes is
- * world-readable: the supplied data is stored by Tako and the resulting
- * `webpage_url` / `embed_url` are viewable by anyone holding the link, with
- * no expiry. Three things encode that, and they have to stay in agreement —
+ * world-readable: the supplied data is stored by Tako and the resulting `url`
+ * / `embed_url` are viewable by anyone holding the link, with no expiry. Three things encode that, and they have to stay in agreement —
  * the `DESCRIPTION` disclosure the model reads before calling, the
  * `readOnlyHint: false` / ChatGPT `openWorldHint: true` annotation pair that
  * makes the call confirmation-worthy, and the matching justifications in
@@ -32,6 +33,7 @@ import {
   fetchPngContentBlock,
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
+import { nonEmpty } from "./_search_results.js";
 import { logWireGuardFailure } from "./_log.js";
 import {
   renderVisualizeMarkdown,
@@ -329,7 +331,10 @@ const inputSchema = z.object({
 //
 // `description` is advertised on NEITHER surface: the backend echoes back the
 // string the caller sent, and a field whose value the model wrote one turn
-// earlier is 41 chars of context for zero information.
+// earlier is 41 chars of context for zero information. `title` reads like the
+// same case and is kept anyway, because it is not always an echo: omit it and
+// the backend derives one from a `header` component, so the returned value can
+// be something the model has not seen.
 const outputSchema = visualizeOutputShape;
 
 type Output = z.infer<typeof outputSchema>;
@@ -387,11 +392,17 @@ export function buildVisualizeOutput(
   height: number,
 ): VisualizeOutput {
   const { embed_url, image_url } = buildChartUrls(env, cardId, DEFAULT_DARK_MODE);
+  // `nonEmpty`, not a null check: `ThinVizCard` types both as
+  // `string | null | undefined`, and `title` is whatever the CALLER sent —
+  // `inputSchema.title` has no `.min(1)`, so `title: ""` round-trips. An empty
+  // string passes `z.string()`, so it would reach structuredContent as
+  // `"title": ""` on the structured-only hosts this projection exists to serve.
+  // Same helper `projectCard` uses on the identical three fields.
+  const title = nonEmpty(wire.title);
+  const url = nonEmpty(wire.webpage_url);
   return {
-    ...(wire.title === null || wire.title === undefined ? {} : { title: wire.title }),
-    ...(wire.webpage_url === null || wire.webpage_url === undefined
-      ? {}
-      : { url: wire.webpage_url }),
+    ...(title === undefined ? {} : { title }),
+    ...(url === undefined ? {} : { url }),
     embed_url,
     image_url,
     pub_id: cardId,
@@ -434,8 +445,10 @@ const tako_visualize = {
   },
   // These three are NOT request-body fields — `buildVisualizeBody` sends only
   // `components`. They are the fixed render settings the tool applies to the
-  // chart URLs and reports back on its own output (see the `dark_mode`/`width`/
-  // `height` assignment in the handler below). `scope: "worker"` is what keeps
+  // chart URLs, and it reports them back on its own output on `/mcp/chatgpt`
+  // ALONE: they are widget fields, so `pickDeclared` strips all three on
+  // `/mcp` (see the assignment in `buildVisualizeOutput` above, and
+  // `visualizeWidgetFields` in `_render_markdown.ts`). `scope: "worker"` is what keeps
   // them out of the request-inputs section of `docs/TOOLS.md`; the longer field
   // names alone did not, because the generator emits that heading for every
   // non-empty `fixedInputs`. The names also keep the derived wire-path guard in

@@ -493,12 +493,20 @@ describe("realistic payloads validate against the published schema", () => {
     const generic = propsFor("generic");
     for (const key of widgetOnly) expect(generic, `generic declares ${key}`).not.toHaveProperty(key);
     for (const key of modelFacing) expect(generic, `generic drops ${key}`).toHaveProperty(key);
-    // `description` is the caller's own input echoed back, dropped everywhere.
-    expect(generic, "generic declares description").not.toHaveProperty("description");
 
     const chatgpt = propsFor("chatgpt");
     for (const key of [...widgetOnly, ...modelFacing]) {
       expect(chatgpt, `chatgpt drops ${key}`).toHaveProperty(key);
+    }
+    // `description` is the caller's own input echoed back, dropped EVERYWHERE —
+    // asserted on both surfaces, because the chatgpt shape is a separate
+    // spread and can regain a field the generic one dropped (the same reason
+    // the tako_search test above loops over both).
+    for (const [surface, props] of [
+      ["generic", generic],
+      ["chatgpt", chatgpt],
+    ] as const) {
+      expect(props, `${surface} declares description`).not.toHaveProperty("description");
     }
   });
 

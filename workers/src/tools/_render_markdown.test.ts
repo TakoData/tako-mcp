@@ -30,6 +30,7 @@ import {
   type VisualizeOutput,
 } from "./_render_markdown.js";
 import { buildSearchOutput } from "./_search_results.js";
+import { buildVisualizeOutput } from "./tako_visualize.js";
 import type { ProjectedCard, SearchOutput, TakoCard, WebResult } from "./_search_results.js";
 import type { Env } from "../env.js";
 
@@ -1007,6 +1008,23 @@ describe("renderVisualizeMarkdown", () => {
     expect(md).not.toContain("—");
   });
 
+  it("keeps the heading standalone when the title flattens to nothing", () => {
+    // `title: ""` round-trips: `inputSchema.title` has no `.min(1)`, the
+    // backend echoes it, and `z.string()` accepts it. Guarding on `undefined`
+    // alone left "## Card created — " with a dangling separator.
+    for (const title of ["", "   ", "\n"]) {
+      const md = renderVisualizeMarkdown(visualizeOutput({ title }));
+      expect(md.split("\n")[0], `title ${JSON.stringify(title)}`).toBe("## Card created");
+      expect(md, `title ${JSON.stringify(title)}`).not.toContain("—");
+    }
+  });
+
+  it("omits a fact line whose url is an empty string", () => {
+    const md = renderVisualizeMarkdown(visualizeOutput({ url: "" }));
+    expect(md).not.toContain("- url:");
+    expect(md).toContain("- embed: https://trytako.com/embed/p1/?dark_mode=auto&showShare=true");
+  });
+
   it("flattens a newline in a caller-supplied title into the heading line", () => {
     const md = renderVisualizeMarkdown(visualizeOutput({ title: "Regional\nSales" }));
     expect(md.split("\n")[0]).toBe("## Card created — Regional Sales");
@@ -1018,7 +1036,33 @@ describe("renderVisualizeMarkdown", () => {
 // it just published.
 describe("channel parity (tako_visualize)", () => {
   it("every field the generic surface advertises appears in the rendered text", () => {
-    const output = visualizeOutput();
+    // Built through the REAL projection, the same way the tako_search parity
+    // test builds its input. A field added to `buildVisualizeOutput` lands
+    // here automatically and must then appear in the text; the hand-written
+    // literal above would let exactly that addition pass unnoticed, which is
+    // the whole failure this test exists to prevent.
+    const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+    const output = buildVisualizeOutput(
+      {
+        card_id: "p1",
+        title: "Regional Sales",
+        description: "Revenue by region, FY2026",
+        webpage_url: "https://trytako.com/card/p1/",
+        image_url: "https://trytako.com/api/v1/image/p1/",
+        embed_url: "https://trytako.com/embed/p1/",
+        card_type: "bar",
+        visualization_data: null,
+        embed_mode: "post",
+      },
+      "p1",
+      ENV,
+      720,
+    );
+    // Not vacuous: the projection has to have produced the fields this walks.
+    // Without these, a projection change that empties one passes silently.
+    expect(output.title, "no title projected").toBeDefined();
+    expect(output.url, "no url projected — the webpage_url rename is uncovered").toBeDefined();
+
     const md = renderVisualizeMarkdown(output);
     // The four widget-only fields are declared on /mcp/chatgpt alone and are
     // render knobs, not facts about the card — the same exemption the search

@@ -587,8 +587,28 @@ try {
       JSON.stringify(tvParsed.error?.issues ?? []).slice(0, 400),
   );
   const tvStructured = tvParsed.data;
-  // `embed_url` is `.optional()` in the advertised shape, so the parse above
-  // cannot assert presence; this does.
+  // The advertised shape is loose and every field is optional, so the parse
+  // above accepts ANY object — `{}` included, and one that leaked the four
+  // chatgpt-only widget fields included. These two loops are what actually
+  // assert the shape `/mcp` served. `mcp.conformance.test.ts` covers the
+  // SCHEMA; only a post-deploy call covers the deployed build, which is the
+  // same reason the pub_id gate below is asserted here rather than in a unit
+  // test.
+  for (const key of ["title", "url", "embed_url", "image_url"] as const) {
+    const value = tvStructured[key];
+    assert(
+      typeof value === "string" && value.length > 0,
+      `tako_visualize structuredContent is missing ${key}: ` +
+        JSON.stringify(tvStructured).slice(0, 200),
+    );
+  }
+  for (const key of ["pub_id", "dark_mode", "width", "height"] as const) {
+    assert(
+      !(key in tvStructured),
+      `tako_visualize on /mcp leaked the chatgpt-only widget field ${key} — ` +
+        `pickDeclared is not narrowing in the deployed build`,
+    );
+  }
   assert(
     typeof tvStructured.embed_url === "string" && /^https?:\/\//.test(tvStructured.embed_url),
     `tako_visualize.embed_url is not http(s): ${JSON.stringify(tvStructured?.embed_url)}`,
@@ -599,12 +619,40 @@ try {
   // The id is still THERE — `buildChartUrls` writes it into the path — and the
   // three checks below (embed-html proxy, data-proxy shim, write gate) all
   // need it, so recovering it beats re-adding a key no model reads.
-  const tvPubId = /\/embed\/([^/?]+)/.exec(tvStructured.embed_url)?.[1];
+  const tvPubIdEncoded = /\/embed\/([^/?]+)/.exec(tvStructured.embed_url)?.[1];
   assert(
-    tvPubId !== undefined && tvPubId.length > 0,
+    tvPubIdEncoded !== undefined && tvPubIdEncoded.length > 0,
     `tako_visualize.embed_url carries no pub_id: ${JSON.stringify(tvStructured.embed_url)}`,
   );
-  ok(`tako_visualize → pub_id ${tvPubId}`);
+  // DECODE. `buildChartUrls` wrote this segment through `encodeURIComponent`,
+  // and two of the three consumers below need the RAW id: the `/embed-html/`
+  // fetch encodes it again, and the write-gate POST sends it as a JSON VALUE,
+  // where a percent-encoded id names a different card and the 400 that check
+  // asserts would mean nothing. Identity for today's nanoid-shaped pub_ids —
+  // this keeps it correct for one that is not.
+  const tvPubId = decodeURIComponent(tvPubIdEncoded);
+  // The text channel, asserted for the same reason as tako_contents above:
+  // `mcp.ts` catches a throwing `renderText` and falls back to
+  // JSON.stringify(output) — which is the FULL handler output, all eight
+  // fields, because that fallback runs before `pickDeclared`. So a renderer
+  // that throws only in the Workers runtime silently ships the widget fields
+  // in THIS channel while `structuredContent` stays clean, and the absence
+  // loop above never sees it.
+  const tvBlocks = (tvResult.content ?? []) as Array<{ type?: string; text?: string }>;
+  const tvText = tvBlocks.find((b) => b.type === "text")?.text ?? "";
+  assert(
+    tvText.startsWith("## Card created"),
+    `tako_visualize text channel is not the rendered markdown (JSON fallback?): ` +
+      tvText.slice(0, 200),
+  );
+  for (const key of ["url", "embed_url", "image_url"] as const) {
+    const value = tvStructured[key] as string;
+    assert(
+      tvText.includes(value),
+      `tako_visualize text channel is missing ${key} (${value}) — the channels disagree`,
+    );
+  }
+  ok(`tako_visualize → pub_id ${tvPubId}, card in both channels`);
 
   // -------------------------------------------------------------------------
   // 6. Native-card proxy — the interactive/themed chart path on claude.ai
@@ -769,7 +817,7 @@ try {
     // which is exactly what shipped and what a user reported.
     //
     // Two distinct things to check, because either alone passes while broken:
-    const dataUrl = `${baseUrl}${EMBED_DATA_PREFIX}${tvPubId}`;
+    const dataUrl = `${baseUrl}${EMBED_DATA_PREFIX}${encodeURIComponent(tvPubId)}`;
     assert(
       nativeBody.includes(dataUrl),
       `/embed-html/ served a page with no data-proxy shim pointing at ` +

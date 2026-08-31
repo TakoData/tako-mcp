@@ -57,9 +57,10 @@ tools:
     description: Fetch the content behind a result URL (a card's CSV or a page's text)
   - name: tako_visualize
     description: >-
-      Create an embeddable chart/card from your own structured data. Opt-in —
-      add the `visualize` token to the server URL's ?tools= allowlist, which
-      replaces the default listing, so name the other tools you want too
+      Create a card from your own structured data. The card is public and
+      permanent — anyone with the returned url can open it without signing in.
+      Opt-in — add the `visualize` token to the server URL's ?tools= allowlist,
+      which replaces the default listing, so name the other tools you want too
       (?tools=search,contents,visualize). Already on by default at
       https://mcp.tako.com/mcp/chatgpt, which serves the chart widget.
   - name: tako_agent

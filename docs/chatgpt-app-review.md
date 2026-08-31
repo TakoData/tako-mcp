@@ -89,8 +89,9 @@ returned unless strictly necessary.
   Dropping it from the advertised schema is what actually removes it from
   `structuredContent`, because `pickDeclared` in `mcp.ts` strips undeclared keys.
 - `tako_visualize` no longer returns `card_id`. It carried the same string as `pub_id`,
-  which the widget needs; the caller now gets the id once, plus `webpage_url` and
-  `embed_url`.
+  which the widget needs. On `/mcp/chatgpt` the caller gets that id once, plus `url`
+  and `embed_url`. On `/mcp` no id is advertised at all: `pub_id` is a widget field,
+  the widget is suppressed there, and `pickDeclared` strips it.
 - The id is **not** lost operationally: `logToolRequestId` (`workers/src/tools/_log.ts`)
   records it server-side per call, which is where a support question is answered from.
   Runbook: `wrangler tail <worker> --search "request_id="`.

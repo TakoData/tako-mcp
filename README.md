@@ -16,7 +16,7 @@ Tako MCP lets an agent:
 - **Search** Tako's knowledge graph and the live web — top result renders inline as a chart, and `tako_contents` reads the rows behind it
 - **Discover** exactly what proprietary data exists for an entity or metric — free and fast
 - **Fetch** the underlying rows (CSV) or a page's text behind any result URL
-- **Visualize** your own structured data as an embeddable chart _(opt-in; on by default on the ChatGPT app)_
+- **Visualize** your own structured data as an embeddable card — public and permanent, readable by anyone with the link _(opt-in; on by default on the ChatGPT app)_
 - **Run** Tako's Answer Agent for deep, multi-step research _(opt-in)_
 
 > **Why a data-native search API?** On Tako's [VerticalRTK benchmark](https://tako.com/blog/evaluating-a-new-kind-of-search-api/) of real-time domain questions (finance, economics, sports, weather), Tako outperforms the next-best web search API by **21%** — while using **~75% fewer tool calls at up to one-tenth the cost**, and answering research tasks in **15.5s vs 124.2s** for OpenAI web search. It reaches parity with Exa, Parallel, Nimble, and Tavily on standard web benchmarks (SimpleQA, FRAMES) and pulls ahead where structured, real-time data matters. **[Read the evals →](https://tako.com/blog/evaluating-a-new-kind-of-search-api/)**

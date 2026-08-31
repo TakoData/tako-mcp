@@ -844,7 +844,19 @@ function buildVisualizeSample(tool: ToolModule): ToolSample {
   const wire = ThinVizCard.parse(
     JSON.parse(readFileSync(VISUALIZE_SAMPLE_FIXTURE, "utf8")) as unknown,
   );
-  const output = buildVisualizeOutput(wire, wire.card_id ?? "", SAMPLE_FIXTURE_ENV, DEFAULT_HEIGHT);
+  // The handler treats a missing card_id as fatal, so this must too. A `?? ""`
+  // here rendered `/embed//?dark_mode=auto` into docs/TOOLS.md instead — the
+  // fixture pipeline exists so a bad hand-edit FAILS registry:check rather
+  // than shipping a wrong sample.
+  const cardId = wire.card_id;
+  if (cardId === undefined || cardId === null || cardId === "") {
+    throw new Error(
+      `${VISUALIZE_SAMPLE_FIXTURE}: card_id is required — without it the sample ` +
+        `renders urls with an empty path segment, and the handler rejects the ` +
+        `same wire outright.`,
+    );
+  }
+  const output = buildVisualizeOutput(wire, cardId, SAMPLE_FIXTURE_ENV, DEFAULT_HEIGHT);
   return {
     // The generic-surface narrowing — what an `/mcp` client's model reads.
     structured: pickDeclared(
