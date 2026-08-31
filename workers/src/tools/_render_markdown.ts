@@ -22,10 +22,11 @@
  * affordable (~31.9k chars -> ~13k per channel), and the "channel parity
  * (tako_search)" test asserts every projected leaf reaches the text.
  *
- * So `tako_search` and `tako_search_advanced` declare NO `slimStructured`
- * hook: their handler output IS the advertised shape, and `pickDeclared` in
- * `mcp.ts` does the per-surface narrowing. `tako_available_data`, `tako_agent`
- * and `tako_contents` still slim, and their hooks live below.
+ * So `tako_search`, `tako_search_advanced` and `tako_contents` declare NO
+ * `slimStructured` hook: their handler output IS the advertised shape, and
+ * `pickDeclared` in `mcp.ts` does the per-surface narrowing.
+ * `tako_available_data` and `tako_agent` still slim, with the two helpers in
+ * this module; `tako_graph_related` slims with its own function.
  *
  * `request_id` reaches NEITHER channel, on purpose. It is a server-side
  * correlation id with no use to a model or an end user, and OpenAI's app
@@ -1051,8 +1052,10 @@ export function renderAgentRunMarkdown(run: AgentRunLike): string {
 // ---------------------------------------------------------------------------
 
 /** One requested url: anchor, the note that explains the payload, the payload,
- *  then the chrome — the same order the projected object uses, so a host that
- *  truncates either channel loses the same thing. */
+ *  then the chrome — the same order `projectedContentsItemShape` DECLARES, so a
+ *  host that truncates either channel loses the same thing. The shape is the
+ *  authority, not the projection's spread: zod rebuilds a parsed object in
+ *  declaration order. */
 function renderContentsItem(item: ProjectedContentsItem, showCost: boolean): string {
   const blocks: string[] = [oneLine(item.url)];
   // A failed url renders as its reason and nothing else; the other entries are

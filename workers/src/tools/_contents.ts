@@ -56,12 +56,15 @@ const cellSchema = z.unknown();
  * cards / ~20 columns on prod, every non-null `unit` was ALREADY inside the
  * column name ("… (USD)", "… (Percentage)", "… (BTUs)"), so objects would pay
  * `{"name":…}` per column to restate it — 160 chars on a 16-column card.
- * `columnName` below appends the unit when the name lacks it, so the
- * assumption cannot fail silently. `type` is dropped because in positional
+ * `columnName` appends the unit when the name lacks it, so the assumption
+ * cannot fail silently. `type` is dropped because in positional
  * JSON the value IS the type (`74.9967` vs `"60"` vs `null`), and on NBA
  * standings the backend declares `Wins` a `string` — true of its storage,
  * misleading as a semantic.
  */
+// Exported for `tako_search_advanced`, whose advertised `rows` is still an
+// empty `z.looseObject({})` stub: its pass reuses this object rather than
+// inventing a second vocabulary for the same thing.
 export const projectedRowsShape = z.object({
   columns: z.array(z.string()).describe("Column names, in row order; the unit is in the name."),
   rows: z.array(z.array(cellSchema)).describe("Positional cells; a missing cell is null."),
@@ -83,15 +86,20 @@ export type ProjectedRows = z.infer<typeof projectedRowsShape>;
  * `max_chars` cut and a passage extraction are the same fact about the same
  * item, and giving it two homes is what this pass removes everywhere else.
  */
-export const projectedContentsItemShape = z.looseObject({
+const projectedContentsItemShape = z.looseObject({
+  // Declaration order IS the shipped order. `contentsOutputShape.safeParse` in
+  // the handler rebuilds every object in SHAPE order, not in the order the
+  // projection spread it, so this list is what a truncating host reads.
+  // Anchor, then the note that explains the payload, then the payload, then
+  // the chrome; `cost` stays last so a cut tail loses it and never the rows.
   url: z.string().describe("The url this entry is for."),
+  note: z.string().optional().describe("What the `query` match found."),
   rows: projectedRowsShape.optional().describe("Tako cards only: the card's data."),
   text: z.string().optional().describe("Web pages only: the page text."),
-  note: z.string().optional().describe("What the `query` match found."),
+  error: z.string().optional().describe("Why this url alone failed; the others are unaffected."),
   truncated: z.boolean().optional().describe("Part of this payload was cut."),
   source_url: z.string().optional().describe("Where a redirect landed."),
   cost: z.number().describe("USD billed for this url."),
-  error: z.string().optional().describe("Why this url alone failed; the others are unaffected."),
 });
 
 export type ProjectedContentsItem = z.infer<typeof projectedContentsItemShape>;
@@ -128,13 +136,28 @@ export interface ContentsWireItem {
   source_url?: string | null | undefined;
 }
 
+/** What an item says when the backend delivered neither rows nor text. One
+ *  message for both shapes: the cause is the same — the payload channel this
+ *  item declared arrived empty — and a card-specific and a page-specific
+ *  wording would be two names for one state. */
+export const EMPTY_PAYLOAD_ERROR =
+  "Tako returned no data for this url. Retry once; if it persists, flag it to the Tako team.";
+
 /** The column name a model reads, with the unit folded in when the backend's
  *  name does not already carry it. Structural, off the backend's own `unit`
- *  field — not a table of known units. */
+ *  field — not a table of known units.
+ *
+ *  The test is for `(unit)`, the convention the backend's own names use, and
+ *  NOT for the unit as a bare substring. `"Team Payroll".includes("m")` is
+ *  true, so raw containment drops every short unit — `%`, `m`, `M`, `t`, `B`,
+ *  all documented values of `TakoDatasetColumn.unit` — and hands the model an
+ *  unlabeled number in a `columns` array whose description promises the unit
+ *  is in the name. A name that spells the unit out ("Revenue in USD") gains a
+ *  redundant `(USD)`, which costs 6 chars and loses nothing. */
 function columnName(column: { name: string; unit?: string | null | undefined }): string {
   const unit = column.unit;
   if (unit === null || unit === undefined || unit === "") return column.name;
-  return column.name.includes(unit) ? column.name : `${column.name} (${unit})`;
+  return column.name.includes(`(${unit})`) ? column.name : `${column.name} (${unit})`;
 }
 
 /**
@@ -175,6 +198,12 @@ export function projectContentsItem(
     // would otherwise arrive reading as complete. Length AT the cap counts as
     // cut — the false positive (a page exactly cap-length) is vanishingly rare
     // next to a guaranteed false "complete" on every long page.
+    //
+    // It assumes the extractor cuts AT the cap. `ContentsRequest.max_chars`
+    // does not promise that, and if it ever trims to a word or paragraph
+    // boundary instead, every truncated page starts reporting complete again —
+    // the exact failure this branch exists to prevent, and silent. A backend
+    // change there needs a tolerance here, or `truncated` on the web route.
     const cap = opts.effectiveMaxChars;
     if (cap !== undefined && text.length >= cap) cut = true;
     if (opts.passageQuery !== undefined) {
@@ -185,9 +214,18 @@ export function projectContentsItem(
     }
   }
 
-  // Key order is load-bearing on a truncating host: the anchor, then the note
-  // that explains the payload, then the payload, then the chrome. A host that
-  // cuts the tail loses `cost`, never the rows.
+  // An item carries exactly one payload, or an error saying why it does not.
+  // Neither branch firing is the shape backend drift takes: every payload
+  // field on the generated `ContentItem` is `.optional()`, so
+  // `ContentsResponse.safeParse` accepts an item whose `dataset` was renamed,
+  // and `ContentsWireItem` widens all of them, so `tsc` accepts it too. This
+  // branch is the only guard between that and a billed item the caller reads
+  // as an empty success.
+  const empty = rows === undefined && text === undefined;
+
+  // Built in the shape's declared order so the two agree on sight. The order
+  // that actually SHIPS is the shape's, because the handler re-parses this
+  // object -- reordering here alone would change nothing.
   return {
     url,
     ...(note !== undefined ? { note } : {}),
@@ -196,10 +234,19 @@ export function projectContentsItem(
     ...(cut ? { truncated: true } : {}),
     ...(item.source_url != null && item.source_url !== url ? { source_url: item.source_url } : {}),
     cost: item.cost ?? 0,
+    ...(empty ? { error: EMPTY_PAYLOAD_ERROR } : {}),
   };
 }
 
-/** Sum the per-url charges into the root `usage`. */
+/** Sum the per-url charges into the root `usage`.
+ *
+ *  Rounded, because this is the one place a Tako usage total is COMPUTED
+ *  rather than quoted: search reads `total_cost_usd` straight off the backend,
+ *  while a contents batch adds up one charge per subrequest. Raw float
+ *  addition renders `usage: $0.30000000000000004` — in both channels, so
+ *  parity holds and no test is wrong; it just reads as a defect. Charges run
+ *  to about four decimals, so six loses nothing real. */
 export function contentsUsage(results: ReadonlyArray<ProjectedContentsItem>): { total_cost_usd: number } {
-  return { total_cost_usd: results.reduce((sum, r) => sum + (r.cost ?? 0), 0) };
+  const total = results.reduce((sum, r) => sum + (r.cost ?? 0), 0);
+  return { total_cost_usd: Math.round(total * 1e6) / 1e6 };
 }

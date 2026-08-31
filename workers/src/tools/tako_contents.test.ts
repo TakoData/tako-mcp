@@ -186,6 +186,41 @@ describe("tako_contents handler", () => {
     expect(out.results[1]?.error).not.toContain("Django returned");
   });
 
+  it("rounds the summed usage, so a batch total is not a float artifact", async () => {
+    // This is the one Tako usage total that is COMPUTED rather than quoted:
+    // search reads it off the backend, a contents batch adds up subrequests.
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(page("a", 0.1))
+      .mockResolvedValueOnce(page("b", 0.2));
+    const out = await tool.handler({ urls: ["https://a", "https://b"] }, ctx);
+    expect(out.usage.total_cost_usd).toBe(0.3);
+    expect(String(out.usage.total_cost_usd)).not.toContain("0.30000000000000004");
+  });
+
+  it("an unexpected throw inside a batch renders generically, never its own message", async () => {
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(page("page A"))
+      // Not a transport failure and not one of our own aborts: a bug. Its
+      // message is unreviewed text, and a batch entry is a model-visible
+      // surface (AGENTS.md Safety Rules).
+      .mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'columns')"));
+    const out = await tool.handler({ urls: ["https://a", "https://boom"] }, ctx);
+    expect(out.results[0]?.text).toBe("page A");
+    expect(out.results[1]?.error).toBe(
+      "Fetch failed for this url. Retry once; if it persists, flag it to the Tako team.",
+    );
+    expect(out.results[1]?.error).not.toContain("columns");
+    expect(out.results[1]?.error).not.toContain("TypeError");
+  });
+
+  it("keeps our own aborts verbatim — they are fetch outcomes, not bugs", async () => {
+    vi.mocked(djangoPost)
+      .mockResolvedValueOnce(page("page A"))
+      .mockResolvedValueOnce({ contents: [], request_id: "r-empty" });
+    const out = await tool.handler({ urls: ["https://a", "https://empty"] }, ctx);
+    expect(out.results[1]?.error).toContain("no downloadable content");
+  });
+
   it("serves a single url as a one-item batch", async () => {
     vi.mocked(djangoPost).mockResolvedValue(page("only"));
     const out = await tool.handler({ urls: ["https://only"] }, ctx);
@@ -253,7 +288,7 @@ describe("tako_contents wire body", () => {
 
   // Review finding: with no batch-wide budget, a 10-url default batch (each
   // defaulting to 100k chars) reconstructed the exact ~250k-token blowup the
-  // single-url 100k default exists to prevent — just spread across urls
+  // single-url 100k default exists to prevent — spread across urls
   // instead of concentrated in one. BATCH_CHAR_BUDGET splits the DEFAULT
   // evenly across the batch instead. Derives expectations off the imported
   // constant rather than hardcoding its current value, so tuning
@@ -365,8 +400,12 @@ describe("tako_contents projected output", () => {
             { name: "Revenue (USD)", type: "number", unit: "USD" },
             { name: "Headcount", type: "number", unit: "people" },
             { name: "Ratio", type: "number", unit: null },
+            // The regression case: `"Team Payroll".includes("m")` is true, so
+            // a raw containment test drops the unit here and the model reads
+            // an unlabeled number.
+            { name: "Team Payroll", type: "number", unit: "m" },
           ],
-          rows: [[1, 2, 3]],
+          rows: [[1, 2, 3, 4]],
           total_rows: 1,
           truncated: false,
           ref: "r",
@@ -378,8 +417,40 @@ describe("tako_contents projected output", () => {
     const out = await tool.handler({ urls: ["https://tako.com/card/abc"] }, ctx);
     // Measured across 8 cards on prod: every non-null unit was already inside
     // the name, so `columns` is a bare string array. This rule is what keeps
-    // that from being an assumption that can fail in silence.
-    expect(out.results[0]?.rows?.columns).toEqual(["Revenue (USD)", "Headcount (people)", "Ratio"]);
+    // that from being an assumption that can fail in silence — which is why
+    // the test is `(unit)` and not raw containment.
+    expect(out.results[0]?.rows?.columns).toEqual([
+      "Revenue (USD)",
+      "Headcount (people)",
+      "Ratio",
+      "Team Payroll (m)",
+    ]);
+  });
+
+  // An item must carry exactly one payload or an error. Without these two,
+  // a backend that renames `dataset` (or `data`) returns a BILLED item with no
+  // payload, no error and no note, and nothing in the stack can see it: every
+  // payload field on the generated `ContentItem` is `.optional()`, so
+  // `ContentsResponse.safeParse` passes, and `ContentsWireItem` widens all of
+  // them, so `tsc` passes too. The projection is the only guard there is.
+  it("a card whose dataset did not materialize reports an error, not an empty item", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(card({ dataset: null }));
+    const out = await tool.handler({ urls: ["https://tako.com/card/abc"] }, ctx);
+    const item = out.results[0]!;
+    expect(item.rows).toBeUndefined();
+    expect(item.text).toBeUndefined();
+    expect(item.error).toMatch(/no data/i);
+  });
+
+  it("a web page with no text reports an error, not an empty item", async () => {
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: null, cost: 0.01, url: null, expires_at: null, source_url: "https://src" }],
+      request_id: "r",
+    });
+    const out = await tool.handler({ urls: ["https://example.com/a"] }, ctx);
+    const item = out.results[0]!;
+    expect(item.text).toBeUndefined();
+    expect(item.error).toMatch(/no data/i);
   });
 
   it("a web page returns `text`, and reports its cost", async () => {
@@ -421,6 +492,18 @@ describe("tako_contents projected output", () => {
     vi.mocked(djangoPost).mockResolvedValue(card());
     const out = await tool.handler({ urls: ["https://tako.com/card/abc"] }, ctx);
     expect(Object.keys(out.results[0]!)).toEqual(["url", "rows", "truncated", "cost"]);
+  });
+
+  it("puts `note` BEFORE the payload it explains, in the order that actually ships", async () => {
+    // A note-free item cannot see this: the handler re-parses, so the shipped
+    // order is the SHAPE's and the projection's spread order proves nothing.
+    // Both channels have to agree, and the text renderer prints the note first.
+    vi.mocked(djangoPost).mockResolvedValue({
+      contents: [{ content_format: null, data: "RevPAR reached $142.11 in Q3.", cost: 1, source_url: "https://example.com/a" }],
+      request_id: "r-note",
+    });
+    const out = await tool.handler({ urls: ["https://example.com/a"], query: "RevPAR" }, ctx);
+    expect(Object.keys(out.results[0]!)).toEqual(["url", "note", "text", "cost"]);
   });
 });
 

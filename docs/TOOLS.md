@@ -622,17 +622,17 @@ Annotations:
 
 Description:
 
-Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own. Needs a signed-in connection.
+Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own.
 
-Fetch only cards `tako_search` marked `exportable: true`; locked cards return no rows on any path, so read the headline value from the card's `description` instead. Rows bill per 1,000 delivered — set `max_rows` when you need only the recent ones.
+Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to get back only the passages that match.
 
-For a long page such as a filing or an annual report, set `query` and get back only the passages that match, in one call. When a search returned web results but no fitting data card, fetch a web result's url here.
+Best for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `urls` | array | yes |  | The urls to fetch, 1-10 per call: a Tako card url or a web result url. Batch them — one call for 8 urls costs the same as 8 calls and saves 7 round trips. |
+| `urls` | array | yes |  | The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips. |
 | `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough. |
 | `max_chars` | integer | no |  | Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. |
 | `query` | string | no |  | Web pages only: return the passages around matches of this phrase instead of the whole page. The full page is always scanned, so no match means the phrase isn't there. |
@@ -664,7 +664,7 @@ Annotations:
         "type": "string",
         "minLength": 1
       },
-      "description": "The urls to fetch, 1-10 per call: a Tako card url or a web result url. Batch them — one call for 8 urls costs the same as 8 calls and saves 7 round trips."
+      "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips."
     },
     "max_rows": {
       "description": "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough.",
@@ -707,6 +707,10 @@ Annotations:
             "type": "string",
             "description": "The url this entry is for."
           },
+          "note": {
+            "description": "What the `query` match found.",
+            "type": "string"
+          },
           "rows": {
             "description": "Tako cards only: the card's data.",
             "type": "object",
@@ -741,8 +745,8 @@ Annotations:
             "description": "Web pages only: the page text.",
             "type": "string"
           },
-          "note": {
-            "description": "What the `query` match found.",
+          "error": {
+            "description": "Why this url alone failed; the others are unaffected.",
             "type": "string"
           },
           "truncated": {
@@ -756,10 +760,6 @@ Annotations:
           "cost": {
             "type": "number",
             "description": "USD billed for this url."
-          },
-          "error": {
-            "description": "Why this url alone failed; the others are unaffected.",
-            "type": "string"
           }
         },
         "required": [

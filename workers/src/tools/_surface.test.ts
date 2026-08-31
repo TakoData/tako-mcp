@@ -113,10 +113,19 @@ describe("tool descriptions are tier-invariant", () => {
   //
   // Which tools the claim can be FALSE for is structural, not a name list:
   // `FREE_TIER_TOOL_NAMES` IS the tier boundary. A tool outside it never runs
-  // anonymously on any tier, so "requires a signed-in connection" is true
-  // whenever a host reads it — that is why `tako_contents` may say so. A tool
+  // anonymously on any tier, so the claim would at least be TRUE there. A tool
   // INSIDE it that carries the same sentence tells a model to skip the one
   // tool anonymous callers have.
+  //
+  // No tool states it today, and none should. Four of the five default tools
+  // sit outside the free set, so the sentence distinguishes nothing; it reads
+  // as a property of the one tool that carries it. `tako_contents` did carry
+  // it and no longer does — the dispatch gate (`GENERIC_SIGN_IN_HINT`) states
+  // it where it applies, and search's zero-card guidance branches on
+  // reachability before naming the tool. #274 removed the mirror claim
+  // ("`tako_available_data` is free") from the instructions for the same
+  // reason. This block audits the free set only; it does not require any
+  // description to advertise the boundary.
   //
   // WHAT THIS DOES NOT PROVE: that the anonymous-set cut held. Reverting
   // `FREE_TIER_TOOL_NAMES` to two tools leaves this block green — it would
@@ -138,12 +147,4 @@ describe("tool descriptions are tier-invariant", () => {
     expect(audited.map((t) => t.name)).toEqual(["tako_search"]);
   });
 
-  it("the tako_contents sign-in sentence is allowed, and still there", () => {
-    // It reads as a tier claim, and is exempt only because the tool sits
-    // outside the free set. If either half changes, this fails.
-    const contents = TOOL_REGISTRY.find((t) => t.name === "tako_contents");
-    expect(contents).toBeDefined();
-    expect(TIER_CLAIM.test(contents!.description)).toBe(true);
-    expect(FREE_TIER_TOOL_NAMES.has("tako_contents")).toBe(false);
-  });
 });

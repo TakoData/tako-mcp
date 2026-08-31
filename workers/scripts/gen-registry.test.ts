@@ -21,10 +21,12 @@ import {
   DESCRIPTION_MAX_CHARS,
   DESCRIPTION_MAX_LINES,
   INSTRUCTIONS_MAX_CHARS,
+  LEGACY_OUTPUT_SCHEMA_CEILINGS,
   LEGACY_PROSE_CEILINGS,
   LOBEHUB_TOOL_ALLOWLIST,
   MCP_TOOL_ALLOWLIST,
   PARAM_MAX_CHARS,
+  OUTPUT_SCHEMA_MAX_CHARS,
   TOOL_ENTRY_MAX_CHARS,
 } from "./gen-registry.js";
 
@@ -701,6 +703,17 @@ describe("assertProseBudget", () => {
   ];
   const OK = "Does the thing.";
 
+  // A zod object whose PUBLISHED JSON Schema lands near a target size. One
+  // property per 40-odd chars of description, so the count is steerable
+  // without hand-writing a 2,000-char literal.
+  const schemaOfAbout = (chars: number) => {
+    const shape: Record<string, z.ZodTypeAny> = {};
+    for (let i = 0; i < Math.ceil(chars / 60); i++) {
+      shape[`f${i}`] = z.string().describe("x".repeat(40));
+    }
+    return z.object(shape);
+  };
+
   it("passes a migrated tool inside every cap", () => {
     expect(() => assertProseBudget(migrated(OK), params({ query: "The query." }), "Short.")).not.toThrow();
   });
@@ -803,5 +816,65 @@ describe("assertProseBudget", () => {
       stale,
       "ratchet row(s) for deleted tool(s) — delete the row, it can never fire again",
     ).toEqual([]);
+  });
+  it("fails an outputSchema over the cap on a tool with no ceiling row", () => {
+    const big = schemaOfAbout(OUTPUT_SCHEMA_MAX_CHARS * 2);
+    expect(() =>
+      assertProseBudget(
+        [{ name: "tako_new", description: OK, outputSchema: big }],
+        params({}),
+        "Short.",
+      ),
+    ).toThrow(/tako_new: generic outputSchema is \d+ chars \(cap 2000\)/);
+  });
+
+  it("checks each surface separately, so a wider chatgpt schema cannot hide", () => {
+    expect(() =>
+      assertProseBudget(
+        [
+          {
+            name: "tako_new",
+            description: OK,
+            outputSchema: z.object({ a: z.string() }),
+            outputSchemaBySurface: { chatgpt: schemaOfAbout(OUTPUT_SCHEMA_MAX_CHARS * 2) },
+          },
+        ],
+        params({}),
+        "Short.",
+      ),
+    ).toThrow(/tako_new: chatgpt outputSchema is \d+ chars/);
+  });
+
+  it("a tool with no outputSchema is not gated", () => {
+    expect(() =>
+      assertProseBudget([{ name: "tako_new", description: OK }], params({}), "Short."),
+    ).not.toThrow();
+  });
+
+  it("records tako_search's oversized schema as shrink-only, not as an exemption", () => {
+    // The row exists BECAUSE the cap is real: 4,381 against 2,000. Reading the
+    // numbers from the map rather than restating them means the search fan-out
+    // PR retunes one place, and `toBeGreaterThan` tells the last one to delete
+    // the block instead of leaving a vacuous test behind.
+    const row = LEGACY_OUTPUT_SCHEMA_CEILINGS["tako_search"];
+    expect(row).toBeDefined();
+    expect(row!.generic).toBeGreaterThan(OUTPUT_SCHEMA_MAX_CHARS);
+    expect(() =>
+      assertProseBudget(
+        [{ name: "tako_search", description: OK, outputSchema: schemaOfAbout(row!.generic * 2) }],
+        [{ name: "tako_search", parameters: {} }],
+        "Short.",
+      ),
+    ).toThrow(/tako_search: generic outputSchema grew to \d+ chars \(legacy ceiling \d+\)/);
+  });
+
+  it("lets a ratcheted schema shrink freely", () => {
+    expect(() =>
+      assertProseBudget(
+        [{ name: "tako_search", description: OK, outputSchema: z.object({ a: z.string() }) }],
+        [{ name: "tako_search", parameters: {} }],
+        "Short.",
+      ),
+    ).not.toThrow();
   });
 });

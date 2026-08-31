@@ -54,7 +54,7 @@ import {
   type ContentsWireItem,
   type ProjectedContentsItem,
 } from "../src/tools/_contents.js";
-import { BATCH_CHAR_BUDGET } from "../src/tools/tako_contents.js";
+import { defaultMaxChars } from "../src/tools/tako_contents.js";
 import type { Env } from "../src/env.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
@@ -604,6 +604,44 @@ export const DESCRIPTION_MAX_LINES = 6;
 export const PARAM_MAX_CHARS = 320;
 export const TOOL_ENTRY_MAX_CHARS = 2_000; // description + every param description
 export const INSTRUCTIONS_MAX_CHARS = 900;
+// D1's sixth cap, wired for the first time here — it went unenforced through
+// the pilot, which is how `tako_search` shipped at 4,381.
+//
+// 2,000, not D1's stated 1,500. That number was a policy target set without
+// measuring a wide tool, and it is unreachable for one: strip EVERY field
+// description from `tako_search` and its bare structure is still 1,907, 27%
+// over. Ten root fields and an 11-field `cards.items` cost that much in braces
+// alone, so 1,500 could only ever be met by dropping advertised fields, which
+// is a D3/D4 call and not a copy edit. 2,000 leaves the narrowest migrated
+// shape real headroom (`tako_contents`, 1,483 — 8 item fields plus a nested
+// `rows`) and still fails `tako_search` by more than 2x, so the gate binds
+// from the day it lands instead of being tuned to pass what exists.
+//
+// Measured on the PUBLISHED schema (`publishedOutputJsonSchema`), which is
+// what `tools/list` serves: the SDK rebuilds the top level strict and emits
+// draft-07, so a count off the raw zod JSON Schema would gate a string no host
+// ever reads.
+export const OUTPUT_SCHEMA_MAX_CHARS = 2_000;
+
+/**
+ * Shrink-only ceilings for the output schemas already over the cap, the same
+ * bargain `LEGACY_PROSE_CEILINGS` strikes for prose: a listed tool may shrink
+ * freely, and growing fails generation.
+ *
+ * Separate from that map on purpose. A tool listed there is exempt from the
+ * PROSE caps because its description has not been rewritten; `tako_search` has
+ * been rewritten and holds every prose cap. Only its schema is oversized, and
+ * folding it into the prose ratchet would silently switch off four caps it
+ * currently passes.
+ *
+ * 2,474 of `tako_search`'s 4,381 is field descriptions — `coverage_end` alone
+ * spends 273 explaining itself against `last_updated`. That is what its fan-out
+ * PR can recover without touching the shape. Delete the row when it does.
+ */
+export const LEGACY_OUTPUT_SCHEMA_CEILINGS: Record<string, { generic: number; chatgpt: number }> = {
+  // Measured 2026-08-31, the day the gate landed.
+  tako_search: { generic: 4381, chatgpt: 4704 },
+};
 
 /**
  * The ratchet for tools the redesign has not reached yet: each fan-out PR
@@ -632,7 +670,7 @@ export function assertProseBudget(
   // Narrowed to the fields this reads, like every sibling assert helper: the
   // gate is testable with a plain literal instead of a cast of a whole
   // ToolModule, and the signature states what it actually inspects.
-  modules: ReadonlyArray<Pick<ToolModule, "name" | "description">>,
+  modules: ReadonlyArray<Pick<ToolModule, "name" | "description" | "outputSchema" | "outputSchemaBySurface">>,
   registryTools: ReadonlyArray<{
     name: string;
     parameters: Record<string, { description?: string }>;
@@ -679,6 +717,27 @@ export function assertProseBudget(
     }
     if (entry > TOOL_ENTRY_MAX_CHARS)
       failures.push(`${m.name}: tool entry is ${entry} chars (cap ${TOOL_ENTRY_MAX_CHARS}).`);
+    // Per SURFACE, not once per tool: `tako_search` publishes a wider schema on
+    // chatgpt (the six widget fields), and the cap is about what one host
+    // receives. Sits below the legacy `continue`, so a ratcheted tool is exempt
+    // here too — deleting its row is what turns this on, like the other caps.
+    for (const surface of ["generic", "chatgpt"] as const) {
+      const schema = outputSchemaForSurface(m, surface);
+      if (schema === undefined) continue;
+      const chars = JSON.stringify(publishedOutputJsonSchema(schema)).length;
+      const ceiling = LEGACY_OUTPUT_SCHEMA_CEILINGS[m.name]?.[surface];
+      if (ceiling !== undefined) {
+        if (chars > ceiling)
+          failures.push(
+            `${m.name}: ${surface} outputSchema grew to ${chars} chars (legacy ceiling ${ceiling}). An oversized schema only shrinks; bring it to the ${OUTPUT_SCHEMA_MAX_CHARS}-char cap and delete the row.`,
+          );
+        continue;
+      }
+      if (chars > OUTPUT_SCHEMA_MAX_CHARS)
+        failures.push(
+          `${m.name}: ${surface} outputSchema is ${chars} chars (cap ${OUTPUT_SCHEMA_MAX_CHARS}).`,
+        );
+    }
   }
   if (instructions.length > INSTRUCTIONS_MAX_CHARS)
     failures.push(
@@ -746,14 +805,14 @@ const CONTENTS_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_contents_sa
  * projection and renderer. Two urls, so one sample shows a Tako card's rows, a
  * web page's text, and the batch envelope.
  *
- * `effectiveMaxChars` is derived the way `fetchOne` derives it rather than
- * pinned, so the sample keeps telling the truth if `BATCH_CHAR_BUDGET` moves.
+ * `effectiveMaxChars` calls the server's own `defaultMaxChars`, not a copy of
+ * the expression, so the sample cannot disagree with what a caller gets.
  */
 function buildContentsSample(tool: ToolModule): ToolSample {
   const raw = JSON.parse(readFileSync(CONTENTS_SAMPLE_FIXTURE, "utf8")) as {
     urls: Array<{ url: string; item: ContentsWireItem }>;
   };
-  const effectiveMaxChars = Math.min(100_000, Math.floor(BATCH_CHAR_BUDGET / raw.urls.length));
+  const effectiveMaxChars = defaultMaxChars(raw.urls.length);
   const results: ProjectedContentsItem[] = raw.urls.map(({ url, item }) =>
     projectContentsItem(item, url, { effectiveMaxChars }),
   );

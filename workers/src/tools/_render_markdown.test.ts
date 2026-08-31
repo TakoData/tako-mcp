@@ -646,6 +646,49 @@ describe("channel parity (tako_contents)", () => {
       expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
     }
   });
+
+  // The single-url path is the common case in production and it renders NO
+  // per-item cost line (`showCost: false`), so `cost` survives parity only
+  // because `contentsUsage` sums one element and the footer prints the same
+  // number. That is a coincidence, not a rendering — pin it, so a later
+  // change to the footer (rounding, `toFixed`, a currency format) fails here
+  // instead of silently dropping a projected leaf on the most-travelled path.
+  it("a single-url output keeps parity even though the item cost renders only as `usage`", () => {
+    const output = {
+      results: [
+        {
+          url: "https://tako.com/card/abc",
+          rows: {
+            columns: ["Timestamp", "Total Revenues (USD)"],
+            rows: [["2026-03-31T00:00:00+00:00", 111184000000]] as Array<Array<string | number | boolean | null>>,
+            total_rows: 46,
+          },
+          cost: 0.0015,
+        },
+      ],
+      usage: { total_cost_usd: 0.0015 },
+    };
+    const md = renderContentsText(output);
+    const leaves: string[] = [];
+    const walk = (v: unknown): void => {
+      if (v === null || v === undefined) return;
+      if (typeof v === "string") leaves.push(v);
+      else if (typeof v === "number") leaves.push(String(v));
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (typeof v === "object") Object.values(v).forEach(walk);
+    };
+    const { usage, ...modelFacing } = output;
+    walk(modelFacing);
+    leaves.push(`$${usage.total_cost_usd}`);
+    for (const leaf of leaves) {
+      expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
+    }
+    // No `##` header and no per-item cost line: with one entry the item cost
+    // and the root usage are the same number, so one line says it.
+    expect(md).not.toContain("## Contents");
+    expect(md).not.toContain("cost: $");
+    expect(md.trimEnd().endsWith("usage: $0.0015")).toBe(true);
+  });
 });
 
 describe("renderGraphRelatedMarkdown", () => {

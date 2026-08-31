@@ -120,11 +120,11 @@
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own. Needs a signed-in connection.\n\nFetch only cards `tako_search` marked `exportable: true`; locked cards return no rows on any path, so read the headline value from the card's `description` instead. Rows bill per 1,000 delivered — set `max_rows` when you need only the recent ones.\n\nFor a long page such as a filing or an annual report, set `query` and get back only the passages that match, in one call. When a search returned web results but no fitting data card, fetch a web result's url here.",
+      "description": "Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own.\n\nFetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to get back only the passages that match.\n\nBest for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.",
       "parameters": {
         "urls": {
           "type": "array",
-          "description": "The urls to fetch, 1-10 per call: a Tako card url or a web result url. Batch them — one call for 8 urls costs the same as 8 calls and saves 7 round trips.",
+          "description": "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips.",
           "required": true
         },
         "max_rows": {

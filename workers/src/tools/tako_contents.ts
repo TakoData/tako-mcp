@@ -26,7 +26,7 @@
  * `_search_results.ts`); conflating the two is where a stale 20-row claim here
  * came from.
  *
- * Not every card is exportable. The backend's export-safe gate 403s cards
+ * Not every card is exportable. The backend's export gate 403s cards
  * without exportable data, and it is STRICTER than the `exportable` flag
  * search sets (`supports_data_export()` vs `export_safe()`), so an
  * `exportable: true` card can still refuse — which is why the description
@@ -63,7 +63,7 @@ export const MAX_CONTENTS_URLS = 10;
  * full page, up to 1,000,000 chars / ~250k tokens) was observed in the wild
  * and unreadable for any client, but that guard was written before batching:
  * at `MAX_CONTENTS_URLS` (10), ten pages defaulting to 100k each rebuilds the
- * exact ~250k-token blowup the 100k default prevents, just spread across urls.
+ * exact ~250k-token blowup the 100k default prevents, spread across urls.
  * Dividing a fixed total across the batch keeps that ceiling meaningful
  * however many urls a call fans out to.
  *
@@ -99,17 +99,35 @@ export const BATCH_CHAR_BUDGET = 250_000;
 // default-listed tool from naming. After D4 a search result carries no rows on
 // any reachable path, which is exactly why this tool exists.
 //
-// "Needs a signed-in connection" earns its 35 chars: the listing is
-// auth-invariant (mcp.ts's free-tier gate), so an anonymous connection LISTS
-// this tool and refuses it at dispatch. One sentence here spends a sentence to
-// save a whole wasted call. It is one constant on both tiers — #272's incident
-// was prose that VARIED by tier and invited a call it would refuse.
+// NO "needs a signed-in connection" line. `FREE_TIER_TOOL_NAMES`
+// (`_surface.ts`) holds `tako_search` alone, so four of the five default tools
+// are auth-gated at dispatch and a sentence here would read as a property that
+// distinguishes this one. The dispatch gate states it where it applies
+// (`GENERIC_SIGN_IN_HINT`), and a search that found no card already branches on
+// reachability before naming this tool (`_search_results.ts`). #274 deleted the
+// mirror claim — "`tako_available_data` is free" — from the instructions for
+// the same reason: the credit-and-auth axis is not what a model routes on.
+//
+// NO recovery for a locked card either, beyond the precondition. "Read the
+// headline from the card's `description`" is what the 403 `modelGuidance`
+// below says, and D3 puts license-gated recovery in the result, once, where
+// the model reads it at the moment it applies. The description carries the
+// precondition; the guidance carries what to do when the precondition held and
+// the export gate refused anyway.
+//
+// NO routing sentence for "search returned web results but no card". It reads
+// as a condition ON fetching a web result, and the condition is false — you
+// fetch a page whenever you need its text, card or no card. `instructions.ts`
+// owns tool routing, and `_search_results.ts`'s zero-card guidance already
+// names this tool only when the connection can actually call it.
 const DESCRIPTION = [
-  `Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to ${MAX_CONTENTS_URLS} urls in one call — each one is billed and fails on its own. Needs a signed-in connection.`,
+  `Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to ${MAX_CONTENTS_URLS} urls in one call — each one is billed and fails on its own.`,
   "",
-  "Fetch only cards `tako_search` marked `exportable: true`; locked cards return no rows on any path, so read the headline value from the card's `description` instead. Rows bill per 1,000 delivered — set `max_rows` when you need only the recent ones.",
+  "Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to get back only the passages that match.",
   "",
-  "For a long page such as a filing or an annual report, set `query` and get back only the passages that match, in one call. When a search returned web results but no fitting data card, fetch a web result's url here.",
+  // `Best for:` last, the shape the other four default tools use (AGENTS.md's
+  // tool-description rule; compare `tako_search`).
+  "Best for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.",
 ].join("\n");
 
 const inputSchema = z.object({
@@ -143,7 +161,10 @@ const inputSchema = z.object({
       .min(1)
       .max(MAX_CONTENTS_URLS)
       .describe(
-        `The urls to fetch, 1-${MAX_CONTENTS_URLS} per call: a Tako card url or a web result url. Batch them — one call for 8 urls costs the same as 8 calls and saves 7 round trips.`,
+        // The count and the cap live in the schema (`min`/`max` above) and the
+        // batch instruction lives in the description. What only this line can
+        // say is why batching pays.
+        "The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips.",
       ),
     { field: "tako_contents.urls" },
   ),
@@ -207,13 +228,35 @@ function errorText(reason: unknown): string {
     const status = reason.status !== undefined ? String(reason.status) : "transport error";
     return `Fetch failed (${status}${detail !== undefined ? `: ${detail}` : ""}).`;
   }
-  return reason instanceof Error ? reason.message : String(reason);
+  if (reason instanceof ContentsFetchError) return reason.message;
+  // Anything else is a bug, not a fetch outcome. Its message is unreviewed
+  // text on a model-visible surface, so it stays in the log.
+  console.warn(`[tako] tako_contents unexpected failure kind=${reason instanceof Error ? reason.name : typeof reason}`);
+  return "Fetch failed for this url. Retry once; if it persists, flag it to the Tako team.";
 }
+
+/** The single-url default web-text cap. `BATCH_CHAR_BUDGET` divides down from
+ *  here, so a one-url call is unaffected by the batch split. */
+export const DEFAULT_MAX_CHARS = 100_000;
 
 /** The per-url share of the batch's default character budget. */
 function perUrlCharCap(batchSize: number): number {
   return Math.max(1, Math.floor(BATCH_CHAR_BUDGET / batchSize));
 }
+
+/** The cap a caller who set no `max_chars` gets, for a batch of this size.
+ *
+ *  Exported because `gen-registry.ts` needs the same number to build the
+ *  `docs/TOOLS.md` sample. It used to re-derive the expression by hand, so
+ *  moving `BATCH_CHAR_BUDGET` published a sample the server would not produce. */
+export function defaultMaxChars(batchSize: number): number {
+  return Math.min(DEFAULT_MAX_CHARS, perUrlCharCap(batchSize));
+}
+
+/** Our own aborts, as opposed to a transport failure or a bug. `errorText`
+ *  renders these verbatim and everything else generically, so a `TypeError`
+ *  thrown inside the projection cannot reach a model as batch entry text. */
+export class ContentsFetchError extends Error {}
 
 /**
  * The wire body for ONE url. Exported for the `fixedInputs` drift guard, which
@@ -240,15 +283,22 @@ export function buildContentsBody(
   const maxChars =
     input.query !== undefined
       ? 1_000_000
-      : input.max_chars ?? Math.min(100_000, perUrlCharCap(batchSize));
+      : input.max_chars ?? defaultMaxChars(batchSize);
+  // `satisfies` sits on the LITERAL, not on the variable. Object-literal
+  // freshness is lost on assignment, so `const body = {…}; return body
+  // satisfies T` type-checks a key the target no longer declares — which is
+  // the drift that matters here: a backend that renames `mode` or
+  // `content_format` would keep receiving the dead key and silently serve its
+  // own "url" / "csv" defaults, and the whole one-delivery-one-serialization
+  // design rides on those two.
   const body = {
     url,
     mode: "inline" as const,
     content_format: "json_compact" as const,
     max_chars: maxChars,
     ...(input.max_rows !== undefined ? { max_rows: input.max_rows } : {}),
-  };
-  return body satisfies z.input<typeof ContentsRequest>; // ← build-time guard: backend request drift breaks here
+  } satisfies z.input<typeof ContentsRequest>; // ← build-time guard: backend request drift breaks here
+  return body;
 }
 
 /** Fetch ONE url. Throws on failure so the caller can decide whether a single
@@ -269,7 +319,7 @@ async function fetchOne(
   } catch (err) {
     // Map the two "this url has no exportable content" statuses to
     // self-correcting messages so the model stops retrying and reads the card's
-    // headline instead. Per the OpenAPI contract: 403 is the export-safe gate,
+    // headline instead. Per the OpenAPI contract: 403 is the export gate,
     // 404 is "does not exist or has no exportable data". Two sentences each —
     // verdict, then the one action (spec: guidance is two sentences per
     // branch). Both are framed as the LIKELY cause, not asserted fact, since a
@@ -299,22 +349,25 @@ async function fetchOne(
     }
     throw err;
   }
-  // Validate the raw wire response against the generated ContentsResponse so
-  // backend drift (renamed fields, a restructured contents array) throws here
-  // instead of silently projecting to an empty payload.
+  // Validate the raw wire response against the generated ContentsResponse so a
+  // restructured `contents` array throws here rather than projecting to
+  // nothing. It does NOT catch a renamed payload field: every one of them is
+  // `.optional()` on the generated `ContentItem`, so an item that lost
+  // `dataset` still parses. `projectContentsItem`'s empty-payload branch is
+  // what turns that into a readable error instead of a billed blank.
   const wireResult = ContentsResponse.safeParse(raw);
   if (!wireResult.success) {
     // Zod detail goes to the server log only — the raw issue dump is
     // upstream-echoed content and noise for the model (Safety Rules).
     logWireGuardFailure("tako_contents", "ContentsResponse", wireResult.error, raw);
-    throw new Error(
+    throw new ContentsFetchError(
       "Tako contents endpoint returned an unexpected wire shape. Retry once; if it persists, flag it to the Tako team.",
     );
   }
   const item = wireResult.data.contents?.[0];
   if (!item) {
     logWireGuardFailure("tako_contents", "empty-contents", undefined, raw);
-    throw new Error("Tako contents endpoint returned no downloadable content for that url.");
+    throw new ContentsFetchError("Tako contents endpoint returned no downloadable content for that url.");
   }
   const projected = projectContentsItem(item, url, {
     ...(input.query !== undefined ? { passageQuery: input.query } : {}),
@@ -330,7 +383,7 @@ async function fetchOne(
     projected.text !== undefined &&
     input.max_chars === undefined &&
     input.query === undefined &&
-    perUrlCharCap(batchSize) < 100_000
+    defaultMaxChars(batchSize) < DEFAULT_MAX_CHARS
   ) {
     console.warn(
       `[tako] tako_contents batch max_chars cap bit tool=tako_contents batch_size=${batchSize} per_url_cap=${perUrlCharCap(batchSize)}`,
@@ -375,7 +428,7 @@ const takoContents = {
     },
     {
       field: "max_chars (when omitted)",
-      value: "min(100000, 250000 / batch size)",
+      value: `min(${DEFAULT_MAX_CHARS}, ${BATCH_CHAR_BUDGET} / batch size)`,
       note: "Per-url character cap for web text; 1,000,000 when `query` is set, so passages scan the whole page.",
     },
     {
@@ -408,7 +461,7 @@ const takoContents = {
     const parsed = contentsOutputShape.safeParse({ results, usage: contentsUsage(results) });
     if (!parsed.success) {
       logWireGuardFailure("tako_contents", "output-projection", parsed.error, results);
-      throw new Error("Tako contents endpoint returned an unexpected shape.");
+      throw new ContentsFetchError("Tako contents endpoint returned an unexpected shape.");
     }
     return parsed.data;
   },
