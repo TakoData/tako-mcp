@@ -558,9 +558,10 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
   const searchResponse = () =>
     jsonResponse(200, { cards: [cardWithRows()], web_results: [], request_id: "req-data" });
 
-  // Rows now ride under the projected `rows` field (only when requested).
-  const datasetOf = (out: { cards: Array<{ rows?: Record<string, unknown> }> }) =>
-    (out.cards[0]?.rows as { dataset?: unknown } | undefined)?.dataset;
+  // Rows now ride under the projected `rows` field (only when requested),
+  // normalized to `columns`/`rows` — the dataset envelope's ref/sources/
+  // provenance and its duplicated counts are dropped by the projection.
+  const rowsOf = (out: { cards: Array<{ rows?: Record<string, unknown> }> }) => out.cards[0]?.rows;
 
   it("keeps card rows when the caller sets data.include_contents", async () => {
     mockFetchSequence([searchResponse()]);
@@ -568,7 +569,7 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
       tako_search_advanced.inputSchema.parse({ query: "us gdp", data: { include_contents: true } }),
       CTX,
     );
-    expect(datasetOf(out)).toMatchObject({ rows: [["2024-01-01", 29]] });
+    expect(rowsOf(out)).toMatchObject({ rows: [["2024-01-01", 29]] });
   });
 
   it("drops card rows when the caller names the data block without the flag", async () => {
@@ -577,7 +578,7 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
       tako_search_advanced.inputSchema.parse({ query: "us gdp", data: {} }),
       CTX,
     );
-    expect(datasetOf(out)).toBeUndefined();
+    expect(rowsOf(out)).toBeUndefined();
     // total_rows is METADATA, not a payload channel: the projection lifts it
     // to the card so the model still knows rows exist and can fetch them.
     expect(out.cards[0]?.total_rows).toBe(1);
@@ -586,7 +587,7 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
   it("tako_search always drops them — the simple tool cannot request them", async () => {
     mockFetchSequence([searchResponse()]);
     const out = await tako_search.handler({ query: "us gdp", sources: ["data"] }, CTX);
-    expect(datasetOf(out)).toBeUndefined();
+    expect(rowsOf(out)).toBeUndefined();
   });
 });
 
@@ -613,6 +614,30 @@ describe("include_related is honoured: related suggestions reach the output", ()
     const md = tako_search_advanced.renderText(out, CTX);
     expect(md).toContain("## Related queries");
     expect(md).toContain("US core CPI");
+    // The pin ids reach the TEXT channel too. They rode in structuredContent
+    // alone until this tool's pass — invisible on the 9 audited harnesses that
+    // feed the model only `content`, which is where the follow-up they exist
+    // to pin would have to be built.
+    expect(md).toContain("mt::cpi-core");
+  });
+
+  // `node_ids: []` is what the wire sends whenever the graph could not resolve
+  // them, which is most suggestions: one empty array per suggestion, in both
+  // channels, saying nothing.
+  it("drops an unresolved node_ids array rather than shipping it empty", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [],
+        web_results: [],
+        request_id: "req-rel",
+        related: [{ query: "US core CPI", description: null, node_ids: [] }],
+      }),
+    ]);
+    const out = await tako_search_advanced.handler(
+      tako_search_advanced.inputSchema.parse({ query: "US CPI", include_related: 3 }),
+      CTX,
+    );
+    expect(out.related).toEqual([{ query: "US core CPI" }]);
   });
 
   it("omits related when the wire carries none", async () => {
@@ -758,8 +783,62 @@ describe("include_answer selects the endpoint", () => {
       }),
       CTX,
     );
-    const ds = (out.cards[0]?.rows as { dataset: { rows: unknown[] } }).dataset;
-    expect(ds.rows).toHaveLength(3);
+    expect((out.cards[0]?.rows as { rows: unknown[] }).rows).toHaveLength(3);
     expect(out.guidance).toBeUndefined();
+  });
+});
+
+/**
+ * The prose caps, applied to the whole published input schema.
+ *
+ * `assertProseBudget` measures TOP-LEVEL parameters only (`flattenParameters`
+ * does not descend), so the 21 describes inside `data`, `web`, `location` and
+ * `output_settings` are ungated — and they were 5,301 chars of the 11,085-char
+ * schema before this tool's pass, written as HTTP-API reference for a caller
+ * reading `POST /api/v3/search` rather than as a rule a model applies while
+ * building an argument. The overrides in `DATA_DESCRIBES` / `WEB_DESCRIBES` /
+ * `OUTPUT_SETTINGS_DESCRIBES` are what brought them down; this holds them
+ * there, because the next schema regeneration re-supplies the generated text
+ * for any field whose override is dropped.
+ */
+describe("published prose stays inside the caps at every level", () => {
+  const described = (): Array<[string, string]> => {
+    const out: Array<[string, string]> = [];
+    const walk = (node: unknown, path: string): void => {
+      if (node === null || typeof node !== "object") return;
+      const n = node as Record<string, unknown>;
+      if (typeof n.description === "string" && path !== "") out.push([path, n.description]);
+      for (const [key, value] of Object.entries((n.properties ?? {}) as Record<string, unknown>)) {
+        walk(value, `${path}.${key}`);
+      }
+      for (const key of ["anyOf", "oneOf", "allOf"]) {
+        const branch = n[key];
+        if (Array.isArray(branch)) branch.forEach((b) => walk(b, path));
+      }
+      if (n.items !== undefined) walk(n.items, `${path}[]`);
+    };
+    walk(z.toJSONSchema(tako_search_advanced.inputSchema, { io: "input" }), "");
+    return out;
+  };
+
+  it("no describe anywhere in the input schema exceeds the 320-char param cap", () => {
+    const over = described()
+      .filter(([, text]) => text.length > 320)
+      .map(([path, text]) => `${path}: ${text.length}`);
+    expect(over, "a generated describe came back; add an override").toEqual([]);
+  });
+
+  it("the pin advice lives on the field it corrects, not two fields away", () => {
+    // The generated `node_ids` text says a pin "always" gets "a strong boost".
+    // Measured on prod (2026-07-29) it does not reliably outrank the organic
+    // winner, which is why the tool description used to carry a paragraph
+    // contradicting a describe the model reads at the same moment.
+    const byPath = new Map(described());
+    const nodeIds = byPath.get(".data.node_ids") ?? "";
+    expect(nodeIds).toMatch(/strict:\s*`?true/);
+    expect(nodeIds, "the overstated generated text is back").not.toMatch(/strong boost/);
+    expect(tako_search_advanced.description, "the contradiction paragraph is back").not.toMatch(
+      /strong boost|provisional/,
+    );
   });
 });

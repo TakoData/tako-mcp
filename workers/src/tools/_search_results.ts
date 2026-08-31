@@ -96,13 +96,15 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * (pinned vs unpinned, by handle) and in the commit that introduced this hatch;
  * cite those rather than looking for a script to re-run.
  */
-// READER: `tako_search_advanced` ONLY — both its endpoints, since the answer
-// data-gap verdict interpolates this too. `tako_search` took no
-// `node_ids`/`strict` after the D4 split, so its zero-card guidance stopped
-// advising a pin — advice for parameters the tool would reject. Do not
-// reintroduce this into any `tako_search` guidance; the canonical NAME is that
-// tool's recovery path. (The other reader was `tako_answer`, deleted in the
-// answer fold.)
+// NO PRODUCTION READER, same as {@link PINNED_FROM_CARD} below, and kept for
+// the same reason: this is the canonical phrasing of the pin form, read by
+// `_pin_form.test.ts` and named in `gen-registry.ts`'s failure message, so a
+// surface that needs the recipe interpolates it instead of restating a form
+// that drifted back to the broken variant twice before. Its last interpolation
+// was the answer data-gap verdict, cut when every guidance branch went to two
+// sentences; `tako_search_advanced`'s `data.node_ids` describe now carries the
+// short form. Do not reintroduce it into any `tako_search` guidance — that tool
+// takes no `node_ids`/`strict`, so the canonical NAME is its recovery path.
 export const PINNED_RETRY =
   "pin the METRIC's node_id ALONE (from structuredContent.matches[].coverage.items[]) with strict:true, naming the entity in the query text — adding the entity's node id widens the filter back out, and a pin at the default strict:false only boosts the node rather than selecting it, which measured as not enough to land the metric. If that pinned call returns 0 cards, run it once more with `node_ids` removed before concluding the data is absent: `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards, so the pin itself is sometimes what empties the result";
 
@@ -642,7 +644,7 @@ export type ProjectedCard = {
   /** Inlined rows — present ONLY when the request asked to inline
    *  (`tako_search_advanced` with `include_contents`); `tako_search`
    *  never sets it. */
-  rows?: Record<string, unknown>;
+  rows?: ProjectedCardRows;
 };
 
 export type ProjectedWebResult = {
@@ -657,31 +659,219 @@ export type ProjectedWebResult = {
   content?: Record<string, unknown>;
 };
 
-/**
- * The keys an inlined `rows` object may carry: every payload channel, plus the
- * three metadata keys that describe one.
+/** The column name a model reads, with the unit folded in when the backend's
+ *  name does not already carry it. Structural, off the backend's own `unit`
+ *  field — not a table of known units.
  *
- * DERIVED from {@link CONTENT_PAYLOAD_KEYS}, never re-spelled. That constant is
- * bound to the generated `ContentItem` by a drift test; a literal list here
- * would not be, so a fifth upstream payload channel would be classified there,
- * turn the drift test green, and still never reach `tako_search_advanced`'s
- * inlined rows. That exact drift already shipped once against
- * `slimCardContent` (see the CONTENT_PAYLOAD_KEYS docstring: three keys against
- * ContentItem's four).
+ *  The test is for `(unit)`, the convention the backend's own names use, and
+ *  NOT for the unit as a bare substring. `"Team Payroll".includes("m")` is
+ *  true, so raw containment drops every short unit — `%`, `m`, `M`, `t`, `B`,
+ *  all documented values of `TakoDatasetColumn.unit` — and hands the model an
+ *  unlabeled number in a `columns` array whose description promises the unit
+ *  is in the name. A name that spells the unit out ("Revenue in USD") gains a
+ *  redundant `(USD)`, which costs 6 chars and loses nothing. */
+export function columnName(column: { name: string; unit?: string | null | undefined }): string {
+  const unit = column.unit;
+  if (unit === null || unit === undefined || unit === "") return column.name;
+  return column.name.includes(`(${unit})`) ? column.name : `${column.name} (${unit})`;
+}
+
+/**
+ * One cell, declared permissively on purpose.
+ *
+ * A `z.union([string, number, boolean, null])` here publishes an 88-char
+ * `anyOf` that can only ever REJECT: the wire guard (`TakoDataset` in
+ * `ContentsResponse`) already constrains cells to those four types, so the
+ * union adds no validation the payload has not passed — while a strict client
+ * (Cursor, claude.ai) would throw out a whole billed result if our own
+ * projection ever emitted something else. D4: the schema is validation
+ * infrastructure, and a deep one adds failure modes, not model context. What
+ * the model needs — that a missing cell is `null` rather than an empty
+ * string — is one clause in `rows`'s own description, where it is read.
  */
-// Exported for the drift guard ONLY. A test that retypes these names instead
-// of importing them pins nothing: renaming `content_format` here to `format`
-// — which drops it from every `rows` object `tako_search_advanced` inlines —
-// left all 1267 tests green.
-//
-// `manifest` is on this list because it is the ONLY carrier of per-column
-// `unit`, `metric` and `entity`. `slimCardContent` already classifies it as
-// metadata to keep, and this loop used to filter it back out — so a
-// json_records inline arrived as `[{"col": 12.4}]` with nothing saying
-// whether 12.4 is USD, USD billions or a percent.
-export const ROWS_META_KEYS = ["total_rows", "truncated", "content_format", "manifest"] as const;
-const ROWS_KEYS: readonly string[] = [...CONTENT_PAYLOAD_KEYS, ...ROWS_META_KEYS];
-const PAYLOAD_KEY_SET: ReadonlySet<string> = new Set<string>(CONTENT_PAYLOAD_KEYS);
+const cellSchema = z.unknown();
+
+/**
+ * A Tako card's rows. Field name and inner shape are the spec's
+ * (`rows` as `{columns, rows, total_rows}`), shared by `tako_contents` items
+ * and `tako_search_advanced`'s inlined card rows so there is one vocabulary
+ * for the same thing. The search side takes it through
+ * {@link projectedCardRowsShape}, which drops `total_rows` (the card already
+ * carries it) and adds the two payloads that are not row-shaped.
+ *
+ * `columns` is a bare name array, not `{name, unit}` objects: checked across 8
+ * cards / ~20 columns on prod, every non-null `unit` was ALREADY inside the
+ * column name ("… (USD)", "… (Percentage)", "… (BTUs)"), so objects would pay
+ * `{"name":…}` per column to restate it — 160 chars on a 16-column card.
+ * `columnName` appends the unit when the name lacks it, so the assumption
+ * cannot fail silently. `type` is dropped because in positional
+ * JSON the value IS the type (`74.9967` vs `"60"` vs `null`), and on NBA
+ * standings the backend declares `Wins` a `string` — true of its storage,
+ * misleading as a semantic.
+ */
+// LIVES HERE, not in `_contents.ts`, only because of the import direction:
+// `_contents.ts` already takes `usageAdvertisedSchema` from this module, so
+// importing back the other way closes a cycle and `module_cycles.test.ts`
+// fails. Both readers — `tako_contents` items and `tako_search_advanced`
+// inlined card rows — get one definition of what a row payload looks like.
+export const projectedRowsShape = z.object({
+  columns: z.array(z.string()).describe("Column names, in row order; the unit is in the name."),
+  rows: z.array(z.array(cellSchema)).describe("Positional cells; a missing cell is null."),
+  // `.int()` deliberately absent: it publishes `minimum`/`maximum` at the
+  // JS safe-integer bounds, ~90 chars that no real row count can violate and
+  // that can only reject. Same reasoning as `cellSchema`.
+  total_rows: z.number().optional().describe("Rows behind the card, before `max_rows`."),
+});
+
+export type ProjectedRows = z.infer<typeof projectedRowsShape>;
+
+/**
+ * A card's INLINED rows, `tako_search_advanced` with
+ * `data.include_contents: true`. Derived from {@link projectedRowsShape} so
+ * the two tools cannot drift into two vocabularies for one thing.
+ *
+ * Two deliberate differences from the contents shape:
+ *
+ *  - `total_rows` is dropped. The card already carries it, and before this
+ *    projection the same count shipped THREE times per card — `card.total_rows`,
+ *    `rows.total_rows` and `rows.dataset.total_rows`.
+ *  - Every field is optional, and `format`/`data`/`card_data` exist, because
+ *    this tool publishes `data.content_format` and `tako_contents` does not.
+ *    Two of the four formats are row-shaped and normalize into
+ *    `columns`/`rows` (`json_compact` from `dataset`, `json_records` from
+ *    `records`); `csv` and `card_json` are not, so they ride verbatim under
+ *    the key that names them, with `format` saying which. Parsing a CSV
+ *    string back into cells would invent quoting rules the caller did not ask
+ *    for; a caller who requested CSV gets CSV.
+ *
+ * What is NOT here is the point: `dataset.ref` (duplicates `card.url`),
+ * `dataset.sources` (duplicates `card.source`) and `dataset.provenance` used
+ * to ride inside every inlined card, ~200 chars per card in BOTH channels,
+ * paid once per `data.count`.
+ */
+export const projectedCardRowsShape = projectedRowsShape
+  .omit({ total_rows: true })
+  .partial()
+  .extend({
+    format: z
+      .string()
+      .optional()
+      .describe("The content_format, when the payload is not `columns`/`rows`."),
+    data: z.string().optional().describe("csv format only: the rows as CSV text."),
+    card_data: z
+      .looseObject({})
+      .optional()
+      .describe("card_json format only: the card-type-specific object."),
+    truncated: z
+      .boolean()
+      .optional()
+      .describe("Not all the rows; the card's `total_rows` has the full count."),
+  })
+  .loose();
+
+export type ProjectedCardRows = z.infer<typeof projectedCardRowsShape>;
+
+/**
+ * Normalize one card's inlined content into {@link projectedCardRowsShape}.
+ *
+ * `manifest` is the fallback unit carrier, not a shipped field: `TakoDataset`
+ * columns carry their own `unit`, but a `json_records` payload has only bare
+ * keys, and the per-column `unit` then exists ONLY in `manifest`. Folding it
+ * into the column name (via {@link columnName}) puts it where the model reads
+ * the number instead of on a separate line it has to join by position — and
+ * lets the manifest itself go, which was 4 keys per column of `metric` and
+ * `entity` prose that repeat the card title.
+ *
+ * Returns `undefined` when no payload channel arrived: a descriptor carrying
+ * only a cost quote is not rows, and an empty `rows: {}` would read as "this
+ * card has no data" when the truth is "you did not ask to inline it".
+ */
+export function projectCardRows(
+  content: Record<string, unknown>,
+  manifest: ReadonlyArray<Record<string, unknown>> | undefined,
+): ProjectedCardRows | undefined {
+  const out: ProjectedCardRows = {};
+  const unitAt = (i: number): string | undefined => {
+    const entry = manifest?.[i];
+    const unit = entry === undefined ? undefined : entry.unit;
+    return typeof unit === "string" && unit !== "" ? unit : undefined;
+  };
+  const dataset = content.dataset as Record<string, unknown> | null | undefined;
+  const records = content.records;
+  if (dataset != null && Array.isArray(dataset.columns) && Array.isArray(dataset.rows)) {
+    out.columns = dataset.columns.map((c, i) => {
+      const col = (c ?? {}) as { name?: unknown; unit?: unknown };
+      const name = typeof col.name === "string" ? col.name : String(i);
+      const unit = typeof col.unit === "string" && col.unit !== "" ? col.unit : unitAt(i);
+      return columnName({ name, ...(unit !== undefined ? { unit } : {}) });
+    });
+    out.rows = dataset.rows as unknown[][];
+  } else if (Array.isArray(records) && records.length > 0) {
+    // Column order is FIRST-SEEN across every record, not the first record's
+    // keys: the backend omits a key whose value is null for that row, so
+    // reading row 0 alone drops a column the rest of the payload has.
+    const keys: string[] = [];
+    for (const record of records) {
+      if (record === null || typeof record !== "object") continue;
+      for (const key of Object.keys(record as Record<string, unknown>)) {
+        if (!keys.includes(key)) keys.push(key);
+      }
+    }
+    out.columns = keys.map((name, i) => {
+      const unit = unitAt(i);
+      return columnName({ name, ...(unit !== undefined ? { unit } : {}) });
+    });
+    // `?? null` and not `?? undefined`: a hole in a positional row has to be a
+    // cell, or every column after it shifts left by one.
+    out.rows = records.map((record) =>
+      keys.map((key) => (record as Record<string, unknown>)[key] ?? null),
+    );
+  } else if (typeof content.data === "string" && content.data !== "") {
+    out.format = typeof content.content_format === "string" ? content.content_format : "csv";
+    out.data = content.data;
+  } else if (content.card_data != null && typeof content.card_data === "object") {
+    out.format = typeof content.content_format === "string" ? content.content_format : "card_json";
+    out.card_data = content.card_data as Record<string, unknown>;
+  } else {
+    return undefined;
+  }
+  // A non-tabular payload still gets `columns` when the manifest names them,
+  // and it is the unit that makes this worth the duplicated header: a CSV
+  // header is bare names, so without this a `csv` inline reaches the model as
+  // a column of numbers with nothing saying whether they are USD, USD billions
+  // or a percent — the same gap `json_records` had. The tabular branches above
+  // already fold the unit into the name and never reach here.
+  if (out.columns === undefined && manifest !== undefined) {
+    const named = manifest
+      .map((c, i) => {
+        const name = typeof c.name === "string" && c.name !== "" ? c.name : undefined;
+        if (name === undefined) return undefined;
+        const unit = unitAt(i);
+        return columnName({ name, ...(unit !== undefined ? { unit } : {}) });
+      })
+      .filter((c): c is string => c !== undefined);
+    if (named.length > 0) out.columns = named;
+  }
+  // Either level may carry it: the cap can be applied to the response as a
+  // whole (`content.truncated`) or inside the dataset the backend built.
+  const truncated =
+    content.truncated === true || (dataset != null && dataset.truncated === true);
+  if (truncated) out.truncated = true;
+  return out;
+}
+
+/**
+ * The payload channels {@link projectCardRows} reads, one branch each.
+ *
+ * Written out because each channel needs its own handling — a loop over
+ * {@link CONTENT_PAYLOAD_KEYS} could not normalize a dataset and a CSV string
+ * the same way. So a test compares this list to that one instead
+ * (`_search_results.test.ts`), and a fifth upstream channel fails there rather
+ * than being silently dropped from every inlined card. That drift has shipped
+ * once already: `slimCardContent` carried three names against `ContentItem`'s
+ * four.
+ */
+export const ROWS_PAYLOAD_KEYS_READ = ["dataset", "records", "data", "card_data"] as const;
 
 /** Project one wire card into the model-facing shape. Pure and immutable. */
 export function projectCard(card: TakoCard, capRows: number | "all" | null): ProjectedCard {
@@ -753,16 +943,11 @@ export function projectCard(card: TakoCard, capRows: number | "all" | null): Pro
         | null
         | undefined;
       if (capped != null) {
-        const rows: Record<string, unknown> = {};
-        for (const key of ROWS_KEYS) {
-          const v = capped[key];
-          if (v !== null && v !== undefined) rows[key] = v;
-        }
-        // Metadata alone is not rows: a descriptor with a cost quote and no
-        // payload channel would otherwise ship an empty `rows` object.
-        if (Object.keys(rows).some((k) => PAYLOAD_KEY_SET.has(k))) {
-          out.rows = rows;
-        }
+        const manifest = Array.isArray(capped.manifest)
+          ? (capped.manifest as Array<Record<string, unknown>>)
+          : undefined;
+        const rows = projectCardRows(capped, manifest);
+        if (rows !== undefined) out.rows = rows;
       }
     }
   }
@@ -790,6 +975,35 @@ export function projectWebResult(w: WebResult, keepWebText: boolean): ProjectedW
       if ("data" in kept) out.content = kept;
     }
   }
+  return out;
+}
+
+/**
+ * One follow-up query, projected.
+ *
+ * `RelatedSuggestion` ships three fields and the wire sends `node_ids: []`
+ * whenever the graph could not resolve them — an empty array per suggestion in
+ * both channels, and one the text channel had no way to render, so it was a
+ * structured-only field on a tool whose text channel 9 audited harnesses read
+ * as the whole result. Empty arrays are dropped; a resolved one rides, because
+ * pinning the follow-up is what the ids are for.
+ */
+export const projectedRelatedShape = z.looseObject({
+  query: z.string().describe("Send this as the `query` of the next search request."),
+  description: z.string().optional().describe("What the query asks for, when its text does not say."),
+  node_ids: z
+    .array(z.string())
+    .optional()
+    .describe("Pass as `data.node_ids` on the follow-up to return this data."),
+});
+
+export type ProjectedRelated = z.infer<typeof projectedRelatedShape>;
+
+export function projectRelated(r: z.infer<typeof RelatedSuggestion>): ProjectedRelated {
+  const out: ProjectedRelated = { query: r.query };
+  const description = nonEmpty(r.description);
+  if (description !== undefined) out.description = description;
+  if (Array.isArray(r.node_ids) && r.node_ids.length > 0) out.node_ids = r.node_ids;
   return out;
 }
 
@@ -937,7 +1151,18 @@ export const projectedCardShape = z.looseObject({
     .optional()
     .describe('Either a 1.0-5.0 score as a string ("4.5", 5.0 = exact match) on entitled accounts, or a coarse word ("High"). Higher is more relevant in both forms.'),
   nodes: z.array(projectedNodeSchema).optional().describe("Graph handles — pass ids to tako_graph_related."),
-  rows: z.looseObject({}).optional().describe("Inlined rows — only when the request asked to inline them."),
+});
+
+/** The card `tako_search_advanced` publishes: the same nine fields plus the
+ *  rows only it can inline. Split from {@link projectedCardShape} for the
+ *  reason the answer-fold fields are split from the core shape — a tool must
+ *  not advertise a field it cannot return. `tako_search` passes `rowCap: null`
+ *  on every call, so `rows` there was 711 chars of schema describing an
+ *  outcome its handler makes unreachable. */
+export const projectedCardWithRowsShape = projectedCardShape.extend({
+  rows: projectedCardRowsShape
+    .optional()
+    .describe("Inlined rows — only when the request asked to inline them."),
 });
 export const projectedWebResultShape = z.looseObject({
   title: z.string().optional(),
@@ -980,7 +1205,7 @@ export const searchOutputShape = {
     .optional()
     .describe("What each source is and how it builds its data, keyed by a card's `source` field verbatim."),
   // Follow-up queries, present only when the request set `include_related`.
-  related: z.array(RelatedSuggestion).optional(),
+  related: z.array(projectedRelatedShape).optional(),
   // The three /v1/answer fields. Present only on the answer endpoint, which
   // only `tako_search_advanced` with `include_answer: true` reaches.
   answer: z.string().optional(),
@@ -997,7 +1222,7 @@ export type SearchOutput = {
   guidance?: string;
   metric_definitions?: Record<string, string>;
   source_notes?: Record<string, string>;
-  related?: z.infer<typeof RelatedSuggestion>[];
+  related?: ProjectedRelated[];
   answer?: string;
   structured_output?: Record<string, unknown>;
   structured_output_error?: z.infer<typeof AnswerStructuredOutputError>;
@@ -1023,60 +1248,6 @@ const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
 // created it (a blanket no-re-search ban losing docs questions to a
 // competing web-search MCP by 5-6 targeted calls) stays the reason the
 // verdicts blame the DATA GRAPH, never re-searching as such.
-
-/**
- * The same carve-out for the ANSWER path, where the move is DECOMPOSITION
- * rather than refinement.
- *
- * An answer call synthesizes one answer per call, so a question spanning several
- * entities or providers ("how does each of these APIs handle X") gets one
- * blended answer built from whatever the single retrieval happened to surface.
- * Re-asking the same broad question is the loop that does not converge; asking
- * it once per entity is not a retry at all, it is the shape the tool wants —
- * the same "one entity per query" rule its own description gives for the data
- * side.
- *
- * Stated as guidance rather than implemented as internal fan-out on purpose:
- * splitting a question server-side would multiply a priced call without the
- * caller asking, and the model is the only party that knows which entities the
- * question actually covers.
- */
-export const DECOMPOSE_WEB_ASK =
-  "If the answer lives on the web rather than in the data graph, do not re-ask this same question: DECOMPOSE it. One narrow question per entity, provider or site, asked in parallel, beats one broad question — that is not a retry, it is the shape this tool answers best, and it is how a multi-part web question gets a complete answer instead of a blended one.";
-
-/**
- * The one carve-out on the BOTH-empty stop — nothing from the data graph and
- * nothing from the web.
- *
- * It exists because the two surfaces once CONTRADICTED each other here: the
- * answer path allowed one narrower web attempt while `tako_search`'s equivalent
- * branch ended flatly at "stop calling Tako for this question" — same
- * situation, opposite verdict, on the most common Tako-has-nothing path. A
- * model that reads both surfaces learns that one of them is wrong. Same drift
- * {@link PINNED_RETRY} and {@link DECOMPOSE_WEB_ASK} exist to prevent.
- *
- * ONE INTERPOLATION LEFT, and that is deliberate — do not "fix" it by pushing
- * this string back into `buildZeroResultGuidance`. Every branch there is capped
- * at TWO sentences (spec: 2026-08-26-model-facing-surface-redesign, "guidance"
- * decision), and this is a ~250-char third one; the search path therefore
- * states the same carve-out as a CLAUSE ("or try one genuinely narrower web
- * question"). The full sentence stays on the answer path, which has no sentence
- * budget and needs the reason it carries — an empty web result usually means
- * the question was too broad, which is the half that actually stops the retry
- * loop.
- *
- * So the guarantee is the INVARIANT, not the string: both surfaces permit
- * exactly one narrower web attempt, and neither forbids re-searching the web.
- * "both zero-result surfaces permit exactly one narrower web attempt" in
- * `_search_results.test.ts` is what holds it — a string-identity test cannot,
- * now that only one side can afford the sentence.
- *
- * Used only where the web was ACTUALLY searched and came back empty. On a
- * data-only call there is no empty web result to reinterpret — that path tells
- * the caller to search the web at all, which is a different (and cheaper) move.
- */
-export const NARROWER_WEB_ATTEMPT =
-  "One exception to the stop, on the WEB axis only: a genuinely narrower question (one entity, one provider, one site) is worth a single attempt, because an empty web result usually means the question was too broad rather than unanswerable.";
 
 /**
  * The verdict when a `strict: true` pin returned nothing: about the FILTER, not
@@ -1110,12 +1281,18 @@ export function strictPinGuidance(tier: Tier): string {
 
 /**
  * The zero-data-card verdict for the ANSWER endpoint, worded by whether web
- * results ground the
- * answer. With web grounding the prose may be a complete, correct answer
- * (e.g. "who won the game?") — the verdict must scope itself to the data
- * index, not read as "this answer failed". Without web grounding it is the
- * hard anti-retry stop. Both are deterministic (cards.length === 0), never
- * inferred from the prose.
+ * results ground the answer. With web grounding the prose may be a complete,
+ * correct answer (e.g. "who won the game?") — the verdict must scope itself to
+ * the data index, not read as "this answer failed". Without web grounding it
+ * is the hard anti-retry stop. Both are deterministic (cards.length === 0),
+ * never inferred from the prose.
+ *
+ * TWO SENTENCES PER BRANCH, like every other guidance branch: the verdict
+ * (which corpora this response is evidence about) and the one next action
+ * (spec, "guidance" decision). These three were the last branches left at the
+ * old length — five to six sentences, up to 740 chars, three of them spent on
+ * anti-instructions ("do NOT rephrase-and-retry", "Do NOT reach for
+ * tako_contents") that restate what the one action already implies.
  *
  * `searchedWebToo` is what keeps the no-web-results branch honest. It used to
  * read "ZERO curated data cards (and no web results)" off `hasWebResults`
@@ -1130,38 +1307,37 @@ export function buildDataGapGuidance(
   registered?: ReadonlySet<string>,
 ): string {
   // A tool RESULT that names a tool is an instruction the model acts on, and
-  // `?tools=` REPLACES the defaults — `?tools=answer` registers
-  // `tako_search_advanced` ALONE, so on the connection that reaches this
-  // function most often, BOTH tools named below are unregistered and every
-  // recovery step here resolved to the SDK's bare "tool not found".
-  const has = (name: string): boolean => registered === undefined || registered.has(name);
-  const coverage = has("tako_available_data");
-  const contents = has("tako_contents");
-  // Each optional clause carries its own leading space, so dropping one
-  // leaves no double space behind.
-  const confirmFirst = coverage ? "confirm coverage once with tako_available_data, then " : "";
+  // `?tools=` REPLACES the defaults — `?tools=search_advanced` registers this
+  // tool ALONE, so on the connection that reaches this function most often
+  // `tako_available_data` is unregistered and naming it resolved to the SDK's
+  // bare "tool not found".
+  const coverage = registered === undefined || registered.has("tako_available_data");
   if (!hasWebResults && !searchedWebToo) {
-    const noContents = contents
-      ? " Do NOT reach for tako_contents: it returns rows only for an exportable card you already have, and 403s on license-gated ones."
-      : "";
-    return `Data-coverage verdict: ZERO curated data cards ground this answer (machine check: cards.length === 0). This ran with the DATA source only, so nothing here says anything about web coverage — do not read it as "not available anywhere". Cheapest next step: re-ask with sources:["data","web"] (same price) before concluding the figure is unavailable. If you want the proprietary series specifically, ${confirmFirst}re-ask ONCE — ${PINNED_RETRY} — stating the period you need.${noContents}`;
+    return [
+      "No data cards ground this answer, and this request searched the data source only, so it says nothing about web coverage.",
+      'Re-ask with both sources — `sources: {data: {}, web: {}}` — at the same price before treating the figure as unavailable.',
+    ].join(" ");
   }
   if (hasWebResults) {
-    const noContents = contents
-      ? " Do NOT reach for tako_contents: it cannot return rows for a card this answer did not cite, and it always 403s on license-gated cards."
-      : "";
-    return `Data-coverage note: ZERO curated data cards ground this answer — it is web-grounded only (machine check: cards.length === 0). If the prose answers the question, use it as-is. If you specifically wanted Tako's proprietary series, do NOT rephrase-and-retry the answer call for it (priced, rarely converges): ${confirmFirst}re-ask ONCE — ${PINNED_RETRY} — and state the period you need in the query.${noContents} ${DECOMPOSE_WEB_ASK}`;
+    return [
+      "No data cards ground this answer — it is web-grounded only, so use the prose if it answers the question.",
+      coverage
+        ? "For Tako's own series instead, get the metric's canonical name from tako_available_data and re-ask once on that name."
+        : "For Tako's own series instead, re-ask once naming the metric and the period you need.",
+    ].join(" ");
   }
-  const recover = coverage
-    ? `Recover in ONE step: call tako_available_data to confirm coverage, then re-ask HERE once (${PINNED_RETRY}), stating the period you need in the query.`
-    : `Recover in ONE step: re-ask HERE once (${PINNED_RETRY}), stating the period you need in the query.`;
-  const noContents = contents
-    ? " Do NOT reach for tako_contents — it returns rows only for an exportable card you already have, and 403s on license-gated ones."
-    : "";
-  const verdict = coverage
-    ? " If tako_available_data shows no coverage, the metric is genuinely absent from the graph: say so and use another source."
-    : " If that retry also comes back empty, the metric is genuinely absent from the graph: say so and use another source.";
-  return `Data-coverage verdict: ZERO curated data cards AND zero web results ground this answer — treat the metric as NOT in Tako's data index for this phrasing (machine check: cards.length === 0). Do NOT rephrase-and-retry the answer call hoping the same question lands a data series; every retry is priced and that loop rarely converges. ${recover}${noContents}${verdict} ${NARROWER_WEB_ATTEMPT}`;
+  // The web carve-out rides in this branch's second sentence as a clause, not
+  // as its own sentence, and it is not optional: the SEARCH path's both-empty
+  // branch permits one narrower web question, and these two surfaces once gave
+  // opposite verdicts on the most common Tako-has-nothing path. A model that
+  // reads both learns one of them is wrong. `_search_results.test.ts` holds the
+  // invariant across both branches, not the wording.
+  return [
+    "Neither data cards nor web results ground this answer, so treat the metric as absent for this phrasing — rewording alone will not change that, and every retry is priced.",
+    coverage
+      ? "Confirm coverage once with tako_available_data and re-ask on the canonical name it returns, or try one genuinely narrower web question — one entity, provider or site — then answer from another source."
+      : "Try one genuinely narrower web question — one entity, provider or site — then answer from another source.",
+  ].join(" ");
 }
 
 /**
@@ -1497,7 +1673,7 @@ export function buildSearchOutput(
     web_results: web,
     usage,
     request_id: requestId,
-    ...(extras.related !== undefined ? { related: extras.related } : {}),
+    ...(extras.related !== undefined ? { related: extras.related.map(projectRelated) } : {}),
     ...(extras.answer !== undefined ? { answer: extras.answer } : {}),
     ...(extras.structured_output !== undefined
       ? { structured_output: extras.structured_output }

@@ -29,52 +29,13 @@ import { z } from "zod";
 
 import { TakoDataset } from "../generated/schemas.js";
 import { extractPassages } from "./_passages.js";
-import { usageAdvertisedSchema } from "./_search_results.js";
+import {
+  columnName,
+  projectedRowsShape,
+  usageAdvertisedSchema,
+  type ProjectedRows,
+} from "./_search_results.js";
 
-/**
- * One cell, declared permissively on purpose.
- *
- * A `z.union([string, number, boolean, null])` here publishes an 88-char
- * `anyOf` that can only ever REJECT: the wire guard (`TakoDataset` in
- * `ContentsResponse`) already constrains cells to those four types, so the
- * union adds no validation the payload has not passed — while a strict client
- * (Cursor, claude.ai) would throw out a whole billed result if our own
- * projection ever emitted something else. D4: the schema is validation
- * infrastructure, and a deep one adds failure modes, not model context. What
- * the model needs — that a missing cell is `null` rather than an empty
- * string — is one clause in `rows`'s own description, where it is read.
- */
-const cellSchema = z.unknown();
-
-/**
- * A Tako card's rows. Field name and inner shape are the spec's
- * (`rows` as `{columns, rows, total_rows}`), so `tako_search_advanced`
- * inherits them verbatim in its own pass instead of inventing a second
- * vocabulary for the same thing.
- *
- * `columns` is a bare name array, not `{name, unit}` objects: checked across 8
- * cards / ~20 columns on prod, every non-null `unit` was ALREADY inside the
- * column name ("… (USD)", "… (Percentage)", "… (BTUs)"), so objects would pay
- * `{"name":…}` per column to restate it — 160 chars on a 16-column card.
- * `columnName` appends the unit when the name lacks it, so the assumption
- * cannot fail silently. `type` is dropped because in positional
- * JSON the value IS the type (`74.9967` vs `"60"` vs `null`), and on NBA
- * standings the backend declares `Wins` a `string` — true of its storage,
- * misleading as a semantic.
- */
-// Exported for `tako_search_advanced`, whose advertised `rows` is still an
-// empty `z.looseObject({})` stub: its pass reuses this object rather than
-// inventing a second vocabulary for the same thing.
-export const projectedRowsShape = z.object({
-  columns: z.array(z.string()).describe("Column names, in row order; the unit is in the name."),
-  rows: z.array(z.array(cellSchema)).describe("Positional cells; a missing cell is null."),
-  // `.int()` deliberately absent: it publishes `minimum`/`maximum` at the
-  // JS safe-integer bounds, ~90 chars that no real row count can violate and
-  // that can only reject. Same reasoning as `cellSchema`.
-  total_rows: z.number().optional().describe("Rows behind the card, before `max_rows`."),
-});
-
-export type ProjectedRows = z.infer<typeof projectedRowsShape>;
 
 /**
  * One requested url's result. Exactly one payload field rides per item:
@@ -143,22 +104,6 @@ export interface ContentsWireItem {
 export const EMPTY_PAYLOAD_ERROR =
   "Tako returned no data for this url. Retry once; if it persists, flag it to the Tako team.";
 
-/** The column name a model reads, with the unit folded in when the backend's
- *  name does not already carry it. Structural, off the backend's own `unit`
- *  field — not a table of known units.
- *
- *  The test is for `(unit)`, the convention the backend's own names use, and
- *  NOT for the unit as a bare substring. `"Team Payroll".includes("m")` is
- *  true, so raw containment drops every short unit — `%`, `m`, `M`, `t`, `B`,
- *  all documented values of `TakoDatasetColumn.unit` — and hands the model an
- *  unlabeled number in a `columns` array whose description promises the unit
- *  is in the name. A name that spells the unit out ("Revenue in USD") gains a
- *  redundant `(USD)`, which costs 6 chars and loses nothing. */
-function columnName(column: { name: string; unit?: string | null | undefined }): string {
-  const unit = column.unit;
-  if (unit === null || unit === undefined || unit === "") return column.name;
-  return column.name.includes(`(${unit})`) ? column.name : `${column.name} (${unit})`;
-}
 
 /**
  * Project one wire item into the model-facing shape. Pure — no network, no

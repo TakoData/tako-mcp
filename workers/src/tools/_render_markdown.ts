@@ -67,6 +67,7 @@ import {
   autoChainShape,
   nonEmpty,
   projectedCardShape,
+  projectedCardWithRowsShape,
   projectedWebResultShape,
   usageAdvertisedSchema,
   type ProjectedCard,
@@ -86,14 +87,12 @@ import {
  *  strips them from responses by construction. `request_id` is deliberately
  *  undeclared on both (OpenAI review). */
 const searchCoreFields = {
+  // The CORE card — no `rows`. `tako_search` cannot inline (its handler passes
+  // `rowCap: null` on every call), so the field is declared on the advanced
+  // shape below instead, which is the same rule the answer-fold fields follow.
   cards: z
     .array(projectedCardShape)
-    // Holds on BOTH tools, because this shape is shared (see the `related`
-    // comment below for the same rule). `tako_search_advanced` with
-    // `include_contents: true` sets rowCap "all" and DOES inline rows, so an
-    // unqualified "fetch the rows with tako_contents" here sent that caller
-    // into a priced refetch of rows it had already paid to inline.
-    .describe("The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."),
+    .describe("The data cards. Fetch an exportable card's rows with tako_contents on its url."),
   web_results: z.array(projectedWebResultShape).describe("Web results."),
   usage: usageAdvertisedSchema
     .nullable()
@@ -131,25 +130,25 @@ const answerFoldFields = {
     .array(z.looseObject({}))
     .optional()
     .describe(
-      "Follow-up queries, each with a `query` to send as the next search request. Present only when you set include_related.",
+      "Follow-up queries; retrieval calls only, when you set include_related.",
     ),
   answer: z
     .string()
     .optional()
     .describe(
-      "The synthesized, citation-backed answer. Present only when you set include_answer: true; the cards and web_results are its citations.",
+      "The synthesized answer, cited from the cards and web_results. Present only when you set include_answer: true.",
     ),
   structured_output: z
     .looseObject({})
     .optional()
     .describe(
-      "The output_schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+      "Your output_schema, filled from the same evidence as the answer. Absent when you sent none, or when Tako could not fill it — see structured_output_error.",
     ),
   structured_output_error: z
     .looseObject({})
     .optional()
     .describe(
-      "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill an output_schema you supplied.",
+      "Why structured_output is absent: `code` and `message`.",
     ),
 } as const;
 
@@ -162,9 +161,17 @@ export const searchChatgptOutputShape = z.looseObject({
   ...autoChainShape,
 });
 
-/** `tako_search_advanced` only: the core plus the answer endpoint's four. */
+/** `tako_search_advanced` only: the core plus the answer endpoint's four, and
+ *  the one card field only this tool can fill. */
 export const searchAdvancedOutputShape = z.looseObject({
   ...searchCoreFields,
+  cards: z
+    .array(projectedCardWithRowsShape)
+    // Says what to do with BOTH outcomes, because this tool produces both: an
+    // unqualified "fetch the rows with tako_contents" sent an
+    // `include_contents: true` caller into a priced refetch of rows it had
+    // already paid to inline.
+    .describe("The data cards. Rows ride in a card's `rows` only when the request asked to inline them — otherwise fetch an exportable card's rows with tako_contents on its url."),
   ...answerFoldFields,
 });
 
@@ -300,55 +307,6 @@ function fenced(text: string, lang = ""): string {
   return `${fence}${lang}\n${text}\n${fence}`;
 }
 
-type LooseContent = {
-  content_format?: string | null;
-  data?: string | null;
-  records?: Array<Record<string, unknown>> | null;
-  dataset?: { columns?: unknown; rows?: unknown[] } | null;
-  total_rows?: number | null;
-  truncated?: boolean | null;
-  /** Per-column descriptors, in column order — the ONLY carrier of a
-   *  column's unit. See `renderColumnManifest`. */
-  manifest?: Array<{
-    name?: string | null;
-    metric?: string | null;
-    entity?: string | null;
-    unit?: string | null;
-  }> | null;
-};
-
-/**
- * The units line for inlined rows.
- *
- * Without it a json_records inline reads `[{"col": 12.4}]` and nothing on
- * either channel says whether 12.4 is USD, USD billions or a percent — the
- * generated `ColumnDescriptor` is the only place `unit`, `metric` and
- * `entity` exist, and the CSV branch fences the payload alone.
- *
- * One line for the whole manifest, `name — metric, entity, unit`, dropping
- * whichever parts a producer left unset. `undefined` when no column carries
- * anything worth printing, so a manifest of bare names adds no line.
- */
-function renderColumnManifest(manifest: NonNullable<LooseContent["manifest"]>): string | undefined {
-  const cols = manifest
-    .map((c) => {
-      const parts = [c.metric, c.entity, c.unit].filter(
-        (v): v is string => typeof v === "string" && v !== "",
-      );
-      const name = typeof c.name === "string" && c.name !== "" ? c.name : undefined;
-      if (parts.length === 0) return name;
-      return name === undefined ? parts.join(", ") : `${name} — ${parts.join(", ")}`;
-    })
-    .filter((v): v is string => v !== undefined)
-    .map(oneLine);
-  if (cols.length === 0) return undefined;
-  // Only worth a line when at least one column said more than its own header.
-  const informative = manifest.some((c) =>
-    [c.metric, c.entity, c.unit].some((v) => typeof v === "string" && v !== ""),
-  );
-  return informative ? `- columns: ${cols.join(" · ")}` : undefined;
-}
-
 
 
 
@@ -422,29 +380,34 @@ function renderProjectedCard(c: ProjectedCard): string {
     lines.push(`- nodes: ${c.nodes.map((n) => `\`${n.id}\` (${oneLine(n.name)})`).join(" · ")}`);
   }
   if (c.rows !== undefined) {
-    if (typeof c.rows.data === "string") {
-      // The string branch fences `data` ALONE, so the descriptor keys beside it
-      // reach structuredContent and nothing else — `truncated: true` most of
-      // all, which tells the model the rows it is reading are cut. The JSON
-      // branch below stringifies the whole object and never had the gap. Both
-      // keys are dropped from the line when absent, so a card with neither
-      // renders exactly as before.
-      const desc: string[] = [];
-      if (typeof c.rows.content_format === "string") desc.push(`format: ${c.rows.content_format}`);
-      if (c.rows.truncated === true) desc.push("TRUNCATED — these are not all the rows");
-      if (desc.length > 0) lines.push(`- rows: ${desc.join(" · ")}`);
-      const columns = Array.isArray(c.rows.manifest)
-        ? renderColumnManifest(c.rows.manifest)
-        : undefined;
-      if (columns !== undefined) lines.push(columns);
-      lines.push(fenced(c.rows.data));
-    } else {
-      const columns = Array.isArray(c.rows.manifest)
-        ? renderColumnManifest(c.rows.manifest)
-        : undefined;
-      if (columns !== undefined) lines.push(columns);
-      lines.push(fenced(JSON.stringify(c.rows)));
+    // One fact line for what the payload is, then the payload. The line only
+    // appears when it has something to say: `format` rides only on the two
+    // non-tabular formats, and `truncated` only when rows were cut. Both are
+    // structured keys, so rendering them here is what keeps the two channels
+    // equivalent — `truncated: true` most of all, which tells the model the
+    // rows it is reading are not all of them.
+    const desc: string[] = [];
+    if (c.rows.format !== undefined) desc.push(`format: ${oneLine(c.rows.format)}`);
+    if (c.rows.truncated === true) desc.push("TRUNCATED — these are not all the rows");
+    if (desc.length > 0) lines.push(`- rows: ${desc.join(" · ")}`);
+    // `columns`/`rows` render as ONE fenced JSON object rather than a markdown
+    // table: `tako_contents` renders the same shape the same way (byte-identical
+    // to its structured payload), and a table would re-encode every cell into a
+    // form the parity test can only approximate.
+    if (c.rows.rows !== undefined) {
+      const table: Record<string, unknown> = {};
+      if (c.rows.columns !== undefined) table.columns = c.rows.columns;
+      table.rows = c.rows.rows;
+      lines.push(fenced(JSON.stringify(table), "json"));
+    } else if (c.rows.columns !== undefined) {
+      // A non-tabular payload (csv, card_json) carries `columns` only when the
+      // manifest named them, and then it is the units the model needs — one
+      // line beside the payload, not a second copy of the header inside a
+      // fenced object.
+      lines.push(`- columns: ${c.rows.columns.map(oneLine).join(" · ")}`);
     }
+    if (c.rows.data !== undefined) lines.push(fenced(c.rows.data));
+    if (c.rows.card_data !== undefined) lines.push(fenced(JSON.stringify(c.rows.card_data), "json"));
   }
   return lines.join("\n");
 }
@@ -518,11 +481,17 @@ export function renderSearchMarkdown(o: SearchOutput): string {
     blocks.push("## Related queries");
     blocks.push(
       o.related
-        .map((r) =>
-          typeof r.description === "string" && r.description !== ""
-            ? `- ${oneLine(r.query)} — ${oneLine(r.description)}`
-            : `- ${oneLine(r.query)}`,
-        )
+        .map((r) => {
+          const parts = [`- ${oneLine(r.query)}`];
+          if (r.description !== undefined) parts.push(`— ${oneLine(r.description)}`);
+          // The ids are the whole point of the field — they pin the follow-up —
+          // and they rode in structuredContent alone until now, invisible on
+          // the 9 harnesses that read only this channel.
+          if (r.node_ids !== undefined) {
+            parts.push(`(pin: ${r.node_ids.map((id) => `\`${id}\``).join(" ")})`);
+          }
+          return parts.join(" ");
+        })
         .join("\n"),
     );
   }

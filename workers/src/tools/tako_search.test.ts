@@ -27,6 +27,7 @@ import type { Env } from "../env.js";
 import { SearchRequest } from "../generated/schemas.js";
 import type { AnyToolModule, ToolContext } from "./types.js";
 import tako_search, { buildSearchBody } from "./tako_search.js";
+import tako_search_advanced from "./tako_search_advanced.js";
 import {
   bodyOf,
   jsonResponse,
@@ -436,6 +437,30 @@ describe("tako_search widget + contract guard", () => {
     expect(snippet).toMatch(/null/); // absence is a legitimate outcome
     // And it has to survive serialization, not just live on the zod object.
     expect(json).toContain("selected against");
+  });
+
+  // A tool must not advertise a field its handler cannot produce. The
+  // answer-endpoint four were split off this shape on the pilot's review for
+  // that reason; `rows` is the same case one level down — `tako_search` passes
+  // `rowCap: null` on every call, so inlined rows are unreachable here, and
+  // declaring them cost 711 chars of published schema describing an outcome
+  // the handler makes impossible.
+  it("does not advertise the inlined rows only tako_search_advanced can return", () => {
+    const schema = z.toJSONSchema(tako_search.outputSchema) as {
+      properties?: { cards?: { items?: { properties?: Record<string, unknown> } } };
+    };
+    const cardFields = schema.properties?.cards?.items?.properties ?? {};
+    expect(Object.keys(cardFields)).not.toHaveLength(0);
+    expect(cardFields).not.toHaveProperty("rows");
+    for (const unreachable of ["answer", "related", "structured_output"]) {
+      expect(Object.keys(schema.properties ?? {}), unreachable).not.toContain(unreachable);
+    }
+    // And the advanced tool DOES advertise it, or the split moved the field
+    // out of both schemas rather than into the right one.
+    const advanced = z.toJSONSchema(tako_search_advanced.outputSchema) as {
+      properties?: { cards?: { items?: { properties?: Record<string, unknown> } } };
+    };
+    expect(advanced.properties?.cards?.items?.properties ?? {}).toHaveProperty("rows");
   });
 
   it("asks for Exa highlights as the web snippet, so the excerpt is answer-bearing", () => {

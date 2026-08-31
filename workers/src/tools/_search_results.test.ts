@@ -17,8 +17,7 @@ import { ContentItem } from "../generated/schemas.js";
 import {
   CONTENT_META_KEYS,
   CONTENT_PAYLOAD_KEYS,
-  NARROWER_WEB_ATTEMPT,
-  ROWS_META_KEYS,
+  ROWS_PAYLOAD_KEYS_READ,
   buildDataGapGuidance,
   buildReferenceMaps,
   buildSearchOutput,
@@ -26,8 +25,14 @@ import {
   projectCard,
   projectWebResult,
   slimCardContent,
+  strictPinGuidance,
 } from "./_search_results.js";
-import type { ResultContent, TakoCard, WebResult } from "./_search_results.js";
+import type {
+  ResultContent,
+  SearchedSources,
+  TakoCard,
+  WebResult,
+} from "./_search_results.js";
 
 import type { Env } from "../env.js";
 
@@ -247,11 +252,11 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // opposite verdict, on the most common Tako-has-nothing path, which teaches a
   // model that reads both that one of them is wrong.
   //
-  // A string-identity check (`toContain(NARROWER_WEB_ATTEMPT)`) cannot hold this
-  // any more: the search branches are capped at two sentences, so only the
-  // answer path can afford the full sentence and the search path states the
-  // carve-out as a clause. Asserting each side separately would let a future
-  // edit delete either wording with the suite green, so both are asserted here.
+  // A string-identity check cannot hold this: BOTH surfaces are now capped at
+  // two sentences, so each states the carve-out as a clause in its own words
+  // and there is no shared constant left to compare against. Asserting each
+  // side separately would let a future edit delete either wording with the
+  // suite green, so both are asserted here.
   it("both zero-result surfaces permit exactly one narrower web attempt", () => {
     const search =
       buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated", OPTS)
@@ -271,9 +276,6 @@ describe("buildSearchOutput — zero-card guidance", () => {
         /do not (re-?search|try) the web/i,
       );
     }
-    // The answer path has the budget for the full sentence, and the REASON it
-    // carries ("too broad rather than unanswerable") is what stops the loop.
-    expect(answer).toContain(NARROWER_WEB_ATTEMPT);
   });
 
   // A web-only search that came back empty has NO data verdict to report (the
@@ -301,6 +303,66 @@ describe("buildSearchOutput — zero-card guidance", () => {
   it("omits guidance when any card is present", () => {
     const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false, "authenticated", OPTS);
     expect(out.guidance).toBeUndefined();
+  });
+});
+
+/**
+ * EVERY guidance branch is two sentences: the verdict (which corpora this
+ * response is evidence about) and the one next action. A branch that cannot
+ * survive at two sentences dies (spec: 2026-08-26-model-facing-surface-
+ * redesign, "guidance" decision).
+ *
+ * Counted rather than eyeballed because the three answer-endpoint branches
+ * were the last ones over — five to six sentences and up to 740 chars each,
+ * three of them spent on anti-instructions the one action already implies.
+ * A sentence budget is the only thing that stops guidance regrowing: it is
+ * written mid-failure, when more advice always feels like the safe choice.
+ */
+describe("every guidance branch is two sentences", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+  // Abbreviations end in a period too, so a naive split over-counts. The
+  // branches here contain none; if one gains one, extend this rather than
+  // loosening the count.
+  const sentences = (text: string): string[] =>
+    text.split(/(?<=[.!?])\s+/).filter((part) => part.trim() !== "");
+
+  const branches = (): Array<[string, string]> => {
+    const out: Array<[string, string]> = [];
+    for (const [label, sources] of [
+      ["search: data+web", ["data", "web"]],
+      ["search: data only", ["data"]],
+      ["search: web only", ["web"]],
+    ] as const) {
+      for (const webResults of [[], [{ url: "https://e.com" }]]) {
+        const g = buildSearchOutput(
+          [],
+          webResults as WebResult[],
+          "r",
+          null,
+          ENV,
+          sources as unknown as SearchedSources,
+          false,
+          "authenticated",
+          OPTS,
+        ).guidance;
+        if (g !== undefined) out.push([`${label} / ${webResults.length} web`, g]);
+      }
+    }
+    out.push(["answer: data only", buildDataGapGuidance(false, false)]);
+    out.push(["answer: web-grounded", buildDataGapGuidance(true, true)]);
+    out.push(["answer: nothing", buildDataGapGuidance(false, true)]);
+    out.push(["strict pin", strictPinGuidance("authenticated")]);
+    return out;
+  };
+
+  it("covers every branch, so the count cannot pass vacuously", () => {
+    expect(branches().length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("no branch runs past two sentences", () => {
+    for (const [label, text] of branches()) {
+      expect(sentences(text).length, `${label}: ${text}`).toBeLessThanOrEqual(2);
+    }
   });
 });
 
@@ -731,18 +793,18 @@ describe("the payload/metadata split cannot drift", () => {
     expect(stale, "classified key(s) no longer in ContentItem").toEqual([]);
   });
 
-  // projectCard's ROWS_KEYS is CONTENT_PAYLOAD_KEYS plus three metadata names.
-  // The payload half is derived, so it cannot drift; the three metadata names
-  // are written out, so this pins them to the classified set.
+  // `projectCardRows` handles each payload channel in its own branch, so it
+  // cannot loop over CONTENT_PAYLOAD_KEYS — this compares the two lists
+  // instead. A fifth upstream channel added to CONTENT_PAYLOAD_KEYS fails here
+  // until `projectCardRows` grows a branch for it, rather than being dropped
+  // silently from every inlined card.
   //
-  // IMPORT the constant, never retype it. The literal list this used to carry
-  // made the guard vacuous in the one direction it exists for: renaming the
+  // IMPORT both constants, never retype either. The literal list the old guard
+  // carried made it vacuous in the one direction it exists for: renaming the
   // real `content_format` to `format` dropped it from every inlined `rows`
   // object and all 1267 tests still passed.
-  it("every metadata key projectCard keeps beside inlined rows is a classified metadata key", () => {
-    const meta = new Set<string>(CONTENT_META_KEYS);
-    const unclassified = ROWS_META_KEYS.filter((k) => !meta.has(k));
-    expect(unclassified, "projectCard keeps a key CONTENT_META_KEYS does not list").toEqual([]);
+  it("projectCardRows reads exactly the classified payload channels", () => {
+    expect([...ROWS_PAYLOAD_KEYS_READ].sort()).toEqual([...CONTENT_PAYLOAD_KEYS].sort());
   });
 });
 
@@ -865,20 +927,54 @@ describe("projectCard — the nine-field model-facing card", () => {
     } as unknown as TakoCard;
     expect(projectCard(withRows, null).rows).toBeUndefined();
     const inlined = projectCard(withRows, "all");
-    expect(inlined.rows).toBeDefined();
-    const rows = inlined.rows as Record<string, unknown>;
-    expect(rows.dataset).toBeDefined();
-    // Null-noise and billing never ride.
-    expect(rows).not.toHaveProperty("data");
-    expect(rows).not.toHaveProperty("records");
-    expect(rows).not.toHaveProperty("cost");
+    expect(inlined.rows).toEqual({
+      columns: ["t", "v"],
+      rows: [
+        ["2026-01-01", 1],
+        ["2026-02-01", 2],
+      ],
+    });
   });
 
-  // Asserted DIRECTLY, because the channel-parity walk structurally cannot
-  // catch a dropped field: it walks the projected output, so removing
-  // `manifest` from the projection removes the leaf AND the requirement to
-  // render it, and the walk stays green.
-  it("keeps the column manifest beside inlined rows — the only carrier of a unit", () => {
+  // The keys that used to ride inside `dataset` on every inlined card: two of
+  // them restate a field the card already carries, and `total_rows` shipped
+  // THREE times (card, rows, dataset). ~200 chars per card, in both channels,
+  // paid once per `data.count`.
+  it("drops the dataset envelope's plumbing and the duplicated counts", () => {
+    const withRows = {
+      ...wireCard,
+      content: {
+        content_format: "json_compact",
+        cost: 0.002,
+        total_rows: 26,
+        truncated: true,
+        dataset: {
+          columns: [{ name: "v", type: "number" }],
+          rows: [[1]],
+          total_rows: 26,
+          truncated: true,
+          ref: "https://tako.com/card/c1/",
+          sources: [{ name: "Fiscal.ai", index: "data" }],
+          provenance: "query",
+        },
+      },
+    } as unknown as TakoCard;
+    const card = projectCard(withRows, "all");
+    expect(card.total_rows, "the count belongs to the card").toBe(26);
+    expect(card.rows).toEqual({ columns: ["v"], rows: [[1]], truncated: true });
+    const serialized = JSON.stringify(card.rows);
+    for (const gone of ["ref", "sources", "provenance", "total_rows", "cost"]) {
+      expect(serialized, `rows still carries ${gone}`).not.toContain(gone);
+    }
+  });
+
+  // The unit is the reason the manifest is read at all. It is folded into the
+  // COLUMN NAME rather than shipped as a parallel array: a `json_records`
+  // payload has bare keys, so without this `[{"revenue": 12.4}]` reaches the
+  // model with nothing saying whether 12.4 is USD, USD billions or a percent —
+  // and a separate manifest costs `metric`/`entity` prose per column that
+  // repeats the card title.
+  it("folds the manifest's unit into the column name (json_records)", () => {
     const withRows = {
       card_id: "c1",
       exportable: true,
@@ -891,10 +987,68 @@ describe("projectCard — the nine-field model-facing card", () => {
         manifest: [{ name: "revenue", metric: "Total Revenue", entity: "Tesla, Inc.", unit: "USD" }],
       },
     } as unknown as TakoCard;
-    const rows = projectCard(withRows, "all").rows as Record<string, unknown>;
-    expect(rows.manifest, "inlined rows arrived with no unit").toEqual([
-      { name: "revenue", metric: "Total Revenue", entity: "Tesla, Inc.", unit: "USD" },
-    ]);
+    expect(projectCard(withRows, "all").rows).toEqual({
+      columns: ["revenue (USD)"],
+      rows: [[12.4]],
+    });
+  });
+
+  // The backend omits a key whose value is null for that row, so reading the
+  // first record's keys alone drops a column the rest of the payload has —
+  // and every cell after the hole then shifts left by one.
+  it("takes json_records columns first-seen across every record, holes as null", () => {
+    const withRows = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_records",
+        records: [{ a: 1 }, { a: 2, b: 3 }],
+      },
+    } as unknown as TakoCard;
+    expect(projectCard(withRows, "all").rows).toEqual({
+      columns: ["a", "b"],
+      rows: [
+        [1, null],
+        [2, 3],
+      ],
+    });
+  });
+
+  // Two of the four formats this tool can request are not row-shaped. Parsing
+  // a CSV string back into cells would invent quoting rules the caller did not
+  // ask for, so it rides verbatim under the key that names it.
+  it("passes a non-tabular payload through under its own format", () => {
+    const csv = {
+      card_id: "c1",
+      exportable: true,
+      content: { content_format: "csv", data: "t,v\n2026-01-01,1", truncated: true },
+    } as unknown as TakoCard;
+    expect(projectCard(csv, "all").rows).toEqual({
+      format: "csv",
+      data: "t,v\n2026-01-01,1",
+      truncated: true,
+    });
+    const cardJson = {
+      card_id: "c1",
+      exportable: true,
+      content: { content_format: "card_json", card_data: { card_type: "chart", series: [] } },
+    } as unknown as TakoCard;
+    expect(projectCard(cardJson, "all").rows).toEqual({
+      format: "card_json",
+      card_data: { card_type: "chart", series: [] },
+    });
+  });
+
+  // A descriptor with a cost quote and no payload is not rows. An empty
+  // `rows: {}` would read as "this card has no data" when the truth is "you
+  // did not ask to inline it".
+  it("emits no rows object when no payload channel arrived", () => {
+    const quoteOnly = {
+      card_id: "c1",
+      exportable: true,
+      content: { content_format: "json_compact", cost: 0.002, total_rows: 26, truncated: false },
+    } as unknown as TakoCard;
+    expect(projectCard(quoteOnly, "all").rows).toBeUndefined();
   });
 });
 

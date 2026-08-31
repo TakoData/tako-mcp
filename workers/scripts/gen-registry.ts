@@ -679,6 +679,14 @@ export const LEGACY_OUTPUT_SCHEMA_CEILINGS: Record<string, { generic: number; ch
   // fan-out PR: it is a shape change and the shape was signed off as two
   // fields.
   tako_available_data: { generic: 3638, chatgpt: 3638 },
+  // Measured 2026-08-31, on the tool's own fan-out PR, which holds every PROSE
+  // cap and only this one. Two structural facts put it out of reach of 2,000:
+  // it publishes the card shape (11 fields, and `rows` on top of them) and the
+  // four answer-endpoint fields, and its bare structure alone — every
+  // description stripped — is over the cap. 2,430 of it is field descriptions;
+  // that is the half a later pass can recover without a D3 decision about
+  // which advertised fields to drop.
+  tako_search_advanced: { generic: 4888, chatgpt: 4888 },
 };
 
 /**
@@ -694,10 +702,6 @@ export const LEGACY_PROSE_CEILINGS: Record<
 > = {
   // Measured 2026-08-30, the day the gate landed. Delete a row when its
   // tool's fan-out PR lands the rewrite.
-  // Re-baselined after #273 folded tako_answer in and exposed the whole
-  // SearchRequest body — the generated param prose is a cross-repo fix
-  // (the tako repo's schema builder), tracked for that tool's fan-out PR.
-  tako_search_advanced: { description: 2611, param: 831, entry: 4860 },
 };
 
 export function assertProseBudget(
@@ -824,6 +828,54 @@ function buildSearchSample(tool: ToolModule): ToolSample {
   );
   return {
     // The generic-surface narrowing — what an `/mcp` client's model reads.
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderSearchMarkdown(output),
+  };
+}
+
+const ADVANCED_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_search_advanced_sample.json");
+
+/**
+ * The `tako_search_advanced` sample, on the ANSWER branch.
+ *
+ * One fixture, and it is the answer path, because `answer` and
+ * `structured_output` are unreachable on the search branch — a search-path
+ * sample would render a page that looks like `tako_search`'s and document none
+ * of the difference. `rowCap: "all"` and `keepWebText: true` stand for the
+ * `include_contents` the fixture's request set on both sources; `runSearch`
+ * derives both from the wire body the same way.
+ *
+ * NO `related` here, and that is the API's rule rather than a fixture
+ * decision: `POST /v1/answer` accepts `include_related` and returns no
+ * `related` field (verified against staging 2026-08-31), so the two cannot
+ * appear in one response. Its shape reaches the page through the rendered
+ * outputSchema instead.
+ */
+function buildAdvancedSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(ADVANCED_SAMPLE_FIXTURE, "utf8")) as {
+    request_id: string;
+    usage: Usage | null;
+    answer: string;
+    structured_output: Record<string, unknown>;
+    cards: unknown;
+    web_results: unknown;
+  };
+  const output = buildSearchOutput(
+    z.array(takoCardSchema).parse(raw.cards),
+    z.array(webResultSchema).parse(raw.web_results),
+    raw.request_id,
+    raw.usage,
+    SAMPLE_FIXTURE_ENV,
+    ["data", "web"],
+    false,
+    "authenticated",
+    { rowCap: "all", keepWebText: true },
+    { answer: raw.answer, structured_output: raw.structured_output },
+  );
+  return {
     structured: pickDeclared(
       outputSchemaForSurface(tool, "generic"),
       output as unknown as Record<string, unknown>,
@@ -982,6 +1034,7 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
     if (m.name === "tako_available_data") samples.set(m.name, buildAvailableDataSample(m));
     if (m.name === "tako_graph_related") samples.set(m.name, buildGraphRelatedSample(m));
     if (m.name === "tako_agent") samples.set(m.name, buildAgentSample(m));
+    if (m.name === "tako_search_advanced") samples.set(m.name, buildAdvancedSample(m));
   }
   return samples;
 }

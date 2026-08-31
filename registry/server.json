@@ -239,16 +239,16 @@
     },
     {
       "name": "tako_search_advanced",
-      "description": "The v3 search request's retrieval options: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.\n\nUse `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.\n\nNothing is sent unless you set it, with one exception named below, so an omitted field takes the server default in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.\n\nWeb snippets are query-relevant highlight passages by default here, as on `tako_search`. Unlike there, you can turn them off: `web.highlights: false` gives you the page's opening text instead.\n\nOne field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.\n\n`include_answer: true` runs the answer endpoint instead: one synthesized, citation-backed answer in `answer`, with the retrieved cards and web results as its citations. Every option here applies the same way; the server defaults that differ on that endpoint (web `count` 3, `snippet_max_chars` 1000) are named in each field's description. `output_schema` fills a JSON Schema from the same evidence and returns it as `structured_output`. For values on a card marked `exportable: false`, pin its METRIC node id alone in `data.node_ids` with `strict: true`, set `include_answer: true` and `data.include_contents: true`.\n\nTo land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
+      "description": "Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.\n\nEvery field is optional; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.\n\nBest for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.",
       "parameters": {
         "query": {
           "type": "string",
-          "description": "Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool.",
+          "description": "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity; an unpaired quote disables quoting.",
           "required": true
         },
         "effort": {
           "type": "string",
-          "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier.",
+          "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds; deep widens retrieval and reranks, at a premium rate.",
           "enum": [
             "fast",
             "instant",
@@ -257,7 +257,7 @@
         },
         "location": {
           "type": "object",
-          "description": "Optional coordinates of the end user. Resolves the location for implicit-location queries (for example, weather). An explicit location in the query overrides these coordinates."
+          "description": "Latitude and longitude to bias web results toward. Omit it and country_code applies."
         },
         "country_code": {
           "type": "string",
@@ -269,7 +269,7 @@
         },
         "timezone": {
           "type": "string",
-          "description": "IANA timezone (for example, 'America/New_York')."
+          "description": "IANA timezone. It formats dates in rendered card images only."
         },
         "output_settings": {
           "type": "object",
@@ -277,23 +277,23 @@
         },
         "include_related": {
           "type": "integer",
-          "description": "Applies to POST /v3/search only. Return follow-up query suggestions in `related`. Omit this field to disable them. The value sets the maximum number of suggestions, from 1 to 20. POST /v1/answer accepts this field but ignores it: the answer response has no `related` field."
+          "description": "Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true."
         },
         "data": {
           "type": "object",
-          "description": "Tako data (card) source settings. Include this key — even as an empty object — to search the data graph."
+          "description": "Tako data (card) source settings. Include this key, even as `{}`, to search the data graph."
         },
         "web": {
           "type": "object",
-          "description": "Web source settings. Include this key — even as an empty object — to search the web."
+          "description": "Web source settings. Include this key, even as `{}`, to search the web."
         },
         "include_answer": {
           "type": "boolean",
-          "description": "Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only."
+          "description": "Set true to synthesize one citation-backed answer from the retrieval into `answer`. Omit or false for retrieval only."
         },
         "output_schema": {
           "type": "object",
-          "description": "JSON Schema for structured output. Tako fills it from the same evidence it uses to write `answer`, and returns it in `structured_output`. Requires effort 'fast' or 'deep'; on 'instant' the request returns 400. Supported subset: the object, array, string, number, integer, and boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties: false`. A type may be nullable as `[\"number\", \"null\"]`, which is how you let Tako signal 'no evidence' rather than filling a zero. `title`, `examples`, `format`, and `default` are accepted and ignored — they constrain nothing. Caps: 16KB total, depth 5, 64 properties, 512 characters per description. Violations return 400. If Tako can't fill the schema, `structured_output` is absent and `structured_output_error` says why — the answer and the cards still return."
+          "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`. No $ref; instant effort rejects it."
         }
       },
       "annotations": {

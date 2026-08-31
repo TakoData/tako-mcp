@@ -76,20 +76,19 @@ import type { SearchOutput } from "./_search_results.js";
 import { runSearch, type SearchCall, type SearchEndpoint } from "./_run_search.js";
 import type { ToolModule } from "./types.js";
 
+// Three paragraphs, `Best for:` last (AGENTS.md; the form the other migrated
+// tools use). What is NOT here, and where it went instead: the pin recipe is
+// `data.node_ids` and `data.strict`, whose describes are the surface a caller
+// reads while building the argument; the measured disagreement with the
+// backend's own "strong boost" wording is a code comment on those overrides;
+// the zero-card recovery is `guidance` on the result, which is where the model
+// reads it at the moment it applies; the highlights toggle is `web.highlights`.
 const DESCRIPTION = [
-  "The v3 search request's retrieval options: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.",
+  "Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.",
   "",
-  "Use `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.",
+  "Every field is optional; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.",
   "",
-  "Nothing is sent unless you set it, with one exception named below, so an omitted field takes the server default in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.",
-  "",
-  "Web snippets are query-relevant highlight passages by default here, as on `tako_search`. Unlike there, you can turn them off: `web.highlights: false` gives you the page's opening text instead.",
-  "",
-  "One field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.",
-  "",
-  "`include_answer: true` runs the answer endpoint instead: one synthesized, citation-backed answer in `answer`, with the retrieved cards and web results as its citations. Every option here applies the same way; the server defaults that differ on that endpoint (web `count` 3, `snippet_max_chars` 1000) are named in each field's description. `output_schema` fills a JSON Schema from the same evidence and returns it as `structured_output`. For values on a card marked `exportable: false`, pin its METRIC node id alone in `data.node_ids` with `strict: true`, set `include_answer: true` and `data.include_contents: true`.",
-  "",
-  "To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
+  "Best for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.",
 ].join("\n");
 
 
@@ -108,16 +107,64 @@ const DESCRIPTION = [
  * it is rebuilt by hand below; `noDefaultsLeak` in the test file is what fails
  * when the backend adds a second one.
  */
-function optionalWithoutDefaults<T extends z.ZodRawShape>(shape: T): {
+function optionalWithoutDefaults<T extends z.ZodRawShape>(
+  shape: T,
+  describes: Partial<Record<keyof T & string, string>> = {},
+): {
   [K in keyof T]: z.ZodOptional<T[K] extends z.ZodDefault<infer Inner> ? Inner : T[K]>;
 } {
   const out: Record<string, z.ZodType> = {};
   for (const [key, field] of Object.entries(shape)) {
     const bare = field instanceof z.ZodDefault ? field.unwrap() : field;
-    out[key] = (bare as z.ZodType).optional();
+    const override = describes[key as keyof T & string];
+    out[key] = override === undefined ? (bare as z.ZodType).optional() : (bare as z.ZodType).describe(override).optional();
   }
   return out as never;
 }
+
+/**
+ * Model-facing rewrites of the generated `.describe()` on the nested block
+ * fields. Keyed by field name, `satisfies`-checked against the generated
+ * shape, so a renamed or deleted backend field fails to compile here rather
+ * than leaving a describe that lands on nothing.
+ *
+ * NOT a fix applied to the generated file, and not a change owed upstream. The
+ * OpenAPI text these replace is the HTTP API's own reference documentation,
+ * written for a caller reading `POST /api/v3/search` — `max_rows` spends 973
+ * chars on the billing model, `mode` 486 on why it is a no-op — and shortening
+ * it there would take detail away from the audience it is for. What the MCP
+ * surface needs is the constraint a model applies while building an argument.
+ * The 21 nested describes were 5,301 chars of an 11,085-char input schema; the
+ * ten rewritten below bring that to ~3,100. The tool's parity test compares
+ * key NAMES and types and treats `description` as a legitimate divergence,
+ * which is what makes this the sanctioned lever.
+ *
+ * `node_ids` and `strict` are here for a reason that is NOT length: the
+ * generated `node_ids` text says pinned nodes "always become retrieval
+ * candidates and get a strong boost". Measured on prod (2026-07-29), a pin at
+ * the default `strict: false` did not reliably outrank the organic winner —
+ * the backend scores it deliberately short of dominant. The tool description
+ * used to carry a paragraph contradicting the generated text from two fields
+ * away; the correction belongs on the field it corrects.
+ */
+const DATA_DESCRIBES = {
+  mode: "Delivery for inlined card data. It has no effect on Tako cards, which always inline the most recent rows up to `max_rows`; it stays for schema stability.",
+  content_format: "Serialization for inlined card data: json_compact (default), json_records, csv, or card_json. All four bill the rows they return. A card with no card_json shape falls back to json_compact.",
+  max_rows: "Rows to inline per card when `include_contents` is true. Omit it and each card takes your account default (20 on the standard plan). Every inlined row bills; the ceiling is 2,000 rows.",
+  node_ids: "Graph node ids to pin, as `tako_available_data` returns them. Pin the metric's node id alone and set `strict: true` to make its card come back; a bare pin only nudges the ranking. Max 20.",
+  strict: "Return only cards matching `node_ids` — a hard filter, so zero cards is evidence about the filter, not coverage. Adding the entity's id beside the metric's widens it back out.",
+} satisfies Partial<Record<keyof typeof DataSourceSettings.shape, string>>;
+
+const WEB_DESCRIBES = {
+  highlights: "Return query-relevant highlight passages as each result's snippet instead of the page's opening text. This tool sends true unless you set it false.",
+  include_contents: "Inline each result's full page text in `content`. It is free on these endpoints; the text can be large, so pair it with `article_content_max_chars`.",
+  snippet_max_chars: "Maximum characters per snippet. Omit it and the server uses 4000, or 1000 with `include_answer: true`.",
+  published_after: "Only return pages published on or after this date (YYYY-MM-DD). Omit it for no lower bound.",
+} satisfies Partial<Record<keyof typeof WebSourceSettings.shape, string>>;
+
+const OUTPUT_SETTINGS_DESCRIBES = {
+  force_refresh: "Skip Tako's render cache when building card images. It does not change the data these endpoints return.",
+} satisfies Partial<Record<keyof typeof OutputSettings.shape, string>>;
 
 /**
  * Both blocks are the WHOLE generated settings schema, every field optional and
@@ -152,8 +199,8 @@ function optionalWithoutDefaults<T extends z.ZodRawShape>(shape: T): {
  * is `.strict()`, withholding the field would leave the caller no lever at all.
  * `snippet_max_chars` caps the excerpt, not `content.data`.
  */
-const dataBlock = z.object(optionalWithoutDefaults(DataSourceSettings.shape)).strict();
-const webBlock = z.object(optionalWithoutDefaults(WebSourceSettings.shape)).strict();
+const dataBlock = z.object(optionalWithoutDefaults(DataSourceSettings.shape, DATA_DESCRIBES)).strict();
+const webBlock = z.object(optionalWithoutDefaults(WebSourceSettings.shape, WEB_DESCRIBES)).strict();
 
 
 /**
@@ -184,7 +231,7 @@ const topLevel = optionalWithoutDefaults(SearchRequest.omit({ query: true, sourc
  * hand-written override, kept its text.
  */
 const outputSettingsBlock = z
-  .object(optionalWithoutDefaults(OutputSettings.shape))
+  .object(optionalWithoutDefaults(OutputSettings.shape, OUTPUT_SETTINGS_DESCRIBES))
   .strict()
   .nullable()
   .optional()
@@ -198,11 +245,11 @@ const inputSchema = z
     // local -32602 was available. The parity test compares key NAMES, so it
     // cannot see a constraint go missing.
     query: SearchRequest.shape.query.describe(
-      "Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool.",
+      "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity; an unpaired quote disables quoting.",
     ),
     ...topLevel,
     effort: topLevel.effort.describe(
-      "Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier.",
+      "Search effort. Omit it and the server uses fast. instant serves cached embeds; deep widens retrieval and reranks, at a premium rate.",
     ),
     country_code: topLevel.country_code.describe(
       "ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US.",
@@ -210,23 +257,40 @@ const inputSchema = z
     locale: topLevel.locale.describe(
       "BCP-47 locale tag for language and formatting. Omit it and the server uses en-US.",
     ),
+    timezone: topLevel.timezone.describe(
+      "IANA timezone. It formats dates in rendered card images only.",
+    ),
+    location: topLevel.location.describe(
+      "Latitude and longitude to bias web results toward. Omit it and country_code applies.",
+    ),
     output_settings: outputSettingsBlock,
     data: dataBlock
       .optional()
-      .describe("Tako data (card) source settings. Include this key — even as an empty object — to search the data graph."),
+      .describe("Tako data (card) source settings. Include this key, even as `{}`, to search the data graph."),
     web: webBlock
       .optional()
-      .describe("Web source settings. Include this key — even as an empty object — to search the web."),
+      .describe("Web source settings. Include this key, even as `{}`, to search the web."),
+    // An INTEGER, 1-20 — the maximum number of suggestions — and search-only.
+    // `/v1/answer` accepts the field and returns no `related`, verified against
+    // staging on 2026-08-31, so an `include_answer` call that sets it gets
+    // nothing back and needs to be told why here.
+    include_related: topLevel.include_related.describe(
+      "Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true.",
+    ),
     include_answer: z
       .boolean()
       .optional()
       .describe(
-        "Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only.",
+        "Set true to synthesize one citation-backed answer from the retrieval into `answer`. Omit or false for retrieval only.",
       ),
-    // The generated text verbatim: the caps, the supported JSON Schema subset
-    // and the instant-effort 400 are the backend's contract, and the model
-    // reads them here.
-    output_schema: AnswerRequest.shape.output_schema,
+    // Rewritten for the same reason as the nested block fields (see
+    // DATA_DESCRIBES): the generated text is 831 chars of HTTP-API reference —
+    // the caps, the supported JSON Schema subset, the instant-effort 400 — and
+    // one parameter cannot spend 41% of this tool's whole 2,000-char entry
+    // budget. The two rules a model breaks are kept.
+    output_schema: AnswerRequest.shape.output_schema.describe(
+      "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`. No $ref; instant effort rejects it.",
+    ),
   })
   // `.strict()` at every level. A bare `z.object` STRIPS unknown keys; this
   // rejects them, and because mcp.ts registers this object rather than its

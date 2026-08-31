@@ -1569,12 +1569,6 @@ Annotations:
               ],
               "additionalProperties": {}
             }
-          },
-          "rows": {
-            "description": "Inlined rows — only when the request asked to inline them.",
-            "type": "object",
-            "properties": {},
-            "additionalProperties": {}
           }
         },
         "required": [
@@ -1582,7 +1576,7 @@ Annotations:
         ],
         "additionalProperties": {}
       },
-      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."
+      "description": "The data cards. Fetch an exportable card's rows with tako_contents on its url."
     },
     "web_results": {
       "type": "array",
@@ -1761,12 +1755,6 @@ The chart-widget fields are declared only here; the widget reads them from `wind
               ],
               "additionalProperties": {}
             }
-          },
-          "rows": {
-            "description": "Inlined rows — only when the request asked to inline them.",
-            "type": "object",
-            "properties": {},
-            "additionalProperties": {}
           }
         },
         "required": [
@@ -1774,7 +1762,7 @@ The chart-widget fields are declared only here; the widget reads them from `wind
         ],
         "additionalProperties": {}
       },
-      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."
+      "description": "The data cards. Fetch an exportable card's rows with tako_contents on its url."
     },
     "web_results": {
       "type": "array",
@@ -2038,36 +2026,28 @@ usage: $0.015
 
 Description:
 
-The v3 search request's retrieval options: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.
+Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.
 
-Use `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.
+Every field is optional; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.
 
-Nothing is sent unless you set it, with one exception named below, so an omitted field takes the server default in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.
-
-Web snippets are query-relevant highlight passages by default here, as on `tako_search`. Unlike there, you can turn them off: `web.highlights: false` gives you the page's opening text instead.
-
-One field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.
-
-`include_answer: true` runs the answer endpoint instead: one synthesized, citation-backed answer in `answer`, with the retrieved cards and web results as its citations. Every option here applies the same way; the server defaults that differ on that endpoint (web `count` 3, `snippet_max_chars` 1000) are named in each field's description. `output_schema` fills a JSON Schema from the same evidence and returns it as `structured_output`. For values on a card marked `exportable: false`, pin its METRIC node id alone in `data.node_ids` with `strict: true`, set `include_answer: true` and `data.include_contents: true`.
-
-To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.
+Best for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | yes |  | Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool. |
-| `effort` | string ("fast" \\| "instant" \\| "deep") | no |  | Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier. |
-| `location` | object | no |  | Optional coordinates of the end user. Resolves the location for implicit-location queries (for example, weather). An explicit location in the query overrides these coordinates. |
+| `query` | string | yes |  | Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity; an unpaired quote disables quoting. |
+| `effort` | string ("fast" \\| "instant" \\| "deep") | no |  | Search effort. Omit it and the server uses fast. instant serves cached embeds; deep widens retrieval and reranks, at a premium rate. |
+| `location` | object | no |  | Latitude and longitude to bias web results toward. Omit it and country_code applies. |
 | `country_code` | string | no |  | ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US. |
 | `locale` | string | no |  | BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. |
-| `timezone` | string | no |  | IANA timezone (for example, 'America/New_York'). |
+| `timezone` | string | no |  | IANA timezone. It formats dates in rendered card images only. |
 | `output_settings` | object | no |  | Settings that control the response shape. |
-| `include_related` | integer | no |  | Applies to POST /v3/search only. Return follow-up query suggestions in `related`. Omit this field to disable them. The value sets the maximum number of suggestions, from 1 to 20. POST /v1/answer accepts this field but ignores it: the answer response has no `related` field. |
-| `data` | object | no |  | Tako data (card) source settings. Include this key — even as an empty object — to search the data graph. |
-| `web` | object | no |  | Web source settings. Include this key — even as an empty object — to search the web. |
-| `include_answer` | boolean | no |  | Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only. |
-| `output_schema` | object | no |  | JSON Schema for structured output. Tako fills it from the same evidence it uses to write `answer`, and returns it in `structured_output`. Requires effort 'fast' or 'deep'; on 'instant' the request returns 400. Supported subset: the object, array, string, number, integer, and boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties: false`. A type may be nullable as `["number", "null"]`, which is how you let Tako signal 'no evidence' rather than filling a zero. `title`, `examples`, `format`, and `default` are accepted and ignored — they constrain nothing. Caps: 16KB total, depth 5, 64 properties, 512 characters per description. Violations return 400. If Tako can't fill the schema, `structured_output` is absent and `structured_output_error` says why — the answer and the cards still return. |
+| `include_related` | integer | no |  | Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true. |
+| `data` | object | no |  | Tako data (card) source settings. Include this key, even as `{}`, to search the data graph. |
+| `web` | object | no |  | Web source settings. Include this key, even as `{}`, to search the web. |
+| `include_answer` | boolean | no |  | Set true to synthesize one citation-backed answer from the retrieval into `answer`. Omit or false for retrieval only. |
+| `output_schema` | object | no |  | JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`. No $ref; instant effort rejects it. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -2089,10 +2069,10 @@ Annotations:
       "type": "string",
       "minLength": 1,
       "pattern": "\\S",
-      "description": "Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool."
+      "description": "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity; an unpaired quote disables quoting."
     },
     "effort": {
-      "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier.",
+      "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds; deep widens retrieval and reranks, at a premium rate.",
       "type": "string",
       "enum": [
         "fast",
@@ -2101,6 +2081,7 @@ Annotations:
       ]
     },
     "location": {
+      "description": "Latitude and longitude to bias web results toward. Omit it and country_code applies.",
       "anyOf": [
         {
           "type": "object",
@@ -2127,8 +2108,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Optional coordinates of the end user. Resolves the location for implicit-location queries (for example, weather). An explicit location in the query overrides these coordinates."
+      ]
     },
     "country_code": {
       "description": "ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US.",
@@ -2139,6 +2119,7 @@ Annotations:
       "type": "string"
     },
     "timezone": {
+      "description": "IANA timezone. It formats dates in rendered card images only.",
       "anyOf": [
         {
           "type": "string"
@@ -2146,8 +2127,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "IANA timezone (for example, 'America/New_York')."
+      ]
     },
     "output_settings": {
       "description": "Settings that control the response shape.",
@@ -2168,7 +2148,7 @@ Annotations:
             },
             "force_refresh": {
               "type": "boolean",
-              "description": "Instant mode only, and currently informational: on these endpoints, instant (effort='instant') always operates in build-and-refresh mode regardless of this flag. Instant retrieves data for embeds that are missing or stale, then creates or refreshes their static embeds. Embeds that are already fresh (within the refresh cadence) return as-is; Tako does not re-retrieve them. Identical queries therefore reuse the same content-addressed embed and return a stable embed URL."
+              "description": "Skip Tako's render cache when building card images. It does not change the data these endpoints return."
             }
           },
           "additionalProperties": false
@@ -2179,6 +2159,7 @@ Annotations:
       ]
     },
     "include_related": {
+      "description": "Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true.",
       "anyOf": [
         {
           "type": "integer",
@@ -2188,11 +2169,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Applies to POST /v3/search only. Return follow-up query suggestions in `related`. Omit this field to disable them. The value sets the maximum number of suggestions, from 1 to 20. POST /v1/answer accepts this field but ignores it: the answer response has no `related` field."
+      ]
     },
     "data": {
-      "description": "Tako data (card) source settings. Include this key — even as an empty object — to search the data graph.",
+      "description": "Tako data (card) source settings. Include this key, even as `{}`, to search the data graph.",
       "type": "object",
       "properties": {
         "count": {
@@ -2206,7 +2186,7 @@ Annotations:
           "description": "Inline this source's underlying data directly in the response. For the Tako data source, that is serialized card data (see content_format). For web results, that is the page text."
         },
         "mode": {
-          "description": "Delivery for inlined card data when include_contents is true. For Tako cards, include_contents always returns the most-recent rows in the response body, up to max_rows, or up to the default inline row cap for your account if you omit max_rows. This field therefore has no effect on Tako cards; it stays for schema stability. total_rows and truncated on the returned content indicate when more data is available. For a presigned download link, call POST /api/v1/contents with mode='url'.",
+          "description": "Delivery for inlined card data. It has no effect on Tako cards, which always inline the most recent rows up to `max_rows`; it stays for schema stability.",
           "type": "string",
           "enum": [
             "url",
@@ -2214,7 +2194,7 @@ Annotations:
           ]
         },
         "content_format": {
-          "description": "Serialization for card data: 'json_compact' (default), 'json_records', 'csv', or 'card_json'. The first three return a row-capped preview. 'card_json' returns a rich card-type-specific JSON object under card_data, truncated to the same row cap. Tako bills the rows it returns on every one of the four. A card type with no card_json shape falls back to 'json_compact' for that card.",
+          "description": "Serialization for inlined card data: json_compact (default), json_records, csv, or card_json. All four bill the rows they return. A card with no card_json shape falls back to json_compact.",
           "type": "string",
           "enum": [
             "csv",
@@ -2224,6 +2204,7 @@ Annotations:
           ]
         },
         "max_rows": {
+          "description": "Rows to inline per card when `include_contents` is true. Omit it and each card takes your account default (20 on the standard plan). Every inlined row bills; the ceiling is 2,000 rows.",
           "anyOf": [
             {
               "type": "integer",
@@ -2233,26 +2214,25 @@ Annotations:
             {
               "type": "null"
             }
-          ],
-          "description": "Maximum number of card data rows to inline when include_contents is true. If you omit this field, Tako returns the default inline row cap for your account (20 rows on the standard plan). That cap is deliberately smaller than the 2,000 rows POST /api/v1/contents returns by default: a search response inlines many cards, so the same number bills once per card. Raise it to inline more rows, up to the 2,000-row system ceiling. Tako clamps a larger value to that ceiling. Every inlined row is billed: a flat per-card baseline fee plus the per-1,000-row rate, the same rate POST /api/v1/contents charges. total_rows and truncated report whether more rows remain. A single response also has a 2,000 billable-row budget and a 20,000-row total budget, both shared across all cards. A later card can therefore return fewer rows than you requested, or no inlined rows at all. Such a card still carries its export_pricing quote, so you can fetch its rows with POST /api/v1/contents."
+          ]
         },
         "node_ids": {
+          "description": "Graph node ids to pin, as `tako_available_data` returns them. Pin the metric's node id alone and set `strict: true` to make its card come back; a bare pin only nudges the ranking. Max 20.",
           "maxItems": 20,
           "type": "array",
           "items": {
             "type": "string"
-          },
-          "description": "Graph node ids to pin into the search; the /v1/graph endpoints return these ids. Pinned nodes always become retrieval candidates and get a strong boost; organic results do not change. Ids are not durable across knowledge-graph rebuilds: the search skips an id that no longer resolves (in strict mode it simply cannot match). Malformed ids fail the request with a 400. Max 20."
+          }
         },
         "strict": {
           "type": "boolean",
-          "description": "When true, return only data cards that match at least one node in node_ids (which must then be non-empty). When false (the default), pinned nodes rank first but organic results still return. Web results do not change either way."
+          "description": "Return only cards matching `node_ids` — a hard filter, so zero cards is evidence about the filter, not coverage. Adding the entity's id beside the metric's widens it back out."
         }
       },
       "additionalProperties": false
     },
     "web": {
-      "description": "Web source settings. Include this key — even as an empty object — to search the web.",
+      "description": "Web source settings. Include this key, even as `{}`, to search the web.",
       "type": "object",
       "properties": {
         "count": {
@@ -2270,7 +2250,7 @@ Annotations:
         },
         "include_contents": {
           "type": "boolean",
-          "description": "Inline the page text of each web result in the response. Tako returns it free of charge, on a best-effort basis: if a page's text isn't available at search time, content.data is null. To fetch a page directly, use POST /api/v1/contents."
+          "description": "Inline each result's full page text in `content`. It is free on these endpoints; the text can be large, so pair it with `article_content_max_chars`."
         },
         "category": {
           "anyOf": [
@@ -2306,6 +2286,7 @@ Annotations:
           "description": "Drop results from these domains (bare hosts, for example 'cnn.com'). Max 20."
         },
         "snippet_max_chars": {
+          "description": "Maximum characters per snippet. Omit it and the server uses 4000, or 1000 with `include_answer: true`.",
           "anyOf": [
             {
               "type": "integer",
@@ -2315,12 +2296,11 @@ Annotations:
             {
               "type": "null"
             }
-          ],
-          "description": "Character cap on the text excerpt returned per web result. If you omit this field, the search endpoint applies 4000 and the answer endpoint applies 1000. If you send a value, the server uses that value exactly. The maximum is 20000."
+          ]
         },
         "highlights": {
           "type": "boolean",
-          "description": "Return query-relevant highlight passages as each web result's snippet, instead of the opening text of the page. Highlights usually carry the answer-bearing sentences, and stay within snippet_max_chars. Unless you also set include_contents, Tako requests no page text, so a page with no highlight returns snippet: null. The snippet can also hold more than one passage from different parts of the page, joined by ' … '. Read the snippet as a whole. Do not cut the snippet to a fixed length. Do not quote the snippet as one continuous sentence. Default false."
+          "description": "Return query-relevant highlight passages as each result's snippet instead of the page's opening text. This tool sends true unless you set it false."
         },
         "article_content_max_chars": {
           "type": "integer",
@@ -2329,6 +2309,7 @@ Annotations:
           "description": "Character cap on the full article text when include_contents is true. Default 30000, maximum 1000000."
         },
         "published_after": {
+          "description": "Only return pages published on or after this date (YYYY-MM-DD). Omit it for no lower bound.",
           "anyOf": [
             {
               "type": "string",
@@ -2338,8 +2319,7 @@ Annotations:
             {
               "type": "null"
             }
-          ],
-          "description": "Keep only web results published on or after this date (ISO 'YYYY-MM-DD'). Tako applies the date on the provider where possible, and always filters the returned results. Results with no known publication date are kept. Omit for no lower bound."
+          ]
         },
         "published_before": {
           "anyOf": [
@@ -2358,10 +2338,11 @@ Annotations:
       "additionalProperties": false
     },
     "include_answer": {
-      "description": "Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only.",
+      "description": "Set true to synthesize one citation-backed answer from the retrieval into `answer`. Omit or false for retrieval only.",
       "type": "boolean"
     },
     "output_schema": {
+      "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`. No $ref; instant effort rejects it.",
       "anyOf": [
         {
           "type": "object",
@@ -2373,8 +2354,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "JSON Schema for structured output. Tako fills it from the same evidence it uses to write `answer`, and returns it in `structured_output`. Requires effort 'fast' or 'deep'; on 'instant' the request returns 400. Supported subset: the object, array, string, number, integer, and boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties: false`. A type may be nullable as `[\"number\", \"null\"]`, which is how you let Tako signal 'no evidence' rather than filling a zero. `title`, `examples`, `format`, and `default` are accepted and ignored — they constrain nothing. Caps: 16KB total, depth 5, 64 properties, 512 characters per description. Violations return 400. If Tako can't fill the schema, `structured_output` is absent and `structured_output_error` says why — the answer and the cards still return."
+      ]
     }
   },
   "required": [
@@ -2460,7 +2440,41 @@ Annotations:
           "rows": {
             "description": "Inlined rows — only when the request asked to inline them.",
             "type": "object",
-            "properties": {},
+            "properties": {
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Column names, in row order; the unit is in the name."
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {}
+                },
+                "description": "Positional cells; a missing cell is null."
+              },
+              "format": {
+                "description": "The content_format, when the payload is not `columns`/`rows`.",
+                "type": "string"
+              },
+              "data": {
+                "description": "csv format only: the rows as CSV text.",
+                "type": "string"
+              },
+              "card_data": {
+                "description": "card_json format only: the card-type-specific object.",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": {}
+              },
+              "truncated": {
+                "description": "Not all the rows; the card's `total_rows` has the full count.",
+                "type": "boolean"
+              }
+            },
             "additionalProperties": {}
           }
         },
@@ -2469,7 +2483,7 @@ Annotations:
         ],
         "additionalProperties": {}
       },
-      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."
+      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them — otherwise fetch an exportable card's rows with tako_contents on its url."
     },
     "web_results": {
       "type": "array",
@@ -2565,7 +2579,7 @@ Annotations:
       }
     },
     "related": {
-      "description": "Follow-up queries, each with a `query` to send as the next search request. Present only when you set include_related.",
+      "description": "Follow-up queries; retrieval calls only, when you set include_related.",
       "type": "array",
       "items": {
         "type": "object",
@@ -2574,17 +2588,17 @@ Annotations:
       }
     },
     "answer": {
-      "description": "The synthesized, citation-backed answer. Present only when you set include_answer: true; the cards and web_results are its citations.",
+      "description": "The synthesized answer, cited from the cards and web_results. Present only when you set include_answer: true.",
       "type": "string"
     },
     "structured_output": {
-      "description": "The output_schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+      "description": "Your output_schema, filled from the same evidence as the answer. Absent when you sent none, or when Tako could not fill it — see structured_output_error.",
       "type": "object",
       "properties": {},
       "additionalProperties": {}
     },
     "structured_output_error": {
-      "description": "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill an output_schema you supplied.",
+      "description": "Why structured_output is absent: `code` and `message`.",
       "type": "object",
       "properties": {},
       "additionalProperties": {}
@@ -2598,6 +2612,139 @@ Annotations:
   "additionalProperties": false
 }
 ```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "cards": [
+    {
+      "exportable": true,
+      "title": "NVIDIA Corporation Data Center Total Revenues (Quarterly)",
+      "description": "NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.",
+      "url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+      "source": "Fiscal.ai",
+      "coverage_end": "2026-04",
+      "last_updated": "2026-08-26",
+      "relevance": "High",
+      "nodes": [
+        {
+          "id": "ent::nvidia_corporation::5ea55992",
+          "name": "NVIDIA Corporation",
+          "type": "entity"
+        },
+        {
+          "id": "mt::total_revenues::8a1f02c3",
+          "name": "Total Revenues (Normalized)",
+          "type": "metric"
+        }
+      ],
+      "total_rows": 26,
+      "rows": {
+        "columns": [
+          "Timestamp",
+          "Data Center Total Revenues (Normalized) (USD)"
+        ],
+        "rows": [
+          [
+            "2025-10-26T00:00:00+00:00",
+            57006000000
+          ],
+          [
+            "2026-01-25T00:00:00+00:00",
+            65821000000
+          ],
+          [
+            "2026-04-26T00:00:00+00:00",
+            75246000000
+          ]
+        ],
+        "truncated": true
+      }
+    }
+  ],
+  "web_results": [
+    {
+      "url": "https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-Q1-FY2027/",
+      "title": "NVIDIA Announces Financial Results for First Quarter Fiscal 2027",
+      "snippet": "Record revenue of $81.6 billion, up 85% from a year ago. Record Data Center revenue of $75.2 billion, up 89% from a year ago.",
+      "source": "investor.nvidia.com",
+      "published": "2026-05-27",
+      "content": {
+        "data": "SANTA CLARA, Calif. — NVIDIA today reported revenue for the first quarter of fiscal 2027 of $81.6 billion, up 85% from a year ago. Data Center revenue was $75.2 billion, up 89% from a year ago.",
+        "truncated": false
+      }
+    }
+  ],
+  "usage": {
+    "total_cost_usd": 0.042
+  },
+  "metric_definitions": {
+    "Total Revenues (Normalized)": "Revenue the company reported for this segment, as disclosed in its segment note. The figure covers one segment only, so it does not sum to consolidated total revenue unless the company reports no other segment."
+  },
+  "source_notes": {
+    "Fiscal.ai": "Fundamental company financials standardized across filings, so the same line item is comparable between companies and periods."
+  },
+  "answer": "NVIDIA's Data Center segment reported $75.2 billion in revenue for the quarter ended April 2026, up 89% year over year [1].",
+  "structured_output": {
+    "segment": "Data Center",
+    "revenue_usd": 75246000000,
+    "period_end": "2026-04-26"
+  }
+}
+```
+
+`content[0].text`:
+
+````markdown
+NVIDIA's Data Center segment reported $75.2 billion in revenue for the quarter ended April 2026, up 89% year over year [1].
+
+## Data cards (1)
+
+### NVIDIA Corporation Data Center Total Revenues (Quarterly)
+NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.
+- url: https://tako.com/card/eDLjXb_EieceW6BapkXJ/ · exportable, 26 rows
+- source: Fiscal.ai · data through 2026-04 · refreshed 2026-08-26 · relevance High
+- nodes: `ent::nvidia_corporation::5ea55992` (NVIDIA Corporation) · `mt::total_revenues::8a1f02c3` (Total Revenues (Normalized))
+- rows: TRUNCATED — these are not all the rows
+```json
+{"columns":["Timestamp","Data Center Total Revenues (Normalized) (USD)"],"rows":[["2025-10-26T00:00:00+00:00",57006000000],["2026-01-25T00:00:00+00:00",65821000000],["2026-04-26T00:00:00+00:00",75246000000]]}
+```
+
+Top card chart — embed: https://tako.com/embed/eDLjXb_EieceW6BapkXJ/?dark_mode=auto&showShare=true · image: https://tako.com/api/v1/image/eDLjXb_EieceW6BapkXJ/?dark_mode=true
+
+## Web results (1)
+
+### NVIDIA Announces Financial Results for First Quarter Fiscal 2027 — investor.nvidia.com, 2026-05-27
+https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-Q1-FY2027/
+```
+Record revenue of $81.6 billion, up 85% from a year ago. Record Data Center revenue of $75.2 billion, up 89% from a year ago.
+```
+```
+SANTA CLARA, Calif. — NVIDIA today reported revenue for the first quarter of fiscal 2027 of $81.6 billion, up 85% from a year ago. Data Center revenue was $75.2 billion, up 89% from a year ago.
+```
+
+## Structured output
+
+```
+{
+ "segment": "Data Center",
+ "revenue_usd": 75246000000,
+ "period_end": "2026-04-26"
+}
+```
+
+## Definitions
+- Total Revenues (Normalized): Revenue the company reported for this segment, as disclosed in its segment note. The figure covers one segment only, so it does not sum to consolidated total revenue unless the company reports no other segment.
+
+## Source notes
+- Fiscal.ai: Fundamental company financials standardized across filings, so the same line item is comparable between companies and periods.
+
+usage: $0.042
+````
 </details>
 
 ### tako_visualize
