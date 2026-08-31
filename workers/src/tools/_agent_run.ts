@@ -1,0 +1,303 @@
+/**
+ * Model-facing projection for `tako_agent` (spec:
+ * 2026-08-26-model-facing-surface-redesign, "Per-tool shape").
+ *
+ * The defect this replaces: the tool advertised a LIFECYCLE stub —
+ * `{run_id, status, timed_out, thread_id}`, 139 chars measured on staging —
+ * and carried the answer, its citations and its cards in the markdown text
+ * only. Five measured harnesses (Claude Code, VS Code MCP, Codex CLI,
+ * Pydantic AI, ChatGPT-with-widget) feed the model `structuredContent` and
+ * DROP `content`, so on all five the answer was invisible and the model read
+ * a uuid and the word `completed`.
+ *
+ * Both channels now carry the same projected result. Every field is mapped on
+ * purpose, so an unknown backend key cannot leak; wire-drift protection is the
+ * generated-contract guard in `pollAgentRun` plus the conformance test in
+ * `_agent_run.test.ts`.
+ *
+ * What the projection drops, and why (sizes measured on two staging runs,
+ * 2026-08-30 — `effort: "medium"`):
+ *
+ *   - `cards[].methodologies` (3,232 chars on one card): the generated BUILD
+ *     record — raw pandas and SQL (`out = df.copy()`, `SELECT f.start_time
+ *     …`). `metadata.methodology` states the same thing in prose the agent
+ *     wrote for a reader.
+ *   - `cards[].metric_definitions` (2,070 chars on one card): an S&P Global
+ *     Excel-formula line-item dump (`IQ_REV Revenues [112] … [45911]`).
+ *     `metadata.definitions` covers the terms the answer actually uses.
+ *     Those two fields alone were 81% of that run's card payload.
+ *   - `cards[].content{}`: nulls plus `export_pricing`; `total_rows` is lifted
+ *     out of it.
+ *   - `citations[].source_name`, `.excerpt`, `.publish_date`, `.content`: the
+ *     generated contract states the Answer Agent "populates source_index and
+ *     leaves the rest null", and both live runs confirm it.
+ *   - `run_id` and `result.request_id`: correlation ids with no model reader
+ *     and no poll tool to spend them on (`mcp.ts` logs `run_id` per call).
+ *     Same call as `request_id` on the search tools.
+ *   - `status`: the handler polls with `onTimeout: "throw"`, so the only
+ *     values that can ship are `completed` and `failed`, and `error` already
+ *     distinguishes them. It comes back the day a non-terminal run can be
+ *     returned.
+ *   - `timed_out`: always `false` for the same reason — the field's own
+ *     describe told the model to poll a tool that does not exist.
+ *
+ * Kept against the drop list: `cards[].image_url` and `cards[].embed_url`
+ * (Jay, 2026-08-31). An agent run's cards ARE its deliverable, and unlike
+ * `tako_search` this tool mounts no widget and ships no PNG block, so those
+ * two urls are the only way a host can render or link the chart it paid for.
+ */
+import { z } from "zod";
+
+import { dateOnly, nonEmpty, type Usage } from "./_search_results.js";
+
+/**
+ * One chart card an agent run built.
+ *
+ * Bare of describes on purpose. The published schema is capped at 2,000 chars
+ * (`OUTPUT_SCHEMA_MAX_CHARS`) and this tool's shape spends 1,500 of it on
+ * structure, so a describe here has to earn its ~50 bytes against a field name
+ * that already says the same thing. `url`, `image_url`, `embed_url`,
+ * `total_rows` and `description` do not need one; the fetch path they imply is
+ * stated ONCE, on the `cards` array itself.
+ *
+ * `total_rows` is a plain `number()`, not `.int()`: draft-7 renders `.int()` as
+ * a 55-char ±2^53 bound pair, and the projection already lifts the value from
+ * a wire field the run-lifecycle guard validated. Same call `tako_contents`
+ * made in #275.
+ */
+export const projectedAgentCardShape = z.looseObject({
+  title: z.string().optional(),
+  description: z.string().optional(),
+  exportable: z.boolean().describe("false → the rows are locked."),
+  url: z.string().optional(),
+  image_url: z.string().optional(),
+  embed_url: z.string().optional(),
+  source: z.string().optional(),
+  last_updated: z.string().optional().describe("When Tako last refreshed the card."),
+  total_rows: z.number().optional(),
+});
+export type ProjectedAgentCard = {
+  title?: string;
+  description?: string;
+  exportable: boolean;
+  url?: string;
+  image_url?: string;
+  embed_url?: string;
+  source?: string;
+  last_updated?: string;
+  total_rows?: number;
+};
+
+/** One indexed source behind the answer. */
+export const projectedCitationShape = z.looseObject({
+  index: z.number().describe("The number an [n] marker joins to; sparse."),
+  title: z.string(),
+  url: z.string().optional(),
+  source_index: z
+    .enum(["data", "web"])
+    .optional()
+    .describe("`web` → a page tako_contents can fetch. `data` → a source's home page."),
+});
+export type ProjectedCitation = {
+  index: number;
+  title: string;
+  url?: string;
+  source_index?: "data" | "web";
+};
+
+/** The projected agent run: what both channels carry. */
+export type AgentRunOutput = {
+  answer?: string;
+  /** Refusal only — see `refusalGuidance`. */
+  guidance?: string;
+  cards: ProjectedAgentCard[];
+  citations: ProjectedCitation[];
+  definitions?: Record<string, string>;
+  assumptions?: Record<string, string>;
+  methodology?: Record<string, string>;
+  thread_id?: string;
+  usage: Usage | null;
+  error?: { code: string; message: string };
+};
+
+/**
+ * The one `guidance` branch this tool has: Tako rejected the query before the
+ * agent ran, so a `completed` run carries no answer and no cards. Without it
+ * the result reads as an empty success — the renderer's old wording for this
+ * state was "Agent run completed with no answer text", and `refusal_code`
+ * never reached either channel to say why.
+ *
+ * Two sentences, verdict then one action, per the spec's guidance rule.
+ */
+export function refusalGuidance(code: string): string {
+  return `Tako rejected this query before the agent ran (${code}), so nothing was researched. Rephrase it as a question about specific entities and metrics, or call \`tako_search\` for a direct lookup.`;
+}
+
+/** The wire fields the projection reads. A superset arrives; nothing else is kept. */
+export type AgentRunWireLike = {
+  thread_id?: string | null | undefined;
+  usage?: Usage | null | undefined;
+  result?:
+    | {
+        answer?: string | null | undefined;
+        cards?: unknown;
+        citations?: unknown;
+        metadata?:
+          | {
+              definitions?: unknown;
+              assumptions?: unknown;
+              methodology?: unknown;
+            }
+          | null
+          | undefined;
+        refusal_code?: string | null | undefined;
+      }
+    | null
+    | undefined;
+  error?: { code: string; message: string } | null | undefined;
+};
+
+const sourceNamesOf = (rec: Record<string, unknown>): string[] => {
+  if (!Array.isArray(rec.sources)) return [];
+  const names: string[] = [];
+  for (const entry of rec.sources) {
+    if (entry === null || typeof entry !== "object") continue;
+    const name = nonEmpty((entry as Record<string, unknown>).source_name);
+    if (name !== undefined && !names.includes(name)) names.push(name);
+  }
+  return names;
+};
+
+/** Project one card an agent run built. */
+export function projectAgentCard(card: unknown): ProjectedAgentCard | undefined {
+  if (card === null || typeof card !== "object") return undefined;
+  const rec = card as Record<string, unknown>;
+  const content = rec.content as Record<string, unknown> | null | undefined;
+  const out: ProjectedAgentCard = {
+    exportable: typeof rec.exportable === "boolean" ? rec.exportable : content != null,
+  };
+  const title = nonEmpty(rec.title);
+  if (title !== undefined) out.title = title;
+  const description = nonEmpty(rec.description);
+  if (description !== undefined) out.description = description;
+  const url = nonEmpty(rec.webpage_url);
+  if (url !== undefined) out.url = url;
+  const imageUrl = nonEmpty(rec.image_url);
+  if (imageUrl !== undefined) out.image_url = imageUrl;
+  const embedUrl = nonEmpty(rec.embed_url);
+  if (embedUrl !== undefined) out.embed_url = embedUrl;
+  const sources = sourceNamesOf(rec);
+  if (sources.length > 0) out.source = sources.join(", ");
+  const freshness = rec.data_freshness;
+  if (freshness !== null && typeof freshness === "object") {
+    // `last_updated` only, the same field `tako_search` projects. Agent cards
+    // are built per run and often leave it null while carrying `coverage_end`;
+    // reading that instead would put the DATA's period under a key that means
+    // Tako's refresh time. The period stays in `description`, where the agent
+    // already writes it.
+    const updated = dateOnly((freshness as Record<string, unknown>).last_updated);
+    if (updated !== undefined) out.last_updated = updated;
+  }
+  // Lifted out of `content` so the count survives that field's drop. A locked
+  // card ships `content: null`, so no count exists to report — a fabricated 0
+  // would read as "no data exists" when the truth is "data you can't have".
+  if (content != null) {
+    const dataset = content.dataset as Record<string, unknown> | null | undefined;
+    const totalRows =
+      typeof content.total_rows === "number"
+        ? content.total_rows
+        : dataset != null && typeof dataset.total_rows === "number"
+          ? dataset.total_rows
+          : undefined;
+    if (totalRows !== undefined) out.total_rows = totalRows;
+  }
+  return out;
+}
+
+/** Project one citation. Drops any entry without the join key the answer needs. */
+export function projectCitation(citation: unknown): ProjectedCitation | undefined {
+  if (citation === null || typeof citation !== "object") return undefined;
+  const rec = citation as Record<string, unknown>;
+  const title = nonEmpty(rec.title);
+  if (typeof rec.index !== "number" || !Number.isInteger(rec.index) || title === undefined) {
+    return undefined;
+  }
+  const out: ProjectedCitation = { index: rec.index, title };
+  const url = nonEmpty(rec.url);
+  if (url !== undefined) out.url = url;
+  if (rec.source_index === "data" || rec.source_index === "web") {
+    out.source_index = rec.source_index;
+  }
+  return out;
+}
+
+/**
+ * Flatten one `metadata` list into a `{name: text}` map, deduped by name.
+ *
+ * The list form carries `category` and `source_ref` alongside; both are
+ * dropped. The map form is the shape the search tools' reference prose already
+ * uses (`metric_definitions`, `source_notes`), so one rendering helper serves
+ * both tools and a truncating host loses the same thing last on either.
+ *
+ * A duplicate name with DIFFERENT text keeps both, disambiguated with a
+ * counter, for the reason `buildReferenceMaps` does the same: dropping text is
+ * worse than an ugly key.
+ */
+export function noteMap(
+  entries: unknown,
+  nameKey: "term" | "title",
+  textKey: "definition" | "description",
+): Record<string, string> | undefined {
+  if (!Array.isArray(entries)) return undefined;
+  const out: Record<string, string> = {};
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== "object") continue;
+    const rec = entry as Record<string, unknown>;
+    const name = nonEmpty(rec[nameKey]);
+    const text = nonEmpty(rec[textKey]);
+    if (name === undefined || text === undefined) continue;
+    if (out[name] === undefined || out[name] === text) {
+      out[name] = text;
+      continue;
+    }
+    let i = 2;
+    while (out[`${name} (${i})`] !== undefined && out[`${name} (${i})`] !== text) i += 1;
+    out[`${name} (${i})`] = text;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Project a terminal agent run into the shape both channels carry. */
+export function projectAgentRun(run: AgentRunWireLike): AgentRunOutput {
+  const result = run.result;
+  const out: AgentRunOutput = {
+    cards: [],
+    citations: [],
+    usage: run.usage ?? null,
+  };
+  const answer = nonEmpty(result?.answer);
+  if (answer !== undefined) out.answer = answer;
+  const refusal = nonEmpty(result?.refusal_code);
+  if (refusal !== undefined) out.guidance = refusalGuidance(refusal);
+  if (Array.isArray(result?.cards)) {
+    out.cards = result.cards
+      .map(projectAgentCard)
+      .filter((c): c is ProjectedAgentCard => c !== undefined);
+  }
+  if (Array.isArray(result?.citations)) {
+    out.citations = result.citations
+      .map(projectCitation)
+      .filter((c): c is ProjectedCitation => c !== undefined);
+  }
+  const md = result?.metadata;
+  const definitions = noteMap(md?.definitions, "term", "definition");
+  if (definitions !== undefined) out.definitions = definitions;
+  const assumptions = noteMap(md?.assumptions, "title", "description");
+  if (assumptions !== undefined) out.assumptions = assumptions;
+  const methodology = noteMap(md?.methodology, "title", "description");
+  if (methodology !== undefined) out.methodology = methodology;
+  const threadId = nonEmpty(run.thread_id);
+  if (threadId !== undefined) out.thread_id = threadId;
+  if (run.error != null) out.error = { code: run.error.code, message: run.error.message };
+  return out;
+}

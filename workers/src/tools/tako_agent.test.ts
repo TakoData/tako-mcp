@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("tako_agent", () => {
-  it("dispatches a deep run, polls to completion, emits progress, returns the result", async () => {
+  it("dispatches a deep run, polls to completion, returns the projected result", async () => {
     vi.useFakeTimers();
     vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_1", status: "queued" });
     vi.mocked(djangoGet)
@@ -45,18 +45,23 @@ describe("tako_agent", () => {
       effort: "medium",
       source_indexes: ["data", "web"],
     });
-    expect(ctx.sendProgress).toHaveBeenCalled();
-    expect(out.status).toBe("completed");
-    expect(out.timed_out).toBe(false);
-    expect(out.result?.answer).toBe("42");
+    // No progress notification: the transport discards request-scoped
+    // notifications under `enableJsonResponse: true` (TAKO-4485), so the loop
+    // must not claim a channel that drops it.
+    expect(ctx.sendProgress).not.toHaveBeenCalled();
+    expect(out.answer).toBe("42");
     // Passthrough cards pick up the share opt-in — see withShareOptIn.
-    expect(out.result?.cards[0]?.embed_url).toBe(
-      "https://trytako.com/embed/agentcard/?showShare=true",
-    );
+    expect(out.cards[0]?.embed_url).toBe("https://trytako.com/embed/agentcard/?showShare=true");
     // The Answer Agent's unified citation registry flows through (replacing the
     // generic agent's web_results).
-    expect(out.result?.citations).toHaveLength(1);
-    expect(out.result?.citations?.[0]?.index).toBe(1);
+    expect(out.citations).toHaveLength(1);
+    expect(out.citations[0]?.index).toBe(1);
+    // The lifecycle fields the old advertised shape was made of are GONE from
+    // the model-facing result: `run_id` and `status` have no model reader and
+    // no poll tool (see _agent_run.ts).
+    expect(out).not.toHaveProperty("run_id");
+    expect(out).not.toHaveProperty("status");
+    expect(out).not.toHaveProperty("timed_out");
   });
 
   it("surfaces the Answer Agent metadata (definitions/assumptions/methodology) instead of dropping it", async () => {
@@ -81,9 +86,10 @@ describe("tako_agent", () => {
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
-    expect(out.result?.metadata?.definitions?.[0]?.term).toBe("GDP");
-    expect(out.result?.metadata?.assumptions?.[0]?.title).toBe("nominal");
-    expect(out.result?.metadata?.methodology?.[0]?.title).toBe("sources");
+    // Flattened to the `{name: text}` maps both channels render.
+    expect(out.definitions).toEqual({ GDP: "gross domestic product" });
+    expect(out.assumptions).toEqual({ nominal: "not inflation-adjusted" });
+    expect(out.methodology).toEqual({ sources: "world bank" });
   });
 
   it("surfaces a failed run with its error", async () => {
@@ -95,9 +101,10 @@ describe("tako_agent", () => {
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
-    expect(out.status).toBe("failed");
-    expect(out.timed_out).toBe(false);
-    expect(out.error?.message).toBe("boom");
+    // A failed run is signalled by `error` alone now — `status` was a field
+    // whose only two reachable values `error` already distinguished.
+    expect(out.error).toEqual({ code: "x", message: "boom" });
+    expect(out.answer).toBeUndefined();
   });
 
   it("throws when the run never completes before AGENT_POLL_BUDGET_MS (Claude path)", async () => {
@@ -219,8 +226,7 @@ describe("tako_agent wire-drift guard", () => {
     const handlerPromise = tool.handler({ query: "in-flight test", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
-    expect(out.status).toBe("completed");
-    expect(out.result?.answer).toBe("done");
+    expect(out.answer).toBe("done");
   });
 
   it("tolerates queued runs that lack a result field — no false-positive", async () => {
@@ -233,8 +239,11 @@ describe("tako_agent wire-drift guard", () => {
     const handlerPromise = tool.handler({ query: "queued test", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
-    expect(out.status).toBe("completed");
-    expect(out.result).toBeNull();
+    // A completed run with a null result projects to an empty-but-valid
+    // result rather than a null the renderer would have to special-case.
+    expect(out.answer).toBeUndefined();
+    expect(out.cards).toEqual([]);
+    expect(out.citations).toEqual([]);
   });
 
   it("throws a contract-drift error when a completed run's citation is missing the required `title`", async () => {

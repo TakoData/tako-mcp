@@ -39,16 +39,16 @@
   "tools": [
     {
       "name": "tako_agent",
-      "description": "Run Tako's Answer Agent: multi-step research returning a synthesized, cited `answer` plus chart `cards`.\n\nBest for: questions whose shape needs figuring out — cohorts (\"which companies match…\"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` returns nothing.\n\nNot for: a known value or a simple comparison — use `tako_search` (faster). This runs ~30–90s but is far more thorough.",
+      "description": "Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.\n\nBest for questions whose shape you'd have to work out first: cohorts (\"which companies match…\"), ranking or screening by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing.\n\nNot for a known value or a two-entity comparison — `tako_search` answers those in one round trip. One agent call takes 30–90 seconds.",
       "parameters": {
         "query": {
           "type": "string",
-          "description": "The deep/analytical question for the agent to work through.",
+          "description": "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps.",
           "required": true
         },
         "sources": {
           "type": "array",
-          "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph.",
+          "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
           "default": [
             "data",
             "web"
@@ -56,7 +56,7 @@
         },
         "thread_id": {
           "type": "string",
-          "description": "Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread."
+          "description": "A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one."
         }
       },
       "annotations": {

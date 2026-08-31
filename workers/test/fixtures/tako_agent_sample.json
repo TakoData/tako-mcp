@@ -1,0 +1,135 @@
+{
+  "__comment": "Canonical tako_agent wire fixture for the generated docs/TOOLS.md samples (spec: 2026-08-26-model-facing-surface-redesign, 'TOOLS.md output rendering'). Shape mirrors GET /api/v1/agent/answer/runs/{run_id} as the backend sends it. Deliberately small — 1 card, 3 citations, one entry per metadata list. It KEEPS the fields the projection drops (card methodologies and metric_definitions, content nulls and export_pricing, citation source_name/excerpt/publish_date nulls, run_id, status, request_id) so regenerating exercises the drop path; the real ones are far larger, 3,232 and 2,070 chars on one staging card. Regenerating TOOLS.md runs this through the real projection + renderer; do not hand-edit the samples there.",
+  "run_id": "8f1c0b2a-6d4e-4f7a-9c31-5b8e2a7d4f60",
+  "object": "agent.run",
+  "thread_id": "cde6ed80-ab7d-464b-baa9-793fcb418a62",
+  "status": "completed",
+  "created_at": "2026-08-30T22:48:10.751475+00:00",
+  "completed_at": "2026-08-30T22:50:31.204118+00:00",
+  "usage": { "total_cost_usd": 0.09314, "compute": { "cost_usd": 0.09314 } },
+  "error": null,
+  "result": {
+    "answer": "Surf Air Mobility grew revenue fastest among the screened US airline companies from 2022 to 2025, with a three-year CAGR of 73.9% [1]. Global Crossing Airlines Group ranked second at 36.4% [1].\n\nAmong larger scheduled carriers, Alaska Air Group led at 13.9% CAGR, with revenue rising from $9.6 billion to $14.2 billion [1]. United Airlines Holdings followed at 9.4%, and Delta Air Lines at 8.5% [1]. Coverage of the 2025 filing season is still incomplete for smaller charter operators [3].\n\nThe ranking uses revenue CAGR, calculated as (2025 revenue / 2022 revenue)^(1/3) - 1, over the 21 US-headquartered companies with normalized revenue for both endpoint years [1].",
+    "cards": [
+      {
+        "card_id": "CpQeOBcKjz8VM8-wNlEV",
+        "title": "Fastest US Airline Revenue Growth",
+        "description": "Three-year revenue CAGR for US-headquartered companies in Tako's Airlines industry, 2022 to 2025, top 10 of 21 screened. Normalized financials, which may differ from as-reported figures.",
+        "semantic_description": null,
+        "webpage_url": "https://tako.com/card/CpQeOBcKjz8VM8-wNlEV/",
+        "image_url": "https://tako.com/api/v1/image/CpQeOBcKjz8VM8-wNlEV/",
+        "embed_url": "https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/",
+        "card_type": "bar",
+        "exportable": true,
+        "relevance": null,
+        "relevance_score": null,
+        "nodes": null,
+        "source_indexes": ["data"],
+        "sources": [
+          {
+            "source_name": "S&P Global",
+            "source_index": "data",
+            "url": "https://www.spglobal.com/",
+            "source_description": "S&P Global is a US-based financial data and analytics company that provides products and services to the financial industry.",
+            "source_text": null
+          }
+        ],
+        "methodologies": [
+          {
+            "methodology_name": "Data Transformation",
+            "methodology_description": "out = df.copy()\nout = out.sort_values('cagr_pct', ascending=False).head(10).reset_index(drop=True)\nreturn out"
+          }
+        ],
+        "metric_definitions": [
+          {
+            "name": "Revenues (Normalized)",
+            "definition": "Excel Formula: IQ_REV Revenues [112] is a line item in the Standard template with the following components: Accident and Health Premiums Earned [118] Asset Management Fee [120] ... This metric is normalized by S&P Global."
+          }
+        ],
+        "content": {
+          "content_format": null,
+          "cost": 0.001,
+          "data": null,
+          "records": null,
+          "dataset": null,
+          "card_data": null,
+          "total_rows": 10,
+          "truncated": false,
+          "export_pricing": {
+            "baseline_usd": 0.001,
+            "row_cpm_usd": 0.01,
+            "free_rows": 0,
+            "max_rows_ceiling": 2000
+          }
+        },
+        "data_freshness": { "coverage_end": "2025-12", "data_as_of": "2026-03-31", "last_updated": "2026-08-26" }
+      }
+    ],
+    "citations": [
+      {
+        "index": 1,
+        "title": "S&P Global",
+        "url": "https://www.spglobal.com/",
+        "source_name": null,
+        "source_index": "data",
+        "excerpt": null,
+        "publish_date": null,
+        "content": null
+      },
+      {
+        "index": 3,
+        "title": "Regional carriers lag the majors on 2025 revenue recovery",
+        "url": "https://www.reuters.com/business/aerospace-defense/regional-carriers-lag-majors-2025-revenue-recovery-2026-03-18/",
+        "source_name": null,
+        "source_index": "web",
+        "excerpt": null,
+        "publish_date": null,
+        "content": null
+      },
+      {
+        "index": 5,
+        "title": "Alaska Air Group reports full-year 2025 results",
+        "url": "https://investor.alaskaair.com/news-releases/news-release-details/alaska-air-group-reports-full-year-2025-results",
+        "source_name": null,
+        "source_index": "web",
+        "excerpt": null,
+        "publish_date": null,
+        "content": null
+      }
+    ],
+    "metadata": {
+      "definitions": [
+        {
+          "term": "Revenue CAGR",
+          "definition": "Compound annual growth rate: the constant annual rate that would produce the observed change between the beginning and ending revenue over the stated period.",
+          "source_ref": null
+        },
+        {
+          "term": "Normalized revenue",
+          "definition": "Revenue standardized across companies to improve comparability; it may differ from the exact figures reported in a company's filings.",
+          "source_ref": 1
+        }
+      ],
+      "assumptions": [
+        {
+          "title": "Interpretation of \"last three years\"",
+          "description": "The comparison treats the latest three-year window as calendar 2022 through calendar 2025, using the two endpoint years and three annual growth intervals.",
+          "category": "temporal",
+          "source_ref": null
+        }
+      ],
+      "methodology": [
+        {
+          "title": "Ranking method",
+          "description": "Companies were ranked by three-year revenue CAGR between calendar 2022 and calendar 2025, rather than by absolute dollar growth."
+        },
+        {
+          "title": "Coverage and scope",
+          "description": "The screen included 21 US-headquartered companies classified broadly as airlines, including passenger, cargo, regional, charter, and other operators. Only companies with revenue observations for both endpoint years were ranked."
+        }
+      ]
+    },
+    "refusal_code": null,
+    "request_id": "req_fixture"
+  }
+}
