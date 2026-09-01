@@ -37,12 +37,14 @@
  *     same bargain `request_id` makes on the search tools, where `mcp.ts`
  *     logs it. Delete that log and this drop stops being safe: `mcp.ts`
  *     itself never sees `run_id`, so nothing else would record it.
- *   - `status`: the handler polls with `onTimeout: "throw"`, so the only
- *     values that can ship are `completed` and `failed`, and `error` already
- *     distinguishes them. It comes back the day a non-terminal run can be
- *     returned.
- *   - `timed_out`: always `false` for the same reason — the field's own
- *     describe told the model to poll a tool that does not exist.
+ *   - `status`: `pollAgentRun` throws on the budget rather than returning a
+ *     non-terminal run, so the only values that can ship are `completed` and
+ *     `failed`, and `error` already distinguishes them. It comes back the day
+ *     a non-terminal run can be returned.
+ *   - `timed_out`: deleted outright, not just dropped here. It was
+ *     MCP-synthetic, only ever `true` on the `onTimeout: "return"` arm that
+ *     went with `tako_agent_wait`, and its own describe told the model to
+ *     poll a tool that does not exist.
  *
  * Kept against the drop list: `cards[].image_url` and `cards[].embed_url`
  * (Jay, 2026-08-31). An agent run's cards ARE its deliverable, and unlike
@@ -358,11 +360,10 @@ export function projectAgentRun(run: AgentRunWireLike): AgentRunOutput {
   // NON-TERMINAL, and the renderer cannot tell it from a prose-free completed
   // run: both project to no answer and no error, so the text channel states
   // "The agent returned no answer." about a run that is still going.
-  // `pollAgentRun`'s `onTimeout: "return"` arm produces exactly this shape
-  // (`status: "running"`, `timed_out: true`) and has no production caller —
-  // the handler passes `onTimeout: "throw"`. This guard is what keeps the
-  // statement true if one appears. `queued` reaches it too, which a
-  // `timed_out` check would not.
+  // `pollAgentRun` cannot hand one over any more — it throws on the budget
+  // instead of returning `status: "running"` — but this projection is
+  // exported and the wire type takes any status string, so the guard is what
+  // keeps the statement true for a caller that builds one another way.
   else if (run.status !== undefined && run.status !== "completed") {
     out.error = {
       code: "agent_run_incomplete",

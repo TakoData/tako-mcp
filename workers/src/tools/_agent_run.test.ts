@@ -30,7 +30,6 @@ const wireRun = {
   status: "completed",
   created_at: "2026-08-30T22:48:10.751475+00:00",
   completed_at: "2026-08-30T22:50:31.204118+00:00",
-  timed_out: false,
   usage: { total_cost_usd: 0.09314, compute: { cost_usd: 0.09314 } },
   error: null,
   result: {
@@ -118,7 +117,7 @@ describe("projectAgentRun conformance", () => {
   });
 
   it("drops the correlation ids, the lifecycle fields and the request_id", () => {
-    for (const key of ["run_id", "object", "status", "timed_out", "created_at", "completed_at", "request_id"]) {
+    for (const key of ["run_id", "object", "status", "created_at", "completed_at", "request_id"]) {
       expect(output, `${key} reached the model`).not.toHaveProperty(key);
     }
   });
@@ -288,9 +287,10 @@ describe("failed run without an error", () => {
 
 describe("non-terminal run", () => {
   it("states the run did not finish, not that it returned nothing", () => {
-    // `pollAgentRun`'s `onTimeout: "return"` arm returns `status: "running"`.
-    // Without the guard this projects to no answer and no error, and the
-    // renderer says "The agent returned no answer." about a live run.
+    // `pollAgentRun` throws on the budget rather than returning `status:
+    // "running"`, so nothing produces this today. Without the guard it
+    // projects to no answer and no error, and the renderer says "The agent
+    // returned no answer." about a live run.
     const out = projectAgentRun({ status: "running", result: null, error: null });
     expect(out.error).toEqual({
       code: "agent_run_incomplete",
@@ -298,7 +298,7 @@ describe("non-terminal run", () => {
     });
   });
 
-  it("covers `queued`, which a `timed_out` check would miss", () => {
+  it("covers `queued`, not just `running`", () => {
     expect(projectAgentRun({ status: "queued", result: null }).error?.code).toBe("agent_run_incomplete");
   });
 

@@ -161,7 +161,6 @@ export const agentRunSchema = z.object({
   // — kept in lockstep on purpose. A new backend status must be added here too,
   // or the poll will reject the run as an "unexpected shape".
   status: z.enum(["queued", "running", "completed", "failed"]),
-  timed_out: z.boolean().default(false),
   result: z
     .object({
       answer: z.string().nullable().optional(),
@@ -191,7 +190,6 @@ type AgentRunWire = {
   run_id?: string;
   thread_id?: string | null;
   status?: string;
-  timed_out?: boolean;
   result?: unknown;
   error?: unknown;
   usage?: unknown;
@@ -257,13 +255,20 @@ export async function dispatchAgentRun(
   return data.run_id;
 }
 
-/** Poll an agent run to a terminal state. Emits no progress: the transport
- *  discards request-scoped notifications under `enableJsonResponse: true`
- *  (TAKO-4485), so a call here would be a claim the wire does not honor. */
+/** Poll an agent run to a terminal state, or throw when the budget elapses.
+ *
+ *  A non-terminal run is never RETURNED. The `onTimeout: "return"` arm and the
+ *  MCP-synthetic `timed_out` it set both went with `tako_agent_wait`: a run
+ *  that came back `status: "running"` projected to no answer and no error, so
+ *  the text channel stated "The agent returned no answer." about a live run.
+ *
+ *  Emits no progress: the transport discards request-scoped notifications
+ *  under `enableJsonResponse: true` (TAKO-4485), so a call here would be a
+ *  claim the wire does not honor. */
 export async function pollAgentRun(
   ctx: ToolContext,
   runId: string,
-  opts: { budgetMs: number; onTimeout: "throw" | "return" },
+  opts: { budgetMs: number },
 ): Promise<AgentRun> {
   const deadline = Date.now() + opts.budgetMs;
   let transient = 0;
@@ -293,10 +298,9 @@ export async function pollAgentRun(
     // AnswerAgentRun contract before mapping into the normalised MCP output shape.
     //
     // Parity decision (Path 2): the generated AnswerAgentRun requires `created_at`
-    // and `object` fields that the poll wire may omit for in-flight runs, and
-    // it lacks the MCP-synthetic `timed_out` field the split tools depend on.
-    // The hand-authored `agentRunSchema` therefore remains the tool's advertised
-    // output shape. We use the generated contract as a structural guard that
+    // and `object` fields that the poll wire may omit for in-flight runs, so the
+    // hand-authored `agentRunSchema` remains the shape this loop normalises to.
+    // We use the generated contract as a structural guard that
     // catches backend drift — renamed/missing fields that would otherwise be
     // silently swallowed by the `wire.field ?? fallback` mapping below.
     //
@@ -307,9 +311,8 @@ export async function pollAgentRun(
     //                        structurally match AnswerAgentResult from the
     //                        generated contract. For in-flight (queued/running)
     //                        runs, result is legitimately absent; no check runs.
-    //   • created_at / object / timed_out — tolerated as absent (metadata
-    //                        fields the poll wire may omit; timed_out is MCP-
-    //                        synthetic and does not appear in the backend schema).
+    //   • created_at / object — tolerated as absent (metadata fields the poll
+    //                        wire may omit).
     const lifecycleGuard = AnswerAgentRunContract.pick({ run_id: true, status: true }).safeParse(wire);
     if (!lifecycleGuard.success) {
       logWireGuardFailure("tako_agent", "run-lifecycle", lifecycleGuard.error, wire);
@@ -354,7 +357,6 @@ export async function pollAgentRun(
       run_id: wire.run_id ?? runId,
       thread_id: wire.thread_id ?? null,
       status: wire.status ?? "running",
-      timed_out: false,
       result: wire.result ?? null,
       error: wire.error ?? null,
       usage,
@@ -371,7 +373,7 @@ export async function pollAgentRun(
       // can still be answered. The transient-error log above fires on a FAILED
       // poll, so without this line a clean run leaves no trace anywhere.
       console.log(`[tako] agent run terminal run_id=${runId} status=${parsed.data.status}`);
-      return { ...lastRun, timed_out: false };
+      return lastRun;
     }
     // Budget check: stop before the next poll would land past the deadline.
     // Worst case the loop still overruns budgetMs by up to
@@ -379,14 +381,9 @@ export async function pollAgentRun(
     // started just under the deadline) — acceptable, and well under the MCP
     // client's tool-call ceiling.
     if (Date.now() + POLL_INTERVAL_MS >= deadline) {
-      if (opts.onTimeout === "throw") {
-        throw new Error(
-          `Agent run ${runId} did not complete within ${Math.round(opts.budgetMs / 1000)}s.`,
-        );
-      }
-      // onTimeout === "return": lastRun is always set here — the deadline
-      // check only runs after a successful GET above assigned it.
-      return { ...lastRun!, timed_out: true };
+      throw new Error(
+        `Agent run ${runId} did not complete within ${Math.round(opts.budgetMs / 1000)}s.`,
+      );
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
@@ -447,10 +444,7 @@ const takoAgent = {
   // and both channels render the same object.
   async handler(input, ctx): Promise<AgentRunOutput> {
     const runId = await dispatchAgentRun(ctx, input.query, input.sources, input.thread_id);
-    const run = await pollAgentRun(ctx, runId, {
-      budgetMs: AGENT_POLL_BUDGET_MS,
-      onTimeout: "throw",
-    });
+    const run = await pollAgentRun(ctx, runId, { budgetMs: AGENT_POLL_BUDGET_MS });
     return projectAgentRun(run);
   },
   renderText(output, _ctx) {

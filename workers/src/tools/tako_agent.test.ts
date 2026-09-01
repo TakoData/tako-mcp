@@ -62,7 +62,6 @@ describe("tako_agent", () => {
     // no poll tool (see _agent_run.ts).
     expect(out).not.toHaveProperty("run_id");
     expect(out).not.toHaveProperty("status");
-    expect(out).not.toHaveProperty("timed_out");
   });
 
   it("surfaces the Answer Agent metadata (definitions/assumptions/methodology) instead of dropping it", async () => {
@@ -135,33 +134,24 @@ describe("tako_agent", () => {
     // Always return "running" — never completes
     vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_3", status: "running" });
 
-    const pollPromise = pollAgentRun(ctx, "run_3", {
-      budgetMs: AGENT_POLL_BUDGET_MS,
-      onTimeout: "throw",
-    });
+    const pollPromise = pollAgentRun(ctx, "run_3", { budgetMs: AGENT_POLL_BUDGET_MS });
     // Advance past the budget
     await vi.advanceTimersByTimeAsync(AGENT_POLL_BUDGET_MS + 10_000);
     await expect(pollPromise).rejects.toThrow(/did not complete within/);
   });
 
-  it("returns timed_out:true with non-terminal status on wait-path deadline elapse", async () => {
+  it("never hands back a non-terminal run: the budget throws, it does not return", async () => {
     vi.useFakeTimers();
-    // Always return "running"
     vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_4", status: "running" });
 
-    // A literal, not a shared constant: the only caller of `onTimeout:
-    // "return"` was the deleted tako_agent_wait, so no production budget
-    // corresponds to this path any more.
+    // The `onTimeout: "return"` arm is gone with `tako_agent_wait`. A returned
+    // `status: "running"` projected to no answer and no error, so the text
+    // channel said "The agent returned no answer." about a live run.
     const budgetMs = 40_000;
-    const pollPromise = pollAgentRun(ctx, "run_4", {
-      budgetMs,
-      onTimeout: "return",
-    });
+    const pollPromise = pollAgentRun(ctx, "run_4", { budgetMs });
     await vi.advanceTimersByTimeAsync(budgetMs + 10_000);
-    const result = await pollPromise;
 
-    expect(result.timed_out).toBe(true);
-    expect(result.status).toBe("running");
+    await expect(pollPromise).rejects.toThrow(/did not complete within 40s/);
   });
 });
 
