@@ -40,14 +40,7 @@ describe("parseToolsParam", () => {
   });
 
   it("returns null when every token is unknown — the caller falls back to defaults", () => {
-    expect(parseToolsParam("nope,graph,credits", KNOWN)).toBeNull();
-  });
-
-  it("does not recognize the old group aliases", () => {
-    // `graph` and `credits` were alias tokens before spec D1; a stale URL
-    // must fall back to the defaults, not silently enable something else.
-    expect(parseToolsParam("graph", KNOWN)).toBeNull();
-    expect(parseToolsParam("credits", KNOWN)).toBeNull();
+    expect(parseToolsParam("nope,graph,credits,answer", KNOWN)).toBeNull();
   });
 });
 
@@ -76,8 +69,8 @@ describe("readToolsParam", () => {
   });
 
   it("joins repeated params that each carry a comma list", () => {
-    expect(read("?tools=search,answer&tools=visualize")).toBe(
-      "search,answer,visualize",
+    expect(read("?tools=search,contents&tools=visualize")).toBe(
+      "search,contents,visualize",
     );
   });
 
@@ -85,33 +78,5 @@ describe("readToolsParam", () => {
     expect(parseToolsParam(read("?tools=agent&tools=search"), KNOWN)).toEqual(
       new Set(["tako_agent", "tako_search"]),
     );
-  });
-});
-
-describe("retired tool tokens", () => {
-  const KNOWN_WITH_ADVANCED: ReadonlySet<string> = new Set([
-    ...KNOWN,
-    "tako_search_advanced",
-  ]);
-
-  it("maps the retired answer token to tako_search_advanced", () => {
-    // Both spellings, since the prefix is optional.
-    expect(parseToolsParam("answer", KNOWN_WITH_ADVANCED)).toEqual(
-      new Set(["tako_search_advanced"]),
-    );
-    expect(parseToolsParam("tako_answer,search", KNOWN_WITH_ADVANCED)).toEqual(
-      new Set(["tako_search_advanced", "tako_search"]),
-    );
-  });
-
-  it("dedupes when both the retired token and its replacement are named", () => {
-    expect(parseToolsParam("answer,search_advanced", KNOWN_WITH_ADVANCED)).toEqual(
-      new Set(["tako_search_advanced"]),
-    );
-  });
-
-  it("still drops the token when its replacement is not a known tool", () => {
-    // Never invents a name: the map forwards, it does not register.
-    expect(parseToolsParam("answer", KNOWN)).toBeNull();
   });
 });
