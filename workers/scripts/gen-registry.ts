@@ -46,6 +46,7 @@ import {
   webResultSchema,
   type Usage,
 } from "../src/tools/_search_results.js";
+import { projectAgentRun, type AgentRunWireLike } from "../src/tools/_agent_run.js";
 import {
   fenceRunFor,
   renderAgentRunMarkdown,
@@ -55,7 +56,6 @@ import {
   renderSearchMarkdown,
   renderVisualizeMarkdown,
 } from "../src/tools/_render_markdown.js";
-import { projectAgentRun, type AgentRunWireLike } from "../src/tools/_agent_run.js";
 import {
   contentsOutputShape,
   contentsUsage,

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../django.js", () => ({ djangoPost: vi.fn(), djangoGet: vi.fn() }));
 import { djangoPost, djangoGet } from "../django.js";
 import tool, { AGENT_POLL_BUDGET_MS, buildAgentBody, pollAgentRun } from "./tako_agent.js";
+import { refusalGuidance } from "./_agent_run.js";
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
 
 const ctx = { token: "t", env: {} as never, surface: "generic" as const, sendProgress: vi.fn() };
@@ -90,6 +91,28 @@ describe("tako_agent", () => {
     expect(out.definitions).toEqual({ GDP: "gross domestic product" });
     expect(out.assumptions).toEqual({ nominal: "not inflation-adjusted" });
     expect(out.methodology).toEqual({ sources: "world bank" });
+  });
+
+  it("carries refusal_code through the wire parse into the one guidance branch", async () => {
+    vi.useFakeTimers();
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_refusal", status: "queued" });
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "run_refusal",
+      status: "completed",
+      result: { answer: null, cards: [], citations: [], refusal_code: "rejected_input_classifier" },
+    });
+
+    const handlerPromise = tool.handler({ query: "q", sources: ["data"] }, ctx);
+    await vi.runAllTimersAsync();
+    const out = await handlerPromise;
+
+    // The regression this pins: `result` is a strict z.object, so dropping
+    // `refusal_code` from it strips the field before projectAgentRun sees it,
+    // and a query Tako rejected reaches the model as a completed run with no
+    // answer and no reason. The other refusal tests call projectAgentRun or
+    // refusalGuidance directly, so neither crosses the parse where it broke.
+    expect(out.guidance).toBe(refusalGuidance("rejected_input_classifier"));
+    expect(out.answer).toBeUndefined();
   });
 
   it("surfaces a failed run with its error", async () => {

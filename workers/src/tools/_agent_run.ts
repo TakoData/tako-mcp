@@ -32,8 +32,11 @@
  *     generated contract states the Answer Agent "populates source_index and
  *     leaves the rest null", and both live runs confirm it.
  *   - `run_id` and `result.request_id`: correlation ids with no model reader
- *     and no poll tool to spend them on (`mcp.ts` logs `run_id` per call).
- *     Same call as `request_id` on the search tools.
+ *     and no poll tool to spend them on. `pollAgentRun` logs `run_id` on the
+ *     TERMINAL poll, which is where a support question gets answered — the
+ *     same bargain `request_id` makes on the search tools, where `mcp.ts`
+ *     logs it. Delete that log and this drop stops being safe: `mcp.ts`
+ *     itself never sees `run_id`, so nothing else would record it.
  *   - `status`: the handler polls with `onTimeout: "throw"`, so the only
  *     values that can ship are `completed` and `failed`, and `error` already
  *     distinguishes them. It comes back the day a non-terminal run can be
@@ -48,7 +51,13 @@
  */
 import { z } from "zod";
 
-import { dateOnly, nonEmpty, type Usage } from "./_search_results.js";
+import {
+  dateOnly,
+  nonEmpty,
+  sourceNamesOf,
+  usageAdvertisedSchema,
+  type Usage,
+} from "./_search_results.js";
 
 /**
  * One chart card an agent run built.
@@ -96,7 +105,7 @@ export const projectedCitationShape = z.looseObject({
   source_index: z
     .enum(["data", "web"])
     .optional()
-    .describe("`web` → a page tako_contents can fetch. `data` → a source's home page."),
+    .describe("`web` → a page `tako_contents` can fetch. `data` → a source's home page."),
 });
 export type ProjectedCitation = {
   index: number;
@@ -104,6 +113,36 @@ export type ProjectedCitation = {
   url?: string;
   source_index?: "data" | "web";
 };
+
+/** Advertised structuredContent for `tako_agent`: the projected run. One
+ *  shape, both surfaces — this tool mounts no widget, so there are no
+ *  per-surface widget fields to declare (it is also off the chatgpt surface,
+ *  `CHATGPT_TOOL_NAMES` in `_surface.ts`).
+ *
+ *  Declared HERE, beside `projectAgentRun`, not in `_render_markdown.ts`: the
+ *  advertised shape and the projection that fills it drift the moment they
+ *  live in different files. `_contents.ts` keeps the same pairing. */
+export const agentRunOutputShape = z.looseObject({
+  answer: z.string().optional().describe("Its [n] markers join to `citations`."),
+  guidance: z.string().optional().describe("Rejected queries only."),
+  cards: z
+    .array(projectedAgentCardShape)
+    .describe("Pass an exportable card's `url` to tako_contents for its rows."),
+  citations: z.array(projectedCitationShape),
+  // The three reference maps carry no describe, and `catchall` rather than
+  // `z.record`: draft-7 gives a record a `propertyNames` clause worth 18 chars
+  // per map and nothing else, the names already say which prose each holds, and
+  // the published cap (OUTPUT_SCHEMA_MAX_CHARS) is better spent where a rule
+  // would otherwise go unstated. The text channel labels them as sections.
+  definitions: z.object({}).catchall(z.string()).optional(),
+  assumptions: z.object({}).catchall(z.string()).optional(),
+  methodology: z.object({}).catchall(z.string()).optional(),
+  thread_id: z.string().optional().describe("Send back as `thread_id` for a follow-up."),
+  // Nullable, unlike tako_contents' always-present `usage`: agent runs over
+  // MCP are not metered for every org yet (TAKO-3245), so null is a real state.
+  usage: usageAdvertisedSchema.nullable().describe("Null when not metered."),
+  error: z.looseObject({ code: z.string(), message: z.string() }).optional(),
+});
 
 /** The projected agent run: what both channels carry. */
 export type AgentRunOutput = {
@@ -155,17 +194,10 @@ export type AgentRunWireLike = {
     | null
     | undefined;
   error?: { code: string; message: string } | null | undefined;
-};
-
-const sourceNamesOf = (rec: Record<string, unknown>): string[] => {
-  if (!Array.isArray(rec.sources)) return [];
-  const names: string[] = [];
-  for (const entry of rec.sources) {
-    if (entry === null || typeof entry !== "object") continue;
-    const name = nonEmpty((entry as Record<string, unknown>).source_name);
-    if (name !== undefined && !names.includes(name)) names.push(name);
-  }
-  return names;
+  // Read ONLY to tell a failed run from a legitimately prose-free one when the
+  // backend leaves `error` null. It is never projected — `status` had two
+  // reachable values and `error` carries the distinction the model acts on.
+  status?: string | undefined;
 };
 
 /** Project one card an agent run built. */
@@ -202,14 +234,19 @@ export function projectAgentCard(card: unknown): ProjectedAgentCard | undefined 
   // card ships `content: null`, so no count exists to report — a fabricated 0
   // would read as "no data exists" when the truth is "data you can't have".
   if (content != null) {
-    const dataset = content.dataset as Record<string, unknown> | null | undefined;
-    const totalRows =
-      typeof content.total_rows === "number"
-        ? content.total_rows
-        : dataset != null && typeof dataset.total_rows === "number"
-          ? dataset.total_rows
-          : undefined;
-    if (totalRows !== undefined) out.total_rows = totalRows;
+    // No `content.dataset` fallback, unlike the search projection this was
+    // copied from: `dataset` is an inline payload group, and the Answer Agent
+    // contract is frozen against inline data ("no inline data — ever",
+    // AnswerAgentRunRequest / AnswerAgentResult). Only the metadata count can
+    // arrive on this path.
+    const totalRows = typeof content.total_rows === "number" ? content.total_rows : undefined;
+    // GATED ON `exportable`, like the search projection: the text channel
+    // renders the count only in the exportable arm, so an ungated count would
+    // sit in structuredContent and nowhere else — a channel-equivalence hole.
+    // The backend's shared export gate ships `content: null` on a locked card
+    // today, so nothing reaches here; the guard is what keeps the two channels
+    // agreeing if that changes.
+    if (totalRows !== undefined && out.exportable) out.total_rows = totalRows;
   }
   return out;
 }
@@ -299,5 +336,12 @@ export function projectAgentRun(run: AgentRunWireLike): AgentRunOutput {
   const threadId = nonEmpty(run.thread_id);
   if (threadId !== undefined) out.thread_id = threadId;
   if (run.error != null) out.error = { code: run.error.code, message: run.error.message };
+  // A failed run whose `error` the backend left null would otherwise reach the
+  // model as "The agent returned no answer." — a WRONG statement, not a missing
+  // one, and a prose-only run with no cards is legitimate so the renderer
+  // cannot tell them apart on its own.
+  else if (run.status === "failed") {
+    out.error = { code: "agent_run_failed", message: "The agent run failed without a reason." };
+  }
   return out;
 }

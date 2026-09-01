@@ -44,6 +44,17 @@ export interface ToolContext {
    * arrives — so a long-running handler can stay under the per-call
    * timeout indefinitely as long as it keeps emitting progress.
    *
+   * NOTHING ABOVE REACHES A CLIENT TODAY, AND NO TOOL CALLS THIS. The
+   * transport runs `enableJsonResponse: true` (`mcp.ts`), and
+   * `webStandardStreamableHttp.js` skips the SSE write for every
+   * request-scoped notification in that mode, so no host has ever received
+   * one and `resetTimeoutOnProgress` cannot fire anywhere. `tako_agent`'s
+   * poll loop was the last caller and dropped the call rather than keep
+   * implying a channel that discards it. The plumbing below stays for
+   * TAKO-4485, which owns the real fix and is blocked on the
+   * `TODO(Phase 2)` unconditional `transport.close()`. Do not add a caller
+   * on the strength of this docstring's first paragraph.
+   *
    * No-op when the request did not carry a progressToken (the client
    * isn't asking for progress, so we don't send any). No-op when the
    * underlying transport's `sendNotification` throws (best-effort).

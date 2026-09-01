@@ -121,9 +121,9 @@ Parameters:
 Never send sensitive data in `components` — it becomes a public page. No credentials, payment or bank details, health information, government identifiers, precise home addresses, or personal data the subject has not agreed to publish.
 
 ### tako_agent
-Opt-in tool — name `agent` in `?tools=` on the endpoint URL (see Connecting). Run Tako's Answer Agent for open-ended, multi-step questions whose shape needs figuring out — cohorts, ranking or filtering by criteria, aggregation, and multi-hop reasoning across many entities; also the fallback when `tako_search` / `tako_search_advanced` return nothing. Returns a synthesized answer plus supporting chart cards (~30–90s). Not on the ChatGPT app surface (`/mcp/chatgpt`): that host sends no progressToken, so a polled run cannot stay inside its per-call timeout.
+Opt-in tool — name `agent` in `?tools=` on the endpoint URL (see Connecting). Run Tako's Answer Agent on a question that needs research rather than a lookup: cohorts, ranking or screening by criteria, multi-step aggregation, multi-hop reasoning; also the fallback when `tako_search` / `tako_search_advanced` find nothing. Returns a written `answer` with numbered citations plus the chart `cards` it built (~30–90s). Not on the ChatGPT app surface (`/mcp/chatgpt`): that host's ~60s per-call ceiling cannot hold a 30–90s run. The Worker polls the run to a terminal state inside the one tool call and the client sees nothing until then — there is no progress channel on any surface (TAKO-4485), so a run slower than your client's tool timeout is lost work.
 
 Parameters:
-- `query` (string, required): The open-ended, analytical question.
-- `sources` (array, optional): both by default (`["data","web"]`) — keep web enabled. Only narrow to `["data"]` once `tako_available_data` has confirmed the proprietary data exists; otherwise web is the fallback when it does not. Pass `["web"]` for open-web only. (`"tako"` is a legacy synonym for `"data"`.)
-- `thread_id` (string UUID, optional): Continue a prior agent run's thread as a follow-up; omit to start a new thread.
+- `query` (string, required): The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps.
+- `sources` (array, optional): Which corpora to search; default is both (`["data","web"]`). Narrow to `["data"]` once `tako_available_data` confirms coverage; narrow to `["web"]` only for news or page text — website traffic is in the data graph.
+- `thread_id` (string UUID, optional): A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.

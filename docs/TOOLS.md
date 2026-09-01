@@ -66,7 +66,7 @@ Run Tako's Answer Agent on a question that needs research rather than a lookup. 
 
 Best for questions whose shape you'd have to work out first: cohorts ("which companies match…"), ranking or screening by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing.
 
-Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip. One agent call takes 30–90 seconds.
+Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.
 
 Parameters:
 
@@ -204,7 +204,7 @@ Annotations:
             "type": "string"
           },
           "source_index": {
-            "description": "`web` → a page tako_contents can fetch. `data` → a source's home page.",
+            "description": "`web` → a page `tako_contents` can fetch. `data` → a source's home page.",
             "type": "string",
             "enum": [
               "data",
@@ -367,7 +367,7 @@ The ranking uses revenue CAGR, calculated as (2025 revenue / 2022 revenue)^(1/3)
 Three-year revenue CAGR for US-headquartered companies in Tako's Airlines industry, 2022 to 2025, top 10 of 21 screened. Normalized financials, which may differ from as-reported figures.
 - url: https://tako.com/card/CpQeOBcKjz8VM8-wNlEV/ · exportable, 10 rows
 - image: https://tako.com/api/v1/image/CpQeOBcKjz8VM8-wNlEV/ · embed: https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/
-- source: S&P Global · updated 2026-08-26
+- source: S&P Global · refreshed 2026-08-26
 
 ## Citations (3)
 

@@ -585,7 +585,10 @@ export const dateOnly = (v: unknown): string | undefined => {
   return m ? m[0] : s;
 };
 
-const sourceNamesOf = (rec: Record<string, unknown>): string[] => {
+// Exported for `_agent_run.ts`, for the reason `nonEmpty` and `dateOnly` are:
+// a second copy lets one channel start naming sources differently from the
+// other.
+export const sourceNamesOf = (rec: Record<string, unknown>): string[] => {
   if (!Array.isArray(rec.sources)) return [];
   const names: string[] = [];
   for (const entry of rec.sources) {

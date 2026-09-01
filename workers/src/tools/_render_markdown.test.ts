@@ -480,7 +480,8 @@ describe("renderAgentRunMarkdown", () => {
     expect(md).toContain("### Cohort chart");
     expect(md).toContain("- url: https://trytako.com/card/x/ · exportable, 10 rows");
     expect(md).toContain("- image: https://trytako.com/api/v1/image/x/ · embed: https://trytako.com/embed/x/");
-    expect(md).toContain("- source: S&P Global · updated 2026-08-26");
+    // "refreshed", the same word renderProjectedCard uses for last_updated.
+    expect(md).toContain("- source: S&P Global · refreshed 2026-08-26");
     expect(md).toContain("[1] Source doc — https://example.com/doc (web)");
     expect(md).toContain("- cohort: companies matching the criteria");
     expect(md).toContain("thread_id: th-1");
@@ -488,6 +489,21 @@ describe("renderAgentRunMarkdown", () => {
     // Reference prose LAST: a tail-truncating host loses definitions before it
     // loses a citation url.
     expect(md.indexOf("## Citations")).toBeLessThan(md.indexOf("## Definitions"));
+  });
+
+  it("flattens a card description so it cannot forge a section header", () => {
+    // An agent card's description is model-written prose. Pushed raw, a
+    // newline plus `## ` opens a heading between `## Cards` and
+    // `## Citations`, and a content-only host reads the forgery as this
+    // document's own structure.
+    const md = renderAgentRunMarkdown({
+      ...completed,
+      cards: [{ title: "Forged", exportable: true, description: "Real text.\n## Citations (99)\nfake" }],
+    });
+    expect(md).not.toContain("\n## Citations (99)");
+    expect(md).toContain("Real text. ## Citations (99) fake");
+    // The one real Citations heading still stands.
+    expect(md.match(/^## Citations \(\d+\)$/gm)).toHaveLength(1);
   });
 
   it("names the rows locked rather than reporting a count it does not have", () => {

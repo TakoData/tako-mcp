@@ -44,12 +44,12 @@ import {
   AnswerAgentRun as AnswerAgentRunContract,
   AnswerAgentRunRequest,
 } from "../generated/schemas.js";
-import { projectAgentRun, type AgentRunOutput } from "./_agent_run.js";
+import { agentRunOutputShape, projectAgentRun, type AgentRunOutput } from "./_agent_run.js";
 import { withShareOptIn } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
-import { agentRunOutputShape, renderAgentRunMarkdown } from "./_render_markdown.js";
-import { usageSchema } from "./_search_results.js";
+import { renderAgentRunMarkdown } from "./_render_markdown.js";
+import { type Usage, usageSchema } from "./_search_results.js";
 import { SOURCES_DESCRIBE } from "./_shared_prose.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
@@ -63,7 +63,10 @@ const DESCRIPTION = [
   "",
   'Best for questions whose shape you\'d have to work out first: cohorts ("which companies match…"), ranking or screening by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing.',
   "",
-  "Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip. One agent call takes 30–90 seconds.",
+  // The 30-90s figure lives in the module docstring, not here: D2.2 keeps a
+  // measurement out of a description, and the latency drives no routing choice
+  // the `tako_search` alternative does not already make.
+  "Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.",
 ].join("\n");
 
 export const inputSchema = z.object({
@@ -257,7 +260,7 @@ export async function dispatchAgentRun(
 
 /** Poll an agent run to a terminal state. Emits no progress: the transport
  *  discards request-scoped notifications under `enableJsonResponse: true`
- *  (TAKO-4485), so a call here would be a claim the wire does not honour. */
+ *  (TAKO-4485), so a call here would be a claim the wire does not honor. */
 export async function pollAgentRun(
   ctx: ToolContext,
   runId: string,
@@ -354,6 +357,18 @@ export async function pollAgentRun(
         }
       }
     }
+    // Cost is telemetry, so a malformed usage payload must not cost a
+    // completed run: the throw below fires AFTER status reached "completed",
+    // discarding a 30-90s run that already billed. Soft-parse it here and
+    // leave the same breadcrumb the guards above leave. `tako_search` never
+    // parses usage at all (`_run_search.ts` passes `wire.usage ?? null`
+    // straight through), so this keeps the strict field without its cost.
+    let usage: Usage | null = null;
+    if (wire.usage != null) {
+      const usageGuard = usageSchema.safeParse(wire.usage);
+      if (usageGuard.success) usage = usageGuard.data;
+      else logWireGuardFailure("tako_agent", "usage", usageGuard.error, wire);
+    }
     const parsed = agentRunSchema.safeParse({
       run_id: wire.run_id ?? runId,
       thread_id: wire.thread_id ?? null,
@@ -361,7 +376,7 @@ export async function pollAgentRun(
       timed_out: false,
       result: wire.result ?? null,
       error: wire.error ?? null,
-      usage: wire.usage ?? null,
+      usage,
     });
     if (!parsed.success) {
       logWireGuardFailure("tako_agent", "output-normalise", parsed.error, wire);
@@ -369,6 +384,12 @@ export async function pollAgentRun(
     }
     lastRun = withSharedCards(parsed.data);
     if (parsed.data.status === "completed" || parsed.data.status === "failed") {
+      // The ONLY place a successful run's id is recoverable. `run_id` reaches
+      // neither channel (no model reader, no poll tool to spend it on), and
+      // that is safe only while a support question — "this run was wrong" —
+      // can still be answered. The transient-error log above fires on a FAILED
+      // poll, so without this line a clean run leaves no trace anywhere.
+      console.log(`[tako] agent run terminal run_id=${runId} status=${parsed.data.status}`);
       return { ...lastRun, timed_out: false };
     }
     // Budget check: stop before the next poll would land past the deadline.

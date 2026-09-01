@@ -39,7 +39,7 @@
   "tools": [
     {
       "name": "tako_agent",
-      "description": "Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.\n\nBest for questions whose shape you'd have to work out first: cohorts (\"which companies match…\"), ranking or screening by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing.\n\nNot for a known value or a two-entity comparison — `tako_search` answers those in one round trip. One agent call takes 30–90 seconds.",
+      "description": "Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.\n\nBest for questions whose shape you'd have to work out first: cohorts (\"which companies match…\"), ranking or screening by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing.\n\nNot for a known value or a two-entity comparison — `tako_search` answers those in one round trip.",
       "parameters": {
         "query": {
           "type": "string",

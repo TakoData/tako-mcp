@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  agentRunOutputShape,
   noteMap,
   projectAgentCard,
   projectAgentRun,
@@ -20,7 +21,6 @@ import {
   refusalGuidance,
 } from "./_agent_run.js";
 import { pickDeclared } from "./_pick_declared.js";
-import { agentRunOutputShape } from "./_render_markdown.js";
 
 /** A run shaped like the wire, carrying every field the projection drops. */
 const wireRun = {
@@ -161,6 +161,21 @@ describe("projectAgentCard", () => {
     expect(locked).not.toHaveProperty("total_rows");
   });
 
+  it("drops the count on a locked card that still carries one", () => {
+    // The channel-equivalence case the `content: null` test above cannot see:
+    // the text channel prints a count only in the exportable arm, so an
+    // ungated count would reach structuredContent and nowhere else. The
+    // backend's export gate makes this unreachable today; the guard is what
+    // keeps it that way.
+    const locked = projectAgentCard({
+      title: "Locked",
+      exportable: false,
+      content: { total_rows: 42 },
+    });
+    expect(locked?.exportable).toBe(false);
+    expect(locked).not.toHaveProperty("total_rows");
+  });
+
   it("reads exportable off content when the backend omits the flag", () => {
     expect(projectAgentCard({ content: { total_rows: 3 } })?.exportable).toBe(true);
     expect(projectAgentCard({ content: null })?.exportable).toBe(false);
@@ -241,6 +256,33 @@ describe("refusal", () => {
 
   it("emits no guidance on a normal run", () => {
     expect(projectAgentRun(wireRun).guidance).toBeUndefined();
+  });
+});
+
+describe("failed run without an error", () => {
+  it("synthesizes an error rather than reading as an empty answer", () => {
+    // `status` is not projected, but it is the only field separating a failed
+    // run from a legitimately prose-free one. Without this the renderer emits
+    // "The agent returned no answer." for a run that actually failed.
+    const out = projectAgentRun({ status: "failed", error: null, result: null });
+    expect(out.error).toEqual({
+      code: "agent_run_failed",
+      message: "The agent run failed without a reason.",
+    });
+    expect(out.answer).toBeUndefined();
+  });
+
+  it("leaves the backend's own error untouched when it sends one", () => {
+    const out = projectAgentRun({
+      status: "failed",
+      error: { code: "x", message: "boom" },
+      result: null,
+    });
+    expect(out.error).toEqual({ code: "x", message: "boom" });
+  });
+
+  it("adds no error to a terminal run that simply carried no prose", () => {
+    expect(projectAgentRun({ result: null }).error).toBeUndefined();
   });
 });
 

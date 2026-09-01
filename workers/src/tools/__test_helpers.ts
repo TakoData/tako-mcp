@@ -15,12 +15,16 @@ import { vi } from "vitest";
 import type { ToolContext } from "./types.js";
 
 /**
- * No-op `sendProgress` for test contexts. Tools that emit progress
- * notifications (e.g. `tako_agent`'s run-polling loop) call
- * `ctx.sendProgress(...)` unconditionally — in production it routes to
- * the SDK's `sendNotification`, in tests it should silently swallow.
- * Tests that want to assert progress emissions can override with a
- * `vi.fn()` instead of using this helper.
+ * No-op `sendProgress` for test contexts, to satisfy the `ToolContext` shape.
+ *
+ * NO TOOL CALLS `sendProgress` any more. `tako_agent`'s run-polling loop was
+ * the last caller and dropped it: the transport runs
+ * `enableJsonResponse: true`, which discards every request-scoped
+ * notification, so no host ever received one (TAKO-4485). This helper exists
+ * because the field is still required on the context, not because a tool emits
+ * progress. A test asserting progress emissions would be asserting a channel
+ * that does not exist — `tako_agent.test.ts` pins `not.toHaveBeenCalled()`
+ * instead.
  */
 export const noopSendProgress: ToolContext["sendProgress"] = async () => {
   /* no-op */

@@ -41,6 +41,11 @@
  */
 import { z } from "zod";
 
+import type {
+  AgentRunOutput,
+  ProjectedAgentCard,
+  ProjectedCitation,
+} from "./_agent_run.js";
 // Flattens upstream text destined for a single-line slot (titles, meta, node
 // names): an embedded newline would otherwise start a fresh line the CONTENT
 // controls. Defined next to the summary builder that needs the same guarantee,
@@ -52,13 +57,6 @@ import {
   type ProjectedMatch,
   type ProjectedRef,
 } from "./_available_data.js";
-import {
-  projectedAgentCardShape,
-  projectedCitationShape,
-  type AgentRunOutput,
-  type ProjectedAgentCard,
-  type ProjectedCitation,
-} from "./_agent_run.js";
 import type { ContentsOutput, ProjectedContentsItem } from "./_contents.js";
 import {
   projectedFocalNodeShape,
@@ -812,35 +810,18 @@ export function renderGraphRelatedMarkdown(o: ProjectedRelated): string {
 // (tail-truncating hosts lose prose before data), then thread_id and usage.
 // ---------------------------------------------------------------------------
 
-/** Advertised structuredContent for `tako_agent`: the projected run. One
- *  shape, both surfaces — this tool mounts no widget, so there are no
- *  per-surface widget fields to declare (it is also off the chatgpt surface,
- *  `CHATGPT_TOOL_NAMES` in `_surface.ts`). */
-export const agentRunOutputShape = z.looseObject({
-  answer: z.string().optional().describe("Its [n] markers join to `citations`."),
-  guidance: z.string().optional().describe("Rejected queries only."),
-  cards: z
-    .array(projectedAgentCardShape)
-    .describe("Pass an exportable card's `url` to tako_contents for its rows."),
-  citations: z.array(projectedCitationShape),
-  // The three reference maps carry no describe, and `catchall` rather than
-  // `z.record`: draft-7 gives a record a `propertyNames` clause worth 18 chars
-  // per map and nothing else, the names already say which prose each holds, and
-  // the published cap (OUTPUT_SCHEMA_MAX_CHARS) is better spent where a rule
-  // would otherwise go unstated. The text channel labels them as sections.
-  definitions: z.object({}).catchall(z.string()).optional(),
-  assumptions: z.object({}).catchall(z.string()).optional(),
-  methodology: z.object({}).catchall(z.string()).optional(),
-  thread_id: z.string().optional().describe("Send back as `thread_id` for a follow-up."),
-  // Nullable, unlike tako_contents' always-present `usage`: agent runs over
-  // MCP are not metered for every org yet (TAKO-3245), so null is a real state.
-  usage: usageAdvertisedSchema.nullable().describe("Null when not metered."),
-  error: z.looseObject({ code: z.string(), message: z.string() }).optional(),
-});
+// `agentRunOutputShape` is declared in `_agent_run.ts`, next to the projection
+// that fills it — the same place `_contents.ts` keeps `contentsOutputShape`.
+// A shape that lives apart from its projection is how the two drift.
 
 function renderAgentCard(c: ProjectedAgentCard): string {
   const lines: string[] = [`### ${oneLine(c.title ?? "Untitled card")}`];
-  if (c.description !== undefined) lines.push(c.description);
+  // `oneLine` for the reason renderProjectedCard gives: a newline followed by
+  // `## ` in a description opens a heading in this document, forging a section
+  // between `## Cards` and `## Citations`. An agent card's description is
+  // model-written prose, so it carries markdown more often than a search
+  // card's does.
+  if (c.description !== undefined) lines.push(oneLine(c.description));
   const access: string[] = [];
   if (c.url !== undefined) access.push(`url: ${c.url}`);
   access.push(
@@ -860,7 +841,10 @@ function renderAgentCard(c: ProjectedAgentCard): string {
   if (chart.length > 0) lines.push(`- ${chart.join(" · ")}`);
   const meta: string[] = [];
   if (c.source !== undefined) meta.push(`source: ${oneLine(c.source)}`);
-  if (c.last_updated !== undefined) meta.push(`updated ${c.last_updated}`);
+  // "refreshed", not "updated", the same word renderProjectedCard uses: this is
+  // Tako's refresh date, not the date the data runs to, and a bare "updated" in
+  // a fact line reads as the latter.
+  if (c.last_updated !== undefined) meta.push(`refreshed ${c.last_updated}`);
   if (meta.length > 0) lines.push(`- ${meta.join(" · ")}`);
   return lines.join("\n");
 }
