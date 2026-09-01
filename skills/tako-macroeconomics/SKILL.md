@@ -1,12 +1,12 @@
 ---
 name: tako-macroeconomics
 description: >-
-  Use when the user asks what a country's economic indicator is or was (inflation, CPI, PCE, unemployment, GDP, interest rates, population), compares countries on one, or wants a macro chart or briefing. Returns citation-backed charts from Tako (FRED, BLS, OECD, BIS, IMF, World Bank, Census and Polymarket). Not for company financials or website traffic; those have their own Tako skills.
+  Use when the user asks what a country's economic indicator is or was (inflation, CPI, PCE, unemployment, GDP, interest rates, population), compares countries on one, or wants a macro chart or briefing. Returns the figures as structured, citation-backed data from Tako (FRED, BLS, OECD, BIS, IMF, World Bank, Census and Polymarket), each with a chart. Country-level indicators only, not company financials or website traffic.
 ---
 
 # Macroeconomics (Tako)
 
-Tako serves macro and demographic indicators as citation-backed charts. All tools below live on the Tako MCP server (server name `tako`). The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers how to shape a macro query, which card to trust, and how to report.
+Tako serves macro and demographic indicators as structured, cited data: each result is a card carrying the headline value, the underlying rows, and a chart of the series. All tools below live on the Tako MCP server (server name `tako`). The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers how to shape a macro query, which card to trust, and how to report.
 
 ## Workflow
 

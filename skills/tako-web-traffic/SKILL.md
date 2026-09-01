@@ -1,12 +1,12 @@
 ---
 name: tako-web-traffic
 description: >-
-  Use when the user asks how much traffic a website gets, compares sites' visits, wants a top-sites ranking, or asks about an app's monthly active users — including when they name the brand rather than the domain ("how much traffic does Netflix get"). Returns SimilarWeb data as citation-backed charts from Tako. Not for company financials such as subscribers or revenue.
+  Use when the user asks how much traffic a website gets, compares sites' visits, wants a top-sites ranking, or asks about an app's monthly active users — including when they name the brand rather than the domain ("how much traffic does Netflix get"). Returns SimilarWeb figures as structured, citation-backed data from Tako, each with a chart. Not for company financials such as subscribers or revenue.
 ---
 
 # Web & App Traffic (Tako)
 
-Tako serves SimilarWeb traffic data as citation-backed charts. All tools below live on the Tako MCP server (server name `tako`). The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers the one rule that decides success here, which card to trust, and how to report.
+Tako serves SimilarWeb traffic data as structured, cited data: each result is a card carrying the headline value and a chart of the series (the rows are licensed and don't export). All tools below live on the Tako MCP server (server name `tako`). The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers the one rule that decides success here, which card to trust, and how to report.
 
 ## Workflow
 

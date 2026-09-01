@@ -369,12 +369,12 @@ Step 2: Add this Claude skill
 ---
 name: tako-financial-research
 description: >-
-  Use when the user asks what a company's financial metric is or was (revenue, margins, EPS, cash flow, valuation, stock price, analyst estimates), compares companies on a metric, or wants a financial chart — including private companies and crypto spot prices. Returns citation-backed charts from Tako (S&P Global, Fiscal.ai, Visible Alpha, Xignite and others). Not for website traffic or macro indicators; those have their own Tako skills.
+  Use when the user asks what a company's financial metric is or was (revenue, margins, EPS, cash flow, valuation, stock price, analyst estimates), compares companies on a metric, asks who a company competes with or what data exists on it, or wants a financial chart — including private companies and crypto spot prices. Returns the figures as structured, citation-backed data from Tako (S&P Global, Fiscal.ai, Visible Alpha, Xignite and others), each with a chart. Company-level data only, not country indicators or website traffic.
 ---
 
 # Financial Research (Tako)
 
-Tako serves company financials as citation-backed charts. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers what they can't: how to shape a financial query, which card to trust, and how to report.
+Tako serves company financials as structured, cited data: each result is a card carrying the headline value, the underlying rows, and a chart of the series. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers what they can't: how to shape a financial query, which card to trust, and how to report.
 
 ## Workflow
 
@@ -384,6 +384,7 @@ Tako serves company financials as citation-backed charts. All tools below live o
 4. **Read the figure from the card's `description`.** It holds the headline value. Fetch the series with `tako_contents` on the card's `url` only when you need the rows — to compute a growth rate, ratio or change yourself, since search retrieves reported values and derives nothing. A locked card (`exportable: false`) is a licensing wall, not an error: quote the headline and stop.
 5. **Zero cards?** Follow the recovery the result states: one free `tako_available_data` call for the canonical metric name, at most one more search on that name, then answer from the web results. Two priced searches per question is the ceiling. Empty means Tako doesn't cover it, not that the fact is false — no dividend card is not "pays no dividend".
 6. **Ambiguous entity?** `"Costco"` resolves to Costco Wholesale Corporation and Costco Wholesale Australia; `"Coca-Cola"` to four listed companies. If the user's intent doesn't settle it, ask before quoting a number.
+7. **Discovery asks** ("who does Nvidia compete with", "what does Tako track for Tesla", "Nvidia's acquisitions")? Resolve the entity with `tako_available_data` to get its node id, then call `tako_graph_related` on it. The first call returns the relation map with counts (`rel:competes_with`, `rel:subsidiaries`, `rel:acquisitions`, `metrics`, `sources`); pass `relation` to page one and `q` to filter it, then search on the names it returns.
 
 ## Choosing the right card
 
@@ -392,7 +393,7 @@ Ranking favours breadth, so #0 is often not the metric asked for, and the releva
 1. **Title is the bare metric.** Overview cards ("Earnings & Estimates Overview", "Ratios Overview", "Stock Overview") rank first on many queries and lead with an estimate-vs-actual narrative. Skip them unless the question is about estimates; querying with the exact metric name doesn't demote them.
 2. **Company-wide, not a segment.** Segment- and geography-scoped variants outrank the consolidated metric, especially from Visible Alpha, because the segment note yields more series. If no company-wide card appears, say so; never pass a segment off as the total.
 3. **The unit matches the question.** A query for a rate can rank the level first (operating income above operating margin). Confirm the unit in `description`.
-4. **`coverage_end` is in the past.** Analyst-estimate cards rank #0 on plain metric queries and carry a future `coverage_end`. Trust the date over the title.
+4. **Reported or estimate, as asked.** Analyst-estimate and consensus cards rank #0 on plain metric queries, and a future `coverage_end` is how you spot one. Both are financial data: quote the estimate when the question is about forecasts or consensus and label it so; otherwise take the reported card.
 5. **`nodes` names the entity asked about.** Related listed entities compete for the same query. Some cards (Fiscal.ai charts, Stock and Ratios Overviews) carry no nodes; fall back to the title there.
 
 ## Comparisons
@@ -432,12 +433,12 @@ Step 2: Add this Claude skill
 ---
 name: tako-web-traffic
 description: >-
-  Use when the user asks how much traffic a website gets, compares sites' visits, wants a top-sites ranking, or asks about an app's monthly active users — including when they name the brand rather than the domain ("how much traffic does Netflix get"). Returns SimilarWeb data as citation-backed charts from Tako. Not for company financials such as subscribers or revenue.
+  Use when the user asks how much traffic a website gets, compares sites' visits, wants a top-sites ranking, or asks about an app's monthly active users — including when they name the brand rather than the domain ("how much traffic does Netflix get"). Returns SimilarWeb figures as structured, citation-backed data from Tako, each with a chart. Not for company financials such as subscribers or revenue.
 ---
 
 # Web & App Traffic (Tako)
 
-Tako serves SimilarWeb traffic data as citation-backed charts. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers the one rule that decides success here, which card to trust, and how to report.
+Tako serves SimilarWeb traffic data as structured, cited data: each result is a card carrying the headline value and a chart of the series (the rows are licensed and don't export). All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers the one rule that decides success here, which card to trust, and how to report.
 
 ## Workflow
 
@@ -485,12 +486,12 @@ Step 2: Add this Claude skill
 ---
 name: tako-macroeconomics
 description: >-
-  Use when the user asks what a country's economic indicator is or was (inflation, CPI, PCE, unemployment, GDP, interest rates, population), compares countries on one, or wants a macro chart or briefing. Returns citation-backed charts from Tako (FRED, BLS, OECD, BIS, IMF, World Bank, Census and Polymarket). Not for company financials or website traffic; those have their own Tako skills.
+  Use when the user asks what a country's economic indicator is or was (inflation, CPI, PCE, unemployment, GDP, interest rates, population), compares countries on one, or wants a macro chart or briefing. Returns the figures as structured, citation-backed data from Tako (FRED, BLS, OECD, BIS, IMF, World Bank, Census and Polymarket), each with a chart. Country-level indicators only, not company financials or website traffic.
 ---
 
 # Macroeconomics (Tako)
 
-Tako serves macro and demographic indicators as citation-backed charts. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers how to shape a macro query, which card to trust, and how to report.
+Tako serves macro and demographic indicators as structured, cited data: each result is a card carrying the headline value, the underlying rows, and a chart of the series. All tools below live on the Tako MCP server installed in Step 1. The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers how to shape a macro query, which card to trust, and how to report.
 
 ## Workflow
 
