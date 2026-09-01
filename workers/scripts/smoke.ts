@@ -90,6 +90,7 @@ import { EMBED_DATA_PREFIX } from "../src/embed_proxy.js";
 // advertising breaks this file's typecheck instead of only its post-deploy
 // run. Reading a dropped field is exactly how this file's old `card_id`
 // assert kept the deploy smoke red for 17 days after PR #210 removed it.
+import type { ProjectedCard } from "../src/tools/_search_results.js";
 import { TOOL_REGISTRY } from "../src/tools/_registry.js";
 import takoVisualize from "../src/tools/tako_visualize.js";
 
@@ -450,9 +451,7 @@ try {
     query: CANARY_QUERY,
   });
   const ksStructured = ksResult.structuredContent as
-    | {
-        cards?: Array<{ card_id?: string | null; webpage_url?: string | null }>;
-      }
+    | { cards?: ProjectedCard[] }
     | undefined;
   assert(ksStructured, "tako_search missing structuredContent");
   const ksCards = ksStructured.cards;
@@ -462,11 +461,11 @@ try {
   );
   ok(`tako_search "${CANARY_QUERY}" → ${ksCards.length} cards`);
 
-  // Capture the top card's webpage_url to chain into tako_contents below.
-  const topResultUrl = ksCards[0]?.webpage_url;
+  // Capture the top card's url to chain into tako_contents below.
+  const topResultUrl = ksCards[0]?.url;
   assert(
     typeof topResultUrl === "string" && topResultUrl.length > 0,
-    "tako_search top card has no webpage_url to feed tako_contents",
+    "tako_search top card has no url to feed tako_contents",
   );
 
   // ----- a2) tako_available_data canary ---------------------------------
@@ -794,6 +793,17 @@ try {
         `CDN urls, but this origin cannot actually serve them: PUBLIC_CDN_URL ` +
         `names a distribution that does not serve the "archive/" tree, or the ` +
         `asset moved out of it. The card mounts and no chart draws.`,
+    );
+    // Drain the body: it proves the bytes actually arrive (a 200 whose body
+    // stalls is the same user-visible failure), and undici keeps the pooled
+    // connection busy until the body is consumed — leaving it unread hung the
+    // NEXT fetch to this origin (the /embed-data/ POST) forever, with no
+    // output and exit far past every CI timeout.
+    const assetBytes = (await assetRes.arrayBuffer()).byteLength;
+    assert(
+      assetBytes > 0,
+      `rewritten asset ${assetPath} answered 200 with an empty body — Card.js ` +
+        `cannot execute from zero bytes, so the card mounts and no chart draws.`,
     );
     // `ACAO: *` is not cosmetic here: a module script is always a CORS fetch, so
     // without this header the widget's Card.js load fails even though the bytes

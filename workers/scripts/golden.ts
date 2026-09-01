@@ -96,7 +96,8 @@ function checkCase(c: GoldenCase, result: Result): void {
     if (has(text, needle)) bad(c.id, `text must NOT contain ${JSON.stringify(needle)}`);
   }
   for (const needle of e.present ?? []) {
-    // next_call is rendered as JSON in the text, so `"strict":true` matches there.
+    // next_call renders into the text as `tool: query`; the JSON fallback
+    // still lets a needle target the structured handle directly.
     if (!has(text, needle) && !has(JSON.stringify(s.next_call ?? {}), needle)) {
       bad(c.id, `text must contain ${JSON.stringify(needle)}`);
     }
