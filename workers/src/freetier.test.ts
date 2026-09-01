@@ -38,8 +38,9 @@ import { mockFetchSequence, requestFrom } from "./tools/__test_helpers.js";
  * to violate the account-copy ban — on the GENERIC surface only, for every
  * client on it. Its own describe ("commerce-gated upsell") proves it is
  * absent by default from every producer and holds it to the hygiene rules
- * that are not commerce-specific; `docs/chatgpt-app-review.md` §1 records
- * the surface gate for reviewers.
+ * that are not commerce-specific. The gate is the request path, never the
+ * client's User-Agent: the ChatGPT surface (`/mcp/chatgpt`) carries no
+ * commerce copy on any message.
  */
 const ALL_FREE_TIER_MESSAGES = [
   FREE_TIER_LIMIT_MESSAGE,

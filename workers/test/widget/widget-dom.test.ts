@@ -2597,7 +2597,7 @@ describe("mcp apps host theme (executed)", () => {
 });
 
 describe("no-image embed fallback strips tracking too", () => {
-  // The invariant in `docs/chatgpt-app-review.md` §4 is stated absolutely —
+  // The invariant the widget promises the ChatGPT app review is absolute —
   // "every iframe load the widget performs" — but this branch used to assign
   // the raw url. Reaching it needs a valid `embed_url` beside an `image_url`
   // the image path rejects, which prod never emits today; the guard exists so
