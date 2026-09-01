@@ -4,14 +4,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 // `./validation/cfworker`, unlike the other server subpaths which do ship
 // `.js` entries. Adding the extension here breaks module resolution.
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
-import {
-  ErrorCode,
-  ListPromptsRequestSchema,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { ListPromptsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   BearerAuthError,
@@ -295,35 +288,6 @@ export function createMcpServer(
       ...(surface === "generic" ? { signInHint: GENERIC_SIGN_IN_HINT } : {}),
       registeredResourceUris,
       registeredTemplateNames,
-    });
-  }
-
-  // Resources parity for server instances that registered NO widget
-  // resource. Only the chatgpt surface registers one (`widgetSuppressed`
-  // above), so this is the COMMON path now — every generic connection takes
-  // it — rather than the unknown-client edge case it was under the deleted
-  // User-Agent classifier. The SDK
-  // only wires the `resources` capability and its request handlers on
-  // the first `registerResource` call — without this block,
-  // `resources/list` / `resources/read` answer JSON-RPC -32601 on
-  // unknown-client instances, which capability-probing clients (Smithery's
-  // scan, some hosts) surface as a failure. Same rationale as the empty
-  // `prompts` registration above: an empty list is the spec-clean answer.
-  // `resources/read` still errors (there is nothing to read) but with the
-  // spec's "resource not found" shape instead of "method not found".
-  if (registeredResourceUris.size === 0) {
-    server.server.registerCapabilities({ resources: {} });
-    server.server.setRequestHandler(ListResourcesRequestSchema, () => ({
-      resources: [],
-    }));
-    server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
-      resourceTemplates: [],
-    }));
-    server.server.setRequestHandler(ReadResourceRequestSchema, (request) => {
-      throw new McpError(
-        ErrorCode.InvalidParams,
-        `Resource ${request.params.uri} not found`,
-      );
     });
   }
 

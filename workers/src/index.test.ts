@@ -709,16 +709,6 @@ describe("worker routing", () => {
     expect(await listToolNames("https://example.com/mcp?tools=agent")).toEqual(["tako_agent"]);
   });
 
-  it("POST /mcp?tools=answer lists tako_search_advanced, not the defaults", async () => {
-    // `tako_answer` was folded into the advanced tool. Without the retired-token
-    // map an answer-only connection resolves to nothing, which falls through to
-    // the four-tool DEFAULT listing in silence — the caller asked for synthesis
-    // and gets a surface that cannot do it, with no error anywhere.
-    expect(await listToolNames("https://example.com/mcp?tools=answer")).toEqual([
-      "tako_search_advanced",
-    ]);
-  });
-
   it("POST /mcp?tools=search,contents lists exactly those two, prefix optional", async () => {
     expect(await listToolNames("https://example.com/mcp?tools=search,contents")).toEqual([
       "tako_contents",
@@ -741,7 +731,7 @@ describe("worker routing", () => {
     ];
     expect(await listToolNames("https://example.com/mcp/chatgpt")).toEqual(expected);
     expect(
-      await listToolNames("https://example.com/mcp/chatgpt?tools=agent,answer"),
+      await listToolNames("https://example.com/mcp/chatgpt?tools=agent,search_advanced"),
     ).toEqual(expected);
   });
 
@@ -1054,14 +1044,12 @@ describe("worker routing", () => {
     expect(item.text).toContain("tako-embed");
   });
 
-  it("POST /mcp resources/list returns an empty list (not -32601) on the generic surface", async () => {
-    // The chart widget resource registers on the chatgpt surface only
-    // (see `widgetSuppressed` in mcp.ts) — so no `registerResource` call
-    // ever happens on a generic server instance — and without this the
-    // SDK would never advertise the `resources` capability, turning
-    // `resources/list` into a hard -32601 for capability-probing clients
-    // (Smithery's scan, some hosts). Mirror of the prompts/list
-    // guarantee below.
+  it("POST /mcp declares no resources capability — the generic surface has none to serve", async () => {
+    // The capability declaration is the contract, and it must match what the
+    // surface can answer. Only the chatgpt surface registers a resource (the
+    // chart widget, see `widgetSuppressed` in mcp.ts), and the SDK declares
+    // `resources` lazily on the first `registerResource` call — so a generic
+    // instance declares nothing, and a spec-following client never asks.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -1072,6 +1060,72 @@ describe("worker routing", () => {
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 12,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "0.0.0" },
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { capabilities: Record<string, unknown> };
+    };
+    expect(body.result.capabilities.resources).toBeUndefined();
+    // The neighbouring empty-list capability is deliberately NOT symmetric:
+    // `prompts` is still declared and still answers `[]`. If that changes,
+    // it changes in its own commit.
+    expect(body.result.capabilities.prompts).toBeDefined();
+    expect(body.result.capabilities.tools).toBeDefined();
+  });
+
+  it("POST /mcp/chatgpt DOES declare resources — the widget is a real one", async () => {
+    // The other half of the assertion above, and what makes deleting the
+    // generic empty-list handlers safe: the declaration follows the widget
+    // registration per server instance, so dropping it on one surface cannot
+    // take it off the other.
+    const res = await SELF.fetch("https://example.com/mcp/chatgpt", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 14,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "0.0.0" },
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      result: { capabilities: Record<string, unknown> };
+    };
+    expect(body.result.capabilities.resources).toBeDefined();
+  });
+
+  it("POST /mcp resources/list answers -32601 on the generic surface", async () => {
+    // Undeclared capability, so "method not found" is the honest answer. An
+    // empty list used to stand here instead, to keep a capability-probing
+    // scanner quiet; it made the server advertise `resources` on every
+    // connection and never serve one, which an agent-readiness audit scored
+    // as the broken capability it was.
+    const res = await SELF.fetch("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: AUTH_HEADER,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 15,
         method: "resources/list",
         params: {},
       }),
@@ -1081,15 +1135,15 @@ describe("worker routing", () => {
       result?: { resources: unknown[] };
       error?: { code: number };
     };
-    expect(body.error).toBeUndefined();
-    expect(body.result?.resources).toEqual([]);
+    expect(body.result).toBeUndefined();
+    expect(body.error?.code).toBe(-32601);
   });
 
-  it("POST /mcp resources/list stays empty for claude UAs too — the UA changes nothing", async () => {
+  it("POST /mcp resources/list answers -32601 for claude UAs too — the UA changes nothing", async () => {
     // The UA classifier is gone (spec D2): a claude UA on /mcp gets the
     // same generic surface as everyone else, so no widget resource is
-    // registered. claude.ai's widget path is a fast-follow gated on
-    // anthropics/claude-ai-mcp#753 and #40.
+    // registered and no resources capability is declared. claude.ai's widget
+    // path is a fast-follow gated on anthropics/claude-ai-mcp#753 and #40.
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -1110,8 +1164,8 @@ describe("worker routing", () => {
       result?: { resources: unknown[] };
       error?: { code: number };
     };
-    expect(body.error).toBeUndefined();
-    expect(body.result?.resources).toEqual([]);
+    expect(body.result).toBeUndefined();
+    expect(body.error?.code).toBe(-32601);
   });
 
   it("POST /mcp prompts/list returns an empty list (not -32601) for capability-probing clients", async () => {
