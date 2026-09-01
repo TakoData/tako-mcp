@@ -315,6 +315,7 @@ async function fetchOne(
   try {
     raw = await djangoPost<unknown>(ctx.env, ctx.token, "/api/v1/contents/", body, {
       timeoutMs: 60_000,
+      caller: ctx.caller,
     });
   } catch (err) {
     // Map the two "this url has no exportable content" statuses to

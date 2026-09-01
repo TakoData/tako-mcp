@@ -117,7 +117,7 @@ const tako_graph_related = {
     try {
       data = await djangoGet<unknown>(
         ctx.env, ctx.token, "/api/v1/graph/related",
-        { query, timeoutMs: 15_000 },
+        { query, timeoutMs: 15_000, caller: ctx.caller },
       );
     } catch (err) {
       // Log before wrapping: the plain-Error wrap drops the DjangoError

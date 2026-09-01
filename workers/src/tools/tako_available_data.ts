@@ -288,7 +288,7 @@ const tako_available_data = {
       try {
         raw = await djangoGet<unknown>(
           ctx.env, ctx.token, "/api/v1/graph/search",
-          { query, timeoutMs: 15_000 },
+          { query, timeoutMs: 15_000, caller: ctx.caller },
         );
       } catch (err) {
         // Log the original transport error — wrapping in a plain Error below
@@ -342,7 +342,7 @@ const tako_available_data = {
               try {
                 relatedRaw = await djangoGet<unknown>(
                   ctx.env, ctx.token, "/api/v1/graph/related",
-                  { query: relatedQuery, timeoutMs: 15_000 },
+                  { query: relatedQuery, timeoutMs: 15_000, caller: ctx.caller },
                 );
               } catch (pageErr) {
                 if (group !== null) {
@@ -405,7 +405,11 @@ const tako_available_data = {
       try {
         const raw = await djangoGet<unknown>(
           ctx.env, ctx.token, "/api/v1/graph/related",
-          { query: { node_id: node.id, relation: coverageKindFor(node.type), limit: 1 }, timeoutMs: 15_000 },
+          {
+            query: { node_id: node.id, relation: coverageKindFor(node.type), limit: 1 },
+            timeoutMs: 15_000,
+            caller: ctx.caller,
+          },
         );
         const parsed = relatedShape.safeParse(raw);
         return {
@@ -447,7 +451,11 @@ const tako_available_data = {
       try {
         const raw = await djangoGet<unknown>(
           ctx.env, ctx.token, "/api/v1/graph/related",
-          { query: { node_id: nodeId, relation: "metrics", limit: 1 }, timeoutMs: PAIR_PROBE_TIMEOUT_MS },
+          {
+            query: { node_id: nodeId, relation: "metrics", limit: 1 },
+            timeoutMs: PAIR_PROBE_TIMEOUT_MS,
+            caller: ctx.caller,
+          },
         );
         const parsed = relatedShape.safeParse(raw);
         if (!parsed.success) {
@@ -502,6 +510,7 @@ const tako_available_data = {
               q: filter, limit: PAIR_PROBE_LIMIT,
             },
             timeoutMs: PAIR_PROBE_TIMEOUT_MS,
+            caller: ctx.caller,
           },
         );
         const parsed = relatedShape.safeParse(raw);

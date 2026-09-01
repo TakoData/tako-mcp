@@ -247,7 +247,7 @@ export async function dispatchAgentRun(
     ctx.token,
     "/api/v1/agent/answer/runs",
     body,
-    { timeoutMs: 30_000 },
+    { timeoutMs: 30_000, caller: ctx.caller },
   );
   if (!data.run_id) {
     throw new Error("Tako agent dispatch returned no run_id.");
@@ -279,6 +279,7 @@ export async function pollAgentRun(
     try {
       wire = await djangoGet<AgentRunWire>(ctx.env, ctx.token, `/api/v1/agent/answer/runs/${runId}`, {
         timeoutMs: AGENT_POLL_REQUEST_TIMEOUT_MS,
+        caller: ctx.caller,
       });
       transient = 0;
     } catch (err) {
