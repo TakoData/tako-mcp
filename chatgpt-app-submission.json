@@ -30,7 +30,7 @@
         "idempotentHint": true
       },
       "justifications": {
-        "read_only_justification": "Retrieves CSV data or page text from a supplied result URL without modifying the source.",
+        "read_only_justification": "Retrieves a card's data rows as JSON or a page's text from a supplied result URL without modifying the source.",
         "open_world_justification": "Does not publish content or change the supplied website or any third-party system.",
         "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions.",
         "idempotent_justification": "Repeating the same fetch returns the same content and changes nothing; no additional effect on any state."
@@ -86,14 +86,6 @@
       "file_attachment_urls": null,
       "tools_triggered": "tako_search",
       "expected_output": "Returns NVIDIA quarterly revenue data with recent values, source attribution, and an inline chart.",
-      "expected_output_url": null
-    },
-    {
-      "description": "Answer a specific data question from search results with source attribution.",
-      "user_prompt": "What was US real GDP growth in 2025? Give me a concise answer with sources.",
-      "file_attachment_urls": null,
-      "tools_triggered": "tako_search",
-      "expected_output": "Returns matching data cards whose headline values and sources let the assistant give one concise, attributed answer.",
       "expected_output_url": null
     },
     {

@@ -1,65 +1,39 @@
 ---
 name: tako-macroeconomics
 description: >-
-  Macroeconomic and demographic indicators via Tako (sources vary — FRED, BLS, OECD, BIS, IMF, World Bank, Census). Inflation (CPI/PCE), unemployment, GDP, interest and policy rates, population, and cross-country comparisons as citation-backed charts. Use for macro monitoring, economic briefings, or any "what is/was <country>'s <indicator>" question.
+  Use when the user asks what a country's economic indicator is or was (inflation, CPI, PCE, unemployment, GDP, interest rates, population), compares countries on one, asks which indicators exist for a country or which countries belong to a bloc, or wants a macro chart or briefing. Returns the figures as structured, citation-backed data from Tako (FRED, BLS, OECD, BIS, IMF, World Bank, Census and Polymarket), each with a chart. Country-level indicators only, not company financials or website traffic.
 ---
 
 # Macroeconomics (Tako)
 
-Tako serves macro indicators as interactive, citation-backed charts. All tools below live on the Tako MCP server (server name `tako`).
+Tako serves macro and demographic indicators as structured, cited data: each result is a card carrying the headline value, the underlying rows, and a chart of the series. All tools below live on the Tako MCP server (server name `tako`). The tool descriptions and every result already carry the card fields, the `sources` guidance and the zero-card recovery; this skill covers how to shape a macro query, how to check a card against the question, and how to report.
 
-## What's in range
-- **Prices**: CPI (headline, core, seasonally adjusted and not), PCE price indices, country inflation rates.
-- **Labor**: unemployment (headline, U-6, harmonised), employment measures.
-- **Output and rates**: nominal and real GDP, GDP growth, policy and market interest rates.
-- **Demographics**: population, population by age band, median age (Census, World Bank). These sit naturally in this skill's scope; don't send them elsewhere.
-- **Prediction markets**: Polymarket contracts on macro outcomes are in the graph (`"Polymarket odds Fed rate cut 2026"` returns "How many Fed rate cuts in 2026?"). Useful when the question is genuinely about expectations, and a trap otherwise, see below.
+## Workflow
 
-**Coverage is country-keyed.** Individual countries resolve well (US, China, Japan, India). Multi-country blocs are weak: `"Eurozone inflation rate"` returns a Polymarket contract instead of an indicator, and `"Euro area CPI inflation rate"` returns nothing at all. For a bloc, query member countries and aggregate yourself, or take the figure from the web results and say so.
+1. **Query as COUNTRY + INDICATOR**: `"US CPI inflation"`, `"Japan unemployment rate"`. Coverage is keyed by country. For a bloc or region, check coverage with `tako_available_data` before searching: member-country series are far denser, so aggregate them yourself or take the figure from the web results and say so.
+2. **Name the variant when intent is precise.** Most indicators exist in several variants with materially different values: headline vs core, seasonally adjusted or not, BLS vs IMF vs OECD-harmonised, U-3 vs U-6, target rate vs effective rate. When you don't know the exact name, call `tako_available_data` first, which is free, and search on the name it returns. Level and rate series share a stem: "Core PCE Price Index" is the index level and "Core PCE Price Index (% Change)" is the inflation rate, and a query that says "inflation" can match either, or a CPI series.
+3. **Call `tako_search`** with the default sources. Web results carry release commentary and cover the gaps in bloc-level data.
+4. **Check the top card against the question** with the list below. If a different card is the right one, link its title to its `url` and say so.
+5. **Read the value from `description`.** When the card is exportable and you need more than the headline, `tako_contents` on its `url` returns the series.
+6. **Zero cards?** Follow the recovery the result states, and keep to two priced searches per question. Empty means not covered, not that the indicator doesn't exist.
+7. **Discovery asks** ("what does Tako track for Japan", "which countries are in the G7", "who publishes Japan's data")? Resolve the country with `tako_available_data` to get its node id, then call `tako_graph_related` on it. The first call returns the relation map with counts (`metrics`, `part_of`, `siblings`, `sources`; `members` on a bloc node); pass `relation` to page one and `q` to filter it, then search on the names it returns.
 
-## Pick the tool
-- `tako_search`: **the default for any "<country> <indicator>" question.** One narrow country+indicator query returns the cited chart with the headline value in the card's `description`; FRED/OECD/BIS cards export, so `tako_contents` on the card's url returns the series (billed per 1k rows) when you need the values. Also the breadth tool: scan several countries or indicator variants in parallel, or pull the card when the chart is the deliverable.
-- `tako_available_data`: FREE, and the right tool when the question is **what Tako covers**, or when many variants exist and you need the exact indicator name (mandatory for PCE — see below).
-- Cohort/ranking asks ("which G7 economy has the highest inflation right now?") → one narrow call per country in parallel, then rank. Use `tako_search` to see what exists; call `tako_contents` when you need each figure beyond the headline.
+## Checking a card against the question
 
-## Query patterns (Critical)
-- Query is COUNTRY + INDICATOR: `"US CPI inflation"`, `"US unemployment rate"`, `"US federal funds rate"` (which resolves to the Effective Federal Funds Rate, not the FOMC target range).
-- Be specific — most indicators have many variants, and they carry materially different numbers. `"US unemployment rate"` returns BLS headline (4.2%), IMF (4.3%), OECD harmonised (4.2%), and U-6 (7.9%) together. Name the variant when intent is precise; run `tako_available_data` first when it isn't.
-- PCE is the sharpest naming trap: `"US core PCE inflation"` silently returns a Core **CPI** card. Query the year-over-year variant by name instead — `"US core PCE price index % change"` returns the correct "Core PCE Price Index (% Change)" card. Verify the chosen card's title actually says `PCE` and `(% Change)`; a plain "PCE Price Index" card is an index level (~130 points), not a rate. Run `tako_available_data` FIRST here.
-- Parallelize multi-part asks: send each metric as its own narrow concurrent `tako_search`, then synthesize — not one query.
-- Cross-country comparison is built in: `"US vs China inflation"` returns a 2-series comparison card. For currency-denominated indicators (GDP, wages), a cross-country chart may plot different currencies on one axis unnormalized. State each series' currency and convert before comparing.
-- `sources`: default to BOTH `["data", "web"]` (also the tool's default when omitted). The chart grounds the number, web results add the release commentary and context that make a briefing readable, and web is the built-in fallback when Tako lacks the indicator, including the bloc-level gaps above. Price is identical either way. Narrow to `["data"]` only when coverage is already confirmed by `tako_available_data`, or in a parallel fan-out where per-call web results would swamp context.
-- Empty result (zero cards): do NOT reword and retry blind; every search is billed. Recover in order: (1) `tako_available_data` (free) for the exact indicator name; (2) if covered, ONE more search using that exact name — the canonical NAME is what recovers cards, and `tako_search` takes no pin; (3) if not covered, stop searching Tako and answer from the web results already in the response. Never more than 2 priced searches per underlying question (in a fan-out, each country+indicator query has its own budget).
-- Empty is usually genuine non-coverage but has been observed transient, which is why the free coverage check, not a hunch, decides whether a retry is justified. Empty also means "not covered in Tako," NOT that the indicator doesn't exist; don't infer a fact from silence.
+One indicator name covers many series: providers, methodologies, vintages, levels and rates, and prediction markets on the same quantity. Before quoting, confirm:
 
-## Reading a result
-Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
+1. **Variant.** The title names the variant asked for; several providers' headline numbers can come back together. Don't average them or take the first.
+2. **Vintage, as asked.** For a current figure, take the series whose `coverage_end` is latest among the matches: discontinued series stay in the graph and an annual series can sit a year behind the monthly one. For a historical period, any series that covers it is valid. Series refresh on different schedules, so don't present two indicators as the same vintage without checking.
+3. **Rate, not level.** A "(% Change)" card is a percentage; a bare "Price Index" card is index points. Confirm from the unit in `description`.
+4. **Indicator or expectation, as asked.** Polymarket cards report what traders expect, not what a statistics agency published, and exist for many macro quantities. Quote one when the question is about expectations, and label it market-implied; otherwise take the published series.
+5. **Country.** `nodes` names it. Country overview cards sometimes carry no nodes; fall back to the title there.
 
-Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
+## Comparisons
 
-## Pick the right card (Critical)
-Tako auto-renders #0, and for macro the **least-specific or stalest card often ranks first**. the relevance fact is unreliable: the correct card is frequently tagged `Low`. If the right card isn't #0, reference it by linking its title to the card's chart URL and say it is the authoritative one. Check, in order:
+- Cross-country comparison is built in: `"US vs China inflation"` returns a two-series card. For currency-denominated indicators (GDP, wages) the chart plots both currencies on one axis unnormalized; state each currency and convert before comparing.
 
-1. **Right variant?** `"US CPI inflation"` returns three different headline numbers at once — a BIS country card (4.2%), a FRED "Inflation Rate" series (2.9%), and FRED "CPI Inflation Rate (Seasonally Adjusted)" (3.5%). Pick the card whose title matches the variant asked for; don't average them or take whichever is first.
-2. **Fresh, not a stale vintage?** Stale series rank high routinely: that FRED "Inflation Rate" card at #1 ends in Jan 2024, and `"US federal funds rate"` ranks "Fed Funds Target Rate (Historical)", a series that ends in Dec 2008, above the current one. Compare as-of dates across cards and take the freshest match. Freshness also varies by series: Core CPI runs to Jun 2026 while Core PCE stops at Jan 2026, so don't present them as the same vintage.
-3. **Rate, not an index level?** A `(% Change)` card is a rate in percent; a bare "Price Index" card is index points. Confirm from the units in `description`.
-4. **An indicator, not a prediction market?** A Polymarket card answers "what do traders expect," not "what was reported." `"Eurozone inflation rate"` returns exactly this. Only use one when the question is about expectations, and label it as market-implied odds.
-5. **Right country?** Confirm the card's `nodes` names it. Country overview cards (type `card`) sometimes carry no nodes at all — fall back to reading the title.
+## Output
 
-## Rendering
-- On a comparison card, the as-of date is the QUERY date, not the data date (the US-vs-China card reported the day it was run while its latest point is May 2026). Cite the period from the card's `description`, not that fact.
-- Cite the card's source name and as-of date. The roster is wider than FRED alone: BIS, OECD, IMF, World Bank, BLS, Census and Polymarket all appear, and the same indicator arrives from different providers on different cards. Never cite from a fixed list.
-- Reference the chart in prose; do NOT re-post the card's image URL as a markdown image — that double-renders the inline chart.
-
-## Examples
-- Single (the common case) → tako_search {"query": "US CPI inflation rate", "sources": ["data", "web"]} → check the chosen card matches the variant asked for; read the value from its `description`
-- Cross-country → tako_search {"query": "US vs China inflation", "sources": ["data", "web"]}
-- Chart is the deliverable → tako_search {"query": "US vs China inflation", "sources": ["data", "web"]} → embed the card
-- Indicator-name question (free; note the arg is `q`) → tako_available_data {"q": "US core PCE"} → then reuse the exact name: tako_search {"query": "US core PCE price index % change", "sources": ["data"]}
-- Parallel multi-metric → four calls for CPI, core CPI, core PCE (% change) and PCE (% change); `tako_search` with `"sources": ["data"]` to see what exists, then `tako_contents` per metric when you need the values (take the "(% Change)" cards; plain "PCE Price Index" cards are index levels)
-- Bloc-level ask → no Eurozone card exists; query member countries in parallel and aggregate, or take the figure from the web citations and label it web-sourced
-
-## Output (tight and structured)
-1) A 1–2 line read of the indicator, referencing the intent-matched chart
-2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card
-3) A single `[Open in Tako]` link built from the card's embed URL, for the card you embedded
+1. One or two lines on the indicator, referencing the chart in prose. Never re-post the image URL: it double-renders the inline chart.
+2. Source name and `coverage_end` date. The roster is wider than FRED, so cite what the card names. Say plainly when a figure is web-sourced.
+3. One `[Open in Tako](url)` link for the card you embedded.

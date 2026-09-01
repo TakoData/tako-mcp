@@ -1459,7 +1459,7 @@ export function buildDataGapGuidance(
  *
  * This protocol is mirrored in the three bundled skills' SKILL.md files
  * under skills/ and their embedded copies in README.md, each as the
- * "Empty result (zero cards)" bullet. What must stay consistent is the
+ * "Zero cards?" workflow step. What must stay consistent is the
  * RECIPE — free tako_available_data check → ONE retry on the exact metric
  * NAME → stop and answer from the web results — not the phrasing;
  * pin an invariant here rather than a quoted sentence, so a reworded skill
