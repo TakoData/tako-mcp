@@ -2047,7 +2047,7 @@ Parameters:
 | `data` | object | no |  | Tako data (card) source settings; naming it selects the data graph. |
 | `web` | object | no |  | Web source settings; naming it selects the web. |
 | `include_answer` | boolean | no |  | Set true to synthesize one citation-backed answer from the retrieval into `answer`. |
-| `output_schema` | object | no |  | JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Only type, properties, required, items, enum, description and additionalProperties are allowed. |
+| `output_schema` | object | no |  | JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Type a field ["number", "null"] when evidence may be missing — Tako then signals that, not a zero. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -2342,7 +2342,7 @@ Annotations:
       "type": "boolean"
     },
     "output_schema": {
-      "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Only type, properties, required, items, enum, description and additionalProperties are allowed.",
+      "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Type a field [\"number\", \"null\"] when evidence may be missing — Tako then signals that, not a zero.",
       "anyOf": [
         {
           "type": "object",

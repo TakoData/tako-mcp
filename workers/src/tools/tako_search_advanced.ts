@@ -317,15 +317,20 @@ const inputSchema = z
     //
     // STATE THE ALLOWLIST, never one exclusion. The validator
     // (`backend/data/agent/structured_output/schema_validation.py`,
-    // `_ALLOWED_KEYWORDS`) accepts a fixed keyword set and 400s on everything
-    // else. An earlier rewrite here said "No $ref" — a keyword that appears
-    // nowhere in that module, rejected only because it is off the list, exactly
-    // like `anyOf`, `oneOf`, `pattern` and `$defs`. Naming the one exclusion
-    // teaches a model the others are allowed, which is worse than saying
-    // nothing. The caps (16 KB, depth 5, 64 properties) are left out as the
-    // ones a hand-written schema does not reach.
+    // NAME NO KEYWORD SET HERE. Two rewrites have now published a false one:
+    // "No $ref" (a keyword absent from the validator, rejected only for being
+    // off the list, exactly like `anyOf`, `oneOf`, `pattern` and `$defs`), then
+    // `_ENFORCED_KEYWORDS` as if it were the gate. The gate is
+    // `_ALLOWED_KEYWORDS = _ENFORCED_KEYWORDS | _IGNORED_KEYWORDS`, so `title`,
+    // `examples`, `format` and `default` pass too — and pydantic emits `title`
+    // on every property, so an "only these are allowed" list is wrong on the
+    // common case. An unsupported keyword 400s naming itself, which is a
+    // recoverable turn; the nullable rule below is not, so it gets the room.
+    //
+    // The caps (16 KB, depth 5, 64 properties) stay out as the ones a
+    // hand-written schema does not reach. Entry budget: 1,995 of 2,000.
     output_schema: AnswerRequest.shape.output_schema.describe(
-      "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Only type, properties, required, items, enum, description and additionalProperties are allowed.",
+      'JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Type a field ["number", "null"] when evidence may be missing — Tako then signals that, not a zero.',
     ),
   })
   // `.strict()` at every level. A bare `z.object` STRIPS unknown keys; this

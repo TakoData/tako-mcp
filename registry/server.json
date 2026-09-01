@@ -293,7 +293,7 @@
         },
         "output_schema": {
           "type": "object",
-          "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Only type, properties, required, items, enum, description and additionalProperties are allowed."
+          "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Type a field [\"number\", \"null\"] when evidence may be missing — Tako then signals that, not a zero."
         }
       },
       "annotations": {
