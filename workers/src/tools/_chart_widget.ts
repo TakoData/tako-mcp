@@ -2116,7 +2116,7 @@ const WIDGET_HTML = `<!doctype html>
       // \`withoutTracking\`. This branch needs a non-http(s) \`image_url\`
       // alongside a valid \`embed_url\`, which the server does not currently
       // emit, so it is unreachable today. It is cleaned anyway: the invariant
-      // documented in \`docs/chatgpt-app-review.md\` §4 is "every iframe load
+      // the widget promises the ChatGPT app review is "every iframe load
       // the widget performs", and holding that by construction beats holding
       // it because two fields happen to always ship together. \`withoutTracking\`
       // is idempotent and allocation-cheap, so there is nothing to trade off.

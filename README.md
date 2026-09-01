@@ -581,6 +581,16 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 - **Versioning & changelog** are automated via release-please. Contributors use Conventional Commit PR titles (squash-merge); maintainers cut a release by merging the bot's `release: X.Y.Z` PR. See `AGENTS.md` → Releases.
 </details>
 
+## ChatGPT app submission
+
+`chatgpt-app-submission.json` at the repo root is the file the OpenAI portal imports. `assertChatgptSubmissionParity` in `workers/scripts/gen-registry.ts` keeps its `tools` object matched to what `/mcp/chatgpt` serves. The schema has no field for three things the portal asks for, so set them by hand:
+
+- **MCP URL:** `https://mcp.tako.com/mcp/chatgpt`. Not `/mcp`, which is the generic surface and serves no widget.
+- **Authentication:** OAuth only. An anonymous request to `/mcp/chatgpt` gets a 401.
+- **Frame domain explanation:** paste the block below. Name only tools on the submitted surface.
+
+> Tako embeds its own chart pages from https://tako.com so results returned by tako_search, and charts created by tako_visualize, can be displayed interactively inside ChatGPT. The frame is one origin, https://tako.com, on one path, /embed/{pub_id}/, and it is the same URL the tool returns as embed_url. The framed page holds the chart, its title, and source attribution, with hover values, legend toggles, and time-range controls. It has no advertisements, sign-in, sign-up, checkout, or upgrade UI, and analytics are disabled on every load the widget performs.
+
 ## Links
 
 - **[Full Documentation](https://docs.tako.com/documentation/integrations/mcp-server)** — setup, tools, and integration guides
