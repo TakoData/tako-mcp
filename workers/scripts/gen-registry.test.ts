@@ -22,7 +22,6 @@ import {
   DESCRIPTION_MAX_LINES,
   INSTRUCTIONS_MAX_CHARS,
   LEGACY_OUTPUT_SCHEMA_CEILINGS,
-  LEGACY_PROSE_CEILINGS,
   LOBEHUB_TOOL_ALLOWLIST,
   MCP_TOOL_ALLOWLIST,
   PARAM_MAX_CHARS,
@@ -691,7 +690,7 @@ describe("assertNoPhantomToolsInDocs", () => {
 // ---------------------------------------------------------------------------
 
 describe("assertProseBudget", () => {
-  // A tool with no LEGACY_PROSE_CEILINGS row: the D1 caps apply outright.
+  // Every tool now: the prose ratchet is gone, so the D1 caps apply outright.
   const migrated = (description: string) => [{ name: "tako_new", description }];
   const params = (descriptions: Record<string, string>) => [
     {
@@ -759,64 +758,6 @@ describe("assertProseBudget", () => {
     );
   });
 
-  // The ratchet. Both the row's NAME and its numbers are read from the map
-  // rather than restated: re-baselining a row cannot make these lie, and the
-  // fan-out PR that deletes a row does not have to come back and repoint these
-  // tests. Naming one row here broke this file the first time a fan-out landed
-  // — `tako_contents` was the hardcoded pick, and deleting its row (which is
-  // exactly what a migration is supposed to do) failed three tests that have
-  // nothing to do with that tool.
-  const legacyNames = Object.keys(LEGACY_PROSE_CEILINGS).sort();
-  // When the last row goes, every tool is migrated and the ratchet is dead
-  // code — delete it and this block together rather than leaving assertions
-  // that silently cover nothing.
-  expect(legacyNames.length, "LEGACY_PROSE_CEILINGS is empty — delete the ratchet and these tests").toBeGreaterThan(0);
-  const legacyName = legacyNames[0] as string;
-  const ceiling = LEGACY_PROSE_CEILINGS[legacyName]!;
-
-  it("passes a legacy tool sitting exactly at its ceiling", () => {
-    const at = "x".repeat(ceiling.description);
-    expect(() =>
-      assertProseBudget([{ name: legacyName, description: at }], [{ name: legacyName, parameters: {} }], "Short."),
-    ).not.toThrow();
-  });
-
-  it("fails a legacy tool one char over its ceiling", () => {
-    const over = "x".repeat(ceiling.description + 1);
-    expect(() =>
-      assertProseBudget([{ name: legacyName, description: over }], [{ name: legacyName, parameters: {} }], "Short."),
-    ).toThrow(/description grew to \d+ chars \(legacy ceiling/);
-  });
-
-  it("lets legacy prose SHRINK freely — the ratchet is one-directional", () => {
-    expect(() =>
-      assertProseBudget([{ name: legacyName, description: "Tiny." }], [{ name: legacyName, parameters: {} }], "Short."),
-    ).not.toThrow();
-  });
-
-  it("exempts a legacy tool from the line cap the migrated caps impose", () => {
-    // Legacy prose is multi-paragraph by construction. Deleting the row is what
-    // turns the line cap on; until then a tall description must not fail.
-    const tall = Array.from({ length: DESCRIPTION_MAX_LINES + 5 }, () => "a").join("\n");
-    expect(tall.length).toBeLessThanOrEqual(ceiling.description);
-    expect(() =>
-      assertProseBudget([{ name: legacyName, description: tall }], [{ name: legacyName, parameters: {} }], "Short."),
-    ).not.toThrow();
-  });
-
-  // assertProseBudget only ever READS a row through a live tool, so a row for a
-  // deleted tool is unreachable and would sit here forever — and it is the row
-  // a future author trusts when re-baselining. tako_credit_balance (#270) and
-  // tako_answer (#273) were both deleted while this map's spec was being
-  // written, so this is the repo's demonstrated failure mode, not a hypothetical.
-  it("every LEGACY_PROSE_CEILINGS row names a tool that still exists", () => {
-    const live = new Set(TOOL_REGISTRY.map((t) => (t as ToolModule).name));
-    const stale = Object.keys(LEGACY_PROSE_CEILINGS).filter((n) => !live.has(n)).sort();
-    expect(
-      stale,
-      "ratchet row(s) for deleted tool(s) — delete the row, it can never fire again",
-    ).toEqual([]);
-  });
   it("fails an outputSchema over the cap on a tool with no ceiling row", () => {
     const big = schemaOfAbout(OUTPUT_SCHEMA_MAX_CHARS * 2);
     expect(() =>

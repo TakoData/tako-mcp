@@ -18,6 +18,7 @@ import {
   webResultSchema,
   type SearchedSources,
   type SearchOutput,
+  type SearchToolName,
 } from "./_search_results.js";
 import type { ToolContext } from "./types.js";
 
@@ -56,13 +57,18 @@ export async function runSearch(
   sources: SearchedSources,
   rowCap: number | "all" | null,
   ctx: ToolContext,
-  // The CALLER's own name, for the wire-guard log only. Required, and not
-  // derived from `endpoint`: `endpointFor` returns "search" for every
-  // `tako_search_advanced` call that omits `include_answer`, so deriving it
-  // logged `tool=tako_search` for a tool that sends fields the simple one
-  // cannot (`mode`, `content_format: "card_json"`, `node_ids`) — pointing an
-  // on-call at the wrong surface with the one signal they get.
-  toolName: string,
+  // The CALLER's own name. Required, and not derived from `endpoint`:
+  // `endpointFor` returns "search" for every `tako_search_advanced` call that
+  // omits `include_answer`, so deriving it logged `tool=tako_search` for a
+  // tool that sends fields the simple one cannot (`mode`,
+  // `content_format: "card_json"`, `node_ids`) — pointing an on-call at the
+  // wrong surface with the one signal they get.
+  //
+  // It reaches the MODEL as well as the log: zero-result guidance names a
+  // `sources` argument, and the two tools spell it differently
+  // (`BOTH_SOURCES_ARG`), so a wrong name here publishes a recovery step the
+  // receiving tool's schema rejects.
+  toolName: SearchToolName,
 ): Promise<SearchOutput> {
   const { endpoint, body } = call;
   // The pairing the type cannot enforce (see `SearchCall`). `SearchRequest` is
@@ -160,7 +166,7 @@ export async function runSearch(
     // when THIS connection registered it. `?tools=` replaces the defaults, so
     // a signed-in `?tools=search` caller has neither tako_available_data nor
     // tako_contents and tier alone cannot tell.
-    { rowCap, keepWebText, registeredTools: ctx.registeredTools },
+    { rowCap, keepWebText, registeredTools: ctx.registeredTools, toolName },
     extras,
   );
 }

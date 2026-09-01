@@ -9,6 +9,7 @@ import {
   Sources,
   WebSourceSettings,
 } from "../generated/schemas.js";
+import { PARAM_MAX_CHARS } from "../../scripts/gen-registry.js";
 import { jsonResponse, mockFetchSequence, noopSendProgress, requestFrom } from "./__test_helpers.js";
 import {
   CHATGPT_TOOL_NAMES,
@@ -558,9 +559,10 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
   const searchResponse = () =>
     jsonResponse(200, { cards: [cardWithRows()], web_results: [], request_id: "req-data" });
 
-  // Rows now ride under the projected `rows` field (only when requested).
-  const datasetOf = (out: { cards: Array<{ rows?: Record<string, unknown> }> }) =>
-    (out.cards[0]?.rows as { dataset?: unknown } | undefined)?.dataset;
+  // Rows now ride under the projected `rows` field (only when requested),
+  // normalized to `columns`/`rows` — the dataset envelope's ref/sources/
+  // provenance and its duplicated counts are dropped by the projection.
+  const rowsOf = (out: { cards: Array<{ rows?: Record<string, unknown> }> }) => out.cards[0]?.rows;
 
   it("keeps card rows when the caller sets data.include_contents", async () => {
     mockFetchSequence([searchResponse()]);
@@ -568,7 +570,7 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
       tako_search_advanced.inputSchema.parse({ query: "us gdp", data: { include_contents: true } }),
       CTX,
     );
-    expect(datasetOf(out)).toMatchObject({ rows: [["2024-01-01", 29]] });
+    expect(rowsOf(out)).toMatchObject({ rows: [["2024-01-01", 29]] });
   });
 
   it("drops card rows when the caller names the data block without the flag", async () => {
@@ -577,7 +579,7 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
       tako_search_advanced.inputSchema.parse({ query: "us gdp", data: {} }),
       CTX,
     );
-    expect(datasetOf(out)).toBeUndefined();
+    expect(rowsOf(out)).toBeUndefined();
     // total_rows is METADATA, not a payload channel: the projection lifts it
     // to the card so the model still knows rows exist and can fetch them.
     expect(out.cards[0]?.total_rows).toBe(1);
@@ -586,7 +588,7 @@ describe("data include_contents is honoured, not advertised and dropped", () => 
   it("tako_search always drops them — the simple tool cannot request them", async () => {
     mockFetchSequence([searchResponse()]);
     const out = await tako_search.handler({ query: "us gdp", sources: ["data"] }, CTX);
-    expect(datasetOf(out)).toBeUndefined();
+    expect(rowsOf(out)).toBeUndefined();
   });
 });
 
@@ -613,6 +615,30 @@ describe("include_related is honoured: related suggestions reach the output", ()
     const md = tako_search_advanced.renderText(out, CTX);
     expect(md).toContain("## Related queries");
     expect(md).toContain("US core CPI");
+    // The pin ids reach the TEXT channel too. They rode in structuredContent
+    // alone until this tool's pass — invisible on the 9 audited harnesses that
+    // feed the model only `content`, which is where the follow-up they exist
+    // to pin would have to be built.
+    expect(md).toContain("mt::cpi-core");
+  });
+
+  // `node_ids: []` is what the wire sends whenever the graph could not resolve
+  // them, which is most suggestions: one empty array per suggestion, in both
+  // channels, saying nothing.
+  it("drops an unresolved node_ids array rather than shipping it empty", async () => {
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [],
+        web_results: [],
+        request_id: "req-rel",
+        related: [{ query: "US core CPI", description: null, node_ids: [] }],
+      }),
+    ]);
+    const out = await tako_search_advanced.handler(
+      tako_search_advanced.inputSchema.parse({ query: "US CPI", include_related: 3 }),
+      CTX,
+    );
+    expect(out.related).toEqual([{ query: "US core CPI" }]);
   });
 
   it("omits related when the wire carries none", async () => {
@@ -694,6 +720,31 @@ describe("include_answer selects the endpoint", () => {
     expect(result.error?.issues[0]?.message).toContain("include_answer");
   });
 
+  it("rejects strict without node_ids before any request is sent", () => {
+    // `DataSourceSettings._strict_requires_node_ids` raises "strict=true
+    // requires a non-empty node_ids list", so this pair is a guaranteed 400
+    // with a paid round trip in front of it. `optionalWithoutDefaults` strips
+    // the generated block's own validators along with its defaults, so this
+    // refine is the only thing standing between the caller and that 400.
+    for (const data of [{ strict: true }, { strict: true, node_ids: [] }]) {
+      const result = tako_search_advanced.inputSchema.safeParse({ query: "q", data });
+      expect(result.success, JSON.stringify(data)).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(["data", "strict"]);
+      expect(result.error?.issues[0]?.message).toContain("node_ids");
+    }
+    // The valid pairing still parses, and so does a bare pin without strict.
+    expect(
+      tako_search_advanced.inputSchema.safeParse({
+        query: "q",
+        data: { strict: true, node_ids: ["mt::x::1"] },
+      }).success,
+    ).toBe(true);
+    expect(
+      tako_search_advanced.inputSchema.safeParse({ query: "q", data: { node_ids: ["mt::x::1"] } })
+        .success,
+    ).toBe(true);
+  });
+
   it("the answer body satisfies AnswerRequest and the search body satisfies SearchRequest", () => {
     const answerInput = tako_search_advanced.inputSchema.parse({
       query: "q",
@@ -709,10 +760,16 @@ describe("include_answer selects the endpoint", () => {
     expect(() => SearchRequest.parse({ query: "q", output_schema: {} })).toThrow();
   });
 
-  it("inlines rows on the answer path when data.include_contents is set (the license-gated values path)", async () => {
-    // The one workflow that needs pins AND synthesis on the same call: a card
-    // marked exportable:false cannot be read with tako_contents, so its figures
-    // only ever arrive inlined beside an answer.
+  it("inlines rows on the answer path when data.include_contents is set", async () => {
+    // The one call that needs a pin AND synthesis: rows arrive beside the
+    // answer instead of costing a second tako_contents round trip.
+    //
+    // `exportable: true` is not incidental. /v3/search and /v1/answer build both
+    // fields from one branch (`to_tako_cards`), so `exportable == (content is
+    // not None)` holds by construction and a card carrying rows is always
+    // exportable. A fixture pairing `exportable: false` with `content` asserts
+    // a shape no endpoint emits, and reads as a live "license-gated" workflow
+    // that does not exist.
     mockFetchSequence([
       jsonResponse(200, {
         answer: "Core CPI was 2.6%.",
@@ -720,7 +777,7 @@ describe("include_answer selects the endpoint", () => {
           {
             card_id: "cpi",
             title: "US Core CPI",
-            exportable: false,
+            exportable: true,
             content: {
               content_format: "json_compact",
               cost: 0,
@@ -758,8 +815,65 @@ describe("include_answer selects the endpoint", () => {
       }),
       CTX,
     );
-    const ds = (out.cards[0]?.rows as { dataset: { rows: unknown[] } }).dataset;
-    expect(ds.rows).toHaveLength(3);
+    expect((out.cards[0]?.rows as { rows: unknown[] }).rows).toHaveLength(3);
     expect(out.guidance).toBeUndefined();
+  });
+});
+
+/**
+ * The prose caps, applied to the whole published input schema.
+ *
+ * `assertProseBudget` measures TOP-LEVEL parameters only (`flattenParameters`
+ * does not descend), so the 21 describes inside `data`, `web`, `location` and
+ * `output_settings` are ungated — and they were 5,301 chars of the 11,085-char
+ * schema before this tool's pass, written as HTTP-API reference for a caller
+ * reading `POST /api/v3/search` rather than as a rule a model applies while
+ * building an argument. The overrides in `DATA_DESCRIBES` / `WEB_DESCRIBES` /
+ * `OUTPUT_SETTINGS_DESCRIBES` are what brought them down; this holds them
+ * there, because the next schema regeneration re-supplies the generated text
+ * for any field whose override is dropped.
+ */
+describe("published prose stays inside the caps at every level", () => {
+  const described = (): Array<[string, string]> => {
+    const out: Array<[string, string]> = [];
+    const walk = (node: unknown, path: string): void => {
+      if (node === null || typeof node !== "object") return;
+      const n = node as Record<string, unknown>;
+      if (typeof n.description === "string" && path !== "") out.push([path, n.description]);
+      for (const [key, value] of Object.entries((n.properties ?? {}) as Record<string, unknown>)) {
+        walk(value, `${path}.${key}`);
+      }
+      for (const key of ["anyOf", "oneOf", "allOf"]) {
+        const branch = n[key];
+        if (Array.isArray(branch)) branch.forEach((b) => walk(b, path));
+      }
+      if (n.items !== undefined) walk(n.items, `${path}[]`);
+    };
+    walk(z.toJSONSchema(tako_search_advanced.inputSchema, { io: "input" }), "");
+    return out;
+  };
+
+  it("no describe anywhere in the input schema exceeds the param cap", () => {
+    // IMPORTED, not retyped. This walk exists to extend D1's per-parameter cap
+    // to the nested blocks `assertProseBudget` cannot see, so a literal here
+    // would let the two drift the next time the cap is retuned.
+    const over = described()
+      .filter(([, text]) => text.length > PARAM_MAX_CHARS)
+      .map(([path, text]) => `${path}: ${text.length}`);
+    expect(over, "a generated describe came back; add an override").toEqual([]);
+  });
+
+  it("the pin advice lives on the field it corrects, not two fields away", () => {
+    // The generated `node_ids` text says a pin "always" gets "a strong boost".
+    // Measured on prod (2026-07-29) it does not reliably outrank the organic
+    // winner, which is why the tool description used to carry a paragraph
+    // contradicting a describe the model reads at the same moment.
+    const byPath = new Map(described());
+    const nodeIds = byPath.get(".data.node_ids") ?? "";
+    expect(nodeIds).toMatch(/strict:\s*`?true/);
+    expect(nodeIds, "the overstated generated text is back").not.toMatch(/strong boost/);
+    expect(tako_search_advanced.description, "the contradiction paragraph is back").not.toMatch(
+      /strong boost|provisional/,
+    );
   });
 });

@@ -147,12 +147,73 @@ describe("renderSearchMarkdown — the COMPLETE text channel", () => {
 
   it("renders inlined rows (advanced include_contents) as a fenced block", () => {
     const withRows = pCard({
-      rows: { dataset: { columns: [{ name: "t" }], rows: [["2026-01-01", 1]] }, total_rows: 1 },
+      rows: { columns: ["t", "v (USD)"], rows: [["2026-01-01", 1]] },
     });
     const md = renderSearchMarkdown(searchOutput({ cards: [withRows] }));
     expect(md).toContain("2026-01-01");
+    // The unit rides in the column name, which is the only place it exists on
+    // a json_records payload.
+    expect(md).toContain("v (USD)");
     // Fenced: row payloads are data, not our markdown.
     expect(md).toMatch(/```[\s\S]*2026-01-01/);
+  });
+
+  // `truncated` and `format` are structured keys, so a text channel that
+  // dropped them would be reporting a complete table that is not one. The
+  // fact line is what keeps the two channels equivalent.
+  it("says on the text channel when inlined rows were cut", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({ cards: [pCard({ rows: { columns: ["v"], rows: [[1]], truncated: true } })] }),
+    );
+    expect(md).toContain("TRUNCATED — these are not all the rows");
+  });
+
+  it("names the format for a payload that is not columns/rows", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({ cards: [pCard({ rows: { format: "csv", data: "t,v\n2026-01-01,1" } })] }),
+    );
+    expect(md).toContain("format: csv");
+    expect(md).toMatch(/```[\s\S]*2026-01-01/);
+  });
+});
+
+// ASSERTED DIRECTLY, because the channel-parity walk below cannot see it: that
+// walk collects string and number leaves only, so EVERY boolean in the
+// projected output is invisible to it. `cards[].exportable` and
+// `cards[].rows.truncated` happen to render as words; `content.truncated` did
+// not, and a text-only host read a page cut at `article_content_max_chars`
+// (default 30,000) as the whole thing. A boolean field needs its own
+// assertion here or it has no guard at all.
+describe("web page text says when it was cut", () => {
+  it("marks a truncated page on the text channel", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({
+        web_results: [
+          {
+            title: "t",
+            url: "https://e.com",
+            content: { data: "First 30k characters of the page.", truncated: true },
+          },
+        ],
+      }),
+    );
+    expect(md).toContain("TRUNCATED");
+    expect(md).toContain("First 30k characters of the page.");
+  });
+
+  it("says nothing when the whole page rode", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({
+        web_results: [
+          {
+            title: "t",
+            url: "https://e.com",
+            content: { data: "The whole page.", truncated: false },
+          },
+        ],
+      }),
+    );
+    expect(md).not.toContain("TRUNCATED");
   });
 });
 
@@ -900,7 +961,7 @@ describe("renderGraphRelatedMarkdown", () => {
 // structuredContent but not in the markdown is invisible on all of them.
 // ---------------------------------------------------------------------------
 
-describe("channel parity (tako_search)", () => {
+describe("channel parity (tako_search and tako_search_advanced)", () => {
   // THE FIXTURE COMES FROM `buildSearchOutput`, not from a hand-written
   // literal, and that is the whole point of this test.
   //
@@ -961,8 +1022,25 @@ describe("channel parity (tako_search)", () => {
       ["data", "web"],
       false,
       "authenticated",
-      { rowCap: "all", keepWebText: true },
-      { related: [{ query: "Tesla margin", description: "Gross margin by quarter." }] },
+      { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced" },
+      // The advanced tool's four extra fields ride here too: it is the only
+      // tool that can return them, and they reach the model through the same
+      // renderer. A separate fixture would let this walk keep passing while
+      // `answer` or `structured_output` silently stopped rendering.
+      //
+      // `answer` + `related` together is deliberately a shape the WIRE cannot
+      // produce — `/v1/answer` returns no `related` — because this walks the
+      // RENDERER, and rendering each field is what it checks. The docs sample
+      // (`gen-registry.ts`) is the artifact that has to stay wire-plausible.
+      {
+        related: [
+          { query: "Tesla margin", description: "Gross margin by quarter." },
+          { query: "Tesla deliveries", node_ids: ["mt::deliveries::1"] },
+        ],
+        answer: "Tesla reported $27.1B of revenue in Q2 2026.",
+        structured_output: { revenue_usd: 27100000000, period: "2026-Q2" },
+        structured_output_error: { code: "validation_failed", message: "One field had no evidence." },
+      },
     );
     // The projection has to have produced the wide shape this test exists to
     // walk. Without this the whole test passes vacuously the day a projection
@@ -971,6 +1049,10 @@ describe("channel parity (tako_search)", () => {
     expect(output.cards[0]?.rows, "no inlined rows to walk").toBeDefined();
     expect(output.web_results[0]?.content, "no web page text to walk").toBeDefined();
     expect(output.related, "no related queries to walk").toBeDefined();
+    expect(output.related?.[1]?.node_ids, "no pin ids to walk").toBeDefined();
+    expect(output.answer, "no answer to walk").toBeDefined();
+    expect(output.structured_output, "no filled schema to walk").toBeDefined();
+    expect(output.structured_output_error, "no schema error to walk").toBeDefined();
 
     const md = renderSearchMarkdown(output);
     const leaves: string[] = [];
@@ -981,6 +1063,16 @@ describe("channel parity (tako_search)", () => {
       else if (Array.isArray(v)) v.forEach(walk);
       else if (typeof v === "object") Object.values(v).forEach(walk);
     };
+    // BOOLEANS ARE NOT WALKED, and that is a real limit rather than an
+    // oversight to "fix" by pushing "true": a boolean renders as a WORD
+    // ("exportable", "TRUNCATED"), never as its literal, so a leaf comparison
+    // would fail on every one. The consequence is that this walk is no guard
+    // at all for a boolean field — `web_results[].content.truncated` reached
+    // structuredContent and nothing else while this test stayed green. Each of
+    // the three booleans in the projected output has its own assertion
+    // instead: "web page text says when it was cut", and the rows /
+    // `exportable` cases in the card tests.
+    //
     // request_id is deliberately NOT part of the model-facing contract.
     //
     // `usage` is checked as its formatted dollar line only. The nested
@@ -1009,27 +1101,16 @@ describe("channel parity (tako_search)", () => {
       height: _h,
       ...modelFacing
     } = output;
-    // A column's `dtype` is exempt for the same reason a node's `type` is:
-    // "datetime" beside a fenced column of dates tells the reader nothing the
-    // values do not. `unit`, `metric` and `entity` are NOT exempt — they are
-    // the whole reason `manifest` rides here, and a number with no unit is
-    // the misquote this exists to prevent.
+    // No `manifest` exemption any more, and none needed: the projection folds
+    // the unit into the column NAME and drops the descriptor, so `columns` is
+    // a leaf this walk checks like any other. The `dtype`/`metric`/`entity`
+    // prose it used to carry is gone from both channels rather than exempted
+    // from one.
     const stripped = {
       ...modelFacing,
       cards: modelFacing.cards.map((c) => ({
         ...c,
         nodes: c.nodes?.map(({ type: _t, ...n }) => n),
-        rows:
-          c.rows === undefined
-            ? undefined
-            : {
-                ...c.rows,
-                manifest: Array.isArray(c.rows.manifest)
-                  ? (c.rows.manifest as Array<Record<string, unknown>>).map(
-                      ({ dtype: _dt, ...col }) => col,
-                    )
-                  : c.rows.manifest,
-              },
       })),
     };
     walk(stripped);

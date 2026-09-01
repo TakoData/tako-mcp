@@ -22,7 +22,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { ADVISES_PINNING, PLURAL_UNQUALIFIED } from "./_pin_form_rules.js";
+import { ADVISES_PINNING, PLURAL_UNQUALIFIED, pinAdvisingSentences } from "./_pin_form_rules.js";
 import { PINNED_FROM_CARD, PINNED_RETRY, takoCardSchema } from "./_search_results.js";
 import { TOOL_REGISTRY } from "./_registry.js";
 
@@ -30,6 +30,20 @@ import { TOOL_REGISTRY } from "./_registry.js";
 // llms-full.txt guard in scripts/gen-registry.ts apply the IDENTICAL rule. They
 // were a hand-written pair once and the copies drifted, which is how the broken
 // form survived in two surfaces this file cannot reach.
+
+/**
+ * Everything a tool publishes as prose: its description AND its input schema's
+ * field descriptions.
+ *
+ * Description alone is not the surface any more. `tako_search_advanced`'s pin
+ * advice moved into `data.node_ids`'s and `data.strict`'s describes on its
+ * fan-out PR — the parameter a caller reads while building the argument, which
+ * D2.4 says is where a constraint belongs — and a description-only scan would
+ * then pass this whole file vacuously while the advice sat one level down,
+ * unchecked. That is the same blind spot `values_hint` exploited.
+ */
+const publishedProse = (tool: (typeof TOOL_REGISTRY)[number]): string =>
+  [tool.description, JSON.stringify(z.toJSONSchema(tool.inputSchema, { io: "input" }))].join("\n");
 
 describe("advertised pin form", () => {
   // A pinned zero is NOT proof of absence. Measured on staging 2026-07-31 (20
@@ -56,20 +70,25 @@ describe("advertised pin form", () => {
     }
   });
 
-  it("no tool description advises pinning every node id on a card", () => {
+  it("nothing a tool publishes advises pinning every node id on a card", () => {
     for (const tool of TOOL_REGISTRY) {
-      expect(tool.description, tool.name).not.toMatch(PLURAL_UNQUALIFIED);
+      expect(publishedProse(tool), tool.name).not.toMatch(PLURAL_UNQUALIFIED);
     }
   });
 
-  it("every description that advises pinning also names strict", () => {
+  it("every sentence that advises pinning also names strict", () => {
     // `strict:false` is the default, so advice that omits `strict` describes
     // the no-op. Naming it is what makes the advice actionable.
+    //
+    // Sentence-level, not document-level: a schema publishes many describes in
+    // one string, and asserting the WHOLE string merely contains "strict" would
+    // pass on a `node_ids` describe that omits it whenever a sibling field
+    // happens to be named `strict`. `pinAdvisingSentences` is the same splitter
+    // the docs guard uses.
     for (const tool of TOOL_REGISTRY) {
-      if (!ADVISES_PINNING.test(tool.description)) continue;
-      expect(tool.description, `${tool.name} advises pinning without strict`).toMatch(
-        /strict/,
-      );
+      for (const sentence of pinAdvisingSentences(publishedProse(tool))) {
+        expect(sentence, `${tool.name} advises pinning without strict`).toMatch(/strict/);
+      }
     }
   });
 
@@ -109,7 +128,11 @@ describe("advertised pin form", () => {
     // `include_answer`. (`tako_contents` and the card's `values_hint` dropped out
     // earlier, when their advice routed to `tako_answer` and answer went opt-in —
     // naming an unregistered tool sends the model into "tool not found".)
-    const advising = TOOL_REGISTRY.filter((t) => ADVISES_PINNING.test(t.description)).map(
+    //
+    // Read off the PUBLISHED prose, not the description: the advanced tool's
+    // recipe now lives on `data.node_ids` and `data.strict`, and this assertion
+    // is the one that fails if a later edit deletes it from both places.
+    const advising = TOOL_REGISTRY.filter((t) => ADVISES_PINNING.test(publishedProse(t))).map(
       (t) => t.name,
     );
     expect(advising).toContain("tako_search_advanced");

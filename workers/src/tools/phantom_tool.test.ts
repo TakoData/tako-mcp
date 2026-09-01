@@ -389,7 +389,12 @@ describe("zero-result guidance names no tool the connection lacks", () => {
                 [...sources],
                 false,
                 tier,
-                { rowCap: null, keepWebText: false, registeredTools: registered },
+                {
+                  rowCap: null,
+                  keepWebText: false,
+                  registeredTools: registered,
+                  toolName: extras.answer === undefined ? "tako_search" : "tako_search_advanced",
+                },
                 extras,
               );
               const guidance = out.guidance;

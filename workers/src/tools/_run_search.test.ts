@@ -68,9 +68,9 @@ describe("runSearch on the answer endpoint", () => {
       }),
     ]);
     const out = await runSearch({ endpoint: "answer", body: { query: "hotel RevPAR Q3" } }, ["data", "web"], null, CTX, "tako_search_advanced");
-    expect(out.guidance).toContain("ZERO curated data cards");
+    expect(out.guidance).toContain("No data cards ground this answer");
     expect(out.guidance).toContain("web-grounded only");
-    expect(out.guidance).toContain("If the prose answers the question, use it as-is");
+    expect(out.guidance).toContain("use the prose if it answers the question");
   });
 
   it("zero data cards AND zero web results gives the hard anti-retry verdict", async () => {
@@ -78,12 +78,12 @@ describe("runSearch on the answer endpoint", () => {
       jsonResponse(200, { answer: "I couldn't find that.", cards: [], web_results: [], request_id: "r" }),
     ]);
     const out = await runSearch({ endpoint: "answer", body: { query: "hotel RevPAR Q3" } }, ["data", "web"], null, CTX, "tako_search_advanced");
-    expect(out.guidance).toContain("zero web results");
-    expect(out.guidance).toContain("Do NOT rephrase-and-retry");
+    expect(out.guidance).toContain("Neither data cards nor web results");
+    expect(out.guidance).toContain("rewording alone will not change that");
     // The carve-out on the hardest stop: one narrower WEB attempt is still
     // allowed. Without it the two arms disagree about the single most common
-    // Tako-has-nothing path — see NARROWER_WEB_ATTEMPT.
-    expect(out.guidance).toMatch(/WEB axis only/);
+    // Tako-has-nothing path — see the carve-out in buildDataGapGuidance.
+    expect(out.guidance).toMatch(/genuinely narrower web question/);
   });
 
   it("data-only ask with zero cards says nothing about web coverage", async () => {
@@ -92,8 +92,8 @@ describe("runSearch on the answer endpoint", () => {
       jsonResponse(200, { answer: "I couldn't find that.", cards: [], web_results: [], request_id: "r" }),
     ]);
     const out = await runSearch({ endpoint: "answer", body: { query: "q", sources: { data: {} } } }, ["data"], null, CTX, "tako_search_advanced");
-    expect(out.guidance).toContain("DATA source only");
-    expect(out.guidance).not.toContain("zero web results");
+    expect(out.guidance).toContain("searched the data source only");
+    expect(out.guidance).not.toMatch(/nor web results/);
   });
 
   it("a strict pin returning zero cards is a filter artefact, on the answer path too", async () => {
