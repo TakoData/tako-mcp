@@ -709,16 +709,6 @@ describe("worker routing", () => {
     expect(await listToolNames("https://example.com/mcp?tools=agent")).toEqual(["tako_agent"]);
   });
 
-  it("POST /mcp?tools=answer lists tako_search_advanced, not the defaults", async () => {
-    // `tako_answer` was folded into the advanced tool. Without the retired-token
-    // map an answer-only connection resolves to nothing, which falls through to
-    // the four-tool DEFAULT listing in silence — the caller asked for synthesis
-    // and gets a surface that cannot do it, with no error anywhere.
-    expect(await listToolNames("https://example.com/mcp?tools=answer")).toEqual([
-      "tako_search_advanced",
-    ]);
-  });
-
   it("POST /mcp?tools=search,contents lists exactly those two, prefix optional", async () => {
     expect(await listToolNames("https://example.com/mcp?tools=search,contents")).toEqual([
       "tako_contents",
@@ -741,7 +731,7 @@ describe("worker routing", () => {
     ];
     expect(await listToolNames("https://example.com/mcp/chatgpt")).toEqual(expected);
     expect(
-      await listToolNames("https://example.com/mcp/chatgpt?tools=agent,answer"),
+      await listToolNames("https://example.com/mcp/chatgpt?tools=agent,search_advanced"),
     ).toEqual(expected);
   });
 

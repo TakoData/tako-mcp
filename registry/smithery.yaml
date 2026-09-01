@@ -82,13 +82,15 @@ examples:
       {"query": "US GDP growth rate"}
   - title: Answer a Data Question
     description: >-
-      Get a synthesized answer with supporting chart cards. Needs the
-      `answer` token on the server URL's ?tools= allowlist — and because that
-      allowlist replaces the default listing, name the other tools you want
-      too (?tools=search,available_data,contents,answer). Without it, tako_search returns the
-      same data for your model to synthesize.
+      Get a synthesized answer with supporting chart cards. Call
+      tako_search_advanced with `include_answer: true`, which needs the
+      `search_advanced` token on the server URL's ?tools= allowlist — and
+      because that allowlist replaces the default listing, name the other
+      tools you want too
+      (?tools=search,available_data,contents,search_advanced). Without it,
+      tako_search returns the same data for your model to synthesize.
     input: |
-      {"query": "How have US mortgage rates moved over the past year?"}
+      {"query": "How have US mortgage rates moved over the past year?", "include_answer": true}
 links:
   homepage: https://tako.com
   documentation: https://github.com/TakoData/tako-mcp#readme

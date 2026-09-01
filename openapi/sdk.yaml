@@ -2207,7 +2207,10 @@ components:
             the card includes projections. Null for card types without a coverage
             date. The value uses ISO 8601 reduced precision, so examine the length
             before you parse it. A date parser reads 2026 as 2026-01-01, which is
-            the start of the period and not the end.
+            the start of the period and not the end. On a card with tabs, only the
+            tab this response built is rendered, so this date describes THAT tab --
+            the same card can report a different date on a request that opens a different
+            tab. Cache it against the response, not against the card id.
           examples:
           - '2026'
           - 2026-06
@@ -2229,8 +2232,10 @@ components:
           - type: string
           - type: 'null'
           title: Last Updated
-          description: Date Tako last refreshed the underlying data, as an ISO date
-            (YYYY-MM-DD).
+          description: 'Date Tako last refreshed the underlying data, as an ISO date
+            (YYYY-MM-DD). On a card with tabs this is the ACTIVE tab''s refresh date,
+            for the same reason coverage_end is tab-scoped: only the tab this response
+            built is rendered.'
           examples:
           - '2026-07-14'
       type: object
@@ -2865,11 +2870,9 @@ components:
       description: 'One follow-up query for the caller to run next.
 
 
-        A suggestion is deterministic. Tako derives it either from the data a
+        A suggestion is deterministic: Tako derives it from the data a returned
 
-        returned card already holds, or from the knowledge graph around that card.
-
-        No language model writes these.'
+        card already holds. No language model writes these.'
     RelationKind:
       type: string
       enum:
@@ -4347,22 +4350,25 @@ components:
         datasets:
           type: integer
           title: Datasets
-          description: Number of billed data units (datasets) included in the response.
+          description: Number of billed datasets or content items included in the
+            response.
+        data_points:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Data Points
+          description: Number of billed quantitative data points included in the response.
       type: object
       required:
       - cost_usd
       - datasets
       title: UsageData
-      description: 'The cost and quantity of inline data delivered in the response:
-        the
+      description: 'The cost and quantity of data delivered in the response.
 
-        agent per-dataset surcharge, the search and answer include_contents
 
-        charge, or the contents per-item cost. `datasets` is the count of billed
+        `datasets` counts billed datasets or content items. `data_points` counts
 
-        data units. Absent when the surface did not or cannot emit inline data
-
-        (for example, the answer agent).'
+        billed quantitative values in generated answer output.'
     WebCategory:
       type: string
       enum:
