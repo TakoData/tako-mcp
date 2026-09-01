@@ -21,6 +21,8 @@ records or checks which endpoint the app points at. Set it by hand at resubmissi
 - **Auth:** OAuth only. The `noauth` scheme is gone from this surface; an anonymous
   request gets 401 + `WWW-Authenticate`.
 
+- **Frame domain explanation:** the paste-ready text is the first block of §4.
+
 `app_info.description` is unchecked too. Keep it to what the four submitted tools actually
 do — it claimed "citation-backed answers" after `tako_answer` left the submitted set.
 
@@ -143,6 +145,18 @@ This matches the annotations the tool already ships — `readOnlyHint: false` pl
 `tako_visualize` justifications in the submission file.
 
 ## 4. Iframe: why it is needed, and what is inside it
+
+**Portal field `frame_domain_explanation` — paste this.** The submission file has no field
+for it, so the portal is the only place it lives; the previous draft carried the placeholder
+`test`. Name only tools on the submitted surface (`tako_answer` is gone and was never on it):
+
+> Tako embeds its own chart pages from https://tako.com so results returned by tako_search,
+> and charts created by tako_visualize, can be displayed interactively inside ChatGPT. The
+> frame is one origin, https://tako.com, on one path, /embed/{pub_id}/, and it is the same
+> URL the tool returns as embed_url. The framed page holds the chart, its title, and source
+> attribution, with hover values, legend toggles, and time-range controls. It has no
+> advertisements, sign-in, sign-up, checkout, or upgrade UI, and analytics are disabled on
+> every load the widget performs.
 
 **Why an iframe at all.** The deliverable of a data query is an interactive chart, and the
 interaction is the product: hover tooltips carrying the exact value and as-of date per

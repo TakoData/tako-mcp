@@ -15,7 +15,7 @@ Tako MCP lets an agent:
 
 - **Search** Tako's knowledge graph and the live web — top result renders inline as a chart, and `tako_contents` reads the rows behind it
 - **Discover** exactly what proprietary data exists for an entity or metric — free and fast
-- **Fetch** the underlying rows (CSV) or a page's text behind any result URL
+- **Fetch** the underlying rows (JSON) or a page's text behind any result URL
 - **Visualize** your own structured data as an embeddable card — public and permanent, readable by anyone with the link _(opt-in; on by default on the ChatGPT app)_
 - **Run** Tako's Answer Agent for deep, multi-step research _(opt-in)_
 
@@ -390,7 +390,7 @@ Reliably NOT in the data graph, and where web carries the answer instead: forwar
 ## Pick the tool by what you want back
 - `tako_search`: **the default for any "<company> <metric>" question.** One narrow entity+metric query returns the cited chart with the headline value in the card's `description`; call `tako_contents` on the card's url when you need the series itself (billed per 1k rows — S&P Global and Visible Alpha cards are license-gated and never export, so read those cards' headline from `description`). It retrieves reported values; it does NOT compute derivations. For a growth rate, ratio, or margin change, pull the underlying levels and compute yourself. Also the breadth tool: fan out across several companies or metrics in parallel, or pull the card when the chart itself is the deliverable. One card renders inline (see Pick the right card).
 - `tako_available_data`: FREE, and the right tool when the question is **what Tako covers**: does this metric exist, under what exact name, for which entity. It also surfaces entity ambiguity early (`"Costco"` matches both Costco Wholesale Corporation and Costco Wholesale Australia).
-- Protected sources are read-only: S&P Global, FactSet, Visible Alpha, and CoinMarketCap cards come back not exportable, and `tako_contents` cannot export their CSV. This is a licensing wall, not an error, so never retry the export. Read the headline value from the card's `description` and cite the chart. (Fiscal.ai cards export normally.)
+- Protected sources are read-only: S&P Global, FactSet, Visible Alpha, and CoinMarketCap cards come back not exportable, and `tako_contents` cannot export their rows. This is a licensing wall, not an error, so never retry the export. Read the headline value from the card's `description` and cite the chart. (Fiscal.ai cards export normally.)
 - Cohort/ranking asks ("which of the largest US chipmakers grew revenue fastest since 2020?") → resolve the cohort yourself, fire one narrow call per member in parallel, and rank from the results. Recon with `tako_search`; call `tako_contents` per member when you need the actual figures.
 
 ## Query patterns (Critical)
@@ -402,14 +402,14 @@ Reliably NOT in the data graph, and where web carries the answer instead: forwar
 - Empty also means "not covered in Tako," NOT that the fact is false. The response is identical for an uncovered metric and a genuinely-nonexistent one, so never infer a business fact from silence (no dividend card ≠ pays no dividend).
 
 ## Reading a result
-Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
+Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable (and how many rows), its relevance, where its data ends (`coverage_end`, the as-of date), when Tako last refreshed it (`last_updated`), its `nodes` (the graph entities and metrics it was built from), its source name, and its `url` (the card page, and the handle `tako_contents` takes).
 
-Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · data-through date · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `total_rows`, `relevance`, `coverage_end`, `last_updated`, `nodes`, `source` and `url`. "As-of" below always means where the data ends (`coverage_end`), never the refresh date.
 
 ## Pick the right card (Critical)
-A search returns several cards and **#0 is frequently not what was asked for**. The relevance fact does not rescue you: the correct card is routinely tagged `Low` while an off-intent card is `High`. Tako auto-renders #0, so if the right card is elsewhere, reference it explicitly by linking its title to the card's chart URL and say it is the authoritative one. Walk this checklist before quoting any number:
+A search returns several cards and **#0 is frequently not what was asked for**. The relevance fact does not rescue you: the correct card is routinely tagged `Low` while an off-intent card is `High`. Tako auto-renders #0, so if the right card is elsewhere, reference it explicitly by linking its title to the card's `url` and say it is the authoritative one. Walk this checklist before quoting any number:
 
-1. **Right shape?** Prefer a card whose type is `chart` and whose title is the bare metric. Overview cards — "Earnings & Estimates Overview", "Ratios Overview", "Stock Overview" — routinely take #0 and lead with an estimate-vs-actual narrative rather than the value asked for. Skip them unless the question was about estimates. Precision in the query does not save you: `"Apple Gross Margin (%)"`, the exact metric name, still ranks the Overview at #0 and the real chart at #2.
+1. **Right shape?** Prefer a card whose title is the bare metric. Overview cards — "Earnings & Estimates Overview", "Ratios Overview", "Stock Overview" — routinely take #0 and lead with an estimate-vs-actual narrative rather than the value asked for. Skip them unless the question was about estimates. Precision in the query does not save you: `"Apple Gross Margin (%)"`, the exact metric name, still ranks the Overview at #0 and the real chart at #2.
 2. **Right scope?** Segment- and geography-scoped variants outrank the company-wide metric, especially Visible Alpha cards. `"Apple gross margin"` puts "Gross margin - Products" (38.7%) above company-wide gross margin (46.9%); `"JPMorgan net interest income"` returns only "- Corporate & investment banking" cards; every top card for `"Airbnb gross bookings"` is a segment card. If no company-wide card appears, say so — never pass a segment off as the total.
 3. **Right unit?** Asking for a rate can return the level. `"Microsoft operating margin quarterly"` ranks Operating Income ($38.4B) above EBIT Margin (46.3%). Check the units in `description` match the question.
 4. **Actual, not projection?** The as-of date must not be in the future. A future date is NOT confined to cards titled "Analyst Estimates" — a plainly-titled "Toyota Revenues (Normalized) (Annual)" card carried a 2026-12-31 as-of. Trust the as-of date; the title is not a reliable signal.
@@ -435,7 +435,7 @@ A search returns several cards and **#0 is frequently not what was asked for**. 
 ## Output (tight and structured)
 1) A 1–2 line read of the finding, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card
-3) A single `[Open in Tako]` link built from the card's embed URL, for the card you embedded
+3) A single `[Open in Tako]` link built from the card's `url`, for the card you embedded
 
 Step 3: Ask the user to restart Claude Code
 
@@ -487,13 +487,13 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts. All 
 ## Pick the tool
 - `tako_search`: **the default for "how much traffic does <domain> get".** One bare-domain query returns the Visits card; SimilarWeb is licensed, so the card carries NO rows on any path — the figure lives in the card's `description` (latest value + % change over the period) and the chart. Also the breadth tool: the ranked top-sites card, a head-to-head embed, or scanning several domains to see which are covered.
 - `tako_available_data`: FREE brand→entity resolver, and the right tool when the question is what Tako covers. Do NOT use it to rule a domain out (see the empty-result bullet).
-- SimilarWeb is a protected source, so EVERY traffic card is read-only: not exportable, and `tako_contents` cannot export the CSV. This is a licensing wall, not an error, so never call `tako_contents` on a traffic card. The numbers live in the card's `description` (latest value + % change over the period) and the chart. (Web-result urls remain fetchable.)
+- SimilarWeb is a protected source, so EVERY traffic card is read-only: not exportable, and `tako_contents` cannot export the rows. This is a licensing wall, not an error, so never call `tako_contents` on a traffic card. The numbers live in the card's `description` (latest value + % change over the period) and the chart. (Web-result urls remain fetchable.)
 - Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search` (breadth is its job), then one narrow single-domain search per domain in parallel and compute growth from each card's `description` figures.
 
 ## Reading a result
-Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
+Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable (and how many rows), its relevance, where its data ends (`coverage_end`, the as-of date), when Tako last refreshed it (`last_updated`), its `nodes` (the graph entities and metrics it was built from), its source name, and its `url` (the card page, and the handle `tako_contents` takes).
 
-Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · data-through date · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `total_rows`, `relevance`, `coverage_end`, `last_updated`, `nodes`, `source` and `url`. "As-of" below always means where the data ends (`coverage_end`), never the refresh date.
 
 ## Pick the right card (Critical)
 - **Verify by title, not by `nodes`.** Traffic cards list only the metric in `nodes` (`Visits`); the domain never appears there, so the entity check that works elsewhere in Tako is useless here. Confirm the domain in the card's title.
@@ -504,7 +504,7 @@ Both response channels carry the same card fields, so the checks below name the 
 ## Rendering
 - The top result renders inline automatically: an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose; do NOT re-post the card's image URL as a markdown image — that double-renders it.
 - Cite SimilarWeb + the as-of month (read it from the single-series card).
-- Point at any extra cards by linking their titles to their chart URLs — embed only the top card.
+- Point at any extra cards by linking their titles to their `url` — embed only the top card.
 
 ## Examples
 - Single domain (the common case) → tako_search {"query": "netflix.com monthly visits", "sources": ["data", "web"]} — the figure (in the card's `description`) plus its SimilarWeb chart
@@ -517,7 +517,7 @@ Both response channels carry the same card fields, so the checks below name the 
 ## Output (tight and structured)
 1) A 1–2 line read of the traffic, referencing the inline chart
 2) SimilarWeb — as-of month, and say so plainly when a figure came from the web rather than a card
-3) A single `[Open in Tako]` link built from the card's embed URL, for the top card
+3) A single `[Open in Tako]` link built from the card's `url`, for the top card
 
 Step 3: Ask the user to restart Claude Code
 
@@ -576,18 +576,18 @@ Tako serves macro indicators as interactive, citation-backed charts. All tools b
 - Empty is usually genuine non-coverage but has been observed transient, which is why the free coverage check, not a hunch, decides whether a retry is justified. Empty also means "not covered in Tako," NOT that the indicator doesn't exist; don't infer a fact from silence.
 
 ## Reading a result
-Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
+Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable (and how many rows), its relevance, where its data ends (`coverage_end`, the as-of date), when Tako last refreshed it (`last_updated`), its `nodes` (the graph entities and metrics it was built from), its source name, and its `url` (the card page, and the handle `tako_contents` takes).
 
-Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · data-through date · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `total_rows`, `relevance`, `coverage_end`, `last_updated`, `nodes`, `source` and `url`. "As-of" below always means where the data ends (`coverage_end`), never the refresh date.
 
 ## Pick the right card (Critical)
-Tako auto-renders #0, and for macro the **least-specific or stalest card often ranks first**. the relevance fact is unreliable: the correct card is frequently tagged `Low`. If the right card isn't #0, reference it by linking its title to the card's chart URL and say it is the authoritative one. Check, in order:
+Tako auto-renders #0, and for macro the **least-specific or stalest card often ranks first**. the relevance fact is unreliable: the correct card is frequently tagged `Low`. If the right card isn't #0, reference it by linking its title to the card's `url` and say it is the authoritative one. Check, in order:
 
 1. **Right variant?** `"US CPI inflation"` returns three different headline numbers at once — a BIS country card (4.2%), a FRED "Inflation Rate" series (2.9%), and FRED "CPI Inflation Rate (Seasonally Adjusted)" (3.5%). Pick the card whose title matches the variant asked for; don't average them or take whichever is first.
 2. **Fresh, not a stale vintage?** Stale series rank high routinely: that FRED "Inflation Rate" card at #1 ends in Jan 2024, and `"US federal funds rate"` ranks "Fed Funds Target Rate (Historical)", a series that ends in Dec 2008, above the current one. Compare as-of dates across cards and take the freshest match. Freshness also varies by series: Core CPI runs to Jun 2026 while Core PCE stops at Jan 2026, so don't present them as the same vintage.
 3. **Rate, not an index level?** A `(% Change)` card is a rate in percent; a bare "Price Index" card is index points. Confirm from the units in `description`.
 4. **An indicator, not a prediction market?** A Polymarket card answers "what do traders expect," not "what was reported." `"Eurozone inflation rate"` returns exactly this. Only use one when the question is about expectations, and label it as market-implied odds.
-5. **Right country?** Confirm the card's `nodes` names it. Country overview cards (type `card`) sometimes carry no nodes at all — fall back to reading the title.
+5. **Right country?** Confirm the card's `nodes` names it. Country overview cards sometimes carry no nodes at all — fall back to reading the title.
 
 ## Rendering
 - On a comparison card, the as-of date is the QUERY date, not the data date (the US-vs-China card reported the day it was run while its latest point is May 2026). Cite the period from the card's `description`, not that fact.
@@ -605,7 +605,7 @@ Tako auto-renders #0, and for macro the **least-specific or stalest card often r
 ## Output (tight and structured)
 1) A 1–2 line read of the indicator, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card
-3) A single `[Open in Tako]` link built from the card's embed URL, for the card you embedded
+3) A single `[Open in Tako]` link built from the card's `url`, for the card you embedded
 
 Step 3: Ask the user to restart Claude Code
 

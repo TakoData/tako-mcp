@@ -26,13 +26,13 @@ Tako serves SimilarWeb traffic data as interactive, citation-backed charts. All 
 ## Pick the tool
 - `tako_search`: **the default for "how much traffic does <domain> get".** One bare-domain query returns the Visits card; SimilarWeb is licensed, so the card carries NO rows on any path — the figure lives in the card's `description` (latest value + % change over the period) and the chart. Also the breadth tool: the ranked top-sites card, a head-to-head embed, or scanning several domains to see which are covered.
 - `tako_available_data`: FREE brand→entity resolver, and the right tool when the question is what Tako covers. Do NOT use it to rule a domain out (see the empty-result bullet).
-- SimilarWeb is a protected source, so EVERY traffic card is read-only: not exportable, and `tako_contents` cannot export the CSV. This is a licensing wall, not an error, so never call `tako_contents` on a traffic card. The numbers live in the card's `description` (latest value + % change over the period) and the chart. (Web-result urls remain fetchable.)
+- SimilarWeb is a protected source, so EVERY traffic card is read-only: not exportable, and `tako_contents` cannot export the rows. This is a licensing wall, not an error, so never call `tako_contents` on a traffic card. The numbers live in the card's `description` (latest value + % change over the period) and the chart. (Web-result urls remain fetchable.)
 - Cohort/growth asks ("top 5 streaming domains by visits, and which is growing fastest") → get the ranked card with `tako_search` (breadth is its job), then one narrow single-domain search per domain in parallel and compute growth from each card's `description` figures.
 
 ## Reading a result
-Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
+Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable (and how many rows), its relevance, where its data ends (`coverage_end`, the as-of date), when Tako last refreshed it (`last_updated`), its `nodes` (the graph entities and metrics it was built from), its source name, and its `url` (the card page, and the handle `tako_contents` takes).
 
-Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · data-through date · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `total_rows`, `relevance`, `coverage_end`, `last_updated`, `nodes`, `source` and `url`. "As-of" below always means where the data ends (`coverage_end`), never the refresh date.
 
 ## Pick the right card (Critical)
 - **Verify by title, not by `nodes`.** Traffic cards list only the metric in `nodes` (`Visits`); the domain never appears there, so the entity check that works elsewhere in Tako is useless here. Confirm the domain in the card's title.
@@ -43,7 +43,7 @@ Both response channels carry the same card fields, so the checks below name the 
 ## Rendering
 - The top result renders inline automatically: an interactive widget on ChatGPT, a chart image on other hosts. Reference it in prose; do NOT re-post the card's image URL as a markdown image — that double-renders it.
 - Cite SimilarWeb + the as-of month (read it from the single-series card).
-- Point at any extra cards by linking their titles to their chart URLs — embed only the top card.
+- Point at any extra cards by linking their titles to their `url` — embed only the top card.
 
 ## Examples
 - Single domain (the common case) → tako_search {"query": "netflix.com monthly visits", "sources": ["data", "web"]} — the figure (in the card's `description`) plus its SimilarWeb chart
@@ -56,4 +56,4 @@ Both response channels carry the same card fields, so the checks below name the 
 ## Output (tight and structured)
 1) A 1–2 line read of the traffic, referencing the inline chart
 2) SimilarWeb — as-of month, and say so plainly when a figure came from the web rather than a card
-3) A single `[Open in Tako]` link built from the card's embed URL, for the top card
+3) A single `[Open in Tako]` link built from the card's `url`, for the top card

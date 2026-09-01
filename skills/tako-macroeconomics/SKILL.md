@@ -33,18 +33,18 @@ Tako serves macro indicators as interactive, citation-backed charts. All tools b
 - Empty is usually genuine non-coverage but has been observed transient, which is why the free coverage check, not a hunch, decides whether a retry is justified. Empty also means "not covered in Tako," NOT that the indicator doesn't exist; don't infer a fact from silence.
 
 ## Reading a result
-Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable, its relevance, its card type, its as-of date, its `nodes` (the graph entities and metrics it was built from), its source name, and its chart/embed URLs.
+Every card carries a title, a `description` holding the headline value, and retrieval facts: whether it is exportable (and how many rows), its relevance, where its data ends (`coverage_end`, the as-of date), when Tako last refreshed it (`last_updated`), its `nodes` (the graph entities and metrics it was built from), its source name, and its `url` (the card page, and the handle `tako_contents` takes).
 
-Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `relevance`, `last_updated`, `nodes`, `source` and `url`.
+Both response channels carry the same card fields, so the checks below name the **concept** and you read whichever your response carries. A markdown response prints them under the card heading (`url` · exportable and row count, then `source` · data-through date · refreshed date · relevance, then node ids); a JSON response uses `exportable`, `total_rows`, `relevance`, `coverage_end`, `last_updated`, `nodes`, `source` and `url`. "As-of" below always means where the data ends (`coverage_end`), never the refresh date.
 
 ## Pick the right card (Critical)
-Tako auto-renders #0, and for macro the **least-specific or stalest card often ranks first**. the relevance fact is unreliable: the correct card is frequently tagged `Low`. If the right card isn't #0, reference it by linking its title to the card's chart URL and say it is the authoritative one. Check, in order:
+Tako auto-renders #0, and for macro the **least-specific or stalest card often ranks first**. the relevance fact is unreliable: the correct card is frequently tagged `Low`. If the right card isn't #0, reference it by linking its title to the card's `url` and say it is the authoritative one. Check, in order:
 
 1. **Right variant?** `"US CPI inflation"` returns three different headline numbers at once — a BIS country card (4.2%), a FRED "Inflation Rate" series (2.9%), and FRED "CPI Inflation Rate (Seasonally Adjusted)" (3.5%). Pick the card whose title matches the variant asked for; don't average them or take whichever is first.
 2. **Fresh, not a stale vintage?** Stale series rank high routinely: that FRED "Inflation Rate" card at #1 ends in Jan 2024, and `"US federal funds rate"` ranks "Fed Funds Target Rate (Historical)", a series that ends in Dec 2008, above the current one. Compare as-of dates across cards and take the freshest match. Freshness also varies by series: Core CPI runs to Jun 2026 while Core PCE stops at Jan 2026, so don't present them as the same vintage.
 3. **Rate, not an index level?** A `(% Change)` card is a rate in percent; a bare "Price Index" card is index points. Confirm from the units in `description`.
 4. **An indicator, not a prediction market?** A Polymarket card answers "what do traders expect," not "what was reported." `"Eurozone inflation rate"` returns exactly this. Only use one when the question is about expectations, and label it as market-implied odds.
-5. **Right country?** Confirm the card's `nodes` names it. Country overview cards (type `card`) sometimes carry no nodes at all — fall back to reading the title.
+5. **Right country?** Confirm the card's `nodes` names it. Country overview cards sometimes carry no nodes at all — fall back to reading the title.
 
 ## Rendering
 - On a comparison card, the as-of date is the QUERY date, not the data date (the US-vs-China card reported the day it was run while its latest point is May 2026). Cite the period from the card's `description`, not that fact.
@@ -62,4 +62,4 @@ Tako auto-renders #0, and for macro the **least-specific or stalest card often r
 ## Output (tight and structured)
 1) A 1–2 line read of the indicator, referencing the intent-matched chart
 2) Source name — as-of date, and say so plainly when a figure came from the web rather than a card
-3) A single `[Open in Tako]` link built from the card's embed URL, for the card you embedded
+3) A single `[Open in Tako]` link built from the card's `url`, for the card you embedded
