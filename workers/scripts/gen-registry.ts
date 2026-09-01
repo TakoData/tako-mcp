@@ -646,15 +646,16 @@ export const INSTRUCTIONS_MAX_CHARS = 900;
 export const OUTPUT_SCHEMA_MAX_CHARS = 2_000;
 
 /**
- * Shrink-only ceilings for the output schemas already over the cap, the same
- * bargain `LEGACY_PROSE_CEILINGS` strikes for prose: a listed tool may shrink
- * freely, and growing fails generation.
+ * Shrink-only ceilings for the output schemas already over the cap: a listed
+ * tool may shrink freely, and growing fails generation.
  *
- * Separate from that map on purpose. A tool listed there is exempt from the
- * PROSE caps because its description has not been rewritten; `tako_search` has
- * been rewritten and holds every prose cap. Only its schema is oversized, and
- * folding it into the prose ratchet would silently switch off four caps it
- * currently passes.
+ * This is the LAST ratchet, and it is a different bargain from the prose one
+ * that used to sit beside it (deleted once every tool was migrated). A tool is
+ * listed here because its schema is structurally over 2,000 — the card shape,
+ * the answer fold, `rows` — not because its prose is unrewritten. Every tool
+ * listed holds all four prose caps. Do not fold a tool in here to buy room for
+ * a long description; that is what the prose ratchet did, and its rows went
+ * stale.
  *
  * 1,379 of `tako_search`'s 3,245 is field descriptions — `coverage_end` alone
  * spends 233 explaining itself against `last_updated`. That is what its fan-out
@@ -699,20 +700,13 @@ export const LEGACY_OUTPUT_SCHEMA_CEILINGS: Record<string, { generic: number; ch
   tako_search_advanced: { generic: 4832, chatgpt: 4832 },
 };
 
-/**
- * The ratchet for tools the redesign has not reached yet: each fan-out PR
- * rewrites one tool, deletes its row here, and the caps above take over.
- * A listed tool may SHRINK freely; growing past its recorded ceiling fails
- * generation, so legacy prose can only move toward the cap. Numbers are the
- * measured sizes when the gate landed (see the pilot PR).
- */
-export const LEGACY_PROSE_CEILINGS: Record<
-  string,
-  { description: number; param: number; entry: number }
-> = {
-  // Measured 2026-08-30, the day the gate landed. Delete a row when its
-  // tool's fan-out PR lands the rewrite.
-};
+// NO PROSE RATCHET ANY MORE. It was deleted with its last row: every tool is
+// migrated, so the D1 caps below apply to all of them unconditionally, which is
+// what each fan-out PR was working toward. Do not reintroduce a per-tool
+// ceiling map to land a tool that does not fit — the caps are the contract, and
+// an exemption outliving its migration is how a row goes stale
+// (`tako_search_advanced` sat at a 4,860-char entry ceiling for three PRs after
+// the text it measured had been rewritten).
 
 export function assertProseBudget(
   // Narrowed to the fields this reads, like every sibling assert helper: the
@@ -734,24 +728,6 @@ export function assertProseBudget(
     );
     const maxParam = paramLens.reduce((a, [, len]) => Math.max(a, len), 0);
     const entry = m.description.length + paramLens.reduce((a, [, len]) => a + len, 0);
-    const legacy = LEGACY_PROSE_CEILINGS[m.name];
-    if (legacy !== undefined) {
-      if (m.description.length > legacy.description)
-        failures.push(
-          `${m.name}: description grew to ${m.description.length} chars (legacy ceiling ${legacy.description}). Legacy prose only shrinks; rewrite it to the ${DESCRIPTION_MAX_CHARS}-char cap instead.`,
-        );
-      if (maxParam > legacy.param)
-        failures.push(
-          `${m.name}: a parameter description grew to ${maxParam} chars (legacy ceiling ${legacy.param}).`,
-        );
-      if (entry > legacy.entry)
-        failures.push(`${m.name}: tool entry grew to ${entry} chars (legacy ceiling ${legacy.entry}).`);
-      // A ratcheted tool is exempt from the LINE cap and the per-param cap too,
-      // not just the char ceilings: legacy prose is multi-paragraph by
-      // construction, and those two caps only become meaningful once the tool
-      // has been rewritten. Deleting the row is what turns them on.
-      continue;
-    }
     if (m.description.length > DESCRIPTION_MAX_CHARS)
       failures.push(
         `${m.name}: description is ${m.description.length} chars (cap ${DESCRIPTION_MAX_CHARS}).`,
