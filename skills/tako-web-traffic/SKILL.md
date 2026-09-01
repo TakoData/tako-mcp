@@ -6,22 +6,22 @@ description: >-
 
 # Web & App Traffic (Tako)
 
-Tako serves SimilarWeb traffic data as structured, cited data: each result is a card carrying the headline value and a chart of the series (the rows are licensed and don't export). All tools below live on the Tako MCP server (server name `tako`). The tool descriptions and every result already carry the card fields and the zero-card recovery; this skill covers the one rule that decides success here, which card to trust, and how to report.
+Tako serves SimilarWeb traffic data as structured, cited data: each result is a card carrying the headline value and a chart of the series (the rows are licensed and don't export). All tools below live on the Tako MCP server (server name `tako`). The tool descriptions and every result already carry the card fields, the `sources` guidance and the zero-card recovery; this skill covers how to shape a traffic query, how to check a card against the question, and how to report.
 
 ## Workflow
 
-1. **Query by DOMAIN, not brand**: `"netflix.com monthly visits"`, `"chatgpt.com"`. Traffic data is keyed by domain, so a brand query (`"Netflix traffic"`) returns the company's subscriber or revenue cards, plausible numbers that aren't traffic, while the web results return network-engineering articles. Resolve the brand to its domain yourself before searching. If no card titled `<domain> Monthly Visits` is in the result, you don't have the traffic number yet.
-2. **For app usage, query app name + metric**: `"Spotify app monthly active users"`. SimilarWeb app cards are keyed by the bare app name, not a domain.
-3. **Call `tako_search`** with the default sources; web results add competitive write-ups and ranking roundups. Narrow to `["data"]` in a parallel fan-out.
-4. **Read the figure from `description`**: the latest monthly value and the % change over the period. Every SimilarWeb card is licensed and locked (`exportable: false`), so never call `tako_contents` on a traffic card; the description and the chart are the data. Web-result urls remain fetchable.
-5. **Zero cards?** The cause is almost always a brand-shaped query: fix it to the bare domain and retry once. If a domain query is still empty, answer from the web results and label the figure web-sourced. Don't use `tako_available_data` to rule a domain out; its graph is entity-based and misses long-tail domains SimilarWeb covers. It is still the right free call to resolve a brand to its entity and `node_id` for `tako_graph_related`.
+1. **Query by domain**: `"netflix.com monthly visits"`, `"chatgpt.com"`. Traffic data is keyed by domain, so resolve a brand to its domain yourself; a brand can also match the company's own reported figures (subscribers, revenue), which are not traffic. For app usage, query app name + metric: `"Spotify app monthly active users"`. App cards are keyed by the bare app name.
+2. **Call `tako_search`** with the default sources. Web results add competitive write-ups and ranking roundups.
+3. **Check the top card against the question** with the list below. You have the traffic number only when the card's title is `<domain> Monthly Visits` (or the app's active-users card).
+4. **Read the figure from `description`**: the latest monthly value and the % change over the period. Every SimilarWeb card is locked (`exportable: false`), so never call `tako_contents` on a traffic card; the description and the chart are the data. Web-result urls remain fetchable.
+5. **Zero cards?** If the query wasn't a bare domain, make it one and retry once. If a domain query is still empty, answer from the web results and label the figure web-sourced. Don't use `tako_available_data` to rule a domain out: its graph is entity-based and misses long-tail domains SimilarWeb covers. It is still the right free call to resolve a brand to its entity and `node_id` for `tako_graph_related`.
 
-## Choosing the right card
+## Checking a card against the question
 
-1. **Verify the domain in the title, not in `nodes`.** Traffic cards list only the metric in `nodes`; the domain never appears there.
-2. **Single-series for absolute visits, comparison for relative.** An `"A vs B"` card's description reports each series as a % change over the period, not absolute visits; the same search usually also returns each domain's single-series card. Read absolutes from those.
-3. **Watch the metric family.** SimilarWeb app "Monthly Active Users" and a company's own reported MAU are different numbers from different sources, and both can appear in one result. Say which you're quoting.
-4. **`coverage_end` is the data month**, about one month behind today. Cite it.
+1. **Domain, from the title.** Traffic cards list only the metric in `nodes`; the domain never appears there, so the entity check that works elsewhere doesn't apply.
+2. **Absolute vs relative.** An `"A vs B"` card's description reports each series as a % change over the period; the same search also returns each domain's single-series card. Read absolute visits from those.
+3. **Metric family.** SimilarWeb app "Monthly Active Users" and a company's own reported MAU are different numbers from different sources, and both can appear in one result. Say which you're quoting.
+4. **Month.** `coverage_end` is the data month, about one month behind today. Cite it.
 
 ## Output
 
