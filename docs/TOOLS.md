@@ -2026,11 +2026,11 @@ usage: $0.015
 
 Description:
 
-Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.
+Get one citation-backed answer (`include_answer: true`), or search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.
 
-Only `query` is required; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.
+Only `query` is required; an omitted field takes the server default its description names. Naming a source block (even `{}`) selects it; omit both to search data and web. `data.include_contents` inlines each card's rows, billed per card — cap with `data.max_rows`, or fetch a card's rows with `tako_contents` instead.
 
-Best for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.
+Best for: a written answer, not a result list (`include_answer` puts it in `answer`), and a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `output_schema` fills a JSON Schema from the evidence into `structured_output`.
 
 Parameters:
 
