@@ -46,8 +46,10 @@ import {
   webResultSchema,
   type Usage,
 } from "../src/tools/_search_results.js";
+import { projectAgentRun, type AgentRunWireLike } from "../src/tools/_agent_run.js";
 import {
   fenceRunFor,
+  renderAgentRunMarkdown,
   renderAvailableDataMarkdown,
   renderContentsText,
   renderGraphRelatedMarkdown,
@@ -692,7 +694,6 @@ export const LEGACY_PROSE_CEILINGS: Record<
 > = {
   // Measured 2026-08-30, the day the gate landed. Delete a row when its
   // tool's fan-out PR lands the rewrite.
-  tako_agent: { description: 448, param: 489, entry: 1134 },
   // Re-baselined after #273 folded tako_answer in and exposed the whole
   // SearchRequest body — the generated param prose is a cross-repo fix
   // (the tako repo's schema builder), tracked for that tool's fan-out PR.
@@ -953,6 +954,23 @@ function buildGraphRelatedSample(tool: ToolModule): ToolSample {
   };
 }
 
+const AGENT_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_agent_sample.json");
+
+function buildAgentSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(AGENT_SAMPLE_FIXTURE, "utf8")) as AgentRunWireLike;
+  const output = projectAgentRun(raw);
+  return {
+    structured: pickDeclared(
+      // One schema on both surfaces (no widget fields), but resolved through
+      // the same helper the server uses, so a future per-surface variant
+      // cannot silently skip the sample.
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderAgentRunMarkdown(output),
+  };
+}
+
 export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string, ToolSample> {
   const samples = new Map<string, ToolSample>();
   for (const m of modules) {
@@ -963,6 +981,7 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
     if (m.name === "tako_visualize") samples.set(m.name, buildVisualizeSample(m));
     if (m.name === "tako_available_data") samples.set(m.name, buildAvailableDataSample(m));
     if (m.name === "tako_graph_related") samples.set(m.name, buildGraphRelatedSample(m));
+    if (m.name === "tako_agent") samples.set(m.name, buildAgentSample(m));
   }
   return samples;
 }

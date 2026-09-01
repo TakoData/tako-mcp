@@ -571,18 +571,24 @@ export type TopCardChartFields = {
 // `slimCardContent` survives because `projectCard` caps inlined rows with it.
 // ---------------------------------------------------------------------------
 
+// Exported for `_agent_run.ts`, which projects the same vocabulary (`url`,
+// `source`, `last_updated`) off a different wire shape. A second copy would
+// let one channel start trimming dates differently from the other.
 export const nonEmpty = (v: unknown): string | undefined =>
   typeof v === "string" && v.trim() !== "" ? v : undefined;
 
 // Date-only per the field vocabulary: recency matters, time-of-day doesn't.
-const dateOnly = (v: unknown): string | undefined => {
+export const dateOnly = (v: unknown): string | undefined => {
   const s = nonEmpty(v);
   if (s === undefined) return undefined;
   const m = /^\d{4}-\d{2}-\d{2}/.exec(s);
   return m ? m[0] : s;
 };
 
-const sourceNamesOf = (rec: Record<string, unknown>): string[] => {
+// Exported for `_agent_run.ts`, for the reason `nonEmpty` and `dateOnly` are:
+// a second copy lets one channel start naming sources differently from the
+// other.
+export const sourceNamesOf = (rec: Record<string, unknown>): string[] => {
   if (!Array.isArray(rec.sources)) return [];
   const names: string[] = [];
   for (const entry of rec.sources) {

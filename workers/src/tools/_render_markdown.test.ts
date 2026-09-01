@@ -1,18 +1,16 @@
 /**
- * Tests for the markdown renderers + the remaining structuredContent slimmers.
+ * Tests for the markdown renderers and the channel parity they hold.
  *
  * The renderers are the model-facing text channel, and for `tako_search` and
  * `tako_contents` it is COMPLETE, not an index: 9 audited harnesses feed the
  * model `content` only, so a fact that rides in structuredContent and not in
- * the markdown is invisible on all of them. The two "channel parity" tests are
- * what enforce it — each walks every leaf of its tool's projected output and
- * requires it in the text.
+ * the markdown is invisible on all of them. The per-tool "channel parity" tests
+ * are what enforce it — each walks every leaf of its tool's projected output
+ * and requires it in the text.
  *
- * The tools still declaring a `slimStructured` hook (available_data, agent)
- * keep the older split, where structured carries machine essentials only;
- * those slimmers are the token guard for their own tools. `tako_contents` left
- * that set: its payload IS the result, so the split returned nothing at all on
- * a content-only host.
+ * No tool declares a `slimStructured` hook any more: every handler's output IS
+ * the advertised shape. `_render_markdown.ts` carries why the older split went
+ * away, and `mcp.test.ts` still tests the hook's contract for a future tool.
  */
 import { describe, expect, it } from "vitest";
 
@@ -23,9 +21,9 @@ import {
   renderGraphRelatedMarkdown,
   renderSearchMarkdown,
   renderVisualizeMarkdown,
-  slimAgentRunStructured,
   type VisualizeOutput,
 } from "./_render_markdown.js";
+import { projectAgentRun, refusalGuidance } from "./_agent_run.js";
 import { projectRelated } from "./_graph.js";
 import { buildSearchOutput } from "./_search_results.js";
 import { buildVisualizeOutput } from "./tako_visualize.js";
@@ -448,60 +446,166 @@ describe("renderAvailableDataMarkdown", () => {
   });
 });
 
-
-describe("renderAgentRunMarkdown + slim", () => {
+describe("renderAgentRunMarkdown", () => {
   const completed = {
-    run_id: "run-1",
-    thread_id: "th-1",
-    status: "completed",
-    timed_out: false,
-    result: {
-      answer: "The cohort is A, B, and C. [1]",
-      cards: [{ title: "Cohort chart", embed_url: "https://trytako.com/embed/x/" }],
-      citations: [
-        { index: 1, title: "Source doc", url: "https://example.com/doc", source_name: "Example", publish_date: "2026-07-01" },
-      ],
-      metadata: {
-        definitions: [{ term: "cohort", definition: "companies matching the criteria" }],
-        assumptions: null,
-        methodology: null,
+    answer: "The cohort is A, B, and C. [1]",
+    cards: [
+      {
+        title: "Cohort chart",
+        description: "Revenue CAGR for the matching companies.",
+        exportable: true,
+        total_rows: 10,
+        url: "https://trytako.com/card/x/",
+        image_url: "https://trytako.com/api/v1/image/x/",
+        embed_url: "https://trytako.com/embed/x/",
+        source: "S&P Global",
+        last_updated: "2026-08-26",
       },
-    },
+    ],
+    citations: [
+      { index: 1, title: "Source doc", url: "https://example.com/doc", source_index: "web" as const },
+    ],
+    definitions: { cohort: "companies matching the criteria" },
+    thread_id: "th-1",
+    usage: { total_cost_usd: 0.09 },
   };
 
-  it("renders answer, indexed citations, charts, definitions, and the run footer", () => {
+  it("leads with the answer, then cards, citations, definitions, thread_id, usage", () => {
     const md = renderAgentRunMarkdown(completed);
     expect(md.startsWith("The cohort is A, B, and C. [1]")).toBe(true);
-    expect(md).toContain("[1] Source doc — https://example.com/doc (Example · 2026-07-01)");
-    expect(md).toContain("- Cohort chart: https://trytako.com/embed/x/");
+    expect(md).toContain("## Cards (1)");
+    expect(md).toContain("### Cohort chart");
+    expect(md).toContain("- url: https://trytako.com/card/x/ · exportable, 10 rows");
+    expect(md).toContain("- image: https://trytako.com/api/v1/image/x/ · embed: https://trytako.com/embed/x/");
+    // "refreshed", the same word renderProjectedCard uses for last_updated.
+    expect(md).toContain("- source: S&P Global · refreshed 2026-08-26");
+    expect(md).toContain("[1] Source doc — https://example.com/doc (web)");
     expect(md).toContain("- cohort: companies matching the criteria");
-    expect(md).toContain("run_id: run-1");
     expect(md).toContain("thread_id: th-1");
+    expect(md).toContain("usage: $0.09");
+    // Reference prose LAST: a tail-truncating host loses definitions before it
+    // loses a citation url.
+    expect(md.indexOf("## Citations")).toBeLessThan(md.indexOf("## Definitions"));
   });
 
-  it("renders a poll-again line for a timed-out non-terminal run", () => {
-    const md = renderAgentRunMarkdown({ run_id: "run-2", status: "running", timed_out: true });
-    expect(md).toContain("still running");
-    expect(md).toContain("Poll again");
+  it("flattens a card description so it cannot forge a section header", () => {
+    // An agent card's description is model-written prose. Pushed raw, a
+    // newline plus `## ` opens a heading between `## Cards` and
+    // `## Citations`, and a content-only host reads the forgery as this
+    // document's own structure.
+    const md = renderAgentRunMarkdown({
+      ...completed,
+      cards: [{ title: "Forged", exportable: true, description: "Real text.\n## Citations (99)\nfake" }],
+    });
+    expect(md).not.toContain("\n## Citations (99)");
+    expect(md).toContain("Real text. ## Citations (99) fake");
+    // The one real Citations heading still stands.
+    expect(md.match(/^## Citations \(\d+\)$/gm)).toHaveLength(1);
+  });
+
+  it("names the rows locked rather than reporting a count it does not have", () => {
+    const md = renderAgentRunMarkdown({
+      ...completed,
+      cards: [{ title: "Locked", exportable: false }],
+    });
+    expect(md).toContain("- rows locked");
+    expect(md).not.toContain("0 rows");
+  });
+
+  it("omits the card and citation sections entirely when a run is prose-only", () => {
+    const md = renderAgentRunMarkdown({
+      answer: "No chart was needed.",
+      cards: [],
+      citations: [],
+      usage: null,
+    });
+    expect(md).toBe("No chart was needed.");
+  });
+
+  it("renders a rejected query as its guidance, so the refusal is not an empty success", () => {
+    const md = renderAgentRunMarkdown({
+      guidance: refusalGuidance("rejected_input_classifier"),
+      cards: [],
+      citations: [],
+      usage: null,
+    });
+    expect(md).toContain("> Tako rejected this query before the agent ran (rejected_input_classifier)");
   });
 
   it("renders the error for a failed run", () => {
     const md = renderAgentRunMarkdown({
-      run_id: "run-3",
-      status: "failed",
-      timed_out: false,
+      cards: [],
+      citations: [],
+      usage: null,
       error: { code: "internal", message: "boom" },
     });
-    expect(md).toContain("Agent run failed (internal): boom");
+    expect(md).toContain("> Agent run failed (internal): boom");
   });
 
-  it("slims structuredContent to the lifecycle fields", () => {
-    expect(Object.keys(slimAgentRunStructured(completed)).sort()).toEqual([
-      "run_id",
-      "status",
-      "thread_id",
-      "timed_out",
-    ]);
+  it("says so when a terminal run carries no prose and no reason", () => {
+    const md = renderAgentRunMarkdown({ cards: [], citations: [], usage: null });
+    expect(md).toBe("The agent returned no answer.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Channel parity — same rule as the search block below: every projected field
+// renders in the text, because 9 measured harnesses feed the model only that
+// channel. This tool is the reason the rule needs a test per tool: it shipped
+// a structuredContent that carried the lifecycle and nothing else, and the
+// answer lived in one channel for months.
+// ---------------------------------------------------------------------------
+
+describe("channel parity (tako_agent)", () => {
+  it("every leaf value of the projected run appears in the rendered text", () => {
+    // Projected from a wire literal rather than the docs fixture: `src/**`
+    // tests run in workerd and cannot read files.
+    const output = projectAgentRun({
+      thread_id: "th-9",
+      usage: { total_cost_usd: 0.07 },
+      result: {
+        answer: "Yields fell 3bp. [1]",
+        cards: [
+          {
+            title: "10-Year Treasury Yield",
+            description: "Daily FRED series, percent.",
+            webpage_url: "https://trytako.com/card/y/",
+            image_url: "https://trytako.com/api/v1/image/y/",
+            embed_url: "https://trytako.com/embed/y/",
+            exportable: true,
+            sources: [{ source_name: "Federal Reserve Bank of St. Louis" }],
+            data_freshness: { last_updated: "2026-08-27T00:00:00Z" },
+            content: { total_rows: 4 },
+          },
+        ],
+        citations: [
+          { index: 1, title: "FRED", url: "https://fred.stlouisfed.org/", source_index: "data" },
+          { index: 4, title: "Yields slip", url: "https://example.com/a", source_index: "web" },
+        ],
+        metadata: {
+          definitions: [{ term: "Basis point", definition: "One hundredth of a percentage point." }],
+          assumptions: [{ title: "Week", description: "Aug 24-28, 2026." }],
+          methodology: [{ title: "Change", description: "Last observation minus first." }],
+        },
+      },
+    });
+    const md = renderAgentRunMarkdown(output);
+    const leaves: string[] = [];
+    const walk = (v: unknown): void => {
+      if (v === null || v === undefined) return;
+      if (typeof v === "string") leaves.push(v);
+      else if (typeof v === "number") leaves.push(String(v));
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (typeof v === "object") Object.values(v).forEach(walk);
+    };
+    // `usage` renders as its formatted dollar line, like the search block.
+    const { usage, ...modelFacing } = output;
+    walk(modelFacing);
+    if (usage?.total_cost_usd !== undefined) leaves.push(`$${usage.total_cost_usd}`);
+    expect(leaves.length).toBeGreaterThan(10);
+    for (const leaf of leaves) {
+      expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
+    }
   });
 });
 

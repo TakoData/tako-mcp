@@ -62,19 +62,19 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 Description:
 
-Run Tako's Answer Agent: multi-step research returning a synthesized, cited `answer` plus chart `cards`.
+Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.
 
-Best for: questions whose shape needs figuring out — cohorts ("which companies match…"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` returns nothing.
+Best for questions whose shape you'd have to work out first: cohorts ("which companies match…"), ranking or screening by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing.
 
-Not for: a known value or a simple comparison — use `tako_search` (faster). This runs ~30–90s but is far more thorough.
+Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | yes |  | The deep/analytical question for the agent to work through. |
-| `sources` | array | no | `["data","web"]` | Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph. |
-| `thread_id` | string | no |  | Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread. |
+| `query` | string | yes |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. |
+| `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
+| `thread_id` | string | no |  | A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -99,14 +99,14 @@ Annotations:
     "query": {
       "type": "string",
       "minLength": 1,
-      "description": "The deep/analytical question for the agent to work through."
+      "description": "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps."
     },
     "sources": {
       "default": [
         "data",
         "web"
       ],
-      "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph.",
+      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
       "minItems": 1,
       "type": "array",
       "items": {
@@ -118,7 +118,7 @@ Annotations:
       }
     },
     "thread_id": {
-      "description": "Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread.",
+      "description": "A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.",
       "type": "string",
       "format": "uuid",
       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
@@ -138,59 +138,257 @@ Annotations:
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "run_id": {
+    "answer": {
+      "description": "Its [n] markers join to `citations`.",
       "type": "string"
     },
-    "status": {
-      "type": "string",
-      "description": "queued | running | completed | failed."
+    "guidance": {
+      "description": "Rejected queries only.",
+      "type": "string"
     },
-    "timed_out": {
-      "type": "boolean",
-      "description": "True when the wait window elapsed before a terminal status — poll again with the same run_id."
+    "cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "exportable": {
+            "type": "boolean",
+            "description": "false → the rows are locked."
+          },
+          "url": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "embed_url": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "last_updated": {
+            "description": "When Tako last refreshed the card.",
+            "type": "string"
+          },
+          "total_rows": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "exportable"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "Pass an exportable card's `url` to tako_contents for its rows."
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "number",
+            "description": "The number an [n] marker joins to; sparse."
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "source_index": {
+            "description": "`web` → a page `tako_contents` can fetch. `data` → a source's home page.",
+            "type": "string",
+            "enum": [
+              "data",
+              "web"
+            ]
+          }
+        },
+        "required": [
+          "index",
+          "title"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "definitions": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "assumptions": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "methodology": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
     },
     "thread_id": {
-      "description": "Pass back as thread_id to ask a follow-up in the same conversation.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "description": "Send back as `thread_id` for a follow-up.",
+      "type": "string"
     },
-    "error": {
+    "usage": {
       "anyOf": [
         {
           "type": "object",
           "properties": {
-            "code": {
-              "type": "string"
-            },
-            "message": {
-              "type": "string"
+            "total_cost_usd": {
+              "type": "number"
             }
           },
           "required": [
-            "code",
-            "message"
+            "total_cost_usd"
           ],
           "additionalProperties": {}
         },
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Null when not metered."
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": {}
     }
   },
   "required": [
-    "run_id",
-    "status",
-    "timed_out"
+    "cards",
+    "citations",
+    "usage"
   ],
   "additionalProperties": false
 }
+```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "answer": "Surf Air Mobility grew revenue fastest among the screened US airline companies from 2022 to 2025, with a three-year CAGR of 73.9% [1]. Global Crossing Airlines Group ranked second at 36.4% [1].\n\nAmong larger scheduled carriers, Alaska Air Group led at 13.9% CAGR, with revenue rising from $9.6 billion to $14.2 billion [1]. United Airlines Holdings followed at 9.4%, and Delta Air Lines at 8.5% [1]. Coverage of the 2025 filing season is still incomplete for smaller charter operators [3].\n\nThe ranking uses revenue CAGR, calculated as (2025 revenue / 2022 revenue)^(1/3) - 1, over the 21 US-headquartered companies with normalized revenue for both endpoint years [1].",
+  "cards": [
+    {
+      "exportable": true,
+      "title": "Fastest US Airline Revenue Growth",
+      "description": "Three-year revenue CAGR for US-headquartered companies in Tako's Airlines industry, 2022 to 2025, top 10 of 21 screened. Normalized financials, which may differ from as-reported figures.",
+      "url": "https://tako.com/card/CpQeOBcKjz8VM8-wNlEV/",
+      "image_url": "https://tako.com/api/v1/image/CpQeOBcKjz8VM8-wNlEV/",
+      "embed_url": "https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/?showShare=true",
+      "source": "S&P Global",
+      "last_updated": "2026-08-26",
+      "total_rows": 10
+    }
+  ],
+  "citations": [
+    {
+      "index": 1,
+      "title": "S&P Global",
+      "url": "https://www.spglobal.com/",
+      "source_index": "data"
+    },
+    {
+      "index": 3,
+      "title": "Regional carriers lag the majors on 2025 revenue recovery",
+      "url": "https://www.reuters.com/business/aerospace-defense/regional-carriers-lag-majors-2025-revenue-recovery-2026-03-18/",
+      "source_index": "web"
+    },
+    {
+      "index": 5,
+      "title": "Alaska Air Group reports full-year 2025 results",
+      "url": "https://investor.alaskaair.com/news-releases/news-release-details/alaska-air-group-reports-full-year-2025-results",
+      "source_index": "web"
+    }
+  ],
+  "definitions": {
+    "Revenue CAGR": "Compound annual growth rate: the constant annual rate that would produce the observed change between the beginning and ending revenue over the stated period.",
+    "Normalized revenue": "Revenue standardized across companies to improve comparability; it may differ from the exact figures reported in a company's filings."
+  },
+  "assumptions": {
+    "Interpretation of \"last three years\"": "The comparison treats the latest three-year window as calendar 2022 through calendar 2025, using the two endpoint years and three annual growth intervals."
+  },
+  "methodology": {
+    "Ranking method": "Companies were ranked by three-year revenue CAGR between calendar 2022 and calendar 2025, rather than by absolute dollar growth.",
+    "Coverage and scope": "The screen included 21 US-headquartered companies classified broadly as airlines, including passenger, cargo, regional, charter, and other operators. Only companies with revenue observations for both endpoint years were ranked."
+  },
+  "thread_id": "cde6ed80-ab7d-464b-baa9-793fcb418a62",
+  "usage": {
+    "total_cost_usd": 0.09314,
+    "compute": {
+      "cost_usd": 0.09314
+    }
+  }
+}
+```
+
+`content[0].text`:
+
+```markdown
+Surf Air Mobility grew revenue fastest among the screened US airline companies from 2022 to 2025, with a three-year CAGR of 73.9% [1]. Global Crossing Airlines Group ranked second at 36.4% [1].
+
+Among larger scheduled carriers, Alaska Air Group led at 13.9% CAGR, with revenue rising from $9.6 billion to $14.2 billion [1]. United Airlines Holdings followed at 9.4%, and Delta Air Lines at 8.5% [1]. Coverage of the 2025 filing season is still incomplete for smaller charter operators [3].
+
+The ranking uses revenue CAGR, calculated as (2025 revenue / 2022 revenue)^(1/3) - 1, over the 21 US-headquartered companies with normalized revenue for both endpoint years [1].
+
+## Cards (1)
+
+### Fastest US Airline Revenue Growth
+Three-year revenue CAGR for US-headquartered companies in Tako's Airlines industry, 2022 to 2025, top 10 of 21 screened. Normalized financials, which may differ from as-reported figures.
+- url: https://tako.com/card/CpQeOBcKjz8VM8-wNlEV/ · exportable, 10 rows
+- image: https://tako.com/api/v1/image/CpQeOBcKjz8VM8-wNlEV/ · embed: https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/?showShare=true
+- source: S&P Global · refreshed 2026-08-26
+
+## Citations (3)
+
+[1] S&P Global — https://www.spglobal.com/ (data)
+[3] Regional carriers lag the majors on 2025 revenue recovery — https://www.reuters.com/business/aerospace-defense/regional-carriers-lag-majors-2025-revenue-recovery-2026-03-18/ (web)
+[5] Alaska Air Group reports full-year 2025 results — https://investor.alaskaair.com/news-releases/news-release-details/alaska-air-group-reports-full-year-2025-results (web)
+
+## Definitions
+- Revenue CAGR: Compound annual growth rate: the constant annual rate that would produce the observed change between the beginning and ending revenue over the stated period.
+- Normalized revenue: Revenue standardized across companies to improve comparability; it may differ from the exact figures reported in a company's filings.
+
+## Assumptions
+- Interpretation of "last three years": The comparison treats the latest three-year window as calendar 2022 through calendar 2025, using the two endpoint years and three annual growth intervals.
+
+## Methodology
+- Ranking method: Companies were ranked by three-year revenue CAGR between calendar 2022 and calendar 2025, rather than by absolute dollar growth.
+- Coverage and scope: The screen included 21 US-headquartered companies classified broadly as airlines, including passenger, cargo, regional, charter, and other operators. Only companies with revenue observations for both endpoint years were ranked.
+
+thread_id: cde6ed80-ab7d-464b-baa9-793fcb418a62 — send it back to ask a follow-up.
+
+usage: $0.09314
 ```
 </details>
 

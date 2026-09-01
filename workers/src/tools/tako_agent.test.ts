@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../django.js", () => ({ djangoPost: vi.fn(), djangoGet: vi.fn() }));
 import { djangoPost, djangoGet } from "../django.js";
 import tool, { AGENT_POLL_BUDGET_MS, buildAgentBody, pollAgentRun } from "./tako_agent.js";
+import { refusalGuidance } from "./_agent_run.js";
 import { AnswerAgentRunRequest } from "../generated/schemas.js";
 
 const ctx = { token: "t", env: {} as never, surface: "generic" as const, sendProgress: vi.fn() };
@@ -13,7 +14,7 @@ afterEach(() => {
 });
 
 describe("tako_agent", () => {
-  it("dispatches a deep run, polls to completion, emits progress, returns the result", async () => {
+  it("dispatches a deep run, polls to completion, returns the projected result", async () => {
     vi.useFakeTimers();
     vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_1", status: "queued" });
     vi.mocked(djangoGet)
@@ -45,18 +46,22 @@ describe("tako_agent", () => {
       effort: "medium",
       source_indexes: ["data", "web"],
     });
-    expect(ctx.sendProgress).toHaveBeenCalled();
-    expect(out.status).toBe("completed");
-    expect(out.timed_out).toBe(false);
-    expect(out.result?.answer).toBe("42");
+    // No progress notification: the transport discards request-scoped
+    // notifications under `enableJsonResponse: true` (TAKO-4485), so the loop
+    // must not claim a channel that drops it.
+    expect(ctx.sendProgress).not.toHaveBeenCalled();
+    expect(out.answer).toBe("42");
     // Passthrough cards pick up the share opt-in — see withShareOptIn.
-    expect(out.result?.cards[0]?.embed_url).toBe(
-      "https://trytako.com/embed/agentcard/?showShare=true",
-    );
+    expect(out.cards[0]?.embed_url).toBe("https://trytako.com/embed/agentcard/?showShare=true");
     // The Answer Agent's unified citation registry flows through (replacing the
     // generic agent's web_results).
-    expect(out.result?.citations).toHaveLength(1);
-    expect(out.result?.citations?.[0]?.index).toBe(1);
+    expect(out.citations).toHaveLength(1);
+    expect(out.citations[0]?.index).toBe(1);
+    // The lifecycle fields the old advertised shape was made of are GONE from
+    // the model-facing result: `run_id` and `status` have no model reader and
+    // no poll tool (see _agent_run.ts).
+    expect(out).not.toHaveProperty("run_id");
+    expect(out).not.toHaveProperty("status");
   });
 
   it("surfaces the Answer Agent metadata (definitions/assumptions/methodology) instead of dropping it", async () => {
@@ -81,9 +86,32 @@ describe("tako_agent", () => {
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
-    expect(out.result?.metadata?.definitions?.[0]?.term).toBe("GDP");
-    expect(out.result?.metadata?.assumptions?.[0]?.title).toBe("nominal");
-    expect(out.result?.metadata?.methodology?.[0]?.title).toBe("sources");
+    // Flattened to the `{name: text}` maps both channels render.
+    expect(out.definitions).toEqual({ GDP: "gross domestic product" });
+    expect(out.assumptions).toEqual({ nominal: "not inflation-adjusted" });
+    expect(out.methodology).toEqual({ sources: "world bank" });
+  });
+
+  it("carries refusal_code through the wire parse into the one guidance branch", async () => {
+    vi.useFakeTimers();
+    vi.mocked(djangoPost).mockResolvedValue({ run_id: "run_refusal", status: "queued" });
+    vi.mocked(djangoGet).mockResolvedValue({
+      run_id: "run_refusal",
+      status: "completed",
+      result: { answer: null, cards: [], citations: [], refusal_code: "rejected_input_classifier" },
+    });
+
+    const handlerPromise = tool.handler({ query: "q", sources: ["data"] }, ctx);
+    await vi.runAllTimersAsync();
+    const out = await handlerPromise;
+
+    // The regression this pins: `result` is a strict z.object, so dropping
+    // `refusal_code` from it strips the field before projectAgentRun sees it,
+    // and a query Tako rejected reaches the model as a completed run with no
+    // answer and no reason. The other refusal tests call projectAgentRun or
+    // refusalGuidance directly, so neither crosses the parse where it broke.
+    expect(out.guidance).toBe(refusalGuidance("rejected_input_classifier"));
+    expect(out.answer).toBeUndefined();
   });
 
   it("surfaces a failed run with its error", async () => {
@@ -95,9 +123,10 @@ describe("tako_agent", () => {
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
 
-    expect(out.status).toBe("failed");
-    expect(out.timed_out).toBe(false);
-    expect(out.error?.message).toBe("boom");
+    // A failed run is signalled by `error` alone now — `status` was a field
+    // whose only two reachable values `error` already distinguished.
+    expect(out.error).toEqual({ code: "x", message: "boom" });
+    expect(out.answer).toBeUndefined();
   });
 
   it("throws when the run never completes before AGENT_POLL_BUDGET_MS (Claude path)", async () => {
@@ -105,33 +134,24 @@ describe("tako_agent", () => {
     // Always return "running" — never completes
     vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_3", status: "running" });
 
-    const pollPromise = pollAgentRun(ctx, "run_3", {
-      budgetMs: AGENT_POLL_BUDGET_MS,
-      onTimeout: "throw",
-    });
+    const pollPromise = pollAgentRun(ctx, "run_3", { budgetMs: AGENT_POLL_BUDGET_MS });
     // Advance past the budget
     await vi.advanceTimersByTimeAsync(AGENT_POLL_BUDGET_MS + 10_000);
     await expect(pollPromise).rejects.toThrow(/did not complete within/);
   });
 
-  it("returns timed_out:true with non-terminal status on wait-path deadline elapse", async () => {
+  it("never hands back a non-terminal run: the budget throws, it does not return", async () => {
     vi.useFakeTimers();
-    // Always return "running"
     vi.mocked(djangoGet).mockResolvedValue({ run_id: "run_4", status: "running" });
 
-    // A literal, not a shared constant: the only caller of `onTimeout:
-    // "return"` was the deleted tako_agent_wait, so no production budget
-    // corresponds to this path any more.
+    // The `onTimeout: "return"` arm is gone with `tako_agent_wait`. A returned
+    // `status: "running"` projected to no answer and no error, so the text
+    // channel said "The agent returned no answer." about a live run.
     const budgetMs = 40_000;
-    const pollPromise = pollAgentRun(ctx, "run_4", {
-      budgetMs,
-      onTimeout: "return",
-    });
+    const pollPromise = pollAgentRun(ctx, "run_4", { budgetMs });
     await vi.advanceTimersByTimeAsync(budgetMs + 10_000);
-    const result = await pollPromise;
 
-    expect(result.timed_out).toBe(true);
-    expect(result.status).toBe("running");
+    await expect(pollPromise).rejects.toThrow(/did not complete within 40s/);
   });
 });
 
@@ -219,8 +239,7 @@ describe("tako_agent wire-drift guard", () => {
     const handlerPromise = tool.handler({ query: "in-flight test", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
-    expect(out.status).toBe("completed");
-    expect(out.result?.answer).toBe("done");
+    expect(out.answer).toBe("done");
   });
 
   it("tolerates queued runs that lack a result field — no false-positive", async () => {
@@ -233,8 +252,11 @@ describe("tako_agent wire-drift guard", () => {
     const handlerPromise = tool.handler({ query: "queued test", sources: ["data"] }, ctx);
     await vi.runAllTimersAsync();
     const out = await handlerPromise;
-    expect(out.status).toBe("completed");
-    expect(out.result).toBeNull();
+    // A completed run with a null result projects to an empty-but-valid
+    // result rather than a null the renderer would have to special-case.
+    expect(out.answer).toBeUndefined();
+    expect(out.cards).toEqual([]);
+    expect(out.citations).toEqual([]);
   });
 
   it("throws a contract-drift error when a completed run's citation is missing the required `title`", async () => {

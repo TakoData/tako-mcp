@@ -1,7 +1,6 @@
 /**
- * Markdown renderers for the model-facing text channel, the advertised
- * `structuredContent` shapes for the tools the redesign has migrated, and the
- * `slimStructured` hooks the ones it has not reached yet still use.
+ * Markdown renderers for the model-facing text channel and the advertised
+ * `structuredContent` shapes every tool now returns directly.
  *
  * Why markdown: the consumers of these tools are agents reading text. JSON
  * taxes prose-heavy content twice — escaped newlines/quotes inside snippets,
@@ -10,8 +9,8 @@
  * loses its tail. Layout: Tako data cards first, then web results, then the
  * two reference maps, so truncating clients lose boilerplate before data.
  *
- * BOTH CHANNELS ARE COMPLETE for the search tools, and the duplication is the
- * decision, not an oversight. The older rule — text carries everything,
+ * BOTH CHANNELS ARE COMPLETE for every migrated tool, and the duplication is
+ * the decision, not an oversight. The older rule — text carries everything,
  * `structuredContent` shrinks to machine essentials so a host counting both
  * does not pay twice — assumed every host reads the text. A 2026-08 audit
  * measured otherwise: 9 harnesses (Cursor, Vercel AI SDK, OpenCode, Gemini
@@ -19,16 +18,13 @@
  * model `content` ONLY, while both submission targets — ChatGPT and Claude
  * Code — feed it `structuredContent` ONLY. Either channel alone is therefore a
  * wrong answer on some host. The projection is what makes shipping both
- * affordable (~31.9k chars -> ~13k per channel), and the "channel parity
- * (tako_search)" test asserts every projected leaf reaches the text.
+ * affordable (~31.9k chars -> ~13k per channel on search), and the per-tool
+ * "channel parity" tests assert every projected leaf reaches the text.
  *
- * So `tako_search`, `tako_search_advanced`, `tako_contents` and
- * `tako_visualize` declare NO `slimStructured` hook: their handler output IS
- * the advertised shape, and `pickDeclared` in `mcp.ts` does the per-surface
- * narrowing.
- * `tako_agent` is the last tool that still slims, with the helper in this
- * module. `tako_available_data` and `tako_graph_related` joined the others:
- * their handlers return the projected shape directly.
+ * So NO TOOL declares a `slimStructured` hook any more: every handler's output
+ * IS the advertised shape, and `pickDeclared` in `mcp.ts` does the per-surface
+ * narrowing. `tako_agent` was the last one still slimming; the hook itself
+ * stays in `mcp.ts` for a future tool, with its contract tested there.
  *
  * `request_id` reaches NEITHER channel, on purpose. It is a server-side
  * correlation id with no use to a model or an end user, and OpenAI's app
@@ -44,6 +40,11 @@
  */
 import { z } from "zod";
 
+import type {
+  AgentRunOutput,
+  ProjectedAgentCard,
+  ProjectedCitation,
+} from "./_agent_run.js";
 // Flattens upstream text destined for a single-line slot (titles, meta, node
 // names): an embedded newline would otherwise start a fresh line the CONTENT
 // controls. Defined next to the summary builder that needs the same guarantee,
@@ -796,153 +797,93 @@ export function renderGraphRelatedMarkdown(o: ProjectedRelated): string {
 }
 
 // ---------------------------------------------------------------------------
-// tako_agent
+// tako_agent — COMPLETE in both channels (spec, text-channel template).
+//
+// What this replaced: `slimAgentRunStructured`, which advertised
+// `{run_id, status, timed_out, thread_id}` and nothing else. The answer, its
+// citations and its cards existed only here, in the text — invisible on the
+// five harnesses that feed the model `structuredContent` and drop `content`.
+// Both channels now render the same projection (`_agent_run.ts`).
+//
+// Order: answer, then cards, then citations, then the reference maps LAST
+// (tail-truncating hosts lose prose before data), then thread_id and usage.
 // ---------------------------------------------------------------------------
 
-/** Advertised (slim) structuredContent shape for agent runs: lifecycle fields
- *  only — the answer, citations, and metadata ride in the markdown text. */
-export const agentRunSlimOutputShape = z.looseObject({
-  run_id: z.string(),
-  status: z
-    .string()
-    .describe("queued | running | completed | failed."),
-  timed_out: z
-    .boolean()
-    .describe("True when the wait window elapsed before a terminal status — poll again with the same run_id."),
-  thread_id: z
-    .string()
-    .nullable()
-    .optional()
-    .describe("Pass back as thread_id to ask a follow-up in the same conversation."),
-  error: z
-    .object({ code: z.string(), message: z.string() })
-    .loose()
-    .nullable()
-    .optional(),
-});
+// `agentRunOutputShape` is declared in `_agent_run.ts`, next to the projection
+// that fills it — the same place `_contents.ts` keeps `contentsOutputShape`.
+// A shape that lives apart from its projection is how the two drift.
 
-interface AgentCitationLike {
-  index: number;
-  title: string;
-  url?: string | null | undefined;
-  source_name?: string | null | undefined;
-  publish_date?: string | null | undefined;
-  [key: string]: unknown;
+function renderAgentCard(c: ProjectedAgentCard): string {
+  const lines: string[] = [`### ${oneLine(c.title ?? "Untitled card")}`];
+  // `oneLine` for the reason renderProjectedCard gives: a newline followed by
+  // `## ` in a description opens a heading in this document, forging a section
+  // between `## Cards` and `## Citations`. An agent card's description is
+  // model-written prose, so it carries markdown more often than a search
+  // card's does.
+  if (c.description !== undefined) lines.push(oneLine(c.description));
+  const access: string[] = [];
+  if (c.url !== undefined) access.push(`url: ${c.url}`);
+  access.push(
+    c.exportable
+      ? c.total_rows !== undefined
+        ? `exportable, ${c.total_rows} rows`
+        : "exportable"
+      : "rows locked",
+  );
+  lines.push(`- ${access.join(" · ")}`);
+  // The chart itself. `tako_search` keeps these on the top card only, because
+  // its widget renders one; this tool renders nothing, so every card needs the
+  // links a host would draw or open.
+  const chart: string[] = [];
+  if (c.image_url !== undefined) chart.push(`image: ${c.image_url}`);
+  if (c.embed_url !== undefined) chart.push(`embed: ${c.embed_url}`);
+  if (chart.length > 0) lines.push(`- ${chart.join(" · ")}`);
+  const meta: string[] = [];
+  if (c.source !== undefined) meta.push(`source: ${oneLine(c.source)}`);
+  // "refreshed", not "updated", the same word renderProjectedCard uses: this is
+  // Tako's refresh date, not the date the data runs to, and a bare "updated" in
+  // a fact line reads as the latter.
+  if (c.last_updated !== undefined) meta.push(`refreshed ${c.last_updated}`);
+  if (meta.length > 0) lines.push(`- ${meta.join(" · ")}`);
+  return lines.join("\n");
 }
 
-interface AgentNoteLike {
-  title?: string | undefined;
-  term?: string | undefined;
-  description?: string | undefined;
-  definition?: string | undefined;
-  [key: string]: unknown;
+function renderCitation(c: ProjectedCitation): string {
+  const url = c.url !== undefined ? ` — ${c.url}` : "";
+  const corpus = c.source_index !== undefined ? ` (${c.source_index})` : "";
+  return `[${c.index}] ${oneLine(c.title)}${url}${corpus}`;
 }
 
-export interface AgentRunLike {
-  run_id: string;
-  thread_id?: string | null | undefined;
-  status: string;
-  timed_out: boolean;
-  result?: {
-    answer?: string | null | undefined;
-    cards?: Array<{
-      title?: string | null | undefined;
-      embed_url?: string | null | undefined;
-      [key: string]: unknown;
-    }>;
-    citations?: AgentCitationLike[];
-    metadata?: {
-      definitions?: AgentNoteLike[] | null | undefined;
-      assumptions?: AgentNoteLike[] | null | undefined;
-      methodology?: AgentNoteLike[] | null | undefined;
-    } | null | undefined;
-    [key: string]: unknown;
-  } | null | undefined;
-  error?: { code: string; message: string } | null | undefined;
-  [key: string]: unknown;
-}
-
-export function slimAgentRunStructured(run: AgentRunLike): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    run_id: run.run_id,
-    status: run.status,
-    timed_out: run.timed_out,
-    thread_id: run.thread_id ?? null,
-  };
-  if (run.error != null) out.error = run.error;
-  return out;
-}
-
-function renderAgentNotes(title: string, notes: AgentNoteLike[] | null | undefined): string | undefined {
-  if (!Array.isArray(notes) || notes.length === 0) return undefined;
-  const lines = notes
-    .map((n) => {
-      const head = n.title ?? n.term;
-      const body = n.description ?? n.definition;
-      if (typeof head !== "string" || typeof body !== "string") return undefined;
-      return `- ${head}: ${body}`;
-    })
-    .filter((s): s is string => s !== undefined);
-  if (lines.length === 0) return undefined;
-  return `## ${title}\n${lines.join("\n")}`;
-}
-
-/** An agent run as markdown: the answer, its indexed citations (the [n]
- *  markers in the answer join to these), charts, and the reasoning notes.
- *  Non-terminal runs render as a poll-again status line. */
-export function renderAgentRunMarkdown(run: AgentRunLike): string {
-  const footer = `_run_id: ${run.run_id}${run.thread_id != null ? ` · thread_id: ${run.thread_id} (pass back for follow-ups)` : ""} · status: ${run.status}_`;
-
-  if (run.status === "failed") {
-    const e = run.error;
-    return [
-      `Agent run failed${e != null ? ` (${e.code}): ${e.message}` : "."}`,
-      footer,
-    ].join("\n\n");
-  }
-  if (run.status !== "completed") {
-    return [
-      `Agent run \`${run.run_id}\` is still ${run.status}${run.timed_out ? " (this wait window elapsed)" : ""}. Poll again with the same run_id — runs typically take 30–90s.`,
-      footer,
-    ].join("\n\n");
-  }
-
+/** An agent run as markdown: the answer, the cards it built, the indexed
+ *  sources its [n] markers join to, and the reasoning notes behind it. */
+export function renderAgentRunMarkdown(o: AgentRunOutput): string {
   const blocks: string[] = [];
-  const answer = run.result?.answer;
-  blocks.push(typeof answer === "string" && answer !== "" ? answer : "Agent run completed with no answer text.");
-
-  const citations = run.result?.citations ?? [];
-  if (citations.length > 0) {
-    const lines = citations.map((c) => {
-      const meta: string[] = [];
-      if (typeof c.source_name === "string" && c.source_name !== "") meta.push(c.source_name);
-      if (typeof c.publish_date === "string" && c.publish_date !== "") meta.push(c.publish_date);
-      const tail = meta.length > 0 ? ` (${meta.join(" · ")})` : "";
-      return `[${c.index}] ${c.title}${c.url != null ? ` — ${c.url}` : ""}${tail}`;
-    });
-    blocks.push(`## Citations\n${lines.join("\n")}`);
+  if (o.answer !== undefined) blocks.push(o.answer);
+  if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
+  if (o.error !== undefined) {
+    blocks.push(`> Agent run failed (${oneLine(o.error.code)}): ${oneLine(o.error.message)}`);
   }
+  // A terminal run with no prose and no reason is a backend anomaly, not an
+  // empty answer the model should paraphrase — say so rather than emitting a
+  // document whose first line is a section header.
+  if (blocks.length === 0) blocks.push("The agent returned no answer.");
 
-  const cards = run.result?.cards ?? [];
-  const chartLines = cards
-    .map((c) =>
-      typeof c.embed_url === "string" && c.embed_url !== ""
-        ? `- ${c.title ?? "Chart"}: ${c.embed_url}`
-        : undefined,
-    )
-    .filter((s): s is string => s !== undefined);
-  if (chartLines.length > 0) blocks.push(`## Charts\n${chartLines.join("\n")}`);
-
-  const md = run.result?.metadata;
-  for (const section of [
-    renderAgentNotes("Definitions", md?.definitions),
-    renderAgentNotes("Assumptions", md?.assumptions),
-    renderAgentNotes("Methodology", md?.methodology),
-  ]) {
-    if (section !== undefined) blocks.push(section);
+  if (o.cards.length > 0) {
+    blocks.push(`## Cards (${o.cards.length})`);
+    blocks.push(...o.cards.map(renderAgentCard));
   }
-
-  blocks.push(footer);
+  if (o.citations.length > 0) {
+    blocks.push(`## Citations (${o.citations.length})`);
+    blocks.push(o.citations.map(renderCitation).join("\n"));
+  }
+  if (o.definitions !== undefined) blocks.push(renderNameMap("Definitions", o.definitions));
+  if (o.assumptions !== undefined) blocks.push(renderNameMap("Assumptions", o.assumptions));
+  if (o.methodology !== undefined) blocks.push(renderNameMap("Methodology", o.methodology));
+  if (o.thread_id !== undefined) {
+    blocks.push(`thread_id: ${o.thread_id} — send it back to ask a follow-up.`);
+  }
+  const footer = renderFooter(o.usage);
+  if (footer !== undefined) blocks.push(footer);
   return blocks.join("\n\n");
 }
 
