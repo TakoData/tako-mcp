@@ -787,10 +787,16 @@ export type ProjectedCardRows = z.infer<typeof projectedCardRowsShape>;
  * Returns `undefined` when no payload channel arrived: a descriptor carrying
  * only a cost quote is not rows, and an empty `rows: {}` would read as "this
  * card has no data" when the truth is "you did not ask to inline it".
+ *
+ * `log` names the caller for the drop breadcrumb below. OPTIONAL, unlike the
+ * `toolName` `buildSearchOutput` requires: there a missing name reaches the
+ * MODEL as another tool's argument syntax, here it only degrades a log line,
+ * and requiring it would rewrite two dozen projection tests that log nothing.
  */
 export function projectCardRows(
   content: Record<string, unknown>,
   manifest: ReadonlyArray<Record<string, unknown>> | undefined,
+  log?: CardProjectionLog,
 ): ProjectedCardRows | undefined {
   const out: ProjectedCardRows = {};
   // JOIN BY NAME, NEVER BY POSITION. `ColumnDescriptor.name` is documented as
@@ -918,7 +924,16 @@ export function projectCardRows(
   // better one than a discarded response.
   const conforms = projectedCardRowsShape.safeParse(out);
   if (!conforms.success) {
-    logWireGuardFailure("projectCardRows", "inlined rows", conforms.error, content);
+    // The card's own `content` carries no `request_id`, so passing it here
+    // logged `tool=projectCardRows request_id=(none)` — the one guard that
+    // drops a payload the caller was BILLED for, and the only one an on-call
+    // could tie to neither a tool nor a backend request.
+    logWireGuardFailure(
+      log?.toolName ?? "projectCardRows",
+      "inlined-rows",
+      conforms.error,
+      log === undefined ? undefined : { request_id: log.requestId },
+    );
     return undefined;
   }
   return out;
@@ -937,8 +952,22 @@ export function projectCardRows(
 // fails until a real branch exists. Do not reintroduce a name list to satisfy
 // it.
 
+/**
+ * Identifies the call behind a dropped row payload. Threaded from
+ * {@link buildSearchOutput}, which holds both halves; see `projectCardRows`
+ * for why it is optional.
+ */
+export interface CardProjectionLog {
+  toolName: SearchToolName;
+  requestId: string;
+}
+
 /** Project one wire card into the model-facing shape. Pure and immutable. */
-export function projectCard(card: TakoCard, capRows: number | "all" | null): ProjectedCard {
+export function projectCard(
+  card: TakoCard,
+  capRows: number | "all" | null,
+  log?: CardProjectionLog,
+): ProjectedCard {
   const rec = card as Record<string, unknown>;
   const out: ProjectedCard = { exportable: card.exportable ?? card.content != null };
   const title = nonEmpty(card.title);
@@ -1010,7 +1039,7 @@ export function projectCard(card: TakoCard, capRows: number | "all" | null): Pro
         const manifest = Array.isArray(capped.manifest)
           ? (capped.manifest as Array<Record<string, unknown>>)
           : undefined;
-        const rows = projectCardRows(capped, manifest);
+        const rows = projectCardRows(capped, manifest, log);
         if (rows !== undefined) out.rows = rows;
       }
     }
@@ -1052,7 +1081,7 @@ export function projectWebResult(w: WebResult, keepWebText: boolean): ProjectedW
  * as the whole result. Empty arrays are dropped; a resolved one rides, because
  * pinning the follow-up is what the ids are for.
  */
-export const projectedRelatedShape = z.looseObject({
+export const projectedRelatedQueryShape = z.looseObject({
   query: z.string().describe("Send this as the `query` of the next search request."),
   description: z.string().optional().describe("What the query asks for, when its text does not say."),
   node_ids: z
@@ -1061,10 +1090,10 @@ export const projectedRelatedShape = z.looseObject({
     .describe("Pass as `data.node_ids` on the follow-up to return this data."),
 });
 
-export type ProjectedRelated = z.infer<typeof projectedRelatedShape>;
+export type ProjectedRelatedQuery = z.infer<typeof projectedRelatedQueryShape>;
 
-export function projectRelated(r: z.infer<typeof RelatedSuggestion>): ProjectedRelated {
-  const out: ProjectedRelated = { query: r.query };
+export function projectRelatedQuery(r: z.infer<typeof RelatedSuggestion>): ProjectedRelatedQuery {
+  const out: ProjectedRelatedQuery = { query: r.query };
   const description = nonEmpty(r.description);
   if (description !== undefined) out.description = description;
   if (Array.isArray(r.node_ids) && r.node_ids.length > 0) out.node_ids = r.node_ids;
@@ -1254,7 +1283,7 @@ export const projectedWebResultShape = z.looseObject({
 // `searchOutputShape` lived here and was DELETED: an exported object literal
 // that no tool published and nothing imported. It looked like the search
 // surface's declared shape, so a change meant for the wire — `related` retyped
-// from the wire suggestion to `projectedRelatedShape` — was made here and
+// from the wire suggestion to `projectedRelatedQueryShape` — was made here and
 // shipped nothing. The shapes tools actually publish are in
 // `_render_markdown.ts` (`searchGenericOutputShape`, `searchChatgptOutputShape`,
 // `searchAdvancedOutputShape`); `SearchOutput` below types the handler return.
@@ -1270,7 +1299,7 @@ export type SearchOutput = {
   guidance?: string;
   metric_definitions?: Record<string, string>;
   source_notes?: Record<string, string>;
-  related?: ProjectedRelated[];
+  related?: ProjectedRelatedQuery[];
   answer?: string;
   structured_output?: Record<string, unknown>;
   structured_output_error?: z.infer<typeof AnswerStructuredOutputError>;
@@ -1756,14 +1785,16 @@ export function buildSearchOutput(
   const citesByPosition = extras.answer !== undefined && /\[\d+\]/.test(extras.answer);
   const ordered = citesByPosition ? [...rawCards] : orderCardsByUsefulness(rawCards);
   const maps = buildReferenceMaps(ordered);
-  const cards = ordered.map((c) => projectCard(c, opts.rowCap));
+  const cards = ordered.map((c) =>
+    projectCard(c, opts.rowCap, { toolName: opts.toolName, requestId }),
+  );
   const web = webResults.map((w) => projectWebResult(w, opts.keepWebText));
   const base: SearchOutput = {
     cards,
     web_results: web,
     usage,
     request_id: requestId,
-    ...(extras.related !== undefined ? { related: extras.related.map(projectRelated) } : {}),
+    ...(extras.related !== undefined ? { related: extras.related.map(projectRelatedQuery) } : {}),
     ...(extras.answer !== undefined ? { answer: extras.answer } : {}),
     ...(extras.structured_output !== undefined
       ? { structured_output: extras.structured_output }

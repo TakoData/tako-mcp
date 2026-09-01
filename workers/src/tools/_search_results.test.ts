@@ -7,7 +7,7 @@
  * the correctness bug these tests pin. Also covers the json_records slice branch
  * and the CSV content_format guard (both previously untested).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { TOOL_REGISTRY } from "./_registry.js";
@@ -1288,6 +1288,50 @@ describe("projectCard — the nine-field model-facing card", () => {
       usage: null,
     });
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+  });
+
+  // Driven through `buildSearchOutput`, not `projectCardRows`: the breadcrumb
+  // is only as good as what the PRODUCTION caller threads in, and the unit
+  // takes `log` optionally. Asserting on the unit with a hand-built `log`
+  // would pass with nothing wired at line 1759.
+  //
+  // This is the one guard that discards a payload the caller was BILLED for
+  // while still answering 200, so an anonymous line here costs an on-call the
+  // only route back to the backend request (`_log.ts`).
+  it("names the tool and the request when it drops a billed row payload", () => {
+    const badRow = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_compact",
+        total_rows: 2,
+        dataset: { columns: [{ name: "v" }], rows: [[1], "oops"] },
+      },
+    } as unknown as TakoCard;
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((m: unknown) => {
+      errors.push(String(m));
+    });
+    try {
+      const out = buildSearchOutput(
+        [badRow],
+        [],
+        "req-drop-1",
+        null,
+        { DJANGO_BASE_URL: "https://staging.trytako.com" },
+        ["data"],
+        false,
+        "authenticated",
+        { rowCap: "all", keepWebText: false, toolName: "tako_search_advanced" },
+      );
+      expect(out.cards[0]?.rows, "the bad payload is still dropped").toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+    const line = errors.find((e) => e.includes("wire-guard failed"));
+    expect(line, "the drop must leave a breadcrumb").toBeDefined();
+    expect(line).toContain("tool=tako_search_advanced");
+    expect(line).toContain("request_id=req-drop-1");
   });
 
   // A descriptor with a cost quote and no payload is not rows. An empty

@@ -760,10 +760,16 @@ describe("include_answer selects the endpoint", () => {
     expect(() => SearchRequest.parse({ query: "q", output_schema: {} })).toThrow();
   });
 
-  it("inlines rows on the answer path when data.include_contents is set (the license-gated values path)", async () => {
-    // The one workflow that needs pins AND synthesis on the same call: a card
-    // marked exportable:false cannot be read with tako_contents, so its figures
-    // only ever arrive inlined beside an answer.
+  it("inlines rows on the answer path when data.include_contents is set", async () => {
+    // The one call that needs a pin AND synthesis: rows arrive beside the
+    // answer instead of costing a second tako_contents round trip.
+    //
+    // `exportable: true` is not incidental. /v3/search and /v1/answer build both
+    // fields from one branch (`to_tako_cards`), so `exportable == (content is
+    // not None)` holds by construction and a card carrying rows is always
+    // exportable. A fixture pairing `exportable: false` with `content` asserts
+    // a shape no endpoint emits, and reads as a live "license-gated" workflow
+    // that does not exist.
     mockFetchSequence([
       jsonResponse(200, {
         answer: "Core CPI was 2.6%.",
@@ -771,7 +777,7 @@ describe("include_answer selects the endpoint", () => {
           {
             card_id: "cpi",
             title: "US Core CPI",
-            exportable: false,
+            exportable: true,
             content: {
               content_format: "json_compact",
               cost: 0,

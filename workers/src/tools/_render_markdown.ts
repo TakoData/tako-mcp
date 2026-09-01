@@ -130,11 +130,16 @@ const searchCoreFields = {
  *  turns back into a gag. */
 const answerFoldFields = {
   // THE DESCRIBE CARRIES THE FIELD NAMES, because the shape cannot.
-  // `projectRelated` emits `{query, description?, node_ids?}`
-  // (`projectedRelatedShape`), and publishing that shape is the obvious fix —
-  // it costs +160 chars of draft-07 structure against an output schema sitting
-  // EXACTLY on its shrink-only ratchet (4,888, `LEGACY_OUTPUT_SCHEMA_CEILINGS`),
-  // so generation fails. Prose cannot cover a structural cost, and the two
+  // `projectRelatedQuery` emits `{query, description?, node_ids?}`
+  // (`projectedRelatedQueryShape`), and publishing that shape is the obvious
+  // fix — it costs +160 chars of draft-07 structure against an output schema
+  // sitting EXACTLY on its shrink-only ratchet
+  // (`LEGACY_OUTPUT_SCHEMA_CEILINGS`), so generation fails. The ceiling is not
+  // copied here on purpose: a trim moves it without touching this file, and
+  // the stale figure that used to sit here read as a 56-char allowance a later
+  // describe could spend.
+  //
+  // Prose cannot cover a structural cost, and the two
   // describes that could fund it (`cards[].coverage_end`,
   // `web_results[].snippet`) are shared with `tako_search` and earmarked for
   // ITS fan-out PR by that ceiling's own comment.
