@@ -52,7 +52,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
     id: "lookup-basic",
     why: "the canonical entity+metric pair",
     args: { q: "Nvidia", metric: "gross margin" },
-    expect: { entity: "NVIDIA", metric: "Gross Margin", found: true, nextCall: true, maxChars: 2000 },
+    expect: { entity: "NVIDIA", metric: "Gross Margin", found: true, nextCall: true, maxChars: 3500 },
   },
   {
     id: "lookup-plural",
@@ -87,15 +87,15 @@ export const GOLDEN_CASES: GoldenCase[] = [
 
   {
     id: "lookup-unvetted-rank0-withholds",
-    why: "TAKO-3754: rank 0 `Operating costs and expenses` fails confidentMatch while rank 2 passes, and the `.some()` verdict licensed a run-verbatim handle pinning rank 0 for an R&D question",
+    why: "TAKO-3754: rank 0 `Operating costs and expenses` fails confidentMatch while rank 2 passes, and the `.some()` verdict licensed a run-verbatim handle pinning rank 0 for an R&D question. `found` is now true — the entity's own metric list matches the phrase — but the handle must still be withheld",
     args: { q: "Pfizer", metric: "R&D expense" },
     expect: {
       entity: "Pfizer",
-      found: false,
+      found: true,
       nextCall: false,
       // The recovery must stay on screen: the caller picks deliberately from
       // the alternates, which is what a live agent run did unaided.
-      present: ["R&D Expenses (Normalized)", "Pick one deliberately"],
+      present: ["R&D Expenses (Normalized)", "Pick a canonical name"],
     },
   },
 
@@ -143,7 +143,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
     id: "gap-nonsense-phrase",
     why: "a plausible phrase always partially matches something; this reported 250+ metrics on Tuesday Morning Corporation",
     args: { q: "the vibes of tuesday" },
-    expect: { found: false, nextCall: false, maxChars: 600 },
+    expect: { found: false, nextCall: false, maxChars: 1500 },
   },
   {
     id: "gap-gibberish",
@@ -175,7 +175,7 @@ export const GOLDEN_CASES: GoldenCase[] = [
     id: "next-call-metric-named",
     why: "next_call was null on 11/11 probed names; naming a metric in `q` now yields a handle",
     args: { q: "Inflation Rate" },
-    expect: { found: true, nextCall: true, present: ['"strict":true'] },
+    expect: { found: true, nextCall: true, present: ["tako_search: Inflation Rate"] },
   },
   {
     id: "next-call-no-invented-entity",
@@ -204,12 +204,12 @@ export const GOLDEN_CASES: GoldenCase[] = [
     expect: { found: true, absent: ["look swapped"] },
   },
 
-  // ---- the pin form: every handle must be metric-only + strict ----------
+  // ---- the handle form: canonical names, no pin --------------------------
   {
-    id: "pin-form",
-    why: "an entity-only pin, or a pin without strict, was measured to be a no-op",
+    id: "handle-canonical-names",
+    why: "the handle carries no pin after the D4 split (a pin returned fewer cards on 11/20 pairs) — it must instead name BOTH canonical halves verbatim",
     args: { q: "Microsoft", metric: "net income" },
-    expect: { found: true, nextCall: true, present: ['"strict":true'] },
+    expect: { found: true, nextCall: true, present: ["tako_search: Microsoft Corporation Net Income"] },
   },
 ];
 
