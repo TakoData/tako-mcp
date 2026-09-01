@@ -3,6 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
+      "release-as": "1.0.0",
       "extra-files": [
         { "type": "json", "path": "server.json", "jsonpath": "$.version" },
         { "type": "json", "path": "agent.json", "jsonpath": "$.version" },
