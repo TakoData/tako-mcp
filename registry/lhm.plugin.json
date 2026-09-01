@@ -1,7 +1,7 @@
 {
   "identifier": "takodata-tako-mcp",
   "name": "Tako MCP",
-  "version": "0.22.2",
+  "version": "1.0.0",
   "author": "Tako",
   "authorUrl": "https://github.com/TakoData",
   "description": "Tako MCP gives your agent industry-leading live web search plus licensed data that the open web does not have: company financials (S&P Global), macroeconomic indicators (FRED, OECD, BIS), web and app traffic (SimilarWeb), sports, US government spending, and more. Search returns citation-backed cards that render inline as charts. Hosted at https://mcp.tako.com/mcp — authenticate with a Tako API key (Bearer) or OAuth on web hosts.",

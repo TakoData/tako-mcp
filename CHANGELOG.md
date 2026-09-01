@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.0.0](https://github.com/TakoData/tako-mcp/compare/v0.22.2...v1.0.0) (2026-09-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove the ?tools=answer forward, and the listings that hand it out ([#282](https://github.com/TakoData/tako-mcp/issues/282))
+* rewrite tako_search_advanced's model-facing surface, and retire the prose ratchet ([#279](https://github.com/TakoData/tako-mcp/issues/279))
+* make tako_agent return the answer instead of a run envelope ([#278](https://github.com/TakoData/tako-mcp/issues/278))
+* make both result channels agree in tako_available_data and tako_graph_related ([#276](https://github.com/TakoData/tako-mcp/issues/276))
+* complete tako_visualize's two result channels, rename webpage_url to url, and cut its description to five lines ([#277](https://github.com/TakoData/tako-mcp/issues/277))
+* complete both tako_contents result channels, and cut its inputs to four ([#275](https://github.com/TakoData/tako-mcp/issues/275))
+* project search results explicitly, and render every field on both channels ([#274](https://github.com/TakoData/tako-mcp/issues/274))
+* fold tako_answer into tako_search_advanced as include_answer, and expose the whole SearchRequest body ([#273](https://github.com/TakoData/tako-mcp/issues/273))
+* cut the anonymous tier to tako_search alone, and stop varying prose by tier ([#272](https://github.com/TakoData/tako-mcp/issues/272))
+* cut tako_search to four parameters and add the opt-in tako_search_advanced ([#265](https://github.com/TakoData/tako-mcp/issues/265))
+* delete the misleading credit balance tool ([#270](https://github.com/TakoData/tako-mcp/issues/270))
+* make ?tools= an allowlist that replaces the defaults, and delete four tools ([#263](https://github.com/TakoData/tako-mcp/issues/263))
+
+### Features
+
+* complete both tako_contents result channels, and cut its inputs to four ([#275](https://github.com/TakoData/tako-mcp/issues/275)) ([1e9c377](https://github.com/TakoData/tako-mcp/commit/1e9c3779990a9fd39f13820a26269e6e9aa62423))
+* complete tako_visualize's two result channels, rename webpage_url to url, and cut its description to five lines ([#277](https://github.com/TakoData/tako-mcp/issues/277)) ([35bd0f4](https://github.com/TakoData/tako-mcp/commit/35bd0f4fc2931d595aafac290146dc55c8ffa9f2))
+* cut tako_search to four parameters and add the opt-in tako_search_advanced ([#265](https://github.com/TakoData/tako-mcp/issues/265)) ([5d2f532](https://github.com/TakoData/tako-mcp/commit/5d2f5325f33889d048cdc98d10b0f9996c44209f))
+* cut the anonymous tier to tako_search alone, and stop varying prose by tier ([#272](https://github.com/TakoData/tako-mcp/issues/272)) ([4cd6bf3](https://github.com/TakoData/tako-mcp/commit/4cd6bf3451f30c73a6111ef12a0bf2ca96734cad))
+* delete the misleading credit balance tool ([#270](https://github.com/TakoData/tako-mcp/issues/270)) ([e384125](https://github.com/TakoData/tako-mcp/commit/e384125f47a94998337ee6963afbc6a7d82c069a))
+* fold tako_answer into tako_search_advanced as include_answer, and expose the whole SearchRequest body ([#273](https://github.com/TakoData/tako-mcp/issues/273)) ([8ea0a0a](https://github.com/TakoData/tako-mcp/commit/8ea0a0aa9e7f82017eeadaf516e97fe148e4def8))
+* make ?tools= an allowlist that replaces the defaults, and delete four tools ([#263](https://github.com/TakoData/tako-mcp/issues/263)) ([778c60e](https://github.com/TakoData/tako-mcp/commit/778c60e682e2827175a034de398168d1675db96a))
+* make both result channels agree in tako_available_data and tako_graph_related ([#276](https://github.com/TakoData/tako-mcp/issues/276)) ([be1d1d8](https://github.com/TakoData/tako-mcp/commit/be1d1d82afd1ba242517cdf4b246d98ab91ba765))
+* make tako_agent return the answer instead of a run envelope ([#278](https://github.com/TakoData/tako-mcp/issues/278)) ([f30e44e](https://github.com/TakoData/tako-mcp/commit/f30e44ef8eaeb17bbe09948c234bd7f3dc610faa))
+* path-selected MCP surfaces; tako_answer and inline rows become opt-in ([#260](https://github.com/TakoData/tako-mcp/issues/260)) ([961b63c](https://github.com/TakoData/tako-mcp/commit/961b63c0e903556c34f9b483a5a7f97a7b354c63))
+* project search results explicitly, and render every field on both channels ([#274](https://github.com/TakoData/tako-mcp/issues/274)) ([473e540](https://github.com/TakoData/tako-mcp/commit/473e540b9f7e785e94c64f42129b265c699ed3b0))
+* remove the ?tools=answer forward, and the listings that hand it out ([#282](https://github.com/TakoData/tako-mcp/issues/282)) ([7851e44](https://github.com/TakoData/tako-mcp/commit/7851e4441e15608ca2648445098a014c46b7788c))
+* rewrite tako_search_advanced's model-facing surface, and retire the prose ratchet ([#279](https://github.com/TakoData/tako-mcp/issues/279)) ([40a8971](https://github.com/TakoData/tako-mcp/commit/40a89718e78880bbf9e3e6873475bec5fc773ef3))
+
+
+### Bug Fixes
+
+* **ci:** update smoke and golden to the projected-card contract, and drain the asset body ([#280](https://github.com/TakoData/tako-mcp/issues/280)) ([dd0363a](https://github.com/TakoData/tako-mcp/commit/dd0363a84c2993476e5d04aed702d998fcfddcca))
+* **graph tools:** stop tako_available_data answering confidently wrong, and cut an 83k overview to 2.5k ([#267](https://github.com/TakoData/tako-mcp/issues/267)) ([a50d646](https://github.com/TakoData/tako-mcp/commit/a50d646994dc4bc9758d7417a99daa9732bbd76e))
+* **resources:** stop declaring a resources capability the generic surface cannot serve ([#283](https://github.com/TakoData/tako-mcp/issues/283)) ([bc86400](https://github.com/TakoData/tako-mcp/commit/bc8640022b46b8cd360ec018d524ae0a2f32f558))
+* **search_advanced:** lead the description with the answer job it inherited ([#284](https://github.com/TakoData/tako-mcp/issues/284)) ([d909c7e](https://github.com/TakoData/tako-mcp/commit/d909c7e3107aa1ea8d5d712695a156154f2f877b))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([#268](https://github.com/TakoData/tako-mcp/issues/268)) ([c23cdc5](https://github.com/TakoData/tako-mcp/commit/c23cdc557fb9fa97a675311733692aac4c8c4d5a))
+
 ## [0.22.2](https://github.com/TakoData/tako-mcp/compare/v0.22.1...v0.22.2) (2026-08-26)
 
 

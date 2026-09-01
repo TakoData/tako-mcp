@@ -62,7 +62,7 @@ import type { AnyToolModule, ToolContext } from "./tools/types.js";
  * returns, so a mismatch surfaces as "wrong server" in tooling.
  */
 export const SERVER_NAME = "tako-mcp";
-export const SERVER_VERSION = "0.22.2"; // x-release-please-version
+export const SERVER_VERSION = "1.0.0"; // x-release-please-version
 
 
 /**

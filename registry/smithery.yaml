@@ -5,7 +5,7 @@ description: |
   data that the open web does not have. That includes company financials,
   macroeconomic indicators, web and app traffic, sports, US government
   spending, and more.
-version: 0.22.2
+version: 1.0.0
 license: MIT
 author:
   name: Tako
@@ -48,9 +48,9 @@ tools:
   - name: tako_search_advanced
     description: >-
       The whole v3 search request body, plus `include_answer: true` for one
-      synthesized, citation-backed answer from Tako and/or the web. Opt-in —
-      add the `search_advanced` token to the server URL's ?tools= allowlist,
-      which replaces the default listing, so name the other tools you want too
+      synthesized, citation-backed answer from Tako and/or the web. Opt-in — add
+      the `search_advanced` token to the server URL's ?tools= allowlist, which
+      replaces the default listing, so name the other tools you want too
       (?tools=search,available_data,contents,search_advanced). Most hosts should
       prefer tako_search and synthesize the answer themselves.
   - name: tako_contents
@@ -66,10 +66,9 @@ tools:
   - name: tako_agent
     description: >-
       Run Tako's Answer Agent — multi-step research for complex questions;
-      returns a cited answer plus chart cards. Opt-in — add the `agent` token
-      to the server URL's ?tools= allowlist, which replaces the default
-      listing, so name the other tools you want too
-      (?tools=search,available_data,agent).
+      returns a cited answer plus chart cards. Opt-in — add the `agent` token to
+      the server URL's ?tools= allowlist, which replaces the default listing, so
+      name the other tools you want too (?tools=search,available_data,agent).
   - name: tako_graph_related
     description: >-
       Explore what a Tako graph node connects to — its metrics, the entities a
@@ -85,12 +84,13 @@ examples:
       Get a synthesized answer with supporting chart cards. Call
       tako_search_advanced with `include_answer: true`, which needs the
       `search_advanced` token on the server URL's ?tools= allowlist — and
-      because that allowlist replaces the default listing, name the other
-      tools you want too
-      (?tools=search,available_data,contents,search_advanced). Without it,
-      tako_search returns the same data for your model to synthesize.
-    input: |
-      {"query": "How have US mortgage rates moved over the past year?", "include_answer": true}
+      because that allowlist replaces the default listing, name the other tools
+      you want too (?tools=search,available_data,contents,search_advanced).
+      Without it, tako_search returns the same data for your model to
+      synthesize.
+    input: >
+      {"query": "How have US mortgage rates moved over the past year?",
+      "include_answer": true}
 links:
   homepage: https://tako.com
   documentation: https://github.com/TakoData/tako-mcp#readme
