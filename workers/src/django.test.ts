@@ -269,3 +269,48 @@ describe("djangoPost", () => {
     expect(url.searchParams.get("format")).toBe("json");
   });
 });
+
+describe("caller attribution headers", () => {
+  const STAMP = {
+    surface: "generic",
+    authMode: "oauth" as const,
+    serverVersion: "9.9.9",
+    tool: "tako_search",
+    clientUserAgent: "claude-code/1.2.3",
+  };
+
+  it("djangoGet sets User-Agent and X-Tako-Caller when a stamp is passed", async () => {
+    const fetchMock = mockFetchOnce(jsonResponse(200, {}));
+    await djangoGet(ENV, TOKEN, "/api/v1/graph/related", { caller: STAMP });
+    const req = fetchMock.mock.calls[0]![0] as Request;
+    expect(req.headers.get("user-agent")).toBe("tako-mcp/9.9.9");
+    expect(req.headers.get("x-tako-caller")).toBe(
+      'channel=mcp, surface=generic, tier=oauth, tool=tako_search, client_ua="claude-code/1.2.3"',
+    );
+    expect(req.headers.get("x-api-key")).toBe(TOKEN);
+  });
+
+  it("djangoPost sets both headers and keeps Content-Type", async () => {
+    const fetchMock = mockFetchOnce(jsonResponse(200, {}));
+    await djangoPost(ENV, TOKEN, "/api/v3/search/", { query: "x" }, { caller: STAMP });
+    const req = fetchMock.mock.calls[0]![0] as Request;
+    expect(req.headers.get("user-agent")).toBe("tako-mcp/9.9.9");
+    expect(req.headers.get("x-tako-caller")).toContain("tool=tako_search");
+    expect(req.headers.get("content-type")).toBe("application/json");
+  });
+
+  it("sends neither header when no stamp is passed", async () => {
+    const fetchMock = mockFetchOnce(jsonResponse(200, {}));
+    await djangoGet(ENV, TOKEN, "/api/v1/graph/related");
+    const req = fetchMock.mock.calls[0]![0] as Request;
+    expect(req.headers.get("x-tako-caller")).toBeNull();
+    expect(req.headers.has("user-agent")).toBe(false);
+  });
+
+  it("treats an explicit undefined stamp like an absent one", async () => {
+    const fetchMock = mockFetchOnce(jsonResponse(200, {}));
+    await djangoGet(ENV, TOKEN, "/api/v1/graph/related", { caller: undefined });
+    const req = fetchMock.mock.calls[0]![0] as Request;
+    expect(req.headers.get("x-tako-caller")).toBeNull();
+  });
+});
