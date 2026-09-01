@@ -6,12 +6,13 @@
  *
  * The created card auto-renders inline as a chart: the backend returns a
  * `card_id` (+ embed/image URLs), which the tool lifts into the same widget
- * fields `tako_search` uses, sharing `_chart_widget.ts`.
+ * fields `tako_search` uses, sharing `_chart_widget.ts`. Those widget fields
+ * are advertised on `/mcp/chatgpt` alone, where a widget reads them; on `/mcp`
+ * the widget is suppressed and the chart ships as a PNG content block instead.
  *
  * This is the one tool on the surface that WRITES, and what it writes is
- * world-readable: the supplied data is stored by Tako and the resulting
- * `webpage_url` / `embed_url` are viewable by anyone holding the link, with
- * no expiry. Three things encode that, and they have to stay in agreement —
+ * world-readable: the supplied data is stored by Tako and the resulting `url`
+ * / `embed_url` are viewable by anyone holding the link, with no expiry. Three things encode that, and they have to stay in agreement —
  * the `DESCRIPTION` disclosure the model reads before calling, the
  * `readOnlyHint: false` / ChatGPT `openWorldHint: true` annotation pair that
  * makes the call confirmation-worthy, and the matching justifications in
@@ -20,6 +21,7 @@
 import { z } from "zod";
 
 import { djangoPost } from "../django.js";
+import type { Env } from "../env.js";
 import { CreateCardRequest, ThinVizCard } from "../generated/schemas.js";
 import {
   buildChartAppUiResourceFromOutputPubId,
@@ -31,8 +33,14 @@ import {
   fetchPngContentBlock,
 } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
+import { nonEmpty } from "./_search_results.js";
 import { logWireGuardFailure } from "./_log.js";
-import { autoChainShape } from "./_search_results.js";
+import {
+  renderVisualizeMarkdown,
+  visualizeChatgptOutputShape,
+  visualizeOutputShape,
+  type VisualizeOutput,
+} from "./_render_markdown.js";
 import type { AppUiResource, ToolContentBlock, ToolModule } from "./types.js";
 
 // Mirrors VALID_COMPONENT_TYPES in the backend
@@ -62,36 +70,37 @@ export const COMPONENT_TYPES = [
   "person_card",
 ] as const;
 
-// The first two lines are a DISCLOSURE, not marketing copy, and they lead on
-// purpose. This tool publishes: the supplied data leaves the conversation,
-// lands in Tako's storage, and becomes a page anyone holding the link can
-// open, with no expiry. "Embeddable" alone (the previous wording) described
-// the mechanism and hid the consequence — and a model that does not know the
-// output is public cannot warn the user before pasting their data into it,
-// which is exactly the gap OpenAI's app review flags. The sensitive-data
-// sentence is addressed to the MODEL because the model is what assembles the
-// `components` payload; it is the only party positioned to refuse.
+// Paragraph one is a DISCLOSURE, not marketing copy, and it leads on purpose.
+// This tool publishes: the supplied data leaves the conversation, lands in
+// Tako's storage, and becomes a page anyone holding the link can open, with no
+// expiry. A model that does not know the output is public cannot warn the user
+// before pasting their data into it, which is exactly the gap OpenAI's app
+// review flags. The sensitive-data paragraph is addressed to the MODEL because
+// the model is what assembles the `components` payload; it is the only party
+// positioned to refuse.
+//
+// What the redesign cut (spec D2, 2026-08-26-model-facing-surface-redesign):
+// the returns-these-fields sentence (transport narration — the result channels
+// carry the urls and say so themselves), the list of which component types are
+// typed versus passthrough and the note that `component_variant` is optional
+// (both are in the input schema, which the model reads in the same breath),
+// and "Always end your reply with `[Open in Tako](embed_url)`" — a formatting
+// mandate, replaced by the action it was reaching for: give the user the url.
 const DESCRIPTION = [
-  "Create a PUBLIC, PERSISTENT Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. The data you supply is sent to and stored by Tako, the card does not expire, and anyone with the returned link can view it without signing in. Confirm the user wants a public chart before calling.",
+  "Create a public, permanent Tako card from data you already have — to chart data Tako already holds, use `tako_search`. Tako stores what you send, the card never expires, and anyone with the returned url can open it without signing in. Confirm the user wants a public card before you call, then give them the url.",
   "",
-  "NEVER put sensitive data in `components`: no passwords, API keys or tokens, payment-card or bank details, health information, government identifiers (SSN, passport, driver's licence), precise home addresses, or anyone's personal data they have not agreed to publish. Aggregate or anonymize first, or decline.",
+  "Never put sensitive data in `components`: no passwords, API keys, payment-card or bank details, health information, government identifiers, precise home addresses, or personal data the subject hasn't agreed to publish. Aggregate or anonymize it first, or decline.",
   "",
-  "Auto-renders inline; returns `webpage_url` / `embed_url`.",
-  "",
-  "Input: one or more `components`, each `{component_type, config}`. `config` is typed per `component_type` — `header`, `categorical_bar`, `generic_timeseries`, `table`, `financial_boxes`, and `pie` carry their required fields inline; other types accept a documented passthrough config. `component_variant` is optional and rarely needed.",
-  "",
-  "Example — a titled bar chart is two components:",
-  '{"components": [{"component_type": "header", "config": {"title": "Revenue"}}, {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Sales", "units": "USD", "data": [{"x": "NA", "y": 500}, {"x": "EU", "y": 300}]}]}}]}',
-  "",
-  "Tip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.",
+  'Each component is `{component_type, config}`, rendered top to bottom. A titled bar chart is two: {"components": [{"component_type": "header", "config": {"title": "Revenue"}}, {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Sales", "units": "USD", "data": [{"x": "NA", "y": 500}]}]}}]}. Use `person_card` alone, never beside another component.',
 ].join("\n");
 
 // `component_variant` is a free-form, per-`component_type` string with no
 // fixed set (backend `ComponentConfig.component_variant: str | None`,
 // thinviz/types.py). Optional and rarely needed — most cards omit it.
 // No `.describe()`: this field appears in all 20 union members, so any text
-// here is duplicated 20× in the emitted schema. The tool DESCRIPTION already
-// says it is optional and rarely needed.
+// here is duplicated 20× in the emitted schema. It is optional in the schema,
+// which is the whole story — the description used to repeat that and no longer
+// does (spec D2.4: a parameter's type and optionality live in the schema).
 const componentVariant = z.string().optional();
 
 // --- Config sub-shapes for the common component types ---
@@ -290,53 +299,43 @@ const inputSchema = z.object({
     z
       .array(componentSchema)
       .min(1)
-      .describe("One or more components making up the card, rendered top to bottom."),
+      .describe("The card's content blocks, rendered top to bottom."),
     { field: "tako_visualize.components", jsonObjectAsItem: true },
   ),
-  title: z.string().optional().describe("Card title (falls back to a header component's title)."),
-  description: z.string().optional().describe("Card description."),
-  source: z.string().optional().describe("Data source attribution, shown in the footer."),
+  title: z.string().optional().describe("The card's title. Omit it and a `header` component's title is used."),
+  description: z.string().optional().describe("Card description, shown under the title."),
+  source: z.string().optional().describe("Data source attribution, shown in the card footer."),
   height: z
     .number()
     .int()
     .min(100)
     .max(2000)
     .optional()
-    .describe("Chart height in pixels (100–2000). Overrides the default aspect-ratio height."),
+    .describe("Card height in pixels. Omit it and the card uses its default aspect-ratio height."),
   normalize_currencies: z
     .string()
     .optional()
-    .describe(
-      "Target ISO 4217 currency code (e.g. 'USD'). Converts recognized currency-denominated datasets to this currency using historical rates.",
-    ),
+    .describe("Convert currency-denominated datasets to this ISO 4217 code (e.g. `USD`) using historical rates."),
 });
 
-// Parity-check outcome: Path 2 — keep the hand-written outputSchema as the
-// MCP facade (always returns the card_id + widget fields for inline render)
-// and validate the raw wire against the generated ThinVizCard contract
-// before extracting card_id.
+// The ADVERTISED output schema, per surface (spec D3/D4). The generic `/mcp`
+// shape is the four fields the MODEL can act on; the chatgpt shape adds the
+// widget's four. Both live in `_render_markdown.ts` beside the renderer that
+// keeps the text channel in parity with them.
 //
-// The generated ThinVizCard documents the create response (card_id, title,
-// description, webpage_url, image_url, embed_url, card_type,
-// visualization_data, embed_mode) but lacks the auto-chain widget fields
-// (pub_id, dark_mode, width, height) that are built from the card_id by
-// buildChartUrls. If we switched to outputSchema = ThinVizCard directly the
-// inline render would break and the existing widget tests would fail.
-// ThinVizCard is therefore used as the wire-guard only.
+// The wire is validated separately, against the generated ThinVizCard: it
+// documents the create response (card_id, title, description, webpage_url,
+// image_url, embed_url, card_type, visualization_data, embed_mode) but has
+// none of the widget fields, which `buildChartUrls` derives from the card_id.
+// So ThinVizCard is the wire guard and never the advertised shape.
 //
-// `card_id` is deliberately NOT advertised, even though the handler receives
-// one and the whole tool is built on it. `pub_id` carries the identical
-// string (see the handler) and has a job — the widget resolves the chart
-// through it — so a second copy under an internal-sounding name was pure
-// duplication in front of the model, and OpenAI's review asks for exactly
-// that to go. The three things a caller actually needs are `webpage_url`
-// (share), `embed_url` (embed) and `pub_id` (render).
-const outputSchema = z.object({
-  title: z.string().optional(),
-  description: z.string().optional(),
-  webpage_url: z.string().optional(),
-  ...autoChainShape,
-});
+// `description` is advertised on NEITHER surface: the backend echoes back the
+// string the caller sent, and a field whose value the model wrote one turn
+// earlier is 41 chars of context for zero information. `title` reads like the
+// same case and is kept anyway, because it is not always an echo: omit it and
+// the backend derives one from a `header` component, so the returned value can
+// be something the model has not seen.
+const outputSchema = visualizeOutputShape;
 
 type Output = z.infer<typeof outputSchema>;
 type Input = z.infer<typeof inputSchema>;
@@ -372,11 +371,55 @@ export function buildVisualizeBody(input: Input): z.input<typeof CreateCardReque
   return body satisfies z.input<typeof CreateCardRequest>; // ← build-time guard: backend request drift breaks here
 }
 
+/**
+ * Project the create response into the tool's output — the ONE place the
+ * advertised fields are built.
+ *
+ * Exported because `gen-registry.ts` renders `docs/TOOLS.md`'s sample result
+ * by running the checked-in wire fixture through this function and
+ * `renderVisualizeMarkdown`, with no network. A sample built any other way
+ * would drift from what the model reads; this one fails `registry:check`
+ * instead.
+ *
+ * The urls are rebuilt from `cardId` rather than passed through from the wire
+ * (`buildChartUrls`, same as `tako_search`), so the theme and share-opt-in
+ * query the widget expects are present whatever form the backend returned.
+ */
+export function buildVisualizeOutput(
+  wire: ThinVizCard,
+  cardId: string,
+  env: Env,
+  height: number,
+): VisualizeOutput {
+  const { embed_url, image_url } = buildChartUrls(env, cardId, DEFAULT_DARK_MODE);
+  // `nonEmpty`, not a null check: `ThinVizCard` types both as
+  // `string | null | undefined`, and `title` is whatever the CALLER sent —
+  // `inputSchema.title` has no `.min(1)`, so `title: ""` round-trips. An empty
+  // string passes `z.string()`, so it would reach structuredContent as
+  // `"title": ""` on the structured-only hosts this projection exists to serve.
+  // Same helper `projectCard` uses on the identical three fields.
+  const title = nonEmpty(wire.title);
+  const url = nonEmpty(wire.webpage_url);
+  return {
+    ...(title === undefined ? {} : { title }),
+    ...(url === undefined ? {} : { url }),
+    embed_url,
+    image_url,
+    pub_id: cardId,
+    dark_mode: DEFAULT_DARK_MODE,
+    width: DEFAULT_WIDTH,
+    height,
+  };
+}
+
 const tako_visualize = {
   name: "tako_visualize",
   description: DESCRIPTION,
   inputSchema,
   outputSchema,
+  // The chart widget fields exist only where a widget reads them; on `/mcp`
+  // the widget is suppressed and the chart ships as a PNG content block.
+  outputSchemaBySurface: { chatgpt: visualizeChatgptOutputShape },
   annotations: {
     title: "Tako: Visualize",
     readOnlyHint: false,
@@ -402,8 +445,10 @@ const tako_visualize = {
   },
   // These three are NOT request-body fields — `buildVisualizeBody` sends only
   // `components`. They are the fixed render settings the tool applies to the
-  // chart URLs and reports back on its own output (see the `dark_mode`/`width`/
-  // `height` assignment in the handler below). `scope: "worker"` is what keeps
+  // chart URLs, and it reports them back on its own output on `/mcp/chatgpt`
+  // ALONE: they are widget fields, so `pickDeclared` strips all three on
+  // `/mcp` (see the assignment in `buildVisualizeOutput` above, and
+  // `visualizeWidgetFields` in `_render_markdown.ts`). `scope: "worker"` is what keeps
   // them out of the request-inputs section of `docs/TOOLS.md`; the longer field
   // names alone did not, because the generator emits that heading for every
   // non-empty `fixedInputs`. The names also keep the derived wire-path guard in
@@ -419,7 +464,9 @@ const tako_visualize = {
       scope: "worker",
     },
   ],
-  async handler(input, ctx): Promise<Output> {
+  // Declared as the FULL internal shape (assignable to the slim advertised
+  // Output via its loose index signature) so the hooks below keep real types.
+  async handler(input, ctx): Promise<VisualizeOutput> {
     const body = buildVisualizeBody(input);
 
     const data = await djangoPost<unknown>(
@@ -449,20 +496,12 @@ const tako_visualize = {
       );
     }
 
-    // Build canonical widget URLs from the card_id (same as tako_search),
-    // so inline render works regardless of the URL form the backend returns.
-    const { embed_url, image_url } = buildChartUrls(ctx.env, cardId, DEFAULT_DARK_MODE);
-    const parsed = outputSchema.safeParse({
-      title: wire.title ?? undefined,
-      description: wire.description ?? undefined,
-      webpage_url: wire.webpage_url ?? undefined,
-      pub_id: cardId,
-      embed_url,
-      image_url,
-      dark_mode: DEFAULT_DARK_MODE,
-      width: DEFAULT_WIDTH,
-      height: input.height ?? DEFAULT_HEIGHT,
-    });
+    // Validated against the WIDEST advertised shape, so a projection bug is
+    // caught here whichever surface the call arrived on; `pickDeclared` in
+    // mcp.ts narrows to the per-surface schema afterwards.
+    const parsed = visualizeChatgptOutputShape.safeParse(
+      buildVisualizeOutput(wire, cardId, ctx.env, input.height ?? DEFAULT_HEIGHT),
+    );
     if (!parsed.success) {
       logWireGuardFailure("tako_visualize", "output-normalise", parsed.error, data);
       throw new Error(
@@ -470,6 +509,10 @@ const tako_visualize = {
       );
     }
     return parsed.data;
+  },
+  renderText(output, _ctx) {
+    void _ctx;
+    return renderVisualizeMarkdown(output as VisualizeOutput);
   },
   async extraMeta(output, ctx) {
     // Skip the PNG prefetch on ChatGPT (its widget renders embed_url
@@ -489,17 +532,21 @@ const tako_visualize = {
     // cross-origin iframe, so without the card's real aspect ratio the iframe
     // falls back to a fixed height and leaves empty bands under a wide chart.
     // Dimensions only — a 64-byte ranged read instead of a ~170 KB render.
-    return buildChartExtraMeta(output.image_url, {
+    // Cast: the widget fields are declared only on the chatgpt advertised
+    // schema now, so the loose base Output no longer types them.
+    const o = output as VisualizeOutput;
+    return buildChartExtraMeta(o.image_url, {
       bakeImage: ctx.surface !== "chatgpt",
       env: ctx.env,
       origin: ctx.origin,
-      pubId: output.pub_id,
+      pubId: o.pub_id,
     });
   },
   async extraContentBlocks(output, _ctx): Promise<ToolContentBlock[]> {
     void _ctx;
-    if (output.image_url === undefined) return [];
-    return fetchPngContentBlock(output.image_url);
+    const o = output as VisualizeOutput;
+    if (o.image_url === undefined) return [];
+    return fetchPngContentBlock(o.image_url);
   },
   appUiResource(env, requestOrigin): AppUiResource {
     return buildChartAppUiResourceFromOutputPubId(env, requestOrigin);

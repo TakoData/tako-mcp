@@ -97,7 +97,7 @@
     {
       "id": "visualize-data",
       "name": "Visualize Your Data",
-      "description": "Create an embeddable Tako chart/card directly from your own structured data — timeseries, bar, table, financial boxes, and more. The card auto-renders as an interactive chart. Opt-in on /mcp via ?tools=search,visualize (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt, the surface that serves the chart widget.",
+      "description": "Create a Tako card directly from your own structured data — timeseries, bar, table, financial boxes, and more. The card auto-renders as an interactive chart. It PUBLISHES: the card is public and permanent, and anyone with the returned url can open it without signing in. Opt-in on /mcp via ?tools=search,visualize (an allowlist that replaces the default listing, so name the defaults you rely on too); listed by default at https://mcp.tako.com/mcp/chatgpt, the surface that serves the chart widget.",
       "tags": [
         "visualize",
         "charts",

@@ -360,6 +360,23 @@ describe("realistic payloads validate against the published schema", () => {
       }),
     ],
     [
+      // The created card plus the widget fields the handler derives. The four
+      // widget-only ones are declared on `/mcp/chatgpt` alone, so this case
+      // also proves the generic narrowing DROPS them rather than shipping keys
+      // the published schema does not carry.
+      "tako_visualize",
+      () => ({
+        title: "Regional Sales",
+        url: "https://trytako.com/card/p1/",
+        embed_url: "https://trytako.com/embed/p1/?dark_mode=auto&showShare=true",
+        image_url: "https://trytako.com/api/v1/image/p1/?dark_mode=true",
+        pub_id: "p1",
+        dark_mode: true,
+        width: 900,
+        height: 720,
+      }),
+    ],
+    [
       "tako_available_data",
       () => ({
         found: true,
@@ -451,6 +468,45 @@ describe("realistic payloads validate against the published schema", () => {
       // Not vacuous: the core fields it CAN produce are still there.
       expect(simple.properties, `tako_search/${surface}`).toHaveProperty("cards");
       expect(simple.properties, `tako_search/${surface}`).toHaveProperty("guidance");
+    }
+  });
+
+  // tako_visualize's half of the same rule, and the departure from
+  // tako_search that needs stating: there the six widget fields were the TOP
+  // CARD's plumbing and every card carried its own `url`, so dropping all six
+  // from `/mcp` cost the model nothing. Here the created card IS the result —
+  // drop `embed_url` and `image_url` and a structured-only host (Claude Code,
+  // Codex, VS Code) gets a title and no way to show or link what it published.
+  // Only the four with no reader outside the widget leave.
+  it("declares tako_visualize's widget-only fields on the chatgpt surface alone", () => {
+    const widgetOnly = ["pub_id", "dark_mode", "width", "height"];
+    const modelFacing = ["title", "url", "embed_url", "image_url"];
+    const propsFor = (surface: "generic" | "chatgpt"): Record<string, unknown> =>
+      (
+        publishedOutputJsonSchema(
+          outputSchemaForSurface(moduleFor("tako_visualize"), surface) as NonNullable<
+            ReturnType<typeof outputSchemaForSurface>
+          >,
+        ) as { properties: Record<string, unknown> }
+      ).properties;
+
+    const generic = propsFor("generic");
+    for (const key of widgetOnly) expect(generic, `generic declares ${key}`).not.toHaveProperty(key);
+    for (const key of modelFacing) expect(generic, `generic drops ${key}`).toHaveProperty(key);
+
+    const chatgpt = propsFor("chatgpt");
+    for (const key of [...widgetOnly, ...modelFacing]) {
+      expect(chatgpt, `chatgpt drops ${key}`).toHaveProperty(key);
+    }
+    // `description` is the caller's own input echoed back, dropped EVERYWHERE —
+    // asserted on both surfaces, because the chatgpt shape is a separate
+    // spread and can regain a field the generic one dropped (the same reason
+    // the tako_search test above loops over both).
+    for (const [surface, props] of [
+      ["generic", generic],
+      ["chatgpt", chatgpt],
+    ] as const) {
+      expect(props, `${surface} declares description`).not.toHaveProperty("description");
     }
   });
 

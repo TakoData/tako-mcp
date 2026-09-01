@@ -15,8 +15,13 @@ import {
   DEFAULT_HEIGHT,
   DEFAULT_WIDTH,
 } from "./_chart_widget.js";
-import takoVisualize, { buildVisualizeBody, COMPONENT_TYPES } from "./tako_visualize.js";
+import takoVisualize, {
+  buildVisualizeBody,
+  buildVisualizeOutput,
+  COMPONENT_TYPES,
+} from "./tako_visualize.js";
 import { CreateCardRequest, ThinVizCard } from "../generated/schemas.js";
+import { visualizeChatgptOutputShape } from "./_render_markdown.js";
 import {
   bodyOf,
   jsonResponse,
@@ -96,14 +101,21 @@ describe("tako_visualize handler", () => {
     expect(Array.isArray(body.components)).toBe(true);
     expect((body.components as unknown[]).length).toBe(2);
 
-    // card fields surfaced
-    expect(out.webpage_url).toBe("https://staging.trytako.com/charts/card_abc123");
+    // card fields surfaced. `url`, not the wire's `webpage_url`: one name for
+    // one thing across the surface (a tako_search card's `url`, the url
+    // tako_contents takes).
+    expect(out.url).toBe("https://staging.trytako.com/charts/card_abc123");
     // The id reaches the caller ONCE, as `pub_id` — the name the widget
     // resolves the chart through. `card_id` is deliberately not advertised
     // (see the outputSchema): it carried the identical string under a second,
     // internal-sounding name, which is the duplication OpenAI's review asks to
     // drop.
     expect("card_id" in out).toBe(false);
+    expect("webpage_url" in out).toBe(false);
+    // The caller's own `description` comes back from the backend unchanged, so
+    // the projection drops it: a field the model wrote one turn earlier tells
+    // it nothing.
+    expect("description" in out).toBe(false);
     // widget fields lifted for inline render
     expect(out.pub_id).toBe("card_abc123");
     expect(out.embed_url).toMatch(/^https?:\/\//);
@@ -421,6 +433,30 @@ const KNOWLEDGE_CARD_WIRE = {
 describe("tako_visualize output contract guard (ThinVizCard wire)", () => {
   it("generated ThinVizCard schema accepts a representative thin_viz/create response", () => {
     expect(() => ThinVizCard.parse(KNOWLEDGE_CARD_WIRE)).not.toThrow();
+  });
+
+  // Both legs of `buildVisualizeOutput`'s ONE branch. Nothing else exercises
+  // it: the docs fixture and every handler test carry non-empty values, so
+  // deleting the guard used to leave all tests green while `title: null` made
+  // the output fail its own schema and the handler throw on a good card.
+  it.each([
+    ["empty strings", { card_id: "p1", title: "  ", webpage_url: "" }],
+    ["nulls", { card_id: "p1", title: null, webpage_url: null }],
+  ])("drops title and url when the wire carries them as %s", (_label, wire) => {
+    // `title` is whatever the CALLER sent — `inputSchema.title` has no
+    // `.min(1)` and the backend echoes it — so `title: ""` is a reachable
+    // wire value, and `z.string()` accepts it. Without `nonEmpty` the
+    // structured-only hosts this projection serves get `"title": ""` and a
+    // card addressed by an empty `url`. Same guard `projectCard` applies.
+    const env = { DJANGO_BASE_URL: "https://staging.trytako.com" } as Env;
+    const out = buildVisualizeOutput(wire, "p1", env, 720);
+    expect("title" in out).toBe(false);
+    expect("url" in out).toBe(false);
+    // Not vacuous: the fields the projection always builds are still there,
+    // and the result still satisfies the schema the handler validates against.
+    expect(out.embed_url).toMatch(/^https?:\/\//);
+    expect(out.pub_id).toBe("p1");
+    expect(visualizeChatgptOutputShape.safeParse(out).success).toBe(true);
   });
 
   it("generated ThinVizCard schema accepts the minimal CARD_RESPONSE (only card_id present)", () => {

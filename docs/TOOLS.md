@@ -2465,29 +2465,22 @@ Annotations:
 
 Description:
 
-Create a PUBLIC, PERSISTENT Tako chart/card from data you ALREADY HAVE — use `tako_search` to find existing Tako data instead. The data you supply is sent to and stored by Tako, the card does not expire, and anyone with the returned link can view it without signing in. Confirm the user wants a public chart before calling.
+Create a public, permanent Tako card from data you already have — to chart data Tako already holds, use `tako_search`. Tako stores what you send, the card never expires, and anyone with the returned url can open it without signing in. Confirm the user wants a public card before you call, then give them the url.
 
-NEVER put sensitive data in `components`: no passwords, API keys or tokens, payment-card or bank details, health information, government identifiers (SSN, passport, driver's licence), precise home addresses, or anyone's personal data they have not agreed to publish. Aggregate or anonymize first, or decline.
+Never put sensitive data in `components`: no passwords, API keys, payment-card or bank details, health information, government identifiers, precise home addresses, or personal data the subject hasn't agreed to publish. Aggregate or anonymize it first, or decline.
 
-Auto-renders inline; returns `webpage_url` / `embed_url`.
-
-Input: one or more `components`, each `{component_type, config}`. `config` is typed per `component_type` — `header`, `categorical_bar`, `generic_timeseries`, `table`, `financial_boxes`, and `pie` carry their required fields inline; other types accept a documented passthrough config. `component_variant` is optional and rarely needed.
-
-Example — a titled bar chart is two components:
-{"components": [{"component_type": "header", "config": {"title": "Revenue"}}, {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Sales", "units": "USD", "data": [{"x": "NA", "y": 500}, {"x": "EU", "y": 300}]}]}}]}
-
-Tip: `person_card` must be the only component when used. Always end your reply with `[Open in Tako](embed_url)`.
+Each component is `{component_type, config}`, rendered top to bottom. A titled bar chart is two: {"components": [{"component_type": "header", "config": {"title": "Revenue"}}, {"component_type": "categorical_bar", "config": {"datasets": [{"label": "Sales", "units": "USD", "data": [{"x": "NA", "y": 500}]}]}}]}. Use `person_card` alone, never beside another component.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `components` | array | yes |  | One or more components making up the card, rendered top to bottom. |
-| `title` | string | no |  | Card title (falls back to a header component's title). |
-| `description` | string | no |  | Card description. |
-| `source` | string | no |  | Data source attribution, shown in the footer. |
-| `height` | integer | no |  | Chart height in pixels (100–2000). Overrides the default aspect-ratio height. |
-| `normalize_currencies` | string | no |  | Target ISO 4217 currency code (e.g. 'USD'). Converts recognized currency-denominated datasets to this currency using historical rates. |
+| `components` | array | yes |  | The card's content blocks, rendered top to bottom. |
+| `title` | string | no |  | The card's title. Omit it and a `header` component's title is used. |
+| `description` | string | no |  | Card description, shown under the title. |
+| `source` | string | no |  | Data source attribution, shown in the card footer. |
+| `height` | integer | no |  | Card height in pixels. Omit it and the card uses its default aspect-ratio height. |
+| `normalize_currencies` | string | no |  | Convert currency-denominated datasets to this ISO 4217 code (e.g. `USD`) using historical rates. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -3324,28 +3317,28 @@ Annotations:
         ],
         "description": "One component: `{component_type, config}`; `config` shape is keyed to `component_type`."
       },
-      "description": "One or more components making up the card, rendered top to bottom."
+      "description": "The card's content blocks, rendered top to bottom."
     },
     "title": {
-      "description": "Card title (falls back to a header component's title).",
+      "description": "The card's title. Omit it and a `header` component's title is used.",
       "type": "string"
     },
     "description": {
-      "description": "Card description.",
+      "description": "Card description, shown under the title.",
       "type": "string"
     },
     "source": {
-      "description": "Data source attribution, shown in the footer.",
+      "description": "Data source attribution, shown in the card footer.",
       "type": "string"
     },
     "height": {
-      "description": "Chart height in pixels (100–2000). Overrides the default aspect-ratio height.",
+      "description": "Card height in pixels. Omit it and the card uses its default aspect-ratio height.",
       "type": "integer",
       "minimum": 100,
       "maximum": 2000
     },
     "normalize_currencies": {
-      "description": "Target ISO 4217 currency code (e.g. 'USD'). Converts recognized currency-denominated datasets to this currency using historical rates.",
+      "description": "Convert currency-denominated datasets to this ISO 4217 code (e.g. `USD`) using historical rates.",
       "type": "string"
     }
   },
@@ -3364,24 +3357,58 @@ Annotations:
   "type": "object",
   "properties": {
     "title": {
+      "description": "The card's title: the one you supplied, or its `header` component's title.",
       "type": "string"
     },
-    "description": {
-      "type": "string"
-    },
-    "webpage_url": {
-      "type": "string"
-    },
-    "pub_id": {
+    "url": {
+      "description": "The card's page on Tako.",
       "type": "string"
     },
     "embed_url": {
+      "description": "The card as a page to embed in an iframe.",
       "type": "string",
       "pattern": "^https?:\\/\\/"
     },
     "image_url": {
+      "description": "A PNG rendering of the card.",
       "type": "string",
       "pattern": "^https?:\\/\\/"
+    }
+  },
+  "additionalProperties": false
+}
+```
+</details>
+
+<details><summary>wire — Published output schema on `/mcp/chatgpt` (JSON Schema)</summary>
+
+The chart-widget fields are declared only here; the widget reads them from `window.openai.toolOutput`, and `pickDeclared` strips them from `/mcp` responses by construction.
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "title": {
+      "description": "The card's title: the one you supplied, or its `header` component's title.",
+      "type": "string"
+    },
+    "url": {
+      "description": "The card's page on Tako.",
+      "type": "string"
+    },
+    "embed_url": {
+      "description": "The card as a page to embed in an iframe.",
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "image_url": {
+      "description": "A PNG rendering of the card.",
+      "type": "string",
+      "pattern": "^https?:\\/\\/"
+    },
+    "pub_id": {
+      "type": "string"
     },
     "dark_mode": {
       "type": "boolean"
@@ -3399,5 +3426,29 @@ Annotations:
   },
   "additionalProperties": false
 }
+```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "title": "Regional Sales",
+  "url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+  "embed_url": "https://tako.com/embed/eDLjXb_EieceW6BapkXJ/?dark_mode=auto&showShare=true",
+  "image_url": "https://tako.com/api/v1/image/eDLjXb_EieceW6BapkXJ/?dark_mode=true"
+}
+```
+
+`content[0].text`:
+
+```markdown
+## Card created — Regional Sales
+
+- url: https://tako.com/card/eDLjXb_EieceW6BapkXJ/
+- embed: https://tako.com/embed/eDLjXb_EieceW6BapkXJ/?dark_mode=auto&showShare=true
+- image: https://tako.com/api/v1/image/eDLjXb_EieceW6BapkXJ/?dark_mode=true
 ```
 </details>

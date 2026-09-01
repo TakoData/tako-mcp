@@ -22,9 +22,9 @@
       "output_schema_sha256": "ee34cbc2d15f04044ac1bd3f270c0f48297b8bab2ac96db4feee33d4b9311b18"
     },
     "tako_visualize": {
-      "description_sha256": "4ea2f9ed87390bb7598d2e86147f3f4cc76f6b4d6302eef1626bda0609139ece",
-      "input_schema_sha256": "10041193cae0bf3bcae12592d331e3a269887e4636e55ad792c649db1a97d8ad",
-      "output_schema_sha256": "d949f6a8265108c9847bcfd672325f30b037da0e8c9d9878789e83c66e2df22f"
+      "description_sha256": "8f5f2862aff0f94e6cbd4cca9436926e3ec4859a7a9c8a6beb690f243389e93d",
+      "input_schema_sha256": "f99b017501c673d46898066f77418ded67215e7c982b8f9d0bcd523bb65ddf5e",
+      "output_schema_sha256": "2bdfeaabaa1eb68bc056ecfa3073410f8f5417604453228b3a6f422dc7f82752"
     }
   }
 }

@@ -571,7 +571,7 @@ export type TopCardChartFields = {
 // `slimCardContent` survives because `projectCard` caps inlined rows with it.
 // ---------------------------------------------------------------------------
 
-const nonEmpty = (v: unknown): string | undefined =>
+export const nonEmpty = (v: unknown): string | undefined =>
   typeof v === "string" && v.trim() !== "" ? v : undefined;
 
 // Date-only per the field vocabulary: recency matters, time-of-day doesn't.
