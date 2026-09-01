@@ -272,6 +272,27 @@ The three-tool restriction is Worker-side filtering, not an authorization
 boundary on the key, so treat the key's blast radius as the whole
 account.
 
+## Upstream caller headers
+
+Every Django request a tool makes carries two attribution headers, set in
+`src/django.ts` from the `CallerStamp` on `ToolContext` (`src/caller.ts`):
+
+```
+User-Agent: tako-mcp/<SERVER_VERSION>
+X-Tako-Caller: channel=mcp, surface=chatgpt, tier=oauth, tool=tako_search, client_ua="claude-code/1.2.3"
+```
+
+`X-Tako-Caller` is an RFC 8941 dictionary. `channel`, `surface`, `tier`
+(`oauth`, `api_key`, `anonymous`) and `tool` are bare tokens. `client_ua` is
+the end client's User-Agent as a quoted string: printable ASCII only, `"` and
+`\` escaped, capped at 200 characters, so a hostile UA cannot forge a second
+item or header line. Django parses it into `caller_channel` on its request-log
+tables and a `channel:` metric tag; the rules live in
+`backend/logging/caller_channel.py` in the `tako` repo.
+
+The header is attribution, never authorization. The OAuth mint call in
+`src/oauth/identity.ts` does not carry it.
+
 ## Password sign-in (`POST /login/password`)
 
 The OAuth sign-in page offers Google **and** email + password. The password
