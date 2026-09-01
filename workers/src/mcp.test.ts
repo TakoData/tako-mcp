@@ -20,6 +20,7 @@ import {
 } from "./instructions.js";
 import {
   AUTH_INVALID_MESSAGE,
+  authModeFor,
   createMcpServer,
   djangoErrorToToolResult,
   GENERIC_SIGN_IN_HINT,
@@ -1897,5 +1898,64 @@ describe("published outputSchema per surface", () => {
     // schema that lost everything would pass the loop above.
     expect(props).toContain("cards");
     expect(props).toContain("web_results");
+  });
+});
+
+describe("caller stamp reaches Django on a tool call", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("maps auth tiers to header auth modes", () => {
+    expect(authModeFor("free", false)).toBe("anonymous");
+    expect(authModeFor("authenticated", true)).toBe("oauth");
+    expect(authModeFor("authenticated", false)).toBe("api_key");
+  });
+
+  it("stamps tool, surface, tier and client UA on the upstream request", async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ detail: "boom" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" } as Env,
+      sendProgress: noopSendProgress,
+      surface: "generic",
+      tier: "authenticated",
+      caller: {
+        surface: "generic",
+        authMode: "api_key",
+        serverVersion: "0.0.0-test",
+        clientUserAgent: "claude-code/1.2.3",
+      },
+    };
+    const server = createMcpServer(ctx, { surface: "generic", tier: "authenticated" });
+    const mcpClient = new Client(
+      { name: "caller-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      await mcpClient.callTool({ name: "tako_search", arguments: { query: "us gdp" } });
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+
+    expect(fetchMock).toHaveBeenCalled();
+    const upstream = fetchMock.mock.calls[0]![0] as Request;
+    expect(upstream.headers.get("user-agent")).toBe("tako-mcp/0.0.0-test");
+    expect(upstream.headers.get("x-tako-caller")).toBe(
+      'channel=mcp, surface=generic, tier=api_key, tool=tako_search, client_ua="claude-code/1.2.3"',
+    );
   });
 });
