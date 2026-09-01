@@ -2,9 +2,9 @@
   "note": "The description, input schema and chatgpt-surface output schema of every tool on the fixed /mcp/chatgpt surface, as last ACCEPTED here. OpenAI snapshots that text at submission and does not update it live, so this file equals OpenAI's copy only after a resubmission — between submissions it is what we intend to submit next. registry:check fails on any drift. Accept a deliberate change with: npm run registry:gen -- --accept-chatgpt-snapshot",
   "tools": {
     "tako_available_data": {
-      "description_sha256": "3a0f70e98a8b37eb25eb8426b7f465e75e1f6524f46b1a55949318fe01f2d20d",
-      "input_schema_sha256": "cfb68bee47bb506bb578b75cdcc6fe196d0e19f027fa6212d830b823bf05da0f",
-      "output_schema_sha256": "f15b40a6a4c88e4f7227f7dd221b018b1a25ea0cdf6eb46dfaffe822a8b71d61"
+      "description_sha256": "9ebd853338d122ab8e22e283d8a687760eb4e57a18b9433fd9655bc7a168c8e1",
+      "input_schema_sha256": "62b5b9b65737867143e3c2844053afeeee8346f95a92b64133709ca0a3e8e3d1",
+      "output_schema_sha256": "c99944f017b8b94928982d9ac00ed9cd33680441d1d6d60bd50d1e9ec1303270"
     },
     "tako_contents": {
       "description_sha256": "278336d9293351cf5a3265dd9b8f7cdc886987bc0ba6dcfbcff823d07a9004a7",
@@ -12,14 +12,14 @@
       "output_schema_sha256": "e30ca69995f4c6d58f70e19269a8e4c679cdcc582beaca8d98bc8f19e0a4f6f9"
     },
     "tako_graph_related": {
-      "description_sha256": "085cae2163f05894a054e7ce3cccb86c04e5e31ae6074419df3d230e1af4f7d7",
-      "input_schema_sha256": "7e2cca5f383a8d6de1700ffa75c3ae25e8c98ed9e52927cc1cac3f60818863a3",
-      "output_schema_sha256": "bea627336b8a937914b0690cee5dcc9a3019529f059e48318f8134d21d08cf41"
+      "description_sha256": "f7f773f8e1fcd95d305b33daa3fcb682c3caafbcee9df6d4888620bc1ef47001",
+      "input_schema_sha256": "142389dbe63e3f426f5402ef30cde838a8b5de4b99c744354eb0fa6682b4325e",
+      "output_schema_sha256": "3569c618ed16c5e390812f9e4f3e10859fd2fc0b38bf44535b5ed097a9a70b26"
     },
     "tako_search": {
       "description_sha256": "61a7e902d8b3026d79bc5a77f367610c6ffa8ab157366cf120e8fa33c49aa658",
       "input_schema_sha256": "5c3ea30d240d20a969691082786bc8551833a8f1eb607f19df5a36592bd791dc",
-      "output_schema_sha256": "ee34cbc2d15f04044ac1bd3f270c0f48297b8bab2ac96db4feee33d4b9311b18"
+      "output_schema_sha256": "9942d5da9350326b1fa1b71aafbc669048c40e38b32dadafe8c18747004a549e"
     },
     "tako_visualize": {
       "description_sha256": "8f5f2862aff0f94e6cbd4cca9436926e3ec4859a7a9c8a6beb690f243389e93d",

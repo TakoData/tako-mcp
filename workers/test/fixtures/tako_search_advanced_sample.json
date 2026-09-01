@@ -1,0 +1,94 @@
+{
+  "__comment": "Canonical tako_search_advanced wire fixture for the generated docs/TOOLS.md samples (spec: 2026-08-26-model-facing-surface-redesign, 'TOOLS.md output rendering'). Shape mirrors POST /api/v1/answer, which is the tool's include_answer branch and a superset of the search branch: it adds answer and structured_output on top of cards[] and web_results[]. The ANSWER path is the one fixture on purpose — a search-path sample can never show `answer`, which is the field this tool alone publishes and the reason the branch exists. The request it stands for sets include_answer, output_schema, data.include_contents with max_rows 3, and web.include_contents, so one sample carries the fields only this tool can return: inlined card rows, web page text, the synthesized answer and its filled schema. NOT `related`: POST /v1/answer accepts include_related and returns no related field (verified against staging 2026-08-31), so a sample carrying both would depict a response the API cannot produce. `related`'s shape is in the outputSchema block on this page. Deliberately small — 1 card, 1 web result, 3 rows. Regenerating TOOLS.md runs this through the real projection + renderer; do not hand-edit the samples there.",
+  "request_id": "req_fixture_advanced",
+  "usage": { "total_cost_usd": 0.042 },
+  "answer": "NVIDIA's Data Center segment reported $75.2 billion in revenue for the quarter ended April 2026, up 89% year over year [1].",
+  "structured_output": {
+    "segment": "Data Center",
+    "revenue_usd": 75246000000,
+    "period_end": "2026-04-26"
+  },
+  "cards": [
+    {
+      "card_id": "eDLjXb_EieceW6BapkXJ",
+      "title": "NVIDIA Corporation Data Center Total Revenues (Quarterly)",
+      "description": "NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.",
+      "exportable": true,
+      "content": {
+        "content_format": "json_compact",
+        "cost": 0.0015,
+        "data": null,
+        "records": null,
+        "dataset": {
+          "columns": [
+            { "name": "Timestamp", "type": "datetime" },
+            { "name": "Data Center Total Revenues (Normalized)", "type": "number", "unit": "USD" }
+          ],
+          "rows": [
+            ["2025-10-26T00:00:00+00:00", 57006000000],
+            ["2026-01-25T00:00:00+00:00", 65821000000],
+            ["2026-04-26T00:00:00+00:00", 75246000000]
+          ],
+          "total_rows": 26,
+          "truncated": true,
+          "ref": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+          "sources": [{ "name": "Fiscal.ai", "index": "data" }],
+          "provenance": "query"
+        },
+        "total_rows": 26,
+        "truncated": true,
+        "manifest": [
+          { "name": "Timestamp", "dtype": "datetime" },
+          {
+            "name": "Data Center Total Revenues (Normalized)",
+            "dtype": "number",
+            "unit": "USD",
+            "metric": "Total Revenues (Normalized)",
+            "entity": "NVIDIA Corporation — Data Center"
+          }
+        ]
+      },
+      "nodes": [
+        { "id": "ent::nvidia_corporation::5ea55992", "name": "NVIDIA Corporation", "type": "entity" },
+        { "id": "mt::total_revenues::8a1f02c3", "name": "Total Revenues (Normalized)", "type": "metric" }
+      ],
+      "card_type": "chart",
+      "data_freshness": { "coverage_end": "2026-04", "data_as_of": "2026-04-26", "last_updated": "2026-08-26" },
+      "relevance": "High",
+      "metric_definitions": [
+        {
+          "name": "Total Revenues (Normalized)",
+          "definition": "Revenue the company reported for this segment, as disclosed in its segment note. The figure covers one segment only, so it does not sum to consolidated total revenue unless the company reports no other segment."
+        }
+      ],
+      "webpage_url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+      "image_url": "https://tako.com/api/v1/image/eDLjXb_EieceW6BapkXJ/",
+      "embed_url": "https://tako.com/embed/eDLjXb_EieceW6BapkXJ/",
+      "sources": [
+        {
+          "source_name": "Fiscal.ai",
+          "source_index": "data",
+          "source_description": "Fundamental company financials standardized across filings, so the same line item is comparable between companies and periods."
+        }
+      ],
+      "source_indexes": ["data"]
+    }
+  ],
+  "web_results": [
+    {
+      "title": "NVIDIA Announces Financial Results for First Quarter Fiscal 2027",
+      "url": "https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-Q1-FY2027/",
+      "snippet": "Record revenue of $81.6 billion, up 85% from a year ago. Record Data Center revenue of $75.2 billion, up 89% from a year ago.",
+      "source_name": "investor.nvidia.com",
+      "publish_date": "2026-05-27T00:00:00Z",
+      "citation_number": null,
+      "content": {
+        "cost": 0,
+        "truncated": false,
+        "data": "SANTA CLARA, Calif. — NVIDIA today reported revenue for the first quarter of fiscal 2027 of $81.6 billion, up 85% from a year ago. Data Center revenue was $75.2 billion, up 89% from a year ago.",
+        "records": null,
+        "dataset": null
+      }
+    }
+  ]
+}

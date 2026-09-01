@@ -30,6 +30,7 @@ import {
   searchSlimOutputShape,
 } from "./_render_markdown.js";
 import { runSearch } from "./_run_search.js";
+import { SOURCES_DESCRIBE } from "./_shared_prose.js";
 import type { SearchOutput } from "./_search_results.js";
 import type { AppUiResource, ToolContentBlock, ToolContext, ToolModule } from "./types.js";
 
@@ -64,9 +65,8 @@ const inputSchema = z.object({
       .array(z.enum(["data", "web"]))
       .min(1)
       .default(["data", "web"])
-      .describe(
-        'Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph.',
-      ),
+      // Shared with tako_agent, whole and unmodified (spec D2.10).
+      .describe(SOURCES_DESCRIBE),
     { field: "tako_search.sources", commaSeparated: true },
   ),
   country_code: z

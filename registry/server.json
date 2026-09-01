@@ -39,16 +39,16 @@
   "tools": [
     {
       "name": "tako_agent",
-      "description": "Run Tako's Answer Agent: multi-step research returning a synthesized, cited `answer` plus chart `cards`.\n\nBest for: questions whose shape needs figuring out — cohorts (\"which companies match…\"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` returns nothing.\n\nNot for: a known value or a simple comparison — use `tako_search` (faster). This runs ~30–90s but is far more thorough.",
+      "description": "Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.\n\nBest for questions whose shape you'd have to work out first: cohorts (\"which companies match…\"), ranking or screening by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing.\n\nNot for a known value or a two-entity comparison — `tako_search` answers those in one round trip.",
       "parameters": {
         "query": {
           "type": "string",
-          "description": "The deep/analytical question for the agent to work through.",
+          "description": "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps.",
           "required": true
         },
         "sources": {
           "type": "array",
-          "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph.",
+          "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
           "default": [
             "data",
             "web"
@@ -56,7 +56,7 @@
         },
         "thread_id": {
           "type": "string",
-          "description": "Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread."
+          "description": "A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one."
         }
       },
       "annotations": {
@@ -69,20 +69,20 @@
     },
     {
       "name": "tako_available_data",
-      "description": "Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.\n\nAsk it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.\n\nWorth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).\n\nWorks on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).\n\nTips:\nKnow the measure? Split it: q=\"Carnival\", metric=\"passenger cruise days\" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q=\"Nvidia\", metric=\"data center\" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.\nOne metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.\nWhen `q` names both an entity and a metric (\"US core PCE\" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.\nOn the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.\nPass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).\nEach match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.\nA broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.\nThis tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.",
+      "description": "Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.\n\nBest for: coverage questions themselves, or a metric's canonical name before a priced search. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.\n\nSearch on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.",
       "parameters": {
         "q": {
           "type": "string",
-          "description": "The NAME of the entity (or metric) to look up, min 2 chars — e.g. \"Carnival\", \"United States\", \"Nvidia\". Put the measure in `metric`, not here.",
+          "description": "The entity or metric to look up by name — \"Carnival\", \"United States\", \"Nvidia\". Put the measure in `metric`, not here.",
           "required": true
         },
         "metric": {
           "type": "string",
-          "description": "The measure you want, when you already know it — e.g. \"gross margin\", \"passenger cruise days\", \"capex\". Supplying it is the FAST path: the tool resolves the entity+metric pair directly and hands back a runnable next_call, instead of listing every metric the entity has. Omit it only to browse what exists."
+          "description": "The measure, when you already know it — \"gross margin\", \"capex\". Supplying it resolves the entity+metric pair directly; omit it to browse everything the entity has."
         },
         "types": {
           "type": "string",
-          "description": "Narrow resolution to a \"thing\" (\"entity\") or a \"measure\" (\"metric\"). Omit to search both.",
+          "description": "Narrow resolution to one kind, an entity or a metric. Omit to resolve both.",
           "enum": [
             "entity",
             "metric"
@@ -90,7 +90,7 @@
         },
         "label": {
           "type": "string",
-          "description": "NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`.",
+          "description": "NER label to prefer for `q` — a boost, not a filter. Set it when you can categorize the term: company → ORG, place → GPE, person → PERSON. It never applies to `metric`.",
           "enum": [
             "PERSON",
             "ORG",
@@ -107,7 +107,7 @@
         },
         "limit": {
           "type": "integer",
-          "description": "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` names, and a deeper metric node can turn a confident single answer into a two-candidate tie."
+          "description": "How many candidates to resolve for each of `q` and `metric`. Raising it widens what the tool considers, not just what it shows: a deeper metric can become the one `next_call` names."
         }
       },
       "annotations": {
@@ -150,24 +150,24 @@
     },
     {
       "name": "tako_graph_related",
-      "description": "Explore what a graph node connects to — the map of what data Tako has for it. Free.\n\nBest for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.\n\nTwo modes. Overview (`node_id` alone) is a compact map: every relation group with its `key`, `label`, `total`, and its first 3 items — a few hundred tokens, never a page. Drill (`relation: \"<key>\"`) pages that one group; each item carries `id`, `name`, `type`, `subtype`, and `label`, and only the focal node carries `aliases` and a truncated `description`.\n\nRelation keys come from the overview. The fixed keys are `metrics`, `entities`, `siblings`, `part_of`, `members`; named edges look like `rel:<phrase>`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.\n`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: \"revenue\" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.",
+      "description": "Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.\n\nTwo modes. Pass `node_id` alone for the map: every relation group with its key, label, total, and its first 3 names. Pass `relation` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.\n\nBest for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.",
       "parameters": {
         "node_id": {
           "type": "string",
-          "description": "Opaque public id of the node to explore.",
+          "description": "Public id of the node to explore, as returned by `tako_available_data` or on a `tako_search` card.",
           "required": true
         },
         "relation": {
           "type": "string",
-          "description": "Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview."
+          "description": "Relation key to page, taken from the map: metrics, entities, siblings, part_of, members, or a named edge like rel:competes_with. Omit for the map."
         },
         "q": {
           "type": "string",
-          "description": "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group."
+          "description": "Case-insensitive substring filter on names and aliases, one string per call: \"revenue\" matches `Total Revenue` and misses `Sales`. Call once per name variant."
         },
         "label": {
           "type": "string",
-          "description": "Prefer related nodes with this NER label (boost, not a filter).",
+          "description": "NER label to prefer among the related nodes — a boost, not a filter.",
           "enum": [
             "PERSON",
             "ORG",
@@ -184,15 +184,15 @@
         },
         "infer_label": {
           "type": "boolean",
-          "description": "Auto-detect labels from q (default true server-side, only when q is set)."
+          "description": "Detect labels from `q`. Omit it and the server infers them whenever `q` is set."
         },
         "cursor": {
           "type": "string",
-          "description": "Pagination cursor (for a single drilled relation; intended for single-q use)."
+          "description": "Page handle from a previous drilled relation. Omit it for the first page."
         },
         "limit": {
           "type": "integer",
-          "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass."
+          "description": "Page size for a drilled relation. Omit it and the server serves 50. Ignored on the map, where every group returns its first 3 names whatever you pass."
         }
       },
       "annotations": {
@@ -239,16 +239,16 @@
     },
     {
       "name": "tako_search_advanced",
-      "description": "The v3 search request's retrieval options: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.\n\nUse `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.\n\nNothing is sent unless you set it, with one exception named below, so an omitted field takes the server default in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.\n\nWeb snippets are query-relevant highlight passages by default here, as on `tako_search`. Unlike there, you can turn them off: `web.highlights: false` gives you the page's opening text instead.\n\nOne field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.\n\n`include_answer: true` runs the answer endpoint instead: one synthesized, citation-backed answer in `answer`, with the retrieved cards and web results as its citations. Every option here applies the same way; the server defaults that differ on that endpoint (web `count` 3, `snippet_max_chars` 1000) are named in each field's description. `output_schema` fills a JSON Schema from the same evidence and returns it as `structured_output`. For values on a card marked `exportable: false`, pin its METRIC node id alone in `data.node_ids` with `strict: true`, set `include_answer: true` and `data.include_contents: true`.\n\nTo land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.",
+      "description": "Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.\n\nOnly `query` is required; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.\n\nBest for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.",
       "parameters": {
         "query": {
           "type": "string",
-          "description": "Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool.",
+          "description": "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity.",
           "required": true
         },
         "effort": {
           "type": "string",
-          "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier.",
+          "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds; deep widens retrieval and reranks, at a premium rate.",
           "enum": [
             "fast",
             "instant",
@@ -257,7 +257,7 @@
         },
         "location": {
           "type": "object",
-          "description": "Optional coordinates of the end user. Resolves the location for implicit-location queries (for example, weather). An explicit location in the query overrides these coordinates."
+          "description": "End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code."
         },
         "country_code": {
           "type": "string",
@@ -269,7 +269,7 @@
         },
         "timezone": {
           "type": "string",
-          "description": "IANA timezone (for example, 'America/New_York')."
+          "description": "IANA timezone. It formats dates in rendered card images only."
         },
         "output_settings": {
           "type": "object",
@@ -277,23 +277,23 @@
         },
         "include_related": {
           "type": "integer",
-          "description": "Applies to POST /v3/search only. Return follow-up query suggestions in `related`. Omit this field to disable them. The value sets the maximum number of suggestions, from 1 to 20. POST /v1/answer accepts this field but ignores it: the answer response has no `related` field."
+          "description": "Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true."
         },
         "data": {
           "type": "object",
-          "description": "Tako data (card) source settings. Include this key — even as an empty object — to search the data graph."
+          "description": "Tako data (card) source settings; naming it selects the data graph."
         },
         "web": {
           "type": "object",
-          "description": "Web source settings. Include this key — even as an empty object — to search the web."
+          "description": "Web source settings; naming it selects the web."
         },
         "include_answer": {
           "type": "boolean",
-          "description": "Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only."
+          "description": "Set true to synthesize one citation-backed answer from the retrieval into `answer`."
         },
         "output_schema": {
           "type": "object",
-          "description": "JSON Schema for structured output. Tako fills it from the same evidence it uses to write `answer`, and returns it in `structured_output`. Requires effort 'fast' or 'deep'; on 'instant' the request returns 400. Supported subset: the object, array, string, number, integer, and boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties: false`. A type may be nullable as `[\"number\", \"null\"]`, which is how you let Tako signal 'no evidence' rather than filling a zero. `title`, `examples`, `format`, and `default` are accepted and ignored — they constrain nothing. Caps: 16KB total, depth 5, 64 properties, 512 characters per description. Violations return 400. If Tako can't fill the schema, `structured_output` is absent and `structured_output_error` says why — the answer and the cards still return."
+          "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Type a field [\"number\", \"null\"] when evidence may be missing — Tako then signals that, not a zero."
         }
       },
       "annotations": {

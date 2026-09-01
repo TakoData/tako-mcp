@@ -22,7 +22,7 @@
  *   4. MCP Apps widget assertion on `tako_search` (soft-warn on miss)
  *   5. Per-tool MCP `tools/call` canaries:
  *        a. `tako_search "US GDP"`        — non-empty results (read-only)
- *        a2. `tako_available_data "US GDP"` — summary + a match with node_id (read-only)
+ *        a2. `tako_available_data "US GDP"` — text plus a match with an id (read-only)
  *        b. `tako_search_advanced "US GDP" include_answer` — answer text returned (read-only)
  *        c. `tako_contents {urls}` — a card's rows in BOTH channels, then a web url's page text (read-only)
  *        d. `tako_visualize`              — creates a card (charges 1 credit)
@@ -470,22 +470,21 @@ try {
   );
 
   // ----- a2) tako_available_data canary ---------------------------------
-  // Free graph pipeline (search → related). Assert the natural-language
-  // summary and at least one resolved match with a node_id.
+  // Free graph pipeline (search → related). Assert the rendered text and at
+  // least one resolved match carrying an id.
   const adResult = await callOk(client, "tako_available_data", {
     q: CANARY_QUERY,
   });
   const adStructured = adResult.structuredContent as
     | {
         found?: boolean;
-        summary?: string;
-        matches?: Array<{ node_id?: string }>;
+        matches?: Array<{ id?: string }>;
       }
     | undefined;
   assert(adStructured, "tako_available_data missing structuredContent");
-  // The prose summary and the coverage-name lists render into the TEXT
+  // The guidance and the coverage lists render into the TEXT
   // channel; structuredContent carries the machine handles (found,
-  // matches[].node_id, next_call). Assert each where it actually lives.
+  // matches[].id, next_call). Assert each where it actually lives.
   const adText = (adResult.content as Array<{ type?: string; text?: string }>)
     .filter((b) => b.type === "text")
     .map((b) => b.text ?? "")
@@ -493,10 +492,10 @@ try {
   assert(adText.length > 0, "tako_available_data returned empty text");
   assert(
     Array.isArray(adStructured.matches) && adStructured.matches.length > 0 &&
-      typeof adStructured.matches[0]?.node_id === "string",
-    "tako_available_data returned no matches with a node_id",
+      typeof adStructured.matches[0]?.id === "string",
+    "tako_available_data returned no matches with an id",
   );
-  ok(`tako_available_data "${CANARY_QUERY}" → ${adStructured.matches.length} matches with node_ids`);
+  ok(`tako_available_data "${CANARY_QUERY}" → ${adStructured.matches.length} matches with ids`);
 
   // ----- b) answer-endpoint canary --------------------------------------
   // `tako_answer` was folded into `tako_search_advanced`: same endpoint, same

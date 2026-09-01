@@ -1,14 +1,14 @@
 /**
  * `tako_graph_related` — explore what a resolved graph node connects to.
  *
- * Wraps `GET /api/v1/graph/related`. Overview mode (no relation, no q) returns
- * each group's key, label, total, and its first three items; drill mode
- * (relation=<key>) pages one group. Items are slimmed to id, name, type,
- * subtype, label — see `slimRelatedResponse`. `q` is a single substring filter
- * — to cover several name-variants of a metric, call this tool once per
- * variant (graph calls are free). Wire-guarded against the
- * loose graphRelatedOutputShape facade (not the strict generated schema, whose
- * RelationKind enum drifts — see the handler note).
+ * Wraps `GET /api/v1/graph/related`. Map mode (no relation) returns each
+ * group's key, label, total and a preview of its names; drill mode
+ * (relation=<key>) pages one group with the id of every item. `q` is a single
+ * substring filter — to cover several name-variants of a metric, call once per
+ * variant (graph calls are free). Wire-guarded against the loose
+ * `graphRelatedOutputShape` facade (not the strict generated schema, whose
+ * RelationKind enum drifts — see the handler note), then projected by
+ * `projectRelated` before either channel reads it.
  */
 import { z } from "zod";
 
@@ -18,10 +18,11 @@ import {
   graphErrorMessage,
   graphRelatedOutputShape,
   OVERVIEW_PREVIEW_N,
-  slimRelatedResponse,
+  projectRelated,
+  type ProjectedRelated,
 } from "./_graph.js";
 import { logWireGuardFailure } from "./_log.js";
-import { renderGraphRelatedMarkdown } from "./_render_markdown.js";
+import { graphRelatedSlimOutputShape, renderGraphRelatedMarkdown } from "./_render_markdown.js";
 import type { ToolModule } from "./types.js";
 
 const NER_LABELS = [
@@ -30,78 +31,57 @@ const NER_LABELS = [
 ] as const;
 
 const DESCRIPTION = [
-  "Explore what a graph node connects to — the map of what data Tako has for it. Free.",
+  "Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.",
   "",
-  "Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.",
+  `Two modes. Pass \`node_id\` alone for the map: every relation group with its key, label, total, and its first ${String(OVERVIEW_PREVIEW_N)} names. Pass \`relation\` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.`,
   "",
-  `Two modes. Overview (\`node_id\` alone) is a compact map: every relation group with its \`key\`, \`label\`, \`total\`, and its first ${String(OVERVIEW_PREVIEW_N)} items — a few hundred tokens, never a page. Drill (\`relation: "<key>"\`) pages that one group; each item carries \`id\`, \`name\`, \`type\`, \`subtype\`, and \`label\`, and only the focal node carries \`aliases\` and a truncated \`description\`.`,
-  "",
-  `Relation keys come from the overview. The fixed keys are ${FIXED_RELATION_KEYS.map((k) => `\`${k}\``).join(", ")}; named edges look like \`rel:<phrase>\`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.`,
-  '`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: "revenue" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.',
+  "Best for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.",
 ].join("\n");
 
 const inputSchema = z.object({
-  node_id: z.string().min(1).describe("Opaque public id of the node to explore."),
+  node_id: z.string().min(1).describe(
+    "Public id of the node to explore, as returned by `tako_available_data` or on a `tako_search` card.",
+  ),
   relation: z.string().min(1).optional().describe(
-    `Relation key to page, taken from the overview: ${FIXED_RELATION_KEYS.join(", ")}, or rel:<phrase>. Omit for the overview.`,
+    `Relation key to page, taken from the map: ${FIXED_RELATION_KEYS.join(", ")}, or a named edge like rel:competes_with. Omit for the map.`,
   ),
   q: z.string().min(1).optional().describe(
-    "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group.",
+    'Case-insensitive substring filter on names and aliases, one string per call: "revenue" matches `Total Revenue` and misses `Sales`. Call once per name variant.',
   ),
   label: z.enum(NER_LABELS).optional().describe(
-    "Prefer related nodes with this NER label (boost, not a filter).",
+    "NER label to prefer among the related nodes — a boost, not a filter.",
   ),
   infer_label: z.boolean().optional().describe(
-    "Auto-detect labels from q (default true server-side, only when q is set).",
+    "Detect labels from `q`. Omit it and the server infers them whenever `q` is set.",
   ),
   cursor: z.string().min(1).optional().describe(
-    "Pagination cursor (for a single drilled relation; intended for single-q use).",
+    "Page handle from a previous drilled relation. Omit it for the first page.",
   ),
-  // `limit` is INERT in overview mode, and the description must say so or a
-  // caller pays a round trip to widen a map that never widens. Two independent
-  // caps stack: measured against production, `?node_id=…&limit=3` and
-  // `&limit=100` return byte-identical overviews (82,741 chars for NVIDIA, 16
-  // groups, every group capped at 10 items) — and on top of that
-  // `slimRelatedResponse` slices every group to OVERVIEW_PREVIEW_N before
-  // either channel sees it. The describe() interpolates that constant rather
-  // than restating it: the tool's own cap is the one a caller actually
-  // observes, and the DESCRIPTION string ships in the same `tools/list`
-  // payload, so a hand-written number here contradicts that one the moment
-  // the constant moves.
+  // `limit` is INERT in map mode, and the description must say so or a caller
+  // pays a round trip to widen a map that never widens. Two independent caps
+  // stack: measured against production, `?node_id=…&limit=3` and `&limit=100`
+  // return byte-identical maps (82,741 chars for NVIDIA, 16 groups, every
+  // group capped at 10 items) — and on top of that `projectRelated` previews
+  // OVERVIEW_PREVIEW_N names per group before either channel sees it. The
+  // describe interpolates that constant rather than restating it: a
+  // hand-written number contradicts the tool's own cap the moment it moves.
   limit: z.number().int().min(1).max(100).optional().describe(
-    `Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first ${String(OVERVIEW_PREVIEW_N)} items no matter what you pass.`,
+    `Page size for a drilled relation. Omit it and the server serves 50. Ignored on the map, where every group returns its first ${String(OVERVIEW_PREVIEW_N)} names whatever you pass.`,
   ),
 });
 
 type Input = z.infer<typeof inputSchema>;
 
-const outputSchema = z.object(graphRelatedOutputShape);
-type Output = z.infer<typeof outputSchema>;
+/** The wire contract — what `graph/related` is allowed to send us. Never advertised. */
+const wireSchema = z.object(graphRelatedOutputShape);
 
-/**
- * The payload the MCP layer must not forward whole. `graph/related` returns
- * the FULL node record for every related item, and the description dominates:
- * the Nvidia overview measures 82,741 chars at `limit: 5` — ~849 chars per
- * item — and Anthropic PBC's 83,487 overflowed the MCP result cap outright.
- * A default-listed tool cannot spend that, and it would spend it TWICE:
- * `mcp.ts` builds the text channel from `JSON.stringify(output)` when no
- * `renderText` exists, then emits the same object as `structuredContent`.
- *
- * The slimming therefore runs in the HANDLER (`slimRelatedResponse`), before
- * either channel can read the output — dropping `description` and `aliases`
- * from related items, and keeping only the first `OVERVIEW_PREVIEW_N` items
- * of each overview group next to its true `total`. Every dropped field is
- * `.optional()` on `graphNodeSchema`, so the slim still conforms to the
- * advertised outputSchema. `slimStructured` re-applies the same function so
- * the hook stays honest if a caller hands it an unslimmed record; it is
- * idempotent. The focal `node` keeps its aliases and a bounded description:
- * it is one record, and it is the node the caller named. For a related
- * item's own detail, call the tool again on its id.
- *
- * Measured on staging 2026-08-26: Anthropic PBC's 17-group overview is 87,556
- * chars on the wire and reaches the model as 2,108 chars of text plus 6,787
- * of structuredContent; NVIDIA's is 87,798 → 2,014 / 6,788.
- */
+// The ADVERTISED output schema: the PROJECTED shape, typed field by field.
+// The handler returns an explicit projection, so an unknown backend key cannot
+// leak and the schema no longer needs to be the wire facade. One shape for
+// both surfaces — this tool mounts no widget, so there is nothing per-surface
+// to add.
+const outputSchema = graphRelatedSlimOutputShape;
+type Output = z.infer<typeof outputSchema>;
 
 const tako_graph_related = {
   name: "tako_graph_related",
@@ -122,7 +102,7 @@ const tako_graph_related = {
     chatgpt: { openWorldHint: false },
   },
   fixedInputs: [],
-  async handler(input: Input, ctx): Promise<Output> {
+  async handler(input: Input, ctx): Promise<ProjectedRelated> {
     const query: Record<string, string | number | boolean> = {
       node_id: input.node_id,
     };
@@ -145,33 +125,30 @@ const tako_graph_related = {
       console.error("[tako] tool error tool=tako_graph_related stage=graph/related:", err);
       throw new Error(graphErrorMessage(err, "related", input.node_id, "tako_graph_related"));
     }
-    // Validate against the LOOSE advertised facade, NOT the generated schema.
-    // The generated GraphRelatedResponse enforces a strict RelationKind enum
+    // Validate against the LOOSE wire facade, NOT the generated schema. The
+    // generated GraphRelatedResponse enforces a strict RelationKind enum
     // (related|data|sibling|membership) — but the live API also returns
     // kind:"source", which a strict guard rejects as "unexpected shape" even
     // though the response is fine. Same drift class as content_format. The
     // facade keeps kind/type/subtype/label as loose strings, so a new enum
     // value passes while genuine structural breaks still throw.
-    const parsed = outputSchema.safeParse(data);
+    const parsed = wireSchema.safeParse(data);
     if (!parsed.success) {
       logWireGuardFailure("tako_graph_related", "output", parsed.error, data);
       throw new Error(
         "Tako graph/related endpoint returned an unexpected shape. Retry once; if it persists, flag it to the Tako team.",
       );
     }
-    // Slim AFTER the wire guard: the guard proves the shape, the slimmer
-    // decides what the model pays for. See the size constants in _graph.ts.
-    return slimRelatedResponse(parsed.data);
+    // Project AFTER the wire guard: the guard proves the shape, the projection
+    // decides what the model pays for. The raw payload cannot ship — Anthropic
+    // PBC's 83,487-char map overflowed the MCP result cap outright, and
+    // `mcp.ts` would spend it TWICE (text built from JSON.stringify, then the
+    // same object as structuredContent). See the size constants in `_graph.ts`.
+    return projectRelated(parsed.data);
   },
   renderText(output, _ctx) {
     void _ctx;
-    return renderGraphRelatedMarkdown(output);
-  },
-  slimStructured(output) {
-    // Idempotent: the handler already slimmed. Kept because the hook is the
-    // contract `mcp.ts` reads, and a caller that constructs an output by hand
-    // must not be able to publish a fat one.
-    return slimRelatedResponse(output);
+    return renderGraphRelatedMarkdown(output as ProjectedRelated);
   },
 } satisfies ToolModule<typeof inputSchema, Output>;
 

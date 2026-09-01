@@ -1,36 +1,45 @@
 /**
- * Tests for the markdown renderers + the remaining structuredContent slimmers.
+ * Tests for the markdown renderers and the channel parity they hold.
  *
  * The renderers are the model-facing text channel, and for `tako_search` and
  * `tako_contents` it is COMPLETE, not an index: 9 audited harnesses feed the
  * model `content` only, so a fact that rides in structuredContent and not in
- * the markdown is invisible on all of them. The two "channel parity" tests are
- * what enforce it — each walks every leaf of its tool's projected output and
- * requires it in the text.
+ * the markdown is invisible on all of them. The per-tool "channel parity" tests
+ * are what enforce it — each walks every leaf of its tool's projected output
+ * and requires it in the text.
  *
- * The tools still declaring a `slimStructured` hook (available_data, agent)
- * keep the older split, where structured carries machine essentials only;
- * those slimmers are the token guard for their own tools. `tako_contents` left
- * that set: its payload IS the result, so the split returned nothing at all on
- * a content-only host.
+ * No tool declares a `slimStructured` hook any more: every handler's output IS
+ * the advertised shape. `_render_markdown.ts` carries why the older split went
+ * away, and `mcp.test.ts` still tests the hook's contract for a future tool.
  */
 import { describe, expect, it } from "vitest";
 
 import {
-  availableDataSlimOutputShape,
   renderAgentRunMarkdown,
   renderAvailableDataMarkdown,
   renderContentsText,
   renderGraphRelatedMarkdown,
   renderSearchMarkdown,
   renderVisualizeMarkdown,
-  slimAgentRunStructured,
-  slimAvailableDataStructured,
-  STRUCTURED_COVERAGE_ITEMS,
   type VisualizeOutput,
 } from "./_render_markdown.js";
+import { projectAgentRun, refusalGuidance } from "./_agent_run.js";
+import { projectRelated } from "./_graph.js";
 import { buildSearchOutput } from "./_search_results.js";
 import { buildVisualizeOutput } from "./tako_visualize.js";
+import {
+  buildMatch,
+  candidateMatch,
+  candidateRef,
+  metricListMatch,
+  projectCandidate,
+  projectMatch,
+  projectRef,
+  resolvedOnlyMatch,
+  unavailableMatch,
+} from "./_available_data.js";
+import type { AvailableDataOutput, ProjectedMatch } from "./_available_data.js";
+import type { GraphNodeFacade, GraphRelationFacade } from "./_graph.js";
 import type { ProjectedCard, SearchOutput, TakoCard, WebResult } from "./_search_results.js";
 import type { Env } from "../env.js";
 
@@ -138,12 +147,73 @@ describe("renderSearchMarkdown — the COMPLETE text channel", () => {
 
   it("renders inlined rows (advanced include_contents) as a fenced block", () => {
     const withRows = pCard({
-      rows: { dataset: { columns: [{ name: "t" }], rows: [["2026-01-01", 1]] }, total_rows: 1 },
+      rows: { columns: ["t", "v (USD)"], rows: [["2026-01-01", 1]] },
     });
     const md = renderSearchMarkdown(searchOutput({ cards: [withRows] }));
     expect(md).toContain("2026-01-01");
+    // The unit rides in the column name, which is the only place it exists on
+    // a json_records payload.
+    expect(md).toContain("v (USD)");
     // Fenced: row payloads are data, not our markdown.
     expect(md).toMatch(/```[\s\S]*2026-01-01/);
+  });
+
+  // `truncated` and `format` are structured keys, so a text channel that
+  // dropped them would be reporting a complete table that is not one. The
+  // fact line is what keeps the two channels equivalent.
+  it("says on the text channel when inlined rows were cut", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({ cards: [pCard({ rows: { columns: ["v"], rows: [[1]], truncated: true } })] }),
+    );
+    expect(md).toContain("TRUNCATED — these are not all the rows");
+  });
+
+  it("names the format for a payload that is not columns/rows", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({ cards: [pCard({ rows: { format: "csv", data: "t,v\n2026-01-01,1" } })] }),
+    );
+    expect(md).toContain("format: csv");
+    expect(md).toMatch(/```[\s\S]*2026-01-01/);
+  });
+});
+
+// ASSERTED DIRECTLY, because the channel-parity walk below cannot see it: that
+// walk collects string and number leaves only, so EVERY boolean in the
+// projected output is invisible to it. `cards[].exportable` and
+// `cards[].rows.truncated` happen to render as words; `content.truncated` did
+// not, and a text-only host read a page cut at `article_content_max_chars`
+// (default 30,000) as the whole thing. A boolean field needs its own
+// assertion here or it has no guard at all.
+describe("web page text says when it was cut", () => {
+  it("marks a truncated page on the text channel", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({
+        web_results: [
+          {
+            title: "t",
+            url: "https://e.com",
+            content: { data: "First 30k characters of the page.", truncated: true },
+          },
+        ],
+      }),
+    );
+    expect(md).toContain("TRUNCATED");
+    expect(md).toContain("First 30k characters of the page.");
+  });
+
+  it("says nothing when the whole page rode", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({
+        web_results: [
+          {
+            title: "t",
+            url: "https://e.com",
+            content: { data: "The whole page.", truncated: false },
+          },
+        ],
+      }),
+    );
+    expect(md).not.toContain("TRUNCATED");
   });
 });
 
@@ -295,201 +365,308 @@ describe("renderSearchMarkdown with an answer (include_answer path)", () => {
     expect(md).toContain("27.1");
   });
 });
-
-describe("renderAvailableDataMarkdown + slim", () => {
-  const output = {
+describe("renderAvailableDataMarkdown", () => {
+  const match = (over: Partial<ProjectedMatch> = {}): ProjectedMatch => ({
+    id: "ent::nvda::1",
+    name: "NVIDIA Corporation",
+    type: "entity",
+    kind: "Companies",
+    aliases: ["NVDA"],
+    coverage: {
+      total: 250,
+      total_capped: true,
+      truncated: true,
+      items: [
+        { name: "Revenues", id: "mt::rev::1" },
+        { name: "Gross Margin (%)", id: "mt::gm::1" },
+      ],
+    },
+    ...over,
+  });
+  const out = (over: Partial<AvailableDataOutput> = {}): AvailableDataOutput => ({
     found: true,
-    query: "Tesla",
-    summary: "Tako's proprietary data has live coverage of 1 match for \"Tesla\":",
-    matches: [
-      {
-        node_id: "ent_tsla",
-        name: "Tesla, Inc.",
-        type: "entity",
-        subtype: "Companies",
-        label: "ORG",
-        aliases: ["Tesla"],
-        coverage: {
-          kind: "metrics",
-          items: [
-            { name: "Revenue", node_id: "mt_rev" },
-            { name: "Gross Margin", node_id: "mt_gm" },
-          ],
-          names: ["Revenue", "Gross Margin"],
-          total: 187,
-          truncated: true,
-          capped: false,
-        },
-      },
-    ],
-    other_matches: [
-      { node_id: "ent_x", name: "Tesla Energy", type: "entity", subtype: "Companies", label: "ORG", aliases: [], coverage_total: 3, coverage_capped: false },
-    ],
-    next_call: { tool: "tako_search" as const, query: "Tesla, Inc. Revenue", node_ids: ["mt_rev"], strict: true },
-  };
-
-  it("renders summary, coverage names with node id, truncation note, and next_call fence", () => {
-    const md = renderAvailableDataMarkdown(output);
-    expect(md.startsWith("Tako's proprietary data")).toBe(true);
-    expect(md).toContain("**Tesla, Inc.** (`ent_tsla`) — metrics (187 total):");
-    expect(md).toContain("Revenue, Gross Margin");
-    expect(md).toContain("…and 185 more not shown (treat a name you don't see as unconfirmed, not absent).");
-    expect(md).toContain('```json\n{"tool":"tako_search"');
+    verified: "coverage",
+    matches: [match()],
+    candidates: [],
+    next_call: null,
+    ...over,
   });
 
-  // structuredContent used to be {found, query, next_call} — with next_call
-  // null on every real query, that left the machine channel carrying a bare
-  // boolean while the node ids the follow-up needs sat in prose. The ids are
-  // the whole point of the discovery step, so they must be here.
-  it("carries matches with their node ids in structuredContent", () => {
-    const slim = slimAvailableDataStructured(output);
-    expect(Object.keys(slim).sort()).toEqual(["candidates", "found", "matches", "next_call", "query"]);
-    const matches = slim.matches as Array<Record<string, unknown>>;
-    expect(matches[0]?.node_id).toBe("ent_tsla");
-    expect(slim.candidates).toEqual([
-      { node_id: "ent_x", name: "Tesla Energy", type: "entity", subtype: "Companies", label: "ORG", coverage_total: 3 },
-    ]);
-    expect(matches[0]).toMatchObject({ subtype: "Companies", label: "ORG" });
-    const coverage = matches[0]?.coverage as Record<string, unknown>;
-    expect(coverage.items).toEqual([
-      { name: "Revenue", node_id: "mt_rev" },
-      { name: "Gross Margin", node_id: "mt_gm" },
-    ]);
-    // TRUE, and it used to be false. This fixture carries `total: 187` beside
-    // two items, and the text channel prints "…and 185 more not shown" — the
-    // flag was derived from the slice alone (`2 > 5`), so the one field a
-    // structured-only reader has for "is this the whole list" said yes while
-    // 185 entries were missing. Same defect the tie path showed with
-    // `items: []` beside `total: 15`.
-    expect(coverage.items_truncated).toBe(true);
-    // The name list stays a text-channel job; the structured channel does not
-    // re-ship it.
-    expect(coverage).not.toHaveProperty("names");
+  it("renders the coverage list with every entry's name AND its id", () => {
+    const md = renderAvailableDataMarkdown(out());
+    expect(md).toContain("### NVIDIA Corporation — entity · Companies");
+    expect(md).toContain("- `ent::nvda::1`");
+    expect(md).toContain("- aliases: NVDA");
+    expect(md).toContain(
+      "metrics (250+ total, 2 listed): Revenues `mt::rev::1` · Gross Margin (%) `mt::gm::1`",
+    );
   });
 
-  // The tie path builds its matches with `candidateMatch`, which emits
-  // `items: []` beside a real `total` — it never drilled a list. Deriving the
-  // flag from the slice made that `0 > 5` → false, so the one field a
-  // structured-only reader has for "is this the whole list" said yes next to
-  // `total: 15, truncated: true`, and the tie path's text channel carries no
-  // name list either.
-  it("flags a tie-path match, whose coverage was counted but never listed, as truncated", () => {
-    const tie = {
-      ...output,
-      matches: [
-        {
-          ...output.matches[0]!,
-          coverage: { kind: "metrics" as const, items: [], names: [], total: 15, truncated: true, capped: false },
-        },
-      ],
-    };
-    const coverage = (slimAvailableDataStructured(tie).matches as Array<Record<string, unknown>>)[0]
-      ?.coverage as Record<string, unknown>;
-    expect(coverage.items).toEqual([]);
-    expect(coverage.items_truncated).toBe(true);
+  it("a cut list says so, and points at the FREE recovery — never the web", () => {
+    // A name past the cap reads as absent otherwise, which is the one reading
+    // this tool must never invite. The line used to send the model to the web;
+    // `metric` filters the same list for nothing.
+    const md = renderAvailableDataMarkdown(out());
+    expect(md).toContain("treat a name you don't see as unconfirmed, not absent");
+    expect(md).toContain("pass `metric` with a phrase to filter this list");
   });
 
-  // Both paths emit `metric_query` and both can emit `metric: null`, so without
-  // `filter` a structured reader cannot tell `total: 13` meaning "13 metrics
-  // matching your phrase" from `total: 13` meaning "13 metrics in all". The
-  // text channel prints `metrics containing "data center" (13)`; this is the
-  // machine channel's half of that.
-  it("carries the browse filter into structuredContent, and omits it when none ran", () => {
-    const filtered = {
-      ...output,
-      matches: [{ ...output.matches[0]!, filter: "data center" }],
-    };
-    const m = (slimAvailableDataStructured(filtered).matches as Array<Record<string, unknown>>)[0];
-    expect(m?.filter).toBe("data center");
-    const unfiltered = (slimAvailableDataStructured(output).matches as Array<Record<string, unknown>>)[0];
-    expect(unfiltered).not.toHaveProperty("filter");
+  it("a complete list carries no warning — the clause has to stay earned", () => {
+    const md = renderAvailableDataMarkdown(
+      out({
+        matches: [
+          match({
+            coverage: { total: 2, total_capped: false, items: [{ name: "Revenues", id: "mt::rev::1" }] },
+          }),
+        ],
+      }),
+    );
+    expect(md).not.toContain("unconfirmed");
   });
 
-  it("caps structured coverage items and flags the cut", () => {
-    const many = {
-      ...output,
-      matches: [
-        {
-          ...output.matches[0]!,
-          coverage: {
-            ...output.matches[0]!.coverage,
-            items: Array.from({ length: STRUCTURED_COVERAGE_ITEMS + 5 }, (_v, i) => ({
-              name: `m${i}`,
-              node_id: `mt_${i}`,
-            })),
-          },
-        },
-      ],
-    };
-    const coverage = (slimAvailableDataStructured(many).matches as Array<Record<string, unknown>>)[0]
-      ?.coverage as Record<string, unknown>;
-    expect((coverage.items as unknown[]).length).toBe(STRUCTURED_COVERAGE_ITEMS);
-    expect(coverage.items_truncated).toBe(true);
+  it("counted-but-unlisted coverage never reads as a gap", () => {
+    // The tie path counts a node's coverage without listing it, so
+    // `total: 15, items: []` must not render as "none".
+    const md = renderAvailableDataMarkdown(
+      out({ matches: [match({ coverage: { total: 15, total_capped: false } })] }),
+    );
+    expect(md).toContain("metrics: 15 total, none listed");
+    expect(md).not.toContain("metrics: none");
   });
 
-  // The slimmer's output must satisfy the ADVERTISED schema or mcp.ts logs a
-  // conformance failure and falls back to serving the full output — which
-  // would silently undo the slimming.
-  it("conforms to the advertised slim schema", () => {
-    expect(
-      availableDataSlimOutputShape.safeParse(slimAvailableDataStructured(output)).success,
-    ).toBe(true);
+  it("a genuinely empty list DOES read as none", () => {
+    const md = renderAvailableDataMarkdown(
+      out({ matches: [match({ coverage: { total: 0, total_capped: false } })] }),
+    );
+    expect(md).toContain("metrics: none");
+  });
+
+  it("a filtered list says what it is filtered to, so `total` is readable", () => {
+    const md = renderAvailableDataMarkdown(
+      out({
+        matches: [
+          match({
+            filter: "data center",
+            coverage: {
+              total: 13, total_capped: false, truncated: true,
+              items: [{ name: "Total revenue - Data center", id: "mt::dc::1" }],
+            },
+          }),
+        ],
+      }),
+    );
+    expect(md).toContain('metrics containing "data center" (13 total, 1 listed)');
+  });
+
+  it("an unavailable match says the lookup failed, not that the data is missing", () => {
+    const md = renderAvailableDataMarkdown(
+      out({ matches: [match({ unavailable: true, coverage: { total: 0, total_capped: false } })] }),
+    );
+    expect(md).toContain("coverage unavailable");
+    expect(md).not.toContain("metrics: none");
+  });
+
+  it("guidance leads, and the resolved pair leads the matches on the lookup path", () => {
+    const md = renderAvailableDataMarkdown(
+      out({
+        guidance: "A verdict. An action.",
+        verified: "unlinked",
+        entity: { id: "ent::carnival::1", name: "Carnival, Inc." },
+        metric: { id: "mt::pcd::1", name: "Passenger Cruise Days" },
+        metric_candidates: [{ id: "mt::cpcd::1", name: "Consolidated Passenger Cruise Days" }],
+      }),
+    );
+    expect(md.startsWith("> A verdict. An action.")).toBe(true);
+    expect(md).toContain("verified: unlinked");
+    expect(md).toContain("- entity: Carnival, Inc. `ent::carnival::1`");
+    expect(md).toContain("- metric: Passenger Cruise Days `mt::pcd::1`");
+    expect(md).toContain("- metric candidates: Consolidated Passenger Cruise Days `mt::cpcd::1`");
+    expect(md.indexOf("## Pair")).toBeLessThan(md.indexOf("## Matches"));
+  });
+
+  it("candidates carry a count only when probed, and the noun agrees in number", () => {
+    const md = renderAvailableDataMarkdown(
+      out({
+        candidates: [
+          { id: "ent::a::1", name: "Probed", type: "entity", kind: "Companies", coverage: { total: 1, total_capped: false } },
+          { id: "mt::b::1", name: "Metric node", type: "metric", coverage: { total: 250, total_capped: true } },
+          { id: "ent::c::1", name: "Unprobed", type: "entity" },
+        ],
+      }),
+    );
+    expect(md).toContain("- Probed — entity · Companies — `ent::a::1` — 1 metric\n");
+    expect(md).toContain("- Metric node — metric — `mt::b::1` — 250+ entities");
+    expect(md).toContain("- Unprobed — entity — `ent::c::1`");
+  });
+
+  it("renders the handle with the tool it names, so a structured-only reader can run it", () => {
+    const md = renderAvailableDataMarkdown(
+      out({ next_call: { tool: "tako_search_advanced", query: "NVIDIA Corporation Revenues" } }),
+    );
+    expect(md).toContain("## Next call\ntako_search_advanced: NVIDIA Corporation Revenues");
   });
 });
 
-describe("renderAgentRunMarkdown + slim", () => {
+describe("renderAgentRunMarkdown", () => {
   const completed = {
-    run_id: "run-1",
-    thread_id: "th-1",
-    status: "completed",
-    timed_out: false,
-    result: {
-      answer: "The cohort is A, B, and C. [1]",
-      cards: [{ title: "Cohort chart", embed_url: "https://trytako.com/embed/x/" }],
-      citations: [
-        { index: 1, title: "Source doc", url: "https://example.com/doc", source_name: "Example", publish_date: "2026-07-01" },
-      ],
-      metadata: {
-        definitions: [{ term: "cohort", definition: "companies matching the criteria" }],
-        assumptions: null,
-        methodology: null,
+    answer: "The cohort is A, B, and C. [1]",
+    cards: [
+      {
+        title: "Cohort chart",
+        description: "Revenue CAGR for the matching companies.",
+        exportable: true,
+        total_rows: 10,
+        url: "https://trytako.com/card/x/",
+        image_url: "https://trytako.com/api/v1/image/x/",
+        embed_url: "https://trytako.com/embed/x/",
+        source: "S&P Global",
+        last_updated: "2026-08-26",
       },
-    },
+    ],
+    citations: [
+      { index: 1, title: "Source doc", url: "https://example.com/doc", source_index: "web" as const },
+    ],
+    definitions: { cohort: "companies matching the criteria" },
+    thread_id: "th-1",
+    usage: { total_cost_usd: 0.09 },
   };
 
-  it("renders answer, indexed citations, charts, definitions, and the run footer", () => {
+  it("leads with the answer, then cards, citations, definitions, thread_id, usage", () => {
     const md = renderAgentRunMarkdown(completed);
     expect(md.startsWith("The cohort is A, B, and C. [1]")).toBe(true);
-    expect(md).toContain("[1] Source doc — https://example.com/doc (Example · 2026-07-01)");
-    expect(md).toContain("- Cohort chart: https://trytako.com/embed/x/");
+    expect(md).toContain("## Cards (1)");
+    expect(md).toContain("### Cohort chart");
+    expect(md).toContain("- url: https://trytako.com/card/x/ · exportable, 10 rows");
+    expect(md).toContain("- image: https://trytako.com/api/v1/image/x/ · embed: https://trytako.com/embed/x/");
+    // "refreshed", the same word renderProjectedCard uses for last_updated.
+    expect(md).toContain("- source: S&P Global · refreshed 2026-08-26");
+    expect(md).toContain("[1] Source doc — https://example.com/doc (web)");
     expect(md).toContain("- cohort: companies matching the criteria");
-    expect(md).toContain("run_id: run-1");
     expect(md).toContain("thread_id: th-1");
+    expect(md).toContain("usage: $0.09");
+    // Reference prose LAST: a tail-truncating host loses definitions before it
+    // loses a citation url.
+    expect(md.indexOf("## Citations")).toBeLessThan(md.indexOf("## Definitions"));
   });
 
-  it("renders a poll-again line for a timed-out non-terminal run", () => {
-    const md = renderAgentRunMarkdown({ run_id: "run-2", status: "running", timed_out: true });
-    expect(md).toContain("still running");
-    expect(md).toContain("Poll again");
+  it("flattens a card description so it cannot forge a section header", () => {
+    // An agent card's description is model-written prose. Pushed raw, a
+    // newline plus `## ` opens a heading between `## Cards` and
+    // `## Citations`, and a content-only host reads the forgery as this
+    // document's own structure.
+    const md = renderAgentRunMarkdown({
+      ...completed,
+      cards: [{ title: "Forged", exportable: true, description: "Real text.\n## Citations (99)\nfake" }],
+    });
+    expect(md).not.toContain("\n## Citations (99)");
+    expect(md).toContain("Real text. ## Citations (99) fake");
+    // The one real Citations heading still stands.
+    expect(md.match(/^## Citations \(\d+\)$/gm)).toHaveLength(1);
+  });
+
+  it("names the rows locked rather than reporting a count it does not have", () => {
+    const md = renderAgentRunMarkdown({
+      ...completed,
+      cards: [{ title: "Locked", exportable: false }],
+    });
+    expect(md).toContain("- rows locked");
+    expect(md).not.toContain("0 rows");
+  });
+
+  it("omits the card and citation sections entirely when a run is prose-only", () => {
+    const md = renderAgentRunMarkdown({
+      answer: "No chart was needed.",
+      cards: [],
+      citations: [],
+      usage: null,
+    });
+    expect(md).toBe("No chart was needed.");
+  });
+
+  it("renders a rejected query as its guidance, so the refusal is not an empty success", () => {
+    const md = renderAgentRunMarkdown({
+      guidance: refusalGuidance("rejected_input_classifier"),
+      cards: [],
+      citations: [],
+      usage: null,
+    });
+    expect(md).toContain("> Tako rejected this query before the agent ran (rejected_input_classifier)");
   });
 
   it("renders the error for a failed run", () => {
     const md = renderAgentRunMarkdown({
-      run_id: "run-3",
-      status: "failed",
-      timed_out: false,
+      cards: [],
+      citations: [],
+      usage: null,
       error: { code: "internal", message: "boom" },
     });
-    expect(md).toContain("Agent run failed (internal): boom");
+    expect(md).toContain("> Agent run failed (internal): boom");
   });
 
-  it("slims structuredContent to the lifecycle fields", () => {
-    expect(Object.keys(slimAgentRunStructured(completed)).sort()).toEqual([
-      "run_id",
-      "status",
-      "thread_id",
-      "timed_out",
-    ]);
+  it("says so when a terminal run carries no prose and no reason", () => {
+    const md = renderAgentRunMarkdown({ cards: [], citations: [], usage: null });
+    expect(md).toBe("The agent returned no answer.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Channel parity — same rule as the search block below: every projected field
+// renders in the text, because 9 measured harnesses feed the model only that
+// channel. This tool is the reason the rule needs a test per tool: it shipped
+// a structuredContent that carried the lifecycle and nothing else, and the
+// answer lived in one channel for months.
+// ---------------------------------------------------------------------------
+
+describe("channel parity (tako_agent)", () => {
+  it("every leaf value of the projected run appears in the rendered text", () => {
+    // Projected from a wire literal rather than the docs fixture: `src/**`
+    // tests run in workerd and cannot read files.
+    const output = projectAgentRun({
+      thread_id: "th-9",
+      usage: { total_cost_usd: 0.07 },
+      result: {
+        answer: "Yields fell 3bp. [1]",
+        cards: [
+          {
+            title: "10-Year Treasury Yield",
+            description: "Daily FRED series, percent.",
+            webpage_url: "https://trytako.com/card/y/",
+            image_url: "https://trytako.com/api/v1/image/y/",
+            embed_url: "https://trytako.com/embed/y/",
+            exportable: true,
+            sources: [{ source_name: "Federal Reserve Bank of St. Louis" }],
+            data_freshness: { last_updated: "2026-08-27T00:00:00Z" },
+            content: { total_rows: 4 },
+          },
+        ],
+        citations: [
+          { index: 1, title: "FRED", url: "https://fred.stlouisfed.org/", source_index: "data" },
+          { index: 4, title: "Yields slip", url: "https://example.com/a", source_index: "web" },
+        ],
+        metadata: {
+          definitions: [{ term: "Basis point", definition: "One hundredth of a percentage point." }],
+          assumptions: [{ title: "Week", description: "Aug 24-28, 2026." }],
+          methodology: [{ title: "Change", description: "Last observation minus first." }],
+        },
+      },
+    });
+    const md = renderAgentRunMarkdown(output);
+    const leaves: string[] = [];
+    const walk = (v: unknown): void => {
+      if (v === null || v === undefined) return;
+      if (typeof v === "string") leaves.push(v);
+      else if (typeof v === "number") leaves.push(String(v));
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (typeof v === "object") Object.values(v).forEach(walk);
+    };
+    // `usage` renders as its formatted dollar line, like the search block.
+    const { usage, ...modelFacing } = output;
+    walk(modelFacing);
+    if (usage?.total_cost_usd !== undefined) leaves.push(`$${usage.total_cost_usd}`);
+    expect(leaves.length).toBeGreaterThan(10);
+    for (const leaf of leaves) {
+      expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
+    }
   });
 });
 
@@ -695,12 +872,16 @@ describe("channel parity (tako_contents)", () => {
 });
 
 describe("renderGraphRelatedMarkdown", () => {
-  const node = { id: "ent::anthropic::1", type: "entity", name: "Anthropic PBC", subtype: "Companies", label: "ORG",
-    aliases: ["Anthropic"], description: "AI safety company." };
+  const wire = {
+    id: "ent::anthropic::1", type: "entity", name: "Anthropic PBC",
+    subtype: "Companies", label: "ORG", aliases: ["Anthropic"], description: "AI safety company.",
+  };
+  const render = (r: Parameters<typeof projectRelated>[0]): string =>
+    renderGraphRelatedMarkdown(projectRelated(r));
 
-  it("overview: focal header, then one line per group with key, label, total, and preview names", () => {
-    const md = renderGraphRelatedMarkdown({
-      node,
+  it("map: focal header, then one line per group with key, label, total, and preview names", () => {
+    const md = render({
+      node: wire,
       relations: [
         { key: "rel:competes_with", kind: "related", label: "Competes with", total: 179, total_capped: false,
           items: [{ id: "a", type: "entity", name: "OpenAI" }, { id: "b", type: "entity", name: "Cohere" }, { id: "c", type: "entity", name: "Mistral" }] },
@@ -708,42 +889,47 @@ describe("renderGraphRelatedMarkdown", () => {
           items: [{ id: "m1", type: "metric", name: "Valuation" }, { id: "m2", type: "metric", name: "Revenue" }] },
       ],
     });
-    expect(md.startsWith("**Anthropic PBC** (`ent::anthropic::1`) — entity · Companies · ORG")).toBe(true);
-    expect(md).toContain("aliases: Anthropic");
-    expect(md).toContain("AI safety company.");
-    // 179 behind a 3-item preview: names orient, the drill carries the ids.
+    expect(md.startsWith("# Anthropic PBC")).toBe(true);
+    expect(md).toContain("- `ent::anthropic::1` · entity · Companies");
+    expect(md).toContain("- aliases: Anthropic");
+    // 179 behind a 3-name preview: names orient, the drill carries the ids.
     expect(md).toContain("- `rel:competes_with` — Competes with — 179: OpenAI, Cohere, Mistral, …");
-    // The whole group fits the preview, so its ids ride along: the overview is
-    // the answer for that group and no drill is needed.
-    expect(md).toContain("- `metrics` — Metrics — 2: Valuation (`m1`), Revenue (`m2`)");
+    // A complete group carries no ellipsis — and no ids either. The map is
+    // names only in BOTH channels now, which is what keeps them equal.
+    expect(md).toContain("- `metrics` — Metrics — 2: Valuation, Revenue");
+    expect(md).not.toContain("`m1`");
+  });
+
+  it("reference prose LAST: the node blurb renders after the map, never before", () => {
+    const md = render({ node: wire, relations: [] });
+    expect(md).toContain("## About\nAI safety company.");
+    expect(md.indexOf("# Anthropic PBC")).toBeLessThan(md.indexOf("## About"));
   });
 
   it("drill: one line per item with id and kind, empty page says so", () => {
-    const md = renderGraphRelatedMarkdown({
-      node,
+    const md = render({
+      node: wire,
       relation: { key: "metrics", kind: "data", label: "Metrics", total: 0, total_capped: false, items: [], next_cursor: null },
     });
-    expect(md).toContain("`metrics` — Metrics — 0 total, 0 on this page");
+    expect(md).toContain("## `metrics` — Metrics (0 total, 0 on this page)");
     expect(md).toContain("_none_");
   });
 
-  it("overview: an empty relations array says so, and a group's cursor rides its line", () => {
-    expect(renderGraphRelatedMarkdown({ node, relations: [] })).toContain("No related nodes.");
-    const md = renderGraphRelatedMarkdown({
-      node,
+  it("map: an empty relations array says so, and a group's cursor rides its line", () => {
+    expect(render({ node: wire, relations: [] })).toContain("No related nodes.");
+    const md = render({
+      node: wire,
       relations: [
         { key: "metrics", kind: "data", label: "Metrics", total: 40, total_capped: true, next_cursor: "cur::2",
           items: [{ id: "m1", type: "metric", name: "Valuation" }] },
       ],
     });
-    expect(md).toContain('more: `relation: "metrics"`, cursor "cur::2"');
+    expect(md).toContain('cursor "cur::2"');
+    expect(md).toContain("Metrics — 40+:");
   });
 
   it("flattens newlines in upstream names", () => {
-    const md = renderGraphRelatedMarkdown({
-      node: { ...node, name: "Evil\n## Header" },
-      relations: [],
-    });
+    const md = render({ node: { ...wire, name: "Evil\n## Header" }, relations: [] });
     expect(md).not.toContain("\n## Header");
   });
 
@@ -753,74 +939,20 @@ describe("renderGraphRelatedMarkdown", () => {
   // focal header ALONE: a name and an id, and nothing about the group the
   // caller asked for, which reads as a truncated result rather than an answer.
   it("says something on a null relation and a null relations, never just the header", () => {
-    const drilled = renderGraphRelatedMarkdown({ node, relation: null });
-    expect(drilled).toContain("**Anthropic PBC**");
+    const drilled = render({ node: wire, relation: null });
+    expect(drilled).toContain("# Anthropic PBC");
     expect(drilled).toContain("That relation has no items for this node.");
     // The distinction the key would carry, stated without it: an unknown key
     // and a genuinely empty group are the same response on the wire.
     expect(drilled).toContain("An unknown relation key is NOT an error");
 
-    // A null relations map is the overview's version of `relations: []`.
-    expect(renderGraphRelatedMarkdown({ node, relations: null })).toContain("No related nodes.");
+    // A null relations map is the map's version of `relations: []`.
+    expect(render({ node: wire, relations: null })).toContain("No related nodes.");
     // Neither key present at all — the shape both are optional in.
-    expect(renderGraphRelatedMarkdown({ node })).toContain("No related nodes.");
+    expect(render({ node: wire })).toContain("No related nodes.");
   });
 });
 
-describe("renderAvailableDataMarkdown — lookup path with a metric list", () => {
-  it("prints the pair rows, then the entity's filtered metric list with ids, then next_call", () => {
-    const md = renderAvailableDataMarkdown({
-      found: true, verified: "resolution", query: "Nvidia", metric_query: "data center",
-      summary: "SUMMARY",
-      entity: { node_id: "ent::nvda::1", name: "NVIDIA Corporation", type: "entity" },
-      metric: { node_id: "mt::rev::1", name: "Revenues", type: "metric" },
-      entity_alternates: [], metric_alternates: [],
-      matches: [{
-        node_id: "ent::nvda::1", name: "NVIDIA Corporation", type: "entity", subtype: "Companies", label: "ORG", aliases: [],
-        filter: "data center",
-        coverage: { kind: "metrics", items: [{ name: "Total revenue - Data center", node_id: "mt::dc::1" }], names: ["Total revenue - Data center"], total: 1, truncated: false, capped: false },
-      }],
-      other_matches: [], next_call: null,
-    });
-    expect(md.startsWith("SUMMARY")).toBe(true);
-    expect(md).toContain("entity  NVIDIA Corporation  `ent::nvda::1`");
-    expect(md).toContain('**NVIDIA Corporation** (`ent::nvda::1`) — metrics containing "data center" (1):\nTotal revenue - Data center');
-    expect(md).not.toContain("next_call");
-    // A COMPLETE list carries no warning — the clause has to stay earned.
-    expect(md).not.toContain("unconfirmed");
-  });
-
-  // The lookup route owns every `metric_query`, including the fall-through
-  // FULL drill. Without the warning a name past MAX_COVERAGE_NAMES reads as
-  // absent, which is the one reading this tool must never invite.
-  const withCoverage = (filter: string | undefined, coverage: object) => ({
-    found: true, verified: "coverage", query: "q", metric_query: "quantum flux",
-    summary: "SUMMARY", other_matches: [], next_call: null,
-    matches: [{
-      node_id: "ent::crocs::1", name: "Crocs, Inc.", type: "entity",
-      subtype: "Companies", label: "ORG", aliases: [],
-      ...(filter === undefined ? {} : { filter }),
-      coverage: { kind: "metrics", items: [], names: ["Revenues", "Gross Margin"], ...coverage },
-    }],
-  });
-
-  it("counts the remainder when the fall-through drill was capped", () => {
-    const md = renderAvailableDataMarkdown(
-      withCoverage(undefined, { total: 400, truncated: true, capped: true }) as never,
-    );
-    expect(md).toContain(
-      "…and 398 more not shown (treat a name you don't see as unconfirmed, not absent).",
-    );
-  });
-
-  it("warns without a count when a FILTERED page was cut — `total` counts the hits, not the remainder", () => {
-    const md = renderAvailableDataMarkdown(
-      withCoverage("backlog", { total: 2, truncated: true, capped: true }) as never,
-    );
-    expect(md).toContain("…this list was cut, so treat a name you don't see as unconfirmed, not absent.");
-    expect(md).not.toContain("more not shown");
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Channel parity — the equivalence rule from the text-channel template:
@@ -829,7 +961,7 @@ describe("renderAvailableDataMarkdown — lookup path with a metric list", () =>
 // structuredContent but not in the markdown is invisible on all of them.
 // ---------------------------------------------------------------------------
 
-describe("channel parity (tako_search)", () => {
+describe("channel parity (tako_search and tako_search_advanced)", () => {
   // THE FIXTURE COMES FROM `buildSearchOutput`, not from a hand-written
   // literal, and that is the whole point of this test.
   //
@@ -890,8 +1022,25 @@ describe("channel parity (tako_search)", () => {
       ["data", "web"],
       false,
       "authenticated",
-      { rowCap: "all", keepWebText: true },
-      { related: [{ query: "Tesla margin", description: "Gross margin by quarter." }] },
+      { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced" },
+      // The advanced tool's four extra fields ride here too: it is the only
+      // tool that can return them, and they reach the model through the same
+      // renderer. A separate fixture would let this walk keep passing while
+      // `answer` or `structured_output` silently stopped rendering.
+      //
+      // `answer` + `related` together is deliberately a shape the WIRE cannot
+      // produce — `/v1/answer` returns no `related` — because this walks the
+      // RENDERER, and rendering each field is what it checks. The docs sample
+      // (`gen-registry.ts`) is the artifact that has to stay wire-plausible.
+      {
+        related: [
+          { query: "Tesla margin", description: "Gross margin by quarter." },
+          { query: "Tesla deliveries", node_ids: ["mt::deliveries::1"] },
+        ],
+        answer: "Tesla reported $27.1B of revenue in Q2 2026.",
+        structured_output: { revenue_usd: 27100000000, period: "2026-Q2" },
+        structured_output_error: { code: "validation_failed", message: "One field had no evidence." },
+      },
     );
     // The projection has to have produced the wide shape this test exists to
     // walk. Without this the whole test passes vacuously the day a projection
@@ -900,6 +1049,10 @@ describe("channel parity (tako_search)", () => {
     expect(output.cards[0]?.rows, "no inlined rows to walk").toBeDefined();
     expect(output.web_results[0]?.content, "no web page text to walk").toBeDefined();
     expect(output.related, "no related queries to walk").toBeDefined();
+    expect(output.related?.[1]?.node_ids, "no pin ids to walk").toBeDefined();
+    expect(output.answer, "no answer to walk").toBeDefined();
+    expect(output.structured_output, "no filled schema to walk").toBeDefined();
+    expect(output.structured_output_error, "no schema error to walk").toBeDefined();
 
     const md = renderSearchMarkdown(output);
     const leaves: string[] = [];
@@ -910,6 +1063,16 @@ describe("channel parity (tako_search)", () => {
       else if (Array.isArray(v)) v.forEach(walk);
       else if (typeof v === "object") Object.values(v).forEach(walk);
     };
+    // BOOLEANS ARE NOT WALKED, and that is a real limit rather than an
+    // oversight to "fix" by pushing "true": a boolean renders as a WORD
+    // ("exportable", "TRUNCATED"), never as its literal, so a leaf comparison
+    // would fail on every one. The consequence is that this walk is no guard
+    // at all for a boolean field — `web_results[].content.truncated` reached
+    // structuredContent and nothing else while this test stayed green. Each of
+    // the three booleans in the projected output has its own assertion
+    // instead: "web page text says when it was cut", and the rows /
+    // `exportable` cases in the card tests.
+    //
     // request_id is deliberately NOT part of the model-facing contract.
     //
     // `usage` is checked as its formatted dollar line only. The nested
@@ -938,27 +1101,16 @@ describe("channel parity (tako_search)", () => {
       height: _h,
       ...modelFacing
     } = output;
-    // A column's `dtype` is exempt for the same reason a node's `type` is:
-    // "datetime" beside a fenced column of dates tells the reader nothing the
-    // values do not. `unit`, `metric` and `entity` are NOT exempt — they are
-    // the whole reason `manifest` rides here, and a number with no unit is
-    // the misquote this exists to prevent.
+    // No `manifest` exemption any more, and none needed: the projection folds
+    // the unit into the column NAME and drops the descriptor, so `columns` is
+    // a leaf this walk checks like any other. The `dtype`/`metric`/`entity`
+    // prose it used to carry is gone from both channels rather than exempted
+    // from one.
     const stripped = {
       ...modelFacing,
       cards: modelFacing.cards.map((c) => ({
         ...c,
         nodes: c.nodes?.map(({ type: _t, ...n }) => n),
-        rows:
-          c.rows === undefined
-            ? undefined
-            : {
-                ...c.rows,
-                manifest: Array.isArray(c.rows.manifest)
-                  ? (c.rows.manifest as Array<Record<string, unknown>>).map(
-                      ({ dtype: _dt, ...col }) => col,
-                    )
-                  : c.rows.manifest,
-              },
       })),
     };
     walk(stripped);
@@ -1073,3 +1225,195 @@ describe("channel parity (tako_visualize)", () => {
     }
   });
 });
+// The same equivalence rule for the two graph tools. Written as one walker per
+// tool rather than a shared helper because each has its own exemptions, and a
+// shared one would grow a flag per caller.
+
+describe("channel parity (tako_available_data)", () => {
+  // EVERY CASE IS BUILT BY THE REAL PROJECTIONS, never as a projected literal
+  // — the reason the tako_search parity test above states, and this test is
+  // where it was learned the second time. A literal covers only the fields it
+  // happens to set, so `projectMatch` shipping candidate `aliases` on the
+  // disclaimed branch (fixed 2026-08-31) and the metric-filter path skipping
+  // COVERAGE_ITEMS_SHOWN both went green here. One case per branch the
+  // orchestrator can return, because the branches differ in which fields the
+  // projection emits at all.
+  const NVDA: GraphNodeFacade = {
+    id: "ent::nvda::1", type: "entity", name: "NVIDIA Corporation",
+    subtype: "Companies", label: "ORG", aliases: ["NVDA", "NVIDIA"],
+  };
+  const VENTURES: GraphNodeFacade = {
+    id: "ent::ven::1", type: "entity", name: "Nvidia Ventures", subtype: "Companies", label: "ORG",
+  };
+  const DC: GraphNodeFacade = { id: "mt::dc::1", type: "metric", name: "Total revenue - Data center" };
+  const GROWTH: GraphNodeFacade = { id: "mt::dc2::1", type: "metric", name: "Data center growth" };
+  const METRICS: GraphRelationFacade = {
+    key: "metrics", kind: "data", label: "Metrics",
+    items: [DC, GROWTH], total: 13, total_capped: true,
+  };
+
+  // Third element: leaves this branch deliberately does NOT print, each with
+  // the reason. An exemption is a decision, so it is written down here
+  // rather than by weakening the walk for every case.
+  const CASES: ReadonlyArray<{
+    label: string;
+    output: AvailableDataOutput;
+    exempt?: readonly string[];
+  }> = [
+    {
+      label: "drilled match with probed candidates",
+      output: {
+        found: true,
+        verified: "coverage",
+        matches: [projectMatch(buildMatch(NVDA, METRICS))],
+        candidates: [projectCandidate({ ...candidateRef(VENTURES), coverage_total: 5, coverage_capped: false })],
+        next_call: { tool: "tako_search", query: "NVIDIA Corporation Revenues" },
+      },
+    },
+    {
+      label: "coverage lookup failed",
+      output: {
+        found: false,
+        verified: "coverage",
+        guidance: "A verdict sentence. Retry once.",
+        matches: [projectMatch(unavailableMatch(NVDA))],
+        candidates: [],
+        next_call: null,
+      },
+      // `coverage.total` is 0 and the renderer prints "coverage unavailable"
+      // in place of a count: "0 metrics" beside a failed lookup reads as a
+      // gap in the data, which is the one thing this branch must not say.
+      // Structured carries `unavailable: true` for the same distinction.
+      exempt: ["0"],
+    },
+    {
+      label: "counted but unlisted",
+      output: {
+        found: true,
+        verified: "coverage",
+        matches: [projectMatch(candidateMatch(NVDA, { total: 250, capped: true }))],
+        candidates: [projectCandidate(candidateRef(GROWTH))],
+        next_call: null,
+      },
+    },
+    {
+      label: "disclaimed, resolved only",
+      output: {
+        found: false,
+        verified: "resolution",
+        guidance: "A verdict sentence. Search the web instead.",
+        matches: [],
+        candidates: [
+          projectCandidate({
+            ...resolvedOnlyMatch(NVDA),
+            coverage_total: 0,
+            coverage_capped: false,
+          }),
+          projectCandidate(candidateRef(VENTURES)),
+        ],
+        next_call: null,
+      },
+    },
+    {
+      label: "metric-filtered list",
+      output: {
+        found: true,
+        verified: "pair",
+        matches: [projectMatch(metricListMatch(NVDA, [DC, GROWTH], false, "data center"))],
+        candidates: [],
+        next_call: { tool: "tako_search_advanced", query: "NVIDIA Corporation Total revenue - Data center" },
+      },
+    },
+    {
+      label: "lookup pair with runners-up",
+      output: {
+        found: true,
+        verified: "unlinked",
+        guidance: "A verdict sentence. An action sentence.",
+        matches: [],
+        candidates: [],
+        next_call: null,
+        entity: projectRef({ node_id: NVDA.id, name: NVDA.name, type: NVDA.type }),
+        metric: projectRef({ node_id: DC.id, name: DC.name, type: DC.type }),
+        entity_candidates: [projectRef({ node_id: VENTURES.id, name: VENTURES.name, type: VENTURES.type })],
+        metric_candidates: [projectRef({ node_id: GROWTH.id, name: GROWTH.name, type: GROWTH.type })],
+      },
+    },
+  ];
+
+  it.each(CASES)("$label: every leaf of the projected output appears in the rendered text", ({ output, exempt }) => {
+    const md = renderAvailableDataMarkdown(output);
+    for (const leaf of leavesOf(output)) {
+      if (exempt?.includes(leaf) === true) continue;
+      expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
+    }
+  });
+
+  it("says the coverage lookup failed rather than printing a zero count", () => {
+    const md = renderAvailableDataMarkdown({
+      found: false, verified: "coverage", matches: [projectMatch(unavailableMatch(NVDA))],
+      candidates: [], next_call: null,
+    });
+    expect(md).toContain("coverage unavailable");
+  });
+
+  // `found` is a BOOLEAN, so the walk above cannot see it (see `leavesOf`).
+  // It is the routing verdict a caller narrows `sources` on, and it is not
+  // derivable from the rest of the document: on the pair path it turns on a
+  // `pinnedConfident` this text never names. Both values must print.
+  it("states `found` in the text channel, in both directions", () => {
+    const at = (found: boolean): AvailableDataOutput => ({
+      found, verified: "coverage", matches: [], candidates: [], next_call: null,
+    });
+    expect(renderAvailableDataMarkdown(at(true))).toContain("found: yes");
+    expect(renderAvailableDataMarkdown(at(false))).toContain("found: no");
+  });
+});
+
+describe("channel parity (tako_graph_related)", () => {
+  it("every leaf value of the projected output appears in the rendered text", () => {
+    const output = projectRelated({
+      node: {
+        id: "ent::nvda::1", type: "entity", name: "NVIDIA Corporation",
+        subtype: "Companies", label: "ORG", aliases: ["NVDA"], description: "A chip company.",
+      },
+      relations: [
+        {
+          key: "rel:in_industry", kind: "related", label: "In industry", total: 2, total_capped: false,
+          items: [
+            { id: "ent::semi::1", type: "entity", name: "Semiconductor", subtype: "Industries" },
+            { id: "ent::ai::1", type: "entity", name: "AI and Machine Learning", subtype: "Industries" },
+          ],
+          next_cursor: "cur::1",
+        },
+      ],
+    });
+    const md = renderGraphRelatedMarkdown(output);
+    for (const leaf of leavesOf(output)) {
+      expect(md, `text channel is missing: ${leaf}`).toContain(leaf);
+    }
+  });
+});
+
+/**
+ * Every string and number leaf of a projected output, in document order.
+ *
+ * BOOLEANS ARE OUT OF REACH OF THIS WALK, and each one therefore needs its own
+ * test. They have no single rendered form: `found` is a stated fact and prints
+ * a word either way, while `truncated` and `total_capped` are flags whose
+ * false value renders as ABSENCE (`groupTotal` prints `+` only when true).
+ * Collecting them as "yes"/"no" was tried on 2026-08-31 and fails the
+ * graph_related parity case for exactly that reason.
+ *
+ * The gap is not academic: `tako_available_data.found` — the routing verdict a
+ * caller narrows `sources` on — reached `structuredContent` and no text branch,
+ * and every test here passed.
+ */
+function leavesOf(v: unknown, acc: string[] = []): string[] {
+  if (v === null || v === undefined) return acc;
+  if (typeof v === "string") acc.push(v);
+  else if (typeof v === "number") acc.push(String(v));
+  else if (Array.isArray(v)) v.forEach((x) => leavesOf(x, acc));
+  else if (typeof v === "object") Object.values(v).forEach((x) => leavesOf(x, acc));
+  return acc;
+}

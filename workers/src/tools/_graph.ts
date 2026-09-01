@@ -82,45 +82,122 @@ export type GraphRelatedFacade = z.infer<typeof graphRelatedFacade>;
  * (spec Appendix A/B, 2026-08-25): the raw overview averages 849 chars per
  * related node because every item carries the full company description, so
  * Anthropic PBC's overview was 83,487 chars and overflowed the MCP result
- * cap, NVIDIA's 82,741 at limit 5. Items carry only what a follow-up call
- * needs (the id) plus what disambiguates them (name, type, subtype, label);
- * the focal node alone keeps aliases and a truncated description.
+ * cap, NVIDIA's 82,741 at limit 5.
  *
- * 600 chars, not 280: the focal node is ONE record and it is the node the
- * caller named, so its own prose is worth keeping whole — measured graph
- * descriptions run ~300-450 chars. The bound exists only so a pathological
- * multi-kilobyte description cannot dwarf the map it sits above.
+ * 300, not the 600 this carried before the surface redesign: the description
+ * is reference prose and BOTH channels pay for it, so a 600-char blurb costs
+ * 1,200 per call. Measured graph descriptions run ~300-450, so 300 keeps the
+ * opening claim (what the company does) and drops the segment recital.
  */
-export const FOCAL_DESCRIPTION_MAX = 600;
+export const FOCAL_DESCRIPTION_MAX = 300;
 export const FOCAL_ALIASES_MAX = 10;
-/** Overview items per group. Three names tell the model what the group is; the drill pages the rest. */
+/** Overview names per group. Three names tell the model what the group is; the drill pages the rest. */
 export const OVERVIEW_PREVIEW_N = 3;
 
 /**
- * id, name, type, subtype, label — nothing else. Absent fields stay absent.
+ * `subtype ?? label` — the ONE kind field, replacing the pair the wire sends.
  *
- * `!= null`, not `!== undefined`: a wire `subtype: null` is DROPPED rather
- * than echoed, which the predecessor `slimRelatedItem` kept. Both forms
- * satisfy `graphNodeSchema` (`.nullable().optional()`), and omitting is what
- * keeps a null from costing bytes in every item of a 250-item page. Pinned by
- * the "no null padding" test.
+ * Measured over 560 drilled items on prod (2026-08-31): `label` added nothing
+ * beyond `type` + `subtype` on ZERO of them. 504 carried both and the label
+ * was the weaker synonym every time (Companies/ORG, Countries/GPE,
+ * Cryptocurrencies/MONEY); 53 were metrics whose only label was `METRIC`,
+ * which `type` already says. Preferring `subtype` therefore loses nothing
+ * here, and the `label` fallback still catches the case that DOES occur on
+ * `tako_available_data`, whose nodes come from search rather than curated
+ * edges: 13 of 134 sampled nodes there were subtype-less entities whose label
+ * was the only kind hint (`Bitcoin` PRODUCT, `France` GPE).
+ *
+ * Both tools define it identically on purpose — one name for one thing.
  */
-export function slimNode(n: GraphNodeFacade): GraphNodeFacade {
-  return {
-    id: n.id,
-    type: n.type,
-    name: n.name,
-    ...(n.subtype != null ? { subtype: n.subtype } : {}),
-    ...(n.label != null ? { label: n.label } : {}),
-  };
+export function kindOf(n: {
+  type?: string | null | undefined;
+  subtype?: string | null | undefined;
+  label?: string | null | undefined;
+}): string | undefined {
+  if (typeof n.subtype === "string" && n.subtype !== "") return n.subtype;
+  const label = n.label;
+  if (typeof label !== "string" || label === "") return undefined;
+  // A label that only restates `type` is noise, not a kind: every metric node
+  // with no subtype carries `label: "METRIC"`, which rendered as
+  // "metric · METRIC". This is a general rule, not a name list — any future
+  // label equal to its own type falls out the same way.
+  return label.toLowerCase() === (n.type ?? "").toLowerCase() ? undefined : label;
 }
 
-/** The focal node: slim plus capped aliases and a truncated description. */
-export function slimFocalNode(n: GraphNodeFacade): GraphNodeFacade {
-  const out = slimNode(n);
-  if (n.aliases !== undefined && n.aliases.length > 0) {
-    out.aliases = n.aliases.slice(0, FOCAL_ALIASES_MAX);
-  }
+// Field descriptions here are DOUBLE-CHARGED: `projectedRelationShape` is
+// inlined under both `relations` and `relation`, so every char inside it is
+// published twice. The bare structure is already 1,569 of the 2,000-char
+// outputSchema cap, which leaves ~430 for prose across both copies — so a
+// description survives here only if the field's own name does not carry it.
+
+/** The model-facing related node: a name and the handle to explore it. */
+export const projectedGraphNodeShape = z.looseObject({
+  id: z.string(),
+  name: z.string(),
+  kind: z.string().optional(),
+});
+export type ProjectedGraphNode = z.infer<typeof projectedGraphNodeShape>;
+
+/** The focal node: the related shape plus the two fields only it carries. */
+export const projectedFocalNodeShape = z.looseObject({
+  id: z.string(),
+  type: z.string().describe("entity or metric."),
+  name: z.string().describe("Canonical graph name — search on this."),
+  kind: z.string().optional(),
+  aliases: z.array(z.string()).optional(),
+  description: z.string().optional(),
+});
+
+/**
+ * A relation group, in the two shapes the two modes actually return.
+ *
+ * SPLIT rather than one shape with two optional item fields, for the reason
+ * the split exists at all: a map that carried ids cost 1,920 chars of them per
+ * call for handles the drill returns anyway (measured, NVIDIA map 6,710 →
+ * 2,760 chars). Declaring both fields on one shape published the drill's whole
+ * item schema inside the map too — ~200 chars, twice, for a field the map can
+ * never carry — and told a reader the two are interchangeable. They are not:
+ *
+ *   - the map previews NAMES (`preview`), because names orient and ids do not;
+ *   - the drill returns the PAGE (`items`), each with the id that explores it.
+ *
+ * `total` / `total_capped` carry the true counts either way, so a preview
+ * loses no count.
+ */
+const relationGroupFields = {
+  key: z.string().describe("Pass back as `relation` to page it."),
+  label: z.string(),
+  // No `.int()`: the SDK publishes it as the JS safe-integer bounds, ~53 chars
+  // twice over (this group is spread into both the map and the drill shape)
+  // for a range no relation count can violate.
+  total: z.number(),
+  total_capped: z.boolean().describe("`total` is a floor."),
+  next_cursor: z.string().optional().describe("Pass back as `cursor`."),
+} as const;
+
+/** A group on the map: names only. */
+export const projectedRelationPreviewShape = z.looseObject({
+  ...relationGroupFields,
+  preview: z.array(z.string()).describe(`The group's first ${String(OVERVIEW_PREVIEW_N)} names.`),
+});
+
+/** A drilled group: the page, with an id per item. */
+export const projectedRelationPageShape = z.looseObject({
+  ...relationGroupFields,
+  items: z.array(projectedGraphNodeShape).describe("This page of the group."),
+});
+
+export type ProjectedRelated = {
+  node: z.infer<typeof projectedFocalNodeShape>;
+  relations?: z.infer<typeof projectedRelationPreviewShape>[];
+  relation?: z.infer<typeof projectedRelationPageShape> | null;
+};
+
+function projectFocal(n: GraphNodeFacade): ProjectedRelated["node"] {
+  const out: ProjectedRelated["node"] = { id: n.id, type: n.type, name: n.name };
+  const kind = kindOf(n);
+  if (kind !== undefined) out.kind = kind;
+  if (n.aliases !== undefined && n.aliases.length > 0) out.aliases = n.aliases.slice(0, FOCAL_ALIASES_MAX);
   if (typeof n.description === "string" && n.description !== "") {
     out.description =
       n.description.length > FOCAL_DESCRIPTION_MAX
@@ -130,28 +207,63 @@ export function slimFocalNode(n: GraphNodeFacade): GraphNodeFacade {
   return out;
 }
 
+/** id, name, kind — nothing else. Absent fields stay absent (no null padding). */
+export function projectItem(n: GraphNodeFacade): ProjectedGraphNode {
+  const out: ProjectedGraphNode = { id: n.id, name: n.name };
+  const kind = kindOf(n);
+  if (kind !== undefined) out.kind = kind;
+  return out;
+}
+
+// `!= null` on next_cursor: a wire `next_cursor: null` means "no more pages"
+// and is dropped rather than echoed, so an absent field is the only "no more"
+// signal in either shape.
+function groupHead(g: GraphRelationFacade): Record<string, unknown> {
+  return {
+    key: g.key,
+    label: g.label,
+    total: g.total,
+    total_capped: g.total_capped,
+    ...(g.next_cursor != null ? { next_cursor: g.next_cursor } : {}),
+  };
+}
+
+function projectPreview(g: GraphRelationFacade): z.infer<typeof projectedRelationPreviewShape> {
+  return {
+    ...groupHead(g),
+    preview: g.items.slice(0, OVERVIEW_PREVIEW_N).map((i) => i.name),
+  } as z.infer<typeof projectedRelationPreviewShape>;
+}
+
+function projectPage(g: GraphRelationFacade): z.infer<typeof projectedRelationPageShape> {
+  return { ...groupHead(g), items: g.items.map(projectItem) } as z.infer<
+    typeof projectedRelationPageShape
+  >;
+}
+
 /**
- * Overview mode keeps every group's key, kind, label, total, and
- * total_capped, but only the first OVERVIEW_PREVIEW_N items (slimmed). Drill
- * mode keeps the whole page, each item slimmed. `total`/`total_capped` still
- * carry the true counts, so truncating items loses nothing the model needs.
+ * Project a wire `graph/related` response into the model-facing shape.
+ *
+ * Runs in the HANDLER, before either channel reads the output, because the raw
+ * payload cannot be forwarded at all: `graph/related` returns the FULL node
+ * record for every related item and Anthropic PBC's 83,487-char overview
+ * overflowed the MCP result cap outright. It is an explicit projection, not a
+ * subtractive slimmer — an unknown backend key cannot leak, which is what lets
+ * the advertised schema be typed field by field (spec D4).
+ *
+ * Dropped, each because nothing reads it: the relation group's `kind`
+ * (`related|data|sibling|membership|source`, rendered by neither channel),
+ * every item's `type` (the `ent::`/`mt::` id prefix carries it) and `label`
+ * (see `kindOf`), and `inferred_labels` (rendered by neither channel).
  */
-export function slimRelatedResponse(r: GraphRelatedFacade): GraphRelatedFacade {
-  const out: GraphRelatedFacade = { node: slimFocalNode(r.node) };
+export function projectRelated(r: GraphRelatedFacade): ProjectedRelated {
+  const out: ProjectedRelated = { node: projectFocal(r.node) };
   if (r.relation !== undefined) {
-    out.relation =
-      r.relation === null ? null : { ...r.relation, items: r.relation.items.map(slimNode) };
+    out.relation = r.relation === null ? null : projectPage(r.relation);
   }
-  if (r.relations !== undefined) {
-    out.relations =
-      r.relations === null
-        ? null
-        : r.relations.map((g) => ({
-            ...g,
-            items: g.items.slice(0, OVERVIEW_PREVIEW_N).map(slimNode),
-          }));
+  if (r.relations !== undefined && r.relations !== null) {
+    out.relations = r.relations.map(projectPreview);
   }
-  if (r.inferred_labels !== undefined) out.inferred_labels = r.inferred_labels;
   return out;
 }
 
@@ -177,7 +289,7 @@ const NER_LABEL_LIST =
  *
  * Grounded ONLY in the documented graph contract (`openapi/sdk.yaml`:
  * search → 400/503, related → 400/404/503) and the
- * live-verified behaviours recorded in the tako-graph-agent skill:
+ * live-verified behaviors recorded in the tako-graph-agent skill:
  *   - 401 → key missing/invalid, or a key used against the wrong environment
  *     (a prod key is rejected on staging and vice-versa).
  *   - 400 → a bad parameter; on search that is almost always an off-enum

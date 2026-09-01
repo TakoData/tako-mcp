@@ -1,0 +1,52 @@
+{
+  "_note": "Canonical wire fixture for docs/TOOLS.md samples. `search` is a GET /api/v1/graph/search response, `related` the GET /api/v1/graph/related coverage drill for its top result. gen-registry runs both through the REAL selectCoverage -> projectMatch/projectCandidate -> renderAvailableDataMarkdown pipeline, so the rendered samples cannot drift from what a model receives. Deliberately small: two coverage entries and two candidates show every field without spending a page on the doc.",
+  "search": {
+    "results": [
+      {
+        "id": "ent::carnival_inc::a374dbc8",
+        "type": "entity",
+        "name": "Carnival, Inc.",
+        "subtype": "Companies",
+        "label": "ORG",
+        "aliases": ["CCL", "Carnival"]
+      },
+      {
+        "id": "ent::carnival_corporation::1feaedf0",
+        "type": "entity",
+        "name": "Carnival Corporation Ltd.",
+        "subtype": "Companies",
+        "label": "ORG",
+        "aliases": []
+      },
+      {
+        "id": "mt::passenger_cruise_day::0c917760",
+        "type": "metric",
+        "name": "Passenger Cruise Days",
+        "subtype": null,
+        "label": "METRIC",
+        "aliases": []
+      }
+    ]
+  },
+  "related": {
+    "node": {
+      "id": "ent::carnival_inc::a374dbc8",
+      "type": "entity",
+      "name": "Carnival, Inc.",
+      "subtype": "Companies",
+      "label": "ORG"
+    },
+    "relation": {
+      "key": "metrics",
+      "kind": "data",
+      "label": "Related Metrics",
+      "total": 214,
+      "total_capped": false,
+      "items": [
+        { "id": "mt::revenues::0cae208b", "type": "metric", "name": "Revenues", "subtype": null, "label": "METRIC" },
+        { "id": "mt::gross_margin_::9a2b184a", "type": "metric", "name": "Gross Margin (%)", "subtype": null, "label": "METRIC" }
+      ]
+    }
+  },
+  "candidate_coverage": { "ent::carnival_corporation::1feaedf0": { "total": 250, "capped": true } }
+}

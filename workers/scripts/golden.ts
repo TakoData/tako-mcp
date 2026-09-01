@@ -141,14 +141,14 @@ async function main(): Promise<void> {
       const c = GOLDEN_CASES.find((x) => x.id === id);
       if (!c) continue;
       const res = await client.callTool({ name: "tako_available_data", arguments: c.args });
-      const nc = (res.structuredContent as { next_call?: { tool: string; query: string; node_ids: string[]; strict: boolean } | null } | undefined)?.next_call;
+      const nc = (res.structuredContent as { next_call?: { tool: string; query: string } | null } | undefined)?.next_call;
       if (nc == null) {
         bad(`${id}:exec`, "no next_call to execute");
         continue;
       }
       const out = await client.callTool({
         name: nc.tool,
-        arguments: { query: nc.query, node_ids: nc.node_ids, strict: nc.strict, sources: ["data"], include_contents: false },
+        arguments: { query: nc.query, sources: ["data"] },
       });
       const cards = (textOf(out).match(/^### /gm) ?? []).length;
       // Zero cards is a legitimate outcome (the graph knows metrics that have

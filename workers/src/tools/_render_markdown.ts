@@ -1,7 +1,6 @@
 /**
- * Markdown renderers for the model-facing text channel, the advertised
- * `structuredContent` shapes for the tools the redesign has migrated, and the
- * `slimStructured` hooks the ones it has not reached yet still use.
+ * Markdown renderers for the model-facing text channel and the advertised
+ * `structuredContent` shapes every tool now returns directly.
  *
  * Why markdown: the consumers of these tools are agents reading text. JSON
  * taxes prose-heavy content twice — escaped newlines/quotes inside snippets,
@@ -10,8 +9,8 @@
  * loses its tail. Layout: Tako data cards first, then web results, then the
  * two reference maps, so truncating clients lose boilerplate before data.
  *
- * BOTH CHANNELS ARE COMPLETE for the search tools, and the duplication is the
- * decision, not an oversight. The older rule — text carries everything,
+ * BOTH CHANNELS ARE COMPLETE for every migrated tool, and the duplication is
+ * the decision, not an oversight. The older rule — text carries everything,
  * `structuredContent` shrinks to machine essentials so a host counting both
  * does not pay twice — assumed every host reads the text. A 2026-08 audit
  * measured otherwise: 9 harnesses (Cursor, Vercel AI SDK, OpenCode, Gemini
@@ -19,15 +18,16 @@
  * model `content` ONLY, while both submission targets — ChatGPT and Claude
  * Code — feed it `structuredContent` ONLY. Either channel alone is therefore a
  * wrong answer on some host. The projection is what makes shipping both
- * affordable (~31.9k chars -> ~13k per channel), and the "channel parity
- * (tako_search)" test asserts every projected leaf reaches the text.
+ * affordable (~31.9k chars -> ~13k per channel on search), and the per-tool
+ * "channel parity" tests assert every projected STRING and NUMBER leaf
+ * reaches the text. Booleans they cannot see — a boolean renders as a WORD
+ * ("exportable", "TRUNCATED"), never as its literal — so each has its own
+ * assertion instead.
  *
- * So `tako_search`, `tako_search_advanced`, `tako_contents` and
- * `tako_visualize` declare NO `slimStructured` hook: their handler output IS
- * the advertised shape, and `pickDeclared` in `mcp.ts` does the per-surface
- * narrowing.
- * `tako_available_data` and `tako_agent` still slim, with the two helpers in
- * this module; `tako_graph_related` slims with its own function.
+ * So NO TOOL declares a `slimStructured` hook any more: every handler's output
+ * IS the advertised shape, and `pickDeclared` in `mcp.ts` does the per-surface
+ * narrowing. `tako_agent` was the last one still slimming; the hook itself
+ * stays in `mcp.ts` for a future tool, with its contract tested there.
  *
  * `request_id` reaches NEITHER channel, on purpose. It is a server-side
  * correlation id with no use to a model or an end user, and OpenAI's app
@@ -43,17 +43,34 @@
  */
 import { z } from "zod";
 
+import type {
+  AgentRunOutput,
+  ProjectedAgentCard,
+  ProjectedCitation,
+} from "./_agent_run.js";
 // Flattens upstream text destined for a single-line slot (titles, meta, node
 // names): an embedded newline would otherwise start a fresh line the CONTENT
 // controls. Defined next to the summary builder that needs the same guarantee,
 // so the two channels cannot drift into flattening differently.
-import { oneLine } from "./_available_data.js";
+import {
+  oneLine,
+  type AvailableDataOutput,
+  type ProjectedCandidate,
+  type ProjectedMatch,
+  type ProjectedRef,
+} from "./_available_data.js";
 import type { ContentsOutput, ProjectedContentsItem } from "./_contents.js";
-import type { GraphRelatedFacade } from "./_graph.js";
+import {
+  projectedFocalNodeShape,
+  projectedRelationPageShape,
+  projectedRelationPreviewShape,
+  type ProjectedRelated,
+} from "./_graph.js";
 import {
   autoChainShape,
   nonEmpty,
   projectedCardShape,
+  projectedCardWithRowsShape,
   projectedWebResultShape,
   usageAdvertisedSchema,
   type ProjectedCard,
@@ -73,14 +90,12 @@ import {
  *  strips them from responses by construction. `request_id` is deliberately
  *  undeclared on both (OpenAI review). */
 const searchCoreFields = {
+  // The CORE card — no `rows`. `tako_search` cannot inline (its handler passes
+  // `rowCap: null` on every call), so the field is declared on the advanced
+  // shape below instead, which is the same rule the answer-fold fields follow.
   cards: z
     .array(projectedCardShape)
-    // Holds on BOTH tools, because this shape is shared (see the `related`
-    // comment below for the same rule). `tako_search_advanced` with
-    // `include_contents: true` sets rowCap "all" and DOES inline rows, so an
-    // unqualified "fetch the rows with tako_contents" here sent that caller
-    // into a priced refetch of rows it had already paid to inline.
-    .describe("The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."),
+    .describe("The data cards. Fetch an exportable card's rows with tako_contents on its url."),
   web_results: z.array(projectedWebResultShape).describe("Web results."),
   usage: usageAdvertisedSchema
     .nullable()
@@ -114,29 +129,50 @@ const searchCoreFields = {
  *  the field. Keep a describe and its knob on the same tool, or the guard
  *  turns back into a gag. */
 const answerFoldFields = {
+  // THE DESCRIBE CARRIES THE FIELD NAMES, because the shape cannot.
+  // `projectRelatedQuery` emits `{query, description?, node_ids?}`
+  // (`projectedRelatedQueryShape`), and publishing that shape is the obvious
+  // fix — it costs +160 chars of draft-07 structure against an output schema
+  // sitting EXACTLY on its shrink-only ratchet
+  // (`LEGACY_OUTPUT_SCHEMA_CEILINGS`), so generation fails. The ceiling is not
+  // copied here on purpose: a trim moves it without touching this file, and
+  // the stale figure that used to sit here read as a 56-char allowance a later
+  // describe could spend.
+  //
+  // Prose cannot cover a structural cost, and the two
+  // describes that could fund it (`cards[].coverage_end`,
+  // `web_results[].snippet`) are shared with `tako_search` and earmarked for
+  // ITS fan-out PR by that ceiling's own comment.
+  //
+  // So the field names ride in prose until that pass frees the room. Do not
+  // "simplify" this back to a bare stub: `looseObject({})` still DELIVERS the
+  // fields, and without these names the model gets `{}` and has to guess that
+  // a follow-up can be pinned at all.
   related: z
     .array(z.looseObject({}))
     .optional()
     .describe(
-      "Follow-up queries, each with a `query` to send as the next search request. Present only when you set include_related.",
+      "Follow-up queries, when you set include_related. Each has a `query` to send next and may have `node_ids` for `data.node_ids`.",
     ),
+  // Trimmed to fund the `related` names above, and both cuts are restatements:
+  // "Present only when you set include_answer: true" repeats what the
+  // `include_answer` parameter already promises, and `structured_output`'s
+  // two absence cases both end at `structured_output_error`.
   answer: z
     .string()
     .optional()
-    .describe(
-      "The synthesized, citation-backed answer. Present only when you set include_answer: true; the cards and web_results are its citations.",
-    ),
+    .describe("The synthesized answer, cited from the cards and web_results."),
   structured_output: z
     .looseObject({})
     .optional()
     .describe(
-      "The output_schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+      "Your output_schema filled from the same evidence; see structured_output_error when absent.",
     ),
   structured_output_error: z
     .looseObject({})
     .optional()
     .describe(
-      "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill an output_schema you supplied.",
+      "Why structured_output is absent: `code` and `message`.",
     ),
 } as const;
 
@@ -149,9 +185,17 @@ export const searchChatgptOutputShape = z.looseObject({
   ...autoChainShape,
 });
 
-/** `tako_search_advanced` only: the core plus the answer endpoint's four. */
+/** `tako_search_advanced` only: the core plus the answer endpoint's four, and
+ *  the one card field only this tool can fill. */
 export const searchAdvancedOutputShape = z.looseObject({
   ...searchCoreFields,
+  cards: z
+    .array(projectedCardWithRowsShape)
+    // Says what to do with BOTH outcomes, because this tool produces both: an
+    // unqualified "fetch the rows with tako_contents" sent an
+    // `include_contents: true` caller into a priced refetch of rows it had
+    // already paid to inline.
+    .describe("The data cards. Rows ride in a card's `rows` only when the request asked to inline them — otherwise fetch an exportable card's rows with tako_contents on its url."),
   ...answerFoldFields,
 });
 
@@ -287,55 +331,6 @@ function fenced(text: string, lang = ""): string {
   return `${fence}${lang}\n${text}\n${fence}`;
 }
 
-type LooseContent = {
-  content_format?: string | null;
-  data?: string | null;
-  records?: Array<Record<string, unknown>> | null;
-  dataset?: { columns?: unknown; rows?: unknown[] } | null;
-  total_rows?: number | null;
-  truncated?: boolean | null;
-  /** Per-column descriptors, in column order — the ONLY carrier of a
-   *  column's unit. See `renderColumnManifest`. */
-  manifest?: Array<{
-    name?: string | null;
-    metric?: string | null;
-    entity?: string | null;
-    unit?: string | null;
-  }> | null;
-};
-
-/**
- * The units line for inlined rows.
- *
- * Without it a json_records inline reads `[{"col": 12.4}]` and nothing on
- * either channel says whether 12.4 is USD, USD billions or a percent — the
- * generated `ColumnDescriptor` is the only place `unit`, `metric` and
- * `entity` exist, and the CSV branch fences the payload alone.
- *
- * One line for the whole manifest, `name — metric, entity, unit`, dropping
- * whichever parts a producer left unset. `undefined` when no column carries
- * anything worth printing, so a manifest of bare names adds no line.
- */
-function renderColumnManifest(manifest: NonNullable<LooseContent["manifest"]>): string | undefined {
-  const cols = manifest
-    .map((c) => {
-      const parts = [c.metric, c.entity, c.unit].filter(
-        (v): v is string => typeof v === "string" && v !== "",
-      );
-      const name = typeof c.name === "string" && c.name !== "" ? c.name : undefined;
-      if (parts.length === 0) return name;
-      return name === undefined ? parts.join(", ") : `${name} — ${parts.join(", ")}`;
-    })
-    .filter((v): v is string => v !== undefined)
-    .map(oneLine);
-  if (cols.length === 0) return undefined;
-  // Only worth a line when at least one column said more than its own header.
-  const informative = manifest.some((c) =>
-    [c.metric, c.entity, c.unit].some((v) => typeof v === "string" && v !== ""),
-  );
-  return informative ? `- columns: ${cols.join(" · ")}` : undefined;
-}
-
 
 
 
@@ -409,29 +404,34 @@ function renderProjectedCard(c: ProjectedCard): string {
     lines.push(`- nodes: ${c.nodes.map((n) => `\`${n.id}\` (${oneLine(n.name)})`).join(" · ")}`);
   }
   if (c.rows !== undefined) {
-    if (typeof c.rows.data === "string") {
-      // The string branch fences `data` ALONE, so the descriptor keys beside it
-      // reach structuredContent and nothing else — `truncated: true` most of
-      // all, which tells the model the rows it is reading are cut. The JSON
-      // branch below stringifies the whole object and never had the gap. Both
-      // keys are dropped from the line when absent, so a card with neither
-      // renders exactly as before.
-      const desc: string[] = [];
-      if (typeof c.rows.content_format === "string") desc.push(`format: ${c.rows.content_format}`);
-      if (c.rows.truncated === true) desc.push("TRUNCATED — these are not all the rows");
-      if (desc.length > 0) lines.push(`- rows: ${desc.join(" · ")}`);
-      const columns = Array.isArray(c.rows.manifest)
-        ? renderColumnManifest(c.rows.manifest)
-        : undefined;
-      if (columns !== undefined) lines.push(columns);
-      lines.push(fenced(c.rows.data));
-    } else {
-      const columns = Array.isArray(c.rows.manifest)
-        ? renderColumnManifest(c.rows.manifest)
-        : undefined;
-      if (columns !== undefined) lines.push(columns);
-      lines.push(fenced(JSON.stringify(c.rows)));
+    // One fact line for what the payload is, then the payload. The line only
+    // appears when it has something to say: `format` rides only on the two
+    // non-tabular formats, and `truncated` only when rows were cut. Both are
+    // structured keys, so rendering them here is what keeps the two channels
+    // equivalent — `truncated: true` most of all, which tells the model the
+    // rows it is reading are not all of them.
+    const desc: string[] = [];
+    if (c.rows.format !== undefined) desc.push(`format: ${oneLine(c.rows.format)}`);
+    if (c.rows.truncated === true) desc.push("TRUNCATED — these are not all the rows");
+    if (desc.length > 0) lines.push(`- rows: ${desc.join(" · ")}`);
+    // `columns`/`rows` render as ONE fenced JSON object rather than a markdown
+    // table: `tako_contents` renders the same shape the same way (byte-identical
+    // to its structured payload), and a table would re-encode every cell into a
+    // form the parity test can only approximate.
+    if (c.rows.rows !== undefined) {
+      const table: Record<string, unknown> = {};
+      if (c.rows.columns !== undefined) table.columns = c.rows.columns;
+      table.rows = c.rows.rows;
+      lines.push(fenced(JSON.stringify(table), "json"));
+    } else if (c.rows.columns !== undefined) {
+      // A non-tabular payload (csv, card_json) carries `columns` only when the
+      // manifest named them, and then it is the units the model needs — one
+      // line beside the payload, not a second copy of the header inside a
+      // fenced object.
+      lines.push(`- columns: ${c.rows.columns.map(oneLine).join(" · ")}`);
     }
+    if (c.rows.data !== undefined) lines.push(fenced(c.rows.data));
+    if (c.rows.card_data !== undefined) lines.push(fenced(JSON.stringify(c.rows.card_data), "json"));
   }
   return lines.join("\n");
 }
@@ -446,6 +446,15 @@ function renderProjectedWebResult(w: ProjectedWebResult): string {
   // this document — fenced so a page cannot forge our own section framing.
   if (typeof w.snippet === "string" && w.snippet !== "") lines.push(fenced(w.snippet));
   if (w.content !== undefined && typeof w.content.data === "string") {
+    // BEFORE the fence, and the same rule as a card's inlined rows: a reader
+    // who is handed a page cut at `article_content_max_chars` (default 30,000)
+    // and told nothing will quote it as the whole page. `truncated` rides in
+    // `structuredContent`, so omitting it here is a channel gap, not a saving —
+    // and the parity walk cannot catch it, because that walk collects string
+    // and number leaves only.
+    if (w.content.truncated === true) {
+      lines.push("- page text: TRUNCATED — this is not the whole page");
+    }
     lines.push(fenced(w.content.data));
   }
   return lines.join("\n");
@@ -505,11 +514,17 @@ export function renderSearchMarkdown(o: SearchOutput): string {
     blocks.push("## Related queries");
     blocks.push(
       o.related
-        .map((r) =>
-          typeof r.description === "string" && r.description !== ""
-            ? `- ${oneLine(r.query)} — ${oneLine(r.description)}`
-            : `- ${oneLine(r.query)}`,
-        )
+        .map((r) => {
+          const parts = [`- ${oneLine(r.query)}`];
+          if (r.description !== undefined) parts.push(`— ${oneLine(r.description)}`);
+          // The ids are the whole point of the field — they pin the follow-up —
+          // and they rode in structuredContent alone until now, invisible on
+          // the 9 harnesses that read only this channel.
+          if (r.node_ids !== undefined) {
+            parts.push(`(pin: ${r.node_ids.map((id) => `\`${id}\``).join(" ")})`);
+          }
+          return parts.join(" ");
+        })
         .join("\n"),
     );
   }
@@ -521,603 +536,356 @@ export function renderSearchMarkdown(o: SearchOutput): string {
 }
 
 // ---------------------------------------------------------------------------
-// tako_available_data
+// tako_available_data — COMPLETE in both channels (spec, text-channel
+// template). Order: guidance, the resolved pair, the drilled matches, the
+// candidates, the runnable handle. There is no reference prose to put last —
+// the `summary` blob that used to open this document is gone (see the
+// guidance section of `_available_data.ts`).
 // ---------------------------------------------------------------------------
 
-/**
- * How many coverage entries per match ride in `structuredContent`. The full
- * (up to MAX_COVERAGE_NAMES) name list is already in the markdown text; this
- * channel exists to hand over the ids for a PINNED follow-up, and metric
- * entries are ordered headline-first, so the useful ones are at the front.
- * Capped because name+id pairs for 200 metrics would roughly double the
- * response for a payload the model reads once.
- */
-export const STRUCTURED_COVERAGE_ITEMS = 25;
-
-const resolvedRefShape = z.object({
-  node_id: z.string(),
-  name: z.string(),
-  type: z.string(),
-});
-
 const coverageItemShape = z.object({
-  name: z.string(),
-  node_id: z.string().describe("Graph node id. Hand it to tako_graph_related to explore what else the graph holds on this node."),
+  name: z.string().describe("Canonical graph name."),
+  id: z.string().describe("Graph node id."),
 });
 
-/** Advertised (slim) structuredContent shape for tako_available_data: the
- *  machine-checkable verdict, the resolved matches with their node ids, and
- *  the ready-to-run follow-up. The prose summary and the full coverage-name
- *  lists ride in the markdown text. */
+/** What a DRILLED node holds: the counts plus the listed entries. */
+const coverageShape = z.looseObject({
+  total: z.number().describe("Entries in all, not entries listed."),
+  total_capped: z.boolean().describe("`total` is a floor."),
+  truncated: z.boolean().optional().describe("More entries exist than are listed."),
+  items: z.array(coverageItemShape).optional().describe("Headline-first."),
+});
+
+/** What a COUNTED node holds: the counts alone. A candidate is probed for its
+ *  size, never for its list, so declaring `items` here would advertise a field
+ *  no candidate can carry — and cost the whole item schema a second time. */
+const coverageCountShape = z.looseObject({
+  total: z.number(),
+  total_capped: z.boolean().describe("`total` is a floor."),
+});
+
+const projectedRefShape = z.object({ id: z.string(), name: z.string() });
+
+const candidateFields = {
+  id: z.string(),
+  name: z.string().describe("Canonical graph name — search on this."),
+  type: z.string().describe("entity or metric; also what `coverage` counts."),
+  kind: z.string().optional(),
+} as const;
+
+/** Advertised structuredContent for tako_available_data — the projected shape
+ *  (`projectMatch` / `projectCandidate` in `_available_data.ts`), typed field
+ *  by field. No field description INSTRUCTS (spec D4): every "call X with Y"
+ *  sentence this schema used to carry moved to the tool description, and the
+ *  three that named `node_ids`/`strict` on `tako_search` named a parameter
+ *  that tool has not had since the D4 split. */
 export const availableDataSlimOutputShape = z.looseObject({
-  found: z
-    .boolean()
-    .describe(
-      "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): the resolved entity HOLDS something matching — the resolved metric is on its own metric list, or its metrics contain your phrase. Both names resolving isn't enough: a checked list with nothing matching reads false. A metric that resolved nowhere globally still reads true when the entity's own list carries the phrase. Read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that.",
-    ),
+  found: z.boolean().describe("Whether Tako holds matching data; `verified` says on what evidence."),
   verified: z
     .enum(["coverage", "pair", "unlinked", "resolution"])
     .optional()
     .describe(
-      "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and the resolved metric is not on it, so a card for this pair is unlikely. It says nothing about the rest of the list — `unlinked` and `found: true` sit together whenever your `metric` phrase matched entries the resolved node is not one of, and `coverage` then names them. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
+      "What was checked. `pair`: the metric is on the entity's own list. `coverage`: a list was drilled. `unlinked`: the list was checked, the metric is absent. `resolution`: names resolved only.",
     ),
-  query: z.string(),
+  guidance: z.string().optional().describe("The verdict, and the one next action."),
   matches: z
-    .array(
-      z.looseObject({
-        node_id: z.string(),
-        name: z.string(),
-        type: z.string(),
-        subtype: z.string().nullable().optional(),
-        label: z.string().nullable().optional(),
-        unavailable: z.boolean().optional(),
-        filter: z
-          .string()
-          .optional()
-          .describe(
-            "The `metric` phrase this match's coverage was filtered by. Present means `coverage.total` counts only the entries matching it, not the entity's whole list — without it a structured-only reader cannot tell `total: 13` meaning \"13 hits for your phrase\" from `total: 13` meaning \"13 metrics in all\". The text channel distinguishes them; this is how the machine channel does.",
-          ),
-        coverage: z.looseObject({
-          kind: z.string(),
-          total: z.number(),
-          truncated: z.boolean(),
-          items: z.array(coverageItemShape),
-          // Optional in the ADVERTISED shape (not in the emitted value) for
-          // the same reason every slim shape here is loose: the handler's FULL
-          // output must stay assignable to it, and the full CoverageGroup
-          // carries no slim-channel bookkeeping field. `slimAvailableData-
-          // Structured` always emits it.
-          items_truncated: z
-            .boolean()
-            .optional()
-            .describe(
-              "More coverage entries exist than are listed here, so treat an entry you do not see as unconfirmed, not absent. The text channel carries every name that was fetched, and says so when that list was cut too.",
-            ),
-        }),
-      }),
-    )
-    .describe(
-      "The resolved matches and their coverage, each entry carrying its canonical name and graph node id. To fetch a specific metric, call tako_search with the EXACT canonical name as the query — the canonical name is what recovers cards. A node id is for traversal via tako_graph_related.",
-    ),
-  // Optional in the ADVERTISED shape, always present in the emitted value —
-  // the same rule `items_truncated` follows: the handler's FULL output carries
-  // `other_matches`, not `candidates`, and must stay assignable to this shape.
+    .array(z.looseObject({ ...candidateFields, aliases: z.array(z.string()).optional(), unavailable: z.boolean().optional(), filter: z.string().optional().describe("The `metric` phrase that narrowed this list. When set, `total` counts only matching entries."), coverage: coverageShape }))
+    .describe("The nodes whose coverage was drilled, best first."),
   candidates: z
-    .array(
-      z.object({
-        node_id: z.string(),
-        name: z.string(),
-        type: z.string(),
-        subtype: z.string().nullable(),
-        label: z.string().nullable(),
-        coverage_total: z.number().int().optional(),
-      }),
-    )
-    .optional()
-    .describe(
-      "The other nodes `q` resolved to, best first, each with its canonical name to search on and its id to explore with tako_graph_related. coverage_total is present only for candidates that were coverage-checked; the text channel carries their aliases.",
-    ),
+    .array(z.looseObject({ ...candidateFields, coverage: coverageCountShape.optional() }))
+    .describe("The other nodes `q` resolved to, best first."),
   next_call: z
     .object({
-      tool: z.enum(["tako_search"]),
+      // A plain string, not an enum of the two possible names: the value is
+      // resolved per connection (`searchToolFor`), and an enum listing
+      // `tako_search_advanced` publishes that name to every surface —
+      // including chatgpt, which never registers it. `phantom_tool.test.ts`
+      // reads published schemas, so the enum was the phantom, not the value.
+      tool: z.string(),
       query: z.string(),
     })
     .nullable()
-    .describe(
-      "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null otherwise — pass `metric` to get a handle.",
-    ),
-  // Lookup path (`metric` supplied): the resolved pair. Optional because the
-  // discovery path returns `matches` instead.
-  metric_query: z.string().optional(),
-  entity: resolvedRefShape.nullable().optional(),
-  metric: resolvedRefShape
-    .nullable()
-    .optional()
-    .describe("The resolved metric, by its canonical graph name — the name the follow-up query uses."),
-  entity_alternates: z.array(resolvedRefShape).optional(),
-  metric_alternates: z
-    .array(resolvedRefShape)
-    .optional()
-    .describe(
-      "Runners-up. The top metric is right ~80% of the time and the top three ~93-95%, so check these before accepting the primary.",
-    ),
+    .describe("A follow-up search in canonical names. Null when no target is unambiguous."),
+  entity: projectedRefShape.nullable().optional().describe("Lookup path: the resolved entity."),
+  metric: projectedRefShape.nullable().optional().describe("Lookup path: the resolved metric."),
+  entity_candidates: z.array(projectedRefShape).optional().describe("Runners-up."),
+  metric_candidates: z.array(projectedRefShape).optional().describe("Runners-up."),
 });
 
-interface CoverageMatchLike {
-  node_id: string;
-  name: string;
-  type: string;
-  subtype: string | null;
-  label: string | null;
-  aliases: string[];
-  unavailable?: boolean | undefined;
-  /** Set when the list was filtered by the caller's `metric` phrase (lookup path). */
-  filter?: string | undefined;
-  coverage: {
-    kind: string;
-    items: Array<{ name: string; node_id: string }>;
-    names: string[];
-    total: number;
-    truncated: boolean;
-    capped: boolean;
-  };
-  [key: string]: unknown;
-}
+const nodeHead = (c: { name: string; type: string; kind?: string }): string =>
+  `${oneLine(c.name)} — ${[c.type, c.kind].filter((p): p is string => typeof p === "string").map(oneLine).join(" · ")}`;
 
-export interface ResolvedRefLike {
-  node_id: string;
-  name: string;
-  type: string;
-}
+const totalStr = (c: { total: number; total_capped: boolean }): string =>
+  `${c.total}${c.total_capped ? "+" : ""}`;
 
-export interface AvailableDataFullOutput {
-  found: boolean;
-  /** What evidence stands behind the verdict — see PairVerdict in _pair_confirm.ts. */
-  verified?: "coverage" | "pair" | "unlinked" | "resolution" | undefined;
-  query: string;
-  summary: string;
-  matches: CoverageMatchLike[];
-  other_matches: Array<{
-    node_id: string;
-    name: string;
-    type: string;
-    subtype: string | null;
-    label: string | null;
-    aliases: string[];
-    coverage_total?: number | undefined;
-    coverage_capped?: boolean | undefined;
-  }>;
-  next_call: { tool: "tako_search"; query: string } | null;
-  /** False when the gate failed open — the matches are low-confidence. */
-  confident?: boolean | undefined;
-  metric_query?: string | undefined;
-  entity?: ResolvedRefLike | null | undefined;
-  metric?: ResolvedRefLike | null | undefined;
-  entity_alternates?: ResolvedRefLike[] | undefined;
-  metric_alternates?: ResolvedRefLike[] | undefined;
-  [key: string]: unknown;
-}
+/**
+ * What a node's coverage counts, agreeing in number with it. Only the
+ * candidate receipt lines use this — a match's list HEADER is a category
+ * label, so it stays plural ("entities: 1 total") where a count reads
+ * singular ("1 entity").
+ */
+const coverageNoun = (type: string, total: number): string =>
+  type === "metric" ? (total === 1 ? "entity" : "entities") : total === 1 ? "metric" : "metrics";
 
-export function slimAvailableDataStructured(
-  o: AvailableDataFullOutput,
-): Record<string, unknown> {
-  return {
-    found: o.found,
-    // Omitted rather than emitted as null when no check applies (swapped args,
-    // no entity) — an absent field reads as "not applicable", where a null
-    // would read as a checked-and-empty result.
-    ...(o.verified === undefined ? {} : { verified: o.verified }),
-    query: o.query,
-    // The node ids the whole discovery→fetch handoff depends on. They were
-    // previously text-only (as prose inside `**Name** (`id`)`), so an agent
-    // reading structuredContent got a bare `found` boolean and nothing to act
-    // on. Names stay capped here (STRUCTURED_COVERAGE_ITEMS) because the full
-    // list is in the text; the ids are the part text can't cheaply carry.
-    matches: o.matches.map((m) => ({
-      node_id: m.node_id,
-      name: m.name,
-      type: m.type,
-      ...(m.subtype === undefined ? {} : { subtype: m.subtype }),
-      ...(m.label === undefined ? {} : { label: m.label }),
-      ...(m.unavailable === true ? { unavailable: true } : {}),
-      // What `coverage.total` COUNTS, without which it is unreadable: 13 hits
-      // for the caller's phrase and 13 metrics in all serialize identically.
-      // The text channel says `metrics containing "data center" (13)`; this is
-      // the machine channel's half of that sentence.
-      ...(m.filter === undefined ? {} : { filter: m.filter }),
-      coverage: {
-        kind: m.coverage.kind,
-        total: m.coverage.total,
-        truncated: m.coverage.truncated,
-        items: m.coverage.items.slice(0, STRUCTURED_COVERAGE_ITEMS),
-        // `total`, not the slice. Deriving this from `items.length` alone read
-        // FALSE on the tie path, whose matches carry `items: []` beside a real
-        // `total` — so `0 > 5` told a structured reader the empty list was the
-        // whole list, next to `total: 15, truncated: true`. Keep the slice
-        // clause too: it is the only one that fires when `total` undercounts
-        // the entries (a filtered count, a capped page), and this flag must
-        // never read false while entries were dropped.
-        items_truncated:
-          m.coverage.items.length > STRUCTURED_COVERAGE_ITEMS ||
-          m.coverage.total > Math.min(m.coverage.items.length, STRUCTURED_COVERAGE_ITEMS),
-      },
-    })),
-    // The wide candidate list reaches the machine channel too: a
-    // structured-only reader could not act on names it had no ids for.
-    candidates: (o.other_matches ?? []).map((c) => ({
-      node_id: c.node_id,
-      name: c.name,
-      type: c.type,
-      subtype: c.subtype ?? null,
-      label: c.label ?? null,
-      ...(c.coverage_total === undefined ? {} : { coverage_total: c.coverage_total }),
-    })),
-    next_call: o.next_call,
-    ...(o.metric_query === undefined ? {} : { metric_query: o.metric_query }),
-    ...(o.entity === undefined ? {} : { entity: o.entity }),
-    ...(o.metric === undefined ? {} : { metric: o.metric }),
-    ...(o.entity_alternates === undefined ? {} : { entity_alternates: o.entity_alternates }),
-    ...(o.metric_alternates === undefined ? {} : { metric_alternates: o.metric_alternates }),
-  };
-}
-
-/** The coverage report: the deterministic summary, then each match's full
- *  coverage-name list (the primary payload — these are the exact terms to
- *  reuse in tako_search), then the runnable next_call. */
-function renderRef(
-  label: string,
-  ref: ResolvedRefLike,
-  alternates: ResolvedRefLike[],
-  // Goes on the FIRST line. Taken as a parameter rather than concatenated by
-  // the caller because this function returns MULTIPLE lines when alternates
-  // exist, so an appended suffix would land on the alternates line instead.
-  suffix = "",
-): string {
-  // Names are upstream content in a single-line slot — flattened so an
-  // embedded newline cannot start a line that mimics this very format.
-  const lines = [`${label}  ${oneLine(ref.name)}  \`${oneLine(ref.node_id)}\`${suffix}`];
-  if (alternates.length > 0) {
+function renderMatch(m: ProjectedMatch): string {
+  const lines: string[] = [`### ${nodeHead(m)}`, `- \`${oneLine(m.id)}\``];
+  if (m.aliases !== undefined && m.aliases.length > 0) {
+    lines.push(`- aliases: ${m.aliases.map(oneLine).join(", ")}`);
+  }
+  if (m.unavailable === true) {
+    lines.push("- coverage unavailable — the lookup failed, so this is not a gap in the data");
+    return lines.join("\n");
+  }
+  // What the list COUNTS, without which `total` is unreadable: 13 hits for the
+  // caller's phrase and 13 metrics in all serialize identically.
+  const what =
+    m.filter === undefined
+      ? m.type === "metric" ? "entities" : "metrics"
+      : `metrics containing "${oneLine(m.filter)}"`;
+  const items = m.coverage.items ?? [];
+  if (items.length === 0) {
+    // "none" is only true at total 0. The tie branch counts a node's coverage
+    // without listing it, so `total: 15, items: []` must not read as a gap.
     lines.push(
-      `${" ".repeat(label.length)}  alternates: ${alternates
-        .map((a) => `${oneLine(a.name)} (\`${oneLine(a.node_id)}\`)`)
-        .join(" · ")}`,
+      m.coverage.total === 0
+        ? `- ${what}: none`
+        : `- ${what}: ${totalStr(m.coverage)} total, none listed`,
     );
+    return lines.join("\n");
+  }
+  lines.push(
+    `- ${what} (${totalStr(m.coverage)} total, ${items.length} listed): ${items
+      .map((i) => `${oneLine(i.name)} \`${oneLine(i.id)}\``)
+      .join(" · ")}`,
+  );
+  // A CUT LIST MUST SAY SO, or a name past the cap reads as absent — and the
+  // recovery must name something free. It used to point at the web; the two
+  // things that actually answer are this tool's own `metric` filter and a
+  // drill on the node id.
+  if (m.coverage.truncated === true) {
+    lines.push("- more exist than are listed — treat a name you don't see as unconfirmed, not absent; pass `metric` with a phrase to filter this list");
   }
   return lines.join("\n");
 }
 
-/**
- * The LOOKUP path's document: what was asked, what each half resolved to (with
- * ids), the runners-up, and one runnable call.
- *
- * Echoing the resolution back is the point. The top metric is right ~80% of the
- * time, and when it is wrong it is wrong VISIBLY — `metric="total revenue"`
- * resolves `Total Odds` with `Revenues` sitting at rank 1. Printing the name
- * the tool actually picked, next to the alternates, lets the model catch that
- * for free instead of pinning a confidently wrong node.
- */
-export function renderAvailableDataPairMarkdown(o: AvailableDataFullOutput): string {
-  const blocks: string[] = [o.summary];
-  const rows: string[] = [];
-  if (o.entity != null) {
-    rows.push(renderRef("entity", o.entity, o.entity_alternates ?? []));
-  }
-  if (o.metric != null) {
-    // The verdict rides on the metric row because the metric is what gets
-    // pinned — it is the row a model reads before deciding to trust the handle.
-    const mark =
-      o.verified === "pair"
-        ? "  (on the entity's metric list)"
-        : o.verified === "unlinked"
-          ? "  (NOT on the entity's metric list)"
-          : "";
-    rows.push(renderRef("metric", o.metric, o.metric_alternates ?? [], mark));
-  }
-  if (rows.length > 0) blocks.push(rows.join("\n"));
-
-  // The entity's own metrics containing the caller's phrase (fix 3), or the
-  // full coverage drill when nothing resolved. `filter` is what tells the two
-  // apart, so the header can say what the list is scoped to.
-  for (const m of o.matches) {
-    if (m.unavailable === true || m.coverage.names.length === 0) continue;
-    const total = `${m.coverage.total}${m.coverage.capped ? "+" : ""}`;
-    const what =
-      m.filter === undefined ? m.coverage.kind : `${m.coverage.kind} containing "${oneLine(m.filter)}"`;
-    // A CUT LIST MUST SAY SO, or a name past the cap reads as absent. This
-    // loop renders the lookup path's fall-through drill, which is the same
-    // full paginated one the discovery renderer warns about (capped at
-    // MAX_COVERAGE_NAMES / MAX_COVERAGE_PAGES) — it lost the warning when the
-    // route widened from `matches.length === 0` to every `metric_query`.
-    // A filtered list cannot name the remainder: its `total` counts the hits,
-    // and a page that came back with a cursor never said how many matched.
-    const more =
-      m.coverage.total > m.coverage.names.length
-        ? ` …and ${m.coverage.total - m.coverage.names.length} more not shown (treat a name you don't see as unconfirmed, not absent).`
-        : m.coverage.truncated
-          ? " …this list was cut, so treat a name you don't see as unconfirmed, not absent."
-          : "";
-    blocks.push(
-      `**${oneLine(m.name)}** (\`${oneLine(m.node_id)}\`) — ${what} (${total}):\n${m.coverage.names.map(oneLine).join(", ")}${more}`,
-    );
-  }
-
-  if (o.next_call !== null) {
-    // The embedded query is caller input — dynamic fence, same as web text.
-    blocks.push(`next_call (run verbatim):\n${fenced(JSON.stringify(o.next_call), "json")}`);
-  }
-  return blocks.join("\n\n");
+function renderCandidate(c: ProjectedCandidate): string {
+  const count =
+    c.coverage === undefined
+      ? ""
+      : ` — ${totalStr(c.coverage)} ${coverageNoun(c.type, c.coverage.total)}`;
+  return `- ${nodeHead(c)} — \`${oneLine(c.id)}\`${count}`;
 }
 
-export function renderAvailableDataMarkdown(o: AvailableDataFullOutput): string {
-  // The lookup path renders the pair rows, and now its own metric list too
-  // (fix 3), so it owns every output carrying a `metric_query` — including the
-  // fall-through full drill, which used to route here.
-  if (o.metric_query !== undefined) return renderAvailableDataPairMarkdown(o);
-  // Nothing plausibly matched. The handler now skips the coverage drill on this
-  // path entirely, so there are no names left to print and this is belt and
-  // braces rather than the thing doing the work — kept because the summary
-  // already disclaims these resolutions ("almost certainly NOT what you asked
-  // for") and appending a coverage list under one would contradict it. Before
-  // the drill was skipped, this suppressed ~8.5k chars elaborating on an answer
-  // we had just disclaimed, while `structuredContent` still carried the totals
-  // — the two channels disagreed. Both now report no coverage.
-  if (o.confident === false) return o.summary;
-  const blocks: string[] = [o.summary];
+const refList = (refs: readonly ProjectedRef[]): string =>
+  refs.map((r) => `${oneLine(r.name)} \`${oneLine(r.id)}\``).join(" · ");
 
-  for (const m of o.matches) {
-    if (m.unavailable === true || m.coverage.names.length === 0) continue;
-    const total = `${m.coverage.total}${m.coverage.capped ? "+" : ""}`;
-    const head = `**${oneLine(m.name)}** (\`${oneLine(m.node_id)}\`) — ${m.coverage.kind} (${total} total):`;
-    const names = m.coverage.names.map(oneLine).join(", ");
-    const more =
-      m.coverage.truncated && m.coverage.total > m.coverage.names.length
-        ? ` …and ${m.coverage.total - m.coverage.names.length} more not shown (treat a name you don't see as unconfirmed, not absent).`
-        : "";
-    blocks.push(`${head}\n${names}${more}`);
-  }
+export function renderAvailableDataMarkdown(o: AvailableDataOutput): string {
+  const blocks: string[] = [];
+  if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
+  // `found` renders even though the fields around it imply it. Recovering it
+  // from text alone takes a different inference per branch — discount the
+  // candidate coverage counts on the disclaimed branch, read the wording of
+  // `guidanceMetricUnresolved` on the pair branch, where `found` turns on a
+  // `pinnedConfident` this document never names. Both channels carry the whole
+  // answer (spec D3), and the parity walker cannot enforce that for a boolean.
+  const facts = [`found: ${o.found ? "yes" : "no"}`];
+  if (o.verified !== undefined) facts.push(`verified: ${o.verified}`);
+  blocks.push(facts.join("\n"));
 
-  if (o.next_call !== null) {
-    // The embedded query is caller input — dynamic fence, same as web text.
-    blocks.push(`next_call (run verbatim):\n${fenced(JSON.stringify(o.next_call), "json")}`);
-  }
-
-  return blocks.join("\n\n");
-}
-
-// ---------------------------------------------------------------------------
-// tako_graph_related
-// ---------------------------------------------------------------------------
-
-function nodeKind(n: {
-  type: string;
-  subtype?: string | null | undefined;
-  label?: string | null | undefined;
-}): string {
-  return [n.type, n.subtype, n.label]
-    .filter((p): p is string => typeof p === "string" && p !== "")
-    .map(oneLine)
-    .join(" · ");
-}
-
-/**
- * The compact map of a node. Overview: one line per relation group — key,
- * label, total, the preview names. Drill: one line per item with its id.
- * Node names and ids are upstream content in single-line slots, so they are
- * flattened the same way the available-data renderer flattens them.
- */
-export function renderGraphRelatedMarkdown(o: GraphRelatedFacade): string {
-  const n = o.node;
-  const head: string[] = [`**${oneLine(n.name)}** (\`${oneLine(n.id)}\`) — ${nodeKind(n)}`];
-  if (n.aliases !== undefined && n.aliases.length > 0) {
-    head.push(`aliases: ${n.aliases.map(oneLine).join(", ")}`);
-  }
-  if (typeof n.description === "string" && n.description !== "") head.push(oneLine(n.description));
-  const blocks: string[] = [head.join("\n")];
-
-  if (o.relation !== undefined && o.relation !== null) {
-    const g = o.relation;
-    const total = `${g.total}${g.total_capped ? "+" : ""}`;
-    const more = g.next_cursor ? `; more: pass cursor "${oneLine(g.next_cursor)}"` : "";
-    const lines = g.items.map((i) => {
-      const kind = [i.subtype, i.label].filter((p): p is string => typeof p === "string" && p !== "");
-      return `- ${oneLine(i.name)} (\`${oneLine(i.id)}\`)${kind.length > 0 ? ` · ${kind.map(oneLine).join(", ")}` : ""}`;
-    });
-    blocks.push(
-      `\`${oneLine(g.key)}\` — ${oneLine(g.label)} — ${total} total, ${g.items.length} on this page${more}:\n${lines.length > 0 ? lines.join("\n") : "_none_"}`,
-    );
-  } else if (o.relations !== undefined && o.relations !== null) {
-    if (o.relations.length === 0) {
-      blocks.push("No related nodes.");
-      return blocks.join("\n\n");
+  // The resolved pair leads on the lookup path: it is the answer, and the
+  // matches below it are the supporting list.
+  if (o.entity !== undefined || o.metric !== undefined) {
+    const rows: string[] = ["## Pair"];
+    if (o.entity != null) rows.push(`- entity: ${oneLine(o.entity.name)} \`${oneLine(o.entity.id)}\``);
+    if (o.metric != null) rows.push(`- metric: ${oneLine(o.metric.name)} \`${oneLine(o.metric.id)}\``);
+    if (o.entity_candidates !== undefined && o.entity_candidates.length > 0) {
+      rows.push(`- entity candidates: ${refList(o.entity_candidates)}`);
     }
-    const lines = o.relations.map((g) => {
-      const total = `${g.total}${g.total_capped ? "+" : ""}`;
-      // A group the preview shows WHOLE is answerable from the overview, so it
-      // carries its ids; a group with more behind it does not, because the
-      // drill returns every id for free and 3 ids per group across a 17-group
-      // overview costs ~1.3k chars for handles the next call supplies anyway.
-      const complete = !g.total_capped && g.total <= g.items.length;
-      const names = g.items
-        .map((i) => (complete ? `${oneLine(i.name)} (\`${oneLine(i.id)}\`)` : oneLine(i.name)))
-        .join(", ");
-      const tail = g.total > g.items.length ? ", …" : "";
-      // A cursor on an overview group is the only handle to the rest of it, so
-      // it rides the line rather than waiting for the drill to rediscover it.
-      const more = g.next_cursor
-        ? ` — more: \`relation: "${oneLine(g.key)}"\`, cursor "${oneLine(g.next_cursor)}"`
-        : "";
-      return `- \`${oneLine(g.key)}\` — ${oneLine(g.label)} — ${total}: ${names}${tail}${more}`;
-    });
-    blocks.push(
-      `Relations (pass \`relation: "<key>"\` to page one, \`q\` to filter by substring):\n${lines.join("\n")}`,
-    );
-  } else if (o.relation === null) {
-    // A drill that came back `relation: null` — spec-legal, and
-    // `tako_available_data` already reads it as a real "zero coverage", so it
-    // reaches the model. Without this arm the response was the focal-node
-    // header ALONE: a name and an id, and not one word about the group the
-    // caller asked for, which reads as a truncated result rather than an
-    // answer. The renderer cannot name the key (renderText sees the output,
-    // not the input), so it states the two things the key would not add.
-    blocks.push(
-      "That relation has no items for this node. An unknown relation key is NOT an error — it returns empty the same way — so re-read the overview (`node_id` alone) for the keys this node actually has.",
-    );
-  } else {
-    // `relations: null`, or neither key present. Same reading as `relations:
-    // []`, and the same sentence the renderer this replaced emitted.
-    blocks.push("No related nodes.");
+    if (o.metric_candidates !== undefined && o.metric_candidates.length > 0) {
+      rows.push(`- metric candidates: ${refList(o.metric_candidates)}`);
+    }
+    if (rows.length > 1) blocks.push(rows.join("\n"));
+  }
+
+  if (o.matches.length > 0) {
+    blocks.push(`## Matches (${o.matches.length})`);
+    blocks.push(...o.matches.map(renderMatch));
+  }
+  if (o.candidates.length > 0) {
+    blocks.push(`## Candidates (${o.candidates.length})\n${o.candidates.map(renderCandidate).join("\n")}`);
+  }
+  if (o.next_call !== null) {
+    blocks.push(`## Next call\n${o.next_call.tool}: ${oneLine(o.next_call.query)}`);
   }
   return blocks.join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
-// tako_agent
+// tako_graph_related — COMPLETE in both channels (spec, text-channel
+// template). Order: the focal node, the relations (the payload), then the
+// node's description LAST, so a tail-truncating host loses prose before data.
 // ---------------------------------------------------------------------------
 
-/** Advertised (slim) structuredContent shape for agent runs: lifecycle fields
- *  only — the answer, citations, and metadata ride in the markdown text. */
-export const agentRunSlimOutputShape = z.looseObject({
-  run_id: z.string(),
-  status: z
-    .string()
-    .describe("queued | running | completed | failed."),
-  timed_out: z
-    .boolean()
-    .describe("True when the wait window elapsed before a terminal status — poll again with the same run_id."),
-  thread_id: z
-    .string()
-    .nullable()
-    .optional()
-    .describe("Pass back as thread_id to ask a follow-up in the same conversation."),
-  error: z
-    .object({ code: z.string(), message: z.string() })
-    .loose()
-    .nullable()
-    .optional(),
+/** Advertised structuredContent for tako_graph_related: the projected shape,
+ *  typed field by field, because `projectRelated` controls every key. */
+export const graphRelatedSlimOutputShape = z.looseObject({
+  node: projectedFocalNodeShape,
+  relations: z.array(projectedRelationPreviewShape).optional().describe("Every group, previewed. The map."),
+  relation: projectedRelationPageShape.nullable().optional().describe("The one group you drilled."),
 });
 
-interface AgentCitationLike {
-  index: number;
-  title: string;
-  url?: string | null | undefined;
-  source_name?: string | null | undefined;
-  publish_date?: string | null | undefined;
-  [key: string]: unknown;
-}
-
-interface AgentNoteLike {
-  title?: string | undefined;
-  term?: string | undefined;
-  description?: string | undefined;
-  definition?: string | undefined;
-  [key: string]: unknown;
-}
-
-export interface AgentRunLike {
-  run_id: string;
-  thread_id?: string | null | undefined;
-  status: string;
-  timed_out: boolean;
-  result?: {
-    answer?: string | null | undefined;
-    cards?: Array<{
-      title?: string | null | undefined;
-      embed_url?: string | null | undefined;
-      [key: string]: unknown;
-    }>;
-    citations?: AgentCitationLike[];
-    metadata?: {
-      definitions?: AgentNoteLike[] | null | undefined;
-      assumptions?: AgentNoteLike[] | null | undefined;
-      methodology?: AgentNoteLike[] | null | undefined;
-    } | null | undefined;
-    [key: string]: unknown;
-  } | null | undefined;
-  error?: { code: string; message: string } | null | undefined;
-  [key: string]: unknown;
-}
-
-export function slimAgentRunStructured(run: AgentRunLike): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    run_id: run.run_id,
-    status: run.status,
-    timed_out: run.timed_out,
-    thread_id: run.thread_id ?? null,
-  };
-  if (run.error != null) out.error = run.error;
-  return out;
-}
-
-function renderAgentNotes(title: string, notes: AgentNoteLike[] | null | undefined): string | undefined {
-  if (!Array.isArray(notes) || notes.length === 0) return undefined;
-  const lines = notes
-    .map((n) => {
-      const head = n.title ?? n.term;
-      const body = n.description ?? n.definition;
-      if (typeof head !== "string" || typeof body !== "string") return undefined;
-      return `- ${head}: ${body}`;
-    })
-    .filter((s): s is string => s !== undefined);
-  if (lines.length === 0) return undefined;
-  return `## ${title}\n${lines.join("\n")}`;
-}
-
-/** An agent run as markdown: the answer, its indexed citations (the [n]
- *  markers in the answer join to these), charts, and the reasoning notes.
- *  Non-terminal runs render as a poll-again status line. */
-export function renderAgentRunMarkdown(run: AgentRunLike): string {
-  const footer = `_run_id: ${run.run_id}${run.thread_id != null ? ` · thread_id: ${run.thread_id} (pass back for follow-ups)` : ""} · status: ${run.status}_`;
-
-  if (run.status === "failed") {
-    const e = run.error;
-    return [
-      `Agent run failed${e != null ? ` (${e.code}): ${e.message}` : "."}`,
-      footer,
-    ].join("\n\n");
+function renderFocalNode(n: ProjectedRelated["node"]): string {
+  const kinds = [n.type, n.kind].filter((p): p is string => typeof p === "string" && p !== "");
+  const lines = [
+    `# ${oneLine(n.name)}`,
+    `- \`${oneLine(n.id)}\` · ${kinds.map(oneLine).join(" · ")}`,
+  ];
+  if (n.aliases !== undefined && n.aliases.length > 0) {
+    lines.push(`- aliases: ${n.aliases.map(oneLine).join(", ")}`);
   }
-  if (run.status !== "completed") {
-    return [
-      `Agent run \`${run.run_id}\` is still ${run.status}${run.timed_out ? " (this wait window elapsed)" : ""}. Poll again with the same run_id — runs typically take 30–90s.`,
-      footer,
-    ].join("\n\n");
-  }
+  return lines.join("\n");
+}
 
-  const blocks: string[] = [];
-  const answer = run.result?.answer;
-  blocks.push(typeof answer === "string" && answer !== "" ? answer : "Agent run completed with no answer text.");
+const groupTotal = (g: { total: number; total_capped: boolean }): string =>
+  `${g.total}${g.total_capped ? "+" : ""}`;
 
-  const citations = run.result?.citations ?? [];
-  if (citations.length > 0) {
-    const lines = citations.map((c) => {
-      const meta: string[] = [];
-      if (typeof c.source_name === "string" && c.source_name !== "") meta.push(c.source_name);
-      if (typeof c.publish_date === "string" && c.publish_date !== "") meta.push(c.publish_date);
-      const tail = meta.length > 0 ? ` (${meta.join(" · ")})` : "";
-      return `[${c.index}] ${c.title}${c.url != null ? ` — ${c.url}` : ""}${tail}`;
+export function renderGraphRelatedMarkdown(o: ProjectedRelated): string {
+  const blocks: string[] = [renderFocalNode(o.node)];
+
+  if (o.relation !== undefined) {
+    if (o.relation === null) {
+      // A drill that came back empty — spec-legal, and `tako_available_data`
+      // reads it as a real "zero coverage". Without this arm the whole answer
+      // was the focal header: a name and an id, and not one word about the
+      // group the caller asked for, which reads as a truncated result. The
+      // renderer cannot name the key (it sees the output, not the input), so
+      // it states the two things the key would not add.
+      blocks.push(
+        "That relation has no items for this node. An unknown relation key is NOT an error — it returns empty the same way — so re-read the map (`node_id` alone) for the keys this node actually has.",
+      );
+    } else {
+      const g = o.relation;
+      const items = g.items ?? [];
+      const lines = items.map(
+        (i) => `- ${oneLine(i.name)} \`${oneLine(i.id)}\`${i.kind === undefined ? "" : ` · ${oneLine(i.kind)}`}`,
+      );
+      blocks.push(
+        `## \`${oneLine(g.key)}\` — ${oneLine(g.label)} (${groupTotal(g)} total, ${items.length} on this page)\n${
+          lines.length > 0 ? lines.join("\n") : "_none_"
+        }`,
+      );
+      if (g.next_cursor !== undefined) blocks.push(`More: pass cursor "${oneLine(g.next_cursor)}".`);
+    }
+  } else if (o.relations !== undefined && o.relations.length > 0) {
+    const lines = o.relations.map((g) => {
+      const names = (g.preview ?? []).map(oneLine).join(", ");
+      const more = g.total > (g.preview ?? []).length ? ", …" : "";
+      // A cursor on a map group is the only handle to the rest of it, so it
+      // rides the line rather than waiting for the drill to rediscover it.
+      const cursor = g.next_cursor === undefined ? "" : ` — cursor "${oneLine(g.next_cursor)}"`;
+      return `- \`${oneLine(g.key)}\` — ${oneLine(g.label)} — ${groupTotal(g)}: ${names}${more}${cursor}`;
     });
-    blocks.push(`## Citations\n${lines.join("\n")}`);
+    blocks.push(
+      `## Relations (${o.relations.length})\nPass \`relation\` with a key to page one group, or \`q\` to filter by substring.\n${lines.join("\n")}`,
+    );
+  } else {
+    blocks.push("No related nodes.");
   }
 
-  const cards = run.result?.cards ?? [];
-  const chartLines = cards
-    .map((c) =>
-      typeof c.embed_url === "string" && c.embed_url !== ""
-        ? `- ${c.title ?? "Chart"}: ${c.embed_url}`
-        : undefined,
-    )
-    .filter((s): s is string => s !== undefined);
-  if (chartLines.length > 0) blocks.push(`## Charts\n${chartLines.join("\n")}`);
+  // Reference prose last (spec, text-channel template): a tail-truncating host
+  // (OpenCode 50 KB, Gemini CLI 40k chars) loses the blurb before the map.
+  if (o.node.description !== undefined) blocks.push(`## About\n${oneLine(o.node.description)}`);
+  return blocks.join("\n\n");
+}
 
-  const md = run.result?.metadata;
-  for (const section of [
-    renderAgentNotes("Definitions", md?.definitions),
-    renderAgentNotes("Assumptions", md?.assumptions),
-    renderAgentNotes("Methodology", md?.methodology),
-  ]) {
-    if (section !== undefined) blocks.push(section);
+// ---------------------------------------------------------------------------
+// tako_agent — COMPLETE in both channels (spec, text-channel template).
+//
+// What this replaced: `slimAgentRunStructured`, which advertised
+// `{run_id, status, timed_out, thread_id}` and nothing else. The answer, its
+// citations and its cards existed only here, in the text — invisible on the
+// five harnesses that feed the model `structuredContent` and drop `content`.
+// Both channels now render the same projection (`_agent_run.ts`).
+//
+// Order: answer, then cards, then citations, then the reference maps LAST
+// (tail-truncating hosts lose prose before data), then thread_id and usage.
+// ---------------------------------------------------------------------------
+
+// `agentRunOutputShape` is declared in `_agent_run.ts`, next to the projection
+// that fills it — the same place `_contents.ts` keeps `contentsOutputShape`.
+// A shape that lives apart from its projection is how the two drift.
+
+function renderAgentCard(c: ProjectedAgentCard): string {
+  const lines: string[] = [`### ${oneLine(c.title ?? "Untitled card")}`];
+  // `oneLine` for the reason renderProjectedCard gives: a newline followed by
+  // `## ` in a description opens a heading in this document, forging a section
+  // between `## Cards` and `## Citations`. An agent card's description is
+  // model-written prose, so it carries markdown more often than a search
+  // card's does.
+  if (c.description !== undefined) lines.push(oneLine(c.description));
+  const access: string[] = [];
+  if (c.url !== undefined) access.push(`url: ${c.url}`);
+  access.push(
+    c.exportable
+      ? c.total_rows !== undefined
+        ? `exportable, ${c.total_rows} rows`
+        : "exportable"
+      : "rows locked",
+  );
+  lines.push(`- ${access.join(" · ")}`);
+  // The chart itself. `tako_search` keeps these on the top card only, because
+  // its widget renders one; this tool renders nothing, so every card needs the
+  // links a host would draw or open.
+  const chart: string[] = [];
+  if (c.image_url !== undefined) chart.push(`image: ${c.image_url}`);
+  if (c.embed_url !== undefined) chart.push(`embed: ${c.embed_url}`);
+  if (chart.length > 0) lines.push(`- ${chart.join(" · ")}`);
+  const meta: string[] = [];
+  if (c.source !== undefined) meta.push(`source: ${oneLine(c.source)}`);
+  // "refreshed", not "updated", the same word renderProjectedCard uses: this is
+  // Tako's refresh date, not the date the data runs to, and a bare "updated" in
+  // a fact line reads as the latter.
+  if (c.last_updated !== undefined) meta.push(`refreshed ${c.last_updated}`);
+  if (meta.length > 0) lines.push(`- ${meta.join(" · ")}`);
+  return lines.join("\n");
+}
+
+function renderCitation(c: ProjectedCitation): string {
+  const url = c.url !== undefined ? ` — ${c.url}` : "";
+  const corpus = c.source_index !== undefined ? ` (${c.source_index})` : "";
+  return `[${c.index}] ${oneLine(c.title)}${url}${corpus}`;
+}
+
+/** An agent run as markdown: the answer, the cards it built, the indexed
+ *  sources its [n] markers join to, and the reasoning notes behind it. */
+export function renderAgentRunMarkdown(o: AgentRunOutput): string {
+  const blocks: string[] = [];
+  if (o.answer !== undefined) blocks.push(o.answer);
+  if (o.guidance !== undefined) blocks.push(`> ${o.guidance}`);
+  if (o.error !== undefined) {
+    blocks.push(`> Agent run failed (${oneLine(o.error.code)}): ${oneLine(o.error.message)}`);
   }
+  // A terminal run with no prose and no reason is a backend anomaly, not an
+  // empty answer the model should paraphrase — say so rather than emitting a
+  // document whose first line is a section header.
+  if (blocks.length === 0) blocks.push("The agent returned no answer.");
 
-  blocks.push(footer);
+  if (o.cards.length > 0) {
+    blocks.push(`## Cards (${o.cards.length})`);
+    blocks.push(...o.cards.map(renderAgentCard));
+  }
+  if (o.citations.length > 0) {
+    blocks.push(`## Citations (${o.citations.length})`);
+    blocks.push(o.citations.map(renderCitation).join("\n"));
+  }
+  if (o.definitions !== undefined) blocks.push(renderNameMap("Definitions", o.definitions));
+  if (o.assumptions !== undefined) blocks.push(renderNameMap("Assumptions", o.assumptions));
+  if (o.methodology !== undefined) blocks.push(renderNameMap("Methodology", o.methodology));
+  if (o.thread_id !== undefined) {
+    blocks.push(`thread_id: ${o.thread_id} — send it back to ask a follow-up.`);
+  }
+  const footer = renderFooter(o.usage);
+  if (footer !== undefined) blocks.push(footer);
   return blocks.join("\n\n");
 }
 

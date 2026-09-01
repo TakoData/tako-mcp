@@ -575,7 +575,7 @@ describe("chart render gates per surface", () => {
 
     expect(result.content.filter((b) => b.type === "image")).toHaveLength(0);
     // The zero-result guidance must survive the SDK round trip: it is
-    // declared in `searchOutputShape`, so `structuredContent` keeps it
+    // declared in the tool's published outputSchema, so `structuredContent` keeps it
     // (an undeclared key would be silently stripped by the SDK's
     // outputSchema parse — this pins schema and builder together).
     expect(

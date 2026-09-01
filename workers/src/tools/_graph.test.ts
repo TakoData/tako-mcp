@@ -12,10 +12,10 @@ import {
   FOCAL_ALIASES_MAX,
   FOCAL_DESCRIPTION_MAX,
   graphErrorMessage,
+  kindOf,
   OVERVIEW_PREVIEW_N,
-  slimFocalNode,
-  slimNode,
-  slimRelatedResponse,
+  projectItem,
+  projectRelated,
 } from "./_graph.js";
 
 describe("graphErrorMessage", () => {
@@ -124,57 +124,70 @@ const fat = (i: number) => ({
   description: "x".repeat(900),
 });
 
-describe("graph slimming", () => {
-  it("slimNode keeps id, name, type, subtype, label and drops aliases and description", () => {
-    expect(slimNode(fat(1))).toEqual({
-      id: "ent::n1::1", type: "entity", name: "Node 1", subtype: "Companies", label: "ORG",
+describe("graph projection", () => {
+  it("projectItem keeps id, name and kind — and drops type, aliases and description", () => {
+    // `type` goes because the `ent::`/`mt::` id prefix carries it; `label`
+    // folds into `kind` via `kindOf`.
+    expect(projectItem(fat(1))).toEqual({ id: "ent::n1::1", name: "Node 1", kind: "Companies" });
+  });
+
+  it("projectItem omits kind entirely when the node has neither subtype nor label", () => {
+    expect(projectItem({ id: "mt::x::1", type: "metric", name: "Revenue" })).toEqual({
+      id: "mt::x::1", name: "Revenue",
     });
   });
 
-  it("slimNode omits subtype and label when the wire has none (no null padding)", () => {
-    expect(slimNode({ id: "mt::x::1", type: "metric", name: "Revenue" })).toEqual({
-      id: "mt::x::1", type: "metric", name: "Revenue",
-    });
+  it("kindOf prefers subtype, falls back to label, and drops a label that only restates type", () => {
+    expect(kindOf({ type: "entity", subtype: "Companies", label: "ORG" })).toBe("Companies");
+    // The 13-of-134 case measured on tako_available_data: a subtype-less
+    // entity whose label is the only kind hint.
+    expect(kindOf({ type: "entity", subtype: null, label: "PRODUCT" })).toBe("PRODUCT");
+    // ...and the case that made every metric render as "metric · METRIC".
+    expect(kindOf({ type: "metric", subtype: null, label: "METRIC" })).toBeUndefined();
+    expect(kindOf({ type: "entity", subtype: null, label: null })).toBeUndefined();
   });
 
-  it("slimFocalNode keeps capped aliases and a truncated description", () => {
+  it("the focal node keeps capped aliases and a truncated description", () => {
     const n = { ...fat(1), aliases: Array.from({ length: FOCAL_ALIASES_MAX + 4 }, (_v, i) => `a${i}`) };
-    const out = slimFocalNode(n);
+    const out = projectRelated({ node: n }).node;
     expect(out.aliases).toHaveLength(FOCAL_ALIASES_MAX);
     expect(out.description?.length).toBe(FOCAL_DESCRIPTION_MAX + 1); // the cap plus the ellipsis
     expect(out.description?.endsWith("…")).toBe(true);
   });
 
-  it("slimFocalNode leaves an ordinary graph description whole", () => {
-    // Measured descriptions run ~300-450 chars; the bound is for the
-    // pathological case, not for the ordinary one.
-    const ordinary = "Z".repeat(400);
-    expect(slimFocalNode({ ...fat(1), description: ordinary }).description).toBe(ordinary);
+  it("the focal node leaves a description at or under the cap whole", () => {
+    const ordinary = "Z".repeat(FOCAL_DESCRIPTION_MAX);
+    expect(projectRelated({ node: { ...fat(1), description: ordinary } }).node.description).toBe(ordinary);
+    expect(projectRelated({ node: { ...fat(1), description: "Short." } }).node.description).toBe("Short.");
   });
 
-  it("slimFocalNode leaves a short description alone", () => {
-    expect(slimFocalNode({ ...fat(1), description: "Short." }).description).toBe("Short.");
+  const group = (key: string, n: number) => ({
+    key, kind: "related", label: key, total: n, total_capped: n > 250,
+    items: Array.from({ length: n }, (_v, i) => fat(i)),
   });
 
-  it("overview: every group keeps key/kind/label/total and only the first OVERVIEW_PREVIEW_N slim items", () => {
-    const group = (key: string, n: number) => ({
-      key, kind: "related", label: key, total: n, total_capped: n > 250,
-      items: Array.from({ length: n }, (_v, i) => fat(i)),
-    });
-    const out = slimRelatedResponse({
+  it("map: each group previews NAMES only, keeps its counts, and carries no ids", () => {
+    // Ids on a map cost 1,920 chars per NVIDIA call for handles the drill
+    // returns anyway — measured 6,710 → 2,760 chars.
+    const out = projectRelated({
       node: fat(0),
       relations: [group("rel:competes_with", 40), group("metrics", 2)],
     });
-    expect(out.relations?.[0]?.items).toHaveLength(OVERVIEW_PREVIEW_N);
-    expect(out.relations?.[0]?.items[0]).toEqual(slimNode(fat(0)));
+    expect(out.relations?.[0]?.preview).toEqual(["Node 0", "Node 1", "Node 2"]);
+    expect(out.relations?.[0]?.preview).toHaveLength(OVERVIEW_PREVIEW_N);
+    expect(out.relations?.[0]).not.toHaveProperty("items");
     expect(out.relations?.[0]?.total).toBe(40);
-    expect(out.relations?.[1]?.items).toHaveLength(2);
-    expect(out.node.description?.endsWith("…")).toBe(true);
-    expect(out.node.aliases).toEqual(["N0", "Node-0"]);
+    expect(out.relations?.[1]?.preview).toHaveLength(2);
+    expect(JSON.stringify(out.relations)).not.toContain("ent::n0::1");
   });
 
-  it("drill: the whole page survives, each item slimmed, cursor kept", () => {
-    const out = slimRelatedResponse({
+  it("map: the group's own `kind` is dropped — nothing renders it", () => {
+    const out = projectRelated({ node: fat(0), relations: [group("metrics", 2)] });
+    expect(out.relations?.[0]).not.toHaveProperty("kind");
+  });
+
+  it("drill: the whole page survives as items WITH ids, cursor kept", () => {
+    const out = projectRelated({
       node: fat(0),
       relation: {
         key: "metrics", kind: "data", label: "Metrics", total: 300, total_capped: true,
@@ -182,13 +195,24 @@ describe("graph slimming", () => {
       },
     });
     expect(out.relation?.items).toHaveLength(50);
-    expect(out.relation?.items[7]).not.toHaveProperty("description");
+    expect(out.relation?.items?.[7]).not.toHaveProperty("description");
+    expect(out.relation?.items?.[7]?.id).toBe("ent::n7::1");
+    expect(out.relation).not.toHaveProperty("preview");
     expect(out.relation?.next_cursor).toBe("c2");
   });
 
-  it("passes inferred_labels through and never invents a relations array on a drill", () => {
-    const out = slimRelatedResponse({ node: fat(0), relation: null, inferred_labels: ["ORG"] });
-    expect(out.inferred_labels).toEqual(["ORG"]);
+  it("a null next_cursor is dropped, so an absent field is the only 'no more pages' signal", () => {
+    const out = projectRelated({
+      node: fat(0),
+      relation: { ...group("metrics", 2), next_cursor: null },
+    });
+    expect(out.relation).not.toHaveProperty("next_cursor");
+  });
+
+  it("drops inferred_labels and never invents a relations array on a drill", () => {
+    const out = projectRelated({ node: fat(0), relation: null, inferred_labels: ["ORG"] });
+    expect(out).not.toHaveProperty("inferred_labels");
     expect(out).not.toHaveProperty("relations");
+    expect(out.relation).toBeNull();
   });
 });

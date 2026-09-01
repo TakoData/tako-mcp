@@ -46,9 +46,13 @@ import {
   webResultSchema,
   type Usage,
 } from "../src/tools/_search_results.js";
+import { projectAgentRun, type AgentRunWireLike } from "../src/tools/_agent_run.js";
 import {
   fenceRunFor,
+  renderAgentRunMarkdown,
+  renderAvailableDataMarkdown,
   renderContentsText,
+  renderGraphRelatedMarkdown,
   renderSearchMarkdown,
   renderVisualizeMarkdown,
 } from "../src/tools/_render_markdown.js";
@@ -63,6 +67,16 @@ import { defaultMaxChars } from "../src/tools/tako_contents.js";
 import { DEFAULT_HEIGHT } from "../src/tools/_chart_widget.js";
 import { buildVisualizeOutput } from "../src/tools/tako_visualize.js";
 import { ThinVizCard } from "../src/generated/schemas.js";
+import {
+  buildMatch,
+  buildNextCall,
+  candidateRef,
+  projectCandidate,
+  projectMatch,
+  searchToolFor,
+  type OtherMatch,
+} from "../src/tools/_available_data.js";
+import { graphRelatedOutputShape, graphSearchOutputShape, projectRelated } from "../src/tools/_graph.js";
 import type { Env } from "../src/env.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
@@ -632,46 +646,67 @@ export const INSTRUCTIONS_MAX_CHARS = 900;
 export const OUTPUT_SCHEMA_MAX_CHARS = 2_000;
 
 /**
- * Shrink-only ceilings for the output schemas already over the cap, the same
- * bargain `LEGACY_PROSE_CEILINGS` strikes for prose: a listed tool may shrink
- * freely, and growing fails generation.
+ * Shrink-only ceilings for the output schemas already over the cap: a listed
+ * tool may shrink freely, and growing fails generation.
  *
- * Separate from that map on purpose. A tool listed there is exempt from the
- * PROSE caps because its description has not been rewritten; `tako_search` has
- * been rewritten and holds every prose cap. Only its schema is oversized, and
- * folding it into the prose ratchet would silently switch off four caps it
- * currently passes.
+ * This is the LAST ratchet, and it is a different bargain from the prose one
+ * that used to sit beside it (deleted once every tool was migrated). A tool is
+ * listed here because its schema is structurally over 2,000 — the card shape,
+ * the answer fold, `rows` — not because its prose is unrewritten. Every tool
+ * listed holds all four prose caps. Do not fold a tool in here to buy room for
+ * a long description; that is what the prose ratchet did, and its rows went
+ * stale.
  *
- * 2,474 of `tako_search`'s 4,381 is field descriptions — `coverage_end` alone
- * spends 273 explaining itself against `last_updated`. That is what its fan-out
+ * 1,379 of `tako_search`'s 3,245 is field descriptions — `coverage_end` alone
+ * spends 233 explaining itself against `last_updated`. That is what its fan-out
  * PR can recover without touching the shape. Delete the row when it does.
+ *
+ * RE-BASELINE A ROW IN THE PR THAT SHRINKS IT. A ratchet left at its old number
+ * has stopped ratcheting: `tako_search` fell to 3,245/3,568 when
+ * `tako_search_advanced`'s fan-out PR moved `rows` off the shared card shape,
+ * and this row went on reading 4,381/4,704 — 1,136 chars per surface free to
+ * regrow with the gate green. Nothing here can notice; only the author of the
+ * shrink can.
  */
 export const LEGACY_OUTPUT_SCHEMA_CEILINGS: Record<string, { generic: number; chatgpt: number }> = {
-  // Measured 2026-08-31, the day the gate landed.
-  tako_search: { generic: 4381, chatgpt: 4704 },
+  // Re-measured on the tako_search_advanced fan-out PR, which took `rows` off
+  // `projectedCardShape` — a field this tool's handler can never fill, since it
+  // passes `rowCap: null` on every call. Was 4,381/4,704 when the gate landed
+  // 2026-08-31.
+  tako_search: { generic: 3245, chatgpt: 3568 },
+  // `tako_available_data` IS migrated — description 759/5 lines, max param
+  // 181, every prose cap held — and still cannot reach 2,000, because its BARE
+  // structure is 2,389 with every field description deleted. Measured cost per
+  // root field: matches 1,401, candidates 866, the four pair fields 890,
+  // verified 300, next_call 285. Even one merged node array plus found,
+  // verified, guidance and next_call is 2,188 before a word of prose.
+  //
+  // So the remaining 1,251 of descriptions is not what to cut — reaching the
+  // cap means dropping advertised fields, which is a D3/D4 decision, not a
+  // copy edit. The candidate is merging `matches` and `candidates` into one
+  // node list (the evidence gradient is already legible: `coverage.items`
+  // present = drilled, `coverage` alone = counted, absent = unchecked), which
+  // measures ~2,770 and removes a vocabulary term. Raised, not taken, in the
+  // fan-out PR: it is a shape change and the shape was signed off as two
+  // fields.
+  tako_available_data: { generic: 3638, chatgpt: 3638 },
+  // Measured 2026-08-31, on the tool's own fan-out PR, which holds every PROSE
+  // cap and only this one. Two structural facts put it out of reach of 2,000:
+  // it publishes the card shape (11 fields, and `rows` on top of them) and the
+  // four answer-endpoint fields, and its bare structure alone — every
+  // description stripped — is over the cap. 2,157 of it is field descriptions;
+  // that is the half a later pass can recover without a D3 decision about
+  // which advertised fields to drop.
+  tako_search_advanced: { generic: 4832, chatgpt: 4832 },
 };
 
-/**
- * The ratchet for tools the redesign has not reached yet: each fan-out PR
- * rewrites one tool, deletes its row here, and the caps above take over.
- * A listed tool may SHRINK freely; growing past its recorded ceiling fails
- * generation, so legacy prose can only move toward the cap. Numbers are the
- * measured sizes when the gate landed (see the pilot PR).
- */
-export const LEGACY_PROSE_CEILINGS: Record<
-  string,
-  { description: number; param: number; entry: number }
-> = {
-  // Measured 2026-08-30, the day the gate landed. Delete a row when its
-  // tool's fan-out PR lands the rewrite.
-  tako_agent: { description: 448, param: 489, entry: 1134 },
-  tako_available_data: { description: 2937, param: 484, entry: 4153 },
-  tako_graph_related: { description: 1262, param: 150, entry: 1929 },
-  // Re-baselined after #273 folded tako_answer in and exposed the whole
-  // SearchRequest body — the generated param prose is a cross-repo fix
-  // (the tako repo's schema builder), tracked for that tool's fan-out PR.
-  tako_search_advanced: { description: 2611, param: 831, entry: 4860 },
-};
+// NO PROSE RATCHET ANY MORE. It was deleted with its last row: every tool is
+// migrated, so the D1 caps below apply to all of them unconditionally, which is
+// what each fan-out PR was working toward. Do not reintroduce a per-tool
+// ceiling map to land a tool that does not fit — the caps are the contract, and
+// an exemption outliving its migration is how a row goes stale
+// (`tako_search_advanced` sat at a 4,860-char entry ceiling for three PRs after
+// the text it measured had been rewritten).
 
 export function assertProseBudget(
   // Narrowed to the fields this reads, like every sibling assert helper: the
@@ -693,24 +728,6 @@ export function assertProseBudget(
     );
     const maxParam = paramLens.reduce((a, [, len]) => Math.max(a, len), 0);
     const entry = m.description.length + paramLens.reduce((a, [, len]) => a + len, 0);
-    const legacy = LEGACY_PROSE_CEILINGS[m.name];
-    if (legacy !== undefined) {
-      if (m.description.length > legacy.description)
-        failures.push(
-          `${m.name}: description grew to ${m.description.length} chars (legacy ceiling ${legacy.description}). Legacy prose only shrinks; rewrite it to the ${DESCRIPTION_MAX_CHARS}-char cap instead.`,
-        );
-      if (maxParam > legacy.param)
-        failures.push(
-          `${m.name}: a parameter description grew to ${maxParam} chars (legacy ceiling ${legacy.param}).`,
-        );
-      if (entry > legacy.entry)
-        failures.push(`${m.name}: tool entry grew to ${entry} chars (legacy ceiling ${legacy.entry}).`);
-      // A ratcheted tool is exempt from the LINE cap and the per-param cap too,
-      // not just the char ceilings: legacy prose is multi-paragraph by
-      // construction, and those two caps only become meaningful once the tool
-      // has been rewritten. Deleting the row is what turns them on.
-      continue;
-    }
     if (m.description.length > DESCRIPTION_MAX_CHARS)
       failures.push(
         `${m.name}: description is ${m.description.length} chars (cap ${DESCRIPTION_MAX_CHARS}).`,
@@ -793,10 +810,58 @@ function buildSearchSample(tool: ToolModule): ToolSample {
     ["data", "web"],
     false,
     "authenticated",
-    { rowCap: null, keepWebText: false },
+    { rowCap: null, keepWebText: false, toolName: "tako_search" },
   );
   return {
     // The generic-surface narrowing — what an `/mcp` client's model reads.
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderSearchMarkdown(output),
+  };
+}
+
+const ADVANCED_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_search_advanced_sample.json");
+
+/**
+ * The `tako_search_advanced` sample, on the ANSWER branch.
+ *
+ * One fixture, and it is the answer path, because `answer` and
+ * `structured_output` are unreachable on the search branch — a search-path
+ * sample would render a page that looks like `tako_search`'s and document none
+ * of the difference. `rowCap: "all"` and `keepWebText: true` stand for the
+ * `include_contents` the fixture's request set on both sources; `runSearch`
+ * derives both from the wire body the same way.
+ *
+ * NO `related` here, and that is the API's rule rather than a fixture
+ * decision: `POST /v1/answer` accepts `include_related` and returns no
+ * `related` field (verified against staging 2026-08-31), so the two cannot
+ * appear in one response. Its shape reaches the page through the rendered
+ * outputSchema instead.
+ */
+function buildAdvancedSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(ADVANCED_SAMPLE_FIXTURE, "utf8")) as {
+    request_id: string;
+    usage: Usage | null;
+    answer: string;
+    structured_output: Record<string, unknown>;
+    cards: unknown;
+    web_results: unknown;
+  };
+  const output = buildSearchOutput(
+    z.array(takoCardSchema).parse(raw.cards),
+    z.array(webResultSchema).parse(raw.web_results),
+    raw.request_id,
+    raw.usage,
+    SAMPLE_FIXTURE_ENV,
+    ["data", "web"],
+    false,
+    "authenticated",
+    { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced" },
+    { answer: raw.answer, structured_output: raw.structured_output },
+  );
+  return {
     structured: pickDeclared(
       outputSchemaForSurface(tool, "generic"),
       output as unknown as Record<string, unknown>,
@@ -867,6 +932,83 @@ function buildVisualizeSample(tool: ToolModule): ToolSample {
   };
 }
 
+const AVAILABLE_DATA_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_available_data_sample.json");
+const GRAPH_RELATED_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_graph_related_sample.json");
+
+/**
+ * `tako_available_data` runs a multi-call orchestration, so the fixture is the
+ * WIRE pieces (one graph/search response plus the coverage drill for its top
+ * result) rather than a canned output: the sample then exercises the real
+ * `selectCoverage` -> `projectMatch` / `projectCandidate` -> renderer chain,
+ * which is the part that drifts. Which branch the orchestrator picks is not
+ * what TOOLS.md documents, so the discovery happy path stands for all of them.
+ */
+function buildAvailableDataSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(AVAILABLE_DATA_SAMPLE_FIXTURE, "utf8")) as {
+    search: unknown;
+    related: unknown;
+    candidate_coverage: Record<string, { total: number; capped: boolean }>;
+  };
+  const search = z.object(graphSearchOutputShape).parse(raw.search);
+  const related = z.object(graphRelatedOutputShape).parse(raw.related);
+  const top = search.results[0];
+  if (top === undefined) throw new Error("available_data fixture: empty search results");
+  const match = buildMatch(top, related.relation);
+  const candidates: OtherMatch[] = search.results.slice(1).map((n) => {
+    const probe = raw.candidate_coverage[n.id];
+    return probe === undefined
+      ? candidateRef(n)
+      : { ...candidateRef(n), coverage_total: probe.total, coverage_capped: probe.capped };
+  });
+  const output = {
+    found: true,
+    verified: "coverage" as const,
+    matches: [projectMatch(match)],
+    candidates: candidates.map(projectCandidate),
+    // GENERATED, never hand-written: `buildNextCall` owns the gate that
+    // decides whether a handle is emitted at all (NEXT_CALL_MAX_NAMES), so a
+    // literal here would document a handle the tool would have withheld.
+    // `undefined` is the default toolset, which is what a reader of the docs is on.
+    next_call: buildNextCall([match], searchToolFor(undefined)),
+  };
+  return {
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderAvailableDataMarkdown(output),
+  };
+}
+
+function buildGraphRelatedSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(GRAPH_RELATED_SAMPLE_FIXTURE, "utf8"));
+  const output = projectRelated(z.object(graphRelatedOutputShape).parse(raw));
+  return {
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderGraphRelatedMarkdown(output),
+  };
+}
+
+const AGENT_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_agent_sample.json");
+
+function buildAgentSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(AGENT_SAMPLE_FIXTURE, "utf8")) as AgentRunWireLike;
+  const output = projectAgentRun(raw);
+  return {
+    structured: pickDeclared(
+      // One schema on both surfaces (no widget fields), but resolved through
+      // the same helper the server uses, so a future per-surface variant
+      // cannot silently skip the sample.
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderAgentRunMarkdown(output),
+  };
+}
+
 export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string, ToolSample> {
   const samples = new Map<string, ToolSample>();
   for (const m of modules) {
@@ -875,6 +1017,10 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
     if (m.name === "tako_search") samples.set(m.name, buildSearchSample(m));
     if (m.name === "tako_contents") samples.set(m.name, buildContentsSample(m));
     if (m.name === "tako_visualize") samples.set(m.name, buildVisualizeSample(m));
+    if (m.name === "tako_available_data") samples.set(m.name, buildAvailableDataSample(m));
+    if (m.name === "tako_graph_related") samples.set(m.name, buildGraphRelatedSample(m));
+    if (m.name === "tako_agent") samples.set(m.name, buildAgentSample(m));
+    if (m.name === "tako_search_advanced") samples.set(m.name, buildAdvancedSample(m));
   }
   return samples;
 }
@@ -960,7 +1106,7 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     "",
     "## Choosing tools with `?tools=`",
     "",
-    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming `tako_search`, so a listing without it gives the model a call it cannot run. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
+    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
     "",
   );
 

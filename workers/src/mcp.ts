@@ -766,25 +766,29 @@ function registerTool(
     (async (input: unknown, extra: ToolHandlerExtra) => {
       // Build a per-call context that layers `sendProgress` over the
       // shared `{ token, env }`. The SDK's `extra._meta.progressToken`
-      // is set when the client provided a progressToken on the request
-      // (and only then are progress notifications useful — clients
-      // ignore notifications whose progressToken they don't recognize,
-      // and the protocol forbids sending progress without a token). On
-      // requests without a progressToken, `sendProgress` no-ops, so
-      // tools can call it unconditionally. `progress` accumulates a
-      // monotonic count of polls / steps; `total` and `message` are
-      // optional. Errors from the underlying transport are swallowed —
-      // a notification failure must NEVER fail the tool call.
+      // is set when the client provided a progressToken on the request;
+      // the protocol forbids sending progress without one, so
+      // `sendProgress` no-ops when it is absent.
+      //
+      // NOTHING BELOW REACHES A CLIENT, WITH OR WITHOUT A TOKEN. The
+      // transport runs `enableJsonResponse: true`, which skips the SSE
+      // write for every request-scoped notification, so a progress event
+      // is discarded either way and NO client's per-tool-call timeout
+      // ever resets — a `resetTimeoutOnProgress` client is in the same
+      // position as one that sent no token. No tool calls `sendProgress`
+      // today; `tako_agent`'s poll loop was the last caller and dropped
+      // it rather than keep implying a channel that discards the call.
+      // TAKO-4485 owns the fix. Until it lands, do not add a caller on
+      // the strength of the paragraph above. `tools/types.ts` carries
+      // the full finding.
       const progressToken = (extra._meta as { progressToken?: string | number } | undefined)
         ?.progressToken;
-      // Diagnostic: log whether the client included a progressToken on
-      // the request. Lets us confirm via `wrangler tail` whether a
-      // given client is asking for progress (Claude.ai's TS SDK does
-      // by default; ChatGPT's Apps SDK historically does not). When
-      // absent, `sendProgress` no-ops and the client's per-tool-call
-      // timeout ticks down without resets — the deep-search path
-      // can't survive longer than the client's default (60 s on the
-      // TS SDK) on those clients.
+      // Diagnostic, and it decides nothing while the transport discards
+      // notifications. It stays because it is the only measurement of
+      // which clients would benefit once TAKO-4485 lands — `wrangler
+      // tail` shows who asks (Claude.ai's TS SDK does by default;
+      // ChatGPT's Apps SDK historically does not). Do not read a
+      // present token as "progress works for this client".
       console.log(
         `[mcp] tool=${tool.name} surface=${options.surface} progressToken=${progressToken ?? "(none)"}`,
       );
@@ -804,10 +808,8 @@ function registerTool(
             },
           });
         } catch (err) {
-          // Best-effort: log and move on. The polling loop continues
-          // without progress reset on this client; if the timeout
-          // fires, the client will see a clean cancel rather than
-          // an opaque transport error.
+          // Best-effort: log and move on. A notification failure must
+          // NEVER fail the tool call.
           console.error(
             `sendProgress failed for ${tool.name}:`,
             err,
@@ -1512,7 +1514,11 @@ export function freeTierHiddenToolResponse(
  *
  * `enableJsonResponse: true` makes the transport return a single JSON-RPC
  * response body instead of an SSE stream, which keeps the wire format simple
- * for the common request/response case.
+ * for the common request/response case. It also DISCARDS every
+ * request-scoped notification — `webStandardStreamableHttp.js` skips the SSE
+ * write in this mode — so `notifications/progress` reaches no host and no
+ * client's per-call timeout resets. TAKO-4485 owns that; see `sendProgress`
+ * in `registerTool` and in `tools/types.ts`.
  */
 export async function handleMcpRequest(
   request: Request,

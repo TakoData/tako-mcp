@@ -7,27 +7,38 @@
  * the correctness bug these tests pin. Also covers the json_records slice branch
  * and the CSV content_format guard (both previously untested).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { TOOL_REGISTRY } from "./_registry.js";
 
 import { ContentItem } from "../generated/schemas.js";
 
+import tako_search from "./tako_search.js";
+import tako_search_advanced from "./tako_search_advanced.js";
+import { searchAdvancedOutputShape } from "./_render_markdown.js";
+
 import {
+  BOTH_SOURCES_ARG,
   CONTENT_META_KEYS,
   CONTENT_PAYLOAD_KEYS,
-  NARROWER_WEB_ATTEMPT,
-  ROWS_META_KEYS,
   buildDataGapGuidance,
   buildReferenceMaps,
   buildSearchOutput,
   orderCardsByUsefulness,
   projectCard,
+  projectCardRows,
   projectWebResult,
   slimCardContent,
+  strictPinGuidance,
 } from "./_search_results.js";
-import type { ResultContent, TakoCard, WebResult } from "./_search_results.js";
+import type {
+  ResultContent,
+  SearchedSources,
+  SearchToolName,
+  TakoCard,
+  WebResult,
+} from "./_search_results.js";
 
 import type { Env } from "../env.js";
 
@@ -175,7 +186,7 @@ describe("slimCardContent — drop-all mode (capRows = null)", () => {
 // `tako_search`'s call shape: no inlined rows, no web page text. Shared by the
 // buildSearchOutput tests below, which exercise guidance and ordering rather
 // than the `tako_search_advanced` inline path.
-const OPTS = { rowCap: null, keepWebText: false } as const;
+const OPTS = { rowCap: null, keepWebText: false, toolName: "tako_search" } as const;
 
 describe("buildSearchOutput — zero-card guidance", () => {
   const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
@@ -228,8 +239,11 @@ describe("buildSearchOutput — zero-card guidance", () => {
     // web-only narrow.
     expect(g).not.toMatch(/node_id/);
     expect(g).not.toMatch(/strict/);
-    // It still names the way to GET a coverage answer, which is the cheap re-ask.
-    expect(g).toMatch(/sources:\["data","web"\]/);
+    // It still names the way to GET a coverage answer, which is the cheap
+    // re-ask. Derived from BOTH_SOURCES_ARG rather than retyped: the point of
+    // that constant is that the advertised argument and the sendable one are
+    // the same value, and a literal here would reintroduce the second copy.
+    expect(g).toContain(JSON.stringify(BOTH_SOURCES_ARG.tako_search).slice(1, -1));
     expect(g).toMatch(/tako_available_data/);
   });
 
@@ -247,16 +261,16 @@ describe("buildSearchOutput — zero-card guidance", () => {
   // opposite verdict, on the most common Tako-has-nothing path, which teaches a
   // model that reads both that one of them is wrong.
   //
-  // A string-identity check (`toContain(NARROWER_WEB_ATTEMPT)`) cannot hold this
-  // any more: the search branches are capped at two sentences, so only the
-  // answer path can afford the full sentence and the search path states the
-  // carve-out as a clause. Asserting each side separately would let a future
-  // edit delete either wording with the suite green, so both are asserted here.
+  // A string-identity check cannot hold this: BOTH surfaces are now capped at
+  // two sentences, so each states the carve-out as a clause in its own words
+  // and there is no shared constant left to compare against. Asserting each
+  // side separately would let a future edit delete either wording with the
+  // suite green, so both are asserted here.
   it("both zero-result surfaces permit exactly one narrower web attempt", () => {
     const search =
       buildSearchOutput([], [], "req-4b", null, ENV, ["data", "web"], false, "authenticated", OPTS)
         .guidance ?? "";
-    const answer = buildDataGapGuidance(false, true);
+    const answer = buildDataGapGuidance(false, true, "tako_search_advanced");
     for (const [surface, g] of [
       ["search", search],
       ["answer", answer],
@@ -271,9 +285,6 @@ describe("buildSearchOutput — zero-card guidance", () => {
         /do not (re-?search|try) the web/i,
       );
     }
-    // The answer path has the budget for the full sentence, and the REASON it
-    // carries ("too broad rather than unanswerable") is what stops the loop.
-    expect(answer).toContain(NARROWER_WEB_ATTEMPT);
   });
 
   // A web-only search that came back empty has NO data verdict to report (the
@@ -301,6 +312,161 @@ describe("buildSearchOutput — zero-card guidance", () => {
   it("omits guidance when any card is present", () => {
     const out = buildSearchOutput([{ card_id: "c1" }], [], "req-2", null, ENV, ["data", "web"], false, "authenticated", OPTS);
     expect(out.guidance).toBeUndefined();
+  });
+});
+
+/**
+ * EVERY guidance branch is two sentences: the verdict (which corpora this
+ * response is evidence about) and the one next action. A branch that cannot
+ * survive at two sentences dies (spec: 2026-08-26-model-facing-surface-
+ * redesign, "guidance" decision).
+ *
+ * Counted rather than eyeballed because the three answer-endpoint branches
+ * were the last ones over — five to six sentences and up to 740 chars each,
+ * three of them spent on anti-instructions the one action already implies.
+ * A sentence budget is the only thing that stops guidance regrowing: it is
+ * written mid-failure, when more advice always feels like the safe choice.
+ */
+describe("every guidance branch is two sentences", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+  // Abbreviations end in a period too, so a naive split over-counts. The
+  // branches here contain none; if one gains one, extend this rather than
+  // loosening the count.
+  const sentences = (text: string): string[] =>
+    text.split(/(?<=[.!?])\s+/).filter((part) => part.trim() !== "");
+
+  const branches = (): Array<[string, string]> => {
+    const out: Array<[string, string]> = [];
+    for (const [label, sources] of [
+      ["search: data+web", ["data", "web"]],
+      ["search: data only", ["data"]],
+      ["search: web only", ["web"]],
+    ] as const) {
+      for (const webResults of [[], [{ url: "https://e.com" }]]) {
+        const g = buildSearchOutput(
+          [],
+          webResults as WebResult[],
+          "r",
+          null,
+          ENV,
+          sources as unknown as SearchedSources,
+          false,
+          "authenticated",
+          OPTS,
+        ).guidance;
+        if (g !== undefined) out.push([`${label} / ${webResults.length} web`, g]);
+      }
+    }
+    out.push(["answer: data only", buildDataGapGuidance(false, false, "tako_search_advanced")]);
+    out.push(["answer: web-grounded", buildDataGapGuidance(true, true, "tako_search_advanced")]);
+    out.push(["answer: nothing", buildDataGapGuidance(false, true, "tako_search_advanced")]);
+    out.push(["strict pin", strictPinGuidance("authenticated")]);
+    return out;
+  };
+
+  it("covers every branch, so the count cannot pass vacuously", () => {
+    expect(branches().length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("no branch runs past two sentences", () => {
+    for (const [label, text] of branches()) {
+      expect(sentences(text).length, `${label}: ${text}`).toBeLessThanOrEqual(2);
+    }
+  });
+});
+
+/**
+ * Guidance names an ARGUMENT, so the argument has to be one the receiving tool
+ * accepts.
+ *
+ * `tako_search` publishes `sources` as an ARRAY. `tako_search_advanced`
+ * publishes no `sources` key at all — the two blocks sit at the top level and
+ * every level is `.strict()`. Both builders named `tako_search`'s form
+ * unconditionally, so on the advanced tool the zero-result recovery step, the
+ * one that exists to stop a priced retry loop, was itself an
+ * `Unrecognized key: "sources"` before the request left the Worker.
+ *
+ * Only the tool's own schema knows this, which is why the assertion parses
+ * rather than compares strings.
+ */
+describe("the sources argument guidance names is one that tool accepts", () => {
+  const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
+  const TOOLS = { tako_search, tako_search_advanced } as const;
+  const NAMES = Object.keys(TOOLS) as SearchToolName[];
+
+  it("every advertised argument parses against that tool's published schema", () => {
+    for (const name of NAMES) {
+      const parsed = TOOLS[name].inputSchema.safeParse({
+        query: "us gdp",
+        ...BOTH_SOURCES_ARG[name],
+      });
+      expect(parsed.success, `${name}: ${JSON.stringify(parsed.error?.issues)}`).toBe(true);
+    }
+  });
+
+  // Catches a HAND-WRITTEN argument too, not only the derived one: any code
+  // span that parses as a JSON object body is what a model will paste, so it
+  // is held to the same bar. A span that is prose (`related`, `tako_contents`)
+  // fails JSON.parse and is skipped — as would an argument written with
+  // unquoted keys, which is the one hole here and the reason the derived form
+  // stringifies.
+  const argumentsNamedIn = (text: string): Record<string, unknown>[] => {
+    const out: Record<string, unknown>[] = [];
+    for (const [, span] of text.matchAll(/`([^`]+)`/g)) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(`{${span}}`);
+      } catch {
+        continue;
+      }
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        out.push(parsed as Record<string, unknown>);
+      }
+    }
+    return out;
+  };
+
+  it("every argument named in any guidance branch is sendable to the tool that emitted it", () => {
+    let checked = 0;
+    for (const name of NAMES) {
+      const branches: string[] = [];
+      for (const sources of [["data"], ["web"], ["data", "web"]] as SearchedSources[]) {
+        for (const web of [[], [{ url: "https://e.com" }]]) {
+          const g = buildSearchOutput(
+            [],
+            web as WebResult[],
+            "r",
+            null,
+            ENV,
+            sources,
+            false,
+            "authenticated",
+            { rowCap: null, keepWebText: false, toolName: name },
+          ).guidance;
+          if (g !== undefined) branches.push(g);
+        }
+      }
+      if (name === "tako_search_advanced") {
+        for (const hasWeb of [true, false]) {
+          for (const searchedWebToo of [true, false]) {
+            branches.push(buildDataGapGuidance(hasWeb, searchedWebToo, name));
+          }
+        }
+      }
+      for (const g of branches) {
+        for (const argument of argumentsNamedIn(g)) {
+          checked += 1;
+          const parsed = TOOLS[name].inputSchema.safeParse({ query: "us gdp", ...argument });
+          expect(
+            parsed.success,
+            `${name} guidance names an unsendable argument ${JSON.stringify(argument)}: ${JSON.stringify(parsed.error?.issues)}\n${g}`,
+          ).toBe(true);
+        }
+      }
+    }
+    // Vacuity guard: this passes trivially if no branch names an argument at
+    // all, which is also how the wording could silently stop being actionable.
+    expect(checked, "no guidance branch named an argument to check").toBeGreaterThan(0);
   });
 });
 
@@ -731,18 +897,32 @@ describe("the payload/metadata split cannot drift", () => {
     expect(stale, "classified key(s) no longer in ContentItem").toEqual([]);
   });
 
-  // projectCard's ROWS_KEYS is CONTENT_PAYLOAD_KEYS plus three metadata names.
-  // The payload half is derived, so it cannot drift; the three metadata names
-  // are written out, so this pins them to the classified set.
+  // `projectCardRows` handles each payload channel in its own branch, so it
+  // cannot loop over CONTENT_PAYLOAD_KEYS. The guard therefore CALLS it once
+  // per classified channel rather than comparing two name lists: a list-vs-list
+  // assertion went green the moment someone added the fifth name to the second
+  // list, with no branch reading it — which is the silent drop the guard exists
+  // to catch, not a guard against it.
   //
-  // IMPORT the constant, never retype it. The literal list this used to carry
-  // made the guard vacuous in the one direction it exists for: renaming the
-  // real `content_format` to `format` dropped it from every inlined `rows`
-  // object and all 1267 tests still passed.
-  it("every metadata key projectCard keeps beside inlined rows is a classified metadata key", () => {
-    const meta = new Set<string>(CONTENT_META_KEYS);
-    const unclassified = ROWS_META_KEYS.filter((k) => !meta.has(k));
-    expect(unclassified, "projectCard keeps a key CONTENT_META_KEYS does not list").toEqual([]);
+  // `SAMPLES` is typed by CONTENT_PAYLOAD_KEYS, so a new channel fails to
+  // COMPILE here until someone writes a payload for it, and then fails to PASS
+  // until `projectCardRows` grows the branch. Both steps are the point.
+  //
+  // The drift this replaces has shipped twice: `slimCardContent` carried three
+  // names against `ContentItem`'s four, and renaming the real `content_format`
+  // to `format` dropped it from every inlined `rows` object with all 1267 tests
+  // still green.
+  it("projectCardRows has a branch for every classified payload channel", () => {
+    const SAMPLES: Record<(typeof CONTENT_PAYLOAD_KEYS)[number], unknown> = {
+      dataset: { columns: [{ name: "v" }], rows: [[1]] },
+      records: [{ v: 1 }],
+      data: "v\n1",
+      card_data: { card_type: "chart" },
+    };
+    for (const key of CONTENT_PAYLOAD_KEYS) {
+      const projected = projectCardRows({ content_format: "json_compact", [key]: SAMPLES[key] }, undefined);
+      expect(projected, `projectCardRows drops the ${key} channel entirely`).toBeDefined();
+    }
   });
 });
 
@@ -865,20 +1045,54 @@ describe("projectCard — the nine-field model-facing card", () => {
     } as unknown as TakoCard;
     expect(projectCard(withRows, null).rows).toBeUndefined();
     const inlined = projectCard(withRows, "all");
-    expect(inlined.rows).toBeDefined();
-    const rows = inlined.rows as Record<string, unknown>;
-    expect(rows.dataset).toBeDefined();
-    // Null-noise and billing never ride.
-    expect(rows).not.toHaveProperty("data");
-    expect(rows).not.toHaveProperty("records");
-    expect(rows).not.toHaveProperty("cost");
+    expect(inlined.rows).toEqual({
+      columns: ["t", "v"],
+      rows: [
+        ["2026-01-01", 1],
+        ["2026-02-01", 2],
+      ],
+    });
   });
 
-  // Asserted DIRECTLY, because the channel-parity walk structurally cannot
-  // catch a dropped field: it walks the projected output, so removing
-  // `manifest` from the projection removes the leaf AND the requirement to
-  // render it, and the walk stays green.
-  it("keeps the column manifest beside inlined rows — the only carrier of a unit", () => {
+  // The keys that used to ride inside `dataset` on every inlined card: two of
+  // them restate a field the card already carries, and `total_rows` shipped
+  // THREE times (card, rows, dataset). ~200 chars per card, in both channels,
+  // paid once per `data.count`.
+  it("drops the dataset envelope's plumbing and the duplicated counts", () => {
+    const withRows = {
+      ...wireCard,
+      content: {
+        content_format: "json_compact",
+        cost: 0.002,
+        total_rows: 26,
+        truncated: true,
+        dataset: {
+          columns: [{ name: "v", type: "number" }],
+          rows: [[1]],
+          total_rows: 26,
+          truncated: true,
+          ref: "https://tako.com/card/c1/",
+          sources: [{ name: "Fiscal.ai", index: "data" }],
+          provenance: "query",
+        },
+      },
+    } as unknown as TakoCard;
+    const card = projectCard(withRows, "all");
+    expect(card.total_rows, "the count belongs to the card").toBe(26);
+    expect(card.rows).toEqual({ columns: ["v"], rows: [[1]], truncated: true });
+    const serialized = JSON.stringify(card.rows);
+    for (const gone of ["ref", "sources", "provenance", "total_rows", "cost"]) {
+      expect(serialized, `rows still carries ${gone}`).not.toContain(gone);
+    }
+  });
+
+  // The unit is the reason the manifest is read at all. It is folded into the
+  // COLUMN NAME rather than shipped as a parallel array: a `json_records`
+  // payload has bare keys, so without this `[{"revenue": 12.4}]` reaches the
+  // model with nothing saying whether 12.4 is USD, USD billions or a percent —
+  // and a separate manifest costs `metric`/`entity` prose per column that
+  // repeats the card title.
+  it("folds the manifest's unit into the column name (json_records)", () => {
     const withRows = {
       card_id: "c1",
       exportable: true,
@@ -891,10 +1105,245 @@ describe("projectCard — the nine-field model-facing card", () => {
         manifest: [{ name: "revenue", metric: "Total Revenue", entity: "Tesla, Inc.", unit: "USD" }],
       },
     } as unknown as TakoCard;
-    const rows = projectCard(withRows, "all").rows as Record<string, unknown>;
-    expect(rows.manifest, "inlined rows arrived with no unit").toEqual([
-      { name: "revenue", metric: "Total Revenue", entity: "Tesla, Inc.", unit: "USD" },
-    ]);
+    expect(projectCard(withRows, "all").rows).toEqual({
+      columns: ["revenue (USD)"],
+      rows: [[12.4]],
+    });
+  });
+
+  // The join is by NAME. It has to be: this branch derives its column order
+  // first-seen across records (the backend omits a null-valued key), so the
+  // derived order and the manifest's order differ exactly when a record is
+  // missing a key — and a positional join then labels every later column with
+  // its neighbour's unit. A wrong unit is worse than none: the model quotes a
+  // margin as dollars instead of asking.
+  //
+  // `ColumnDescriptor.name` is documented as "the CSV header, the
+  // json_records key, and the dataset column label", so the key is exact.
+  it("joins the manifest by column NAME, not by position", () => {
+    const withRows = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_records",
+        records: [
+          { date: "2026-01-01", margin: 12 },
+          { date: "2026-02-01", revenue: 13, margin: 5 },
+        ],
+        manifest: [
+          { name: "date", dtype: "datetime" },
+          { name: "revenue", dtype: "number", unit: "USD" },
+          { name: "margin", dtype: "number", unit: "%" },
+        ],
+      },
+    } as unknown as TakoCard;
+    expect(projectCard(withRows, "all").rows).toEqual({
+      columns: ["date", "margin (%)", "revenue (USD)"],
+      rows: [
+        ["2026-01-01", 12, null],
+        ["2026-02-01", 5, 13],
+      ],
+    });
+  });
+
+  // Same join, on the dataset branch: a column the manifest describes under a
+  // different index still gets ITS unit, not the one sitting at its position.
+  it("joins the manifest by name on the dataset branch too", () => {
+    const withRows = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_compact",
+        dataset: {
+          columns: [{ name: "margin" }, { name: "revenue" }],
+          rows: [[5, 13]],
+        },
+        manifest: [
+          { name: "revenue", unit: "USD" },
+          { name: "margin", unit: "%" },
+        ],
+      },
+    } as unknown as TakoCard;
+    expect(projectCard(withRows, "all").rows).toEqual({
+      columns: ["margin (%)", "revenue (USD)"],
+      rows: [[5, 13]],
+    });
+  });
+
+  // The backend omits a key whose value is null for that row, so reading the
+  // first record's keys alone drops a column the rest of the payload has —
+  // and every cell after the hole then shifts left by one.
+  it("takes json_records columns first-seen across every record, holes as null", () => {
+    const withRows = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_records",
+        records: [{ a: 1 }, { a: 2, b: 3 }],
+      },
+    } as unknown as TakoCard;
+    expect(projectCard(withRows, "all").rows).toEqual({
+      columns: ["a", "b"],
+      rows: [
+        [1, null],
+        [2, 3],
+      ],
+    });
+  });
+
+  // The wire guard for `content` is `.loose()` with every field optional, on
+  // purpose — hard-requiring a field there turned a benign backend rename into
+  // a total outage once. That makes THIS the layer that has to survive junk.
+  // The two loops in the records branch read the same list, so an entry the key
+  // scan skips must not be one the row build indexes: it skipped `null` and the
+  // row build did not, which threw a TypeError after the call was billed. The
+  // manifest half threw the same way before the unit join moved to names.
+  it("survives junk entries in records and manifest", () => {
+    const card = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_records",
+        records: [{ a: 1 }, null, "nope", [9], { a: 2, b: 3 }],
+        manifest: [null, { name: "b", unit: "%" }],
+      },
+    } as unknown as TakoCard;
+    expect(projectCard(card, "all").rows).toEqual({
+      columns: ["a", "b (%)"],
+      rows: [
+        [1, null],
+        [2, 3],
+      ],
+    });
+  });
+
+  // Two of the four formats this tool can request are not row-shaped. Parsing
+  // a CSV string back into cells would invent quoting rules the caller did not
+  // ask for, so it rides verbatim under the key that names it.
+  it("passes a non-tabular payload through under its own format", () => {
+    const csv = {
+      card_id: "c1",
+      exportable: true,
+      content: { content_format: "csv", data: "t,v\n2026-01-01,1", truncated: true },
+    } as unknown as TakoCard;
+    expect(projectCard(csv, "all").rows).toEqual({
+      format: "csv",
+      data: "t,v\n2026-01-01,1",
+      truncated: true,
+    });
+    const cardJson = {
+      card_id: "c1",
+      exportable: true,
+      content: { content_format: "card_json", card_data: { card_type: "chart", series: [] } },
+    } as unknown as TakoCard;
+    expect(projectCard(cardJson, "all").rows).toEqual({
+      format: "card_json",
+      card_data: { card_type: "chart", series: [] },
+    });
+  });
+
+  // The projection must not emit something the tool's own outputSchema
+  // rejects. `resultContentSchema` is loose by design, so a backend that ships
+  // a non-array row or an ARRAY card_data passes the wire guard — and `mcp.ts`
+  // serves a non-conforming structuredContent anyway, which makes a
+  // spec-compliant client discard the whole billed result rather than one
+  // field. Dropping `rows` for that card leaves `exportable`/`total_rows` to
+  // route the model to tako_contents.
+  it("drops rows the published output schema would reject, rather than shipping them", () => {
+    const badRow = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_compact",
+        total_rows: 2,
+        dataset: { columns: [{ name: "v" }], rows: [[1], "oops"] },
+      },
+    } as unknown as TakoCard;
+    const card = projectCard(badRow, "all");
+    expect(card.rows).toBeUndefined();
+    expect(card.total_rows, "the fetch route must survive").toBe(2);
+
+    const badCardData = {
+      card_id: "c1",
+      exportable: true,
+      content: { content_format: "card_json", card_data: [{ a: 1 }] },
+    } as unknown as TakoCard;
+    expect(projectCard(badCardData, "all").rows).toBeUndefined();
+  });
+
+  // ...and the whole projected output conforms, which is the assertion that
+  // actually binds the projection to what the tool publishes.
+  it("projects a card whose output the advanced tool's outputSchema accepts", () => {
+    const ok = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_compact",
+        dataset: { columns: [{ name: "v", unit: "USD" }], rows: [[1]] },
+      },
+    } as unknown as TakoCard;
+    const parsed = searchAdvancedOutputShape.safeParse({
+      cards: [projectCard(ok, "all")],
+      web_results: [],
+      usage: null,
+    });
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+  });
+
+  // Driven through `buildSearchOutput`, not `projectCardRows`: the breadcrumb
+  // is only as good as what the PRODUCTION caller threads in, and the unit
+  // takes `log` optionally. Asserting on the unit with a hand-built `log`
+  // would pass with nothing wired at line 1759.
+  //
+  // This is the one guard that discards a payload the caller was BILLED for
+  // while still answering 200, so an anonymous line here costs an on-call the
+  // only route back to the backend request (`_log.ts`).
+  it("names the tool and the request when it drops a billed row payload", () => {
+    const badRow = {
+      card_id: "c1",
+      exportable: true,
+      content: {
+        content_format: "json_compact",
+        total_rows: 2,
+        dataset: { columns: [{ name: "v" }], rows: [[1], "oops"] },
+      },
+    } as unknown as TakoCard;
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((m: unknown) => {
+      errors.push(String(m));
+    });
+    try {
+      const out = buildSearchOutput(
+        [badRow],
+        [],
+        "req-drop-1",
+        null,
+        { DJANGO_BASE_URL: "https://staging.trytako.com" },
+        ["data"],
+        false,
+        "authenticated",
+        { rowCap: "all", keepWebText: false, toolName: "tako_search_advanced" },
+      );
+      expect(out.cards[0]?.rows, "the bad payload is still dropped").toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+    const line = errors.find((e) => e.includes("wire-guard failed"));
+    expect(line, "the drop must leave a breadcrumb").toBeDefined();
+    expect(line).toContain("tool=tako_search_advanced");
+    expect(line).toContain("request_id=req-drop-1");
+  });
+
+  // A descriptor with a cost quote and no payload is not rows. An empty
+  // `rows: {}` would read as "this card has no data" when the truth is "you
+  // did not ask to inline it".
+  it("emits no rows object when no payload channel arrived", () => {
+    const quoteOnly = {
+      card_id: "c1",
+      exportable: true,
+      content: { content_format: "json_compact", cost: 0.002, total_rows: 26, truncated: false },
+    } as unknown as TakoCard;
+    expect(projectCard(quoteOnly, "all").rows).toBeUndefined();
   });
 });
 

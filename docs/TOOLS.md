@@ -8,7 +8,7 @@ This page is rendered from the same objects the server publishes on `tools/list`
 
 ## Choosing tools with `?tools=`
 
-On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming `tako_search`, so a listing without it gives the model a call it cannot run. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.
+On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.
 
 ## `/mcp` — the generic surface, every client
 
@@ -62,19 +62,19 @@ Tako searches the web and a proprietary knowledge graph of live structured data 
 
 Description:
 
-Run Tako's Answer Agent: multi-step research returning a synthesized, cited `answer` plus chart `cards`.
+Run Tako's Answer Agent on a question that needs research rather than a lookup. It plans, queries the data graph and the web over several steps, and returns a written `answer` with numbered citations plus the chart `cards` it built.
 
-Best for: questions whose shape needs figuring out — cohorts ("which companies match…"), ranking or filtering by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` returns nothing.
+Best for questions whose shape you'd have to work out first: cohorts ("which companies match…"), ranking or screening by criteria, multi-step aggregation, multi-hop reasoning. Also the fallback when `tako_search` finds nothing.
 
-Not for: a known value or a simple comparison — use `tako_search` (faster). This runs ~30–90s but is far more thorough.
+Not for a known value or a two-entity comparison — `tako_search` answers those in one round trip.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | yes |  | The deep/analytical question for the agent to work through. |
-| `sources` | array | no | `["data","web"]` | Source(s) the agent may use. Default ["data","web"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to ["data"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to ["web"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph. |
-| `thread_id` | string | no |  | Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread. |
+| `query` | string | yes |  | The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps. |
+| `sources` | array | no | `["data","web"]` | Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph. |
+| `thread_id` | string | no |  | A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -99,14 +99,14 @@ Annotations:
     "query": {
       "type": "string",
       "minLength": 1,
-      "description": "The deep/analytical question for the agent to work through."
+      "description": "The question to research, in natural language. Ask one question per call; the agent plans its own sub-steps."
     },
     "sources": {
       "default": [
         "data",
         "web"
       ],
-      "description": "Source(s) the agent may use. Default [\"data\",\"web\"] (both) — keep BOTH enabled unless you have a confirmed reason to narrow. Narrow to [\"data\"] only once `tako_available_data` has confirmed Tako covers the data (web is the fallback when it lacks it). Narrow to [\"web\"] only for content a data graph cannot hold (news articles, page text, qualitative claims) — never because a metric merely feels web-native: website traffic, app usage, and similar digital metrics ARE in Tako's data graph.",
+      "description": "Which corpora to search; default is both. Narrow to [\"data\"] once `tako_available_data` confirms coverage; narrow to [\"web\"] only for news or page text — website traffic is in the data graph.",
       "minItems": 1,
       "type": "array",
       "items": {
@@ -118,7 +118,7 @@ Annotations:
       }
     },
     "thread_id": {
-      "description": "Optional thread ID (a UUID from a prior agent run's `thread_id`) to continue that conversation as a follow-up. Omit to start a new thread.",
+      "description": "A `thread_id` from an earlier run. Pass it back to ask a follow-up in that conversation; omit it to start a new one.",
       "type": "string",
       "format": "uuid",
       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
@@ -138,59 +138,257 @@ Annotations:
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "run_id": {
+    "answer": {
+      "description": "Its [n] markers join to `citations`.",
       "type": "string"
     },
-    "status": {
-      "type": "string",
-      "description": "queued | running | completed | failed."
+    "guidance": {
+      "description": "Rejected queries only.",
+      "type": "string"
     },
-    "timed_out": {
-      "type": "boolean",
-      "description": "True when the wait window elapsed before a terminal status — poll again with the same run_id."
+    "cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "exportable": {
+            "type": "boolean",
+            "description": "false → the rows are locked."
+          },
+          "url": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "embed_url": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "last_updated": {
+            "description": "When Tako last refreshed the card.",
+            "type": "string"
+          },
+          "total_rows": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "exportable"
+        ],
+        "additionalProperties": {}
+      },
+      "description": "Pass an exportable card's `url` to tako_contents for its rows."
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "number",
+            "description": "The number an [n] marker joins to; sparse."
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "source_index": {
+            "description": "`web` → a page `tako_contents` can fetch. `data` → a source's home page.",
+            "type": "string",
+            "enum": [
+              "data",
+              "web"
+            ]
+          }
+        },
+        "required": [
+          "index",
+          "title"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "definitions": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "assumptions": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "methodology": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": {
+        "type": "string"
+      }
     },
     "thread_id": {
-      "description": "Pass back as thread_id to ask a follow-up in the same conversation.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "description": "Send back as `thread_id` for a follow-up.",
+      "type": "string"
     },
-    "error": {
+    "usage": {
       "anyOf": [
         {
           "type": "object",
           "properties": {
-            "code": {
-              "type": "string"
-            },
-            "message": {
-              "type": "string"
+            "total_cost_usd": {
+              "type": "number"
             }
           },
           "required": [
-            "code",
-            "message"
+            "total_cost_usd"
           ],
           "additionalProperties": {}
         },
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Null when not metered."
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": {}
     }
   },
   "required": [
-    "run_id",
-    "status",
-    "timed_out"
+    "cards",
+    "citations",
+    "usage"
   ],
   "additionalProperties": false
 }
+```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "answer": "Surf Air Mobility grew revenue fastest among the screened US airline companies from 2022 to 2025, with a three-year CAGR of 73.9% [1]. Global Crossing Airlines Group ranked second at 36.4% [1].\n\nAmong larger scheduled carriers, Alaska Air Group led at 13.9% CAGR, with revenue rising from $9.6 billion to $14.2 billion [1]. United Airlines Holdings followed at 9.4%, and Delta Air Lines at 8.5% [1]. Coverage of the 2025 filing season is still incomplete for smaller charter operators [3].\n\nThe ranking uses revenue CAGR, calculated as (2025 revenue / 2022 revenue)^(1/3) - 1, over the 21 US-headquartered companies with normalized revenue for both endpoint years [1].",
+  "cards": [
+    {
+      "exportable": true,
+      "title": "Fastest US Airline Revenue Growth",
+      "description": "Three-year revenue CAGR for US-headquartered companies in Tako's Airlines industry, 2022 to 2025, top 10 of 21 screened. Normalized financials, which may differ from as-reported figures.",
+      "url": "https://tako.com/card/CpQeOBcKjz8VM8-wNlEV/",
+      "image_url": "https://tako.com/api/v1/image/CpQeOBcKjz8VM8-wNlEV/",
+      "embed_url": "https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/?showShare=true",
+      "source": "S&P Global",
+      "last_updated": "2026-08-26",
+      "total_rows": 10
+    }
+  ],
+  "citations": [
+    {
+      "index": 1,
+      "title": "S&P Global",
+      "url": "https://www.spglobal.com/",
+      "source_index": "data"
+    },
+    {
+      "index": 3,
+      "title": "Regional carriers lag the majors on 2025 revenue recovery",
+      "url": "https://www.reuters.com/business/aerospace-defense/regional-carriers-lag-majors-2025-revenue-recovery-2026-03-18/",
+      "source_index": "web"
+    },
+    {
+      "index": 5,
+      "title": "Alaska Air Group reports full-year 2025 results",
+      "url": "https://investor.alaskaair.com/news-releases/news-release-details/alaska-air-group-reports-full-year-2025-results",
+      "source_index": "web"
+    }
+  ],
+  "definitions": {
+    "Revenue CAGR": "Compound annual growth rate: the constant annual rate that would produce the observed change between the beginning and ending revenue over the stated period.",
+    "Normalized revenue": "Revenue standardized across companies to improve comparability; it may differ from the exact figures reported in a company's filings."
+  },
+  "assumptions": {
+    "Interpretation of \"last three years\"": "The comparison treats the latest three-year window as calendar 2022 through calendar 2025, using the two endpoint years and three annual growth intervals."
+  },
+  "methodology": {
+    "Ranking method": "Companies were ranked by three-year revenue CAGR between calendar 2022 and calendar 2025, rather than by absolute dollar growth.",
+    "Coverage and scope": "The screen included 21 US-headquartered companies classified broadly as airlines, including passenger, cargo, regional, charter, and other operators. Only companies with revenue observations for both endpoint years were ranked."
+  },
+  "thread_id": "cde6ed80-ab7d-464b-baa9-793fcb418a62",
+  "usage": {
+    "total_cost_usd": 0.09314,
+    "compute": {
+      "cost_usd": 0.09314
+    }
+  }
+}
+```
+
+`content[0].text`:
+
+```markdown
+Surf Air Mobility grew revenue fastest among the screened US airline companies from 2022 to 2025, with a three-year CAGR of 73.9% [1]. Global Crossing Airlines Group ranked second at 36.4% [1].
+
+Among larger scheduled carriers, Alaska Air Group led at 13.9% CAGR, with revenue rising from $9.6 billion to $14.2 billion [1]. United Airlines Holdings followed at 9.4%, and Delta Air Lines at 8.5% [1]. Coverage of the 2025 filing season is still incomplete for smaller charter operators [3].
+
+The ranking uses revenue CAGR, calculated as (2025 revenue / 2022 revenue)^(1/3) - 1, over the 21 US-headquartered companies with normalized revenue for both endpoint years [1].
+
+## Cards (1)
+
+### Fastest US Airline Revenue Growth
+Three-year revenue CAGR for US-headquartered companies in Tako's Airlines industry, 2022 to 2025, top 10 of 21 screened. Normalized financials, which may differ from as-reported figures.
+- url: https://tako.com/card/CpQeOBcKjz8VM8-wNlEV/ · exportable, 10 rows
+- image: https://tako.com/api/v1/image/CpQeOBcKjz8VM8-wNlEV/ · embed: https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/?showShare=true
+- source: S&P Global · refreshed 2026-08-26
+
+## Citations (3)
+
+[1] S&P Global — https://www.spglobal.com/ (data)
+[3] Regional carriers lag the majors on 2025 revenue recovery — https://www.reuters.com/business/aerospace-defense/regional-carriers-lag-majors-2025-revenue-recovery-2026-03-18/ (web)
+[5] Alaska Air Group reports full-year 2025 results — https://investor.alaskaair.com/news-releases/news-release-details/alaska-air-group-reports-full-year-2025-results (web)
+
+## Definitions
+- Revenue CAGR: Compound annual growth rate: the constant annual rate that would produce the observed change between the beginning and ending revenue over the stated period.
+- Normalized revenue: Revenue standardized across companies to improve comparability; it may differ from the exact figures reported in a company's filings.
+
+## Assumptions
+- Interpretation of "last three years": The comparison treats the latest three-year window as calendar 2022 through calendar 2025, using the two endpoint years and three annual growth intervals.
+
+## Methodology
+- Ranking method: Companies were ranked by three-year revenue CAGR between calendar 2022 and calendar 2025, rather than by absolute dollar growth.
+- Coverage and scope: The screen included 21 US-headquartered companies classified broadly as airlines, including passenger, cargo, regional, charter, and other operators. Only companies with revenue observations for both endpoint years were ranked.
+
+thread_id: cde6ed80-ab7d-464b-baa9-793fcb418a62 — send it back to ask a follow-up.
+
+usage: $0.09314
 ```
 </details>
 
@@ -203,37 +401,25 @@ Annotations:
 
 Description:
 
-Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.
+Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.
 
-Ask it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.
+Best for: coverage questions themselves, or a metric's canonical name before a priced search. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.
 
-Worth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).
-
-Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).
-
-Tips:
-Know the measure? Split it: q="Carnival", metric="passenger cruise days" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q="Nvidia", metric="data center" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.
-One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.
-When `q` names both an entity and a metric ("US core PCE" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.
-On the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.
-Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).
-Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.
-A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.
-This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.
+Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `q` | string | yes |  | The NAME of the entity (or metric) to look up, min 2 chars — e.g. "Carnival", "United States", "Nvidia". Put the measure in `metric`, not here. |
-| `metric` | string | no |  | The measure you want, when you already know it — e.g. "gross margin", "passenger cruise days", "capex". Supplying it is the FAST path: the tool resolves the entity+metric pair directly and hands back a runnable next_call, instead of listing every metric the entity has. Omit it only to browse what exists. |
-| `types` | string ("entity" \\| "metric") | no |  | Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both. |
-| `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`. |
-| `limit` | integer | no |  | How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` names, and a deeper metric node can turn a confident single answer into a two-candidate tie. |
+| `q` | string | yes |  | The entity or metric to look up by name — "Carnival", "United States", "Nvidia". Put the measure in `metric`, not here. |
+| `metric` | string | no |  | The measure, when you already know it — "gross margin", "capex". Supplying it resolves the entity+metric pair directly; omit it to browse everything the entity has. |
+| `types` | string ("entity" \\| "metric") | no |  | Narrow resolution to one kind, an entity or a metric. Omit to resolve both. |
+| `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer for `q` — a boost, not a filter. Set it when you can categorize the term: company → ORG, place → GPE, person → PERSON. It never applies to `metric`. |
+| `limit` | integer | no |  | How many candidates to resolve for each of `q` and `metric`. Raising it widens what the tool considers, not just what it shows: a deeper metric can become the one `next_call` names. |
 
 Fixed request inputs (the caller cannot change these):
 
-- `graph/related limit (coverage drill)` = `100` — Page size for the rendered coverage list; paging stops at 250 names or 4 pages.
+- `graph/related limit (coverage drill)` = `100` — Page size for the coverage drill; 1 page is fetched and the headline-first slice of 25 entries is what both channels render.
 - `graph/related limit (candidate probes)` = `1` — The cheap per-candidate coverage probes fetch a count only — the probed candidates' lists are never read. The top 4 gated candidates are inspected: 1 drilled in full and 3 by a limit=1 probe. A shell rank-0 costs one more drill.
 
 Annotations:
@@ -251,15 +437,15 @@ Annotations:
     "q": {
       "type": "string",
       "minLength": 2,
-      "description": "The NAME of the entity (or metric) to look up, min 2 chars — e.g. \"Carnival\", \"United States\", \"Nvidia\". Put the measure in `metric`, not here."
+      "description": "The entity or metric to look up by name — \"Carnival\", \"United States\", \"Nvidia\". Put the measure in `metric`, not here."
     },
     "metric": {
-      "description": "The measure you want, when you already know it — e.g. \"gross margin\", \"passenger cruise days\", \"capex\". Supplying it is the FAST path: the tool resolves the entity+metric pair directly and hands back a runnable next_call, instead of listing every metric the entity has. Omit it only to browse what exists.",
+      "description": "The measure, when you already know it — \"gross margin\", \"capex\". Supplying it resolves the entity+metric pair directly; omit it to browse everything the entity has.",
       "type": "string",
       "minLength": 2
     },
     "types": {
-      "description": "Narrow resolution to a \"thing\" (\"entity\") or a \"measure\" (\"metric\"). Omit to search both.",
+      "description": "Narrow resolution to one kind, an entity or a metric. Omit to resolve both.",
       "type": "string",
       "enum": [
         "entity",
@@ -267,7 +453,7 @@ Annotations:
       ]
     },
     "label": {
-      "description": "NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`.",
+      "description": "NER label to prefer for `q` — a boost, not a filter. Set it when you can categorize the term: company → ORG, place → GPE, person → PERSON. It never applies to `metric`.",
       "type": "string",
       "enum": [
         "PERSON",
@@ -284,7 +470,7 @@ Annotations:
       ]
     },
     "limit": {
-      "description": "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` names, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
+      "description": "How many candidates to resolve for each of `q` and `metric`. Raising it widens what the tool considers, not just what it shows: a deeper metric can become the one `next_call` names.",
       "type": "integer",
       "minimum": 1,
       "maximum": 20
@@ -306,10 +492,10 @@ Annotations:
   "properties": {
     "found": {
       "type": "boolean",
-      "description": "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): the resolved entity HOLDS something matching — the resolved metric is on its own metric list, or its metrics contain your phrase. Both names resolving isn't enough: a checked list with nothing matching reads false. A metric that resolved nowhere globally still reads true when the entity's own list carries the phrase. Read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that."
+      "description": "Whether Tako holds matching data; `verified` says on what evidence."
     },
     "verified": {
-      "description": "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and the resolved metric is not on it, so a card for this pair is unlikely. It says nothing about the rest of the list — `unlinked` and `found: true` sit together whenever your `metric` phrase matched entries the resolved node is not one of, and `coverage` then names them. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
+      "description": "What was checked. `pair`: the metric is on the entity's own list. `coverage`: a list was drilled. `unlinked`: the list was checked, the metric is absent. `resolution`: names resolved only.",
       "type": "string",
       "enum": [
         "coverage",
@@ -318,7 +504,8 @@ Annotations:
         "resolution"
       ]
     },
-    "query": {
+    "guidance": {
+      "description": "The verdict, and the one next action.",
       "type": "string"
     },
     "matches": {
@@ -326,148 +513,133 @@ Annotations:
       "items": {
         "type": "object",
         "properties": {
-          "node_id": {
+          "id": {
             "type": "string"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Canonical graph name — search on this."
           },
           "type": {
+            "type": "string",
+            "description": "entity or metric; also what `coverage` counts."
+          },
+          "kind": {
             "type": "string"
           },
-          "subtype": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "unavailable": {
             "type": "boolean"
           },
           "filter": {
-            "description": "The `metric` phrase this match's coverage was filtered by. Present means `coverage.total` counts only the entries matching it, not the entity's whole list — without it a structured-only reader cannot tell `total: 13` meaning \"13 hits for your phrase\" from `total: 13` meaning \"13 metrics in all\". The text channel distinguishes them; this is how the machine channel does.",
+            "description": "The `metric` phrase that narrowed this list. When set, `total` counts only matching entries.",
             "type": "string"
           },
           "coverage": {
             "type": "object",
             "properties": {
-              "kind": {
-                "type": "string"
-              },
               "total": {
-                "type": "number"
+                "type": "number",
+                "description": "Entries in all, not entries listed."
+              },
+              "total_capped": {
+                "type": "boolean",
+                "description": "`total` is a floor."
               },
               "truncated": {
+                "description": "More entries exist than are listed.",
                 "type": "boolean"
               },
               "items": {
+                "description": "Headline-first.",
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
                     "name": {
-                      "type": "string"
-                    },
-                    "node_id": {
                       "type": "string",
-                      "description": "Graph node id. Hand it to tako_graph_related to explore what else the graph holds on this node."
+                      "description": "Canonical graph name."
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Graph node id."
                     }
                   },
                   "required": [
                     "name",
-                    "node_id"
+                    "id"
                   ],
                   "additionalProperties": false
                 }
-              },
-              "items_truncated": {
-                "description": "More coverage entries exist than are listed here, so treat an entry you do not see as unconfirmed, not absent. The text channel carries every name that was fetched, and says so when that list was cut too.",
-                "type": "boolean"
               }
             },
             "required": [
-              "kind",
               "total",
-              "truncated",
-              "items"
+              "total_capped"
             ],
             "additionalProperties": {}
           }
         },
         "required": [
-          "node_id",
+          "id",
           "name",
           "type",
           "coverage"
         ],
         "additionalProperties": {}
       },
-      "description": "The resolved matches and their coverage, each entry carrying its canonical name and graph node id. To fetch a specific metric, call tako_search with the EXACT canonical name as the query — the canonical name is what recovers cards. A node id is for traversal via tako_graph_related."
+      "description": "The nodes whose coverage was drilled, best first."
     },
     "candidates": {
-      "description": "The other nodes `q` resolved to, best first, each with its canonical name to search on and its id to explore with tako_graph_related. coverage_total is present only for candidates that were coverage-checked; the text channel carries their aliases.",
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "node_id": {
+          "id": {
             "type": "string"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Canonical graph name — search on this."
           },
           "type": {
+            "type": "string",
+            "description": "entity or metric; also what `coverage` counts."
+          },
+          "kind": {
             "type": "string"
           },
-          "subtype": {
-            "anyOf": [
-              {
-                "type": "string"
+          "coverage": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "number"
               },
-              {
-                "type": "null"
+              "total_capped": {
+                "type": "boolean",
+                "description": "`total` is a floor."
               }
-            ]
-          },
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "coverage_total": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            },
+            "required": [
+              "total",
+              "total_capped"
+            ],
+            "additionalProperties": {}
           }
         },
         "required": [
-          "node_id",
+          "id",
           "name",
-          "type",
-          "subtype",
-          "label"
+          "type"
         ],
-        "additionalProperties": false
-      }
+        "additionalProperties": {}
+      },
+      "description": "The other nodes `q` resolved to, best first."
     },
     "next_call": {
       "anyOf": [
@@ -475,10 +647,7 @@ Annotations:
           "type": "object",
           "properties": {
             "tool": {
-              "type": "string",
-              "enum": [
-                "tako_search"
-              ]
+              "type": "string"
             },
             "query": {
               "type": "string"
@@ -494,30 +663,24 @@ Annotations:
           "type": "null"
         }
       ],
-      "description": "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null otherwise — pass `metric` to get a handle."
-    },
-    "metric_query": {
-      "type": "string"
+      "description": "A follow-up search in canonical names. Null when no target is unambiguous."
     },
     "entity": {
+      "description": "Lookup path: the resolved entity.",
       "anyOf": [
         {
           "type": "object",
           "properties": {
-            "node_id": {
+            "id": {
               "type": "string"
             },
             "name": {
               "type": "string"
-            },
-            "type": {
-              "type": "string"
             }
           },
           "required": [
-            "node_id",
-            "name",
-            "type"
+            "id",
+            "name"
           ],
           "additionalProperties": false
         },
@@ -527,25 +690,21 @@ Annotations:
       ]
     },
     "metric": {
-      "description": "The resolved metric, by its canonical graph name — the name the follow-up query uses.",
+      "description": "Lookup path: the resolved metric.",
       "anyOf": [
         {
           "type": "object",
           "properties": {
-            "node_id": {
+            "id": {
               "type": "string"
             },
             "name": {
               "type": "string"
-            },
-            "type": {
-              "type": "string"
             }
           },
           "required": [
-            "node_id",
-            "name",
-            "type"
+            "id",
+            "name"
           ],
           "additionalProperties": false
         },
@@ -554,49 +713,42 @@ Annotations:
         }
       ]
     },
-    "entity_alternates": {
+    "entity_candidates": {
+      "description": "Runners-up.",
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "node_id": {
+          "id": {
             "type": "string"
           },
           "name": {
             "type": "string"
-          },
-          "type": {
-            "type": "string"
           }
         },
         "required": [
-          "node_id",
-          "name",
-          "type"
+          "id",
+          "name"
         ],
         "additionalProperties": false
       }
     },
-    "metric_alternates": {
-      "description": "Runners-up. The top metric is right ~80% of the time and the top three ~93-95%, so check these before accepting the primary.",
+    "metric_candidates": {
+      "description": "Runners-up.",
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "node_id": {
+          "id": {
             "type": "string"
           },
           "name": {
             "type": "string"
-          },
-          "type": {
-            "type": "string"
           }
         },
         "required": [
-          "node_id",
-          "name",
-          "type"
+          "id",
+          "name"
         ],
         "additionalProperties": false
       }
@@ -604,12 +756,94 @@ Annotations:
   },
   "required": [
     "found",
-    "query",
     "matches",
+    "candidates",
     "next_call"
   ],
   "additionalProperties": false
 }
+```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "found": true,
+  "verified": "coverage",
+  "matches": [
+    {
+      "id": "ent::carnival_inc::a374dbc8",
+      "name": "Carnival, Inc.",
+      "type": "entity",
+      "coverage": {
+        "total": 214,
+        "total_capped": false,
+        "items": [
+          {
+            "name": "Revenues",
+            "id": "mt::revenues::0cae208b"
+          },
+          {
+            "name": "Gross Margin (%)",
+            "id": "mt::gross_margin_::9a2b184a"
+          }
+        ],
+        "truncated": true
+      },
+      "kind": "Companies",
+      "aliases": [
+        "CCL",
+        "Carnival"
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "id": "ent::carnival_corporation::1feaedf0",
+      "name": "Carnival Corporation Ltd.",
+      "type": "entity",
+      "kind": "Companies",
+      "coverage": {
+        "total": 250,
+        "total_capped": true
+      }
+    },
+    {
+      "id": "mt::passenger_cruise_day::0c917760",
+      "name": "Passenger Cruise Days",
+      "type": "metric"
+    }
+  ],
+  "next_call": {
+    "tool": "tako_search",
+    "query": "Carnival, Inc. Revenues"
+  }
+}
+```
+
+`content[0].text`:
+
+```markdown
+found: yes
+verified: coverage
+
+## Matches (1)
+
+### Carnival, Inc. — entity · Companies
+- `ent::carnival_inc::a374dbc8`
+- aliases: CCL, Carnival
+- metrics (214 total, 2 listed): Revenues `mt::revenues::0cae208b` · Gross Margin (%) `mt::gross_margin_::9a2b184a`
+- more exist than are listed — treat a name you don't see as unconfirmed, not absent; pass `metric` with a phrase to filter this list
+
+## Candidates (2)
+- Carnival Corporation Ltd. — entity · Companies — `ent::carnival_corporation::1feaedf0` — 250+ metrics
+- Passenger Cruise Days — metric — `mt::passenger_cruise_day::0c917760`
+
+## Next call
+tako_search: Carnival, Inc. Revenues
 ```
 </details>
 
@@ -883,26 +1117,23 @@ usage: $0.0052
 
 Description:
 
-Explore what a graph node connects to — the map of what data Tako has for it. Free.
+Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.
 
-Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.
+Two modes. Pass `node_id` alone for the map: every relation group with its key, label, total, and its first 3 names. Pass `relation` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.
 
-Two modes. Overview (`node_id` alone) is a compact map: every relation group with its `key`, `label`, `total`, and its first 3 items — a few hundred tokens, never a page. Drill (`relation: "<key>"`) pages that one group; each item carries `id`, `name`, `type`, `subtype`, and `label`, and only the focal node carries `aliases` and a truncated `description`.
-
-Relation keys come from the overview. The fixed keys are `metrics`, `entities`, `siblings`, `part_of`, `members`; named edges look like `rel:<phrase>`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.
-`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: "revenue" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.
+Best for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `node_id` | string | yes |  | Opaque public id of the node to explore. |
-| `relation` | string | no |  | Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview. |
-| `q` | string | no |  | Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group. |
-| `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | Prefer related nodes with this NER label (boost, not a filter). |
-| `infer_label` | boolean | no |  | Auto-detect labels from q (default true server-side, only when q is set). |
-| `cursor` | string | no |  | Pagination cursor (for a single drilled relation; intended for single-q use). |
-| `limit` | integer | no |  | Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass. |
+| `node_id` | string | yes |  | Public id of the node to explore, as returned by `tako_available_data` or on a `tako_search` card. |
+| `relation` | string | no |  | Relation key to page, taken from the map: metrics, entities, siblings, part_of, members, or a named edge like rel:competes_with. Omit for the map. |
+| `q` | string | no |  | Case-insensitive substring filter on names and aliases, one string per call: "revenue" matches `Total Revenue` and misses `Sales`. Call once per name variant. |
+| `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer among the related nodes — a boost, not a filter. |
+| `infer_label` | boolean | no |  | Detect labels from `q`. Omit it and the server infers them whenever `q` is set. |
+| `cursor` | string | no |  | Page handle from a previous drilled relation. Omit it for the first page. |
+| `limit` | integer | no |  | Page size for a drilled relation. Omit it and the server serves 50. Ignored on the map, where every group returns its first 3 names whatever you pass. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -923,20 +1154,20 @@ Annotations:
     "node_id": {
       "type": "string",
       "minLength": 1,
-      "description": "Opaque public id of the node to explore."
+      "description": "Public id of the node to explore, as returned by `tako_available_data` or on a `tako_search` card."
     },
     "relation": {
-      "description": "Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview.",
+      "description": "Relation key to page, taken from the map: metrics, entities, siblings, part_of, members, or a named edge like rel:competes_with. Omit for the map.",
       "type": "string",
       "minLength": 1
     },
     "q": {
-      "description": "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group.",
+      "description": "Case-insensitive substring filter on names and aliases, one string per call: \"revenue\" matches `Total Revenue` and misses `Sales`. Call once per name variant.",
       "type": "string",
       "minLength": 1
     },
     "label": {
-      "description": "Prefer related nodes with this NER label (boost, not a filter).",
+      "description": "NER label to prefer among the related nodes — a boost, not a filter.",
       "type": "string",
       "enum": [
         "PERSON",
@@ -953,16 +1184,16 @@ Annotations:
       ]
     },
     "infer_label": {
-      "description": "Auto-detect labels from q (default true server-side, only when q is set).",
+      "description": "Detect labels from `q`. Omit it and the server infers them whenever `q` is set.",
       "type": "boolean"
     },
     "cursor": {
-      "description": "Pagination cursor (for a single drilled relation; intended for single-q use).",
+      "description": "Page handle from a previous drilled relation. Omit it for the first page.",
       "type": "string",
       "minLength": 1
     },
     "limit": {
-      "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass.",
+      "description": "Page size for a drilled relation. Omit it and the server serves 50. Ignored on the map, where every group returns its first 3 names whatever you pass.",
       "type": "integer",
       "minimum": 1,
       "maximum": 100
@@ -989,9 +1220,14 @@ Annotations:
           "type": "string"
         },
         "type": {
-          "type": "string"
+          "type": "string",
+          "description": "entity or metric."
         },
         "name": {
+          "type": "string",
+          "description": "Canonical graph name — search on this."
+        },
+        "kind": {
           "type": "string"
         },
         "aliases": {
@@ -1001,34 +1237,7 @@ Annotations:
           }
         },
         "description": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "subtype": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "label": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "type": "string"
         }
       },
       "required": [
@@ -1036,130 +1245,72 @@ Annotations:
         "type",
         "name"
       ],
-      "additionalProperties": false
+      "additionalProperties": {}
     },
     "relations": {
-      "anyOf": [
-        {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "key": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string"
-              },
-              "label": {
-                "type": "string"
-              },
-              "items": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "aliases": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "subtype": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "label": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "type",
-                    "name"
-                  ],
-                  "additionalProperties": false
-                }
-              },
-              "total": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
-              },
-              "total_capped": {
-                "type": "boolean"
-              },
-              "next_cursor": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
+      "description": "Every group, previewed. The map.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Pass back as `relation` to page it."
+          },
+          "label": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          },
+          "total_capped": {
+            "type": "boolean",
+            "description": "`total` is a floor."
+          },
+          "next_cursor": {
+            "description": "Pass back as `cursor`.",
+            "type": "string"
+          },
+          "preview": {
+            "type": "array",
+            "items": {
+              "type": "string"
             },
-            "required": [
-              "key",
-              "kind",
-              "label",
-              "items",
-              "total",
-              "total_capped"
-            ],
-            "additionalProperties": false
+            "description": "The group's first 3 names."
           }
         },
-        {
-          "type": "null"
-        }
-      ]
+        "required": [
+          "key",
+          "label",
+          "total",
+          "total_capped",
+          "preview"
+        ],
+        "additionalProperties": {}
+      }
     },
     "relation": {
+      "description": "The one group you drilled.",
       "anyOf": [
         {
           "type": "object",
           "properties": {
             "key": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string"
+              "type": "string",
+              "description": "Pass back as `relation` to page it."
             },
             "label": {
+              "type": "string"
+            },
+            "total": {
+              "type": "number"
+            },
+            "total_capped": {
+              "type": "boolean",
+              "description": "`total` is a floor."
+            },
+            "next_cursor": {
+              "description": "Pass back as `cursor`.",
               "type": "string"
             },
             "items": {
@@ -1170,98 +1321,30 @@ Annotations:
                   "id": {
                     "type": "string"
                   },
-                  "type": {
-                    "type": "string"
-                  },
                   "name": {
                     "type": "string"
                   },
-                  "aliases": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "description": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "subtype": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "label": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                  "kind": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "id",
-                  "type",
                   "name"
                 ],
-                "additionalProperties": false
-              }
-            },
-            "total": {
-              "type": "integer",
-              "minimum": -9007199254740991,
-              "maximum": 9007199254740991
-            },
-            "total_capped": {
-              "type": "boolean"
-            },
-            "next_cursor": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+                "additionalProperties": {}
+              },
+              "description": "This page of the group."
             }
           },
           "required": [
             "key",
-            "kind",
             "label",
-            "items",
             "total",
-            "total_capped"
+            "total_capped",
+            "items"
           ],
-          "additionalProperties": false
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "inferred_labels": {
-      "anyOf": [
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "additionalProperties": {}
         },
         {
           "type": "null"
@@ -1274,6 +1357,67 @@ Annotations:
   ],
   "additionalProperties": false
 }
+```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "node": {
+    "id": "ent::nvidia_corporation::5ea55992",
+    "type": "entity",
+    "name": "NVIDIA Corporation",
+    "kind": "Companies",
+    "aliases": [
+      "NVDA",
+      "NVIDIA",
+      "NVIDIA Corp"
+    ],
+    "description": "NVIDIA Corporation operates as a data center scale AI infrastructure company. The company operates through two segments, Compute & Networking, and Graphics. The Compute & Networking segment provides data center accelerated computing and networking platforms, artificial intelligence solutions and sof…"
+  },
+  "relations": [
+    {
+      "key": "metrics",
+      "label": "Related Metrics",
+      "total": 250,
+      "total_capped": true,
+      "preview": [
+        "EV/NTM Revenue",
+        "Gross Margin (%)",
+        "Revenues"
+      ]
+    },
+    {
+      "key": "rel:in_industry",
+      "label": "In industry",
+      "total": 2,
+      "total_capped": false,
+      "preview": [
+        "Semiconductor",
+        "AI and Machine Learning"
+      ]
+    }
+  ]
+}
+```
+
+`content[0].text`:
+
+```markdown
+# NVIDIA Corporation
+- `ent::nvidia_corporation::5ea55992` · entity · Companies
+- aliases: NVDA, NVIDIA, NVIDIA Corp
+
+## Relations (2)
+Pass `relation` with a key to page one group, or `q` to filter by substring.
+- `metrics` — Related Metrics — 250+: EV/NTM Revenue, Gross Margin (%), Revenues, …
+- `rel:in_industry` — In industry — 2: Semiconductor, AI and Machine Learning
+
+## About
+NVIDIA Corporation operates as a data center scale AI infrastructure company. The company operates through two segments, Compute & Networking, and Graphics. The Compute & Networking segment provides data center accelerated computing and networking platforms, artificial intelligence solutions and sof…
 ```
 </details>
 
@@ -1425,12 +1569,6 @@ Annotations:
               ],
               "additionalProperties": {}
             }
-          },
-          "rows": {
-            "description": "Inlined rows — only when the request asked to inline them.",
-            "type": "object",
-            "properties": {},
-            "additionalProperties": {}
           }
         },
         "required": [
@@ -1438,7 +1576,7 @@ Annotations:
         ],
         "additionalProperties": {}
       },
-      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."
+      "description": "The data cards. Fetch an exportable card's rows with tako_contents on its url."
     },
     "web_results": {
       "type": "array",
@@ -1617,12 +1755,6 @@ The chart-widget fields are declared only here; the widget reads them from `wind
               ],
               "additionalProperties": {}
             }
-          },
-          "rows": {
-            "description": "Inlined rows — only when the request asked to inline them.",
-            "type": "object",
-            "properties": {},
-            "additionalProperties": {}
           }
         },
         "required": [
@@ -1630,7 +1762,7 @@ The chart-widget fields are declared only here; the widget reads them from `wind
         ],
         "additionalProperties": {}
       },
-      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."
+      "description": "The data cards. Fetch an exportable card's rows with tako_contents on its url."
     },
     "web_results": {
       "type": "array",
@@ -1894,36 +2026,28 @@ usage: $0.015
 
 Description:
 
-The v3 search request's retrieval options: per-source result counts, inline card rows and row caps, graph pins, web domain and category filters, and the deep effort tier.
+Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.
 
-Use `tako_search` unless you need one of these options. It takes the same query and applies the server's own defaults, which are right for almost every call.
+Only `query` is required; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.
 
-Nothing is sent unless you set it, with one exception named below, so an omitted field takes the server default in its description. Naming a source block at all — even as an empty object — is what selects that source; omit both and the server searches data and web.
-
-Web snippets are query-relevant highlight passages by default here, as on `tako_search`. Unlike there, you can turn them off: `web.highlights: false` gives you the page's opening text instead.
-
-One field here bills beyond the search itself: `data.include_contents` inlines each card's rows, and delivered rows are charged per 1,000. `data.max_rows` caps them per card — omit it and each card takes your account default, so `count: 20` bills twenty cards of rows. Leave the flag off and fetch just what you need with `tako_contents`.
-
-`include_answer: true` runs the answer endpoint instead: one synthesized, citation-backed answer in `answer`, with the retrieved cards and web results as its citations. Every option here applies the same way; the server defaults that differ on that endpoint (web `count` 3, `snippet_max_chars` 1000) are named in each field's description. `output_schema` fills a JSON Schema from the same evidence and returns it as `structured_output`. For values on a card marked `exportable: false`, pin its METRIC node id alone in `data.node_ids` with `strict: true`, set `include_answer: true` and `data.include_contents: true`.
-
-To land on exactly one metric, pin THAT metric's node id alone in `data.node_ids` with `strict: true` and name the entity in the query text; adding the entity's own id widens the filter back out. Note the disagreement below: the generated `node_ids` description calls that boost strong, and `strict` says pinned nodes rank first. Measured, a bare pin at the default `strict: false` makes the node a retrieval candidate and ranks it up without reliably outranking the organic winner — the backend scores it deliberately short of dominant, and marks that score provisional. So treat a pin without `strict` as a nudge, and set `strict: true` when you need the card to come back. If that call returns 0 cards, drop `node_ids` and run the query text alone — `strict` is a hard filter and the graph holds near-duplicate metric nodes where only one twin carries cards.
+Best for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | yes |  | Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool. |
-| `effort` | string ("fast" \\| "instant" \\| "deep") | no |  | Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier. |
-| `location` | object | no |  | Optional coordinates of the end user. Resolves the location for implicit-location queries (for example, weather). An explicit location in the query overrides these coordinates. |
+| `query` | string | yes |  | Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity. |
+| `effort` | string ("fast" \\| "instant" \\| "deep") | no |  | Search effort. Omit it and the server uses fast. instant serves cached embeds; deep widens retrieval and reranks, at a premium rate. |
+| `location` | object | no |  | End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code. |
 | `country_code` | string | no |  | ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US. |
 | `locale` | string | no |  | BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. |
-| `timezone` | string | no |  | IANA timezone (for example, 'America/New_York'). |
+| `timezone` | string | no |  | IANA timezone. It formats dates in rendered card images only. |
 | `output_settings` | object | no |  | Settings that control the response shape. |
-| `include_related` | integer | no |  | Applies to POST /v3/search only. Return follow-up query suggestions in `related`. Omit this field to disable them. The value sets the maximum number of suggestions, from 1 to 20. POST /v1/answer accepts this field but ignores it: the answer response has no `related` field. |
-| `data` | object | no |  | Tako data (card) source settings. Include this key — even as an empty object — to search the data graph. |
-| `web` | object | no |  | Web source settings. Include this key — even as an empty object — to search the web. |
-| `include_answer` | boolean | no |  | Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only. |
-| `output_schema` | object | no |  | JSON Schema for structured output. Tako fills it from the same evidence it uses to write `answer`, and returns it in `structured_output`. Requires effort 'fast' or 'deep'; on 'instant' the request returns 400. Supported subset: the object, array, string, number, integer, and boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties: false`. A type may be nullable as `["number", "null"]`, which is how you let Tako signal 'no evidence' rather than filling a zero. `title`, `examples`, `format`, and `default` are accepted and ignored — they constrain nothing. Caps: 16KB total, depth 5, 64 properties, 512 characters per description. Violations return 400. If Tako can't fill the schema, `structured_output` is absent and `structured_output_error` says why — the answer and the cards still return. |
+| `include_related` | integer | no |  | Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true. |
+| `data` | object | no |  | Tako data (card) source settings; naming it selects the data graph. |
+| `web` | object | no |  | Web source settings; naming it selects the web. |
+| `include_answer` | boolean | no |  | Set true to synthesize one citation-backed answer from the retrieval into `answer`. |
+| `output_schema` | object | no |  | JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Type a field ["number", "null"] when evidence may be missing — Tako then signals that, not a zero. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -1945,10 +2069,10 @@ Annotations:
       "type": "string",
       "minLength": 1,
       "pattern": "\\S",
-      "description": "Natural-language search query. One entity + one metric retrieves best, the same as on the simple tool."
+      "description": "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity."
     },
     "effort": {
-      "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds without a new retrieval. deep widens retrieval and adds an LLM rerank; it is slower and bills at a premium tier.",
+      "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds; deep widens retrieval and reranks, at a premium rate.",
       "type": "string",
       "enum": [
         "fast",
@@ -1957,6 +2081,7 @@ Annotations:
       ]
     },
     "location": {
+      "description": "End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code.",
       "anyOf": [
         {
           "type": "object",
@@ -1983,8 +2108,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Optional coordinates of the end user. Resolves the location for implicit-location queries (for example, weather). An explicit location in the query overrides these coordinates."
+      ]
     },
     "country_code": {
       "description": "ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US.",
@@ -1995,6 +2119,7 @@ Annotations:
       "type": "string"
     },
     "timezone": {
+      "description": "IANA timezone. It formats dates in rendered card images only.",
       "anyOf": [
         {
           "type": "string"
@@ -2002,8 +2127,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "IANA timezone (for example, 'America/New_York')."
+      ]
     },
     "output_settings": {
       "description": "Settings that control the response shape.",
@@ -2024,7 +2148,7 @@ Annotations:
             },
             "force_refresh": {
               "type": "boolean",
-              "description": "Instant mode only, and currently informational: on these endpoints, instant (effort='instant') always operates in build-and-refresh mode regardless of this flag. Instant retrieves data for embeds that are missing or stale, then creates or refreshes their static embeds. Embeds that are already fresh (within the refresh cadence) return as-is; Tako does not re-retrieve them. Identical queries therefore reuse the same content-addressed embed and return a stable embed URL."
+              "description": "Informational on these endpoints: instant effort already rebuilds missing or stale card embeds whatever you set here."
             }
           },
           "additionalProperties": false
@@ -2035,6 +2159,7 @@ Annotations:
       ]
     },
     "include_related": {
+      "description": "Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true.",
       "anyOf": [
         {
           "type": "integer",
@@ -2044,11 +2169,10 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "Applies to POST /v3/search only. Return follow-up query suggestions in `related`. Omit this field to disable them. The value sets the maximum number of suggestions, from 1 to 20. POST /v1/answer accepts this field but ignores it: the answer response has no `related` field."
+      ]
     },
     "data": {
-      "description": "Tako data (card) source settings. Include this key — even as an empty object — to search the data graph.",
+      "description": "Tako data (card) source settings; naming it selects the data graph.",
       "type": "object",
       "properties": {
         "count": {
@@ -2062,7 +2186,7 @@ Annotations:
           "description": "Inline this source's underlying data directly in the response. For the Tako data source, that is serialized card data (see content_format). For web results, that is the page text."
         },
         "mode": {
-          "description": "Delivery for inlined card data when include_contents is true. For Tako cards, include_contents always returns the most-recent rows in the response body, up to max_rows, or up to the default inline row cap for your account if you omit max_rows. This field therefore has no effect on Tako cards; it stays for schema stability. total_rows and truncated on the returned content indicate when more data is available. For a presigned download link, call POST /api/v1/contents with mode='url'.",
+          "description": "Delivery for inlined card data. It has no effect on Tako cards, which always inline the most recent rows up to `max_rows`; it stays for schema stability.",
           "type": "string",
           "enum": [
             "url",
@@ -2070,7 +2194,7 @@ Annotations:
           ]
         },
         "content_format": {
-          "description": "Serialization for card data: 'json_compact' (default), 'json_records', 'csv', or 'card_json'. The first three return a row-capped preview. 'card_json' returns a rich card-type-specific JSON object under card_data, truncated to the same row cap. Tako bills the rows it returns on every one of the four. A card type with no card_json shape falls back to 'json_compact' for that card.",
+          "description": "Serialization for inlined card data: json_compact (default), json_records, csv, or card_json. All four bill the rows they return. A card with no card_json shape falls back to json_compact.",
           "type": "string",
           "enum": [
             "csv",
@@ -2080,6 +2204,7 @@ Annotations:
           ]
         },
         "max_rows": {
+          "description": "Rows to inline per card when `include_contents` is true. Omit it and each card takes your account default (20 on the standard plan). Every inlined row bills; the ceiling is 2,000 rows.",
           "anyOf": [
             {
               "type": "integer",
@@ -2089,26 +2214,25 @@ Annotations:
             {
               "type": "null"
             }
-          ],
-          "description": "Maximum number of card data rows to inline when include_contents is true. If you omit this field, Tako returns the default inline row cap for your account (20 rows on the standard plan). That cap is deliberately smaller than the 2,000 rows POST /api/v1/contents returns by default: a search response inlines many cards, so the same number bills once per card. Raise it to inline more rows, up to the 2,000-row system ceiling. Tako clamps a larger value to that ceiling. Every inlined row is billed: a flat per-card baseline fee plus the per-1,000-row rate, the same rate POST /api/v1/contents charges. total_rows and truncated report whether more rows remain. A single response also has a 2,000 billable-row budget and a 20,000-row total budget, both shared across all cards. A later card can therefore return fewer rows than you requested, or no inlined rows at all. Such a card still carries its export_pricing quote, so you can fetch its rows with POST /api/v1/contents."
+          ]
         },
         "node_ids": {
+          "description": "Graph node ids to pin, as a card's `nodes` or `tako_available_data` return them. Pin the metric's node id alone and set `strict: true` to make its card come back; a bare pin only nudges the ranking. Max 20.",
           "maxItems": 20,
           "type": "array",
           "items": {
             "type": "string"
-          },
-          "description": "Graph node ids to pin into the search; the /v1/graph endpoints return these ids. Pinned nodes always become retrieval candidates and get a strong boost; organic results do not change. Ids are not durable across knowledge-graph rebuilds: the search skips an id that no longer resolves (in strict mode it simply cannot match). Malformed ids fail the request with a 400. Max 20."
+          }
         },
         "strict": {
           "type": "boolean",
-          "description": "When true, return only data cards that match at least one node in node_ids (which must then be non-empty). When false (the default), pinned nodes rank first but organic results still return. Web results do not change either way."
+          "description": "Return only cards matching `node_ids` — a hard filter, so zero cards is evidence about the filter, not coverage. Default false: the pin only ranks up, and organic results still return. Adding the entity's id beside the metric's widens it back out."
         }
       },
       "additionalProperties": false
     },
     "web": {
-      "description": "Web source settings. Include this key — even as an empty object — to search the web.",
+      "description": "Web source settings; naming it selects the web.",
       "type": "object",
       "properties": {
         "count": {
@@ -2126,7 +2250,7 @@ Annotations:
         },
         "include_contents": {
           "type": "boolean",
-          "description": "Inline the page text of each web result in the response. Tako returns it free of charge, on a best-effort basis: if a page's text isn't available at search time, content.data is null. To fetch a page directly, use POST /api/v1/contents."
+          "description": "Inline each result's full page text in `content`. It is free on these endpoints; the text can be large, so pair it with `article_content_max_chars`."
         },
         "category": {
           "anyOf": [
@@ -2162,6 +2286,7 @@ Annotations:
           "description": "Drop results from these domains (bare hosts, for example 'cnn.com'). Max 20."
         },
         "snippet_max_chars": {
+          "description": "Maximum characters per snippet. Omit it and the server uses 4000, or 1000 with `include_answer: true`.",
           "anyOf": [
             {
               "type": "integer",
@@ -2171,12 +2296,11 @@ Annotations:
             {
               "type": "null"
             }
-          ],
-          "description": "Character cap on the text excerpt returned per web result. If you omit this field, the search endpoint applies 4000 and the answer endpoint applies 1000. If you send a value, the server uses that value exactly. The maximum is 20000."
+          ]
         },
         "highlights": {
           "type": "boolean",
-          "description": "Return query-relevant highlight passages as each web result's snippet, instead of the opening text of the page. Highlights usually carry the answer-bearing sentences, and stay within snippet_max_chars. Unless you also set include_contents, Tako requests no page text, so a page with no highlight returns snippet: null. The snippet can also hold more than one passage from different parts of the page, joined by ' … '. Read the snippet as a whole. Do not cut the snippet to a fixed length. Do not quote the snippet as one continuous sentence. Default false."
+          "description": "Return query-relevant highlight passages as each result's snippet instead of the page's opening text. This tool sends true unless you set it false."
         },
         "article_content_max_chars": {
           "type": "integer",
@@ -2185,6 +2309,7 @@ Annotations:
           "description": "Character cap on the full article text when include_contents is true. Default 30000, maximum 1000000."
         },
         "published_after": {
+          "description": "Only return pages published on or after this date (YYYY-MM-DD). Pages with no known publication date are kept. Omit it for no lower bound.",
           "anyOf": [
             {
               "type": "string",
@@ -2194,8 +2319,7 @@ Annotations:
             {
               "type": "null"
             }
-          ],
-          "description": "Keep only web results published on or after this date (ISO 'YYYY-MM-DD'). Tako applies the date on the provider where possible, and always filters the returned results. Results with no known publication date are kept. Omit for no lower bound."
+          ]
         },
         "published_before": {
           "anyOf": [
@@ -2214,10 +2338,11 @@ Annotations:
       "additionalProperties": false
     },
     "include_answer": {
-      "description": "Set true to run the answer endpoint instead of search: Tako synthesizes one citation-backed answer from the retrieved cards and web results and returns it as `answer`, with the retrieval as its citations. Omit or false for retrieval only.",
+      "description": "Set true to synthesize one citation-backed answer from the retrieval into `answer`.",
       "type": "boolean"
     },
     "output_schema": {
+      "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Type a field [\"number\", \"null\"] when evidence may be missing — Tako then signals that, not a zero.",
       "anyOf": [
         {
           "type": "object",
@@ -2229,8 +2354,7 @@ Annotations:
         {
           "type": "null"
         }
-      ],
-      "description": "JSON Schema for structured output. Tako fills it from the same evidence it uses to write `answer`, and returns it in `structured_output`. Requires effort 'fast' or 'deep'; on 'instant' the request returns 400. Supported subset: the object, array, string, number, integer, and boolean types, plus `items`, `enum`, `required`, `description`, and `additionalProperties: false`. A type may be nullable as `[\"number\", \"null\"]`, which is how you let Tako signal 'no evidence' rather than filling a zero. `title`, `examples`, `format`, and `default` are accepted and ignored — they constrain nothing. Caps: 16KB total, depth 5, 64 properties, 512 characters per description. Violations return 400. If Tako can't fill the schema, `structured_output` is absent and `structured_output_error` says why — the answer and the cards still return."
+      ]
     }
   },
   "required": [
@@ -2316,7 +2440,41 @@ Annotations:
           "rows": {
             "description": "Inlined rows — only when the request asked to inline them.",
             "type": "object",
-            "properties": {},
+            "properties": {
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Column names, in row order; the unit is in the name."
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {}
+                },
+                "description": "Positional cells; a missing cell is null."
+              },
+              "format": {
+                "description": "The content_format, when the payload is not `columns`/`rows`.",
+                "type": "string"
+              },
+              "data": {
+                "description": "csv format only: the rows as CSV text.",
+                "type": "string"
+              },
+              "card_data": {
+                "description": "card_json format only: the card-type-specific object.",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": {}
+              },
+              "truncated": {
+                "description": "Not all the rows; the card's `total_rows` has the full count.",
+                "type": "boolean"
+              }
+            },
             "additionalProperties": {}
           }
         },
@@ -2325,7 +2483,7 @@ Annotations:
         ],
         "additionalProperties": {}
       },
-      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them (tako_search never does) — otherwise fetch an exportable card's rows with tako_contents on its url."
+      "description": "The data cards. Rows ride in a card's `rows` only when the request asked to inline them — otherwise fetch an exportable card's rows with tako_contents on its url."
     },
     "web_results": {
       "type": "array",
@@ -2421,7 +2579,7 @@ Annotations:
       }
     },
     "related": {
-      "description": "Follow-up queries, each with a `query` to send as the next search request. Present only when you set include_related.",
+      "description": "Follow-up queries, when you set include_related. Each has a `query` to send next and may have `node_ids` for `data.node_ids`.",
       "type": "array",
       "items": {
         "type": "object",
@@ -2430,17 +2588,17 @@ Annotations:
       }
     },
     "answer": {
-      "description": "The synthesized, citation-backed answer. Present only when you set include_answer: true; the cards and web_results are its citations.",
+      "description": "The synthesized answer, cited from the cards and web_results.",
       "type": "string"
     },
     "structured_output": {
-      "description": "The output_schema you supplied, filled from the same evidence as the answer. Absent when you supplied none, or when Tako could not fill it — see structured_output_error.",
+      "description": "Your output_schema filled from the same evidence; see structured_output_error when absent.",
       "type": "object",
       "properties": {},
       "additionalProperties": {}
     },
     "structured_output_error": {
-      "description": "Why structured_output is absent: `code` and `message`. Present only when Tako could not fill an output_schema you supplied.",
+      "description": "Why structured_output is absent: `code` and `message`.",
       "type": "object",
       "properties": {},
       "additionalProperties": {}
@@ -2454,6 +2612,139 @@ Annotations:
   "additionalProperties": false
 }
 ```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "cards": [
+    {
+      "exportable": true,
+      "title": "NVIDIA Corporation Data Center Total Revenues (Quarterly)",
+      "description": "NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.",
+      "url": "https://tako.com/card/eDLjXb_EieceW6BapkXJ/",
+      "source": "Fiscal.ai",
+      "coverage_end": "2026-04",
+      "last_updated": "2026-08-26",
+      "relevance": "High",
+      "nodes": [
+        {
+          "id": "ent::nvidia_corporation::5ea55992",
+          "name": "NVIDIA Corporation",
+          "type": "entity"
+        },
+        {
+          "id": "mt::total_revenues::8a1f02c3",
+          "name": "Total Revenues (Normalized)",
+          "type": "metric"
+        }
+      ],
+      "total_rows": 26,
+      "rows": {
+        "columns": [
+          "Timestamp",
+          "Data Center Total Revenues (Normalized) (USD)"
+        ],
+        "rows": [
+          [
+            "2025-10-26T00:00:00+00:00",
+            57006000000
+          ],
+          [
+            "2026-01-25T00:00:00+00:00",
+            65821000000
+          ],
+          [
+            "2026-04-26T00:00:00+00:00",
+            75246000000
+          ]
+        ],
+        "truncated": true
+      }
+    }
+  ],
+  "web_results": [
+    {
+      "url": "https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-Q1-FY2027/",
+      "title": "NVIDIA Announces Financial Results for First Quarter Fiscal 2027",
+      "snippet": "Record revenue of $81.6 billion, up 85% from a year ago. Record Data Center revenue of $75.2 billion, up 89% from a year ago.",
+      "source": "investor.nvidia.com",
+      "published": "2026-05-27",
+      "content": {
+        "data": "SANTA CLARA, Calif. — NVIDIA today reported revenue for the first quarter of fiscal 2027 of $81.6 billion, up 85% from a year ago. Data Center revenue was $75.2 billion, up 89% from a year ago.",
+        "truncated": false
+      }
+    }
+  ],
+  "usage": {
+    "total_cost_usd": 0.042
+  },
+  "metric_definitions": {
+    "Total Revenues (Normalized)": "Revenue the company reported for this segment, as disclosed in its segment note. The figure covers one segment only, so it does not sum to consolidated total revenue unless the company reports no other segment."
+  },
+  "source_notes": {
+    "Fiscal.ai": "Fundamental company financials standardized across filings, so the same line item is comparable between companies and periods."
+  },
+  "answer": "NVIDIA's Data Center segment reported $75.2 billion in revenue for the quarter ended April 2026, up 89% year over year [1].",
+  "structured_output": {
+    "segment": "Data Center",
+    "revenue_usd": 75246000000,
+    "period_end": "2026-04-26"
+  }
+}
+```
+
+`content[0].text`:
+
+````markdown
+NVIDIA's Data Center segment reported $75.2 billion in revenue for the quarter ended April 2026, up 89% year over year [1].
+
+## Data cards (1)
+
+### NVIDIA Corporation Data Center Total Revenues (Quarterly)
+NVIDIA Corporation Data Center Total Revenues (Normalized) (Quarterly)'s latest value was $75,246,000,000 in Apr 2026, up 7,673.3% since Jan 2020.
+- url: https://tako.com/card/eDLjXb_EieceW6BapkXJ/ · exportable, 26 rows
+- source: Fiscal.ai · data through 2026-04 · refreshed 2026-08-26 · relevance High
+- nodes: `ent::nvidia_corporation::5ea55992` (NVIDIA Corporation) · `mt::total_revenues::8a1f02c3` (Total Revenues (Normalized))
+- rows: TRUNCATED — these are not all the rows
+```json
+{"columns":["Timestamp","Data Center Total Revenues (Normalized) (USD)"],"rows":[["2025-10-26T00:00:00+00:00",57006000000],["2026-01-25T00:00:00+00:00",65821000000],["2026-04-26T00:00:00+00:00",75246000000]]}
+```
+
+Top card chart — embed: https://tako.com/embed/eDLjXb_EieceW6BapkXJ/?dark_mode=auto&showShare=true · image: https://tako.com/api/v1/image/eDLjXb_EieceW6BapkXJ/?dark_mode=true
+
+## Web results (1)
+
+### NVIDIA Announces Financial Results for First Quarter Fiscal 2027 — investor.nvidia.com, 2026-05-27
+https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-Q1-FY2027/
+```
+Record revenue of $81.6 billion, up 85% from a year ago. Record Data Center revenue of $75.2 billion, up 89% from a year ago.
+```
+```
+SANTA CLARA, Calif. — NVIDIA today reported revenue for the first quarter of fiscal 2027 of $81.6 billion, up 85% from a year ago. Data Center revenue was $75.2 billion, up 89% from a year ago.
+```
+
+## Structured output
+
+```
+{
+ "segment": "Data Center",
+ "revenue_usd": 75246000000,
+ "period_end": "2026-04-26"
+}
+```
+
+## Definitions
+- Total Revenues (Normalized): Revenue the company reported for this segment, as disclosed in its segment note. The figure covers one segment only, so it does not sum to consolidated total revenue unless the company reports no other segment.
+
+## Source notes
+- Fiscal.ai: Fundamental company financials standardized across filings, so the same line item is comparable between companies and periods.
+
+usage: $0.042
+````
 </details>
 
 ### tako_visualize

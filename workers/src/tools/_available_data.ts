@@ -2,10 +2,10 @@
  * Pure selection + formatting helpers for `tako_available_data`.
  *
  * `tako_available_data` resolves a name to graph node(s) and, for each, reports
- * what data Tako has for it — as a natural-language "Tako has data on X"
- * summary. Everything network-free lives here so it can be unit-tested in
- * isolation; the tool module (`tako_available_data.ts`) only orchestrates the
- * fetches and calls these.
+ * what data Tako has for it. Everything network-free lives here so it can be
+ * unit-tested in isolation; the tool module (`tako_available_data.ts`) only
+ * orchestrates the fetches and calls these. The markdown rendering lives in
+ * `_render_markdown.ts`, not here.
  *
  * Coverage is type-aware, because the graph models the two node kinds
  * differently:
@@ -77,25 +77,28 @@ export const SHELL_COVERAGE_MAX = 5;
 // The tool paginates with the cursor, so this is a request-shaping knob, not
 // a cap on what the agent sees.
 export const PAGE_LIMIT = 100;
-// Ceiling on the coverage name list across all fetched pages. Coverage names
-// are the tool's primary payload — each is a term the agent reuses in a
-// follow-up tako_search — so the drill paginates well past the old one-page
-// window (which buried anything behind the backend's fixed, boilerplate-first
-// order). Matched to the server's OWN counting cap (graph/related stops
-// counting related items at 250 and reports `total_capped`) rather than set
-// tighter, so this is a genuine ceiling, not a second, lower cap layered on
-// top of the server's: a node at or under 250 gets its COMPLETE coverage list.
-// Names are reordered headline-first across everything FETCHED before this
-// slice is taken, so low-signal accounting names are what a genuine >250 cap
-// still drops, and `total`/`truncated` still report when more exist
-// server-side — a "250 of 400+" list is explained, not an unexplained second
-// cap.
-export const MAX_COVERAGE_NAMES = 250;
-// Hard ceiling on coverage-drill round-trips per node, independent of the
-// item-count target above. Normally ceil(250/100) = 3 pages suffice; the
-// slack covers a server that pages smaller than PAGE_LIMIT without letting a
-// pathological page size serialize dozens of sequential calls.
-export const MAX_COVERAGE_PAGES = 4;
+// How many coverage entries reach the model — the SAME number in both
+// channels (spec, text-channel template: nothing renders that structured does
+// not carry). It used to be 250 in text and 25 in structuredContent, so the
+// two channels disagreed about what Tako holds.
+//
+// 25, not more, because depth cannot fix the miss it looks like it fixes.
+// Measured on prod 2026-08-31: 15 of 16 live coverage lists exceed 25 entries
+// and 13 exceed 100, so the cap is the normal path, not an edge case — and the
+// browse order puts Dividend Yield at #36-44, EBITDA Margin at #29-47, P/E
+// Annual at #53-61 and Enterprise Value at #59-77 across NVIDIA, Apple, Tesla
+// and Crocs. Raising the cap to 50 doubles the payload (3,798 → 7,043 chars
+// for NVIDIA across both channels) and still misses P/E and EV. The answer to
+// "does Tako hold X" is the `metric` filter, which is free and ~0.6s; this
+// list is orientation. Names are reordered headline-first across everything
+// FETCHED before the slice, so the accounting names are what a cut drops.
+export const COVERAGE_ITEMS_SHOWN = 25;
+// Hard ceiling on coverage-drill round-trips per node. ONE page of PAGE_LIMIT
+// (100) items is a deep enough pool to take a headline-first slice of
+// COVERAGE_ITEMS_SHOWN from, and `total`/`total_capped` come off the page
+// itself rather than from counting rows — so the three extra pages this used
+// to fetch bought 225 names that no channel now renders.
+export const MAX_COVERAGE_PAGES = 1;
 /**
  * How many candidates `graph/search` returns, and so how many the tool lists.
  * The default is today's fixed request. The cap is OURS, not the endpoint's:
@@ -121,7 +124,7 @@ export const MAX_COVERAGE_PAGES = 4;
  */
 export const MAX_CANDIDATES = 20;
 export const DEFAULT_CANDIDATES = 10;
-/** Aliases shown per candidate line — enough to recognise a ticker or abbreviation. */
+/** Aliases shown per candidate line — enough to recognize a ticker or abbreviation. */
 export const ALIASES_SHOWN = 3;
 
 // Metric names that read as internal/accounting plumbing rather than the
@@ -164,18 +167,11 @@ export interface CoverageItem {
 export interface CoverageGroup {
   kind: CoverageKind;
   /**
-   * Preview entries (name + node id), capped; headline-first for metrics.
-   * Canonical — `names` is the text-channel projection of this.
+   * The entries, capped at COVERAGE_ITEMS_SHOWN; headline-first for metrics.
+   * ONE list, rendered identically by both channels — the `names` projection
+   * that used to sit beside this is gone with the channel split it served.
    */
   items: CoverageItem[];
-  /**
-   * The same names, in the same order — the projection the markdown text
-   * channel renders. Kept as its own field (rather than derived at every call
-   * site) because the two channels have different jobs: text lists names for
-   * the model to read, `structuredContent` carries name+id pairs for it to
-   * pin. Both are built once, from `items`, in `selectCoverage`.
-   */
-  names: string[];
   /** Server-reported total. A floor when `capped` is true. */
   total: number;
   /** More names exist than are shown (`total > names.length`, or `capped`). */
@@ -228,7 +224,7 @@ export type OtherMatch = CandidateRef & {
 };
 
 const emptyGroup = (kind: CoverageKind): CoverageGroup => ({
-  kind, items: [], names: [], total: 0, truncated: false, capped: false,
+  kind, items: [], total: 0, truncated: false, capped: false,
 });
 
 /**
@@ -267,7 +263,7 @@ export function orderMetricItems(items: readonly CoverageItem[]): CoverageItem[]
 /**
  * Build the CoverageGroup from a drilled relation group. Metrics are reordered
  * headline-first; entities keep the backend's (popularity) order. Caps at
- * MAX_COVERAGE_NAMES and reports the server total + capped flag.
+ * COVERAGE_ITEMS_SHOWN and reports the server total + capped flag.
  */
 export function selectCoverage(
   group: GraphRelation | null | undefined,
@@ -280,12 +276,11 @@ export function selectCoverage(
   const raw: CoverageItem[] = group.items.map((i) => ({ name: i.name, node_id: i.id }));
   const ordered = kind === "metrics" ? orderMetricItems(raw) : raw;
   const total = group.total ?? ordered.length;
-  const items = ordered.slice(0, MAX_COVERAGE_NAMES);
+  const items = ordered.slice(0, COVERAGE_ITEMS_SHOWN);
   const capped = group.total_capped ?? false;
   return {
     kind,
     items,
-    names: items.map((i) => i.name),
     total,
     // Capped means the server stopped counting — more names always exist
     // beyond the floor, even if `total` happens to equal the shown count.
@@ -384,7 +379,7 @@ export function candidateMatch(
   return {
     ...candidateRef(node),
     coverage: {
-      kind, items: [], names: [], total: probe.total,
+      kind, items: [], total: probe.total,
       truncated: probe.total > 0, capped: probe.capped,
     },
   };
@@ -402,141 +397,139 @@ export function metricListMatch(
   complete: boolean,
   filter: string,
 ): CoverageMatch {
-  const items: CoverageItem[] = list.map((n) => ({ name: n.name, node_id: n.id }));
+  const hits: CoverageItem[] = list.map((n) => ({ name: n.name, node_id: n.id }));
+  const items = hits.slice(0, COVERAGE_ITEMS_SHOWN);
   return {
     ...candidateRef(node),
     filter,
     coverage: {
-      kind: "metrics", items, names: items.map((i) => i.name),
-      total: items.length, truncated: !complete, capped: !complete,
+      kind: "metrics", items,
+      total: hits.length,
+      truncated: !complete || items.length < hits.length,
+      capped: !complete,
     },
   };
 }
 
-// Counts only — the names themselves are rendered once, under each match in
-// the markdown text channel, so listing them here again would double their
-// token cost. Capped totals render as "N+" (the total is a floor).
-function countStr(g: CoverageGroup): string {
-  return `${g.total}${g.capped ? "+" : ""}`;
-}
-
-/** "(Companies, ORG)" — subtype then label, whichever the node has. Empty when it has neither. */
-function kindTag(c: { subtype?: string | null; label?: string | null }): string {
-  const parts = [c.subtype, c.label].filter((p): p is string => typeof p === "string" && p !== "");
-  return parts.length > 0 ? ` (${parts.map(oneLine).join(", ")})` : "";
-}
-
-function aliasTag(aliases: readonly string[]): string {
-  return aliases.length > 0 ? ` — aliases: ${aliases.map(oneLine).join(", ")}` : "";
-}
-
-function coverageClause(g: CoverageGroup): string {
-  if (g.kind === "entities") {
-    return `tracked for ${countStr(g)} ${plural(g.total, "entity", "entities")}`;
-  }
-  return `${countStr(g)} ${plural(g.total, "metric", "metrics")}`;
-}
-
-// A zero-coverage line is now unambiguous: the drill covers the whole
-// coverage, so "none" is a genuine gap the agent can act on and report.
-function emptyClause(kind: CoverageKind): string {
-  return kind === "entities"
-    ? "resolved, but Tako isn't tracking it against any entities yet"
-    : "resolved, but Tako holds no metrics for it yet";
-}
+// ---------------------------------------------------------------------------
+// Guidance (spec D3: "guidance lives in the result, once")
+//
+// This replaces `summary`, a 383-1,469-char prose blob that did three jobs at
+// once: it re-listed the fields in sentences, it taught static lessons, and it
+// gave a verdict. Each job moved to where it belongs — the fields render
+// themselves (`renderAvailableDataMarkdown`), the static lessons live in the
+// tool description, and what is left is this: TWO SENTENCES per branch, the
+// verdict plus the one next action. A branch that cannot survive at two
+// sentences does not get one. The happy path gets none — nothing there is a
+// verdict, and `summary` spent 1,282 chars on Nvidia saying what `matches`,
+// `candidates` and `coverage` already said.
+// ---------------------------------------------------------------------------
 
 /**
- * `showId` places the node id where the receipt lines put it — after the
- * coverage clause, before the aliases. Off by default so the rendered matches
- * keep printing theirs in the renderer's per-match block; the tie summary
- * turns it on, because that block skips a match with empty `names`.
- */
-function matchLine(m: CoverageMatch, showId = false): string {
-  const head = `**${oneLine(m.name)}**${kindTag(m)}`;
-  const id = showId ? ` (\`${oneLine(m.node_id)}\`)` : "";
-  const tail = `${id}${aliasTag(m.aliases)}`;
-  if (m.unavailable) {
-    return `${head} — resolved, but Tako couldn't load its coverage right now (temporary); retry.${tail}`;
-  }
-  if (m.coverage.total === 0) return `${head} — ${emptyClause(m.coverage.kind)}.${tail}`;
-  return `${head} — ${coverageClause(m.coverage)}.${tail}`;
-}
-
-/**
- * The receipt blocks for candidates the tool resolved but did not render in
- * full. SHARED, because a summary that omits them strands the ids: the tie
- * summary rendered no candidate lines and no node ids at all, so the model was
- * told to "re-run with types" with nothing to re-run against, while
- * `structuredContent.candidates` carried every id.
- */
-function candidateBlocks(otherMatches: readonly OtherMatch[]): string[] {
-  const blocks: string[] = [];
-  // Candidates we probed get a one-line receipt carrying their node id and
-  // coverage count — enough to switch to one without re-running this tool, and
-  // ~110 chars instead of the ~8.3k a second full coverage list costs.
-  const probed = otherMatches.filter((o) => o.coverage_total !== undefined);
-  if (probed.length > 0) {
-    const lines = probed.map((o) => {
-      const count = o.coverage_total ?? 0;
-      // The noun follows the node's OWN coverage direction — a metric node's
-      // coverage is the ENTITIES tracking it, not metrics. Hardcoding "metrics"
-      // mislabelled every metric-node receipt (`Inflation Rate — 63+ metrics`),
-      // which reads as a nonsense claim about the graph's shape.
-      const kind = coverageKindFor(o.type);
-      const noun =
-        kind === "metrics" ? plural(count, "metric", "metrics") : plural(count, "entity", "entities");
-      // "+" means "the server stopped counting, this is a floor" — the same
-      // meaning it carries in `countStr` for a rendered match. It used to print
-      // on every non-zero total, which claimed a floor for counts the server
-      // reported exactly (`Inflation Rate — 63+ entities` for exactly 63).
-      const floor = o.coverage_capped === true ? "+" : "";
-      return `- ${oneLine(o.name)}${kindTag(o)} — ${count}${floor} ${noun} (\`${oneLine(o.node_id)}\`)${aliasTag(o.aliases)}`;
-    });
-    blocks.push(
-      "",
-      `Also resolved (not listed in full — re-run with the one you want, or pass its node_id to tako_graph_related):\n${lines.join("\n")}`,
-    );
-  }
-  // Never inspected. Every one is listed — with its id, kind, and aliases — so
-  // the model can switch to one or explore it without a second resolve call.
-  // Flattened, like every other slot that echoes an upstream name.
-  const unprobed = otherMatches.filter((o) => o.coverage_total === undefined);
-  if (unprobed.length > 0) {
-    const lines = unprobed.map(
-      (o) => `- ${oneLine(o.name)}${kindTag(o)} (\`${oneLine(o.node_id)}\`)${aliasTag(o.aliases)}`,
-    );
-    blocks.push("", `Also matched (not coverage-checked):\n${lines.join("\n")}`);
-  }
-  return blocks;
-}
-
-/**
- * The prose for a query that names both kinds. The model, not the tool,
- * breaks the tie — it has the user's intent. No pin advice here: the caller
- * re-runs this tool, and the re-run carries whatever handle shape is current.
+ * The search tool THIS connection can actually call.
  *
- * The two tie lines carry their node ids INLINE. `candidateMatch` gives them
- * empty `names`, so the renderer's per-match block — the slot that normally
- * prints the id — skips them, and the tie answer shipped with no handle for
- * either node the model is being asked to choose between.
+ * `?tools=` is an allowlist that REPLACES the defaults (spec D1), so
+ * `?tools=available_data,search_advanced` registers no `tako_search` — and
+ * every handle and every guidance sentence that hardcoded the name shipped a
+ * dead end there, resolving to the SDK's bare "tool not found".
+ * `phantom_tool.test.ts` cannot catch it: it walks descriptions and schemas,
+ * not values built at runtime.
+ *
+ * `undefined` means a non-HTTP caller (tests, scripts) with no surface to
+ * resolve against; the defaults carry `tako_search`, so that is the answer.
+ * `null` means this connection registered no search tool at all — callers must
+ * then omit the handle rather than invent one.
  */
-export function buildTieSummary(input: {
-  query: string;
-  entity: CoverageMatch;
-  metric: CoverageMatch;
-  otherMatches?: readonly OtherMatch[];
-}): string {
-  const q = oneLine(input.query);
-  return [
-    `"${q}" names both an ENTITY and a METRIC with live data, and only you know which one you meant:`,
-    "",
-    matchLine(input.entity, true),
-    "",
-    matchLine(input.metric, true),
-    ...candidateBlocks(input.otherMatches ?? []),
-    "",
-    `Re-run with types:"entity" for the entity's metric list, or types:"metric" for the entities the metric is tracked across. If you want one measure on the entity, re-run with \`metric\` set to it instead.`,
-  ].join("\n");
+export function searchToolFor(
+  registered: ReadonlySet<string> | undefined,
+): "tako_search" | "tako_search_advanced" | null {
+  if (registered === undefined) return "tako_search";
+  if (registered.has("tako_search")) return "tako_search";
+  if (registered.has("tako_search_advanced")) return "tako_search_advanced";
+  return null;
+}
+
+/** "Search the web with `tako_search`" — or, with no search tool registered, no pointer at all. */
+function webFallback(searchTool: string | null): string {
+  return searchTool === null
+    ? "Re-run with the exact entity or metric name."
+    : `Search the web with \`${searchTool}\`, or re-run with the exact entity or metric name.`;
+}
+
+/** Nothing in the graph resolved the query at all. */
+export function guidanceNoMatch(query: string, searchTool: string | null): string {
+  return `Nothing in Tako's graph resolves "${oneLine(query)}". ${webFallback(searchTool)}`;
+}
+
+/**
+ * Names resolved but the gate rejected them all. The candidates still ship —
+ * a model may recognize one — so the verdict has to say what they are, or a
+ * near-spelling reads as an answer.
+ */
+export function guidanceLowConfidence(query: string, searchTool: string | null): string {
+  return `Nothing in the graph confidently matches "${oneLine(
+    query,
+  )}"; the candidates below are near-spellings, not answers. ${webFallback(searchTool)}`;
+}
+
+/** The query names an entity AND a metric. Only the caller knows which. */
+export function guidanceTie(query: string, entityName: string, metricName: string): string {
+  return `"${oneLine(query)}" names both an entity (${oneLine(entityName)}) and a metric (${oneLine(
+    metricName,
+  )}), and only you know which. Re-run with \`types\` set to the one you meant, or with \`metric\` set to get one measure on the entity.`;
+}
+
+/** The pair resolved but the graph holds no edge between the halves. */
+export function guidanceUnlinked(
+  entityName: string,
+  metricName: string,
+  searchTool: string | null,
+): string {
+  const action =
+    searchTool === null
+      ? "Report the pair as unconfirmed rather than rephrasing."
+      : "Run `next_call` anyway to be sure, and say Tako has no card for the pair if it comes back empty.";
+  return `${oneLine(metricName)} is not on ${oneLine(
+    entityName,
+  )}'s own metric list, so a card for this pair is unlikely. ${action}`;
+}
+
+/** The entity half did not resolve, so there is nothing to look a metric up on. */
+export function guidanceEntityUnresolved(entityQuery: string, searchTool: string | null): string {
+  return `"${oneLine(entityQuery)}" does not resolve to a graph node, so no pair could be looked up. ${
+    searchTool === null
+      ? "Re-run with the entity's exact name."
+      : `Search the web with \`${searchTool}\`, or re-run with the entity's exact name.`
+  }`;
+}
+
+/** The metric phrase resolved nowhere, so the entity's whole list is the answer. */
+export function guidanceMetricUnresolved(entityName: string, metricQuery: string): string {
+  return `No metric matches "${oneLine(metricQuery)}", so this is everything ${oneLine(
+    entityName,
+  )} tracks instead. Pick a canonical name from the list and search on it exactly.`;
+}
+
+/** Drilled, and the node genuinely holds nothing. */
+export function guidanceNoCoverage(name: string, kind: CoverageKind, searchTool: string | null): string {
+  const what = kind === "entities" ? "is not tracked against any entity yet" : "has no metrics yet";
+  return `${oneLine(name)} resolved, but it ${what}. ${
+    searchTool === null ? "Say Tako holds no data for it rather than rephrasing." : `Search the web with \`${searchTool}\` rather than rephrasing.`
+  }`;
+}
+
+/** The coverage lookup failed. Transient, and the caller can retry. */
+export function guidanceUnavailable(name: string): string {
+  return `${oneLine(name)} resolved, but Tako couldn't load its coverage. Retry once; this is transient, not a gap in the data.`;
+}
+
+/** The arguments look swapped, so nothing was looked up. */
+export function guidanceSwapped(q: string, metricQuery: string): string {
+  return `The arguments look swapped: "${oneLine(q)}" resolves to a metric and "${oneLine(
+    metricQuery,
+  )}" to an entity, so nothing was looked up. Re-run the other way round: q="${oneLine(
+    metricQuery,
+  )}", metric="${oneLine(q)}".`;
 }
 
 /**
@@ -559,15 +552,15 @@ export function buildTieSummary(input: {
  */
 export interface NextCall {
   /**
-   * Always `tako_search`. Kept as a field (not dropped) because it rides in
-   * the advertised `structuredContent.next_call`, but narrowed to a single
-   * literal so the compiler refuses a handle naming a tool the default
-   * surface does not register — `tako_search_advanced` is opt-in, and
-   * a handle labelled "run verbatim" that names it is a dead end.
+   * The search tool THIS connection registers — see `searchToolFor`. Not a
+   * constant: `?tools=available_data,search_advanced` registers no
+   * `tako_search`, and the hardcoded name this used to carry made every
+   * handle on such a connection resolve to "tool not found".
    */
-  tool: "tako_search";
+  tool: "tako_search" | "tako_search_advanced";
   /**
-   * The EXACT canonical name of each half, which is what recovers cards.
+   * The EXACT canonical name of each half. `tako_search` matches the graph's
+   * own names, so the caller's phrasing is the thing that misses.
    *
    * No pin rides along. `tako_search` takes no `node_ids` / `strict` after the
    * D4 split, so a handle carrying them would be rejected by the very tool it
@@ -580,7 +573,7 @@ export interface NextCall {
 }
 
 // A coverage list at or under this size is treated as unambiguous enough for
-// a ready-to-run handle: with 3 names the top one is a meaningful pick; with
+// a ready-to-run handle: with 3 entries the top one is a meaningful pick; with
 // a broad entity's dozens, names[0] is just backend popularity order and a
 // handle would invite an off-target PRICED search.
 export const NEXT_CALL_MAX_NAMES = 3;
@@ -588,7 +581,7 @@ export const NEXT_CALL_MAX_NAMES = 3;
 // The example query + node id the summary and next_call share: first match
 // with real coverage, entity match → "Tesla, Inc. Revenue", metric match →
 // "United States Inflation Rate".
-function exampleSearch(matches: CoverageMatch[]): NextCall | null {
+function exampleSearch(matches: CoverageMatch[], tool: NextCall["tool"]): NextCall | null {
   const m = matches.find((x) => !x.unavailable && x.coverage.items.length > 0);
   if (!m) return null;
   const first = m.coverage.items[0] as CoverageItem;
@@ -599,7 +592,7 @@ function exampleSearch(matches: CoverageMatch[]): NextCall | null {
   if (entityMatch) {
     // Both halves come from the SAME match — the entity and one of its own
     // metrics — so the pairing is real.
-    return { tool: "tako_search", query: `${m.name} ${first.name}` };
+    return { tool, query: `${m.name} ${first.name}` };
   }
   // METRIC match: the caller named the measure. Do NOT pair it with
   // coverage.items[0] — a metric's entity list is frequently generic rather
@@ -607,7 +600,7 @@ function exampleSearch(matches: CoverageMatch[]): NextCall | null {
   // Amazon and Microsoft), which produced "NVIDIA Corporation Passenger Cruise
   // Days" as something to run verbatim. Query the metric alone; the caller can
   // add an entity themselves.
-  return { tool: "tako_search", query: m.name };
+  return { tool, query: m.name };
 }
 
 /**
@@ -619,8 +612,12 @@ function exampleSearch(matches: CoverageMatch[]): NextCall | null {
  * null when no match has coverage (a handle for a name just reported as
  * data-less would steer the agent into a search that misses).
  */
-export function buildNextCall(matches: CoverageMatch[]): NextCall | null {
-  const m = matches.find((x) => !x.unavailable && x.coverage.names.length > 0);
+export function buildNextCall(
+  matches: CoverageMatch[],
+  tool: NextCall["tool"] | null,
+): NextCall | null {
+  if (tool === null) return null;
+  const m = matches.find((x) => !x.unavailable && x.coverage.items.length > 0);
   if (!m) return null;
   // A METRIC match means the caller NAMED the measure (`q="Inflation Rate"`).
   // We know exactly what to pin, so the handle is meaningful however many
@@ -634,8 +631,8 @@ export function buildNextCall(matches: CoverageMatch[]): NextCall | null {
   // entry is the obvious pick. To get a handle for a named measure on an
   // entity, pass the `metric` argument — that is the path built for it.
   const namedTheMetric = m.coverage.kind === "entities";
-  if (!namedTheMetric && m.coverage.names.length > NEXT_CALL_MAX_NAMES) return null;
-  return exampleSearch(matches);
+  if (!namedTheMetric && m.coverage.items.length > NEXT_CALL_MAX_NAMES) return null;
+  return exampleSearch(matches, tool);
 }
 
 // ---------------------------------------------------------------------------
@@ -675,30 +672,25 @@ export const toRef = (n: { id: string; name: string; type: string }): ResolvedRe
 });
 
 /**
- * The runnable handle for a resolved pair: `tako_search` with the METRIC node
- * pinned and `strict: true`, the entity named in the query text.
+ * The runnable handle for a resolved pair: the connection's search tool, with
+ * both halves named by their canonical graph names. No pin — see the
+ * measurement on `NextCall.query`.
  *
- * `tako_search`, NOT the answer path: synthesis lives on the opt-in
- * `tako_search_advanced`, registered on neither default surface (and before the
- * answer fold it was `tako_answer`, equally off them). This handle reaches the
- * model as
- * "next_call (run verbatim)", so a name that is not on the surface resolves to
- * the SDK's bare "tool not found" — the discovery path's handle already names
- * tako_search, and the two now agree.
- *
- * `tako_search` is itself off-surface on one connection shape, and that is
- * ACCEPTED, not overlooked: `?tools=` is an allowlist that REPLACES the
- * defaults (spec D1), so a hand-written `?tools=available_data` lists this
- * tool without its own follow-up target. Both default listings carry both
- * tools, so no connection reaches that state without a caller narrowing it
- * deliberately against the warning in `docs/TOOLS.md`. See the accepted-
- * consequence note in `phantom_tool.test.ts`. Do not "fix" it by naming a
- * different tool here — every alternative is opt-in and strictly worse.
+ * The tool NAME is resolved per connection (`searchToolFor`), not hardcoded.
+ * `?tools=` is an allowlist that REPLACES the defaults (spec D1), so
+ * `?tools=available_data` registers this tool with no follow-up target at all
+ * and `?tools=available_data,search_advanced` registers a different one. A
+ * connection with neither gets `null` — no handle beats a handle that names a
+ * tool the caller cannot call.
  *
  * Null when no metric resolved: a handle pointing at a metric we could not
  * find would spend a priced call on a guess.
  */
-export function buildPairNextCall(pair: PairResolution): NextCall | null {
+export function buildPairNextCall(
+  pair: PairResolution,
+  tool: NextCall["tool"] | null,
+): NextCall | null {
+  if (tool === null) return null;
   // No entity → the summary is routing the caller elsewhere (a bare-domain
   // tako_search); a handle here would contradict it.
   if (pair.metric === null || pair.entity === null) return null;
@@ -709,7 +701,7 @@ export function buildPairNextCall(pair: PairResolution): NextCall | null {
   // The metric half used to be the caller's phrase, because the pinned node
   // carried the precision. With tako_search taking no pin, the canonical name
   // is the ONLY steering signal left — and it is the arm the measurement
-  // favours: the canonical name recovered cards on 9 of 15 pairs, while a pin
+  // favors: the canonical name recovered cards on 9 of 15 pairs, while a pin
   // returned FEWER cards than the same query unpinned on 11 of 20 (staging
   // 2026-07-31, 20 handles × 3 repeats, KE-812) because the graph holds
   // near-duplicate metric nodes where only one twin carries cards.
@@ -717,222 +709,121 @@ export function buildPairNextCall(pair: PairResolution): NextCall | null {
   // That measurement is also why there is no longer an `unpinned` variant for
   // the `unlinked` verdict: with no pin on any path, both arms collapsed into
   // this one.
-  return { tool: "tako_search", query: `${pair.entity.name} ${pair.metric.name}` };
-}
-
-/**
- * The lookup path's prose: what was asked, what each half resolved to, and
- * what a zero-card follow-up means. Node ids are NOT repeated here — the
- * renderer prints them beside each name once.
- */
-export function buildPairSummary(input: {
-  entityQuery: string;
-  metricQuery: string;
-  pair: PairResolution;
-  domainShaped: boolean;
-  metricConfident?: boolean;
-  /** What the pair-confirmation probe found; undefined when it never ran. */
-  verified?: "pair" | "unlinked" | "resolution" | undefined;
-  /** Names of the entity's own metrics that matched the filter (context on `unlinked`). */
-  entityMetricMatches?: string[];
-  /**
-   * The entity's own metrics containing the caller's phrase — the browse list
-   * (fix 3). Rendered under the match; named here only by its count, because
-   * repeating the names would double their token cost.
-   */
-  metricList?: string[];
-  /**
-   * The filtered page was cut off, so the count is a FLOOR. Measured on
-   * staging: `q="Lockheed Martin", metric="backlog"` fills the 100-item page
-   * and returns a cursor, and the prose said "100 of ... contain" while the
-   * rendered list header said "100+" — the two channels disagreed about the
-   * same number.
-   */
-  metricListCapped?: boolean;
-}): string {
-  const {
-    pair, domainShaped, metricConfident = true, verified, entityMetricMatches = [],
-  } = input;
-  const entityQuery = oneLine(input.entityQuery);
-  const metricQuery = oneLine(input.metricQuery);
-  const list = input.metricList ?? [];
-  const entityName = pair.entity === null ? "" : oneLine(pair.entity.name);
-  // A list of ONE adds nothing to a confirmed pair — the pinned name already
-  // says it. `min` is what each branch considers worth pointing at.
-  const listCount = `${list.length}${input.metricListCapped === true ? "+" : ""}`;
-  const listClause = (min: number): string =>
-    list.length >= min
-      ? ` ${listCount} of ${entityName}'s own metrics contain "${metricQuery}" and are listed below with their node ids.`
-      : "";
-  if (pair.entity === null) {
-    // A domain that resolves to nothing is a routing answer, not a dead end:
-    // measured, `openai.com` and `kagi.com` have no graph node at all while
-    // SimilarWeb still covers them, so the recovery is a direct search.
-    return domainShaped
-      ? `No graph node matches "${entityQuery}". Domains are often not graph nodes even when Tako has their traffic data — call tako_search directly with the bare domain (e.g. "${entityQuery} monthly visits") instead of looking it up here.`
-      : `No graph node matches "${entityQuery}". Tako may still have relevant public/web data — try tako_search directly, or rephrase the name.`;
-  }
-  if (pair.metric === null) {
-    // The verbatim filter's hits ARE the answer when nothing resolved
-    // globally: the caller asked what the entity has near this phrase, and
-    // this list is exactly that, with ids.
-    if (list.length > 0) {
-      return `No metric named like "${metricQuery}" resolved globally, but${listClause(1)} Re-run with \`metric\` set to the exact name you want to get a runnable next_call.`;
-    }
-    // `oneLine` on the resolved name for the same reason as the queries above:
-    // it is upstream content in a single-line slot, and a newline inside it
-    // renders a line indistinguishable from this tool's own match lines.
-    return `Resolved the entity but no metric matching "${metricQuery}". The metrics Tako actually holds for ${oneLine(pair.entity.name)} are listed below — pick one and re-run with it.`;
-  }
-  if (!metricConfident) {
-    // No handle is emitted on this path, so the entity's OWN nearest metrics
-    // are the whole payload — they are what the caller picks from. Keyed on
-    // HAVING them rather than on the verdict: this branch runs with
-    // `verified: "resolution"` (nothing about a pin was established, because
-    // there is no pin), and an earlier version gated the text on
-    // `verified === "unlinked"`, which fetched these names, sliced them, and
-    // then dropped every one.
-    //
-    // Deliberately NOT phrased as a gap. The filter that produced them is a
-    // recall-oriented substring match on one token, so it establishes what the
-    // entity HAS near this phrase — never that it lacks the measure.
-    // The browse list is stronger evidence than the near-miss names: it is the
-    // entity's own metrics containing what the caller typed, so it replaces
-    // the "probably NOT what you asked for" wording rather than joining it.
-    if (list.length > 0) {
-      return `Resolved the entity, but no single metric confidently matches "${metricQuery}", so nothing is pinned.${listClause(1)} Re-run with \`metric\` set to the exact name you want to get a runnable next_call.`;
-    }
-    const near =
-      entityMetricMatches.length > 0
-        ? ` The metrics ${oneLine(pair.entity.name)} itself holds nearest to "${metricQuery}": ${entityMetricMatches.map(oneLine).join(", ")}.`
-        : "";
-    return `Resolved the entity, but NO metric confidently matches "${metricQuery}" — the closest names Tako holds are shown below and are probably NOT what you asked for.${near} Pick one deliberately and search on its exact name, or conclude Tako does not track this measure.`;
-  }
-  if (verified === "unlinked") {
-    // The failure this whole probe exists to catch: the NAME fits perfectly and
-    // the entity does not hold it. Measured on staging — Lockheed Martin /
-    // backlog, Shopify / gross merchandise volume and UnitedHealth Group /
-    // change in unearned revenues all resolve cleanly here and return 0 cards.
-    const near =
-      entityMetricMatches.length > 0
-        ? ` The nearest metrics ${oneLine(pair.entity.name)} DOES have: ${entityMetricMatches.map(oneLine).join(", ")}.`
-        : "";
-    return `Resolved "${entityQuery}" + "${metricQuery}", but ${oneLine(pair.metric.name)} is NOT on ${oneLine(pair.entity.name)}'s own metric list — the name fits, the graph holds no edge, so a card for this pair is unlikely.${near}${listClause(1)} Run the next_call below anyway — it is the only free way to be sure. If it is empty, stop there: report the gap rather than rephrasing further.`;
-  }
-  if (verified === "pair") {
-    return `Resolved "${entityQuery}" + "${metricQuery}", and ${oneLine(pair.metric.name)} IS on ${oneLine(pair.entity.name)}'s own metric list — the strongest free confirmation available, though it still does not guarantee a chart exists.${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, stop there: report the gap rather than rephrasing further.`;
-  }
-  // The zero-card advice used to read "Tako has no card for this pair — that is
-  // the definitive answer, do not rephrase and retry". Measured on staging
-  // 2026-07-31 with matched arms — same tool, same query text, 20 handles, 3
-  // repeats each, the only variable being whether the resolved node is pinned —
-  // that is false: 11 of 20 retrieve FEWER cards pinned than unpinned, because
-  // `strict` is a hard filter and the graph holds near-duplicate metric nodes
-  // where only one twin carries cards (KE-812). Dropping the pin recovers the
-  // REAL metric, verified by card title, not a lookalike:
-  //
-  //   "Carnival Corporation passenger cruise days"  pinned [0,0,0]  unpinned [3,3,3]
-  //     -> Passenger Cruise Days 2 (Annual), Passenger cruise days (PCD) (Quarterly)
-  //   "Apple Inc. P/E ratio"       pinned [0,0,0]  unpinned [3,3,3]  -> P/E Annual, 32.55x
-  //   "United States CPI"          pinned [0,0,0]  unpinned [3,3,3]  -> 98.7% of GDP
-  //
-  // That measurement retired the "definitive" wording; the D4 split then retired
-  // the retry that replaced it. No path pins any more, so "the same query without
-  // the pin" IS the next_call, and prescribing it a second time buys a
-  // byte-identical priced search.
-  //
-  // The ADVICE is terminal — one call, then stop. The CLAIM is not, and keeping
-  // those apart is the whole point of the current wording. "There was never a pin
-  // to blame" removes the old mechanism for a false zero; it does not turn one
-  // fuzzy retrieval into proof of absence, and the same measurement put the
-  // canonical name at 9 of 15 pairs, not 15. A conclusive-negative phrasing has
-  // now been removed here three times — e8d5a15 ("stop calling a zero-card pin
-  // definitive"), c287554 ("absence must be established, not assumed"), and this
-  // one, which reinstated it on the new ground above. So: say "report the gap",
-  // never "Tako holds no chart for this pair". Keep the table below: it is the
-  // only record of why `strict` left the simple tool, and the bound it set still
-  // holds — one call, no rephrase-and-vary loop, which is the thrash the old
-  // wording existed to stop (after a zero-card answer agents called tako_contents
-  // 56 times).
-  //
-  // The run itself was driven by hand against staging and is NOT checked in, so
-  // the per-handle table above is the record — treat it as the citation, not as a
-  // pointer to a script. Root cause (the near-duplicate metric nodes) is KE-812.
-  return `Resolved "${entityQuery}" + "${metricQuery}".${listClause(2)} Run the next_call below verbatim. If it returns 0 cards, stop there: report the gap rather than rephrasing further.`;
+  return { tool, query: `${pair.entity.name} ${pair.metric.name}` };
 }
 
 /** A `q` that looks like a hostname (has a dot, no spaces). */
 export const isDomainShaped = (q: string): boolean => /^[^\s]+\.[a-z]{2,}$/i.test(q.trim());
 
+// ---------------------------------------------------------------------------
+// The model-facing projection (spec D3/D4: the advertised shape IS the
+// projection, so an unknown key cannot leak and the schema can be typed field
+// by field). Everything above this line is the tool's internal vocabulary.
+// ---------------------------------------------------------------------------
+
+/** A resolved node, reduced to a name to search on and a handle to explore. */
+export interface ProjectedRef {
+  id: string;
+  name: string;
+}
+
+/** A node the tool resolved but did not drill: `coverage` only when probed. */
+export interface ProjectedCandidate extends ProjectedRef {
+  type: string;
+  kind?: string;
+  coverage?: ProjectedCoverage;
+  // Index signature, like every projected shape in this tree: the advertised
+  // element schemas are `looseObject`, so the inferred type carries one and a
+  // plain interface is not assignable to it.
+  [key: string]: unknown;
+}
+
+export interface ProjectedCoverage {
+  total: number;
+  total_capped: boolean;
+  truncated?: boolean;
+  /** `id`, not `node_id` — one name for one thing across all three tools. */
+  items?: Array<{ name: string; id: string }>;
+  [key: string]: unknown;
+}
+
+/** A node the tool drilled, with the list it holds. */
+export interface ProjectedMatch extends ProjectedCandidate {
+  aliases?: string[];
+  unavailable?: boolean;
+  filter?: string;
+  coverage: ProjectedCoverage;
+}
+
+export interface AvailableDataOutput {
+  found: boolean;
+  verified?: "coverage" | "pair" | "unlinked" | "resolution";
+  guidance?: string;
+  matches: ProjectedMatch[];
+  candidates: ProjectedCandidate[];
+  next_call: NextCall | null;
+  entity?: ProjectedRef | null;
+  metric?: ProjectedRef | null;
+  entity_candidates?: ProjectedRef[];
+  metric_candidates?: ProjectedRef[];
+  [key: string]: unknown;
+}
+
+export const projectRef = (r: ResolvedRef): ProjectedRef => ({ id: r.node_id, name: r.name });
+
 /**
- * The natural-language coverage summary — the narrative shell of
- * `tako_available_data`'s output: header, per-match counts, gap/unavailable
- * phrasing, and the next-step instruction. The coverage names themselves are
- * NOT repeated here — the markdown renderer lists them once, under each
- * match. Node ids never appear in this prose; they ride in
- * `structuredContent.matches[].coverage.items[]`.
+ * `subtype ?? label`, the same rule `_graph.ts` applies — one name for one
+ * thing across both graph tools. Kept as its own copy rather than imported to
+ * avoid a module cycle (`_graph` ← `tako_available_data` → `_available_data`);
+ * `kind_definition_unit_test` pins the two against each other.
  */
-export function buildSummary(input: {
-  query: string;
-  matches: CoverageMatch[];
-  otherMatches: OtherMatch[];
-  /** False when the relevance gate found nothing plausible and failed open. */
-  confident?: boolean;
-}): string {
-  const { matches, otherMatches, confident = true } = input;
-  const query = oneLine(input.query);
+function kindOf(c: { type: string; subtype: string | null; label: string | null }): string | undefined {
+  if (c.subtype !== null && c.subtype !== "") return c.subtype;
+  if (c.label === null || c.label === "") return undefined;
+  // A label that only restates `type` is noise: every subtype-less metric
+  // carries `label: "METRIC"`, which rendered as "metric · METRIC".
+  return c.label.toLowerCase() === c.type.toLowerCase() ? undefined : c.label;
+}
 
-  if (matches.length === 0) {
-    return `Tako has no data-graph node matching "${query}". Tako may still have relevant public/web data — try tako_search directly, or rephrase the entity or metric name.`;
+/**
+ * A candidate: enough to recognize it, search it, and explore it.
+ *
+ * `aliases` are DROPPED here and kept only on `matches`. They used to render
+ * in the text channel and not in the structured one, so the two channels
+ * disagreed about the same node; a candidate a caller acts on is re-resolved
+ * anyway, and on `q="Nvidia"` this is ~300 chars of a 1,250-char block.
+ */
+export function projectCandidate(c: OtherMatch): ProjectedCandidate {
+  const out: ProjectedCandidate = { id: c.node_id, name: c.name, type: c.type };
+  const kind = kindOf(c);
+  if (kind !== undefined) out.kind = kind;
+  if (c.coverage_total !== undefined) {
+    out.coverage = { total: c.coverage_total, total_capped: c.coverage_capped ?? false };
   }
+  return out;
+}
 
-  const n = matches.length;
-  // The header only claims coverage for matches that actually have some — a
-  // resolved node with no coverage (or a failed drill) must not be advertised
-  // as data, per the tool's contract ("a match with no coverage is a real
-  // answer — report the gap"). "Tako's proprietary data" is the grammatical
-  // subject on purpose: downstream models echo this header nearly verbatim to
-  // the user, and this framing keeps them from attributing the answer to a
-  // generic "dataset".
-  // Fail-open means NOTHING plausibly matched and we drilled the top hits
-  // anyway. Saying "Tako has live coverage of X" there is how
-  // `q="the vibes of tuesday"` came to report 250+ metrics on Tuesday Morning
-  // Corporation. Name what actually resolved and let the caller judge.
-  if (!confident) {
-    const names = matches.map((m) => `**${oneLine(m.name)}**${kindTag(m)}`).join(", ");
-    return `No graph node confidently matches "${query}". The closest resolutions are ${names} — almost certainly NOT what you asked for. Rephrase with the exact entity or metric name, or use tako_search directly.`;
+/**
+ * A drilled match. `coverage.kind` is NOT carried: it is
+ * `type === "metric" ? "entities" : "metrics"` — `coverageKindFor` exactly —
+ * so `type` already says it, and the word `kind` is spent on the node's own
+ * class instead.
+ */
+export function projectMatch(m: CoverageMatch): ProjectedMatch {
+  const out: ProjectedMatch = {
+    id: m.node_id,
+    name: m.name,
+    type: m.type,
+    coverage: { total: m.coverage.total, total_capped: m.coverage.capped },
+  };
+  const kind = kindOf(m);
+  if (kind !== undefined) out.kind = kind;
+  if (m.aliases.length > 0) out.aliases = m.aliases;
+  if (m.unavailable === true) out.unavailable = true;
+  if (m.filter !== undefined) out.filter = m.filter;
+  if (m.coverage.items.length > 0) {
+    out.coverage.items = m.coverage.items.map((i) => ({ name: i.name, id: i.node_id }));
   }
-  const withData = matches.filter(hasLiveCoverage).length;
-  const matchesOf = `${n} ${plural(n, "match", "matches")} for "${query}"`;
-  const covers = "Tako's proprietary data has live, continuously-updated coverage of";
-  let header: string;
-  if (withData === 0) {
-    header = `Resolved ${matchesOf}, but none with live data coverage:`;
-  } else if (withData < n) {
-    header = `${covers} ${withData} of ${matchesOf}:`;
-  } else {
-    header = `${covers} ${matchesOf}:`;
-  }
-  const lines = matches.map((m) => matchLine(m));
-
-  const blocks: string[] = [header, "", lines.join("\n\n"), ...candidateBlocks(otherMatches)];
-
-  // Mirror the tool's next_call gate: advertise the ready-made handle only
-  // when one is actually emitted; otherwise steer to composing a precise
-  // entity + metric query (still showing a concrete example).
-  const handle = buildNextCall(matches);
-  const example = exampleSearch(matches);
-  if (handle) {
-    blocks.push(
-      "",
-      `The exact names are listed under each match above, and their node ids ride in structuredContent.matches[].coverage.items[]. To pull one as a chart or dataset, run the ready-made \`next_call\` verbatim — tako_search with query "${handle.query}" — or compose your own entity + metric query the same way.`,
-    );
-  } else if (example) {
-    blocks.push(
-      "",
-      `The exact names are listed under each match above. Pick the one you actually need and pull it with tako_search as entity + metric (e.g. "${example.query}"). Search on its EXACT name as listed — the canonical name is what recovers cards.`,
-    );
-  }
-
-  return blocks.join("\n");
+  if (m.coverage.truncated) out.coverage.truncated = true;
+  return out;
 }
