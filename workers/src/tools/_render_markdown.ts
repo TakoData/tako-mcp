@@ -19,7 +19,10 @@
  * Code — feed it `structuredContent` ONLY. Either channel alone is therefore a
  * wrong answer on some host. The projection is what makes shipping both
  * affordable (~31.9k chars -> ~13k per channel on search), and the per-tool
- * "channel parity" tests assert every projected leaf reaches the text.
+ * "channel parity" tests assert every projected STRING and NUMBER leaf
+ * reaches the text. Booleans they cannot see — a boolean renders as a WORD
+ * ("exportable", "TRUNCATED"), never as its literal — so each has its own
+ * assertion instead.
  *
  * So NO TOOL declares a `slimStructured` hook any more: every handler's output
  * IS the advertised shape, and `pickDeclared` in `mcp.ts` does the per-surface
@@ -126,23 +129,39 @@ const searchCoreFields = {
  *  the field. Keep a describe and its knob on the same tool, or the guard
  *  turns back into a gag. */
 const answerFoldFields = {
+  // THE DESCRIBE CARRIES THE FIELD NAMES, because the shape cannot.
+  // `projectRelated` emits `{query, description?, node_ids?}`
+  // (`projectedRelatedShape`), and publishing that shape is the obvious fix —
+  // it costs +160 chars of draft-07 structure against an output schema sitting
+  // EXACTLY on its shrink-only ratchet (4,888, `LEGACY_OUTPUT_SCHEMA_CEILINGS`),
+  // so generation fails. Prose cannot cover a structural cost, and the two
+  // describes that could fund it (`cards[].coverage_end`,
+  // `web_results[].snippet`) are shared with `tako_search` and earmarked for
+  // ITS fan-out PR by that ceiling's own comment.
+  //
+  // So the field names ride in prose until that pass frees the room. Do not
+  // "simplify" this back to a bare stub: `looseObject({})` still DELIVERS the
+  // fields, and without these names the model gets `{}` and has to guess that
+  // a follow-up can be pinned at all.
   related: z
     .array(z.looseObject({}))
     .optional()
     .describe(
-      "Follow-up queries; retrieval calls only, when you set include_related.",
+      "Follow-up queries, when you set include_related. Each has a `query` to send next and may have `node_ids` for `data.node_ids`.",
     ),
+  // Trimmed to fund the `related` names above, and both cuts are restatements:
+  // "Present only when you set include_answer: true" repeats what the
+  // `include_answer` parameter already promises, and `structured_output`'s
+  // two absence cases both end at `structured_output_error`.
   answer: z
     .string()
     .optional()
-    .describe(
-      "The synthesized answer, cited from the cards and web_results. Present only when you set include_answer: true.",
-    ),
+    .describe("The synthesized answer, cited from the cards and web_results."),
   structured_output: z
     .looseObject({})
     .optional()
     .describe(
-      "Your output_schema, filled from the same evidence as the answer. Absent when you sent none, or when Tako could not fill it — see structured_output_error.",
+      "Your output_schema filled from the same evidence; see structured_output_error when absent.",
     ),
   structured_output_error: z
     .looseObject({})
@@ -422,6 +441,15 @@ function renderProjectedWebResult(w: ProjectedWebResult): string {
   // this document — fenced so a page cannot forge our own section framing.
   if (typeof w.snippet === "string" && w.snippet !== "") lines.push(fenced(w.snippet));
   if (w.content !== undefined && typeof w.content.data === "string") {
+    // BEFORE the fence, and the same rule as a card's inlined rows: a reader
+    // who is handed a page cut at `article_content_max_chars` (default 30,000)
+    // and told nothing will quote it as the whole page. `truncated` rides in
+    // `structuredContent`, so omitting it here is a channel gap, not a saving —
+    // and the parity walk cannot catch it, because that walk collects string
+    // and number leaves only.
+    if (w.content.truncated === true) {
+      lines.push("- page text: TRUNCATED — this is not the whole page");
+    }
     lines.push(fenced(w.content.data));
   }
   return lines.join("\n");

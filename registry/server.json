@@ -239,11 +239,11 @@
     },
     {
       "name": "tako_search_advanced",
-      "description": "Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.\n\nEvery field is optional; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.\n\nBest for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.",
+      "description": "Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.\n\nOnly `query` is required; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.\n\nBest for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.",
       "parameters": {
         "query": {
           "type": "string",
-          "description": "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity; an unpaired quote disables quoting.",
+          "description": "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity.",
           "required": true
         },
         "effort": {
@@ -257,7 +257,7 @@
         },
         "location": {
           "type": "object",
-          "description": "Latitude and longitude to bias web results toward. Omit it and country_code applies."
+          "description": "End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code."
         },
         "country_code": {
           "type": "string",
@@ -281,19 +281,19 @@
         },
         "data": {
           "type": "object",
-          "description": "Tako data (card) source settings. Include this key, even as `{}`, to search the data graph."
+          "description": "Tako data (card) source settings; naming it selects the data graph."
         },
         "web": {
           "type": "object",
-          "description": "Web source settings. Include this key, even as `{}`, to search the web."
+          "description": "Web source settings; naming it selects the web."
         },
         "include_answer": {
           "type": "boolean",
-          "description": "Set true to synthesize one citation-backed answer from the retrieval into `answer`. Omit or false for retrieval only."
+          "description": "Set true to synthesize one citation-backed answer from the retrieval into `answer`."
         },
         "output_schema": {
           "type": "object",
-          "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`. No $ref; instant effort rejects it."
+          "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Only type, properties, required, items, enum, description and additionalProperties are allowed."
         }
       },
       "annotations": {

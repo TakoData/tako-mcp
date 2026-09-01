@@ -86,7 +86,7 @@ import type { ToolModule } from "./types.js";
 const DESCRIPTION = [
   "Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.",
   "",
-  "Every field is optional; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.",
+  "Only `query` is required; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.",
   "",
   "Best for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.",
 ].join("\n");
@@ -151,19 +151,38 @@ const DATA_DESCRIBES = {
   mode: "Delivery for inlined card data. It has no effect on Tako cards, which always inline the most recent rows up to `max_rows`; it stays for schema stability.",
   content_format: "Serialization for inlined card data: json_compact (default), json_records, csv, or card_json. All four bill the rows they return. A card with no card_json shape falls back to json_compact.",
   max_rows: "Rows to inline per card when `include_contents` is true. Omit it and each card takes your account default (20 on the standard plan). Every inlined row bills; the ceiling is 2,000 rows.",
-  node_ids: "Graph node ids to pin, as `tako_available_data` returns them. Pin the metric's node id alone and set `strict: true` to make its card come back; a bare pin only nudges the ranking. Max 20.",
-  strict: "Return only cards matching `node_ids` — a hard filter, so zero cards is evidence about the filter, not coverage. Adding the entity's id beside the metric's widens it back out.",
+  // NAMES A SOURCE THIS CONNECTION HAS. `?tools=search_advanced` registers
+  // this tool ALONE, so a describe that points only at `tako_available_data`
+  // sends that caller to a tool it cannot call — the reason
+  // `buildDataGapGuidance` gates the same name on `registeredTools`. A
+  // describe cannot branch, so it names the card's own `nodes` first, which
+  // this tool returns on every search.
+  node_ids: "Graph node ids to pin, as a card's `nodes` or `tako_available_data` return them. Pin the metric's node id alone and set `strict: true` to make its card come back; a bare pin only nudges the ranking. Max 20.",
+  // The DEFAULT is the load-bearing half, and `optionalWithoutDefaults` strips
+  // it from the published schema, so this describe is the only place a model
+  // can read what an omitted `strict` does — which the tool description
+  // promises ("an omitted field takes the server default its description
+  // names").
+  strict: "Return only cards matching `node_ids` — a hard filter, so zero cards is evidence about the filter, not coverage. Default false: the pin only ranks up, and organic results still return. Adding the entity's id beside the metric's widens it back out.",
 } satisfies Partial<Record<keyof typeof DataSourceSettings.shape, string>>;
 
 const WEB_DESCRIBES = {
   highlights: "Return query-relevant highlight passages as each result's snippet instead of the page's opening text. This tool sends true unless you set it false.",
   include_contents: "Inline each result's full page text in `content`. It is free on these endpoints; the text can be large, so pair it with `article_content_max_chars`.",
   snippet_max_chars: "Maximum characters per snippet. Omit it and the server uses 4000, or 1000 with `include_answer: true`.",
-  published_after: "Only return pages published on or after this date (YYYY-MM-DD). Omit it for no lower bound.",
+  // The undated-page rule stays: `published_before` is NOT overridden, so it
+  // keeps that sentence from the generated text. Dropping it here alone gave
+  // one symmetric pair two different meanings.
+  published_after: "Only return pages published on or after this date (YYYY-MM-DD). Pages with no known publication date are kept. Omit it for no lower bound.",
 } satisfies Partial<Record<keyof typeof WebSourceSettings.shape, string>>;
 
 const OUTPUT_SETTINGS_DESCRIBES = {
-  force_refresh: "Skip Tako's render cache when building card images. It does not change the data these endpoints return.",
+  // "Informational", not "skips the cache". The generated text is explicit that
+  // instant "always operates in build-and-refresh mode REGARDLESS of this
+  // flag", so a shorter describe promising an effect invents one — and this is
+  // the only field whose whole point is that it currently does nothing here.
+  force_refresh:
+    "Informational on these endpoints: instant effort already rebuilds missing or stale card embeds whatever you set here.",
 } satisfies Partial<Record<keyof typeof OutputSettings.shape, string>>;
 
 /**
@@ -245,7 +264,7 @@ const inputSchema = z
     // local -32602 was available. The parity test compares key NAMES, so it
     // cannot see a constraint go missing.
     query: SearchRequest.shape.query.describe(
-      "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity; an unpaired quote disables quoting.",
+      "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity.",
     ),
     ...topLevel,
     effort: topLevel.effort.describe(
@@ -260,16 +279,23 @@ const inputSchema = z
     timezone: topLevel.timezone.describe(
       "IANA timezone. It formats dates in rendered card images only.",
     ),
+    // NOT a web-geo lever, though every neighbouring field is about
+    // localization and it reads like one. `SearchRequest.location` is wired to
+    // `SearchParams.user_location` and consumed by the WEATHER manager's
+    // reverse geocode; the backend's own comment on the field says "Web-search
+    // geo bias still uses country_code only (TAKO-3183 phase 2)". An earlier
+    // rewrite here said "bias web results toward", which is the one reading the
+    // code rules out.
     location: topLevel.location.describe(
-      "Latitude and longitude to bias web results toward. Omit it and country_code applies.",
+      "End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code.",
     ),
     output_settings: outputSettingsBlock,
     data: dataBlock
       .optional()
-      .describe("Tako data (card) source settings. Include this key, even as `{}`, to search the data graph."),
+      .describe("Tako data (card) source settings; naming it selects the data graph."),
     web: webBlock
       .optional()
-      .describe("Web source settings. Include this key, even as `{}`, to search the web."),
+      .describe("Web source settings; naming it selects the web."),
     // An INTEGER, 1-20 — the maximum number of suggestions — and search-only.
     // `/v1/answer` accepts the field and returns no `related`, verified against
     // staging on 2026-08-31, so an `include_answer` call that sets it gets
@@ -281,15 +307,25 @@ const inputSchema = z
       .boolean()
       .optional()
       .describe(
-        "Set true to synthesize one citation-backed answer from the retrieval into `answer`. Omit or false for retrieval only.",
+        "Set true to synthesize one citation-backed answer from the retrieval into `answer`.",
       ),
     // Rewritten for the same reason as the nested block fields (see
     // DATA_DESCRIBES): the generated text is 831 chars of HTTP-API reference —
     // the caps, the supported JSON Schema subset, the instant-effort 400 — and
     // one parameter cannot spend 41% of this tool's whole 2,000-char entry
-    // budget. The two rules a model breaks are kept.
+    // budget.
+    //
+    // STATE THE ALLOWLIST, never one exclusion. The validator
+    // (`backend/data/agent/structured_output/schema_validation.py`,
+    // `_ALLOWED_KEYWORDS`) accepts a fixed keyword set and 400s on everything
+    // else. An earlier rewrite here said "No $ref" — a keyword that appears
+    // nowhere in that module, rejected only because it is off the list, exactly
+    // like `anyOf`, `oneOf`, `pattern` and `$defs`. Naming the one exclusion
+    // teaches a model the others are allowed, which is worse than saying
+    // nothing. The caps (16 KB, depth 5, 64 properties) are left out as the
+    // ones a hand-written schema does not reach.
     output_schema: AnswerRequest.shape.output_schema.describe(
-      "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`. No $ref; instant effort rejects it.",
+      "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Only type, properties, required, items, enum, description and additionalProperties are allowed.",
     ),
   })
   // `.strict()` at every level. A bare `z.object` STRIPS unknown keys; this
@@ -304,6 +340,16 @@ const inputSchema = z
     path: ["output_schema"],
     message:
       "output_schema applies only to the answer endpoint. Set include_answer: true, or drop output_schema.",
+  })
+  // The same bargain one level down: `DataSourceSettings._strict_requires_node_ids`
+  // raises "strict=true requires a non-empty node_ids list", so this pair is a
+  // guaranteed 400 with a paid round trip in front of it. `optionalWithoutDefaults`
+  // strips the block's inner validators along with its defaults, so nothing else
+  // in this schema catches it.
+  .refine((v) => v.data?.strict !== true || (v.data.node_ids?.length ?? 0) > 0, {
+    path: ["data", "strict"],
+    message:
+      "strict: true filters to data.node_ids, so it needs at least one. Add the metric's node id, or drop strict.",
   });
 
 type Input = z.infer<typeof inputSchema>;

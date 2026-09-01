@@ -13,6 +13,7 @@ import { z } from "zod";
 import type { Env } from "../env.js";
 import type { Tier } from "../freetier.js";
 import { AnswerStructuredOutputError, RelatedSuggestion } from "../generated/schemas.js";
+import { logWireGuardFailure } from "./_log.js";
 import {
   HTTP_URL_REGEX,
   DEFAULT_DARK_MODE,
@@ -71,9 +72,10 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * change which card wins. Do not restate it as "the pin does nothing" — the next
  * author who checks the backend will find the opposite and distrust the rest.
  *
- * Exported because the ANSWER path's zero-card guidance needs the identical
- * recipe: two verdicts whose recovery advice drifts apart teach the model two
- * different pin forms, and only one of them works. One string, one place.
+ * Exported for the guards, not for a caller — see the reader note below the
+ * docstring. The reason it stays a constant at all is unchanged: two verdicts
+ * whose recovery advice drifts apart teach the model two different pin forms,
+ * and only one of them works.
  *
  * THE UNPIN ESCAPE HATCH, and why advice about how to pin ends with advice to
  * stop pinning. A later matched-arm run on staging (2026-07-31: 20 handles, 3
@@ -791,41 +793,75 @@ export function projectCardRows(
   manifest: ReadonlyArray<Record<string, unknown>> | undefined,
 ): ProjectedCardRows | undefined {
   const out: ProjectedCardRows = {};
-  const unitAt = (i: number): string | undefined => {
-    const entry = manifest?.[i];
-    const unit = entry === undefined ? undefined : entry.unit;
-    return typeof unit === "string" && unit !== "" ? unit : undefined;
-  };
+  // JOIN BY NAME, NEVER BY POSITION. `ColumnDescriptor.name` is documented as
+  // "the CSV header, the json_records key, and the dataset column label", so
+  // the key is exact — and the two orders genuinely differ. The records branch
+  // below derives its column order FIRST-SEEN across records, because the
+  // backend omits a key whose value is null for that row; a positional join
+  // therefore slid every unit after the first hole onto the wrong column.
+  // Measured on a 3-column card whose first record was missing `revenue`:
+  // `margin` came back labelled `(USD)` and `revenue` `(%)`. That is worse
+  // than the unlabelled number this fold exists to prevent — the model reads a
+  // confidently wrong unit instead of asking.
+  const unitByName = new Map<string, string>();
+  for (const entry of manifest ?? []) {
+    if (entry === null || typeof entry !== "object") continue;
+    const { name, unit } = entry as { name?: unknown; unit?: unknown };
+    if (typeof name === "string" && name !== "" && typeof unit === "string" && unit !== "") {
+      unitByName.set(name, unit);
+    }
+  }
   const dataset = content.dataset as Record<string, unknown> | null | undefined;
-  const records = content.records;
+  // FILTER ONCE, BEFORE BOTH LOOPS. The key scan below skipped non-object
+  // entries and the row build did not, so a single `null` in `records` threw a
+  // TypeError — after the upstream call was billed, and inside a projection
+  // whose whole input is a deliberately `.loose()` wire guard that validates
+  // nothing here. One list keeps the two loops reading the same rows, which is
+  // the real invariant: the column ORDER comes from one and the CELLS from the
+  // other, so they cannot be allowed to disagree about which records exist.
+  // Arrays are excluded too — `Object.keys([1,2])` is `["0","1"]`, which would
+  // invent positional columns out of a malformed payload.
+  const rawRecords = content.records;
+  const records = Array.isArray(rawRecords)
+    ? rawRecords.filter(
+        (r): r is Record<string, unknown> =>
+          r !== null && typeof r === "object" && !Array.isArray(r),
+      )
+    : [];
   if (dataset != null && Array.isArray(dataset.columns) && Array.isArray(dataset.rows)) {
     out.columns = dataset.columns.map((c, i) => {
       const col = (c ?? {}) as { name?: unknown; unit?: unknown };
       const name = typeof col.name === "string" ? col.name : String(i);
-      const unit = typeof col.unit === "string" && col.unit !== "" ? col.unit : unitAt(i);
+      const unit =
+        typeof col.unit === "string" && col.unit !== "" ? col.unit : unitByName.get(name);
       return columnName({ name, ...(unit !== undefined ? { unit } : {}) });
     });
     out.rows = dataset.rows as unknown[][];
-  } else if (Array.isArray(records) && records.length > 0) {
+  } else if (records.length > 0) {
+    // `records.length > 0` where the dataset branch accepts an EMPTY `rows`,
+    // and the asymmetry is correct rather than an oversight: a dataset DECLARES
+    // its columns, so `{columns:[...], rows:[]}` is a real answer ("no rows for
+    // these columns"), while a records payload DERIVES its columns from the
+    // entries, so an empty array can describe nothing at all. Returning
+    // `undefined` there says "you did not ask to inline", which is the only
+    // honest reading. Do not "align" the two.
+    //
     // Column order is FIRST-SEEN across every record, not the first record's
     // keys: the backend omits a key whose value is null for that row, so
     // reading row 0 alone drops a column the rest of the payload has.
     const keys: string[] = [];
     for (const record of records) {
-      if (record === null || typeof record !== "object") continue;
-      for (const key of Object.keys(record as Record<string, unknown>)) {
+      for (const key of Object.keys(record)) {
         if (!keys.includes(key)) keys.push(key);
       }
     }
-    out.columns = keys.map((name, i) => {
-      const unit = unitAt(i);
+    out.columns = keys.map((name) => {
+      const unit = unitByName.get(name);
       return columnName({ name, ...(unit !== undefined ? { unit } : {}) });
     });
     // `?? null` and not `?? undefined`: a hole in a positional row has to be a
     // cell, or every column after it shifts left by one.
-    out.rows = records.map((record) =>
-      keys.map((key) => (record as Record<string, unknown>)[key] ?? null),
-    );
+    out.rows = records.map((record) => keys.map((key) => record[key] ?? null));
   } else if (typeof content.data === "string" && content.data !== "") {
     out.format = typeof content.content_format === "string" ? content.content_format : "csv";
     out.data = content.data;
@@ -843,10 +879,15 @@ export function projectCardRows(
   // already fold the unit into the name and never reach here.
   if (out.columns === undefined && manifest !== undefined) {
     const named = manifest
-      .map((c, i) => {
-        const name = typeof c.name === "string" && c.name !== "" ? c.name : undefined;
+      .map((c) => {
+        // This branch walks the manifest itself, so the descriptor beside the
+        // name IS this column's — no join, positional or otherwise.
+        const name =
+          c !== null && typeof c === "object" && typeof c.name === "string" && c.name !== ""
+            ? c.name
+            : undefined;
         if (name === undefined) return undefined;
-        const unit = unitAt(i);
+        const unit = unitByName.get(name);
         return columnName({ name, ...(unit !== undefined ? { unit } : {}) });
       })
       .filter((c): c is string => c !== undefined);
@@ -857,21 +898,44 @@ export function projectCardRows(
   const truncated =
     content.truncated === true || (dataset != null && dataset.truncated === true);
   if (truncated) out.truncated = true;
+  // THE PUBLISHED SHAPE IS THE PREDICATE, not a hand-written check per branch.
+  //
+  // `resultContentSchema` is deliberately `.loose()` with every field optional
+  // — the wire guard must not turn a benign backend change into an outage —
+  // so nothing upstream of here constrains what a payload actually holds, and
+  // the two casts below this comment's reach (`dataset.rows as unknown[][]`,
+  // `card_data as Record<string, unknown>`) assert a shape rather than check
+  // one. A `rows: [[1], "oops"]` or an ARRAY `card_data` therefore passed the
+  // wire guard and then failed the tool's OWN outputSchema — and `mcp.ts`
+  // serves a non-conforming structuredContent anyway (it logs and moves on),
+  // so a spec-compliant client discards the whole billed result, text block
+  // included.
+  //
+  // Parsing against the shape we publish covers every branch here and every
+  // branch added later, which a per-branch guard would not. A card that fails
+  // ships with NO `rows`: `exportable` and `total_rows` still route the model
+  // to `tako_contents`, which is a worse answer than inlined rows and a much
+  // better one than a discarded response.
+  const conforms = projectedCardRowsShape.safeParse(out);
+  if (!conforms.success) {
+    logWireGuardFailure("projectCardRows", "inlined rows", conforms.error, content);
+    return undefined;
+  }
   return out;
 }
 
-/**
- * The payload channels {@link projectCardRows} reads, one branch each.
- *
- * Written out because each channel needs its own handling — a loop over
- * {@link CONTENT_PAYLOAD_KEYS} could not normalize a dataset and a CSV string
- * the same way. So a test compares this list to that one instead
- * (`_search_results.test.ts`), and a fifth upstream channel fails there rather
- * than being silently dropped from every inlined card. That drift has shipped
- * once already: `slimCardContent` carried three names against `ContentItem`'s
- * four.
- */
-export const ROWS_PAYLOAD_KEYS_READ = ["dataset", "records", "data", "card_data"] as const;
+// No list of "the channels projectCardRows reads" lives here any more, and
+// that is the point. It was a hand-retyped copy of {@link CONTENT_PAYLOAD_KEYS}
+// compared to it by a test — which meant a fifth upstream channel went GREEN as
+// soon as someone added the name here, with no branch above to read it: the
+// silent drop that guard was written to prevent. The old `ROWS_KEYS` did not
+// have that hole because it was derived AND drove the loop; a list that only a
+// test reads cannot inherit that property.
+//
+// `_search_results.test.ts` now feeds `projectCardRows` one sample per key of
+// `CONTENT_PAYLOAD_KEYS` and asserts each comes back projected, so the guard
+// fails until a real branch exists. Do not reintroduce a name list to satisfy
+// it.
 
 /** Project one wire card into the model-facing shape. Pure and immutable. */
 export function projectCard(card: TakoCard, capRows: number | "all" | null): ProjectedCard {
@@ -1187,33 +1251,17 @@ export const projectedWebResultShape = z.looseObject({
   content: z.looseObject({}).optional().describe("Page text — only when the request asked for it."),
 });
 
-export const searchOutputShape = {
-  cards: z.array(projectedCardShape),
-  web_results: z.array(projectedWebResultShape),
-  // Cost-plus usage for this request (null when it was not metered/billed).
-  usage: usageSchema.nullable(),
-  request_id: z.string(),
-  // Present ONLY on a zero-result response: the verdict (which corpora this
-  // response is evidence about) and the one next action.
-  guidance: z.string().optional(),
-  metric_definitions: z
-    .record(z.string(), z.string())
-    .optional()
-    .describe("What each metric means (unit, basis, caveats), keyed by the metric name the cards carry."),
-  source_notes: z
-    .record(z.string(), z.string())
-    .optional()
-    .describe("What each source is and how it builds its data, keyed by a card's `source` field verbatim."),
-  // Follow-up queries, present only when the request set `include_related`.
-  related: z.array(projectedRelatedShape).optional(),
-  // The three /v1/answer fields. Present only on the answer endpoint, which
-  // only `tako_search_advanced` with `include_answer: true` reaches.
-  answer: z.string().optional(),
-  structured_output: z.record(z.string(), z.unknown()).optional(),
-  structured_output_error: AnswerStructuredOutputError.optional(),
-  ...autoChainShape,
-} as const;
+// `searchOutputShape` lived here and was DELETED: an exported object literal
+// that no tool published and nothing imported. It looked like the search
+// surface's declared shape, so a change meant for the wire — `related` retyped
+// from the wire suggestion to `projectedRelatedShape` — was made here and
+// shipped nothing. The shapes tools actually publish are in
+// `_render_markdown.ts` (`searchGenericOutputShape`, `searchChatgptOutputShape`,
+// `searchAdvancedOutputShape`); `SearchOutput` below types the handler return.
 
+/** What every search handler returns, before `mcp.ts` narrows it per surface.
+ *  A TYPE, not a published schema: the widget fields at the bottom ride on
+ *  `/mcp/chatgpt` only, and `pickDeclared` is what drops them elsewhere. */
 export type SearchOutput = {
   cards: ProjectedCard[];
   web_results: ProjectedWebResult[];
@@ -1240,6 +1288,38 @@ export type SearchOutput = {
 export type SearchedSources = ReadonlyArray<"data" | "web">;
 export const searchedData = (s: SearchedSources): boolean => s.includes("data");
 const searchedWeb = (s: SearchedSources): boolean => s.includes("web");
+
+/** Which tool a guidance string is being written for. Guidance names an
+ *  ARGUMENT the model then sends, and the two tools spell the same request
+ *  differently, so one shared string cannot be right for both. */
+export type SearchToolName = "tako_search" | "tako_search_advanced";
+
+/**
+ * How each tool spells "search data and web".
+ *
+ * `tako_search` publishes a `sources` ARRAY. `tako_search_advanced` publishes
+ * no `sources` key at all — it takes the two blocks at the TOP level, and
+ * every level is `.strict()`, so a `sources` key there is a -32602 before the
+ * request leaves the Worker. Both guidance builders named `tako_search`'s form
+ * unconditionally, which put an unsendable argument on the two paths that
+ * exist to stop a priced retry loop: the model's one recovery step failed
+ * schema validation.
+ *
+ * The OBJECT is the source of truth and the prose is derived from it, so the
+ * advertised argument cannot drift from the sendable one.
+ * `_search_results.test.ts` parses each entry against that tool's own
+ * published input schema, which is the assertion a hand-written string could
+ * never carry.
+ */
+export const BOTH_SOURCES_ARG: Record<SearchToolName, Record<string, unknown>> = {
+  tako_search: { sources: ["data", "web"] },
+  tako_search_advanced: { data: {}, web: {} },
+};
+
+/** {@link BOTH_SOURCES_ARG} as the fragment a caller pastes into its arguments
+ *  object — the braces stripped, so it reads as "add these keys". */
+const bothSourcesArg = (tool: SearchToolName): string =>
+  `\`${JSON.stringify(BOTH_SOURCES_ARG[tool]).slice(1, -1)}\``;
 
 // REFINE_WEB_FREELY was deleted with the two-sentence guidance rewrite: its
 // carve-out ("refining a WEB query converges; hunting for a CARD does not")
@@ -1304,6 +1384,7 @@ export function strictPinGuidance(tier: Tier): string {
 export function buildDataGapGuidance(
   hasWebResults: boolean,
   searchedWebToo: boolean,
+  toolName: SearchToolName,
   registered?: ReadonlySet<string>,
 ): string {
   // A tool RESULT that names a tool is an instruction the model acts on, and
@@ -1315,7 +1396,7 @@ export function buildDataGapGuidance(
   if (!hasWebResults && !searchedWebToo) {
     return [
       "No data cards ground this answer, and this request searched the data source only, so it says nothing about web coverage.",
-      'Re-ask with both sources — `sources: {data: {}, web: {}}` — at the same price before treating the figure as unavailable.',
+      `Re-ask with both sources — add ${bothSourcesArg(toolName)} — at the same price before treating the figure as unavailable.`,
     ].join(" ");
   }
   if (hasWebResults) {
@@ -1360,9 +1441,11 @@ export function buildDataGapGuidance(
  * `node_ids` / `strict`, so a pin recipe here would prescribe parameters the
  * tool rejects. The two arms now agree on the canonical NAME, which is also the
  * arm the measurement favours: 11 of 20 handles retrieved FEWER cards pinned
- * than unpinned, while the canonical name helped 9 of 15. `PINNED_RETRY` still
- * exists for the ANSWER path, which keeps both parameters — do not route it
- * back here.
+ * than unpinned, while the canonical name helped 9 of 15. `PINNED_RETRY` has no
+ * production reader at all now — the answer path's last interpolation went when
+ * every guidance branch was cut to two sentences, and
+ * `tako_search_advanced`'s `data.node_ids` describe carries the short form.
+ * Do not route it back here.
  *
  * The web-axis carve-out is deliberately NOT mirrored into those three:
  * they are data-domain skills (equity research, macro indicators, site
@@ -1397,6 +1480,7 @@ function buildZeroResultGuidance(
   hasWebResults: boolean,
   sources: SearchedSources,
   tier: Tier,
+  toolName: SearchToolName,
   registered?: ReadonlySet<string>,
 ): string {
   // Every branch is exactly TWO sentences: the verdict (which corpora this
@@ -1436,8 +1520,8 @@ function buildZeroResultGuidance(
       return [
         "This search ran on the web source only, so it says nothing about whether Tako's data graph covers this.",
         coverage === "callable"
-          ? 'Answer from the web_results; if you want a chart or dataset, re-run with sources:["data","web"] (same price) or check tako_available_data (free).'
-          : 'Answer from the web_results; if you want a chart or dataset, re-run with sources:["data","web"] (same price).',
+          ? `Answer from the web_results; if you want a chart or dataset, re-run with ${bothSourcesArg(toolName)} (same price) or check tako_available_data (free).`
+          : `Answer from the web_results; if you want a chart or dataset, re-run with ${bothSourcesArg(toolName)} (same price).`,
       ].join(" ");
     }
     const readPage =
@@ -1646,6 +1730,12 @@ export function buildSearchOutput(
      *  tier alone is not the predicate. Omitted by non-HTTP callers, which
      *  degrades to tier-only. */
     registeredTools?: ReadonlySet<string> | undefined;
+    /** The tool this output belongs to. Guidance names an ARGUMENT, and the
+     *  two tools spell the same request differently — see
+     *  {@link BOTH_SOURCES_ARG}. Required, because a default would silently
+     *  hand one tool's syntax to the other, which is the bug this field
+     *  exists to make impossible. */
+    toolName: SearchToolName;
   },
   extras: SearchOutputExtras = {},
 ): SearchOutput {
@@ -1701,12 +1791,14 @@ export function buildSearchOutput(
                 ? buildDataGapGuidance(
                     webResults.length > 0,
                     searchedSources.includes("web"),
+                    opts.toolName,
                     opts.registeredTools,
                   )
                 : buildZeroResultGuidance(
                     webResults.length > 0,
                     searchedSources,
                     tier,
+                    opts.toolName,
                     opts.registeredTools,
                   ),
         }

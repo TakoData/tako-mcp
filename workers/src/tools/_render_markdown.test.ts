@@ -177,6 +177,46 @@ describe("renderSearchMarkdown — the COMPLETE text channel", () => {
   });
 });
 
+// ASSERTED DIRECTLY, because the channel-parity walk below cannot see it: that
+// walk collects string and number leaves only, so EVERY boolean in the
+// projected output is invisible to it. `cards[].exportable` and
+// `cards[].rows.truncated` happen to render as words; `content.truncated` did
+// not, and a text-only host read a page cut at `article_content_max_chars`
+// (default 30,000) as the whole thing. A boolean field needs its own
+// assertion here or it has no guard at all.
+describe("web page text says when it was cut", () => {
+  it("marks a truncated page on the text channel", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({
+        web_results: [
+          {
+            title: "t",
+            url: "https://e.com",
+            content: { data: "First 30k characters of the page.", truncated: true },
+          },
+        ],
+      }),
+    );
+    expect(md).toContain("TRUNCATED");
+    expect(md).toContain("First 30k characters of the page.");
+  });
+
+  it("says nothing when the whole page rode", () => {
+    const md = renderSearchMarkdown(
+      searchOutput({
+        web_results: [
+          {
+            title: "t",
+            url: "https://e.com",
+            content: { data: "The whole page.", truncated: false },
+          },
+        ],
+      }),
+    );
+    expect(md).not.toContain("TRUNCATED");
+  });
+});
+
 // Upstream web content is attacker-controlled. Snippets now ride verbatim in
 // the text channel (completeness), so the fence is the structural boundary
 // that stops a page from forging Tako's own sections and footer.
@@ -982,7 +1022,7 @@ describe("channel parity (tako_search and tako_search_advanced)", () => {
       ["data", "web"],
       false,
       "authenticated",
-      { rowCap: "all", keepWebText: true },
+      { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced" },
       // The advanced tool's four extra fields ride here too: it is the only
       // tool that can return them, and they reach the model through the same
       // renderer. A separate fixture would let this walk keep passing while
@@ -1023,6 +1063,16 @@ describe("channel parity (tako_search and tako_search_advanced)", () => {
       else if (Array.isArray(v)) v.forEach(walk);
       else if (typeof v === "object") Object.values(v).forEach(walk);
     };
+    // BOOLEANS ARE NOT WALKED, and that is a real limit rather than an
+    // oversight to "fix" by pushing "true": a boolean renders as a WORD
+    // ("exportable", "TRUNCATED"), never as its literal, so a leaf comparison
+    // would fail on every one. The consequence is that this walk is no guard
+    // at all for a boolean field — `web_results[].content.truncated` reached
+    // structuredContent and nothing else while this test stayed green. Each of
+    // the three booleans in the projected output has its own assertion
+    // instead: "web page text says when it was cut", and the rows /
+    // `exportable` cases in the card tests.
+    //
     // request_id is deliberately NOT part of the model-facing contract.
     //
     // `usage` is checked as its formatted dollar line only. The nested

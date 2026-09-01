@@ -2028,7 +2028,7 @@ Description:
 
 Search Tako's data graph and the live web with the whole v3 request: per-source counts, inline card rows, graph pins, web domain and category filters, and the deep effort tier.
 
-Every field is optional; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.
+Only `query` is required; an omitted field takes the server default its description names. Naming a source block — even as `{}` — selects that source; omit both and Tako searches data and web. `data.include_contents` inlines each card's rows and bills them per card, so cap them with `data.max_rows`, or leave it off and fetch one card's rows with `tako_contents`.
 
 Best for: a call `tako_search` can't express — a wider count, inline rows, a pinned node, a domain filter, or deep effort. `include_answer: true` returns one synthesized, citation-backed answer in `answer`; `output_schema` fills a JSON Schema from the same evidence into `structured_output`.
 
@@ -2036,18 +2036,18 @@ Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | yes |  | Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity; an unpaired quote disables quoting. |
+| `query` | string | yes |  | Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity. |
 | `effort` | string ("fast" \\| "instant" \\| "deep") | no |  | Search effort. Omit it and the server uses fast. instant serves cached embeds; deep widens retrieval and reranks, at a premium rate. |
-| `location` | object | no |  | Latitude and longitude to bias web results toward. Omit it and country_code applies. |
+| `location` | object | no |  | End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code. |
 | `country_code` | string | no |  | ISO 3166-1 alpha-2 country code for localization. Omit it and the server uses US. |
 | `locale` | string | no |  | BCP-47 locale tag for language and formatting. Omit it and the server uses en-US. |
 | `timezone` | string | no |  | IANA timezone. It formats dates in rendered card images only. |
 | `output_settings` | object | no |  | Settings that control the response shape. |
 | `include_related` | integer | no |  | Maximum follow-up queries to return in `related`. Ignored when `include_answer` is true. |
-| `data` | object | no |  | Tako data (card) source settings. Include this key, even as `{}`, to search the data graph. |
-| `web` | object | no |  | Web source settings. Include this key, even as `{}`, to search the web. |
-| `include_answer` | boolean | no |  | Set true to synthesize one citation-backed answer from the retrieval into `answer`. Omit or false for retrieval only. |
-| `output_schema` | object | no |  | JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`. No $ref; instant effort rejects it. |
+| `data` | object | no |  | Tako data (card) source settings; naming it selects the data graph. |
+| `web` | object | no |  | Web source settings; naming it selects the web. |
+| `include_answer` | boolean | no |  | Set true to synthesize one citation-backed answer from the retrieval into `answer`. |
+| `output_schema` | object | no |  | JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Only type, properties, required, items, enum, description and additionalProperties are allowed. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -2069,7 +2069,7 @@ Annotations:
       "type": "string",
       "minLength": 1,
       "pattern": "\\S",
-      "description": "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity; an unpaired quote disables quoting."
+      "description": "Natural-language search query. One metric per query retrieves best. Double-quote a multi-word name to keep it one entity."
     },
     "effort": {
       "description": "Search effort. Omit it and the server uses fast. instant serves cached embeds; deep widens retrieval and reranks, at a premium rate.",
@@ -2081,7 +2081,7 @@ Annotations:
       ]
     },
     "location": {
-      "description": "Latitude and longitude to bias web results toward. Omit it and country_code applies.",
+      "description": "End-user coordinates, for queries whose location is implicit (weather). A location named in the query wins; web results follow country_code.",
       "anyOf": [
         {
           "type": "object",
@@ -2148,7 +2148,7 @@ Annotations:
             },
             "force_refresh": {
               "type": "boolean",
-              "description": "Skip Tako's render cache when building card images. It does not change the data these endpoints return."
+              "description": "Informational on these endpoints: instant effort already rebuilds missing or stale card embeds whatever you set here."
             }
           },
           "additionalProperties": false
@@ -2172,7 +2172,7 @@ Annotations:
       ]
     },
     "data": {
-      "description": "Tako data (card) source settings. Include this key, even as `{}`, to search the data graph.",
+      "description": "Tako data (card) source settings; naming it selects the data graph.",
       "type": "object",
       "properties": {
         "count": {
@@ -2217,7 +2217,7 @@ Annotations:
           ]
         },
         "node_ids": {
-          "description": "Graph node ids to pin, as `tako_available_data` returns them. Pin the metric's node id alone and set `strict: true` to make its card come back; a bare pin only nudges the ranking. Max 20.",
+          "description": "Graph node ids to pin, as a card's `nodes` or `tako_available_data` return them. Pin the metric's node id alone and set `strict: true` to make its card come back; a bare pin only nudges the ranking. Max 20.",
           "maxItems": 20,
           "type": "array",
           "items": {
@@ -2226,13 +2226,13 @@ Annotations:
         },
         "strict": {
           "type": "boolean",
-          "description": "Return only cards matching `node_ids` — a hard filter, so zero cards is evidence about the filter, not coverage. Adding the entity's id beside the metric's widens it back out."
+          "description": "Return only cards matching `node_ids` — a hard filter, so zero cards is evidence about the filter, not coverage. Default false: the pin only ranks up, and organic results still return. Adding the entity's id beside the metric's widens it back out."
         }
       },
       "additionalProperties": false
     },
     "web": {
-      "description": "Web source settings. Include this key, even as `{}`, to search the web.",
+      "description": "Web source settings; naming it selects the web.",
       "type": "object",
       "properties": {
         "count": {
@@ -2309,7 +2309,7 @@ Annotations:
           "description": "Character cap on the full article text when include_contents is true. Default 30000, maximum 1000000."
         },
         "published_after": {
-          "description": "Only return pages published on or after this date (YYYY-MM-DD). Omit it for no lower bound.",
+          "description": "Only return pages published on or after this date (YYYY-MM-DD). Pages with no known publication date are kept. Omit it for no lower bound.",
           "anyOf": [
             {
               "type": "string",
@@ -2338,11 +2338,11 @@ Annotations:
       "additionalProperties": false
     },
     "include_answer": {
-      "description": "Set true to synthesize one citation-backed answer from the retrieval into `answer`. Omit or false for retrieval only.",
+      "description": "Set true to synthesize one citation-backed answer from the retrieval into `answer`.",
       "type": "boolean"
     },
     "output_schema": {
-      "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`. No $ref; instant effort rejects it.",
+      "description": "JSON Schema for the answer to fill, returned in `structured_output`. Needs `include_answer: true`; instant effort 400s. Only type, properties, required, items, enum, description and additionalProperties are allowed.",
       "anyOf": [
         {
           "type": "object",
@@ -2579,7 +2579,7 @@ Annotations:
       }
     },
     "related": {
-      "description": "Follow-up queries; retrieval calls only, when you set include_related.",
+      "description": "Follow-up queries, when you set include_related. Each has a `query` to send next and may have `node_ids` for `data.node_ids`.",
       "type": "array",
       "items": {
         "type": "object",
@@ -2588,11 +2588,11 @@ Annotations:
       }
     },
     "answer": {
-      "description": "The synthesized answer, cited from the cards and web_results. Present only when you set include_answer: true.",
+      "description": "The synthesized answer, cited from the cards and web_results.",
       "type": "string"
     },
     "structured_output": {
-      "description": "Your output_schema, filled from the same evidence as the answer. Absent when you sent none, or when Tako could not fill it — see structured_output_error.",
+      "description": "Your output_schema filled from the same evidence; see structured_output_error when absent.",
       "type": "object",
       "properties": {},
       "additionalProperties": {}

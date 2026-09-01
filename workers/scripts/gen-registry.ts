@@ -656,13 +656,23 @@ export const OUTPUT_SCHEMA_MAX_CHARS = 2_000;
  * folding it into the prose ratchet would silently switch off four caps it
  * currently passes.
  *
- * 2,474 of `tako_search`'s 4,381 is field descriptions — `coverage_end` alone
- * spends 273 explaining itself against `last_updated`. That is what its fan-out
+ * 1,379 of `tako_search`'s 3,245 is field descriptions — `coverage_end` alone
+ * spends 233 explaining itself against `last_updated`. That is what its fan-out
  * PR can recover without touching the shape. Delete the row when it does.
+ *
+ * RE-BASELINE A ROW IN THE PR THAT SHRINKS IT. A ratchet left at its old number
+ * has stopped ratcheting: `tako_search` fell to 3,245/3,568 when
+ * `tako_search_advanced`'s fan-out PR moved `rows` off the shared card shape,
+ * and this row went on reading 4,381/4,704 — 1,136 chars per surface free to
+ * regrow with the gate green. Nothing here can notice; only the author of the
+ * shrink can.
  */
 export const LEGACY_OUTPUT_SCHEMA_CEILINGS: Record<string, { generic: number; chatgpt: number }> = {
-  // Measured 2026-08-31, the day the gate landed.
-  tako_search: { generic: 4381, chatgpt: 4704 },
+  // Re-measured on the tako_search_advanced fan-out PR, which took `rows` off
+  // `projectedCardShape` — a field this tool's handler can never fill, since it
+  // passes `rowCap: null` on every call. Was 4,381/4,704 when the gate landed
+  // 2026-08-31.
+  tako_search: { generic: 3245, chatgpt: 3568 },
   // `tako_available_data` IS migrated — description 759/5 lines, max param
   // 181, every prose cap held — and still cannot reach 2,000, because its BARE
   // structure is 2,389 with every field description deleted. Measured cost per
@@ -683,10 +693,10 @@ export const LEGACY_OUTPUT_SCHEMA_CEILINGS: Record<string, { generic: number; ch
   // cap and only this one. Two structural facts put it out of reach of 2,000:
   // it publishes the card shape (11 fields, and `rows` on top of them) and the
   // four answer-endpoint fields, and its bare structure alone — every
-  // description stripped — is over the cap. 2,430 of it is field descriptions;
+  // description stripped — is over the cap. 2,157 of it is field descriptions;
   // that is the half a later pass can recover without a D3 decision about
   // which advertised fields to drop.
-  tako_search_advanced: { generic: 4888, chatgpt: 4888 },
+  tako_search_advanced: { generic: 4832, chatgpt: 4832 },
 };
 
 /**
@@ -824,7 +834,7 @@ function buildSearchSample(tool: ToolModule): ToolSample {
     ["data", "web"],
     false,
     "authenticated",
-    { rowCap: null, keepWebText: false },
+    { rowCap: null, keepWebText: false, toolName: "tako_search" },
   );
   return {
     // The generic-surface narrowing — what an `/mcp` client's model reads.
@@ -872,7 +882,7 @@ function buildAdvancedSample(tool: ToolModule): ToolSample {
     ["data", "web"],
     false,
     "authenticated",
-    { rowCap: "all", keepWebText: true },
+    { rowCap: "all", keepWebText: true, toolName: "tako_search_advanced" },
     { answer: raw.answer, structured_output: raw.structured_output },
   );
   return {

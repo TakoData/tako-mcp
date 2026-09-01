@@ -9,6 +9,7 @@ import {
   Sources,
   WebSourceSettings,
 } from "../generated/schemas.js";
+import { PARAM_MAX_CHARS } from "../../scripts/gen-registry.js";
 import { jsonResponse, mockFetchSequence, noopSendProgress, requestFrom } from "./__test_helpers.js";
 import {
   CHATGPT_TOOL_NAMES,
@@ -719,6 +720,31 @@ describe("include_answer selects the endpoint", () => {
     expect(result.error?.issues[0]?.message).toContain("include_answer");
   });
 
+  it("rejects strict without node_ids before any request is sent", () => {
+    // `DataSourceSettings._strict_requires_node_ids` raises "strict=true
+    // requires a non-empty node_ids list", so this pair is a guaranteed 400
+    // with a paid round trip in front of it. `optionalWithoutDefaults` strips
+    // the generated block's own validators along with its defaults, so this
+    // refine is the only thing standing between the caller and that 400.
+    for (const data of [{ strict: true }, { strict: true, node_ids: [] }]) {
+      const result = tako_search_advanced.inputSchema.safeParse({ query: "q", data });
+      expect(result.success, JSON.stringify(data)).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(["data", "strict"]);
+      expect(result.error?.issues[0]?.message).toContain("node_ids");
+    }
+    // The valid pairing still parses, and so does a bare pin without strict.
+    expect(
+      tako_search_advanced.inputSchema.safeParse({
+        query: "q",
+        data: { strict: true, node_ids: ["mt::x::1"] },
+      }).success,
+    ).toBe(true);
+    expect(
+      tako_search_advanced.inputSchema.safeParse({ query: "q", data: { node_ids: ["mt::x::1"] } })
+        .success,
+    ).toBe(true);
+  });
+
   it("the answer body satisfies AnswerRequest and the search body satisfies SearchRequest", () => {
     const answerInput = tako_search_advanced.inputSchema.parse({
       query: "q",
@@ -821,9 +847,12 @@ describe("published prose stays inside the caps at every level", () => {
     return out;
   };
 
-  it("no describe anywhere in the input schema exceeds the 320-char param cap", () => {
+  it("no describe anywhere in the input schema exceeds the param cap", () => {
+    // IMPORTED, not retyped. This walk exists to extend D1's per-parameter cap
+    // to the nested blocks `assertProseBudget` cannot see, so a literal here
+    // would let the two drift the next time the cap is retuned.
     const over = described()
-      .filter(([, text]) => text.length > 320)
+      .filter(([, text]) => text.length > PARAM_MAX_CHARS)
       .map(([path, text]) => `${path}: ${text.length}`);
     expect(over, "a generated describe came back; add an override").toEqual([]);
   });
