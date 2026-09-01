@@ -1,7 +1,6 @@
 /**
- * Markdown renderers for the model-facing text channel, the advertised
- * `structuredContent` shapes for the tools the redesign has migrated, and the
- * `slimStructured` hooks the ones it has not reached yet still use.
+ * Markdown renderers for the model-facing text channel and the advertised
+ * `structuredContent` shapes every tool now returns directly.
  *
  * Why markdown: the consumers of these tools are agents reading text. JSON
  * taxes prose-heavy content twice — escaped newlines/quotes inside snippets,
@@ -19,7 +18,7 @@
  * model `content` ONLY, while both submission targets — ChatGPT and Claude
  * Code — feed it `structuredContent` ONLY. Either channel alone is therefore a
  * wrong answer on some host. The projection is what makes shipping both
- * affordable (~31.9k chars -> ~13k per channel on search), and the two
+ * affordable (~31.9k chars -> ~13k per channel on search), and the per-tool
  * "channel parity" tests assert every projected leaf reaches the text.
  *
  * So NO TOOL declares a `slimStructured` hook any more: every handler's output

@@ -305,7 +305,7 @@ Annotations:
       "description": "Three-year revenue CAGR for US-headquartered companies in Tako's Airlines industry, 2022 to 2025, top 10 of 21 screened. Normalized financials, which may differ from as-reported figures.",
       "url": "https://tako.com/card/CpQeOBcKjz8VM8-wNlEV/",
       "image_url": "https://tako.com/api/v1/image/CpQeOBcKjz8VM8-wNlEV/",
-      "embed_url": "https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/",
+      "embed_url": "https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/?showShare=true",
       "source": "S&P Global",
       "last_updated": "2026-08-26",
       "total_rows": 10
@@ -366,7 +366,7 @@ The ranking uses revenue CAGR, calculated as (2025 revenue / 2022 revenue)^(1/3)
 ### Fastest US Airline Revenue Growth
 Three-year revenue CAGR for US-headquartered companies in Tako's Airlines industry, 2022 to 2025, top 10 of 21 screened. Normalized financials, which may differ from as-reported figures.
 - url: https://tako.com/card/CpQeOBcKjz8VM8-wNlEV/ · exportable, 10 rows
-- image: https://tako.com/api/v1/image/CpQeOBcKjz8VM8-wNlEV/ · embed: https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/
+- image: https://tako.com/api/v1/image/CpQeOBcKjz8VM8-wNlEV/ · embed: https://tako.com/embed/CpQeOBcKjz8VM8-wNlEV/?showShare=true
 - source: S&P Global · refreshed 2026-08-26
 
 ## Citations (3)

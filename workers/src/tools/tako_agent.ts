@@ -45,7 +45,6 @@ import {
   AnswerAgentRunRequest,
 } from "../generated/schemas.js";
 import { agentRunOutputShape, projectAgentRun, type AgentRunOutput } from "./_agent_run.js";
-import { withShareOptIn } from "./_chart_widget.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import { renderAgentRunMarkdown } from "./_render_markdown.js";
@@ -270,24 +269,6 @@ export async function pollAgentRun(
   let transient = 0;
   let lastRun: AgentRun | undefined;
 
-  // Share opt-in on the passthrough card embed_urls, so the url an agent
-  // quotes into its answer matches the one every other surface serves for
-  // the same card — see withShareOptIn in _chart_widget.ts.
-  const withSharedCards = (run: AgentRun): AgentRun =>
-    run.result == null || run.result.cards.length === 0
-      ? run
-      : {
-          ...run,
-          result: {
-            ...run.result,
-            cards: run.result.cards.map((c) =>
-              typeof c.embed_url === "string" && c.embed_url !== ""
-                ? { ...c, embed_url: withShareOptIn(c.embed_url) }
-                : c,
-            ),
-          },
-        };
-
   while (true) {
     let wire: AgentRunWire;
     try {
@@ -382,7 +363,7 @@ export async function pollAgentRun(
       logWireGuardFailure("tako_agent", "output-normalise", parsed.error, wire);
       throw new Error("Tako agent run endpoint returned an unexpected shape.");
     }
-    lastRun = withSharedCards(parsed.data);
+    lastRun = parsed.data;
     if (parsed.data.status === "completed" || parsed.data.status === "failed") {
       // The ONLY place a successful run's id is recoverable. `run_id` reaches
       // neither channel (no model reader, no poll tool to spend it on), and

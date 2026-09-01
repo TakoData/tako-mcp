@@ -1,19 +1,16 @@
 /**
- * Tests for the markdown renderers + the remaining structuredContent slimmers.
+ * Tests for the markdown renderers and the channel parity they hold.
  *
  * The renderers are the model-facing text channel, and for `tako_search` and
  * `tako_contents` it is COMPLETE, not an index: 9 audited harnesses feed the
  * model `content` only, so a fact that rides in structuredContent and not in
- * the markdown is invisible on all of them. The two "channel parity" tests are
- * what enforce it — each walks every leaf of its tool's projected output and
- * requires it in the text.
+ * the markdown is invisible on all of them. The per-tool "channel parity" tests
+ * are what enforce it — each walks every leaf of its tool's projected output
+ * and requires it in the text.
  *
- * `tako_available_data` is the last tool declaring a `slimStructured` hook; it
- * keeps the older split, where structured carries machine essentials only, and
- * that slimmer is the token guard for its own tool. `tako_contents` and
- * `tako_agent` both left that set: contents' payload IS the result, and agent's
- * slimmer advertised the run lifecycle and nothing else, so on a
- * structured-only host the split returned a uuid instead of the answer.
+ * No tool declares a `slimStructured` hook any more: every handler's output IS
+ * the advertised shape. `_render_markdown.ts` carries why the older split went
+ * away, and `mcp.test.ts` still tests the hook's contract for a future tool.
  */
 import { describe, expect, it } from "vitest";
 

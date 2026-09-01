@@ -286,6 +286,27 @@ describe("failed run without an error", () => {
   });
 });
 
+describe("non-terminal run", () => {
+  it("states the run did not finish, not that it returned nothing", () => {
+    // `pollAgentRun`'s `onTimeout: "return"` arm returns `status: "running"`.
+    // Without the guard this projects to no answer and no error, and the
+    // renderer says "The agent returned no answer." about a live run.
+    const out = projectAgentRun({ status: "running", result: null, error: null });
+    expect(out.error).toEqual({
+      code: "agent_run_incomplete",
+      message: "The agent run ended while still running.",
+    });
+  });
+
+  it("covers `queued`, which a `timed_out` check would miss", () => {
+    expect(projectAgentRun({ status: "queued", result: null }).error?.code).toBe("agent_run_incomplete");
+  });
+
+  it("leaves a completed run that simply carried no prose alone", () => {
+    expect(projectAgentRun({ status: "completed", result: null }).error).toBeUndefined();
+  });
+});
+
 describe("usage", () => {
   it("carries the headline cost, which the tool used to drop entirely", () => {
     expect(projectAgentRun(wireRun).usage?.total_cost_usd).toBe(0.09314);

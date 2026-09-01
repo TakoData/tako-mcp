@@ -51,6 +51,7 @@
  */
 import { z } from "zod";
 
+import { withShareOptIn } from "./_chart_widget.js";
 import {
   dateOnly,
   nonEmpty,
@@ -217,7 +218,14 @@ export function projectAgentCard(card: unknown): ProjectedAgentCard | undefined 
   const imageUrl = nonEmpty(rec.image_url);
   if (imageUrl !== undefined) out.image_url = imageUrl;
   const embedUrl = nonEmpty(rec.embed_url);
-  if (embedUrl !== undefined) out.embed_url = embedUrl;
+  // Share opt-in HERE, not in the poll loop, so the url an agent quotes into
+  // its answer matches the one every other surface serves for the same card.
+  // Agent cards are passthrough, unlike search's, which get `showShare=true`
+  // baked in by `buildChartUrls`. While the opt-in lived in `pollAgentRun` the
+  // three consumers that call this projection directly — the doc generator,
+  // `_agent_run.test.ts`, and the channel-parity test — all missed it, and
+  // `docs/TOOLS.md` shipped an embed url production never returns.
+  if (embedUrl !== undefined) out.embed_url = withShareOptIn(embedUrl);
   const sources = sourceNamesOf(rec);
   if (sources.length > 0) out.source = sources.join(", ");
   const freshness = rec.data_freshness;
@@ -286,7 +294,11 @@ export function noteMap(
   textKey: "definition" | "description",
 ): Record<string, string> | undefined {
   if (!Array.isArray(entries)) return undefined;
-  const out: Record<string, string> = {};
+  // NULL-PROTOTYPE, for the reason `buildReferenceMaps` uses one: every key is a
+  // model-written `term` or `title`, so a term of `toString` reads back
+  // Object.prototype's member instead of undefined and publishes to the model as
+  // `toString (2)` — a duplicate the payload does not contain.
+  const out: Record<string, string> = Object.create(null);
   for (const entry of entries) {
     if (entry === null || typeof entry !== "object") continue;
     const rec = entry as Record<string, unknown>;
@@ -342,6 +354,20 @@ export function projectAgentRun(run: AgentRunWireLike): AgentRunOutput {
   // cannot tell them apart on its own.
   else if (run.status === "failed") {
     out.error = { code: "agent_run_failed", message: "The agent run failed without a reason." };
+  }
+  // NON-TERMINAL, and the renderer cannot tell it from a prose-free completed
+  // run: both project to no answer and no error, so the text channel states
+  // "The agent returned no answer." about a run that is still going.
+  // `pollAgentRun`'s `onTimeout: "return"` arm produces exactly this shape
+  // (`status: "running"`, `timed_out: true`) and has no production caller —
+  // the handler passes `onTimeout: "throw"`. This guard is what keeps the
+  // statement true if one appears. `queued` reaches it too, which a
+  // `timed_out` check would not.
+  else if (run.status !== undefined && run.status !== "completed") {
+    out.error = {
+      code: "agent_run_incomplete",
+      message: `The agent run ended while still ${run.status}.`,
+    };
   }
   return out;
 }
