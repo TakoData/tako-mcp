@@ -28,26 +28,6 @@ export function readToolsParam(url: URL): string | null {
 }
 
 /**
- * Retired tokens and the tool that replaced them.
- *
- * NOT the alias table #263 deleted. That one HID a tool: `credits` mapped onto
- * `tako_credit_balance`, so a caller who named the real tool got the alias
- * instead. This forwards a token whose tool no longer exists, so a connection
- * configured before the fold keeps listing the tool it asked for rather than
- * silently widening to the four defaults — an allowlist that resolves to
- * nothing falls back to the defaults, which is the worst outcome here: the
- * caller asked for synthesis and gets a surface that cannot do it, with no
- * error anywhere.
- *
- * Remove an entry one minor release after its tool's deletion ships.
- */
-const RETIRED_TOOL_TOKENS: ReadonlyMap<string, string> = new Map([
-  // Deleted 2026-08 in the answer fold; synthesis is `include_answer` on the
-  // advanced tool, which reaches the same endpoint.
-  ["tako_answer", "tako_search_advanced"],
-]);
-
-/**
  * Resolve a raw `?tools=` value into the set of tool names to register, or
  * `null` for "use the defaults".
  *
@@ -76,11 +56,7 @@ export function parseToolsParam(
     const name = token.startsWith(TOOL_NAME_PREFIX)
       ? token
       : `${TOOL_NAME_PREFIX}${token}`;
-    // Forwarding happens BEFORE the known-name check, so a retired token never
-    // reaches it — and the check still runs on the replacement, so this map can
-    // never register a name the surface does not have.
-    const resolved = RETIRED_TOOL_TOKENS.get(name) ?? name;
-    if (knownNames.has(resolved)) requested.add(resolved);
+    if (knownNames.has(name)) requested.add(name);
   }
   return requested.size === 0 ? null : requested;
 }
