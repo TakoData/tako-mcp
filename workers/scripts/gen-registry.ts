@@ -48,7 +48,9 @@ import {
 } from "../src/tools/_search_results.js";
 import {
   fenceRunFor,
+  renderAvailableDataMarkdown,
   renderContentsText,
+  renderGraphRelatedMarkdown,
   renderSearchMarkdown,
   renderVisualizeMarkdown,
 } from "../src/tools/_render_markdown.js";
@@ -63,6 +65,16 @@ import { defaultMaxChars } from "../src/tools/tako_contents.js";
 import { DEFAULT_HEIGHT } from "../src/tools/_chart_widget.js";
 import { buildVisualizeOutput } from "../src/tools/tako_visualize.js";
 import { ThinVizCard } from "../src/generated/schemas.js";
+import {
+  buildMatch,
+  buildNextCall,
+  candidateRef,
+  projectCandidate,
+  projectMatch,
+  searchToolFor,
+  type OtherMatch,
+} from "../src/tools/_available_data.js";
+import { graphRelatedOutputShape, graphSearchOutputShape, projectRelated } from "../src/tools/_graph.js";
 import type { Env } from "../src/env.js";
 import type { Surface } from "../src/surface.js";
 import type { ToolAnnotations, ToolModule } from "../src/tools/types.js";
@@ -649,6 +661,22 @@ export const OUTPUT_SCHEMA_MAX_CHARS = 2_000;
 export const LEGACY_OUTPUT_SCHEMA_CEILINGS: Record<string, { generic: number; chatgpt: number }> = {
   // Measured 2026-08-31, the day the gate landed.
   tako_search: { generic: 4381, chatgpt: 4704 },
+  // `tako_available_data` IS migrated — description 759/5 lines, max param
+  // 181, every prose cap held — and still cannot reach 2,000, because its BARE
+  // structure is 2,389 with every field description deleted. Measured cost per
+  // root field: matches 1,401, candidates 866, the four pair fields 890,
+  // verified 300, next_call 285. Even one merged node array plus found,
+  // verified, guidance and next_call is 2,188 before a word of prose.
+  //
+  // So the remaining 1,251 of descriptions is not what to cut — reaching the
+  // cap means dropping advertised fields, which is a D3/D4 decision, not a
+  // copy edit. The candidate is merging `matches` and `candidates` into one
+  // node list (the evidence gradient is already legible: `coverage.items`
+  // present = drilled, `coverage` alone = counted, absent = unchecked), which
+  // measures ~2,770 and removes a vocabulary term. Raised, not taken, in the
+  // fan-out PR: it is a shape change and the shape was signed off as two
+  // fields.
+  tako_available_data: { generic: 3638, chatgpt: 3638 },
 };
 
 /**
@@ -665,8 +693,6 @@ export const LEGACY_PROSE_CEILINGS: Record<
   // Measured 2026-08-30, the day the gate landed. Delete a row when its
   // tool's fan-out PR lands the rewrite.
   tako_agent: { description: 448, param: 489, entry: 1134 },
-  tako_available_data: { description: 2937, param: 484, entry: 4153 },
-  tako_graph_related: { description: 1262, param: 150, entry: 1929 },
   // Re-baselined after #273 folded tako_answer in and exposed the whole
   // SearchRequest body — the generated param prose is a cross-repo fix
   // (the tako repo's schema builder), tracked for that tool's fan-out PR.
@@ -867,6 +893,66 @@ function buildVisualizeSample(tool: ToolModule): ToolSample {
   };
 }
 
+const AVAILABLE_DATA_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_available_data_sample.json");
+const GRAPH_RELATED_SAMPLE_FIXTURE = resolve(HERE, "../test/fixtures/tako_graph_related_sample.json");
+
+/**
+ * `tako_available_data` runs a multi-call orchestration, so the fixture is the
+ * WIRE pieces (one graph/search response plus the coverage drill for its top
+ * result) rather than a canned output: the sample then exercises the real
+ * `selectCoverage` -> `projectMatch` / `projectCandidate` -> renderer chain,
+ * which is the part that drifts. Which branch the orchestrator picks is not
+ * what TOOLS.md documents, so the discovery happy path stands for all of them.
+ */
+function buildAvailableDataSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(AVAILABLE_DATA_SAMPLE_FIXTURE, "utf8")) as {
+    search: unknown;
+    related: unknown;
+    candidate_coverage: Record<string, { total: number; capped: boolean }>;
+  };
+  const search = z.object(graphSearchOutputShape).parse(raw.search);
+  const related = z.object(graphRelatedOutputShape).parse(raw.related);
+  const top = search.results[0];
+  if (top === undefined) throw new Error("available_data fixture: empty search results");
+  const match = buildMatch(top, related.relation);
+  const candidates: OtherMatch[] = search.results.slice(1).map((n) => {
+    const probe = raw.candidate_coverage[n.id];
+    return probe === undefined
+      ? candidateRef(n)
+      : { ...candidateRef(n), coverage_total: probe.total, coverage_capped: probe.capped };
+  });
+  const output = {
+    found: true,
+    verified: "coverage" as const,
+    matches: [projectMatch(match)],
+    candidates: candidates.map(projectCandidate),
+    // GENERATED, never hand-written: `buildNextCall` owns the gate that
+    // decides whether a handle is emitted at all (NEXT_CALL_MAX_NAMES), so a
+    // literal here would document a handle the tool would have withheld.
+    // `undefined` is the default toolset, which is what a reader of the docs is on.
+    next_call: buildNextCall([match], searchToolFor(undefined)),
+  };
+  return {
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderAvailableDataMarkdown(output),
+  };
+}
+
+function buildGraphRelatedSample(tool: ToolModule): ToolSample {
+  const raw = JSON.parse(readFileSync(GRAPH_RELATED_SAMPLE_FIXTURE, "utf8"));
+  const output = projectRelated(z.object(graphRelatedOutputShape).parse(raw));
+  return {
+    structured: pickDeclared(
+      outputSchemaForSurface(tool, "generic"),
+      output as unknown as Record<string, unknown>,
+    ),
+    text: renderGraphRelatedMarkdown(output),
+  };
+}
+
 export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string, ToolSample> {
   const samples = new Map<string, ToolSample>();
   for (const m of modules) {
@@ -875,6 +961,8 @@ export function buildToolSamples(modules: ReadonlyArray<ToolModule>): Map<string
     if (m.name === "tako_search") samples.set(m.name, buildSearchSample(m));
     if (m.name === "tako_contents") samples.set(m.name, buildContentsSample(m));
     if (m.name === "tako_visualize") samples.set(m.name, buildVisualizeSample(m));
+    if (m.name === "tako_available_data") samples.set(m.name, buildAvailableDataSample(m));
+    if (m.name === "tako_graph_related") samples.set(m.name, buildGraphRelatedSample(m));
   }
   return samples;
 }
@@ -960,7 +1048,7 @@ export function buildToolsDoc(input: ToolsDocInput): string {
     "",
     "## Choosing tools with `?tools=`",
     "",
-    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming `tako_search`, so a listing without it gives the model a call it cannot run. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
+    "On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.",
     "",
   );
 

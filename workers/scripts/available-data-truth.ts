@@ -78,7 +78,7 @@ async function main(): Promise<void> {
     // measured the 11-of-20 result — by taking the metric node from the
     // resolved pair and calling /api/v3/search directly, which still accepts
     // node_ids even though tako_search no longer exposes them.
-    const pinId = out.metric?.node_id ?? null;
+    const pinId = out.metric?.id ?? null;
     const emitted = nc === null ? "none" : "unpinned";
     let handleCards = 0; let titles: string[] = [];
     if (nc !== null) {

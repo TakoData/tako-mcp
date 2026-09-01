@@ -92,7 +92,7 @@ export type ResultContent = z.infer<typeof resultContentSchema>;
  * this constant exists to prevent, one level up.
  *
  * Neither run is checked in — both were driven by hand against staging. The
- * per-handle numbers live in `_available_data.ts`'s `buildPairSummary` comment
+ * per-handle numbers live in `_available_data.ts`'s `buildPairNextCall` comment
  * (pinned vs unpinned, by handle) and in the commit that introduced this hatch;
  * cite those rather than looking for a script to re-run.
  */

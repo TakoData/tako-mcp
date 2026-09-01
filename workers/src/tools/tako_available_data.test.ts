@@ -2,9 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env.js";
 import type { ToolContext } from "./types.js";
-import { MAX_COVERAGE_NAMES, MAX_COVERAGE_PAGES, PAGE_LIMIT } from "./_available_data.js";
+import { COVERAGE_ITEMS_SHOWN, MAX_COVERAGE_PAGES, PAGE_LIMIT } from "./_available_data.js";
+import type { AvailableDataOutput } from "./_available_data.js";
 import takoSearch from "./tako_search.js";
-import takoAvailableData, { fullOutputSchema } from "./tako_available_data.js";
+import takoAvailableData from "./tako_available_data.js";
 import {
   jsonResponse,
   mockFetchSequence,
@@ -16,6 +17,14 @@ const ENV: Env = { DJANGO_BASE_URL: "https://staging.trytako.com" };
 const CTX: ToolContext = {
   token: "sk-test", env: ENV, sendProgress: noopSendProgress, surface: "generic",
 };
+
+/**
+ * The TEXT channel, which is where the prose these tests assert on now lives.
+ * `summary` is gone: the renderer builds the document from the projected
+ * fields and `guidance` carries only the two-sentence verdict, so a test that
+ * used to read `out.summary` reads one or the other.
+ */
+const md = (out: AvailableDataOutput): string => takoAvailableData.renderText(out, CTX);
 
 const searchHit = (id: string, name: string, type = "entity", label = "ORG") => ({
   id, type, name, label,
@@ -81,7 +90,7 @@ afterEach(() => {
  * loses a parameter; a hand-written key list would go stale the next time it
  * does.
  */
-function expectRunnableByTakoSearch(nextCall: Record<string, unknown> | null): void {
+function expectRunnableByTakoSearch(nextCall: { tool: string; query: string } | null): void {
   // Callers reach this only on paths that MUST emit a handle; the suppression
   // paths assert `next_call === null` directly and never come here.
   expect(nextCall, "next_call was suppressed on a path that should emit one").not.toBeNull();
@@ -105,7 +114,7 @@ describe("tako_available_data", () => {
     expect(fetchMock.mock.calls).toHaveLength(1); // search only
     expect(out.found).toBe(false);
     expect(out.matches).toEqual([]);
-    expect(out.summary).toContain("no data-graph node");
+    expect(out.guidance).toContain('Nothing in Tako\'s graph resolves "zzz"');
   });
 
   it("forwards q + limit + optional types/label to graph/search", async () => {
@@ -157,16 +166,18 @@ describe("tako_available_data", () => {
     expect(out.found).toBe(true);
     // Render narrow: only the winner carries a full coverage list.
     expect(out.matches).toHaveLength(1);
-    expect(out.matches[0]?.node_id).toBe("apple-inc");
+    expect(out.matches[0]?.id).toBe("apple-inc");
     // Probed-but-not-rendered candidates keep their id + count for a switch.
-    const probed = out.other_matches.filter((o) => o.node_id !== undefined);
-    expect(probed.map((o) => o.node_id)).toEqual(["apple-gpe", "apple-records"]);
-    expect(probed[1]?.coverage_total).toBe(5);
-    expect(out.matches[0]?.coverage.kind).toBe("metrics");
+    const probed = out.candidates.filter((o) => o.id !== undefined);
+    expect(probed.map((o) => o.id)).toEqual(["apple-gpe", "apple-records"]);
+    expect(probed[1]?.coverage?.total).toBe(5);
+    // `coverage.kind` is gone: it is `coverageKindFor(type)` exactly, so
+    // `type` already says whether the list holds metrics or entities.
+    expect(out.matches[0]?.type).toBe("entity");
     expect(out.matches[0]?.coverage.total).toBe(47);
-    expect(out.summary).toContain("47 metrics.");
-    // Names live once, in coverage.names — the prose never enumerates them.
-    expect(out.summary).not.toContain("Net Income");
+    expect(md(out)).toContain("metrics (47 total, 2 listed)");
+    // The happy path carries no verdict — the fields already say it.
+    expect(out.guidance).toBeUndefined();
   });
 
   it("metric-type hit drills relation=entities and reports coverage, NOT 'no metrics'", async () => {
@@ -180,10 +191,10 @@ describe("tako_available_data", () => {
 
     const drillUrl = new URL(requestFrom(fetchMock.mock.calls[1]).url);
     expect(drillUrl.searchParams.get("relation")).toBe("entities"); // NOT metrics
-    expect(out.matches[0]?.coverage.kind).toBe("entities");
+    expect(out.matches[0]?.type).toBe("metric");
     expect(out.matches[0]?.coverage.total).toBe(63);
-    expect(out.summary).toContain("tracked for 63 entities.");
-    expect(out.summary).not.toContain("no metrics");
+    expect(md(out)).toContain("entities (63 total, 3 listed)");
+    expect(md(out)).not.toContain("no metrics");
   });
 
   it("renders a capped total as 'N+'", async () => {
@@ -192,8 +203,8 @@ describe("tako_available_data", () => {
       jsonResponse(200, drill("tsla", "Tesla, Inc.", "metrics", ["EV/NTM Revenue", "Gross Margin (%)"], 250, true)),
     ]);
     const out = await takoAvailableData.handler({ q: "tesla" }, CTX);
-    expect(out.matches[0]?.coverage.capped).toBe(true);
-    expect(out.summary).toContain("250+ metrics.");
+    expect(out.matches[0]?.coverage.total_capped).toBe(true);
+    expect(md(out)).toContain("metrics (250+ total, 2 listed)");
   });
 
   it("isolates a per-node coverage failure as an unavailable match", async () => {
@@ -213,7 +224,7 @@ describe("tako_available_data", () => {
     // a zero count rather than sinking the call.
     expect(out.matches).toHaveLength(1);
     expect(out.matches[0]?.coverage.total).toBe(1);
-    expect(out.other_matches.find((o) => o.node_id === "b")?.coverage_total).toBe(0);
+    expect(out.candidates.find((o) => o.id === "b")?.coverage?.total).toBe(0);
   });
 
   it("promotes a probed candidate when rank 0 has no coverage (the Carnival shape)", async () => {
@@ -238,8 +249,8 @@ describe("tako_available_data", () => {
     const out = await takoAvailableData.handler({ q: "Carnival" }, CTX);
     expect(fetchMock.mock.calls).toHaveLength(6);
     expect(out.found).toBe(true);
-    expect(out.matches.map((m) => m.node_id)).toContain("carnival-ltd");
-    expect(out.matches.find((m) => m.node_id === "carnival-ltd")?.coverage.names).toEqual([
+    expect(out.matches.map((m) => m.id)).toContain("carnival-ltd");
+    expect(out.matches.find((m) => m.id === "carnival-ltd")?.coverage.items?.map((i) => i.name)).toEqual([
       "Passenger Cruise Days",
     ]);
   });
@@ -272,12 +283,12 @@ describe("tako_available_data", () => {
     const out = await takoAvailableData.handler({ q: "US inflation" }, CTX);
     expect(fetchMock.mock.calls).toHaveLength(5);
     // argmax, not first-non-zero: `Inflation Rate` (63) also has coverage.
-    expect(out.matches.map((m) => m.node_id)).toEqual(["united-states"]);
+    expect(out.matches.map((m) => m.id)).toEqual(["united-states"]);
     expect(out.found).toBe(true);
     // The shell drops to a receipt line carrying its real count, so a caller
     // who actually wanted it can still get there.
-    const demoted = out.other_matches.find((o) => o.node_id === "us-savings");
-    expect(demoted?.coverage_total).toBe(1);
+    const demoted = out.candidates.find((o) => o.id === "us-savings");
+    expect(demoted?.coverage?.total).toBe(1);
     // Only ONE full coverage list is rendered — the whole point of
     // RENDER_FULL_N is not paying ~8.3k twice.
     expect(out.matches).toHaveLength(1);
@@ -303,8 +314,8 @@ describe("tako_available_data", () => {
       jsonResponse(200, drill("delta-corp", "Delta Corp Limited", "metrics", ["X"], 250, true)),
     ]);
     const out = await takoAvailableData.handler({ q: "Delta" }, CTX);
-    expect(out.matches.map((m) => m.node_id)).toEqual(["delta-air"]);
-    expect(out.other_matches.find((o) => o.node_id === "delta-corp")?.coverage_total).toBe(250);
+    expect(out.matches.map((m) => m.id)).toEqual(["delta-air"]);
+    expect(out.candidates.find((o) => o.id === "delta-corp")?.coverage?.total).toBe(250);
   });
 
   // The mirror of the `rank0Known` guard below: unavailable is not zero in the
@@ -328,12 +339,12 @@ describe("tako_available_data", () => {
       jsonResponse(503, { detail: "graph store down" }),
     ]);
     const out = await takoAvailableData.handler({ q: "US inflation" }, CTX);
-    expect(out.matches.map((m) => m.node_id)).toEqual(["us-savings"]);
+    expect(out.matches.map((m) => m.id)).toEqual(["us-savings"]);
     expect(out.matches[0]?.unavailable).toBeUndefined();
     expect(out.found).toBe(true);
     // The better-covered candidate is still named with its id, so switching to
     // it does not require re-running the tool.
-    expect(out.other_matches.find((o) => o.node_id === "united-states")?.coverage_total).toBe(250);
+    expect(out.candidates.find((o) => o.id === "united-states")?.coverage?.total).toBe(250);
   });
 
   it("does NOT promote when rank 0's coverage lookup failed (unavailable ≠ zero)", async () => {
@@ -351,12 +362,12 @@ describe("tako_available_data", () => {
       jsonResponse(200, drill("delta-corp", "Delta Corp Limited", "metrics", ["X"], 250, true)),
     ]);
     const out = await takoAvailableData.handler({ q: "Delta" }, CTX);
-    expect(out.matches.map((m) => m.node_id)).toEqual(["delta-air"]);
+    expect(out.matches.map((m) => m.id)).toEqual(["delta-air"]);
     expect(out.matches[0]?.unavailable).toBe(true);
     expect(out.found).toBe(false);
     // The better-covered node is still named in a receipt, so a retry is not
     // the caller's only move.
-    expect(out.other_matches.find((o) => o.node_id === "delta-corp")?.coverage_total).toBe(250);
+    expect(out.candidates.find((o) => o.id === "delta-corp")?.coverage?.total).toBe(250);
   });
 
   it("fail-open skips the coverage drill and reports no coverage in either channel", async () => {
@@ -372,13 +383,15 @@ describe("tako_available_data", () => {
     const out = await takoAvailableData.handler({ q: "the vibes of tuesday" }, CTX);
     expect(fetchMock.mock.calls).toHaveLength(1); // search only — no drill, no probes
     expect(out.found).toBe(false);
-    expect(out.confident).toBe(false);
     expect(out.next_call).toBeNull();
-    // Resolution is still reported — it must not read as "no node matched".
-    expect(out.matches.map((m) => m.name)).toEqual(["Tuesday Morning Corporation"]);
-    expect(out.matches[0]?.coverage.total).toBe(0);
-    expect(out.matches[0]?.unavailable).toBeUndefined(); // never attempted ≠ failed
-    expect(out.summary).toContain("No graph node confidently matches");
+    // Resolution is still reported — it must not read as "no node matched" —
+    // but as a CANDIDATE, not a match. Shipping these as matches is what let
+    // structuredContent report coverage on a response whose prose disclaimed
+    // the very same names.
+    expect(out.matches).toEqual([]);
+    expect(out.candidates.map((c) => c.name)).toEqual(["Tuesday Morning Corporation"]);
+    expect(out.guidance).toContain("Nothing in the graph confidently matches");
+    expect(md(out)).toContain("Tuesday Morning Corporation");
   });
 
   it("resolved node with empty coverage → found:false and a gap summary, no coverage claim", async () => {
@@ -390,8 +403,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "tesla" }, CTX);
     expect(out.found).toBe(false);
-    expect(out.summary).not.toContain("Tako's proprietary data has");
-    expect(out.summary).toContain("no metrics for it yet");
+    expect(out.guidance).toContain("has no metrics yet");
   });
 
   it("all coverage drills failing → found:false, gap summary over unavailable lines", async () => {
@@ -404,7 +416,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "Alpha" }, CTX);
     expect(out.found).toBe(false);
-    expect(out.summary).not.toContain("Tako's proprietary data has");
+    expect(out.guidance).toContain("couldn't load its coverage");
     expect(out.matches.every((m) => m.unavailable)).toBe(true);
   });
 
@@ -419,8 +431,7 @@ describe("tako_available_data", () => {
     const drillUrl = new URL(requestFrom(fetchMock.mock.calls[1]).url);
     expect(drillUrl.searchParams.get("relation")).toBe("metrics");
     expect(out.found).toBe(true);
-    expect(out.matches[0]?.coverage.kind).toBe("metrics");
-    expect(out.summary).toContain("12 metrics.");
+    expect(md(out)).toContain("metrics (12 total, 2 listed)");
   });
 
   it("treats a malformed coverage payload as unavailable, not a hard failure", async () => {
@@ -444,7 +455,7 @@ describe("tako_available_data", () => {
     await expect(takoAvailableData.handler({ q: "apple" }, CTX)).rejects.toThrow(/unexpected shape/);
   });
 
-  it("paginates the coverage drill with the cursor and concatenates every page's names", async () => {
+  it("stops after ONE page: the first PAGE_LIMIT response already overshoots the cap", async () => {
     // The whole point of pagination: a metric buried past page 1 ("Net
     // charges-off" behind 100 boilerplate normalized-accounting names) must
     // appear in coverage.names of the ONE call — no second fetch, no filter.
@@ -463,36 +474,42 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "capital one" }, CTX);
 
-    expect(fetchMock.mock.calls).toHaveLength(3); // search + 2 pages
+    // One page, not two. Both channels render COVERAGE_ITEMS_SHOWN (25)
+    // entries now, and the first page carries PAGE_LIMIT (100) — so chasing
+    // the cursor bought 75+ names that nothing renders, at a round trip each.
+    expect(fetchMock.mock.calls).toHaveLength(2); // search + ONE page
     const firstDrill = new URL(requestFrom(fetchMock.mock.calls[1]).url);
     expect(firstDrill.searchParams.get("limit")).toBe(String(PAGE_LIMIT));
     expect(firstDrill.searchParams.has("cursor")).toBe(false);
-    const secondDrill = new URL(requestFrom(fetchMock.mock.calls[2]).url);
-    expect(secondDrill.searchParams.get("cursor")).toBe("cursor-2");
-    expect(out.matches[0]?.coverage.names).toHaveLength(PAGE_LIMIT + 1);
-    expect(out.matches[0]?.coverage.names).toContain("Net charges-off/(Recoveries) (Quarterly)");
-    // Every name fetched (101 of 101) → the complete list, nothing truncated.
-    expect(out.matches[0]?.coverage.truncated).toBe(false);
+    expect(out.matches[0]?.coverage.items).toHaveLength(COVERAGE_ITEMS_SHOWN);
+    // 101 exist and 25 are listed, so `truncated` must say so — otherwise a
+    // name past the cap reads as absent, the one reading this tool must never
+    // invite.
+    expect(out.matches[0]?.coverage.total).toBe(101);
+    expect(out.matches[0]?.coverage.truncated).toBe(true);
   });
 
-  it("stops paginating at MAX_COVERAGE_NAMES and reports truncated", async () => {
+  it("stops paginating at COVERAGE_ITEMS_SHOWN and reports truncated", async () => {
     const page = (cursor: string | null) =>
       drill(
         "big", "Big Node", "metrics",
         Array.from({ length: PAGE_LIMIT }, (_, i) => `M ${cursor ?? "p1"} ${i}`),
         1000, false, cursor,
       );
-    // Enough pages that an unbounded loop would keep going; the fetched-name
-    // count crosses MAX_COVERAGE_NAMES after page ceil(MAX/PAGE_LIMIT) and no
-    // further page is requested.
-    const pagesNeeded = Math.ceil(MAX_COVERAGE_NAMES / PAGE_LIMIT);
+    // Enough pages that an unbounded loop would keep going. One page of
+    // PAGE_LIMIT (100) already overshoots COVERAGE_ITEMS_SHOWN (25), so the
+    // loop stops on the count before MAX_COVERAGE_PAGES ever binds.
+    const pagesNeeded = Math.min(
+      MAX_COVERAGE_PAGES,
+      Math.ceil(COVERAGE_ITEMS_SHOWN / PAGE_LIMIT),
+    );
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { results: [searchHit("big", "Big Node")] }),
       ...Array.from({ length: pagesNeeded + 1 }, (_, i) => jsonResponse(200, page(`c${i + 2}`))),
     ]);
     const out = await takoAvailableData.handler({ q: "big" }, CTX);
     expect(fetchMock.mock.calls).toHaveLength(1 + pagesNeeded); // search + pages, never the extra one
-    expect(out.matches[0]?.coverage.names).toHaveLength(MAX_COVERAGE_NAMES);
+    expect(out.matches[0]?.coverage.items).toHaveLength(COVERAGE_ITEMS_SHOWN);
     expect(out.matches[0]?.coverage.truncated).toBe(true);
     expect(out.matches[0]?.coverage.total).toBe(1000);
   });
@@ -506,7 +523,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "a" }, CTX);
     expect(out.matches[0]?.unavailable).toBeUndefined();
-    expect(out.matches[0]?.coverage.names).toEqual(["Revenue", "Net Income"]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["Revenue", "Net Income"]);
     expect(out.matches[0]?.coverage.total).toBe(150);
     expect(out.matches[0]?.coverage.truncated).toBe(true);
   });
@@ -520,7 +537,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "a" }, CTX);
     expect(out.matches[0]?.unavailable).toBeUndefined();
-    expect(out.matches[0]?.coverage.names).toEqual(["Revenue", "Net Income"]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["Revenue", "Net Income"]);
     expect(out.matches[0]?.coverage.truncated).toBe(true);
   });
 
@@ -537,8 +554,8 @@ describe("tako_available_data", () => {
     expect(out.matches[0]?.unavailable).toBeUndefined();
     expect(out.matches[0]?.coverage.total).toBe(0);
     expect(out.found).toBe(false);
-    expect(out.summary).toContain("no metrics for it yet");
-    expect(out.summary).not.toContain("couldn't load its coverage");
+    expect(out.guidance).toContain("has no metrics yet");
+    expect(out.guidance).not.toContain("could not load");
   });
 
   it("stops after MAX_COVERAGE_PAGES round-trips even when the server pages tiny", async () => {
@@ -552,7 +569,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "a" }, CTX);
     expect(fetchMock.mock.calls).toHaveLength(1 + MAX_COVERAGE_PAGES);
-    expect(out.matches[0]?.coverage.names).toHaveLength(MAX_COVERAGE_PAGES * 2);
+    expect(out.matches[0]?.coverage.items).toHaveLength(MAX_COVERAGE_PAGES * 2);
     expect(out.matches[0]?.coverage.truncated).toBe(true);
   });
 
@@ -571,7 +588,7 @@ describe("tako_available_data", () => {
     const drillUrl = new URL(requestFrom(fetchMock.mock.calls[1]).url);
     expect(drillUrl.searchParams.get("q")).toBeNull();
     expect(out.found).toBe(true);
-    expect(out.summary).not.toContain("matching");
+    expect(md(out)).not.toContain("containing");
   });
 
   it("empty coverage reads as a genuine gap the agent can act on", async () => {
@@ -581,7 +598,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "capital one" }, CTX);
     expect(out.found).toBe(false);
-    expect(out.summary).toContain("no metrics for it yet");
+    expect(out.guidance).toContain("has no metrics yet");
   });
 
   it("returns a ready-to-run next_call handle when the coverage list is small (unambiguous)", async () => {
@@ -597,7 +614,7 @@ describe("tako_available_data", () => {
     // Whatever the handle says, tako_search must accept it verbatim. A handle
     // labelled "run verbatim" that the tool rejects is worse than no handle.
     expectRunnableByTakoSearch(out.next_call);
-    expect(out.summary).toContain("next_call");
+    expect(md(out)).toContain("## Next call\ntako_search: Apple Inc. Revenue");
   });
 
   it("suppresses next_call for a broad UNFILTERED coverage (names[0] is arbitrary popularity order)", async () => {
@@ -613,8 +630,7 @@ describe("tako_available_data", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "capital one" }, CTX);
     expect(out.next_call).toBeNull();
-    expect(out.summary).not.toContain("next_call");
-    expect(out.summary).toContain('(e.g. "Capital One Financial EV/NTM Revenue")');
+    expect(md(out)).not.toContain("## Next call");
   });
 
   it("next_call is null when no match has coverage (never a handle for data-less names)", async () => {
@@ -626,24 +642,19 @@ describe("tako_available_data", () => {
     expect(out.next_call).toBeNull();
   });
 
-  it("stops on the cursor landing items exactly at MAX_COVERAGE_NAMES with more available", async () => {
+  it("fetches one page and stops, even with a cursor and more available", async () => {
     const p1 = drill(
       "a", "A", "metrics",
       Array.from({ length: PAGE_LIMIT }, (_, i) => `M1-${i}`), 400, false, "c2",
     );
-    const p2 = drill(
-      "a", "A", "metrics",
-      Array.from({ length: MAX_COVERAGE_NAMES - PAGE_LIMIT }, (_, i) => `M2-${i}`), 400, false, "c3",
-    );
     const fetchMock = mockFetchSequence([
       jsonResponse(200, { results: [searchHit("a", "A")] }),
       jsonResponse(200, p1),
-      jsonResponse(200, p2),
       jsonResponse(200, drill("a", "A", "metrics", ["never-fetched"], 400)),
     ]);
     const out = await takoAvailableData.handler({ q: "a" }, CTX);
-    expect(fetchMock.mock.calls).toHaveLength(3); // count-cap stops the loop, not the cursor
-    expect(out.matches[0]?.coverage.names).toHaveLength(MAX_COVERAGE_NAMES);
+    expect(fetchMock.mock.calls).toHaveLength(2); // MAX_COVERAGE_PAGES stops the loop — not the cursor, and not the item count
+    expect(out.matches[0]?.coverage.items).toHaveLength(COVERAGE_ITEMS_SHOWN);
     expect(out.matches[0]?.coverage.truncated).toBe(true);
     expect(out.matches[0]?.coverage.total).toBe(400);
   });
@@ -699,8 +710,8 @@ describe("tako_available_data — lookup path", () => {
     expect(types.slice(0, 2).sort()).toEqual(["entity", "metric"]);
     expect(types.slice(2, 4)).toEqual([null, null]);
 
-    expect(out.entity).toEqual({ node_id: "ent::nvidia::1", name: "NVIDIA Corporation", type: "entity" });
-    expect(out.metric).toEqual({ node_id: "mt::gross_margin::9", name: "Gross Margin (%)", type: "metric" });
+    expect(out.entity).toEqual({ id: "ent::nvidia::1", name: "NVIDIA Corporation" });
+    expect(out.metric).toEqual({ id: "mt::gross_margin::9", name: "Gross Margin (%)" });
     // BOTH halves are the graph's canonical names — "Gross Margin (%)", not the
     // caller's "gross margin". The pin used to carry the precision; with
     // tako_search taking none, the canonical name is the only steering signal
@@ -711,8 +722,8 @@ describe("tako_available_data — lookup path", () => {
       query: "NVIDIA Corporation Gross Margin (%)",
     });
     // The verbatim filter's hit comes back as the entity's own filtered list.
-    expect(out.matches[0]).toMatchObject({ node_id: "ent::nvidia::1", filter: "gross margin" });
-    expect(out.matches[0]?.coverage.names).toEqual(["Gross Margin (%)"]);
+    expect(out.matches[0]).toMatchObject({ id: "ent::nvidia::1", filter: "gross margin" });
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["Gross Margin (%)"]);
     // `matches` is no longer empty here (PR 267 returns the filtered list), but
     // the handle must still be one tako_search accepts verbatim.
     expectRunnableByTakoSearch(out.next_call);
@@ -737,7 +748,7 @@ describe("tako_available_data — lookup path", () => {
 ]);
     const out = await takoAvailableData.handler({ q: "Walmart", metric: "total revenue" }, CTX);
     expect(out.metric?.name).toBe("Total Odds");
-    expect(out.metric_alternates?.map((a) => a.name)).toEqual(["Revenues", "Revenue per Share"]);
+    expect(out.metric_candidates?.map((a) => a.name)).toEqual(["Revenues", "Revenue per Share"]);
   });
 
   it("falls back to the coverage drill when the metric does not resolve", async () => {
@@ -762,8 +773,8 @@ describe("tako_available_data — lookup path", () => {
     expect(new URL(requestFrom(fetchMock.mock.calls[6]).url).pathname).toBe("/api/v1/graph/related");
     expect(out.metric).toBeNull();
     expect(out.next_call).toBeNull();
-    expect(out.matches[0]?.coverage.names).toEqual(["Revenue", "Net Income"]);
-    expect(out.summary).toContain("no metric matching");
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["Revenue", "Net Income"]);
+    expect(out.guidance).toContain('No metric matches "quantum flux capacity"');
   });
 
   it("routes a domain that resolves to nothing at tako_search instead of a dead end", async () => {
@@ -775,8 +786,7 @@ describe("tako_available_data — lookup path", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "openai.com", metric: "monthly visits" }, CTX);
     expect(out.entity).toBeNull();
-    expect(out.summary).toContain("Domains are often not graph nodes");
-    expect(out.summary).toContain("tako_search");
+    expect(out.guidance).toContain("tako_search");
   });
 
   it("gates fuzzy entity matches out of the pair", async () => {
@@ -794,7 +804,7 @@ describe("tako_available_data — lookup path", () => {
       { q: "Carnival Corporation", metric: "passenger cruise days" }, CTX,
     );
     expect(out.entity?.name).toBe("Carnival Corporation Ltd.");
-    expect(out.entity_alternates).toEqual([]);
+    expect(out.entity_candidates).toEqual([]);
   });
 });
 
@@ -815,7 +825,7 @@ describe("tako_available_data — lookup path, live-caught regressions", () => {
     );
     expect(out.next_call).toBeNull();
     expect(out.found).toBe(false);
-    expect(out.summary).toContain("NO metric confidently matches");
+    expect(out.guidance).toContain('No metric matches "number of unicorns"');
   });
 
   it("emits NO next_call when the entity did not resolve (would contradict the routing)", async () => {
@@ -961,16 +971,17 @@ describe("tako_available_data — metric confidence is judged on what is shown",
     expect(out.found).toBe(false);
     // Backend order is preserved — confidentMatch decides confidence, never
     // order (promoting rank 2 was measured to pick ratios over real metrics).
-    expect(out.metric?.node_id).toBe("mt::opex::1");
+    expect(out.metric?.id).toBe("mt::opex::1");
     // The recovery has to stay available: every candidate keeps its node id for
     // tako_graph_related traversal, and its NAME is what the caller searches on.
     // A live agent run picked R&D Expenses (Normalized) off this list unaided.
-    expect(out.metric_alternates?.map((m) => m.node_id)).toEqual([
+    expect(out.metric_candidates?.map((m) => m.id)).toEqual([
       "mt::rd_norm::2",
       "mt::rd_amer::3",
     ]);
-    expect(out.summary).toContain("NO metric confidently matches");
-    expect(out.summary).toContain("Pick one deliberately");
+    expect(out.guidance).toContain('No metric matches "R&D expense"');
+    // The runners-up ARE the recovery, so they must reach the text channel too.
+    expect(md(out)).toContain("R&D Expenses (Normalized)");
   });
 });
 
@@ -991,7 +1002,7 @@ describe("tako_available_data — lookup probe failure isolation", () => {
     expect(out.entity?.name).toBe("Apple Inc.");
     expect(out.metric).toBeNull();
     expect(out.next_call).toBeNull();
-    expect(out.matches[0]?.coverage.names).toEqual(["Revenue"]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["Revenue"]);
   });
 
   it("still throws when the ENTITY probe fails (nothing to fall back to)", async () => {
@@ -1068,10 +1079,10 @@ describe("tako_available_data — swapped argument detection", () => {
     expect(out.next_call).toBeNull();
     expect(out.entity).toBeNull();
     expect(out.metric).toBeNull();
-    expect(out.summary).toContain("look swapped");
+    expect(out.guidance).toContain("look swapped");
     // Names the corrected call rather than silently reinterpreting intent.
-    expect(out.summary).toContain('q="Nvidia"');
-    expect(out.summary).toContain('metric="gross margin"');
+    expect(out.guidance).toContain('q="Nvidia"');
+    expect(out.guidance).toContain('metric="gross margin"');
   });
 
   // `probe` used to fall back to `input.types` whenever its own `types`
@@ -1091,7 +1102,7 @@ describe("tako_available_data — swapped argument detection", () => {
     const out = await takoAvailableData.handler(
       { q: "gross margin", metric: "Nvidia", types: "entity" }, CTX,
     );
-    expect(out.summary).toContain("look swapped");
+    expect(out.guidance).toContain("look swapped");
     expect(out.found).toBe(false);
     expect(out.next_call).toBeNull();
   });
@@ -1107,7 +1118,7 @@ describe("tako_available_data — swapped argument detection", () => {
       jsonResponse(200, { results: [searchHit("ent::sales::1", "Sales and Related Occupations")] }),
     ]);
     const out = await takoAvailableData.handler({ q: "Block", metric: "same store sales" }, CTX);
-    expect(out.summary).not.toContain("look swapped");
+    expect(out.guidance ?? "").not.toContain("look swapped");
     expect(out.entity?.name).toBe("Block, Inc.");
   });
 
@@ -1118,7 +1129,7 @@ describe("tako_available_data — swapped argument detection", () => {
       ...quietDetection,
     ]);
     const out = await takoAvailableData.handler({ q: "Nvidia", metric: "gross margin" }, CTX);
-    expect(out.summary).not.toContain("look swapped");
+    expect(out.guidance ?? "").not.toContain("look swapped");
     expect(out.found).toBe(true);
     expect(out.next_call).not.toBeNull();
   });
@@ -1175,7 +1186,10 @@ describe("tako_available_data — pair confirmation", () => {
       tool: "tako_search",
       query: "Novo Nordisk A/S Revenues",
     });
-    expect(out.summary).toContain("IS on");
+    // A confirmed pair is not a verdict — `verified: "pair"` states it, and
+    // the description carries the static "run next_call verbatim" lesson.
+    expect(out.guidance).toBeUndefined();
+    expect(md(out)).toContain("verified: pair");
   });
 
   it("confident + ABSENT from the entity's list, and nothing matching either → verified:unlinked, found:false", async () => {
@@ -1193,8 +1207,8 @@ describe("tako_available_data — pair confirmation", () => {
     const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
     expect(out.verified).toBe("unlinked");
     expect(out.found).toBe(false);
-    expect(out.metric?.node_id).toBe("mt::backlog::1");
-    expect(out.summary).toContain("NOT on");
+    expect(out.metric?.id).toBe("mt::backlog::1");
+    expect(out.guidance).toContain("is not on Lockheed Martin Corporation's own metric list");
   });
 
   it("unlinked still emits a handle rather than withholding it", async () => {
@@ -1229,12 +1243,12 @@ describe("tako_available_data — pair confirmation", () => {
       jsonResponse(200, pairPage([["mt::oi::1", "Order Intake"], ["mt::rev::2", "Revenues"]])),
     ]);
     const out = await takoAvailableData.handler({ q: "Lockheed Martin", metric: "backlog" }, CTX);
-    expect(out.summary).toContain("Order Intake");
-    expect(out.summary).toContain("Revenues");
+    expect(md(out)).toContain("Order Intake");
+    expect(md(out)).toContain("Revenues");
     // The same hits are the browse list (fix 3), so the entity does hold
     // something matching and the names come back with their node ids.
     expect(out.found).toBe(true);
-    expect(out.matches[0]?.coverage.names).toEqual(["Order Intake", "Revenues"]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["Order Intake", "Revenues"]);
   });
 
   it("NEVER re-pins off the entity's list, even on a textbook-looking match", async () => {
@@ -1255,12 +1269,12 @@ describe("tako_available_data — pair confirmation", () => {
     const out = await takoAvailableData.handler(
       { q: "Netflix", metric: "paid subscribers" }, CTX,
     );
-    expect(out.metric?.node_id).toBe("mt::top_paid::1");
+    expect(out.metric?.id).toBe("mt::top_paid::1");
     expect(out.next_call).toBeNull();
     // The list SHOWS the polluted name; the pin never takes it. `found` reports
     // that the entity's list holds something matching the phrase — which it
     // does — and the model picks from the list with its ids.
-    expect(out.matches[0]?.coverage.names).toEqual(["Disney Core Paid Subscribers"]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["Disney Core Paid Subscribers"]);
     expect(out.found).toBe(true);
   });
 
@@ -1283,14 +1297,12 @@ describe("tako_available_data — pair confirmation", () => {
     const out = await takoAvailableData.handler({ q: "Pfizer", metric: "R&D expense" }, CTX);
     expect(out.found).toBe(false);
     expect(out.next_call).toBeNull();
-    expect(out.summary).toContain("NO metric confidently matches");
+    expect(out.guidance).toContain('No metric matches "R&D expense"');
     // NOT `unlinked`: nothing about a pin was established here, because there
-    // is no pin. Claiming the entity's list "holds nothing matching" while its
-    // own entries sit in entityMetricMatches was the contradiction.
+    // is no pin.
     expect(out.verified).toBe("resolution");
-    expect(out.summary).not.toContain("holds nothing matching");
     // The near-misses ARE the payload on this path and must reach the model.
-    expect(out.summary).toContain("Operating costs and expenses");
+    expect(md(out)).toContain("Operating costs and expenses");
   });
 
   it("a TRUNCATED page never asserts absence — verdict degrades to resolution", async () => {
@@ -1309,7 +1321,7 @@ describe("tako_available_data — pair confirmation", () => {
     expect(out.verified).toBe("resolution");
     // The handle still resolves, and names the graph's metric.
     expect(out.next_call?.query).toContain("Backlog");
-    expect(out.summary).not.toContain("NOT on");
+    expect(out.guidance ?? "").not.toContain("is not on");
   });
 
   it("a FOUND node is `pair` even when the page was truncated", async () => {
@@ -1419,13 +1431,19 @@ describe("tako_available_data — candidate metadata and limit (fix 6)", () => {
     const out = await takoAvailableData.handler({ q: "apple", limit: 20 }, CTX);
     expect(new URL(requestFrom(fetchMock.mock.calls[0]).url).searchParams.get("limit")).toBe("20");
     // The rendered match carries its kind and (capped) aliases.
-    expect(out.matches[0]).toMatchObject({ subtype: "Companies", label: "ORG", aliases: ["Apple", "AAPL", "Apple Computer"] });
+    // `subtype` and `label` are ONE field now: measured over 134 live nodes,
+    // the label added nothing beyond type+subtype on all but 13, and those 13
+    // had no subtype at all.
+    expect(out.matches[0]).toMatchObject({ kind: "Companies", aliases: ["Apple", "AAPL", "Apple Computer"] });
     // Uninspected candidates are no longer name-only: the wide list the deleted graph search used to give.
-    const unprobed = out.other_matches.filter((o) => o.coverage_total === undefined);
-    expect(unprobed.map((o) => o.node_id)).toEqual(["apple-hosp", "apple-pie"]);
-    expect(unprobed[0]).toMatchObject({ subtype: "Companies", label: "ORG", aliases: ["APLE"] });
-    expect(out.summary).toContain("- Apple Hospitality REIT (Companies, ORG) (`apple-hosp`) — aliases: APLE");
-    expect(out.summary).toContain("- Apple Records (Companies, ORG) — 5 metrics (`apple-records`)");
+    const unprobed = out.candidates.filter((o) => o.coverage === undefined);
+    expect(unprobed.map((o) => o.id)).toEqual(["apple-hosp", "apple-pie"]);
+    // ...but a candidate drops its aliases, which used to render in text and
+    // not in structuredContent — the two channels disagreed about one node.
+    expect(unprobed[0]).toMatchObject({ kind: "Companies" });
+    expect(unprobed[0]).not.toHaveProperty("aliases");
+    expect(md(out)).toContain("- Apple Hospitality REIT — entity · Companies — `apple-hosp`");
+    expect(md(out)).toContain("- Apple Records — entity · Companies — `apple-records` — 5 metrics");
   });
 
   it("rejects limit outside 1..20", () => {
@@ -1451,11 +1469,11 @@ describe("tako_available_data — no padding an exact match (fix 5)", () => {
     const out = await takoAvailableData.handler({ q: "Jerome Powell" }, CTX);
     expect(fetchMock.mock.calls).toHaveLength(3); // no round-2 drill of Jerome, ID
     expect(out.found).toBe(false);
-    expect(out.matches.map((m) => m.node_id)).toEqual(["powell"]);
-    expect(out.summary).toContain("resolved, but Tako holds no metrics for it yet");
+    expect(out.matches.map((m) => m.id)).toEqual(["powell"]);
+    expect(out.guidance).toContain("Jerome Powell resolved, but it has no metrics yet");
     // Still visible as a one-line receipt with its count, for a caller who meant it.
-    expect(out.other_matches.find((o) => o.node_id === "jerome-id")?.coverage_total).toBe(12);
-    expect(out.summary).not.toContain("Median Sale Price");
+    expect(out.candidates.find((o) => o.id === "jerome-id")?.coverage?.total).toBe(12);
+    expect(md(out)).not.toContain("Median Sale Price");
   });
 });
 
@@ -1473,13 +1491,16 @@ describe("tako_available_data — both kinds (fix 1)", () => {
     expect(fetchMock.mock.calls).toHaveLength(3); // search + rank-0 drill + one probe; no round 2
     expect(out.found).toBe(true);
     expect(out.verified).toBe("coverage");
-    expect(out.matches.map((m) => [m.node_id, m.type])).toEqual([["core-co", "entity"], ["core-pce", "metric"]]);
-    for (const m of out.matches) expect(m.coverage.names).toEqual([]); // neither rendered in full
-    expect(out.matches[1]).toMatchObject({ label: "METRIC", aliases: ["Core PCE"] });
+    expect(out.matches.map((m) => [m.id, m.type])).toEqual([["core-co", "entity"], ["core-pce", "metric"]]);
+    for (const m of out.matches) expect(m.coverage.items).toBeUndefined(); // neither rendered in full
+    // A metric node's `label: "METRIC"` only restates `type`, so it is dropped
+    // rather than rendered as "metric · METRIC".
+    expect(out.matches[1]).toMatchObject({ aliases: ["Core PCE"] });
+    expect(out.matches[1]).not.toHaveProperty("kind");
     expect(out.matches[0]?.coverage.total).toBe(15);
     expect(out.next_call).toBeNull();
-    expect(out.summary).toContain('types:"metric"');
-    expect(out.other_matches).toEqual([]);
+    expect(out.guidance).toContain("`types`");
+    expect(out.candidates).toEqual([]);
   });
 
   it("the tie reaches past SELECT_TOP_N for the top of the other kind", async () => {
@@ -1498,9 +1519,9 @@ describe("tako_available_data — both kinds (fix 1)", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "US core PCE" }, CTX);
     expect(fetchMock.mock.calls).toHaveLength(6); // 1 search + 1 drill + 3 probes + the metric's probe
-    expect(out.matches.map((m) => m.node_id)).toEqual(["core-co", "core-pce"]);
+    expect(out.matches.map((m) => m.id)).toEqual(["core-co", "core-pce"]);
     // Core D was never inspected and Core A-C were: all four are receipts.
-    expect(out.other_matches.map((o) => o.node_id)).toEqual(["core-a", "core-b", "core-c", "core-d"]);
+    expect(out.candidates.map((o) => o.id)).toEqual(["core-a", "core-b", "core-c", "core-d"]);
     // EVERY id reaches the TEXT channel, not just structuredContent. The tie
     // tells the model to re-run, and a re-run needs a handle: the two tied
     // nodes carry theirs inline (the renderer's per-match block skips them,
@@ -1524,9 +1545,9 @@ describe("tako_available_data — both kinds (fix 1)", () => {
       jsonResponse(200, drill("dis-subs", "Disney Core Paid Subscribers", "entities", ["Netflix"], 4)),
     ]);
     const out = await takoAvailableData.handler({ q: "Disney" }, CTX);
-    expect(out.matches.map((m) => m.node_id)).toEqual(["disney"]);
-    expect(out.matches[0]?.coverage.names).toEqual(["Revenue"]);
-    expect(out.other_matches.find((o) => o.node_id === "dis-subs")?.coverage_total).toBe(4);
+    expect(out.matches.map((m) => m.id)).toEqual(["disney"]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["Revenue"]);
+    expect(out.candidates.find((o) => o.id === "dis-subs")?.coverage?.total).toBe(4);
   });
 
   it("a zero-coverage kind is not a tie: the covered kind is rendered in full", async () => {
@@ -1539,7 +1560,7 @@ describe("tako_available_data — both kinds (fix 1)", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "US core PCE" }, CTX);
     expect(out.found).toBe(true);
-    expect(out.matches.find((m) => m.node_id === "core-pce")?.coverage.names).toEqual(["United States", "Euro Area"]);
+    expect(out.matches.find((m) => m.id === "core-pce")?.coverage.items?.map((i) => i.name)).toEqual(["United States", "Euro Area"]);
   });
 
   it("never calls a tie when the caller passed types", async () => {
@@ -1549,7 +1570,7 @@ describe("tako_available_data — both kinds (fix 1)", () => {
     ]);
     const out = await takoAvailableData.handler({ q: "US core PCE", types: "metric" }, CTX);
     expect(out.matches).toHaveLength(1);
-    expect(out.matches[0]?.coverage.names).toEqual(["United States"]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["United States"]);
   });
 });
 
@@ -1587,10 +1608,12 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
     expect(out.verified).toBe("resolution");
     expect(out.next_call).toBeNull(); // nothing vetted, nothing pinned
     expect(out.matches).toHaveLength(1);
-    expect(out.matches[0]).toMatchObject({ node_id: "ent::nvda::1", filter: "data center" });
+    expect(out.matches[0]).toMatchObject({ id: "ent::nvda::1", filter: "data center" });
     expect(out.matches[0]?.coverage.items).toHaveLength(13);
-    expect(out.matches[0]?.coverage.items[0]).toEqual({ name: "Data center metric 0", node_id: "mt::dc0::1" });
-    expect(out.summary).toContain("13 of NVIDIA Corporation's own metrics contain \"data center\"");
+    expect(out.matches[0]?.coverage.items?.[0]).toEqual({ name: "Data center metric 0", id: "mt::dc0::1" });
+    // `filter` is what makes `total` readable: 13 hits for the phrase and 13
+    // metrics in all serialize identically without it.
+    expect(md(out)).toContain('metrics containing "data center" (13 total, 13 listed)');
   });
 
   it("binds the pair to the same-named entity that has data when rank 0 is an empty stub (the Duolingo shape)", async () => {
@@ -1611,15 +1634,15 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
       jsonResponse(200, { node: { id: "ent::duo-stub::1", type: "entity", name: "Duolingo" }, relation: null }),
     ]);
     const out = await takoAvailableData.handler({ q: "Duolingo", metric: "daily active users" }, CTX);
-    expect(out.entity?.node_id).toBe("ent::duo::1");
-    expect(out.entity_alternates?.map((e) => e.node_id)).toEqual(["ent::duo-stub::1"]);
+    expect(out.entity?.id).toBe("ent::duo::1");
+    expect(out.entity_candidates?.map((e) => e.id)).toEqual(["ent::duo-stub::1"]);
     expect(out.verified).toBe("pair");
     expect(out.found).toBe(true);
     // Both halves CANONICAL since the D4 split: the graph's metric name, not the
     // caller's phrase. The pin used to carry the precision; with tako_search
     // taking none, the canonical name is the only steering signal left.
     expect(out.next_call?.query).toBe("Duolingo, Inc. Daily Active Users");
-    expect(out.matches[0]?.coverage.items.map((i) => i.node_id)).toEqual(["mt::dau::1", "mt::dau2::1"]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.id)).toEqual(["mt::dau::1", "mt::dau2::1"]);
   });
 
   it("does NOT rebind when rank 0's filtered zero is only a phrase miss — the unfiltered probe finds metrics", async () => {
@@ -1647,7 +1670,7 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
       jsonResponse(200, page([["mt::other::1", "Streak Length"]], 250)),
     ]);
     const out = await takoAvailableData.handler({ q: "Duolingo", metric: "daily active users" }, CTX);
-    expect(out.entity?.node_id).toBe("ent::duo::1");
+    expect(out.entity?.id).toBe("ent::duo::1");
   });
 
   it("keeps rank 0 when its probes failed (unavailable is not zero) even if the alternate has data", async () => {
@@ -1659,7 +1682,7 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
       jsonResponse(200, page([["mt::asm::1", "Available Seat Miles"]], 250)),
     ]);
     const out = await takoAvailableData.handler({ q: "Delta", metric: "available seat miles" }, CTX);
-    expect(out.entity?.node_id).toBe("ent::delta::1");
+    expect(out.entity?.id).toBe("ent::delta::1");
     expect(out.verified).toBe("resolution");
   });
 
@@ -1672,7 +1695,7 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
       jsonResponse(200, page([["mt::msp::1", "Median Sale Price"]], 12)),
     ]);
     const out = await takoAvailableData.handler({ q: "Jerome Powell", metric: "median sale price" }, CTX);
-    expect(out.entity?.node_id).toBe("ent::powell::1");
+    expect(out.entity?.id).toBe("ent::powell::1");
     expect(out.found).toBe(false);
   });
 
@@ -1689,7 +1712,7 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
     // No pin on any path after D4, so `unlinked` and a confirmed pair emit the
     // same shape. What `unlinked` still changes is the summary.
     expect(out.next_call).toEqual({ tool: "tako_search", query: "Lockheed Martin Corporation Backlog" });
-    expect(out.matches[0]?.coverage.names).toEqual(["12 Month Backlog"]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["12 Month Backlog"]);
   });
 
   it("uses the verbatim hits instead of the full drill when the metric does not resolve globally", async () => {
@@ -1704,38 +1727,7 @@ describe("tako_available_data — lookup path: entity binding and the metric lis
     expect(fetchMock.mock.calls).toHaveLength(6); // no full drill
     expect(out.metric).toBeNull();
     expect(out.found).toBe(true);
-    expect(out.matches[0]?.coverage.names).toEqual(["Total revenue - Data center"]);
-    expect(out.summary).toContain("No metric named like \"data center\" resolved globally");
-  });
-});
-
-// Makes the rule at `fullOutputSchema` enforceable instead of a convention.
-//
-// This schema types the handler's return and is published nowhere;
-// `availableDataSlimOutputShape` is what `tools/list` serves. A `.describe()`
-// here is therefore a second hand-maintained copy of model-facing prose that no
-// model reads and no guard checks — `_pin_form.test.ts` walks published schemas
-// only, so pin vocabulary added here passes clean.
-//
-// It already drifted once, in the direction that costs the most: `next_call`'s
-// unpublished description carried the accurate emit condition ("the entity has
-// few enough metrics that the top one is unambiguous") while the published copy
-// said "Null when no metric resolved", so the correct half was the half no model
-// could read.
-//
-// Derived from the schema shape, never a field list — a hand-written list of
-// fields to check is the same defect one level up, and goes stale the next time
-// the schema gains one.
-describe("fullOutputSchema carries no model-facing prose", () => {
-  const described = Object.entries(fullOutputSchema.shape)
-    .filter(([, field]) => (field as { description?: string }).description !== undefined)
-    .map(([name]) => name);
-
-  it("has fields to check, so the assertion below cannot pass vacuously", () => {
-    expect(Object.keys(fullOutputSchema.shape).length).toBeGreaterThan(5);
-  });
-
-  it("describes nothing — the published slim shape is the only contract", () => {
-    expect(described, "move the text to availableDataSlimOutputShape").toEqual([]);
+    expect(out.matches[0]?.coverage.items?.map((i) => i.name)).toEqual(["Total revenue - Data center"]);
+    expect(out.guidance ?? "").not.toContain("look swapped");
   });
 });

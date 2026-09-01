@@ -8,7 +8,7 @@ This page is rendered from the same objects the server publishes on `tools/list`
 
 ## Choosing tools with `?tools=`
 
-On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming `tako_search`, so a listing without it gives the model a call it cannot run. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.
+On `/mcp`, `?tools=` on the connection URL is an allowlist that **replaces** the default listing: `?tools=search,contents` lists exactly those two. Tokens are tool names; the `tako_` prefix is optional. Unknown tokens are dropped, and a param that names nothing recognizable yields the defaults, so a typo never breaks a connection. If you list tools, include the defaults you rely on — descriptions assume `tako_search`, `tako_available_data`, and `tako_contents` are present, and a `tako_available_data` result hands back a `next_call` handle naming whichever search tool the connection registers — `tako_search`, else `tako_search_advanced`, else no handle at all. `/mcp/chatgpt` ignores the param: its listing is fixed at submission.
 
 ## `/mcp` — the generic surface, every client
 
@@ -203,37 +203,25 @@ Annotations:
 
 Description:
 
-Find what proprietary, continuously-updated structured data exists on something — summarized in one call. Free and fast.
+Find what data Tako holds on an entity or a metric, and the canonical name it holds it under.
 
-Ask it when the question IS coverage: what does Tako have on X, is this measure tracked at all, what is it called. Then build the real question around what comes back.
+Best for: coverage questions themselves, or a metric's canonical name before a priced search. Put a company, person, or place in `q` to list the metrics tracked on it; put a metric in `q` to list the entities it covers. Add `metric` when you know the measure — you get the resolved pair and a ready-to-run `next_call`.
 
-Worth one call first when you need a measure's EXACT name: resolving a loose phrase to the canonical metric name measurably improves what the priced call retrieves (measured, 9 of 15 pairs).
-
-Works on an entity (a company, person, or place → the metrics tracked on it, e.g. Tesla) or a metric (→ the entities it is tracked across, e.g. Inflation Rate).
-
-Tips:
-Know the measure? Split it: q="Carnival", metric="passenger cruise days" — you get the entity+metric pair and a runnable next_call in ~0.6s. `metric` is also the browse filter: q="Nvidia", metric="data center" lists every NVIDIA metric whose name contains the phrase, with node ids. Omit `metric` only to browse everything an entity has.
-One metric across many entities → one metric-first call; one entity across many metrics → one entity-first call. The returned coverage list answers all of them at once — never loop one call per name.
-When `q` names both an entity and a metric ("US core PCE" → the company Core and the metric Core PCE Price Index), the tool returns both as candidates with subtype, label, and aliases and picks neither. Re-run with `types` (or `metric`) once you know which you meant.
-On the discovery path, `found: true` means a match has live data coverage — never that a name merely resolved. On the lookup path it means the entity holds something matching; read `verified` for what was actually checked, because a probe that failed leaves `resolution` and no coverage evidence. Every other candidate is listed with its node id, subtype, label, and aliases; raise `limit` (max 20) for the wide list.
-Pass `label` when you can categorize the term (company → ORG, country → GPE, person → PERSON).
-Each match lists the exact metric/entity names, and structuredContent.matches[].coverage.items[] pairs each name with its node id. Search on the EXACT name — the canonical name is what recovers cards. When the measure is known — you passed `metric`, or `q` named a metric — `next_call` is that follow-up prewritten — run it verbatim. A node id is for TRAVERSAL: hand it to `tako_graph_related` to see what else the graph holds on it.
-A broad entity's coverage list is capped, so it can be truncated: treat a name you don't see as UNCONFIRMED rather than absent, and fall back to the web instead of re-calling this tool to double-check.
-This tool confirms a name EXISTS in the graph; it cannot confirm a chart exists behind it. If next_call returns 0 cards, report the gap rather than rephrasing the query further — one retrieval on the canonical name is the best free evidence available, not proof of absence, and rephrasing is the one thing that does not improve it.
+Search on the canonical names it returns, not your own phrasing — `tako_search` matches the graph's names, not yours. A name here means the graph tracks it, not that a card exists. If the follow-up search comes back empty, say Tako has no card for it rather than rephrasing the query. Hand a node id to `tako_graph_related` to see what else connects to it.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `q` | string | yes |  | The NAME of the entity (or metric) to look up, min 2 chars — e.g. "Carnival", "United States", "Nvidia". Put the measure in `metric`, not here. |
-| `metric` | string | no |  | The measure you want, when you already know it — e.g. "gross margin", "passenger cruise days", "capex". Supplying it is the FAST path: the tool resolves the entity+metric pair directly and hands back a runnable next_call, instead of listing every metric the entity has. Omit it only to browse what exists. |
-| `types` | string ("entity" \\| "metric") | no |  | Narrow resolution to a "thing" ("entity") or a "measure" ("metric"). Omit to search both. |
-| `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`. |
-| `limit` | integer | no |  | How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` names, and a deeper metric node can turn a confident single answer into a two-candidate tie. |
+| `q` | string | yes |  | The entity or metric to look up by name — "Carnival", "United States", "Nvidia". Put the measure in `metric`, not here. |
+| `metric` | string | no |  | The measure, when you already know it — "gross margin", "capex". Supplying it resolves the entity+metric pair directly; omit it to browse everything the entity has. |
+| `types` | string ("entity" \\| "metric") | no |  | Narrow resolution to one kind, an entity or a metric. Omit to resolve both. |
+| `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer for `q` — a boost, not a filter. Set it when you can categorize the term: company → ORG, place → GPE, person → PERSON. It never applies to `metric`. |
+| `limit` | integer | no |  | How many candidates to resolve for each of `q` and `metric`. Raising it widens what the tool considers, not just what it shows: a deeper metric can become the one `next_call` names. |
 
 Fixed request inputs (the caller cannot change these):
 
-- `graph/related limit (coverage drill)` = `100` — Page size for the rendered coverage list; paging stops at 250 names or 4 pages.
+- `graph/related limit (coverage drill)` = `100` — Page size for the coverage drill; 1 page is fetched and the headline-first slice of 25 entries is what both channels render.
 - `graph/related limit (candidate probes)` = `1` — The cheap per-candidate coverage probes fetch a count only — the probed candidates' lists are never read. The top 4 gated candidates are inspected: 1 drilled in full and 3 by a limit=1 probe. A shell rank-0 costs one more drill.
 
 Annotations:
@@ -251,15 +239,15 @@ Annotations:
     "q": {
       "type": "string",
       "minLength": 2,
-      "description": "The NAME of the entity (or metric) to look up, min 2 chars — e.g. \"Carnival\", \"United States\", \"Nvidia\". Put the measure in `metric`, not here."
+      "description": "The entity or metric to look up by name — \"Carnival\", \"United States\", \"Nvidia\". Put the measure in `metric`, not here."
     },
     "metric": {
-      "description": "The measure you want, when you already know it — e.g. \"gross margin\", \"passenger cruise days\", \"capex\". Supplying it is the FAST path: the tool resolves the entity+metric pair directly and hands back a runnable next_call, instead of listing every metric the entity has. Omit it only to browse what exists.",
+      "description": "The measure, when you already know it — \"gross margin\", \"capex\". Supplying it resolves the entity+metric pair directly; omit it to browse everything the entity has.",
       "type": "string",
       "minLength": 2
     },
     "types": {
-      "description": "Narrow resolution to a \"thing\" (\"entity\") or a \"measure\" (\"metric\"). Omit to search both.",
+      "description": "Narrow resolution to one kind, an entity or a metric. Omit to resolve both.",
       "type": "string",
       "enum": [
         "entity",
@@ -267,7 +255,7 @@ Annotations:
       ]
     },
     "label": {
-      "description": "NER label to prefer for `q` (boost, not a filter). Supply when you can categorize the term (company→ORG, place→GPE, person→PERSON, ...). Describes the ENTITY only — it is not applied to `metric`.",
+      "description": "NER label to prefer for `q` — a boost, not a filter. Set it when you can categorize the term: company → ORG, place → GPE, person → PERSON. It never applies to `metric`.",
       "type": "string",
       "enum": [
         "PERSON",
@@ -284,7 +272,7 @@ Annotations:
       ]
     },
     "limit": {
-      "description": "How many candidate nodes to resolve for EACH of `q` and `metric` (default 10, max 20). Every candidate comes back with its node id, type, subtype, label, and aliases; only the top few are coverage-checked. Raise it when a name is ambiguous and you want the wide list — but this widens what the tool considers, not just what it shows: a deeper exact-name metric can become the one `next_call` names, and a deeper metric node can turn a confident single answer into a two-candidate tie.",
+      "description": "How many candidates to resolve for each of `q` and `metric`. Raising it widens what the tool considers, not just what it shows: a deeper metric can become the one `next_call` names.",
       "type": "integer",
       "minimum": 1,
       "maximum": 20
@@ -306,10 +294,10 @@ Annotations:
   "properties": {
     "found": {
       "type": "boolean",
-      "description": "The OUTCOME. Discovery path (no `metric`): at least one match has live data coverage, not mere node resolution. Lookup path (`metric` supplied): the resolved entity HOLDS something matching — the resolved metric is on its own metric list, or its metrics contain your phrase. Both names resolving isn't enough: a checked list with nothing matching reads false. A metric that resolved nowhere globally still reads true when the entity's own list carries the phrase. Read `verified` for what was actually CHECKED. Never means a chart exists; only running `next_call` establishes that."
+      "description": "Whether Tako holds matching data; `verified` says on what evidence."
     },
     "verified": {
-      "description": "WHAT WAS CHECKED, as distinct from `found`, which is the outcome. `coverage`: a coverage list was drilled. `pair`: the metric is on the entity's own metric list — the strongest free evidence there is. `unlinked`: the entity's list was checked and the resolved metric is not on it, so a card for this pair is unlikely. It says nothing about the rest of the list — `unlinked` and `found: true` sit together whenever your `metric` phrase matched entries the resolved node is not one of, and `coverage` then names them. `resolution`: no pair evidence (check skipped or failed) — treat exactly as before.",
+      "description": "What was checked. `pair`: the metric is on the entity's own list. `coverage`: a list was drilled. `unlinked`: the list was checked, the metric is absent. `resolution`: names resolved only.",
       "type": "string",
       "enum": [
         "coverage",
@@ -318,7 +306,8 @@ Annotations:
         "resolution"
       ]
     },
-    "query": {
+    "guidance": {
+      "description": "The verdict, and the one next action.",
       "type": "string"
     },
     "matches": {
@@ -326,148 +315,133 @@ Annotations:
       "items": {
         "type": "object",
         "properties": {
-          "node_id": {
+          "id": {
             "type": "string"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Canonical graph name — search on this."
           },
           "type": {
+            "type": "string",
+            "description": "entity or metric; also what `coverage` counts."
+          },
+          "kind": {
             "type": "string"
           },
-          "subtype": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "unavailable": {
             "type": "boolean"
           },
           "filter": {
-            "description": "The `metric` phrase this match's coverage was filtered by. Present means `coverage.total` counts only the entries matching it, not the entity's whole list — without it a structured-only reader cannot tell `total: 13` meaning \"13 hits for your phrase\" from `total: 13` meaning \"13 metrics in all\". The text channel distinguishes them; this is how the machine channel does.",
+            "description": "The `metric` phrase that narrowed this list. When set, `total` counts only matching entries.",
             "type": "string"
           },
           "coverage": {
             "type": "object",
             "properties": {
-              "kind": {
-                "type": "string"
-              },
               "total": {
-                "type": "number"
+                "type": "number",
+                "description": "Entries in all, not entries listed."
+              },
+              "total_capped": {
+                "type": "boolean",
+                "description": "`total` is a floor."
               },
               "truncated": {
+                "description": "More entries exist than are listed.",
                 "type": "boolean"
               },
               "items": {
+                "description": "Headline-first.",
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
                     "name": {
-                      "type": "string"
-                    },
-                    "node_id": {
                       "type": "string",
-                      "description": "Graph node id. Hand it to tako_graph_related to explore what else the graph holds on this node."
+                      "description": "Canonical graph name."
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Graph node id."
                     }
                   },
                   "required": [
                     "name",
-                    "node_id"
+                    "id"
                   ],
                   "additionalProperties": false
                 }
-              },
-              "items_truncated": {
-                "description": "More coverage entries exist than are listed here, so treat an entry you do not see as unconfirmed, not absent. The text channel carries every name that was fetched, and says so when that list was cut too.",
-                "type": "boolean"
               }
             },
             "required": [
-              "kind",
               "total",
-              "truncated",
-              "items"
+              "total_capped"
             ],
             "additionalProperties": {}
           }
         },
         "required": [
-          "node_id",
+          "id",
           "name",
           "type",
           "coverage"
         ],
         "additionalProperties": {}
       },
-      "description": "The resolved matches and their coverage, each entry carrying its canonical name and graph node id. To fetch a specific metric, call tako_search with the EXACT canonical name as the query — the canonical name is what recovers cards. A node id is for traversal via tako_graph_related."
+      "description": "The nodes whose coverage was drilled, best first."
     },
     "candidates": {
-      "description": "The other nodes `q` resolved to, best first, each with its canonical name to search on and its id to explore with tako_graph_related. coverage_total is present only for candidates that were coverage-checked; the text channel carries their aliases.",
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "node_id": {
+          "id": {
             "type": "string"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Canonical graph name — search on this."
           },
           "type": {
+            "type": "string",
+            "description": "entity or metric; also what `coverage` counts."
+          },
+          "kind": {
             "type": "string"
           },
-          "subtype": {
-            "anyOf": [
-              {
-                "type": "string"
+          "coverage": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "number"
               },
-              {
-                "type": "null"
+              "total_capped": {
+                "type": "boolean",
+                "description": "`total` is a floor."
               }
-            ]
-          },
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "coverage_total": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            },
+            "required": [
+              "total",
+              "total_capped"
+            ],
+            "additionalProperties": {}
           }
         },
         "required": [
-          "node_id",
+          "id",
           "name",
-          "type",
-          "subtype",
-          "label"
+          "type"
         ],
-        "additionalProperties": false
-      }
+        "additionalProperties": {}
+      },
+      "description": "The other nodes `q` resolved to, best first."
     },
     "next_call": {
       "anyOf": [
@@ -475,10 +449,7 @@ Annotations:
           "type": "object",
           "properties": {
             "tool": {
-              "type": "string",
-              "enum": [
-                "tako_search"
-              ]
+              "type": "string"
             },
             "query": {
               "type": "string"
@@ -494,30 +465,24 @@ Annotations:
           "type": "null"
         }
       ],
-      "description": "Ready-to-run follow-up: call the tool it names with exactly this query. The query uses the canonical graph names for both halves, which is what recovers cards. Present whenever the measure is known: you passed `metric`, or `q` itself named a metric, or the entity has few enough metrics that the top one is unambiguous. Null otherwise — pass `metric` to get a handle."
-    },
-    "metric_query": {
-      "type": "string"
+      "description": "A follow-up search in canonical names. Null when no target is unambiguous."
     },
     "entity": {
+      "description": "Lookup path: the resolved entity.",
       "anyOf": [
         {
           "type": "object",
           "properties": {
-            "node_id": {
+            "id": {
               "type": "string"
             },
             "name": {
               "type": "string"
-            },
-            "type": {
-              "type": "string"
             }
           },
           "required": [
-            "node_id",
-            "name",
-            "type"
+            "id",
+            "name"
           ],
           "additionalProperties": false
         },
@@ -527,25 +492,21 @@ Annotations:
       ]
     },
     "metric": {
-      "description": "The resolved metric, by its canonical graph name — the name the follow-up query uses.",
+      "description": "Lookup path: the resolved metric.",
       "anyOf": [
         {
           "type": "object",
           "properties": {
-            "node_id": {
+            "id": {
               "type": "string"
             },
             "name": {
               "type": "string"
-            },
-            "type": {
-              "type": "string"
             }
           },
           "required": [
-            "node_id",
-            "name",
-            "type"
+            "id",
+            "name"
           ],
           "additionalProperties": false
         },
@@ -554,49 +515,42 @@ Annotations:
         }
       ]
     },
-    "entity_alternates": {
+    "entity_candidates": {
+      "description": "Runners-up.",
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "node_id": {
+          "id": {
             "type": "string"
           },
           "name": {
             "type": "string"
-          },
-          "type": {
-            "type": "string"
           }
         },
         "required": [
-          "node_id",
-          "name",
-          "type"
+          "id",
+          "name"
         ],
         "additionalProperties": false
       }
     },
-    "metric_alternates": {
-      "description": "Runners-up. The top metric is right ~80% of the time and the top three ~93-95%, so check these before accepting the primary.",
+    "metric_candidates": {
+      "description": "Runners-up.",
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "node_id": {
+          "id": {
             "type": "string"
           },
           "name": {
             "type": "string"
-          },
-          "type": {
-            "type": "string"
           }
         },
         "required": [
-          "node_id",
-          "name",
-          "type"
+          "id",
+          "name"
         ],
         "additionalProperties": false
       }
@@ -604,12 +558,94 @@ Annotations:
   },
   "required": [
     "found",
-    "query",
     "matches",
+    "candidates",
     "next_call"
   ],
   "additionalProperties": false
 }
+```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "found": true,
+  "verified": "coverage",
+  "matches": [
+    {
+      "id": "ent::carnival_inc::a374dbc8",
+      "name": "Carnival, Inc.",
+      "type": "entity",
+      "coverage": {
+        "total": 214,
+        "total_capped": false,
+        "items": [
+          {
+            "name": "Revenues",
+            "id": "mt::revenues::0cae208b"
+          },
+          {
+            "name": "Gross Margin (%)",
+            "id": "mt::gross_margin_::9a2b184a"
+          }
+        ],
+        "truncated": true
+      },
+      "kind": "Companies",
+      "aliases": [
+        "CCL",
+        "Carnival"
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "id": "ent::carnival_corporation::1feaedf0",
+      "name": "Carnival Corporation Ltd.",
+      "type": "entity",
+      "kind": "Companies",
+      "coverage": {
+        "total": 250,
+        "total_capped": true
+      }
+    },
+    {
+      "id": "mt::passenger_cruise_day::0c917760",
+      "name": "Passenger Cruise Days",
+      "type": "metric"
+    }
+  ],
+  "next_call": {
+    "tool": "tako_search",
+    "query": "Carnival, Inc. Revenues"
+  }
+}
+```
+
+`content[0].text`:
+
+```markdown
+found: yes
+verified: coverage
+
+## Matches (1)
+
+### Carnival, Inc. — entity · Companies
+- `ent::carnival_inc::a374dbc8`
+- aliases: CCL, Carnival
+- metrics (214 total, 2 listed): Revenues `mt::revenues::0cae208b` · Gross Margin (%) `mt::gross_margin_::9a2b184a`
+- more exist than are listed — treat a name you don't see as unconfirmed, not absent; pass `metric` with a phrase to filter this list
+
+## Candidates (2)
+- Carnival Corporation Ltd. — entity · Companies — `ent::carnival_corporation::1feaedf0` — 250+ metrics
+- Passenger Cruise Days — metric — `mt::passenger_cruise_day::0c917760`
+
+## Next call
+tako_search: Carnival, Inc. Revenues
 ```
 </details>
 
@@ -883,26 +919,23 @@ usage: $0.0052
 
 Description:
 
-Explore what a graph node connects to — the map of what data Tako has for it. Free.
+Explore what a graph node connects to — its metrics, the entities a metric covers, competitors, industry, index membership, and sources.
 
-Best for: drilling into a node after `tako_available_data` resolved it — its metrics, the entities a metric covers, competitors (`rel:competes_with`), industry (`rel:in_industry`), index or group membership (`part_of`, `members`), and sources.
+Two modes. Pass `node_id` alone for the map: every relation group with its key, label, total, and its first 3 names. Pass `relation` to page one group, where each item comes back with the id that explores it. Read a key off the map rather than guessing — an unknown key returns an empty group, not an error.
 
-Two modes. Overview (`node_id` alone) is a compact map: every relation group with its `key`, `label`, `total`, and its first 3 items — a few hundred tokens, never a page. Drill (`relation: "<key>"`) pages that one group; each item carries `id`, `name`, `type`, `subtype`, and `label`, and only the focal node carries `aliases` and a truncated `description`.
-
-Relation keys come from the overview. The fixed keys are `metrics`, `entities`, `siblings`, `part_of`, `members`; named edges look like `rel:<phrase>`. Read the key off the overview rather than guessing it — an unknown key returns empty items, not an error.
-`q` is a case-insensitive SUBSTRING match on names and aliases, not a search: "revenue" matches `Total Revenue` and `Revenue per Employee` and misses `Sales`. One string per call; for several variants, call once per variant. A listed metric is table-level evidence, not proof — `tako_search` is the final validator.
+Best for: expanding a node you already resolved. Resolve a name to a node id with `tako_available_data` first. A metric listed here means the graph tracks it, not that a card exists — `tako_search` is the final check.
 
 Parameters:
 
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `node_id` | string | yes |  | Opaque public id of the node to explore. |
-| `relation` | string | no |  | Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview. |
-| `q` | string | no |  | Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group. |
-| `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | Prefer related nodes with this NER label (boost, not a filter). |
-| `infer_label` | boolean | no |  | Auto-detect labels from q (default true server-side, only when q is set). |
-| `cursor` | string | no |  | Pagination cursor (for a single drilled relation; intended for single-q use). |
-| `limit` | integer | no |  | Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass. |
+| `node_id` | string | yes |  | Public id of the node to explore, as returned by `tako_available_data` or on a `tako_search` card. |
+| `relation` | string | no |  | Relation key to page, taken from the map: metrics, entities, siblings, part_of, members, or a named edge like rel:competes_with. Omit for the map. |
+| `q` | string | no |  | Case-insensitive substring filter on names and aliases, one string per call: "revenue" matches `Total Revenue` and misses `Sales`. Call once per name variant. |
+| `label` | string ("PERSON" \\| "ORG" \\| "GPE" \\| "LOC" \\| "PRODUCT" \\| "EVENT" \\| "LANGUAGE" \\| "MONEY" \\| "METRIC" \\| "STOCK_TICKER" \\| "WEBSITE") | no |  | NER label to prefer among the related nodes — a boost, not a filter. |
+| `infer_label` | boolean | no |  | Detect labels from `q`. Omit it and the server infers them whenever `q` is set. |
+| `cursor` | string | no |  | Page handle from a previous drilled relation. Omit it for the first page. |
+| `limit` | integer | no |  | Page size for a drilled relation. Omit it and the server serves 50. Ignored on the map, where every group returns its first 3 names whatever you pass. |
 
 Fixed request inputs (the caller cannot change these):
 
@@ -923,20 +956,20 @@ Annotations:
     "node_id": {
       "type": "string",
       "minLength": 1,
-      "description": "Opaque public id of the node to explore."
+      "description": "Public id of the node to explore, as returned by `tako_available_data` or on a `tako_search` card."
     },
     "relation": {
-      "description": "Relation key to page, taken from the overview: metrics, entities, siblings, part_of, members, or rel:<phrase>. Omit for the overview.",
+      "description": "Relation key to page, taken from the map: metrics, entities, siblings, part_of, members, or a named edge like rel:competes_with. Omit for the map.",
       "type": "string",
       "minLength": 1
     },
     "q": {
-      "description": "Case-insensitive SUBSTRING filter on names and aliases (one string). Filters every group of the overview, or the one drilled group.",
+      "description": "Case-insensitive substring filter on names and aliases, one string per call: \"revenue\" matches `Total Revenue` and misses `Sales`. Call once per name variant.",
       "type": "string",
       "minLength": 1
     },
     "label": {
-      "description": "Prefer related nodes with this NER label (boost, not a filter).",
+      "description": "NER label to prefer among the related nodes — a boost, not a filter.",
       "type": "string",
       "enum": [
         "PERSON",
@@ -953,16 +986,16 @@ Annotations:
       ]
     },
     "infer_label": {
-      "description": "Auto-detect labels from q (default true server-side, only when q is set).",
+      "description": "Detect labels from `q`. Omit it and the server infers them whenever `q` is set.",
       "type": "boolean"
     },
     "cursor": {
-      "description": "Pagination cursor (for a single drilled relation; intended for single-q use).",
+      "description": "Page handle from a previous drilled relation. Omit it for the first page.",
       "type": "string",
       "minLength": 1
     },
     "limit": {
-      "description": "Page size for a DRILLED relation (default 50, max 100). Ignored in overview mode, where every group returns its first 3 items no matter what you pass.",
+      "description": "Page size for a drilled relation. Omit it and the server serves 50. Ignored on the map, where every group returns its first 3 names whatever you pass.",
       "type": "integer",
       "minimum": 1,
       "maximum": 100
@@ -989,9 +1022,14 @@ Annotations:
           "type": "string"
         },
         "type": {
-          "type": "string"
+          "type": "string",
+          "description": "entity or metric."
         },
         "name": {
+          "type": "string",
+          "description": "Canonical graph name — search on this."
+        },
+        "kind": {
           "type": "string"
         },
         "aliases": {
@@ -1001,34 +1039,7 @@ Annotations:
           }
         },
         "description": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "subtype": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "label": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "type": "string"
         }
       },
       "required": [
@@ -1036,130 +1047,72 @@ Annotations:
         "type",
         "name"
       ],
-      "additionalProperties": false
+      "additionalProperties": {}
     },
     "relations": {
-      "anyOf": [
-        {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "key": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string"
-              },
-              "label": {
-                "type": "string"
-              },
-              "items": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "aliases": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "description": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "subtype": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "label": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "type",
-                    "name"
-                  ],
-                  "additionalProperties": false
-                }
-              },
-              "total": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
-              },
-              "total_capped": {
-                "type": "boolean"
-              },
-              "next_cursor": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
+      "description": "Every group, previewed. The map.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Pass back as `relation` to page it."
+          },
+          "label": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          },
+          "total_capped": {
+            "type": "boolean",
+            "description": "`total` is a floor."
+          },
+          "next_cursor": {
+            "description": "Pass back as `cursor`.",
+            "type": "string"
+          },
+          "preview": {
+            "type": "array",
+            "items": {
+              "type": "string"
             },
-            "required": [
-              "key",
-              "kind",
-              "label",
-              "items",
-              "total",
-              "total_capped"
-            ],
-            "additionalProperties": false
+            "description": "The group's first 3 names."
           }
         },
-        {
-          "type": "null"
-        }
-      ]
+        "required": [
+          "key",
+          "label",
+          "total",
+          "total_capped",
+          "preview"
+        ],
+        "additionalProperties": {}
+      }
     },
     "relation": {
+      "description": "The one group you drilled.",
       "anyOf": [
         {
           "type": "object",
           "properties": {
             "key": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string"
+              "type": "string",
+              "description": "Pass back as `relation` to page it."
             },
             "label": {
+              "type": "string"
+            },
+            "total": {
+              "type": "number"
+            },
+            "total_capped": {
+              "type": "boolean",
+              "description": "`total` is a floor."
+            },
+            "next_cursor": {
+              "description": "Pass back as `cursor`.",
               "type": "string"
             },
             "items": {
@@ -1170,98 +1123,30 @@ Annotations:
                   "id": {
                     "type": "string"
                   },
-                  "type": {
-                    "type": "string"
-                  },
                   "name": {
                     "type": "string"
                   },
-                  "aliases": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "description": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "subtype": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "label": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                  "kind": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "id",
-                  "type",
                   "name"
                 ],
-                "additionalProperties": false
-              }
-            },
-            "total": {
-              "type": "integer",
-              "minimum": -9007199254740991,
-              "maximum": 9007199254740991
-            },
-            "total_capped": {
-              "type": "boolean"
-            },
-            "next_cursor": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+                "additionalProperties": {}
+              },
+              "description": "This page of the group."
             }
           },
           "required": [
             "key",
-            "kind",
             "label",
-            "items",
             "total",
-            "total_capped"
+            "total_capped",
+            "items"
           ],
-          "additionalProperties": false
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "inferred_labels": {
-      "anyOf": [
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "additionalProperties": {}
         },
         {
           "type": "null"
@@ -1274,6 +1159,67 @@ Annotations:
   ],
   "additionalProperties": false
 }
+```
+</details>
+
+<details><summary>illustrative — Sample result (generated from the checked-in fixture)</summary>
+
+`structuredContent` (as served on `/mcp`):
+
+```json
+{
+  "node": {
+    "id": "ent::nvidia_corporation::5ea55992",
+    "type": "entity",
+    "name": "NVIDIA Corporation",
+    "kind": "Companies",
+    "aliases": [
+      "NVDA",
+      "NVIDIA",
+      "NVIDIA Corp"
+    ],
+    "description": "NVIDIA Corporation operates as a data center scale AI infrastructure company. The company operates through two segments, Compute & Networking, and Graphics. The Compute & Networking segment provides data center accelerated computing and networking platforms, artificial intelligence solutions and sof…"
+  },
+  "relations": [
+    {
+      "key": "metrics",
+      "label": "Related Metrics",
+      "total": 250,
+      "total_capped": true,
+      "preview": [
+        "EV/NTM Revenue",
+        "Gross Margin (%)",
+        "Revenues"
+      ]
+    },
+    {
+      "key": "rel:in_industry",
+      "label": "In industry",
+      "total": 2,
+      "total_capped": false,
+      "preview": [
+        "Semiconductor",
+        "AI and Machine Learning"
+      ]
+    }
+  ]
+}
+```
+
+`content[0].text`:
+
+```markdown
+# NVIDIA Corporation
+- `ent::nvidia_corporation::5ea55992` · entity · Companies
+- aliases: NVDA, NVIDIA, NVIDIA Corp
+
+## Relations (2)
+Pass `relation` with a key to page one group, or `q` to filter by substring.
+- `metrics` — Related Metrics — 250+: EV/NTM Revenue, Gross Margin (%), Revenues, …
+- `rel:in_industry` — In industry — 2: Semiconductor, AI and Machine Learning
+
+## About
+NVIDIA Corporation operates as a data center scale AI infrastructure company. The company operates through two segments, Compute & Networking, and Graphics. The Compute & Networking segment provides data center accelerated computing and networking platforms, artificial intelligence solutions and sof…
 ```
 </details>
 

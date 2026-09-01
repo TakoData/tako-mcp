@@ -101,12 +101,11 @@ async function discovery(): Promise<void> {
     const text = takoAvailableData.renderText?.(out, ctx) ?? "";
     const shown = out.matches
       .map((m) => {
-        const kind = [m.subtype, m.label].filter((x) => x !== null && x !== "").join(", ");
-        return `${m.name} (${kind}) ${m.type} ${m.coverage.total}${m.coverage.capped ? "+" : ""}`;
+        return `${m.name} (${m.kind ?? ""}) ${m.type} ${m.coverage.total}${m.coverage.total_capped ? "+" : ""}`;
       })
       .join(" | ");
     console.log(
-      `${q}\n  found=${out.found} verified=${out.verified ?? "-"} candidates=${out.other_matches.length} text=${text.length} (${ms}ms)\n  ${shown}`,
+      `${q}\n  found=${out.found} verified=${out.verified ?? "-"} candidates=${out.candidates.length} text=${text.length} (${ms}ms)\n  ${shown}`,
     );
   }
 }
@@ -126,7 +125,9 @@ async function main(): Promise<void> {
       continue;
     }
     const ms = Date.now() - started;
-    const structured = takoAvailableData.slimStructured?.(out) ?? {};
+    // The handler's return IS the advertised structuredContent now — the
+    // projection replaced the slimStructured hook.
+    const structured = out;
 
     if (JSON_ONLY) {
       console.log(JSON.stringify({ q, metric, ms, structured }, null, 2));
@@ -139,8 +140,8 @@ async function main(): Promise<void> {
     console.log(`\n--- verdict -------------------------------------------------`);
     console.log(`  found:    ${out.found}`);
     console.log(`  verified: ${out.verified ?? "(absent)"}`);
-    console.log(`  entity:   ${out.entity?.name ?? "—"}  ${out.entity?.node_id ?? ""}`);
-    console.log(`  metric:   ${out.metric?.name ?? "—"}  ${out.metric?.node_id ?? ""}`);
+    console.log(`  entity:   ${out.entity?.name ?? "—"}  ${out.entity?.id ?? ""}`);
+    console.log(`  metric:   ${out.metric?.name ?? "—"}  ${out.metric?.id ?? ""}`);
     console.log(`  next_call:${out.next_call === null ? " null" : ""}`);
     if (out.next_call !== null) console.log(`    ${JSON.stringify(out.next_call)}`);
     console.log(`\n--- text channel (what the model actually reads) -------------`);

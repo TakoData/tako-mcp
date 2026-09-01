@@ -378,32 +378,31 @@ describe("realistic payloads validate against the published schema", () => {
     ],
     [
       "tako_available_data",
+      // The PROJECTED shape (`projectMatch` / `projectCandidate`), which is
+      // what the handler returns and what the schema advertises — there is no
+      // second internal shape to keep in sync any more.
       () => ({
         found: true,
-        query: "Nvidia",
-        // Rendered to the text channel, undeclared in the advertised shape.
-        summary: "Tako's proprietary data has live coverage of 1 match.",
+        verified: "coverage",
+        guidance: "A verdict sentence. An action sentence.",
         matches: [
           {
-            node_id: "ent::nvidia::1",
+            id: "ent::nvidia::1",
             name: "NVIDIA Corporation",
             type: "entity",
-            subtype: "Companies",
-            label: "ORG",
+            // `subtype` and `label` are ONE field; `coverage.kind` is gone
+            // because `type` derives it.
+            kind: "Companies",
             aliases: ["NVDA"],
             coverage: {
-              kind: "metrics",
-              items: [{ name: "Revenue", node_id: "mt::revenue::1" }],
-              names: ["Revenue"],
+              items: [{ name: "Revenue", id: "mt::revenue::1" }],
               total: 1,
-              truncated: false,
-              capped: false,
+              total_capped: false,
             },
           },
         ],
-        other_matches: [],
-        confident: true,
-        // No node_ids / strict: tako_search takes neither after the D4 split,
+        candidates: [],
+        // No node_ids / strict: no search tool takes a pin from this handle,
         // and the published schema is strict about additional properties, so a
         // stale pin here fails conformance rather than shipping silently.
         next_call: {
