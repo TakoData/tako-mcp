@@ -82,7 +82,7 @@
   "test_cases": [
     {
       "description": "Retrieve a company metric as structured data with a chart.",
-      "user_prompt": "Show me NVIDIA's quarterly revenue as a chart.",
+      "user_prompt": "Show me NVIDIA's quarterly revenue.",
       "file_attachment_urls": null,
       "tools_triggered": "tako_search",
       "expected_output": "Returns NVIDIA quarterly revenue data with recent values, source attribution, and an inline chart.",
@@ -106,10 +106,10 @@
     },
     {
       "description": "Create a chart from data supplied directly by the user.",
-      "user_prompt": "Create a bar chart titled Regional Sales using North America: 500, Europe: 300, and Asia: 450, with units of USD millions.",
+      "user_prompt": "Create a public Tako bar chart titled Regional Sales using North America: 500, Europe: 300, and Asia: 450, with units of USD millions. I understand the card is public and permanent; go ahead and publish it.",
       "file_attachment_urls": null,
       "tools_triggered": "tako_visualize",
-      "expected_output": "Creates and displays a regional sales bar chart and provides a link to open the resulting Tako card.",
+      "expected_output": "Creates the Regional Sales bar chart, displays it inline as a Tako card, and gives the card's URL.",
       "expected_output_url": null
     },
     {

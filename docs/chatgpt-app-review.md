@@ -204,15 +204,19 @@ without a chart. That path is the default everywhere except ChatGPT.
 
 ## 5. Still open — not code
 
-Two items from review are not addressable in this repository and are tracked elsewhere:
+One item from review is not addressable in this repository and is tracked elsewhere:
 
-- **Privacy policy.** `tako.com`'s policy (`app/frontend/src/pages/privacy-policy/` in the
-  Tako web repo) does not state retention periods, and does not cover the plugin-specific
-  categories: OAuth account identifiers, search/answer queries, IP and rate-limit data,
-  public chart data and its retention, Stytch and Cloudflare as processors, or how a user
-  deletes a chart and revokes the connection. It also needs to reconcile the site's
-  zero-data-retention claim with `tako_visualize`, which creates persistent public charts
-  on purpose.
-- **Age policy.** OpenAI requires suitability for ages 13–17; Tako's terms require 18+ and
-  the privacy policy states the service is not intended for anyone under 18. Needs counsel
-  before attesting.
+- **Age policy.** OpenAI requires suitability for ages 13–17. `tako.com/privacy/` sets its
+  floor at 13 (updated 2026-08-11), but `tako.com/tos/` §5 still has the user represent that
+  they are 18 or older. The two disagree, and the terms are the binding one. Needs counsel
+  and a one-line terms change in the Tako web repo before attesting.
+
+Closed since the first review:
+
+- **Privacy policy.** `tako.com/privacy/` (updated 2026-08-25) now covers the plugin: the
+  queries, URLs, files and chart data an assistant sends; the email and API key created on
+  OAuth sign-in and how to revoke it; IP use for anonymous rate limiting; that published
+  charts are public, don't expire, and are deleted on request; the assistant platform as a
+  recipient; a subprocessor list; and per-category retention periods.
+- **Support contact.** `tako.com/support/` names `support@trytako.com`; the policy names
+  `privacy@trytako.com`.
