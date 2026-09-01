@@ -1,0 +1,29 @@
+trig-fin-direct	skill	sonnet	What was Nvidia's revenue last quarter?
+trig-fin-indirect	skill	sonnet	How is Apple doing financially these days?
+trig-fin-nearmiss-traffic	skill	sonnet	How many subscribers does Netflix have?
+trig-fin-private	skill	sonnet	What's SpaceX's revenue?
+trig-macro-direct	skill	sonnet	What's the US unemployment rate right now?
+trig-macro-compare	skill	sonnet	Compare inflation in Japan and Germany over the last two years
+trig-macro-demographics	skill	sonnet	What's the population of Tokyo?
+trig-traffic-brand	skill	sonnet	How much traffic does Netflix get?
+trig-traffic-compare	skill	sonnet	Which gets more visitors, youtube.com or tiktok.com?
+trig-traffic-app	skill	sonnet	How many monthly active users does the Spotify app have?
+trig-neg-creative	skill	sonnet	Write a limerick about spreadsheets
+trig-neg-concept	skill	sonnet	Explain in general terms how a consumer price index is constructed
+trig-neg-calendar	skill	sonnet	Schedule a meeting with my team tomorrow at 10
+out-F1-margin	skill	sonnet	What is Apple's gross margin? Cite your source.
+out-F1-margin	noskill	sonnet	What is Apple's gross margin? Cite your source.
+out-F2-toyota	skill	sonnet	What is Toyota's annual revenue?
+out-F2-toyota	noskill	sonnet	What is Toyota's annual revenue?
+out-M1-pce	skill	sonnet	What is US core PCE inflation right now?
+out-M1-pce	noskill	sonnet	What is US core PCE inflation right now?
+out-M2-fedfunds	skill	sonnet	What is the current US federal funds rate?
+out-M2-fedfunds	noskill	sonnet	What is the current US federal funds rate?
+out-T1-netflix	skill	sonnet	How much web traffic does Netflix get per month?
+out-T1-netflix	noskill	sonnet	How much web traffic does Netflix get per month?
+out-T2-compare	skill	sonnet	Compare youtube.com and netflix.com traffic
+out-T2-compare	noskill	sonnet	Compare youtube.com and netflix.com traffic
+haiku-fin-indirect	skill	haiku	How is Apple doing financially these days?
+haiku-traffic-brand	skill	haiku	How much traffic does Netflix get?
+haiku-macro-direct	skill	haiku	What's the US unemployment rate right now?
+haiku-neg-concept	skill	haiku	Explain in general terms how a consumer price index is constructed

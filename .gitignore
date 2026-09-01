@@ -39,3 +39,4 @@ workers/.dev.vars.*
 # and query dumps, so they must never be committable.
 scratch_space/
 .gstack/
+workers/scripts/evals/skills/out/
