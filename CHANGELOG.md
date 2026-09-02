@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.1.0](https://github.com/TakoData/tako-mcp/compare/v1.0.0...v1.1.0) (2026-09-02)
+
+
+### Features
+
+* stamp MCP channel, surface, tier and tool on every Django API call ([#288](https://github.com/TakoData/tako-mcp/issues/288)) ([718d8f2](https://github.com/TakoData/tako-mcp/commit/718d8f2723280e36f594c8999621c22dae87655e))
+
+
+### Bug Fixes
+
+* **chatgpt:** make the submission importable, and rewrite the research skills as tested workflows ([#287](https://github.com/TakoData/tako-mcp/issues/287)) ([c76ee0e](https://github.com/TakoData/tako-mcp/commit/c76ee0ed8a7061b898a9e782df14ec3207912a90))
+* **chatgpt:** point the submission file at the apps-sdk schema URL, and drop the 1.0.0 release pin ([#285](https://github.com/TakoData/tako-mcp/issues/285)) ([926dd48](https://github.com/TakoData/tako-mcp/commit/926dd483484462f3abe277553257b43aad801026))
+* **submission:** reword two test prompts, and remove the app review notes from the repo ([#289](https://github.com/TakoData/tako-mcp/issues/289)) ([8ab8ae6](https://github.com/TakoData/tako-mcp/commit/8ab8ae6e4917a5174ee91133353a5e549e9532e4))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([8770e49](https://github.com/TakoData/tako-mcp/commit/8770e49321a94bfaac214ea4af5001c0dfbbf1b6))
+* sync OpenAPI spec from monorepo ([1ef8e50](https://github.com/TakoData/tako-mcp/commit/1ef8e506f26c0aa7956bf083d285ba3ff1b49d9d))
+* sync OpenAPI spec from TakoData/tako ([52d9af9](https://github.com/TakoData/tako-mcp/commit/52d9af9516eba3653a076e226117fa3f1d67f891))
+
 ## [1.0.0](https://github.com/TakoData/tako-mcp/compare/v0.22.2...v1.0.0) (2026-09-01)
 
 
