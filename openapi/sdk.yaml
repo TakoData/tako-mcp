@@ -3558,7 +3558,16 @@ components:
 
         appears only on metered (pay-as-you-go) runs and is null otherwise.
 
-        agent_result plus run_summary equals the GET poll object.
+        agent_result plus run_summary equals the GET poll object, with one exception:
+
+        for up to the durability grace window after a run completes, the GET poll
+        can
+
+        report it still running while this frame reports it completed. The poll holds
+
+        such a run so the client asks again; this frame is emitted once with nothing
+
+        after it, so it cannot. Read the frame as authoritative on status.
 
 
         It carries the same envelope `seq` as the stream_done that follows it (it
