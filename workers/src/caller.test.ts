@@ -54,7 +54,7 @@ describe("caller header", () => {
     expect(header).not.toContain("\r");
     expect(header).not.toContain("\n");
     expect(header).toBe(
-      'channel=mcp, surface=generic, tier=oauth, client_ua="evil  X-Injected: 1, channel=direct,  "',
+      'channel=mcp, surface=generic, tier=oauth, client_ua="evil  X-Injected: 1, channel=direct,"',
     );
   });
 
@@ -67,6 +67,22 @@ describe("caller header", () => {
   it("drops an empty client User-Agent instead of emitting an empty string", () => {
     expect(serializeCallerHeader({ ...BASE, clientUserAgent: "" })).toBe(
       "channel=mcp, surface=generic, tier=oauth",
+    );
+  });
+
+  it.each([
+    ["all non-ASCII", "\u65e5\u672c\u8a9e"],
+    ["astral only", "\ud83d\ude00\ud83d\ude00"],
+    ["control characters only", "\t\t\t"],
+  ])("drops a client User-Agent that is blank after sanitizing (%s)", (_name, ua) => {
+    expect(serializeCallerHeader({ ...BASE, clientUserAgent: ua })).toBe(
+      "channel=mcp, surface=generic, tier=oauth",
+    );
+  });
+
+  it("trims the padding a stripped non-ASCII prefix leaves behind", () => {
+    expect(serializeCallerHeader({ ...BASE, clientUserAgent: "\u65e5\u672c\u8a9e/1.0" })).toBe(
+      'channel=mcp, surface=generic, tier=oauth, client_ua="/1.0"',
     );
   });
 

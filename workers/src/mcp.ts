@@ -21,6 +21,7 @@ import {
   DjangoUnauthorizedError,
   extractErrorDetail,
 } from "./django.js";
+import type { AuthMode, CallerStamp } from "./caller.js";
 import type { Env } from "./env.js";
 import type { Surface } from "./surface.js";
 import {
@@ -52,7 +53,6 @@ import {
   outputSchemaForSurface,
   toolAnnotationsForSurface,
 } from "./tools/_surface.js";
-import type { AuthMode, CallerStamp } from "./caller.js";
 import { pickDeclared } from "./tools/_pick_declared.js";
 import type { AnyToolModule, ToolContext } from "./tools/types.js";
 
@@ -73,7 +73,6 @@ export function authModeFor(tier: Tier, oauthResolved: boolean): AuthMode {
   if (tier === "free") return "anonymous";
   return oauthResolved ? "oauth" : "api_key";
 }
-
 
 /**
  * MCP Apps UI resource MIME type. Hosts (claude.ai, ChatGPT Apps SDK, VS
@@ -806,7 +805,13 @@ function registerTool(
         // connection did not register is an instruction the model cannot
         // follow.
         registeredTools: options.registeredTools,
-        caller: ctx.caller === undefined ? undefined : { ...ctx.caller, tool: tool.name },
+        // Same registration-time source as `surface` and `tier` above: the
+        // logged surface must be the one that chose the toolset, not the
+        // request-time copy on `ctx`.
+        caller:
+          ctx.caller === undefined
+            ? undefined
+            : { ...ctx.caller, surface: options.surface, tool: tool.name },
       };
       // Free-tier dispatch gate: the listing is auth-invariant (spec D4),
       // so an auth-required tool (`tako_contents`) IS listed on an

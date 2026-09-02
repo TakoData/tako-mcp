@@ -136,11 +136,9 @@ export interface ToolContext {
    */
   registeredTools?: ReadonlySet<string> | undefined;
   /**
-   * Attribution forwarded to Django on every upstream call (`django.ts`
-   * sets `User-Agent` and `X-Tako-Caller` from it). `handleMcpRequest`
-   * stamps surface, auth mode, server version, and the end client's UA once
-   * per request; `registerTool` adds `tool` per call. `undefined` outside an
-   * HTTP context, in which case no attribution headers are sent.
+   * Attribution for upstream Django calls: `django.ts` sets `User-Agent`
+   * and `X-Tako-Caller` from it. When `undefined`, the request sends no
+   * attribution headers.
    */
   caller?: CallerStamp | undefined;
 }

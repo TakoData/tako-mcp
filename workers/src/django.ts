@@ -17,13 +17,13 @@
  * are explicitly out of scope for this ticket.
  */
 
-import type { Env } from "./env.js";
 import {
   CALLER_HEADER,
   type CallerStamp,
   callerUserAgent,
   serializeCallerHeader,
 } from "./caller.js";
+import type { Env } from "./env.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -59,12 +59,12 @@ export interface DjangoRequestOptions {
   /** Abort threshold in milliseconds. Defaults to 30 000. */
   timeoutMs?: number;
   /**
-   * Attribution stamp. When present the request carries
-   * `User-Agent: tako-mcp/<version>` and `X-Tako-Caller` so Django can log
-   * the channel, surface, tool, and end client. Absent for the OAuth mint
-   * call and for tests that assert the bare request shape.
+   * Attribution stamp, or `undefined` to send no attribution. Required, and
+   * `opts` has no default, so a new call site cannot reach Django
+   * unattributed by omission — only by typing `undefined` on purpose. Tests
+   * asserting the bare request shape are the only callers that do.
    */
-  caller?: CallerStamp | undefined;
+  caller: CallerStamp | undefined;
 }
 
 export type DjangoGetOptions = DjangoRequestOptions;
@@ -231,7 +231,7 @@ export async function djangoGet<T>(
   env: Env,
   token: string,
   path: string,
-  opts: DjangoGetOptions = {},
+  opts: DjangoGetOptions,
 ): Promise<T> {
   const url = buildUrl(env, path, opts.query);
   const headers = new Headers({
@@ -249,7 +249,7 @@ export async function djangoPost<T>(
   token: string,
   path: string,
   body: unknown,
-  opts: DjangoPostOptions = {},
+  opts: DjangoPostOptions,
 ): Promise<T> {
   const url = buildUrl(env, path, opts.query);
   const headers = new Headers({

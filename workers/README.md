@@ -274,24 +274,59 @@ account.
 
 ## Upstream caller headers
 
-Every Django request a tool makes carries two attribution headers, set in
-`src/django.ts` from the `CallerStamp` on `ToolContext` (`src/caller.ts`):
+Every Django request made through `src/django.ts` carries two attribution
+headers, set from the `CallerStamp` on `ToolContext` (`src/caller.ts`):
 
 ```
 User-Agent: tako-mcp/<SERVER_VERSION>
 X-Tako-Caller: channel=mcp, surface=chatgpt, tier=oauth, tool=tako_search, client_ua="claude-code/1.2.3"
 ```
 
-`X-Tako-Caller` is an RFC 8941 dictionary. `channel`, `surface`, `tier`
+`X-Tako-Caller` is an RFC 8941-shaped dictionary. `channel`, `surface`, `tier`
 (`oauth`, `api_key`, `anonymous`) and `tool` are bare tokens. `client_ua` is
 the end client's User-Agent as a quoted string: printable ASCII only, `"` and
-`\` escaped, capped at 200 characters, so a hostile UA cannot forge a second
-item or header line. Django parses it into `caller_channel` on its request-log
-tables and a `channel:` metric tag; the rules live in
-`backend/logging/caller_channel.py` in the `tako` repo.
+`\` escaped, capped at 200 characters **before** escaping, so a hostile UA
+cannot forge a second item or header line. Escaping can double the value, so
+budget 412 bytes for the item rather than 200.
 
-The header is attribution, never authorization. The OAuth mint call in
-`src/oauth/identity.ts` does not carry it.
+Django reads the header into `caller_channel` on its request-log tables and a
+`channel:` metric tag, but only once TakoData/tako#30022 deploys — until then
+it's ignored and nothing breaks. Two files in the `tako` repo own the contract:
+`app/backend/context/caller_channel.py` holds the grammar, and its bare-token
+character class must stay identical to `token()` in `src/caller.ts`;
+`app/backend/logging/caller_channel.py` holds the resolution rules.
+
+The header is attribution, never authorization.
+
+Three tool paths bypass `django.ts` and send no attribution, all deliberately.
+The chart-image reads in `src/tools/_chart_widget.ts` — `fetchPngDimensions`,
+`fetchImageDataUrlAndDims` and `fetchPngContentBlock` — and the embed proxy in
+`src/embed_proxy.ts` fetch a public image endpoint with no API key. The channel
+dimension covers the API endpoints, not public asset routes, so don't stamp
+these. The OAuth mint call in `src/oauth/identity.ts` carries a Stytch session
+cookie, not a tool call.
+
+The consequence to know when reading a dashboard: Django attributes those image
+reads to `channel=direct`, so an MCP chart call counts as direct traffic on
+`/api/v1/image/`. That bucket mixes MCP-driven reads with real browser embed
+loads by design.
+
+`tako_agent` stamps `/api/v1/agent/answer/runs`, but nothing reads it yet: the
+run executes in Celery, and the view builds its task kwargs with no request in
+scope, so `agent_run_logs` has no `caller_channel` column and the agent's count
+metric builds its own statsd tags rather than going through the tagged helpers.
+Keep the stamp — the backend follow-up carries `CallerChannel` in
+`request_metadata_json`, and the header already arrives.
+
+The dev harnesses under `scripts/` (`available-data-live.ts`,
+`available-data-truth.ts`, `graph-related-live.ts`) build a `ToolContext` with
+no stamp, so their traffic records as `channel=direct`. That's correct — they
+aren't MCP calls.
+
+Reading the signal: don't trust `tier` on rows older than this worker's deploy.
+Before the header exists, Django infers the channel from an `MCP: `-prefixed
+API key name and hardcodes `tier=oauth`, so early `api_key` and `anonymous`
+traffic reads as `oauth`.
 
 ## Password sign-in (`POST /login/password`)
 

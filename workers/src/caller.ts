@@ -1,18 +1,9 @@
-/**
- * Attribution the worker stamps on every upstream Django request so the
- * backend can record which channel, surface, tool, and end client a call
- * came from. Attribution only: Django never authorizes or bills on it.
- *
- * Wire format is an RFC 8941 Structured Field dictionary. Closed-set values
- * travel as bare tokens; the caller-controlled User-Agent travels as a quoted
- * string restricted to printable ASCII, so a hostile UA cannot forge a second
- * item or a second header line.
- */
+import type { Surface } from "./surface.js";
 
 export type AuthMode = "oauth" | "api_key" | "anonymous";
 
 export interface CallerStamp {
-  surface: string;
+  surface: Surface;
   authMode: AuthMode;
   serverVersion: string;
   tool?: string | undefined;
@@ -32,8 +23,9 @@ export function serializeCallerHeader(stamp: CallerStamp): string {
   if (stamp.tool !== undefined && stamp.tool.length > 0) {
     items.push(`tool=${token(stamp.tool)}`);
   }
-  if (stamp.clientUserAgent !== undefined && stamp.clientUserAgent.length > 0) {
-    items.push(`client_ua=${quotedString(stamp.clientUserAgent, CLIENT_UA_MAX_CHARS)}`);
+  const clientUa = quotedClientUserAgent(stamp.clientUserAgent);
+  if (clientUa !== null) {
+    items.push(`client_ua=${clientUa}`);
   }
   return items.join(", ");
 }
@@ -42,7 +34,17 @@ function token(value: string): string {
   return value.replace(/[^A-Za-z0-9_.:/-]/g, "_");
 }
 
-function quotedString(value: string, maxChars: number): string {
-  const printableAscii = value.replace(/[^\x20-\x7e]/g, " ").slice(0, maxChars);
+/**
+ * Quote a caller-controlled User-Agent, or `null` when it carries no
+ * attribution. The cap is applied BEFORE escaping so truncation can never
+ * split a `\\` pair and leave a trailing lone backslash.
+ */
+function quotedClientUserAgent(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  const printableAscii = value
+    .replace(/[^\x20-\x7e]/g, " ")
+    .slice(0, CLIENT_UA_MAX_CHARS)
+    .trim();
+  if (printableAscii.length === 0) return null;
   return `"${printableAscii.replace(/(["\\])/g, "\\$1")}"`;
 }
