@@ -19,7 +19,7 @@ export function callerUserAgent(stamp: CallerStamp): string {
 }
 
 export function serializeCallerHeader(stamp: CallerStamp): string {
-  const items = ["channel=mcp", `surface=${token(stamp.surface)}`, `tier=${stamp.authMode}`];
+  const items = ["channel=mcp", `surface=${stamp.surface}`, `tier=${stamp.authMode}`];
   if (stamp.tool !== undefined && stamp.tool.length > 0) {
     items.push(`tool=${token(stamp.tool)}`);
   }
@@ -30,6 +30,8 @@ export function serializeCallerHeader(stamp: CallerStamp): string {
   return items.join(", ");
 }
 
+// Must match `_DICTIONARY_ITEM` in tako's app/backend/context/caller_channel.py:
+// widen one side only and Django drops the header silently — no error, no metric.
 function token(value: string): string {
   return value.replace(/[^A-Za-z0-9_.:/-]/g, "_");
 }
