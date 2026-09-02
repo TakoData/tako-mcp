@@ -21,6 +21,7 @@ import {
   DjangoUnauthorizedError,
   extractErrorDetail,
 } from "./django.js";
+import type { AuthMode, CallerStamp } from "./caller.js";
 import type { Env } from "./env.js";
 import type { Surface } from "./surface.js";
 import {
@@ -64,6 +65,14 @@ import type { AnyToolModule, ToolContext } from "./tools/types.js";
 export const SERVER_NAME = "tako-mcp";
 export const SERVER_VERSION = "1.0.0"; // x-release-please-version
 
+/**
+ * The header's `tier` value. A raw Tako API key and an OAuth-minted one both
+ * reach Django as `X-API-Key`, so only the bearer's shape separates them.
+ */
+export function authModeFor(tier: Tier, oauthResolved: boolean): AuthMode {
+  if (tier === "free") return "anonymous";
+  return oauthResolved ? "oauth" : "api_key";
+}
 
 /**
  * MCP Apps UI resource MIME type. Hosts (claude.ai, ChatGPT Apps SDK, VS
@@ -796,6 +805,13 @@ function registerTool(
         // connection did not register is an instruction the model cannot
         // follow.
         registeredTools: options.registeredTools,
+        // Same registration-time source as `surface` and `tier` above: the
+        // logged surface must be the one that chose the toolset, not the
+        // request-time copy on `ctx`.
+        caller:
+          ctx.caller === undefined
+            ? undefined
+            : { ...ctx.caller, surface: options.surface, tool: tool.name },
       };
       // Free-tier dispatch gate: the listing is auth-invariant (spec D4),
       // so an auth-required tool (`tako_contents`) IS listed on an
@@ -1517,6 +1533,7 @@ export async function handleMcpRequest(
   const origin = new URL(request.url).origin;
   let token: string;
   let tier: Tier;
+  let oauthResolved = false;
   if (bearer === null && freeTier !== null) {
     // Anonymous free tier: admission checks BEFORE any SDK work (global
     // ceiling → body-size bound → batch rejection → per-IP metering of
@@ -1580,6 +1597,7 @@ export async function handleMcpRequest(
       // forwarding it to Django as a raw API key.
       return oauthChallengeResponse(request, oauth.error, oauth.errorDescription);
     }
+    oauthResolved = oauth.kind === "ok";
     token = oauth.kind === "ok" ? oauth.takoToken : bearer;
     tier = "authenticated";
   } else {
@@ -1588,6 +1606,14 @@ export async function handleMcpRequest(
     // future refactor can't silently serve an unauthenticated request.
     throw new Error("unreachable: no bearer and no free-tier config");
   }
+
+  const userAgent = request.headers.get("user-agent");
+  const caller: CallerStamp = {
+    surface,
+    authMode: authModeFor(tier, oauthResolved),
+    serverVersion: SERVER_VERSION,
+    clientUserAgent: userAgent ?? undefined,
+  };
 
   // Base ctx — `sendProgress` here is a placeholder overridden per
   // tool call inside `registerTool`'s SDK callback (where the
@@ -1601,6 +1627,7 @@ export async function handleMcpRequest(
     },
     surface,
     tier,
+    caller,
   };
 
   try {
@@ -1617,7 +1644,6 @@ export async function handleMcpRequest(
     // an embedded newline would otherwise forge a second log line (same
     // log-injection reasoning as `django.ts`). Capped because a UA is
     // untrusted length, not because any real one is long.
-    const userAgent = request.headers.get("user-agent");
     console.log(
       `[mcp] request surface=${surface} ua=${JSON.stringify(
         (userAgent ?? "(absent)").slice(0, 200),

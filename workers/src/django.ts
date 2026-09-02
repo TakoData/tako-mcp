@@ -3,8 +3,9 @@
  *
  * Every MCP tool handler eventually hits Django via this module. The
  * client injects the user's Bearer token as `X-API-Key` (the Django API
- * expects the token in the `X-API-Key` header) and `Content-Type: application/json`
- * on bodied requests.
+ * expects the token in the `X-API-Key` header), `Content-Type: application/json`
+ * on bodied requests, and — when the caller passes a `CallerStamp` — the two
+ * attribution headers `User-Agent` and `X-Tako-Caller` (see `caller.ts`).
  *
  * Timeouts default to 30 s (matching the legacy Python default) but
  * are overridable per call — some endpoints legitimately take longer
@@ -16,6 +17,12 @@
  * are explicitly out of scope for this ticket.
  */
 
+import {
+  CALLER_HEADER,
+  type CallerStamp,
+  callerUserAgent,
+  serializeCallerHeader,
+} from "./caller.js";
 import type { Env } from "./env.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -51,6 +58,13 @@ export interface DjangoRequestOptions {
   query?: Record<string, string | number | boolean>;
   /** Abort threshold in milliseconds. Defaults to 30 000. */
   timeoutMs?: number;
+  /**
+   * Attribution stamp, or `undefined` to send no attribution. Required, and
+   * `opts` has no default, so a new call site cannot reach Django
+   * unattributed by omission — only by typing `undefined` on purpose. Tests
+   * asserting the bare request shape are the only callers that do.
+   */
+  caller: CallerStamp | undefined;
 }
 
 export type DjangoGetOptions = DjangoRequestOptions;
@@ -207,16 +221,23 @@ export class DjangoResponseParseError extends DjangoError {
 /* Public helpers                                                     */
 /* ------------------------------------------------------------------ */
 
+function applyCallerHeaders(headers: Headers, caller: CallerStamp | undefined): void {
+  if (caller === undefined) return;
+  headers.set("User-Agent", callerUserAgent(caller));
+  headers.set(CALLER_HEADER, serializeCallerHeader(caller));
+}
+
 export async function djangoGet<T>(
   env: Env,
   token: string,
   path: string,
-  opts: DjangoGetOptions = {},
+  opts: DjangoGetOptions,
 ): Promise<T> {
   const url = buildUrl(env, path, opts.query);
   const headers = new Headers({
     "X-API-Key": token,
   });
+  applyCallerHeaders(headers, opts.caller);
   return executeRequest<T>(
     new Request(url, { method: "GET", headers }),
     { path, method: "GET", timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS },
@@ -228,13 +249,14 @@ export async function djangoPost<T>(
   token: string,
   path: string,
   body: unknown,
-  opts: DjangoPostOptions = {},
+  opts: DjangoPostOptions,
 ): Promise<T> {
   const url = buildUrl(env, path, opts.query);
   const headers = new Headers({
     "X-API-Key": token,
     "Content-Type": "application/json",
   });
+  applyCallerHeaders(headers, opts.caller);
   return executeRequest<T>(
     new Request(url, {
       method: "POST",

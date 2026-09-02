@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "./env.js";
+import type { CallerStamp } from "./caller.js";
 import {
   DjangoBadRequestError,
   DjangoError,
@@ -45,6 +46,7 @@ describe("djangoGet", () => {
       ENV,
       TOKEN,
       "/api/v1/knowledge_search",
+      { caller: undefined },
     );
 
     expect(result).toEqual({ hello: "world" });
@@ -58,7 +60,7 @@ describe("djangoGet", () => {
   it("concatenates a no-trailing-slash base URL with a leading-slash path to produce exactly one slash", async () => {
     mockFetchOnce(jsonResponse(200, {}));
     const envNoTrailing: Env = { DJANGO_BASE_URL: BASE_URL };
-    await djangoGet(envNoTrailing, TOKEN, "/api/v1/x");
+    await djangoGet(envNoTrailing, TOKEN, "/api/v1/x", { caller: undefined });
     const req = (globalThis.fetch as unknown as FetchMock).mock.calls[0]![0] as Request;
     // Exactly one slash between origin and `/api/v1/x`:
     expect(req.url).toBe(`${BASE_URL}/api/v1/x`);
@@ -67,26 +69,26 @@ describe("djangoGet", () => {
 
   it("throws when DJANGO_BASE_URL ends with a trailing slash (rather than silently producing `//`)", async () => {
     const envTrailing: Env = { DJANGO_BASE_URL: "https://trytako.com/" };
-    const err = await djangoGet(envTrailing, TOKEN, "/api/v1/x").catch((e) => e);
+    const err = await djangoGet(envTrailing, TOKEN, "/api/v1/x", { caller: undefined }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toMatch(/trailing slash/i);
   });
 
   it("throws when DJANGO_BASE_URL is empty", async () => {
     const envEmpty: Env = { DJANGO_BASE_URL: "" };
-    const err = await djangoGet(envEmpty, TOKEN, "/api/v1/x").catch((e) => e);
+    const err = await djangoGet(envEmpty, TOKEN, "/api/v1/x", { caller: undefined }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toMatch(/not configured/i);
   });
 
   it("throws when path does not start with a leading slash", async () => {
-    const err = await djangoGet(ENV, TOKEN, "api/v1/x").catch((e) => e);
+    const err = await djangoGet(ENV, TOKEN, "api/v1/x", { caller: undefined }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toMatch(/must start with/i);
   });
 
   it("throws when path begins with `//` (blocks protocol-relative hijack)", async () => {
-    const err = await djangoGet(ENV, TOKEN, "//evil.com/api/v1/x").catch(
+    const err = await djangoGet(ENV, TOKEN, "//evil.com/api/v1/x", { caller: undefined }).catch(
       (e) => e,
     );
     expect(err).toBeInstanceOf(Error);
@@ -100,6 +102,7 @@ describe("djangoGet", () => {
     // as the first key.
     const err = await djangoGet(ENV, TOKEN, "/api/v1/x?foo=bar", {
       query: { baz: "qux" },
+      caller: undefined,
     }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toMatch(/must not contain/i);
@@ -109,6 +112,7 @@ describe("djangoGet", () => {
     mockFetchOnce(jsonResponse(200, {}));
     await djangoGet(ENV, TOKEN, "/api/v1/x", {
       query: { a: 1, b: "two", c: true },
+      caller: undefined,
     });
     const req = (globalThis.fetch as unknown as FetchMock).mock.calls[0]![0] as Request;
     const url = new URL(req.url);
@@ -120,7 +124,7 @@ describe("djangoGet", () => {
 
   it("throws DjangoNotFoundError on 404", async () => {
     mockFetchOnce(new Response("nope", { status: 404 }));
-    const err = await djangoGet(ENV, TOKEN, "/api/v1/missing").catch((e) => e);
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/missing", { caller: undefined }).catch((e) => e);
     expect(err).toBeInstanceOf(DjangoNotFoundError);
     expect(err).toBeInstanceOf(DjangoError);
     expect((err as DjangoNotFoundError).status).toBe(404);
@@ -130,7 +134,9 @@ describe("djangoGet", () => {
 
   it("throws DjangoBadRequestError on 400 carrying the body", async () => {
     mockFetchOnce(new Response("bad field: foo", { status: 400 }));
-    const err = await djangoGet(ENV, TOKEN, "/api/v1/x").catch((e) => e);
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/x", { caller: undefined }).catch(
+      (e) => e,
+    );
     expect(err).toBeInstanceOf(DjangoBadRequestError);
     expect((err as DjangoBadRequestError).status).toBe(400);
     expect((err as DjangoBadRequestError).body).toBe("bad field: foo");
@@ -140,7 +146,9 @@ describe("djangoGet", () => {
     mockFetchOnce(
       new Response('{"detail":"Invalid token."}', { status: 401 }),
     );
-    const err = await djangoGet(ENV, TOKEN, "/api/v1/x").catch((e) => e);
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/x", { caller: undefined }).catch(
+      (e) => e,
+    );
     expect(err).toBeInstanceOf(DjangoUnauthorizedError);
     expect((err as DjangoUnauthorizedError).status).toBe(401);
     // The auth-failure reason is captured so the MCP boundary can relay it.
@@ -154,7 +162,9 @@ describe("djangoGet", () => {
         headers: { "content-type": "application/json" },
       }),
     );
-    const err = await djangoGet(ENV, TOKEN, "/api/v1/x").catch((e) => e);
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/x", { caller: undefined }).catch(
+      (e) => e,
+    );
     expect(err).toBeInstanceOf(DjangoResponseParseError);
     // Contract for Phase 2 handlers: a single `instanceof DjangoError`
     // gate must cover this case too.
@@ -166,7 +176,9 @@ describe("djangoGet", () => {
 
   it("throws DjangoHttpError with status=500 for other non-2xx responses", async () => {
     mockFetchOnce(new Response("boom", { status: 500 }));
-    const err = await djangoGet(ENV, TOKEN, "/api/v1/x").catch((e) => e);
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/x", { caller: undefined }).catch(
+      (e) => e,
+    );
     expect(err).toBeInstanceOf(DjangoHttpError);
     // Sanity: DjangoHttpError is the catch-all and must NOT be one of
     // the specific subclasses.
@@ -192,7 +204,7 @@ describe("djangoGet", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const err = await djangoGet(ENV, TOKEN, "/api/v1/x", { timeoutMs: 50 }).catch(
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/x", { timeoutMs: 50, caller: undefined }).catch(
       (e) => e,
     );
     expect(err).toBeInstanceOf(DjangoTimeoutError);
@@ -212,7 +224,9 @@ describe("djangoGet", () => {
     // `...[truncated]` so callers / logs can tell signal from noise.
     const oversize = "x".repeat(16_384); // 2x the 8 KiB cap
     mockFetchOnce(new Response(oversize, { status: 500 }));
-    const err = await djangoGet(ENV, TOKEN, "/api/v1/x").catch((e) => e);
+    const err = await djangoGet(ENV, TOKEN, "/api/v1/x", { caller: undefined }).catch(
+      (e) => e,
+    );
     expect(err).toBeInstanceOf(DjangoHttpError);
     const body = (err as DjangoHttpError).body;
     expect(body.length).toBeLessThanOrEqual(8192 + "...[truncated]".length);
@@ -231,6 +245,7 @@ describe("djangoPost", () => {
       TOKEN,
       "/api/v1/create",
       { foo: "bar", n: 42 },
+      { caller: undefined },
     );
 
     expect(result).toEqual({ ok: true });
@@ -245,7 +260,7 @@ describe("djangoPost", () => {
 
   it("maps 404 → DjangoNotFoundError with method=POST", async () => {
     mockFetchOnce(new Response("nope", { status: 404 }));
-    const err = await djangoPost(ENV, TOKEN, "/api/v1/x", {}).catch((e) => e);
+    const err = await djangoPost(ENV, TOKEN, "/api/v1/x", {}, { caller: undefined }).catch((e) => e);
     expect(err).toBeInstanceOf(DjangoNotFoundError);
     expect((err as DjangoNotFoundError).method).toBe("POST");
   });
@@ -261,11 +276,56 @@ describe("djangoPost", () => {
       TOKEN,
       "/api/v1/create",
       { foo: "bar" },
-      { query: { format: "json" } },
+      { query: { format: "json" }, caller: undefined },
     );
     const req = (globalThis.fetch as unknown as FetchMock).mock.calls[0]![0] as Request;
     const url = new URL(req.url);
     expect(url.pathname).toBe("/api/v1/create");
     expect(url.searchParams.get("format")).toBe("json");
+  });
+});
+
+describe("caller attribution headers", () => {
+  const STAMP: CallerStamp = {
+    surface: "generic",
+    authMode: "oauth",
+    serverVersion: "9.9.9",
+    tool: "tako_search",
+    clientUserAgent: "claude-code/1.2.3",
+  };
+
+  it("djangoGet sets User-Agent and X-Tako-Caller when a stamp is passed", async () => {
+    const fetchMock = mockFetchOnce(jsonResponse(200, {}));
+    await djangoGet(ENV, TOKEN, "/api/v1/graph/related", { caller: STAMP });
+    const req = fetchMock.mock.calls[0]![0] as Request;
+    expect(req.headers.get("user-agent")).toBe("tako-mcp/9.9.9");
+    expect(req.headers.get("x-tako-caller")).toBe(
+      'channel=mcp, surface=generic, tier=oauth, tool=tako_search, client_ua="claude-code/1.2.3"',
+    );
+    expect(req.headers.get("x-api-key")).toBe(TOKEN);
+  });
+
+  it("djangoPost sets both headers and keeps Content-Type", async () => {
+    const fetchMock = mockFetchOnce(jsonResponse(200, {}));
+    await djangoPost(ENV, TOKEN, "/api/v3/search/", { query: "x" }, { caller: STAMP });
+    const req = fetchMock.mock.calls[0]![0] as Request;
+    expect(req.headers.get("user-agent")).toBe("tako-mcp/9.9.9");
+    expect(req.headers.get("x-tako-caller")).toContain("tool=tako_search");
+    expect(req.headers.get("content-type")).toBe("application/json");
+  });
+
+  it("sends neither header when no stamp is passed", async () => {
+    const fetchMock = mockFetchOnce(jsonResponse(200, {}));
+    await djangoGet(ENV, TOKEN, "/api/v1/graph/related", { caller: undefined });
+    const req = fetchMock.mock.calls[0]![0] as Request;
+    expect(req.headers.get("x-tako-caller")).toBeNull();
+    expect(req.headers.has("user-agent")).toBe(false);
+  });
+
+  it("treats an explicit undefined stamp like an absent one", async () => {
+    const fetchMock = mockFetchOnce(jsonResponse(200, {}));
+    await djangoGet(ENV, TOKEN, "/api/v1/graph/related", { caller: undefined });
+    const req = fetchMock.mock.calls[0]![0] as Request;
+    expect(req.headers.get("x-tako-caller")).toBeNull();
   });
 });

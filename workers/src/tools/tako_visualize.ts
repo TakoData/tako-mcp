@@ -474,7 +474,7 @@ const tako_visualize = {
       ctx.token,
       "/api/v1/thin_viz/create/",
       body,
-      { timeoutMs: 130_000 },
+      { timeoutMs: 130_000, caller: ctx.caller },
     );
 
     // Wire-contract guard: validate against the generated ThinVizCard

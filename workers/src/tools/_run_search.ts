@@ -81,7 +81,10 @@ export async function runSearch(
   // Both endpoints are synchronous (~120s sync ceiling). No async/202, no
   // polling. Zero matches come back as 200 with empty `cards`.
   const path = endpoint === "answer" ? "/api/v1/answer/" : "/api/v3/search/";
-  const data = await djangoPost<unknown>(ctx.env, ctx.token, path, body, { timeoutMs: 130_000 });
+  const data = await djangoPost<unknown>(ctx.env, ctx.token, path, body, {
+    timeoutMs: 130_000,
+    caller: ctx.caller,
+  });
 
   // Wire-contract guard, PER ENDPOINT. `SearchResponse` is a bare `z.object`
   // and STRIPS unknown keys: guarding an /v1/answer payload with it would drop

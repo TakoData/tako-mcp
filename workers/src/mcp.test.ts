@@ -20,6 +20,7 @@ import {
 } from "./instructions.js";
 import {
   AUTH_INVALID_MESSAGE,
+  authModeFor,
   createMcpServer,
   djangoErrorToToolResult,
   GENERIC_SIGN_IN_HINT,
@@ -27,6 +28,7 @@ import {
   PAYMENT_REQUIRED_MESSAGE,
   PAYMENT_REQUIRED_REMEDY_FALLBACK,
   paymentRequiredToolResult,
+  SERVER_VERSION,
   structuredContentFor,
   withChatGptToolSecuritySchemes,
 } from "./mcp.js";
@@ -37,8 +39,11 @@ import {
   jsonResponse,
   mockFetchSequence,
   noopSendProgress,
+  requestFrom,
   TIER_CLAIM,
 } from "./tools/__test_helpers.js";
+import worker from "./index.js";
+import { encryptAesGcm, signJwt } from "./oauth/jwt.js";
 import type { ToolContext } from "./tools/types.js";
 
 describe("toolAnnotationsForSurface", () => {
@@ -1897,5 +1902,220 @@ describe("published outputSchema per surface", () => {
     // schema that lost everything would pass the loop above.
     expect(props).toContain("cards");
     expect(props).toContain("web_results");
+  });
+});
+
+describe("caller stamp reaches Django on a tool call", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("maps auth tiers to header auth modes", () => {
+    expect(authModeFor("free", false)).toBe("anonymous");
+    expect(authModeFor("authenticated", true)).toBe("oauth");
+    expect(authModeFor("authenticated", false)).toBe("api_key");
+  });
+
+  it("stamps tool, surface, tier and client UA on the upstream request", async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ detail: "boom" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx: ToolContext = {
+      token: "sk-test",
+      env: { DJANGO_BASE_URL: "https://staging.trytako.com" } as Env,
+      sendProgress: noopSendProgress,
+      surface: "generic",
+      tier: "authenticated",
+      caller: {
+        surface: "generic",
+        authMode: "api_key",
+        serverVersion: "0.0.0-test",
+        clientUserAgent: "claude-code/1.2.3",
+      },
+    };
+    const server = createMcpServer(ctx, { surface: "generic", tier: "authenticated" });
+    const mcpClient = new Client(
+      { name: "caller-test", version: "0.0.0" },
+      { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await mcpClient.connect(clientTransport);
+    try {
+      await mcpClient.callTool({ name: "tako_search", arguments: { query: "us gdp" } });
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+
+    expect(fetchMock).toHaveBeenCalled();
+    const upstream = fetchMock.mock.calls[0]![0] as Request;
+    expect(upstream.headers.get("user-agent")).toBe("tako-mcp/0.0.0-test");
+    expect(upstream.headers.get("x-tako-caller")).toBe(
+      'channel=mcp, surface=generic, tier=api_key, tool=tako_search, client_ua="claude-code/1.2.3"',
+    );
+  });
+});
+
+
+/**
+ * Attribution on the REAL entrypoint. Every other caller test builds a
+ * `CallerStamp` by hand, so none of them touch `handleMcpRequest`'s
+ * resolution of `tier` from the bearer's shape — the one field Django keys
+ * `oauth` vs `api_key` vs `anonymous` on. Deleting `caller` from the base
+ * ctx, or wiring `oauthResolved` wrong, is invisible without these.
+ */
+describe("caller attribution through handleMcpRequest", () => {
+  const SIGN_KEY = "test-sign-key-caller-e2e";
+  const CLIENT_UA = "claude-code/1.2.3";
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function freshEncKey(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    let out = "";
+    for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]!);
+    return btoa(out);
+  }
+
+  const allow = { async limit() { return { success: true }; } };
+
+  function prodEnv(): Env {
+    return {
+      DJANGO_BASE_URL: "http://localhost:8000",
+      FREE_TIER_API_KEY: "free-tier-secret-key",
+      FREE_TIER_RATE_LIMITER: allow,
+      FREE_TIER_GLOBAL_RATE_LIMITER: allow,
+      OAUTH_SIGN_KEY: SIGN_KEY,
+      OAUTH_ENC_KEY: freshEncKey(),
+    } as unknown as Env;
+  }
+
+  /** `iss`/`aud` are optional in `tryResolveOAuthAccessToken`, so omit both. */
+  async function mintOAuthBearer(env: Env): Promise<string> {
+    const enc_tako_token = await encryptAesGcm("tako-token-xyz", env.OAUTH_ENC_KEY!);
+    return signJwt(
+      {
+        type: "access",
+        scope: "mcp",
+        user_id: "user-1",
+        user_email: "alice@example.com",
+        enc_tako_token,
+        exp: Math.floor(Date.now() / 1000) + 60,
+      },
+      SIGN_KEY,
+    );
+  }
+
+  async function upstreamCallerHeader(
+    path: string,
+    headers: Record<string, string>,
+    env: Env,
+  ): Promise<{ caller: string | null; userAgent: string | null }> {
+    const fetchMock = mockFetchSequence([jsonResponse(200, {})]);
+    const request = new Request(`https://mcp.tako.com${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "user-agent": CLIENT_UA,
+        "cf-connecting-ip": "203.0.113.7",
+        ...headers,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "tako_search", arguments: { query: "US GDP" } },
+      }),
+    });
+    const res = await worker.fetch(request, env);
+    expect(res.status, `${path} should reach a tool call`).toBe(200);
+    expect(fetchMock, `${path} should hit Django`).toHaveBeenCalled();
+    const upstream = requestFrom(fetchMock.mock.calls[0]!);
+    return {
+      caller: upstream.headers.get("x-tako-caller"),
+      userAgent: upstream.headers.get("user-agent"),
+    };
+  }
+
+  it("stamps tier=anonymous for the anonymous free tier", async () => {
+    const { caller, userAgent } = await upstreamCallerHeader("/mcp", {}, prodEnv());
+    expect(caller).toBe(
+      `channel=mcp, surface=generic, tier=anonymous, tool=tako_search, client_ua="${CLIENT_UA}"`,
+    );
+    expect(userAgent).toBe(`tako-mcp/${SERVER_VERSION}`);
+  });
+
+  it("stamps tier=api_key for a raw Tako API token", async () => {
+    const { caller } = await upstreamCallerHeader(
+      "/mcp",
+      { authorization: "Bearer raw-tako-token-no-dots" },
+      prodEnv(),
+    );
+    expect(caller).toBe(
+      `channel=mcp, surface=generic, tier=api_key, tool=tako_search, client_ua="${CLIENT_UA}"`,
+    );
+  });
+
+  it("stamps tier=oauth for a Worker-minted access token", async () => {
+    const env = prodEnv();
+    const bearer = await mintOAuthBearer(env);
+    const { caller } = await upstreamCallerHeader(
+      "/mcp",
+      { authorization: `Bearer ${bearer}` },
+      env,
+    );
+    expect(caller).toBe(
+      `channel=mcp, surface=generic, tier=oauth, tool=tako_search, client_ua="${CLIENT_UA}"`,
+    );
+  });
+
+  it("stamps surface=chatgpt on the chatgpt surface", async () => {
+    const env = prodEnv();
+    const bearer = await mintOAuthBearer(env);
+    const { caller } = await upstreamCallerHeader(
+      "/mcp/chatgpt",
+      { authorization: `Bearer ${bearer}` },
+      env,
+    );
+    expect(caller).toBe(
+      `channel=mcp, surface=chatgpt, tier=oauth, tool=tako_search, client_ua="${CLIENT_UA}"`,
+    );
+  });
+
+  it("omits client_ua when the request carries no User-Agent", async () => {
+    const fetchMock = mockFetchSequence([jsonResponse(200, {})]);
+    const res = await worker.fetch(
+      new Request("https://mcp.tako.com/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "cf-connecting-ip": "203.0.113.7",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "tako_search", arguments: { query: "US GDP" } },
+        }),
+      }),
+      prodEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(requestFrom(fetchMock.mock.calls[0]!).headers.get("x-tako-caller")).toBe(
+      "channel=mcp, surface=generic, tier=anonymous, tool=tako_search",
+    );
   });
 });

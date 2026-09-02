@@ -16,6 +16,7 @@
 
 import type { z } from "zod";
 
+import type { CallerStamp } from "../caller.js";
 import type { Env } from "../env.js";
 import type { Tier } from "../freetier.js";
 import type { Surface } from "../surface.js";
@@ -134,6 +135,12 @@ export interface ToolContext {
    * a tool is present.
    */
   registeredTools?: ReadonlySet<string> | undefined;
+  /**
+   * Attribution for upstream Django calls: `django.ts` sets `User-Agent`
+   * and `X-Tako-Caller` from it. When `undefined`, the request sends no
+   * attribution headers.
+   */
+  caller?: CallerStamp | undefined;
 }
 
 /**
