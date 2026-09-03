@@ -1,6 +1,6 @@
 {
   "name": "tako-mcp-workers",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Tako MCP server on Cloudflare Workers (mcp.tako.com).",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "tako",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Tako MCP grounds your agent in two kinds of knowledge at once: proprietary structured data from trusted providers, and full web search. The curated side covers company financials, macroeconomic indicators, web and app traffic, sports, US government spending, and more. One tool call returns typed values with named sources when curated data exists, and agent-ready web results and page text for everything else. That combination is the point. A pure data API misses most questions, and a pure web search API makes your agent do the reading.",
   "contextFileName": "docs${/}gemini${/}GEMINI.md",
   "mcpServers": {
