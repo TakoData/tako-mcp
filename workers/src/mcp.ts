@@ -63,7 +63,7 @@ import type { AnyToolModule, ToolContext } from "./tools/types.js";
  * returns, so a mismatch surfaces as "wrong server" in tooling.
  */
 export const SERVER_NAME = "tako-mcp";
-export const SERVER_VERSION = "1.1.0"; // x-release-please-version
+export const SERVER_VERSION = "1.1.1"; // x-release-please-version
 
 /**
  * The header's `tier` value. A raw Tako API key and an OAuth-minted one both

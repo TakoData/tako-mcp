@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/TakoData/tako-mcp/compare/v1.1.0...v1.1.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **annotations:** serve OpenAI's openWorldHint and destructiveHint readings on /mcp/chatgpt ([#291](https://github.com/TakoData/tako-mcp/issues/291)) ([1601876](https://github.com/TakoData/tako-mcp/commit/1601876b8eeaf18cc3a65e9357c831184899cfc8))
+
 ## [1.1.0](https://github.com/TakoData/tako-mcp/compare/v1.0.0...v1.1.0) (2026-09-02)
 
 
