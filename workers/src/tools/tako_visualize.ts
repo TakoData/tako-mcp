@@ -423,6 +423,9 @@ const tako_visualize = {
   annotations: {
     title: "Tako: Visualize",
     readOnlyHint: false,
+    // Additive under the MCP spec's destructiveHint: a call only ever adds a
+    // card and never modifies or deletes one. The chatgpt override below
+    // carries Apps review's reading.
     destructiveHint: false,
     // idempotentHint false: each call mints a new persistent Tako card.
     idempotentHint: false,
@@ -432,16 +435,19 @@ const tako_visualize = {
     openWorldHint: false,
   },
   annotationsBySurface: {
-    // The one override that WIDENS a hint: Apps review reads
-    // `openWorldHint` as "publishes/mutates publicly visible state", and
-    // this call mints a card with publicly accessible webpage/embed URLs.
-    // Combined with `readOnlyHint: false` this marks the call
+    // Two overrides that WIDEN a hint. Apps review reads `openWorldHint`
+    // as "publishes/mutates publicly visible state", and this call mints a
+    // card with publicly accessible webpage/embed URLs. It reads
+    // `destructiveHint` as "an outcome you can't undo", and the card is
+    // public and permanent: nothing in this app or the Tako API deletes
+    // it. Combined with `readOnlyHint: false` this marks the call
     // confirmation-worthy in ChatGPT even though the tool sits on
     // ChatGPT's default surface — intended: a user-visible prompt before
     // creating a public URL is the honest label for review, and matches
-    // the justification in `chatgpt-app-submission.json`. See
-    // `annotationsBySurface` in types.ts.
-    chatgpt: { openWorldHint: true },
+    // the justifications in `chatgpt-app-submission.json`. The description
+    // carries the same safeguard: the model confirms with the user before
+    // it calls. See `annotationsBySurface` in types.ts.
+    chatgpt: { openWorldHint: true, destructiveHint: true },
   },
   // These three are NOT request-body fields — `buildVisualizeBody` sends only
   // `components`. They are the fixed render settings the tool applies to the

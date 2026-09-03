@@ -34,7 +34,10 @@ import {
 } from "./mcp.js";
 import type { Surface } from "./surface.js";
 import { TOOL_REGISTRY } from "./tools/_registry.js";
-import { toolAnnotationsForSurface } from "./tools/_surface.js";
+import {
+  CHATGPT_CLOSED_WORLD_TOOLS,
+  toolAnnotationsForSurface,
+} from "./tools/_surface.js";
 import {
   jsonResponse,
   mockFetchSequence,
@@ -56,15 +59,33 @@ describe("toolAnnotationsForSurface", () => {
   });
 
   it("uses OpenAI Apps review semantics for chatgpt descriptors", () => {
+    // Open-world under Apps review = reaches systems outside Tako or
+    // publishes public state. The closed set is the one list in
+    // `_surface.ts`; every tool not on it is open-world, so a new tool that
+    // copies a `chatgpt: { openWorldHint: false }` override fails here
+    // until someone lists it deliberately.
     for (const tool of TOOL_REGISTRY) {
       const annotations = toolAnnotationsForSurface(tool, "chatgpt");
-      expect(annotations.destructiveHint, tool.name).toBe(false);
-      // `tako_visualize` mints a publicly reachable card URL — the one
-      // tool Apps review reads as publishing state (`openWorldHint:
-      // true` + `readOnlyHint: false`); retrieval tools stay read-only.
-      expect(annotations.openWorldHint, tool.name).toBe(
+      // `tako_visualize` is the one call that can't be undone: the card it
+      // publishes is permanent and nothing deletes it.
+      expect(annotations.destructiveHint, tool.name).toBe(
         tool.name === "tako_visualize",
       );
+      expect(annotations.openWorldHint, tool.name).toBe(
+        !CHATGPT_CLOSED_WORLD_TOOLS.has(tool.name),
+      );
+      if (tool.annotationsBySurface?.chatgpt?.openWorldHint === false) {
+        expect(
+          CHATGPT_CLOSED_WORLD_TOOLS.has(tool.name),
+          `${tool.name} narrows openWorldHint on chatgpt but is not in CHATGPT_CLOSED_WORLD_TOOLS`,
+        ).toBe(true);
+      }
+    }
+    for (const name of CHATGPT_CLOSED_WORLD_TOOLS) {
+      expect(
+        TOOL_REGISTRY.some((tool) => tool.name === name),
+        `CHATGPT_CLOSED_WORLD_TOOLS names "${name}", which is not a registered tool`,
+      ).toBe(true);
     }
     for (const name of [
       "tako_search",

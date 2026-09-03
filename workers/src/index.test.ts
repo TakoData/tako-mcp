@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Env } from "./env.js";
 import worker from "./index.js";
 import { SERVER_VERSION } from "./mcp.js";
+import { CHATGPT_CLOSED_WORLD_TOOLS } from "./tools/_surface.js";
 
 // Valid RFC 6750 b64token — any non-empty ASCII token works for these tests
 // because `extractBearer` only validates shape, not value. Django's the one
@@ -678,10 +679,16 @@ describe("worker routing", () => {
     expect(names.has("tako_visualize")).toBe(true);
     expect(body.result.tools).toHaveLength(5);
 
+    // Apps review readings: `tako_visualize` publishes a permanent public
+    // card nothing can delete (a write, destructive, open-world); every
+    // other tool is open-world unless `_surface.ts` lists it as reading
+    // Tako's own graph only.
     for (const tool of body.result.tools) {
-      expect(tool.annotations.destructiveHint, tool.name).toBe(false);
-      expect(tool.annotations.openWorldHint, tool.name).toBe(
+      expect(tool.annotations.destructiveHint, tool.name).toBe(
         tool.name === "tako_visualize",
+      );
+      expect(tool.annotations.openWorldHint, tool.name).toBe(
+        !CHATGPT_CLOSED_WORLD_TOOLS.has(tool.name),
       );
       expect(tool.annotations.readOnlyHint, tool.name).toBe(
         tool.name !== "tako_visualize",

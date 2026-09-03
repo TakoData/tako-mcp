@@ -395,12 +395,24 @@ export interface ToolModule<
    * generic surface and the generated registry see.
    *
    * Exists because OpenAI's ChatGPT Apps review reads `openWorldHint`
-   * differently from the MCP protocol. MCP: domain of interaction (web
-   * search is the spec's canonical open-world example). Apps review:
-   * "does this call publish or mutate publicly visible / third-party
-   * state?" Retrieval tools are therefore open-world under MCP but
-   * closed-world under Apps review, and `tako_visualize` (mints public
-   * chart URLs) is the reverse.
+   * differently from the MCP protocol. MCP: domain of interaction, so
+   * every retrieval tool is open-world (web search is the spec's canonical
+   * example). Apps review: "does the call reach systems outside a private
+   * or first-party context, or publish publicly visible state?" — false
+   * "only if it operates entirely within closed or private systems". The
+   * readings agree on the web-touching tools (`tako_search`,
+   * `tako_contents`, `tako_search_advanced`, `tako_agent`: true on every
+   * surface) and diverge twice, in opposite directions:
+   *
+   * - `tako_available_data`, `tako_graph_related` read Tako's own graph
+   *   and nothing else: open-world under MCP, closed under Apps review.
+   *   Canonical true, chatgpt override false.
+   * - `tako_visualize` renders caller-supplied data into a card: closed
+   *   under MCP (no external entities), open under Apps review (public
+   *   URLs). Canonical false, chatgpt override true. Its `destructiveHint`
+   *   diverges the same way: additive under MCP (a call only adds a card),
+   *   irreversible under Apps review (the card is permanent and nothing
+   *   deletes it). Canonical false, chatgpt override true.
    *
    * `readOnlyHint` needs NO per-surface override — its meaning is the
    * same in both ecosystems ("does not modify its environment"), and the

@@ -11,28 +11,28 @@
     "tako_search": {
       "annotations": {
         "readOnlyHint": true,
-        "openWorldHint": false,
+        "openWorldHint": true,
         "destructiveHint": false,
         "idempotentHint": true
       },
       "justifications": {
-        "read_only_justification": "Searches Tako's data index and the live web and returns matching cards and links without modifying records or external state.",
-        "open_world_justification": "Does not publish content or change publicly visible or third-party state.",
-        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions.",
+        "read_only_justification": "Searches Tako's data index and the live web and returns matching cards and links; it modifies no record and no external state.",
+        "open_world_justification": "Reaches the live public web on every call, a system outside Tako's first-party context; it only reads from it and publishes nothing.",
+        "destructive_justification": "Read-only: deletes, overwrites, sends, and publishes nothing, so there is no outcome to undo.",
         "idempotent_justification": "Repeating the same search returns results and changes nothing; no additional effect on any state."
       }
     },
     "tako_contents": {
       "annotations": {
         "readOnlyHint": true,
-        "openWorldHint": false,
+        "openWorldHint": true,
         "destructiveHint": false,
         "idempotentHint": true
       },
       "justifications": {
-        "read_only_justification": "Retrieves a card's data rows as JSON or a page's text from a supplied result URL without modifying the source.",
-        "open_world_justification": "Does not publish content or change the supplied website or any third-party system.",
-        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions.",
+        "read_only_justification": "Fetches the text of a supplied web page or the data rows of a Tako card and modifies neither.",
+        "open_world_justification": "Fetches arbitrary public web pages that a search returned, systems outside Tako's first-party context; it only reads them and never submits or posts.",
+        "destructive_justification": "Read-only: deletes, overwrites, sends, and publishes nothing, so there is no outcome to undo.",
         "idempotent_justification": "Repeating the same fetch returns the same content and changes nothing; no additional effect on any state."
       }
     },
@@ -45,8 +45,8 @@
       },
       "justifications": {
         "read_only_justification": "Looks up Tako's structured-data coverage for an entity or metric and returns matching names without changing data.",
-        "open_world_justification": "Does not publish content or modify publicly visible or third-party state.",
-        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions.",
+        "open_world_justification": "Reads Tako's own data graph and nothing else: no web request, no third-party system, and no publicly visible state.",
+        "destructive_justification": "Read-only: deletes, overwrites, sends, and publishes nothing, so there is no outcome to undo.",
         "idempotent_justification": "Repeating the same coverage lookup returns the same catalog answer and changes nothing."
       }
     },
@@ -54,13 +54,13 @@
       "annotations": {
         "readOnlyHint": false,
         "openWorldHint": true,
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false
       },
       "justifications": {
-        "read_only_justification": "Creates a persistent Tako chart card from structured data supplied by the user.",
-        "open_world_justification": "Creates a chart card with publicly accessible webpage and embed URLs.",
-        "destructive_justification": "Creates a new card but does not delete, overwrite, revoke access, or perform irreversible transactions.",
+        "read_only_justification": "Creates a new Tako chart card, a durable resource with its own URL, from data the user supplied.",
+        "open_world_justification": "Publishes a card that anyone with the URL can open without signing in, outside the current user's private context.",
+        "destructive_justification": "The card is public and permanent: nothing in this app or in the Tako API deletes it, so a call can't be undone. Safeguards: the call only adds a card and never modifies or deletes existing data, and the tool description instructs the model to confirm with the user before it calls.",
         "idempotent_justification": "Each call mints a new persistent chart card with its own public URL; repeating the call creates another card."
       }
     },
@@ -73,8 +73,8 @@
       },
       "justifications": {
         "read_only_justification": "Reads the related nodes of one Tako data-graph node (its metrics, covered entities, competitors, memberships, sources) without modifying any record.",
-        "open_world_justification": "Does not publish content or change any external or third-party system; it reads Tako's own graph.",
-        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions.",
+        "open_world_justification": "Reads Tako's own data graph and nothing else: no web request, no third-party system, and no publicly visible state.",
+        "destructive_justification": "Read-only: deletes, overwrites, sends, and publishes nothing, so there is no outcome to undo.",
         "idempotent_justification": "Repeating the same lookup returns the same related nodes and changes nothing; no additional effect on any state."
       }
     }
