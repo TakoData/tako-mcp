@@ -400,12 +400,19 @@ export interface ToolModule<
    * example). Apps review: "does the call reach systems outside a private
    * or first-party context, or publish publicly visible state?" — false
    * "only if it operates entirely within closed or private systems". The
-   * two readings agree on the web-touching tools (`tako_search`,
-   * `tako_contents`, `tako_search_advanced`: true everywhere) and on
-   * `tako_visualize` (public URLs: true everywhere). They differ only on
-   * the tools that read Tako's own graph and nothing else
-   * (`tako_available_data`, `tako_graph_related`): open-world under MCP,
-   * closed under Apps review, hence their chatgpt override to false.
+   * readings agree on the web-touching tools (`tako_search`,
+   * `tako_contents`, `tako_search_advanced`, `tako_agent`: true on every
+   * surface) and diverge twice, in opposite directions:
+   *
+   * - `tako_available_data`, `tako_graph_related` read Tako's own graph
+   *   and nothing else: open-world under MCP, closed under Apps review.
+   *   Canonical true, chatgpt override false.
+   * - `tako_visualize` renders caller-supplied data into a card: closed
+   *   under MCP (no external entities), open under Apps review (public
+   *   URLs). Canonical false, chatgpt override true. Its `destructiveHint`
+   *   diverges the same way: additive under MCP (a call only adds a card),
+   *   irreversible under Apps review (the card is permanent and nothing
+   *   deletes it). Canonical false, chatgpt override true.
    *
    * `readOnlyHint` needs NO per-surface override — its meaning is the
    * same in both ecosystems ("does not modify its environment"), and the

@@ -88,6 +88,19 @@ export const CHATGPT_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Tools that read Tako's own graph and nothing else, so Apps review's
+ * `openWorldHint` is false on `/mcp/chatgpt` while MCP's stays true. Every
+ * other tool is open-world on every surface. A tool whose chatgpt override
+ * sets `openWorldHint: false` must be listed here — `mcp.test.ts` fails an
+ * override that isn't, so a copied override can't ship the label OpenAI
+ * rejected in review. See `annotationsBySurface` in types.ts.
+ */
+export const CHATGPT_CLOSED_WORLD_TOOLS: ReadonlySet<string> = new Set([
+  "tako_available_data",
+  "tako_graph_related",
+]);
+
+/**
  * The tools a request registers.
  *
  * @param requested the parsed `?tools=` allowlist, or `null` when the param

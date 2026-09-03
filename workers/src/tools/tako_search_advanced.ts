@@ -445,11 +445,11 @@ const tako_search_advanced = {
     readOnlyHint: true,
     destructiveHint: false,
     idempotentHint: true,
-    // Open-world on EVERY surface: the call searches the live public web, a system outside
-    // Tako's first-party context. That is open-world under MCP's reading
-    // (domain of interaction) and under OpenAI's Apps review guideline
-    // ("tools that interact with external systems ... must be explicitly
-    // labeled"). See `annotationsBySurface` in types.ts.
+    // Open-world on EVERY surface: the call searches the live public web,
+    // a system outside Tako's first-party context. That is open-world
+    // under MCP's reading (domain of interaction) and under OpenAI's Apps
+    // review guideline ("tools that interact with external systems ...
+    // must be explicitly labeled"). See `annotationsBySurface` in types.ts.
     openWorldHint: true,
   },
   // Nothing is FIXED, and web highlights is the field that tests the

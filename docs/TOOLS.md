@@ -2785,7 +2785,7 @@ Fixed worker-side settings (not request fields):
 
 Annotations:
 
-- `/mcp`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: true; idempotentHint: false; openWorldHint: false
+- `/mcp`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false
 - `/mcp/chatgpt`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: true; idempotentHint: false; openWorldHint: true
 
 <details><summary>wire — Published input schema (JSON Schema)</summary>

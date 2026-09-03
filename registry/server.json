@@ -337,7 +337,7 @@
       "annotations": {
         "title": "Tako: Visualize",
         "readOnlyHint": false,
-        "destructiveHint": true,
+        "destructiveHint": false,
         "idempotentHint": false,
         "openWorldHint": false
       }

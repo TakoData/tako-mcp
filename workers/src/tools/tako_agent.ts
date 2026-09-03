@@ -412,9 +412,8 @@ const takoAgent = {
     idempotentHint: false,
     // Open-world on EVERY surface: the run searches the live public web, a
     // system outside Tako's first-party context, under MCP's reading and
-    // under OpenAI's Apps review guideline alike. `CHATGPT_TOOL_NAMES` in
-    // `_surface.ts` keeps this tool off the chatgpt surface, but
-    // `annotations_complete.test.ts` resolves every tool on both surfaces.
+    // under OpenAI's Apps review guideline alike. Off the chatgpt surface
+    // today (`CHATGPT_TOOL_NAMES`); the annotation is per-tool regardless.
     // See `annotationsBySurface` in types.ts.
     openWorldHint: true,
   },
