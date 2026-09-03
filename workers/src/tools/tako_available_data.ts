@@ -222,9 +222,11 @@ const tako_available_data = {
     openWorldHint: true,
   },
   annotationsBySurface: {
-    // Apps review reads `openWorldHint` as "publishes/mutates public or
-    // third-party state", not MCP's domain-of-interaction — retrieval is
-    // closed-world there. See `annotationsBySurface` in types.ts.
+    // Reads Tako's own graph and nothing else — a closed, first-party
+    // system. MCP's canonical reading (domain of interaction) keeps the
+    // generic surface at true; OpenAI's Apps review reading ("operates
+    // entirely within closed or private systems" → false) makes it false
+    // on the chatgpt surface. See `annotationsBySurface` in types.ts.
     chatgpt: { openWorldHint: false },
   },
   fixedInputs: [

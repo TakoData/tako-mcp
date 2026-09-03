@@ -56,14 +56,25 @@ describe("toolAnnotationsForSurface", () => {
   });
 
   it("uses OpenAI Apps review semantics for chatgpt descriptors", () => {
+    // Open-world under Apps review = reaches systems outside Tako or
+    // publishes public state: the web-touching retrieval tools and the
+    // card-minting `tako_visualize`. Closed = reads Tako's own graph only.
+    const OPEN_WORLD = new Set([
+      "tako_search",
+      "tako_search_advanced",
+      "tako_contents",
+      "tako_visualize",
+      "tako_agent",
+    ]);
     for (const tool of TOOL_REGISTRY) {
       const annotations = toolAnnotationsForSurface(tool, "chatgpt");
-      expect(annotations.destructiveHint, tool.name).toBe(false);
-      // `tako_visualize` mints a publicly reachable card URL — the one
-      // tool Apps review reads as publishing state (`openWorldHint:
-      // true` + `readOnlyHint: false`); retrieval tools stay read-only.
-      expect(annotations.openWorldHint, tool.name).toBe(
+      // `tako_visualize` is the one call that can't be undone: the card it
+      // publishes is permanent and nothing deletes it.
+      expect(annotations.destructiveHint, tool.name).toBe(
         tool.name === "tako_visualize",
+      );
+      expect(annotations.openWorldHint, tool.name).toBe(
+        OPEN_WORLD.has(tool.name),
       );
     }
     for (const name of [

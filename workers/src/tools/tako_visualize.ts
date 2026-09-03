@@ -423,7 +423,12 @@ const tako_visualize = {
   annotations: {
     title: "Tako: Visualize",
     readOnlyHint: false,
-    destructiveHint: false,
+    // destructiveHint true: the card is public and permanent, and nothing in
+    // this app or the Tako API deletes it, so a call cannot be undone —
+    // OpenAI's Apps review reading of destructive ("an outcome you can't
+    // undo"). The safeguard is in the description: the model confirms with
+    // the user before it calls.
+    destructiveHint: true,
     // idempotentHint false: each call mints a new persistent Tako card.
     idempotentHint: false,
     // Closed domain per the MCP spec's openWorldHint: it renders data the

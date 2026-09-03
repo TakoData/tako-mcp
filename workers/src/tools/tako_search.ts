@@ -154,13 +154,12 @@ const tako_search = {
     readOnlyHint: true,
     destructiveHint: false,
     idempotentHint: true,
+    // Open-world on EVERY surface: the call searches the live public web, a system outside
+    // Tako's first-party context. That is open-world under MCP's reading
+    // (domain of interaction) and under OpenAI's Apps review guideline
+    // ("tools that interact with external systems ... must be explicitly
+    // labeled"). See `annotationsBySurface` in types.ts.
     openWorldHint: true,
-  },
-  annotationsBySurface: {
-    // Apps review reads `openWorldHint` as "publishes/mutates public or
-    // third-party state", not MCP's domain-of-interaction — retrieval is
-    // closed-world there. See `annotationsBySurface` in types.ts.
-    chatgpt: { openWorldHint: false },
   },
   // No `anonymousInputRejects`. It existed for one input — `include_contents:
   // true`, which billed rows to the shared free-tier account — and that input

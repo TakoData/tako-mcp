@@ -445,16 +445,12 @@ const tako_search_advanced = {
     readOnlyHint: true,
     destructiveHint: false,
     idempotentHint: true,
+    // Open-world on EVERY surface: the call searches the live public web, a system outside
+    // Tako's first-party context. That is open-world under MCP's reading
+    // (domain of interaction) and under OpenAI's Apps review guideline
+    // ("tools that interact with external systems ... must be explicitly
+    // labeled"). See `annotationsBySurface` in types.ts.
     openWorldHint: true,
-  },
-  annotationsBySurface: {
-    // Declared even though this tool is opt-in on /mcp only and never reaches
-    // the chatgpt surface: the annotation convention is per-TOOL, not per
-    // membership, so the semantics stay right if it is ever submitted. Apps
-    // review reads `openWorldHint` as "publishes/mutates public or third-party
-    // state", not MCP's domain-of-interaction — retrieval is closed-world
-    // there. See `annotationsBySurface` in types.ts.
-    chatgpt: { openWorldHint: false },
   },
   // Nothing is FIXED, and web highlights is the field that tests the
   // distinction. Both tools supply it — see `buildAdvancedSearchBody` — but

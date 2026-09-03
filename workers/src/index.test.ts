@@ -678,10 +678,17 @@ describe("worker routing", () => {
     expect(names.has("tako_visualize")).toBe(true);
     expect(body.result.tools).toHaveLength(5);
 
+    // Apps review readings: `tako_visualize` publishes a permanent public
+    // card nothing can delete (a write, destructive, open-world); the two
+    // web-touching retrieval tools reach systems outside Tako (open-world);
+    // the two graph tools read Tako's own graph only (closed).
+    const OPEN_WORLD = new Set(["tako_visualize", "tako_search", "tako_contents"]);
     for (const tool of body.result.tools) {
-      expect(tool.annotations.destructiveHint, tool.name).toBe(false);
-      expect(tool.annotations.openWorldHint, tool.name).toBe(
+      expect(tool.annotations.destructiveHint, tool.name).toBe(
         tool.name === "tako_visualize",
+      );
+      expect(tool.annotations.openWorldHint, tool.name).toBe(
+        OPEN_WORLD.has(tool.name),
       );
       expect(tool.annotations.readOnlyHint, tool.name).toBe(
         tool.name !== "tako_visualize",

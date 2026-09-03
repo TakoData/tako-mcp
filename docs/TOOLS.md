@@ -87,7 +87,7 @@ Fixed worker-side settings (not request fields):
 Annotations:
 
 - `/mcp`: title: Tako: Answer Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Answer Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false
+- `/mcp/chatgpt`: title: Tako: Answer Agent; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
 
 <details><summary>wire — Published input schema (JSON Schema)</summary>
 
@@ -881,7 +881,7 @@ Fixed request inputs (the caller cannot change these):
 Annotations:
 
 - `/mcp`: title: Tako: Fetch Contents; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Fetch Contents; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+- `/mcp/chatgpt`: title: Tako: Fetch Contents; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
 
 <details><summary>wire — Published input schema (JSON Schema)</summary>
 
@@ -1452,7 +1452,7 @@ Fixed request inputs (the caller cannot change these):
 Annotations:
 
 - `/mcp`: title: Tako: Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+- `/mcp/chatgpt`: title: Tako: Search; readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
 
 <details><summary>wire — Published input schema (JSON Schema)</summary>
 
@@ -2056,7 +2056,7 @@ _none_
 Annotations:
 
 - `/mcp`: title: Tako: Search (advanced); readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
-- `/mcp/chatgpt`: title: Tako: Search (advanced); readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false
+- `/mcp/chatgpt`: title: Tako: Search (advanced); readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: true
 
 <details><summary>wire — Published input schema (JSON Schema)</summary>
 
@@ -2785,8 +2785,8 @@ Fixed worker-side settings (not request fields):
 
 Annotations:
 
-- `/mcp`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false
-- `/mcp/chatgpt`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: true
+- `/mcp`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: true; idempotentHint: false; openWorldHint: false
+- `/mcp/chatgpt`: title: Tako: Visualize; readOnlyHint: false; destructiveHint: true; idempotentHint: false; openWorldHint: true
 
 <details><summary>wire — Published input schema (JSON Schema)</summary>
 

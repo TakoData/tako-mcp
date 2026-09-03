@@ -587,9 +587,13 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 
 - **MCP URL:** `https://mcp.tako.com/mcp/chatgpt`. Not `/mcp`, which is the generic surface and serves no widget.
 - **Authentication:** OAuth only. An anonymous request to `/mcp/chatgpt` gets a 401.
-- **Frame domain explanation:** paste the block below. Name only tools on the submitted surface.
+- **Frame domain explanation:** paste the block below. The portal cuts the field at 200 characters without warning, so keep any edit under that. Name only tools on the submitted surface.
 
-> Tako embeds its own chart pages from https://tako.com so results returned by tako_search, and charts created by tako_visualize, can be displayed interactively inside ChatGPT. The frame is one origin, https://tako.com, on one path, /embed/{pub_id}/, and it is the same URL the tool returns as embed_url. The framed page holds the chart, its title, and source attribution, with hover values, legend toggles, and time-range controls. It has no advertisements, sign-in, sign-up, checkout, or upgrade UI, and analytics are disabled on every load the widget performs.
+> Tako's own chart pages at https://tako.com/embed/{pub_id}/ (the embed_url a tool returns) render tako_search results and tako_visualize cards interactively. No ads, sign-in, or upgrade UI.
+
+- **Screenshots:** one per starter prompt, showing the widget alone: no ChatGPT chrome, no prompt bubble, no model text. OpenAI's template is a 353×400 CSS px frame exported at 2x, so capture the card's embed page (`https://tako.com/embed/{pub_id}/`) in a 353 px wide viewport at `deviceScaleFactor: 2` and clip to 400–860 px tall. The portal accepts any 706 px wide PNG, so it won't tell you when a capture includes the conversation; review does.
+
+- **Annotations** come from the server, not the form. A wrong hint is fixed in the tool module, deployed to production, and re-scanned with **Scan Tools** before you submit; the justification alone changes nothing.
 
 ## Links
 

@@ -410,19 +410,13 @@ const takoAgent = {
     destructiveHint: false,
     // idempotentHint false: each call dispatches a new agent run.
     idempotentHint: false,
-    openWorldHint: true,
-  },
-  annotationsBySurface: {
-    // Apps review reads `openWorldHint` as "publishes/mutates public or
-    // third-party state", not MCP's domain-of-interaction, so the open-world
-    // retrieval flag drops on the chatgpt surface.
-    //
-    // Production never reads this override: `CHATGPT_TOOL_NAMES` in
-    // `_surface.ts` keeps this tool off the chatgpt surface entirely. Kept
-    // anyway so the tool stays correct if it is ever added there, and because
+    // Open-world on EVERY surface: the run searches the live public web, a
+    // system outside Tako's first-party context, under MCP's reading and
+    // under OpenAI's Apps review guideline alike. `CHATGPT_TOOL_NAMES` in
+    // `_surface.ts` keeps this tool off the chatgpt surface, but
     // `annotations_complete.test.ts` resolves every tool on both surfaces.
     // See `annotationsBySurface` in types.ts.
-    chatgpt: { openWorldHint: false },
+    openWorldHint: true,
   },
   fixedInputs: [
     { field: "effort", value: "\"medium\"", note: "The only Answer Agent effort level launched." },
