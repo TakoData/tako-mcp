@@ -82,10 +82,10 @@
   "test_cases": [
     {
       "description": "Retrieve a company metric as structured data with a chart.",
-      "user_prompt": "Show me NVIDIA's quarterly revenue.",
+      "user_prompt": "Using Tako, show me NVIDIA's quarterly revenue.",
       "file_attachment_urls": null,
-      "tools_triggered": "tako_search",
-      "expected_output": "Returns NVIDIA quarterly revenue data with recent values, source attribution, and an inline chart.",
+      "tools_triggered": "tako_available_data, tako_search",
+      "expected_output": "Resolves the metric name with tako_available_data, then tako_search returns NVIDIA quarterly revenue with recent values, source attribution, and an inline chart card.",
       "expected_output_url": null
     },
     {
@@ -117,7 +117,7 @@
       "user_prompt": "Using Tako's data graph, which companies does NVIDIA compete with, and what metrics does Tako track for it?",
       "file_attachment_urls": null,
       "tools_triggered": "tako_graph_related",
-      "expected_output": "Resolves NVIDIA with tako_available_data, then lists its competitors (rel:competes_with) and tracked metrics from tako_graph_related, naming the relation and counts.",
+      "expected_output": "Lists companies NVIDIA competes with and metrics Tako tracks for it, each with a count, from Tako's data graph. The model may resolve NVIDIA with tako_available_data first.",
       "expected_output_url": null
     }
   ],
