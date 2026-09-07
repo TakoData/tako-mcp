@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2](https://github.com/TakoData/tako-mcp/compare/v1.1.1...v1.1.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* **deps:** clear six scanner CVEs across js-yaml, fast-uri, postcss and nanoid ([51b6bc4](https://github.com/TakoData/tako-mcp/commit/51b6bc438edc836afe780f89902b43725d1aa6a1))
+* **deps:** clear six scanner CVEs across js-yaml, fast-uri, postcss and nanoid ([f4213e2](https://github.com/TakoData/tako-mcp/commit/f4213e267b7a80608165a3b3a7828e66ecf00c8d))
+
 ## [1.1.1](https://github.com/TakoData/tako-mcp/compare/v1.1.0...v1.1.1) (2026-09-03)
 
 
