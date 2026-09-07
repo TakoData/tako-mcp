@@ -123,27 +123,27 @@
   ],
   "negative_test_cases": [
     {
-      "description": "Do not trigger for unrelated creative-writing requests.",
-      "user_prompt": "Write a short bedtime story about a friendly lighthouse.",
+      "description": "Do not trigger for arithmetic on numbers the user already supplied.",
+      "user_prompt": "If a company's revenue went from $10M to $25M over four years, what's the CAGR?",
       "file_attachment_urls": null,
       "tools_triggered": null,
-      "expected_output": "The app should not be invoked because the request does not involve data discovery, data retrieval, or visualization.",
+      "expected_output": "ChatGPT computes the growth rate (about 25.7% a year) from the numbers in the prompt. The app should not be invoked: there is no metric to look up, no page to fetch, and no chart requested.",
       "expected_output_url": null
     },
     {
-      "description": "Do not trigger for calendar-management requests.",
-      "user_prompt": "Schedule a meeting with my design team tomorrow at 10 AM.",
+      "description": "Do not trigger for conceptual finance questions that need no data.",
+      "user_prompt": "Explain the difference between GAAP and non-GAAP revenue.",
       "file_attachment_urls": null,
       "tools_triggered": null,
-      "expected_output": "The app should not be invoked because it cannot access or modify calendars.",
+      "expected_output": "ChatGPT explains the accounting distinction from general knowledge. The app should not be invoked: the question asks for a definition, not a figure, a series, or coverage of an entity.",
       "expected_output_url": null
     },
     {
-      "description": "Do not trigger for sending messages through another service.",
-      "user_prompt": "Email this market summary to my team.",
+      "description": "Do not trigger for reformatting user-supplied data when no chart is requested.",
+      "user_prompt": "Convert this Q3 sales table to JSON: North 120, South 95, West 140.",
       "file_attachment_urls": null,
       "tools_triggered": null,
-      "expected_output": "The app should not be invoked because it cannot send email or messages.",
+      "expected_output": "ChatGPT returns the three rows as JSON. The app should not be invoked: the user asked for a format change, not a visualization, so tako_visualize must not create a card and no search runs.",
       "expected_output_url": null
     }
   ]
