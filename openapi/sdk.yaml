@@ -488,9 +488,8 @@ paths:
                 required:
                 - error
         '402':
-          description: Payment required. A PAYG API-credit balance is empty (error_type,
-            error_message, balance_cents), or the account has no subscription credits
-            left (error, message, upgrade_url).
+          description: Payment required. The PAYG API-credit balance is empty or depleted
+            (error_type, error_message, balance_cents).
           content:
             application/json:
               schema:
@@ -501,13 +500,11 @@ paths:
                     type: string
                   balance_cents:
                     type: integer
-                  error:
-                    type: string
-                  message:
-                    type: string
-                  upgrade_url:
-                    type: string
                 type: object
+                required:
+                - error_type
+                - error_message
+                - balance_cents
         '500':
           description: Internal server error
           content:
@@ -1488,6 +1485,29 @@ components:
         to AgentStreamEnvelope; the only difference is the terminal agent_result
 
         block carries AnswerAgentResult (top-level citations, no web_results).'
+    AnswerOutputSettings:
+      properties:
+        image_dark_mode:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Image Dark Mode
+          description: Whether to render card preview images in dark mode.
+        force_refresh:
+          type: boolean
+          title: Force Refresh
+          description: 'Instant mode only, and currently informational: on these endpoints,
+            instant (effort=''instant'') always operates in build-and-refresh mode
+            regardless of this flag. Instant retrieves data for embeds that are missing
+            or stale, then creates or refreshes their static embeds. Embeds that are
+            already fresh (within the refresh cadence) return as-is; Tako does not
+            re-retrieve them. Identical queries therefore reuse the same content-addressed
+            embed and return a stable embed URL.'
+          default: false
+      additionalProperties: false
+      type: object
+      title: AnswerOutputSettings
+      description: Settings that control the response shape.
     AnswerRequest:
       properties:
         query:
@@ -1532,7 +1552,7 @@ components:
           description: IANA timezone (for example, 'America/New_York').
         output_settings:
           anyOf:
-          - $ref: '#/components/schemas/OutputSettings'
+          - $ref: '#/components/schemas/AnswerOutputSettings'
           - type: 'null'
           description: Settings that control the response shape.
         include_related:
@@ -2521,6 +2541,105 @@ components:
         are waived sees 0 here, and the same formula then yields the baseline alone,
 
         which is exactly what that account is billed.'
+    FlatResult:
+      properties:
+        type:
+          $ref: '#/components/schemas/TakoSourceIndex'
+          description: data for a Tako card, web for a web page.
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+          description: The card page for a card, the page URL for a web result.
+        snippet:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Snippet
+          description: 'Markdown. For a card: the data description, then sections
+            headed ### Sources, ### Methodology, and ### Metrics, each omitted when
+            empty. For a web page: the matching excerpt.'
+        published_date:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Published Date
+          description: Calendar date, YYYY-MM-DD, or null. For a card, the date Tako
+            last refreshed the data. For a web page, its publication date.
+        sources:
+          items:
+            $ref: '#/components/schemas/ResultSource'
+          type: array
+          title: Sources
+          description: Publishers behind this result.
+        relevance:
+          anyOf:
+          - $ref: '#/components/schemas/KnowledgeCardRelevance'
+          - type: 'null'
+          description: Tako's relevance label for a card. Omitted for a web page.
+        content:
+          anyOf:
+          - $ref: '#/components/schemas/ResultContent'
+          - type: 'null'
+        image_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image Url
+          description: Chart image for a card. Omitted for a web page.
+        card_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Card Id
+          description: Tako card id. Omitted for a web page.
+      type: object
+      required:
+      - type
+      title: FlatResult
+      description: 'One row of results: a Tako card or a web page in the same shape.'
+    FlatResultsSettings:
+      properties:
+        max_results:
+          anyOf:
+          - type: integer
+            maximum: 40
+            minimum: 1
+          - type: 'null'
+          title: Max Results
+          description: The number of results you want in results. The range is 1 to
+            40. Each source retrieves up to this many, capped at 20, unless you gave
+            that source its own count, which always stands. Either way Tako cuts the
+            merged list to this length, dropping Low-relevance cards first, then Medium-relevance
+            cards, then trailing web results, then trailing High-relevance cards.
+            High-relevance cards are cut last, so a small max_results can return cards
+            alone. A small max_results can also return web results alone, because
+            it sizes web retrieval too and Medium-relevance cards rank below every
+            web result. Omit it for no cut.
+        snippet_max_chars:
+          anyOf:
+          - type: integer
+            maximum: 20000
+            minimum: 1
+          - type: 'null'
+          title: Snippet Max Chars
+          description: Character cap on every snippet in results. Tako sends it to
+            the web source as its snippet cap and truncates card snippets by section.
+            Don't combine it with sources.web.snippet_max_chars; Tako rejects a request
+            that sets both. Omit it for no cap.
+      additionalProperties: false
+      type: object
+      title: FlatResultsSettings
+      description: 'Settings for the flat results mode. Sending this object turns
+        the mode
+
+        on. Send an empty object to turn it on with defaults.'
     GeoLocation:
       properties:
         latitude:
@@ -2813,9 +2932,17 @@ components:
             re-retrieve them. Identical queries therefore reuse the same content-addressed
             embed and return a stable embed URL.'
           default: false
+        flat_results:
+          anyOf:
+          - $ref: '#/components/schemas/FlatResultsSettings'
+          - type: 'null'
+          description: Return cards and web results as one list, results, of one shape.
+            Send an object to turn the mode on; an empty object uses the defaults.
+            Omit it for the grouped cards and web_results lists.
       additionalProperties: false
       type: object
       title: OutputSettings
+      description: Settings that control the response shape.
     ReasoningEvent:
       properties:
         kind:
@@ -3132,6 +3259,28 @@ components:
         `card_data` is null, so a caller reading absent payloads as "quote" reads
 
         those two as quotes.'
+    ResultSource:
+      properties:
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+          description: Publisher name.
+          examples:
+          - S&P Global
+          - bea.gov
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+          description: Publisher URL.
+          examples:
+          - https://www.bea.gov
+      type: object
+      title: ResultSource
+      description: One publisher behind a flat result.
     RetrievalAgentEffort:
       type: string
       enum:
@@ -3690,6 +3839,15 @@ components:
           description: Follow-up queries you can run next. Set `include_related` on
             the request to receive them. Absent when you did not ask for them, or
             when Tako found none.
+        results:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/FlatResult'
+            type: array
+          - type: 'null'
+          title: Results
+          description: Cards and web results as one list, present only when the request
+            set output_settings.flat_results. cards and web_results are then empty.
       type: object
       required:
       - request_id
@@ -4491,8 +4649,9 @@ components:
           title: Snippet Max Chars
           description: Character cap on the text excerpt returned per web result.
             If you omit this field, the search endpoint applies 4000 and the answer
-            endpoint applies 1000. If you send a value, the server uses that value
-            exactly. The maximum is 20000.
+            endpoint applies 1000, unless Tako has agreed a different default for
+            your account. If you send a value, the server uses that value exactly.
+            The maximum is 20000.
         highlights:
           type: boolean
           title: Highlights
