@@ -5,6 +5,7 @@ import type { Env } from "../env.js";
 import {
   AnswerRequest,
   DataSourceSettings,
+  OutputSettings,
   SearchRequest,
   Sources,
   WebSourceSettings,
@@ -129,12 +130,18 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
     // `optionalWithoutDefaults` strips defaults on purpose so an omitted field
     // stays omitted. Everything else must be identical.
     //
-    // NO EXCEPTION LIST. Every derived field matches today, so an exception
-    // list would be four hardcoded names waiting to go stale; a genuine future
-    // divergence should fail here and be argued, not pre-authorized.
+    // NO EXCEPTION LIST, and `output_settings` is not one. The tool withholds
+    // exactly one field of it — `flat_results`, because selecting the mode
+    // empties the lists runSearch reads — so the comparison target is rebuilt
+    // MINUS that field rather than the whole field being waved through. Every
+    // other property, bound and optionality of `output_settings` is still
+    // compared bit for bit, and widening the omission fails here.
     const generated = {
       ...SearchRequest.shape,
       output_schema: AnswerRequest.shape.output_schema,
+      output_settings: OutputSettings.omit({ flat_results: true })
+        .nullable()
+        .optional(),
     } as unknown as Record<string, z.ZodType>;
     const diverged: string[] = [];
     for (const [name, field] of Object.entries(tako_search_advanced.inputSchema.shape)) {
@@ -206,6 +213,35 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
       data: { mode: "inline" },
       web: { published_after: "2026-01-01", published_before: "2026-06-30", highlights: true },
     });
+  });
+
+  it("output_settings exposes every generated field except flat_results", () => {
+    // The omission is the ONE hole in "derived from the whole shape", so it is
+    // pinned from BOTH sides: the published key set is compared against the
+    // generated one minus that single name, which fails if a second field is
+    // ever dropped by accident, and fails again if `flat_results` comes back
+    // without this test being revisited. `tako_search_advanced.ts` carries the
+    // reason; `_run_search.test.ts` carries the behavior that justifies it.
+    const published = z.toJSONSchema(tako_search_advanced.inputSchema, { io: "input" }) as {
+      properties: Record<string, { anyOf?: Array<{ properties?: Record<string, unknown> }> }>;
+    };
+    const branch = published.properties.output_settings?.anyOf?.find((b) => b.properties);
+    const generated = Object.keys(OutputSettings.shape).filter((k) => k !== "flat_results");
+    expect(Object.keys(branch?.properties ?? {}).sort()).toEqual(generated.sort());
+    expect(generated, "flat_results left the backend: drop the .omit() rather than the field").not
+      .toContain("flat_results");
+    expect(Object.keys(OutputSettings.shape)).toContain("flat_results");
+  });
+
+  it("naming flat_results is a local -32602, not a billed empty result", () => {
+    // `.strict()` is what makes withholding the key safe. Without it the key
+    // would be stripped in silence and the caller would believe the mode was
+    // on while the response came back grouped.
+    const parsed = tako_search_advanced.inputSchema.safeParse({
+      query: "x",
+      output_settings: { flat_results: {} },
+    });
+    expect(parsed.success, "flat_results must be rejected, not stripped").toBe(false);
   });
 
   it("PARSING adds nothing: no generated default survives onto the input", () => {
