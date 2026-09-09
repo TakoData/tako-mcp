@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.3](https://github.com/TakoData/tako-mcp/compare/v1.1.2...v1.1.3) (2026-09-09)
+
+
+### Bug Fixes
+
+* **search_advanced:** withhold flat_results, which empties the lists runSearch reads ([1557a25](https://github.com/TakoData/tako-mcp/commit/1557a2512ac7ae5952105eaba9a9da08f23144a1))
+* **search_advanced:** withhold flat_results, which empties the lists runSearch reads ([20fae21](https://github.com/TakoData/tako-mcp/commit/20fae212ac10fa3f80b30f9ba1074c87845dd494))
+
+
+### Chores
+
+* **submission:** route test case 1 to Tako by name and loosen cases 1 and 5 ([#295](https://github.com/TakoData/tako-mcp/issues/295)) ([cdd4555](https://github.com/TakoData/tako-mcp/commit/cdd4555729efee5fcc7d06ba32a825ddc26a6d14))
+* sync OpenAPI spec from TakoData/tako ([f351fb2](https://github.com/TakoData/tako-mcp/commit/f351fb2c47ece4cd9accf018ccf30ed1b9137310))
+
 ## [1.1.2](https://github.com/TakoData/tako-mcp/compare/v1.1.1...v1.1.2) (2026-09-07)
 
 
