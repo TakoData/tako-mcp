@@ -177,4 +177,44 @@ describe("runSearch on the search endpoint", () => {
     expect(requestFrom(fetchMock.mock.calls[0]).url).toContain("/api/v3/search/");
     expect(out).not.toHaveProperty("answer");
   });
+
+  it("flat mode empties the two lists runSearch reads", async () => {
+    // THE REASON `output_settings.flat_results` IS WITHHELD from
+    // tako_search_advanced's input schema. Not a behavior anyone wants — a
+    // record of what selecting the mode costs, so the omission cannot outlive
+    // it. `wire.results` is the only place the rows exist and nothing here
+    // reads it, so the caller pays for a search and gets an empty projection
+    // plus the zero-result protocol's pin guidance, which names a cause that is
+    // not the one.
+    //
+    // WHEN THIS FAILS, runSearch has learned to read `wire.results`. That is
+    // the signal to expose the field in tako_search_advanced.ts — with a
+    // FLAT_RESULTS_DESCRIBES override, because the generated `max_results`
+    // describe is 610 chars against gen-registry's 320-char cap — and to
+    // rewrite this test into the mapping's coverage.
+    //
+    // The wire payload is the shape tako's api_surface contract test
+    // (test_search_semantics.py, "flat mode must empty cards") asserts the
+    // backend returns.
+    mockFetchSequence([
+      jsonResponse(200, {
+        cards: [],
+        web_results: [],
+        results: [
+          { type: "data", title: "US CPI", url: "https://trytako.com/c/1", relevance: "High" },
+          { type: "web", title: "CPI report", url: "https://bls.gov/cpi" },
+        ],
+        request_id: "r",
+      }),
+    ]);
+    const out = await runSearch(
+      { endpoint: "search", body: { query: "q", output_settings: { flat_results: {} } } },
+      ["data", "web"],
+      null,
+      CTX,
+      "tako_search_advanced",
+    );
+    expect(out.cards, "runSearch reads wire.results now: revisit the flat_results omission").toEqual([]);
+    expect(out.web_results, "runSearch reads wire.results now: revisit the flat_results omission").toEqual([]);
+  });
 });

@@ -30,6 +30,11 @@
  * every parameter already states its server-side default in words — the same
  * no-defaults rule `tako_search` follows.
  *
+ * ONE field is withheld from that derivation, `output_settings.flat_results`,
+ * because selecting the mode empties the two lists `_run_search.ts` reads. The
+ * argument and the two guards that keep the omission honest are on
+ * `outputSettingsBlock` below.
+ *
  * `optionalWithoutDefaults` is load-bearing, not cosmetic. `.partial()` alone
  * is NOT enough: zod keeps the inner `ZodDefault`, so `data: {}` parsed back
  * `{count: 5, include_contents: false, content_format: "json_compact",
@@ -248,9 +253,36 @@ const topLevel = optionalWithoutDefaults(SearchRequest.omit({ query: true, sourc
  * shipped `"output_settings": {"description": ""}` to `registry/server.json` and
  * a blank cell to `docs/TOOLS.md`, while `timezone`, same shape but with no
  * hand-written override, kept its text.
+ *
+ * `flat_results` IS OMITTED, and that is a decision rather than the gap a
+ * `.pick()` leaves behind. Selecting the mode empties the response this tool
+ * reads: the backend contract (tako's
+ * `app/backend/integration_tests/api_surface/test_search_semantics.py`,
+ * "flat mode must empty cards" / "must empty web_results") moves every row to
+ * `results[]`, and `_run_search.ts` parses `wire.cards` and `wire.web_results`
+ * only. A caller who named it would pay for a search, get nothing back, and
+ * read the zero-result protocol's pin-recovery guidance, which names a cause
+ * that is not the one. The block is `.strict()`, so withholding the key makes
+ * that a local -32602 instead of a billed empty result.
+ *
+ * Consuming `results[]` is not the smaller fix. A `FlatResult` row carries no
+ * `pub_id`, no `nodes` and no export descriptor, so cards rebuilt from it would
+ * come back lossy — the projection this tool exists for, degraded on every call
+ * that used the mode.
+ *
+ * TWO GUARDS HOLD THIS TO ITS REASON, because an omission whose reason expired
+ * is how a curated list starts. `.omit()` is typed, so the day the backend
+ * renames or drops the field this stops compiling rather than silently
+ * omitting nothing. And `_run_search.test.ts` ("flat mode empties the two lists
+ * runSearch reads") asserts the behavior above: teach `runSearch` to read
+ * `wire.results` and that test fails, which is the signal to expose the field
+ * here — with a `FLAT_RESULTS_DESCRIBES` override, since the generated
+ * `max_results` text is 610 chars against a 320-char cap.
  */
 const outputSettingsBlock = z
-  .object(optionalWithoutDefaults(OutputSettings.shape, OUTPUT_SETTINGS_DESCRIBES))
+  .object(
+    optionalWithoutDefaults(OutputSettings.omit({ flat_results: true }).shape, OUTPUT_SETTINGS_DESCRIBES),
+  )
   .strict()
   .nullable()
   .optional()
