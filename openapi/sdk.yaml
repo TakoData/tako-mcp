@@ -533,7 +533,7 @@ paths:
           type: string
         name: cursor
         in: query
-      - description: Max runs to return (default 20, max 100).
+      - description: Max items to return (default 20, max 100).
         required: false
         schema:
           type: integer
@@ -706,7 +706,7 @@ paths:
           type: string
         name: cursor
         in: query
-      - description: Max runs to return (default 20, max 100).
+      - description: Max items to return (default 20, max 100).
         required: false
         schema:
           type: integer
@@ -1532,7 +1532,8 @@ components:
           - $ref: '#/components/schemas/GeoLocation'
           - type: 'null'
           description: Optional coordinates of the end user. Resolves the location
-            for implicit-location queries (for example, weather). An explicit location
+            for implicit-location queries (for example, weather) and, when `timezone`
+            is absent, the timezone Tako renders preview images in. An explicit location
             in the query overrides these coordinates.
         country_code:
           type: string
@@ -1549,7 +1550,9 @@ components:
           - type: string
           - type: 'null'
           title: Timezone
-          description: IANA timezone (for example, 'America/New_York').
+          description: IANA timezone (for example, 'America/New_York') Tako renders
+            preview images in. Defaults to the zone at `location` when you send coordinates.
+            Card text keeps each surface's own timezone.
         output_settings:
           anyOf:
           - $ref: '#/components/schemas/AnswerOutputSettings'
@@ -1711,6 +1714,13 @@ components:
           - $ref: '#/components/schemas/TakoDatasetColumnType'
           - type: 'null'
           description: The data type of the column, inferred from the exported values.
+        premium_class:
+          anyOf:
+          - $ref: '#/components/schemas/PremiumClass'
+          - type: 'null'
+          description: 'Set when the column is premium: ''company_record'' or ''person_contact''.
+            Its cells are null unless the export passed premium=true; the item''s
+            redacted_cells says which rows held a value. Null for every other column.'
       type: object
       title: ColumnDescriptor
       description: 'Structured description of one exported value column.
@@ -1964,8 +1974,43 @@ components:
           description: 'Per-column metadata, one entry per exported column, in column
             order: entry i describes column i (CSV header i, json_records key i, or
             dataset.columns[i]). Each entry carries name (the column header), dtype,
-            unit, metric, and entity. Null for web or quote responses that carry no
-            tabular columns.'
+            unit, metric, entity, and premium_class. Null for web or quote responses
+            that carry no tabular columns.'
+        premium:
+          type: boolean
+          title: Premium
+          description: 'True when this item''s premium cells are revealed: a /contents
+            response to premium=true. False on every search and answer card and on
+            a /contents response without the flag, where premium cells are null and
+            redacted_cells says which rows held a value.'
+          default: false
+        premium_rows:
+          anyOf:
+          - additionalProperties:
+              type: integer
+            type: object
+          - type: 'null'
+          title: Premium Rows
+          description: Per premium class ('company_record', 'person_contact'), the
+            number of delivered rows with at least one non-null cell in a column of
+            that class, whether revealed or withheld. Multiply by export_pricing.premium_row_cpm_usd[class]
+            / 1000 to price the premium part of an export before asking for it. A
+            row with cells of two classes counts once in each. Empty for a card with
+            no premium columns; null for web text.
+        redacted_cells:
+          anyOf:
+          - additionalProperties:
+              items:
+                type: integer
+              type: array
+            type: object
+          - type: 'null'
+          title: Redacted Cells
+          description: 'Column header to the 0-based positions, among the delivered
+            rows, whose premium value was withheld. Present only when a premium cell
+            was withheld; null when premium=true, when nothing was withheld, and for
+            web text. Positions index the delivered rows: CSV data rows in order,
+            json_records entries, or dataset.rows.'
         source_url:
           type: string
           title: Source Url
@@ -2093,6 +2138,18 @@ components:
             the payload. The same export-safe gate applies, so an unexportable card
             still returns 403, and a card type with no card_json shape still returns
             422.'
+          default: false
+        premium:
+          type: boolean
+          title: Premium
+          description: 'When true, reveal premium cells and bill them. A card''s premium
+            columns (see manifest[].premium_class) are null by default, and this is
+            the only way to receive their values. The export then adds export_pricing.premium_row_cpm_usd[class]
+            per 1,000 rows that hold a value in a column of that class, on top of
+            the standard row rate; premium_rows on the item reports the counts. The
+            flag has no effect on a card without premium columns and on web URLs,
+            and is rejected with content_format=card_json, which carries no premium
+            plumbing. Reserved today: no card carries a premium column yet.'
           default: false
       type: object
       required:
@@ -2471,6 +2528,9 @@ components:
       - Football Players
       - Football Conferences
       - Football Divisions
+      - Ice Hockey Teams
+      - Ice Hockey Conferences
+      - Ice Hockey Divisions
       - Sports
       - Sports Leagues
       title: EntityClassName
@@ -2500,6 +2560,17 @@ components:
             by the card's most expensive source; no per-source breakdown. This is
             0 if your account's row charges are waived, in which case an export costs
             baseline_usd whatever its size.
+        premium_row_cpm_usd:
+          additionalProperties:
+            type: number
+          type: object
+          title: Premium Row Cpm Usd
+          description: USD charged per 1,000 premium rows, keyed by premium class
+            ('company_record', 'person_contact'), added on top of row_cpm_usd when
+            a /contents export passes premium=true. A premium row is a delivered row
+            with at least one non-null cell in a column of that class; the item's
+            premium_rows reports the count per class. Empty when the card has no premium
+            columns. Not affected by a row-charge waiver.
         free_rows:
           type: integer
           title: Free Rows
@@ -2527,7 +2598,9 @@ components:
 
         caller can compute an export''s cost before fetching. A /contents export
 
-        charge = baseline_usd + row_cpm_usd * rows / 1000, rows <= max_rows_ceiling.
+        charge = baseline_usd + row_cpm_usd * rows / 1000 + sum over classes c of
+
+        premium_row_cpm_usd[c] * premium_rows[c] / 1000, rows <= max_rows_ceiling.
 
 
         row_cpm_usd is the card-level rate: the per-1,000-row rate of the card''s
@@ -2943,6 +3016,14 @@ components:
       type: object
       title: OutputSettings
       description: Settings that control the response shape.
+    PremiumClass:
+      type: string
+      enum:
+      - person_contact
+      - company_record
+      title: PremiumClass
+      description: The price class of a premium column. Person and company records
+        are licensed at different per-record rates.
     ReasoningEvent:
       properties:
         kind:
@@ -3144,8 +3225,43 @@ components:
           description: 'Per-column metadata, one entry per exported column, in column
             order: entry i describes column i (CSV header i, json_records key i, or
             dataset.columns[i]). Each entry carries name (the column header), dtype,
-            unit, metric, and entity. Null for web or quote responses that carry no
-            tabular columns.'
+            unit, metric, entity, and premium_class. Null for web or quote responses
+            that carry no tabular columns.'
+        premium:
+          type: boolean
+          title: Premium
+          description: 'True when this item''s premium cells are revealed: a /contents
+            response to premium=true. False on every search and answer card and on
+            a /contents response without the flag, where premium cells are null and
+            redacted_cells says which rows held a value.'
+          default: false
+        premium_rows:
+          anyOf:
+          - additionalProperties:
+              type: integer
+            type: object
+          - type: 'null'
+          title: Premium Rows
+          description: Per premium class ('company_record', 'person_contact'), the
+            number of delivered rows with at least one non-null cell in a column of
+            that class, whether revealed or withheld. Multiply by export_pricing.premium_row_cpm_usd[class]
+            / 1000 to price the premium part of an export before asking for it. A
+            row with cells of two classes counts once in each. Empty for a card with
+            no premium columns; null for web text.
+        redacted_cells:
+          anyOf:
+          - additionalProperties:
+              items:
+                type: integer
+              type: array
+            type: object
+          - type: 'null'
+          title: Redacted Cells
+          description: 'Column header to the 0-based positions, among the delivered
+            rows, whose premium value was withheld. Present only when a premium cell
+            was withheld; null when premium=true, when nothing was withheld, and for
+            web text. Positions index the delivered rows: CSV data rows in order,
+            json_records entries, or dataset.rows.'
       type: object
       title: ResultContent
       description: 'Describes the downloadable content behind a result.
@@ -3202,9 +3318,15 @@ components:
 
         compute the full charge of a later export before fetching: baseline_usd +
 
-        row_cpm_usd * billed_rows / 1000, where `billed_rows` is the SMALLER of the
+        row_cpm_usd * billed_rows / 1000 + sum over classes c of
 
-        rows the export returns and `max_rows` clamped to `max_rows_ceiling`. One
+        premium_row_cpm_usd[c] * premium_rows[c] / 1000, where `billed_rows` is the
+
+        SMALLER of the rows the export returns and `max_rows` clamped to
+
+        `max_rows_ceiling`, `premium_rows` is this item''s per-class count, and the
+
+        premium term applies only to an export that passes `premium=true`. One
 
         formula covers every format, card_json included: every export returns no
 
@@ -3770,7 +3892,8 @@ components:
           - $ref: '#/components/schemas/GeoLocation'
           - type: 'null'
           description: Optional coordinates of the end user. Resolves the location
-            for implicit-location queries (for example, weather). An explicit location
+            for implicit-location queries (for example, weather) and, when `timezone`
+            is absent, the timezone Tako renders preview images in. An explicit location
             in the query overrides these coordinates.
         country_code:
           type: string
@@ -3787,7 +3910,9 @@ components:
           - type: string
           - type: 'null'
           title: Timezone
-          description: IANA timezone (for example, 'America/New_York').
+          description: IANA timezone (for example, 'America/New_York') Tako renders
+            preview images in. Defaults to the zone at `location` when you send coordinates.
+            Card text keeps each surface's own timezone.
         output_settings:
           anyOf:
           - $ref: '#/components/schemas/OutputSettings'
@@ -4630,16 +4755,16 @@ components:
           type: array
           maxItems: 20
           title: Include Domains
-          description: Return only results from these domains (bare hosts, for example
-            'cnn.com'). Max 20.
+          description: 'Return only results from these domains. Max 20. Send a bare
+            host that includes a top-level domain: ''cnn.com'', not ''cnn''.'
         exclude_domains:
           items:
             type: string
           type: array
           maxItems: 20
           title: Exclude Domains
-          description: Drop results from these domains (bare hosts, for example 'cnn.com').
-            Max 20.
+          description: 'Drop results from these domains. Max 20. Send a bare host
+            that includes a top-level domain: ''cnn.com'', not ''cnn''.'
         snippet_max_chars:
           anyOf:
           - type: integer
