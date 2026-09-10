@@ -2275,7 +2275,7 @@ Annotations:
           "items": {
             "type": "string"
           },
-          "description": "Return only results from these domains (bare hosts, for example 'cnn.com'). Max 20."
+          "description": "Return only results from these domains. Max 20. Send a bare host that includes a top-level domain: 'cnn.com', not 'cnn'."
         },
         "exclude_domains": {
           "maxItems": 20,
@@ -2283,7 +2283,7 @@ Annotations:
           "items": {
             "type": "string"
           },
-          "description": "Drop results from these domains (bare hosts, for example 'cnn.com'). Max 20."
+          "description": "Drop results from these domains. Max 20. Send a bare host that includes a top-level domain: 'cnn.com', not 'cnn'."
         },
         "snippet_max_chars": {
           "description": "Maximum characters per snippet. Omit it and the server uses 4000, or 1000 with `include_answer: true`.",
