@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.4](https://github.com/TakoData/tako-mcp/compare/v1.1.3...v1.1.4) (2026-09-10)
+
+
+### Bug Fixes
+
+* classify the premium ContentItem keys as metadata ([5946ef3](https://github.com/TakoData/tako-mcp/commit/5946ef3d3b7c3e6f05f15fb5278c2108df862856))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([84e0456](https://github.com/TakoData/tako-mcp/commit/84e0456ca6d246abfca211ed1acb4e4a096e8ed8))
+* sync OpenAPI spec from monorepo ([212a983](https://github.com/TakoData/tako-mcp/commit/212a9837320afd40e7d6245abb0499055497fc70))
+* sync OpenAPI spec from TakoData/tako ([2549f9b](https://github.com/TakoData/tako-mcp/commit/2549f9b8d6106e2d239b3c22e91728c9a7533f17))
+
 ## [1.1.3](https://github.com/TakoData/tako-mcp/compare/v1.1.2...v1.1.3) (2026-09-09)
 
 
