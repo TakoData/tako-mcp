@@ -409,6 +409,20 @@ function capCsv(csv: string, cap: number): { data: string; truncated: boolean } 
  * `card_data_schema` is METADATA on purpose: it is the SHAPE, not the payload,
  * and a url-mode or quote response returns it beside a null `card_data`, so
  * dropping it would lose the only thing those two shapes carry.
+ *
+ * The three premium fields are METADATA for the same reason: they DESCRIBE the
+ * rows rather than carry them, so none of them can leak a row out on a call
+ * that asked for none. `premium` is a flag, and `premium_rows` and
+ * `redacted_cells` are a per-class count and a set of positions.
+ *
+ * Known caveat, live only once a card actually carries a premium column (today
+ * none does, and `premium` is false on every search and answer card): both
+ * `premium_rows` and `redacted_cells` are stated against the rows the BACKEND
+ * delivered, and the numeric-cap branch below re-slices those rows. The count
+ * then overstates and the positions index the pre-cap rows. Re-mapping needs a
+ * dropped-row offset out of all three cap helpers (`capCsv`, and `capRecentRows`
+ * for records and dataset), which none of them reports today. Do that when a
+ * premium column ships, not before.
  */
 export const CONTENT_PAYLOAD_KEYS = ["data", "records", "dataset", "card_data"] as const;
 export const CONTENT_META_KEYS = [
@@ -422,6 +436,9 @@ export const CONTENT_META_KEYS = [
   "export_pricing",
   "manifest",
   "source_url",
+  "premium",
+  "premium_rows",
+  "redacted_cells",
 ] as const;
 
 export function slimCardContent(
