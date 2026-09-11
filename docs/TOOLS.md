@@ -2144,7 +2144,7 @@ Annotations:
                   "type": "null"
                 }
               ],
-              "description": "Whether to render card preview images in dark mode."
+              "description": "Whether to render card preview images in dark mode. Omit it and Tako renders dark."
             },
             "force_refresh": {
               "type": "boolean",
@@ -2176,10 +2176,17 @@ Annotations:
       "type": "object",
       "properties": {
         "count": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 20,
-          "description": "Maximum number of results to return for this source. 1-20."
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Maximum number of data cards to return, 1 to 20. Omit it and Tako uses 5, unless a result cap set elsewhere in the request sizes retrieval instead. Fast and instant return at most 4 cards and deep at most 8, whatever count you send."
         },
         "include_contents": {
           "type": "boolean",
@@ -2246,7 +2253,7 @@ Annotations:
               "type": "null"
             }
           ],
-          "description": "Maximum number of results to return for this source. The range is 1 to 20. If you omit this field, the search endpoint returns 5 results and the answer endpoint returns 3."
+          "description": "Maximum number of web results to return, 1 to 20. Omit it and Tako uses 5 on search and 3 on answer, unless a result cap set elsewhere in the request sizes retrieval instead."
         },
         "include_contents": {
           "type": "boolean",
@@ -2306,7 +2313,7 @@ Annotations:
           "type": "integer",
           "minimum": 1,
           "maximum": 1000000,
-          "description": "Character cap on the full article text when include_contents is true. Default 30000, maximum 1000000."
+          "description": "Character cap on the full article text when include_contents is true."
         },
         "published_after": {
           "description": "Only return pages published on or after this date (YYYY-MM-DD). Pages with no known publication date are kept. Omit it for no lower bound.",
