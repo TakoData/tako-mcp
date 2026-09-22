@@ -3884,9 +3884,9 @@ components:
 
         and DEEP both write the answer with a stronger model. DEEP also widens Tako
 
-        retrieval and adds an LLM rerank for higher-quality results; it''s slower
+        retrieval and adds a second, higher-quality reranking pass; it''s slower and
 
-        and bills at a premium tier.'
+        bills at a premium tier.'
     SearchRequest:
       properties:
         query:
