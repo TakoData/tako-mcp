@@ -2566,10 +2566,12 @@ components:
         row_cpm_usd:
           type: number
           title: Row Cpm Usd
-          description: USD charged per 1,000 rows delivered. Card-level rate, set
-            by the card's most expensive source; no per-source breakdown. This is
-            0 if your account's row charges are waived, in which case an export costs
-            baseline_usd whatever its size.
+          description: USD charged per 1,000 rows delivered. Card-level rate; use
+            this value rather than deriving one from the card's sources. It is the
+            sum of the rates of the card's separately priced data feeds, or the standard
+            rate once for a card with none. Credited producers and cited web pages
+            never add to it. This is 0 if your account's row charges are waived, in
+            which case an export costs baseline_usd whatever its size.
         premium_row_cpm_usd:
           additionalProperties:
             type: number
@@ -2613,17 +2615,23 @@ components:
         premium_row_cpm_usd[c] * premium_rows[c] / 1000, rows <= max_rows_ceiling.
 
 
-        row_cpm_usd is the card-level rate: the per-1,000-row rate of the card''s
-        most
+        row_cpm_usd is the card-level rate and is authoritative: don''t derive it
 
-        expensive source (TAKO-3916 — a card costs its most expensive source, never
-        a
+        from the card''s listed sources. It is the sum of the rates of the card''s
 
-        sum); no per-source breakdown. It is per-CALLER: an account whose row charges
+        separately priced data feeds. A card with no separately priced feed bills
 
-        are waived sees 0 here, and the same formula then yields the baseline alone,
+        the standard rate once, however many sources it lists. An organization the
 
-        which is exactly what that account is billed.'
+        card credits only as the producer of a redistributed number, and a web page
+
+        it cites, never adds to the rate. There is no per-source breakdown. It is
+
+        per-CALLER: an account whose row charges are waived sees 0 here, and the
+
+        same formula then yields the baseline alone, which is exactly what that
+
+        account is billed.'
     FlatResult:
       properties:
         type:
@@ -3284,9 +3292,9 @@ components:
 
         Pricing: for a Tako card CSV export, the charge is a flat per-export
 
-        baseline plus a per-row CPM, at the rate of the card''s most expensive
+        baseline plus a per-row CPM on every row returned, at the rate that
 
-        source, on every row returned. Web text bills at the standard Contents
+        ``export_pricing.row_cpm_usd`` publishes. Web text bills at the standard Contents
 
         rate on POST /v1/contents; web text inlined on a search or answer response
 
