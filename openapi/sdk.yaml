@@ -919,6 +919,19 @@ components:
           title: Provenance
           description: 'How the rows were produced: ''query'' (Tako data) or ''web_extraction''.'
           default: query
+        redacted_cells:
+          anyOf:
+          - additionalProperties:
+              items:
+                type: integer
+              type: array
+            type: object
+          - type: 'null'
+          title: Redacted Cells
+          description: Column name to the 0-based positions in `rows` whose premium
+            value was withheld; those cells are null. Set on a structured-output dataset
+            slot when a premium cell was withheld, and null otherwise. An inline /contents
+            dataset reports this on the content item instead.
       type: object
       required:
       - columns
@@ -2149,14 +2162,14 @@ components:
         premium:
           type: boolean
           title: Premium
-          description: 'When true, reveal premium cells and bill them. A card''s premium
+          description: When true, reveal premium cells and bill them. A card's premium
             columns (see manifest[].premium_class) are null by default, and this is
             the only way to receive their values. The export then adds export_pricing.premium_row_cpm_usd[class]
             per 1,000 rows that hold a value in a column of that class, on top of
             the standard row rate; premium_rows on the item reports the counts. The
             flag has no effect on a card without premium columns and on web URLs,
             and is rejected with content_format=card_json, which carries no premium
-            plumbing. Reserved today: no card carries a premium column yet.'
+            plumbing.
           default: false
       type: object
       required:
