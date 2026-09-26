@@ -2118,14 +2118,20 @@ components:
             minimum: 1
           - type: 'null'
           title: Max Rows
-          description: Optional cap on the rows a Tako card export returns and is
+          description: 'Optional cap on the rows a Tako card export returns and is
             priced against. When omitted, it defaults to the whole card, up to the
-            2,000-row system ceiling (Tako clamps larger values). Every row returned
-            bills at the per-1,000-row rate, on top of the flat per-export baseline.
-            Tako never bills more rows than it returns, so a card holding fewer rows
-            than this cap bills only what it holds. Every card format returns the
-            rows up to this cap and bills them, including card_json. Web URLs ignore
-            this field.
+            2,000-row system ceiling (Tako clamps larger values). When a card holds
+            more rows than the cap, csv, json_records, and json_compact keep the rows
+            with the latest dates, counting back from the card''s latest date even
+            when that date is in the future, as on a schedule or a forecast. A card
+            without a date column keeps its first rows instead. The kept rows stay
+            in the card''s own order. card_json cuts each card type its own way: a
+            price or indicator series keeps its newest readings, and a forecast, schedule,
+            or ranking keeps its first records. Every row returned bills at the per-1,000-row
+            rate, on top of the flat per-export baseline. Tako never bills more rows
+            than it returns, so a card holding fewer rows than this cap bills only
+            what it holds. Every card format returns the rows up to this cap and bills
+            them, including card_json. Web URLs ignore this field.'
           examples:
           - 100
         max_chars:
