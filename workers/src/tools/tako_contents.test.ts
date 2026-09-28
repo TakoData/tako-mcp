@@ -247,6 +247,7 @@ describe("tako_contents wire body", () => {
       url: "https://example.com/a",
       mode: "inline",
       content_format: "json_compact",
+      max_rows: 2000,
       max_chars: 100_000,
     });
   });
@@ -274,6 +275,12 @@ describe("tako_contents wire body", () => {
       max_rows: 1000,
       max_chars: 100_000,
     });
+  });
+
+  it("sends max_rows 2000 when the caller omits it, below the backend's 100,000-row default", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(card());
+    await tool.handler(tool.inputSchema.parse({ urls: ["https://tako.com/card/abc"] }), ctx);
+    expect((vi.mocked(djangoPost).mock.calls[0]![3] as { max_rows?: number }).max_rows).toBe(2000);
   });
 
   it("applies the 100k inline default for web text onto the wire", async () => {
