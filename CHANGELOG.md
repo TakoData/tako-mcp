@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.9](https://github.com/TakoData/tako-mcp/compare/v1.1.8...v1.1.9) (2026-09-29)
+
+
+### Bug Fixes
+
+* classify ContentItem.total_matching as card metadata ([856e910](https://github.com/TakoData/tako-mcp/commit/856e910e0f08d66b88790f73d04e41da9b2488f7))
+* **tako_contents:** send max_rows 2000 when the model omits it ([#310](https://github.com/TakoData/tako-mcp/issues/310)) ([c5cb263](https://github.com/TakoData/tako-mcp/commit/c5cb2634ff760d2dc8d8ccfff4cb3172f4695094))
+
+
+### Chores
+
+* sync OpenAPI spec from monorepo ([6ef24da](https://github.com/TakoData/tako-mcp/commit/6ef24da53cb2964a8787fe9da4903eab2c139f73))
+* sync OpenAPI spec from TakoData/tako ([f69adfe](https://github.com/TakoData/tako-mcp/commit/f69adfe9f5ed5c433f8246d350428f59de1e857a))
+
 ## [1.1.8](https://github.com/TakoData/tako-mcp/compare/v1.1.7...v1.1.8) (2026-09-26)
 
 
