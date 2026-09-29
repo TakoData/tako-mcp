@@ -18,8 +18,8 @@
  * one `rows` shape. That is why `data`, `records`, `dataset` and `format` are
  * gone from the output too.
  *
- * A Tako card export returns the WHOLE card by default, up to the backend's
- * 2,000-row ceiling; `max_rows` caps it lower. Every row delivered bills per
+ * A Tako card export returns the WHOLE card by default, up to
+ * `MAX_CONTENTS_ROWS` (2,000); `max_rows` caps it lower. Every row delivered bills per
  * 1,000 — tako#29572 (2026-08-21) removed the row allowance, so no copy here
  * may describe a row as costless. An inline card preview inside a SEARCH
  * response is a different, much smaller cap (`INLINE_PREVIEW_ROW_CAP` in
@@ -52,6 +52,8 @@ import type { ToolContext, ToolModule } from "./types.js";
  *  out to N subrequests; this bounds both the Workers subrequest budget and
  *  the bill a single call can run up. */
 export const MAX_CONTENTS_URLS = 10;
+
+export const MAX_CONTENTS_ROWS = 2000;
 
 /**
  * Per-call ceiling on TOTAL default (caller did not set `max_chars`) web-text
@@ -168,15 +170,15 @@ const inputSchema = z.object({
       ),
     { field: "tako_contents.urls" },
   ),
-  // Bounded to the backend's 2,000-row ceiling here so the cap is explicit in
-  // the discovery card and an over-ask fails fast at the MCP layer instead of
-  // being silently clamped server-side. The default is NOT 20: omitting it
-  // returns the whole card up to that ceiling.
+  // Bounded to 2,000 rows here, below the backend's 100,000-row ceiling, so an
+  // inline result stays small enough to read into a model's context. The cap is
+  // explicit in the discovery card, and an over-ask fails fast at the MCP layer.
+  // The default is NOT 20: omitting it returns the whole card up to that cap.
   max_rows: z
     .number()
     .int()
     .gte(1)
-    .lte(2000)
+    .lte(MAX_CONTENTS_ROWS)
     .optional()
     .describe(
       "Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough.",
@@ -296,7 +298,7 @@ export function buildContentsBody(
     mode: "inline" as const,
     content_format: "json_compact" as const,
     max_chars: maxChars,
-    ...(input.max_rows !== undefined ? { max_rows: input.max_rows } : {}),
+    max_rows: input.max_rows ?? MAX_CONTENTS_ROWS,
   } satisfies z.input<typeof ContentsRequest>; // ← build-time guard: backend request drift breaks here
   return body;
 }
