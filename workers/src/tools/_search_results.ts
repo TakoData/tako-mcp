@@ -432,6 +432,7 @@ export const CONTENT_META_KEYS = [
   "url",
   "expires_at",
   "total_rows",
+  "total_matching",
   "truncated",
   "export_pricing",
   "manifest",
