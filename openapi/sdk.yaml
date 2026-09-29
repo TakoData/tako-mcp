@@ -1886,7 +1886,12 @@ components:
           title: Data
           description: 'Inline payload as text: card data serialized to CSV, or a
             web page''s extracted text. Set only for the ''csv'' card format and for
-            web text; null otherwise.'
+            web text; null otherwise. A card export can hold up to 100,000 rows. Don''t
+            read a large export directly into a model''s context: at about 15 tokens
+            per row, 10,000 rows cost about 150,000 tokens. Write the export to a
+            file, on disk or in memory, and have the agent parse it with code. Give
+            the model only the rows or results it needs. To cap the export instead,
+            set max_rows.'
         records:
           anyOf:
           - items:
@@ -1902,13 +1907,23 @@ components:
           - type: 'null'
           title: Records
           description: 'Inline card data as verbose JSON: a list of row objects keyed
-            by column name. Set only when content_format is ''json_records''.'
+            by column name. Set only when content_format is ''json_records''. A card
+            export can hold up to 100,000 rows. Don''t read a large export directly
+            into a model''s context: at about 15 tokens per row, 10,000 rows cost
+            about 150,000 tokens. Write the export to a file, on disk or in memory,
+            and have the agent parse it with code. Give the model only the rows or
+            results it needs. To cap the export instead, set max_rows.'
         dataset:
           anyOf:
           - $ref: '#/components/schemas/TakoDataset'
           - type: 'null'
-          description: Inline card data as a compact TakoDataset (typed column headers
-            plus positional row arrays). Set only when content_format is 'json_compact'.
+          description: 'Inline card data as a compact TakoDataset (typed column headers
+            plus positional row arrays). Set only when content_format is ''json_compact''.
+            A card export can hold up to 100,000 rows. Don''t read a large export
+            directly into a model''s context: at about 15 tokens per row, 10,000 rows
+            cost about 150,000 tokens. Write the export to a file, on disk or in memory,
+            and have the agent parse it with code. Give the model only the rows or
+            results it needs. To cap the export instead, set max_rows.'
         card_data:
           anyOf:
           - additionalProperties: true
@@ -1923,7 +1938,12 @@ components:
             export ceiling and reports ''truncated'': true. The payload then also
             carries the true count for its record array. Card types without a card_json
             shape return 422 on /contents and fall back to ''json_compact'' on search
-            and answer include_contents.'
+            and answer include_contents. A card export can hold up to 100,000 rows.
+            Don''t read a large export directly into a model''s context: at about
+            15 tokens per row, 10,000 rows cost about 150,000 tokens. Write the export
+            to a file, on disk or in memory, and have the agent parse it with code.
+            Give the model only the rows or results it needs. To cap the export instead,
+            set max_rows.'
         card_data_schema:
           anyOf:
           - additionalProperties: true
@@ -1959,22 +1979,40 @@ components:
           - type: integer
           - type: 'null'
           title: Total Rows
-          description: True total number of rows in the card's data, independent of
-            how many rows were returned. Compare with truncated to tell whether more
-            rows are available via a larger max_rows. Null for web text.
+          description: Total number of rows in the card's data, independent of how
+            many rows were returned. Compare with the rows returned to tell whether
+            a larger max_rows returns more. A card that lists a capped slice of a
+            larger set, such as the 30 soonest-closing of 330 open solicitations,
+            has only that slice as its data, so total_rows is 30 and total_matching
+            gives the set's size. Null for web text.
+        total_matching:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Total Matching
+          description: 'Size of the whole set behind a card that lists a capped slice
+            of it, such as 330 for a card listing the 30 soonest-closing of 330 open
+            solicitations. It''s the count the card''s description states, and it''s
+            the same on every content format. A larger max_rows doesn''t return more
+            of that set. Tako reports it for the cards that list such a slice: open
+            solicitations, international tenders, a federal agency''s contracts, and
+            a company''s news. Null when the card''s rows are the whole set, when
+            Tako doesn''t count the set (truncated is still true), and for web text.'
         truncated:
           type: boolean
           title: Truncated
-          description: True when Tako capped the returned rows and total_rows is larger
-            than the number returned. Tako caps a card at the request max_rows or
-            at the 2,000-row system ceiling. On a search or answer response, Tako
-            also applies a budget of 2,000 billable rows that all cards in the response
-            share, so it can return fewer rows for a later card than max_rows asked
-            for. A request that omits max_rows spends 20 rows per card from that budget,
-            so it is bounded by it at about 100 cards -- above any reachable result
-            count, but not immune the way it was when those rows were free. A card
-            the budget can no longer pay for still returns a small preview rather
-            than nothing.
+          description: True when the card has more rows than Tako returned. Tako caps
+            a card at the request max_rows or at the 100,000-row system ceiling, and
+            then total_rows is larger than the rows returned. It's also true when
+            the card itself lists a capped slice of a larger set; then total_matching
+            gives the set's size when Tako counts it. An inline /contents export that
+            omits max_rows returns up to 2,000 rows. On a search or answer response,
+            all cards share a budget of 2,000 billable rows and a budget of 20,000
+            inline rows, both spent in card order, so a later card can return fewer
+            rows than max_rows asked for. A card the billable budget can no longer
+            pay for still returns a small preview. A card that arrives after the inline
+            budget runs out returns no inline rows, and its export_pricing still prices
+            a /contents export of them.
           default: false
         export_pricing:
           anyOf:
@@ -2102,9 +2140,14 @@ components:
         mode:
           $ref: '#/components/schemas/ContentsDeliveryMode'
           description: 'Delivery mode. ''url'' returns a presigned download link.
-            ''inline'' returns the content in the response body: CSV data up to the
-            2,000-row system ceiling (with total_rows and truncated reported), or
-            web text.'
+            ''inline'' returns the content in the response body: card data up to 2,000
+            rows unless max_rows asks for more, up to the 100,000-row system ceiling
+            (with total_rows and truncated reported), or web text. A card export can
+            hold up to 100,000 rows. Don''t read a large export directly into a model''s
+            context: at about 15 tokens per row, 10,000 rows cost about 150,000 tokens.
+            Write the export to a file, on disk or in memory, and have the agent parse
+            it with code. Give the model only the rows or results it needs. To cap
+            the export instead, set max_rows.'
           default: url
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
@@ -2119,19 +2162,25 @@ components:
           - type: 'null'
           title: Max Rows
           description: 'Optional cap on the rows a Tako card export returns and is
-            priced against. When omitted, it defaults to the whole card, up to the
-            2,000-row system ceiling (Tako clamps larger values). When a card holds
-            more rows than the cap, csv, json_records, and json_compact keep the rows
-            with the latest dates, counting back from the card''s latest date even
-            when that date is in the future, as on a schedule or a forecast. A card
-            without a date column keeps its first rows instead. The kept rows stay
-            in the card''s own order. card_json cuts each card type its own way: a
-            price or indicator series keeps its newest readings, and a forecast, schedule,
-            or ranking keeps its first records. Every row returned bills at the per-1,000-row
-            rate, on top of the flat per-export baseline. Tako never bills more rows
-            than it returns, so a card holding fewer rows than this cap bills only
-            what it holds. Every card format returns the rows up to this cap and bills
-            them, including card_json. Web URLs ignore this field.'
+            priced against. When omitted, it depends on mode: ''url'' returns the
+            whole card, up to the 100,000-row system ceiling, and ''inline'' returns
+            up to 2,000 rows. Tako clamps larger values to the ceiling. When a card
+            holds more rows than the cap, csv, json_records, and json_compact keep
+            the rows with the latest dates, counting back from the card''s latest
+            date even when that date is in the future, as on a schedule or a forecast.
+            A card without a date column keeps its first rows instead. The kept rows
+            stay in the card''s own order. card_json cuts each card type its own way:
+            a price or indicator series keeps its newest readings, and a forecast,
+            schedule, or ranking keeps its first records. Every row returned bills
+            at the per-1,000-row rate, on top of the flat per-export baseline. Tako
+            never bills more rows than it returns, so a card holding fewer rows than
+            this cap bills only what it holds. Every card format returns the rows
+            up to this cap and bills them, including card_json. Web URLs ignore this
+            field. A card export can hold up to 100,000 rows. Don''t read a large
+            export directly into a model''s context: at about 15 tokens per row, 10,000
+            rows cost about 150,000 tokens. Write the export to a file, on disk or
+            in memory, and have the agent parse it with code. Give the model only
+            the rows or results it needs. To cap the export instead, set max_rows.'
           examples:
           - 100
         max_chars:
@@ -2154,16 +2203,17 @@ components:
             url fields are null, and the request is free. One exception: a card_json
             quote returns ''card_data_schema'', the shape the export would deliver.
             Test ''content_format'' for null to tell a quote from a delivery. `max_rows`
-            shapes the quote and defaults to the whole card, as a real export does.
-            The request ignores `mode`. Every format prices a quote from `max_rows`,
-            so a quote is instant and makes no call to a data provider. A quote is
-            an upper bound on the charge: an export of a card with fewer rows than
-            the cap bills less. A card_json export is truncated to `max_rows` like
-            every other format, so the charge can never exceed the quote for the same
-            cap. A card_json quote reports no `total_rows`, because it does not build
-            the payload. The same export-safe gate applies, so an unexportable card
-            still returns 403, and a card type with no card_json shape still returns
-            422.'
+            shapes the quote. An omitted `max_rows` defaults the way a real export
+            does: the whole card for mode ''url'', and 2,000 rows for ''inline''.
+            The quote reads `mode` only for that default. Every format prices a quote
+            from `max_rows`, so a quote is instant and makes no call to a data provider.
+            A quote is an upper bound on the charge: an export of a card with fewer
+            rows than the cap bills less. A card_json export is truncated to `max_rows`
+            like every other format, so the charge can never exceed the quote for
+            the same cap. A card_json quote reports no `total_rows`, because it does
+            not build the payload. The same export-safe gate applies, so an unexportable
+            card still returns 403, and a card type with no card_json shape still
+            returns 422.'
           default: false
         premium:
           type: boolean
@@ -2421,9 +2471,9 @@ components:
           title: Max Rows
           description: 'Maximum number of card data rows to inline when include_contents
             is true. Omit it and Tako uses your account''s inline row cap. That cap
-            is deliberately smaller than the 2,000 rows POST /api/v1/contents returns
+            is deliberately smaller than the whole card POST /api/v1/contents returns
             by default: a search response inlines many cards, so the same number bills
-            once per card. Raise it to inline more rows, up to the 2,000-row system
+            once per card. Raise it to inline more rows, up to the 100,000-row system
             ceiling. Tako clamps a larger value to that ceiling. Every inlined row
             is billed: a flat per-card baseline fee plus the per-1,000-row rate, the
             same rate POST /api/v1/contents charges. total_rows and truncated report
@@ -2431,7 +2481,12 @@ components:
             budget and a 20,000-row total budget, both shared across all cards. A
             later card can therefore return fewer rows than you requested, or no inlined
             rows at all. Such a card still carries its export_pricing quote, so you
-            can fetch its rows with POST /api/v1/contents.'
+            can fetch its rows with POST /api/v1/contents. A card export can hold
+            up to 100,000 rows. Don''t read a large export directly into a model''s
+            context: at about 15 tokens per row, 10,000 rows cost about 150,000 tokens.
+            Write the export to a file, on disk or in memory, and have the agent parse
+            it with code. Give the model only the rows or results it needs. To cap
+            the export instead, set max_rows.'
           examples:
           - 100
         node_ids:
@@ -3160,7 +3215,12 @@ components:
           title: Data
           description: 'Inline payload as text: card data serialized to CSV, or a
             web page''s extracted text. Set only for the ''csv'' card format and for
-            web text; null otherwise.'
+            web text; null otherwise. A card export can hold up to 100,000 rows. Don''t
+            read a large export directly into a model''s context: at about 15 tokens
+            per row, 10,000 rows cost about 150,000 tokens. Write the export to a
+            file, on disk or in memory, and have the agent parse it with code. Give
+            the model only the rows or results it needs. To cap the export instead,
+            set max_rows.'
         records:
           anyOf:
           - items:
@@ -3176,13 +3236,23 @@ components:
           - type: 'null'
           title: Records
           description: 'Inline card data as verbose JSON: a list of row objects keyed
-            by column name. Set only when content_format is ''json_records''.'
+            by column name. Set only when content_format is ''json_records''. A card
+            export can hold up to 100,000 rows. Don''t read a large export directly
+            into a model''s context: at about 15 tokens per row, 10,000 rows cost
+            about 150,000 tokens. Write the export to a file, on disk or in memory,
+            and have the agent parse it with code. Give the model only the rows or
+            results it needs. To cap the export instead, set max_rows.'
         dataset:
           anyOf:
           - $ref: '#/components/schemas/TakoDataset'
           - type: 'null'
-          description: Inline card data as a compact TakoDataset (typed column headers
-            plus positional row arrays). Set only when content_format is 'json_compact'.
+          description: 'Inline card data as a compact TakoDataset (typed column headers
+            plus positional row arrays). Set only when content_format is ''json_compact''.
+            A card export can hold up to 100,000 rows. Don''t read a large export
+            directly into a model''s context: at about 15 tokens per row, 10,000 rows
+            cost about 150,000 tokens. Write the export to a file, on disk or in memory,
+            and have the agent parse it with code. Give the model only the rows or
+            results it needs. To cap the export instead, set max_rows.'
         card_data:
           anyOf:
           - additionalProperties: true
@@ -3197,7 +3267,12 @@ components:
             export ceiling and reports ''truncated'': true. The payload then also
             carries the true count for its record array. Card types without a card_json
             shape return 422 on /contents and fall back to ''json_compact'' on search
-            and answer include_contents.'
+            and answer include_contents. A card export can hold up to 100,000 rows.
+            Don''t read a large export directly into a model''s context: at about
+            15 tokens per row, 10,000 rows cost about 150,000 tokens. Write the export
+            to a file, on disk or in memory, and have the agent parse it with code.
+            Give the model only the rows or results it needs. To cap the export instead,
+            set max_rows.'
         card_data_schema:
           anyOf:
           - additionalProperties: true
@@ -3233,22 +3308,40 @@ components:
           - type: integer
           - type: 'null'
           title: Total Rows
-          description: True total number of rows in the card's data, independent of
-            how many rows were returned. Compare with truncated to tell whether more
-            rows are available via a larger max_rows. Null for web text.
+          description: Total number of rows in the card's data, independent of how
+            many rows were returned. Compare with the rows returned to tell whether
+            a larger max_rows returns more. A card that lists a capped slice of a
+            larger set, such as the 30 soonest-closing of 330 open solicitations,
+            has only that slice as its data, so total_rows is 30 and total_matching
+            gives the set's size. Null for web text.
+        total_matching:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Total Matching
+          description: 'Size of the whole set behind a card that lists a capped slice
+            of it, such as 330 for a card listing the 30 soonest-closing of 330 open
+            solicitations. It''s the count the card''s description states, and it''s
+            the same on every content format. A larger max_rows doesn''t return more
+            of that set. Tako reports it for the cards that list such a slice: open
+            solicitations, international tenders, a federal agency''s contracts, and
+            a company''s news. Null when the card''s rows are the whole set, when
+            Tako doesn''t count the set (truncated is still true), and for web text.'
         truncated:
           type: boolean
           title: Truncated
-          description: True when Tako capped the returned rows and total_rows is larger
-            than the number returned. Tako caps a card at the request max_rows or
-            at the 2,000-row system ceiling. On a search or answer response, Tako
-            also applies a budget of 2,000 billable rows that all cards in the response
-            share, so it can return fewer rows for a later card than max_rows asked
-            for. A request that omits max_rows spends 20 rows per card from that budget,
-            so it is bounded by it at about 100 cards -- above any reachable result
-            count, but not immune the way it was when those rows were free. A card
-            the budget can no longer pay for still returns a small preview rather
-            than nothing.
+          description: True when the card has more rows than Tako returned. Tako caps
+            a card at the request max_rows or at the 100,000-row system ceiling, and
+            then total_rows is larger than the rows returned. It's also true when
+            the card itself lists a capped slice of a larger set; then total_matching
+            gives the set's size when Tako counts it. An inline /contents export that
+            omits max_rows returns up to 2,000 rows. On a search or answer response,
+            all cards share a budget of 2,000 billable rows and a budget of 20,000
+            inline rows, both spent in card order, so a later card can return fewer
+            rows than max_rows asked for. A card the billable budget can no longer
+            pay for still returns a small preview. A card that arrives after the inline
+            budget runs out returns no inline rows, and its export_pricing still prices
+            a /contents export of them.
           default: false
         export_pricing:
           anyOf:
