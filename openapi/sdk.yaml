@@ -2002,9 +2002,9 @@ components:
           type: boolean
           title: Truncated
           description: True when the card has more rows than Tako returned. Tako caps
-            a card at the request max_rows or at the 100,000-row system ceiling, and
-            then total_rows is larger than the rows returned. It's also true when
-            the card itself lists a capped slice of a larger set; then total_matching
+            a card at the request max_rows or at the card's max_rows_ceiling (at most
+            100,000), and then total_rows is larger than the rows returned. It's also
+            true when the card itself lists a capped slice of a larger set; then total_matching
             gives the set's size when Tako counts it. An inline /contents export that
             omits max_rows returns up to 2,000 rows. On a search or answer response,
             all cards share a budget of 2,000 billable rows and a budget of 20,000
@@ -2141,13 +2141,13 @@ components:
           $ref: '#/components/schemas/ContentsDeliveryMode'
           description: 'Delivery mode. ''url'' returns a presigned download link.
             ''inline'' returns the content in the response body: card data up to 2,000
-            rows unless max_rows asks for more, up to the 100,000-row system ceiling
-            (with total_rows and truncated reported), or web text. A card export can
-            hold up to 100,000 rows. Don''t read a large export directly into a model''s
-            context: at about 15 tokens per row, 10,000 rows cost about 150,000 tokens.
-            Write the export to a file, on disk or in memory, and have the agent parse
-            it with code. Give the model only the rows or results it needs. To cap
-            the export instead, set max_rows.'
+            rows unless max_rows asks for more, up to the card''s export_pricing.max_rows_ceiling,
+            at most 100,000 (with total_rows and truncated reported), or web text.
+            A card export can hold up to 100,000 rows. Don''t read a large export
+            directly into a model''s context: at about 15 tokens per row, 10,000 rows
+            cost about 150,000 tokens. Write the export to a file, on disk or in memory,
+            and have the agent parse it with code. Give the model only the rows or
+            results it needs. To cap the export instead, set max_rows.'
           default: url
         content_format:
           $ref: '#/components/schemas/ContentsFormat'
@@ -2163,24 +2163,25 @@ components:
           title: Max Rows
           description: 'Optional cap on the rows a Tako card export returns and is
             priced against. When omitted, it depends on mode: ''url'' returns the
-            whole card, up to the 100,000-row system ceiling, and ''inline'' returns
-            up to 2,000 rows. Tako clamps larger values to the ceiling. When a card
-            holds more rows than the cap, csv, json_records, and json_compact keep
-            the rows with the latest dates, counting back from the card''s latest
-            date even when that date is in the future, as on a schedule or a forecast.
-            A card without a date column keeps its first rows instead. The kept rows
-            stay in the card''s own order. card_json cuts each card type its own way:
-            a price or indicator series keeps its newest readings, and a forecast,
-            schedule, or ranking keeps its first records. Every row returned bills
-            at the per-1,000-row rate, on top of the flat per-export baseline. Tako
-            never bills more rows than it returns, so a card holding fewer rows than
-            this cap bills only what it holds. Every card format returns the rows
-            up to this cap and bills them, including card_json. Web URLs ignore this
-            field. A card export can hold up to 100,000 rows. Don''t read a large
-            export directly into a model''s context: at about 15 tokens per row, 10,000
-            rows cost about 150,000 tokens. Write the export to a file, on disk or
-            in memory, and have the agent parse it with code. Give the model only
-            the rows or results it needs. To cap the export instead, set max_rows.'
+            whole card, up to the card''s export_pricing.max_rows_ceiling (at most
+            100,000 rows), and ''inline'' returns up to 2,000 rows. Tako clamps larger
+            values to that ceiling. When a card holds more rows than the cap, csv,
+            json_records, and json_compact keep the rows with the latest dates, counting
+            back from the card''s latest date even when that date is in the future,
+            as on a schedule or a forecast. A card without a date column keeps its
+            first rows instead. The kept rows stay in the card''s own order. card_json
+            cuts each card type its own way: a price or indicator series keeps its
+            newest readings, and a forecast, schedule, or ranking keeps its first
+            records. Every row returned bills at the per-1,000-row rate, on top of
+            the flat per-export baseline. Tako never bills more rows than it returns,
+            so a card holding fewer rows than this cap bills only what it holds. Every
+            card format returns the rows up to this cap and bills them, including
+            card_json. Web URLs ignore this field. A card export can hold up to 100,000
+            rows. Don''t read a large export directly into a model''s context: at
+            about 15 tokens per row, 10,000 rows cost about 150,000 tokens. Write
+            the export to a file, on disk or in memory, and have the agent parse it
+            with code. Give the model only the rows or results it needs. To cap the
+            export instead, set max_rows.'
           examples:
           - 100
         max_chars:
@@ -2473,11 +2474,11 @@ components:
             is true. Omit it and Tako uses your account''s inline row cap. That cap
             is deliberately smaller than the whole card POST /api/v1/contents returns
             by default: a search response inlines many cards, so the same number bills
-            once per card. Raise it to inline more rows, up to the 100,000-row system
-            ceiling. Tako clamps a larger value to that ceiling. Every inlined row
-            is billed: a flat per-card baseline fee plus the per-1,000-row rate, the
-            same rate POST /api/v1/contents charges. total_rows and truncated report
-            whether more rows remain. A single response also has a 2,000 billable-row
+            once per card. Raise it to inline more rows, up to the card''s export_pricing.max_rows_ceiling
+            (at most 100,000). Tako clamps a larger value to that ceiling. Every inlined
+            row is billed: a flat per-card baseline fee plus the per-1,000-row rate,
+            the same rate POST /api/v1/contents charges. total_rows and truncated
+            report whether more rows remain. A single response also has a 2,000 billable-row
             budget and a 20,000-row total budget, both shared across all cards. A
             later card can therefore return fewer rows than you requested, or no inlined
             rows at all. Such a card still carries its export_pricing quote, so you
@@ -3331,9 +3332,9 @@ components:
           type: boolean
           title: Truncated
           description: True when the card has more rows than Tako returned. Tako caps
-            a card at the request max_rows or at the 100,000-row system ceiling, and
-            then total_rows is larger than the rows returned. It's also true when
-            the card itself lists a capped slice of a larger set; then total_matching
+            a card at the request max_rows or at the card's max_rows_ceiling (at most
+            100,000), and then total_rows is larger than the rows returned. It's also
+            true when the card itself lists a capped slice of a larger set; then total_matching
             gives the set's size when Tako counts it. An inline /contents export that
             omits max_rows returns up to 2,000 rows. On a search or answer response,
             all cards share a budget of 2,000 billable rows and a budget of 20,000
