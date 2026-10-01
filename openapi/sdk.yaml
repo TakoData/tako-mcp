@@ -1738,8 +1738,10 @@ components:
           - $ref: '#/components/schemas/PremiumClass'
           - type: 'null'
           description: 'Set when the column is premium: ''company_record'' or ''person_contact''.
-            Its cells are null unless the export passed premium=true; the item''s
-            redacted_cells says which rows held a value. Null for every other column.'
+            Unless the export passed premium=true, a cell that held a value reads
+            [premium: withheld] in CSV and is null in JSON formats, so a CSV reader
+            can''t parse this column as its dtype; the item''s redacted_cells says
+            which rows held a value. Null for every other column.'
       type: object
       title: ColumnDescriptor
       description: 'Structured description of one exported value column.
@@ -2038,8 +2040,9 @@ components:
           title: Premium
           description: 'True when this item''s premium cells are revealed: a /contents
             response to premium=true. False on every search and answer card and on
-            a /contents response without the flag, where premium cells are null and
-            redacted_cells says which rows held a value.'
+            a /contents response without the flag. There, a withheld premium cell
+            reads [premium: withheld] in CSV and is null in JSON formats, and redacted_cells
+            says which rows held a value.'
           default: false
         premium_rows:
           anyOf:
@@ -2067,7 +2070,8 @@ components:
             rows, whose premium value was withheld. Present only when a premium cell
             was withheld; null when premium=true, when nothing was withheld, and for
             web text. Positions index the delivered rows: CSV data rows in order,
-            json_records entries, or dataset.rows.'
+            json_records entries, or dataset.rows. In CSV, the same cells read [premium:
+            withheld]; a premium cell with no value is blank.'
         source_url:
           type: string
           title: Source Url
@@ -2219,14 +2223,15 @@ components:
         premium:
           type: boolean
           title: Premium
-          description: When true, reveal premium cells and bill them. A card's premium
-            columns (see manifest[].premium_class) are null by default, and this is
-            the only way to receive their values. The export then adds export_pricing.premium_row_cpm_usd[class]
+          description: 'When true, reveal premium cells and bill them. A card''s premium
+            columns (see manifest[].premium_class) are withheld by default: a withheld
+            cell reads [premium: withheld] in CSV and is null in JSON formats. This
+            is the only way to receive their values. The export then adds export_pricing.premium_row_cpm_usd[class]
             per 1,000 rows that hold a value in a column of that class, on top of
             the standard row rate; premium_rows on the item reports the counts. The
             flag has no effect on a card without premium columns and on web URLs,
             and is rejected with content_format=card_json, which carries no premium
-            plumbing.
+            plumbing.'
           default: false
       type: object
       required:
@@ -3368,8 +3373,9 @@ components:
           title: Premium
           description: 'True when this item''s premium cells are revealed: a /contents
             response to premium=true. False on every search and answer card and on
-            a /contents response without the flag, where premium cells are null and
-            redacted_cells says which rows held a value.'
+            a /contents response without the flag. There, a withheld premium cell
+            reads [premium: withheld] in CSV and is null in JSON formats, and redacted_cells
+            says which rows held a value.'
           default: false
         premium_rows:
           anyOf:
@@ -3397,7 +3403,8 @@ components:
             rows, whose premium value was withheld. Present only when a premium cell
             was withheld; null when premium=true, when nothing was withheld, and for
             web text. Positions index the delivered rows: CSV data rows in order,
-            json_records entries, or dataset.rows.'
+            json_records entries, or dataset.rows. In CSV, the same cells read [premium:
+            withheld]; a premium cell with no value is blank.'
       type: object
       title: ResultContent
       description: 'Describes the downloadable content behind a result.
