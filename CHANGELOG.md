@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.11](https://github.com/TakoData/tako-mcp/compare/v1.1.10...v1.1.11) (2026-10-01)
+
+
+### Bug Fixes
+
+* **deps:** raise sharp and undici override floors to clear npm advisories ([884300e](https://github.com/TakoData/tako-mcp/commit/884300e467dbee8d2ea334a11257a12cfdcf4c1c))
+* **deps:** raise sharp and undici override floors to clear npm advisories ([c10dacf](https://github.com/TakoData/tako-mcp/commit/c10dacf65d22276d1f68f6e18b0efc7abdf0c9af))
+
+
+### Chores
+
+* regenerate schemas + registry from synced spec ([b8bd344](https://github.com/TakoData/tako-mcp/commit/b8bd344918e5bdc1eb51f3c4ca017db3c267b40c))
+* sync OpenAPI spec from monorepo ([343039c](https://github.com/TakoData/tako-mcp/commit/343039c0b0036132ba2c75b5bdf8d694da8e2c03))
+* sync OpenAPI spec from TakoData/tako ([31479ba](https://github.com/TakoData/tako-mcp/commit/31479baac95b8b49e383cfa7c0b9b0bc57f329f6))
+
 ## [1.1.10](https://github.com/TakoData/tako-mcp/compare/v1.1.9...v1.1.10) (2026-09-30)
 
 
