@@ -1,0 +1,28 @@
+{
+  "author": {
+    "name": "Tako"
+  },
+  "description": "Tako helps users find current data and metrics from proprietary datasets and the live web as citation-backed charts, retrieve the underlying result content, check available data coverage, and create shareable public chart links from user-provided structured data.",
+  "interface": {
+    "brandColor": "#1B9AAA",
+    "brandColorDark": "#55D4E4",
+    "capabilities": [],
+    "category": "Productivity",
+    "defaultPrompt": [
+      "Show me Nvidia's quarterly revenue. Use Tako.",
+      "Give me the current Premier League standings. Use Tako.",
+      "Show me monthly visits for netflix.com. Use Tako."
+    ],
+    "developerName": "Tako",
+    "displayName": "Tako",
+    "longDescription": "Tako helps users find current data and metrics from proprietary datasets and the live web as citation-backed charts, retrieve the underlying result content, check available data coverage, and create shareable public chart links from user-provided structured data.",
+    "privacyPolicyURL": "https://tako.com/privacy",
+    "shortDescription": "Search live data and charts",
+    "supportURL": "https://tako.com/support/",
+    "termsOfServiceURL": "https://tako.com/tos",
+    "websiteURL": "https://tako.com"
+  },
+  "name": "app-69fb789923988191a03797de71aa0cc2",
+  "skills": "./skills",
+  "version": "1.0.0"
+}
