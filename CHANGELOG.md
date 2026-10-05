@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.12](https://github.com/TakoData/tako-mcp/compare/v1.1.11...v1.1.12) (2026-10-05)
+
+
+### Chores
+
+* add the ChatGPT plugin package and match its listing to directory search ([#318](https://github.com/TakoData/tako-mcp/issues/318)) ([fafc4b2](https://github.com/TakoData/tako-mcp/commit/fafc4b2aacfcaa96159ea930f4a2eee1b7f69e29))
+
 ## [1.1.11](https://github.com/TakoData/tako-mcp/compare/v1.1.10...v1.1.11) (2026-10-01)
 
 
