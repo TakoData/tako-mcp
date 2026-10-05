@@ -595,6 +595,18 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 
 - **Annotations** come from the server, not the form. A wrong hint is fixed in the tool module, deployed to production, and re-scanned with **Scan Tools** before you submit; the justification alone changes nothing.
 
+### Plugin package
+
+`chatgpt-plugin/plugin.json` holds the ChatGPT plugin's listing: name, subtitle, descriptions, keywords, category, starter prompts, and icons. It uses OpenAI's portable Agent Plugins format, with listing fields under `extensions.com.openai.interface`. It lives outside the repository root because the repository root is also the Claude plugin that `.claude-plugin/marketplace.json` installs. A root `plugin.json` would replace that plugin's identity.
+
+To change the listing:
+
+1. Edit `chatgpt-plugin/plugin.json` and raise its `version`. That version is OpenAI's package version, separate from our release version.
+2. Run `chatgpt-plugin/build.sh`. It copies the manifest, `skills/`, and the icons from `docs/branding/` into `chatgpt-plugin/dist/tako-chatgpt-plugin-<version>.zip`.
+3. In the OpenAI dashboard, open the Tako plugin and select **Upload new version**.
+
+Tool descriptions don't need a package upload. OpenAI rescans `/mcp/chatgpt` daily and updates each tool after its checks pass.
+
 ## Links
 
 - **[Full Documentation](https://docs.tako.com/documentation/integrations/mcp-server)** — setup, tools, and integration guides
