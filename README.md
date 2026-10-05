@@ -602,7 +602,7 @@ Tako is published to the official [MCP Registry](https://registry.modelcontextpr
 To change the listing:
 
 1. Edit `chatgpt-plugin/plugin.json` and raise its `version`. That version is OpenAI's package version, separate from our release version.
-2. Run `chatgpt-plugin/build.sh`. It copies the manifest, `skills/`, and the icons from `docs/branding/` into `chatgpt-plugin/dist/tako-chatgpt-plugin-<version>.zip`.
+2. Run `chatgpt-plugin/build.sh`. It copies the manifest, `skills/`, and `chatgpt-plugin/assets/` into `chatgpt-plugin/dist/tako-chatgpt-plugin-<version>.zip`.
 3. In the OpenAI dashboard, open the Tako plugin and select **Upload new version**.
 
 Tool descriptions don't need a package upload. OpenAI rescans `/mcp/chatgpt` daily and updates each tool after its checks pass.
