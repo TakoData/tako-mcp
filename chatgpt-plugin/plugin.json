@@ -1,0 +1,62 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "app-69fb789923988191a03797de71aa0cc2",
+  "version": "1.1.0",
+  "description": "Tako searches licensed and public datasets and the live web in one call, and returns current figures as citation-backed charts alongside web results. It covers company financials and analyst estimates, stock prices and valuation, economic indicators, website and app traffic, prediction-market odds, sports statistics, demographics, energy, and real estate.",
+  "author": {
+    "name": "Tako"
+  },
+  "keywords": [
+    "financial data",
+    "stock data",
+    "company financials",
+    "earnings",
+    "analyst estimates",
+    "valuation",
+    "economic data",
+    "macroeconomics",
+    "inflation",
+    "GDP",
+    "unemployment",
+    "interest rates",
+    "website traffic",
+    "app usage",
+    "prediction markets",
+    "sports statistics",
+    "demographics",
+    "real estate",
+    "web search",
+    "charts",
+    "data visualization"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "brandColor": "#1B9AAA",
+        "brandColorDark": "#55D4E4",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "category": "Productivity",
+        "composerIcon": "./assets/composer-icon.png",
+        "composerIconDark": "./assets/composer-icon-dark.png",
+        "defaultPrompt": [
+          "Show me Nvidia's quarterly revenue. Use Tako.",
+          "Give me the current Premier League standings. Use Tako.",
+          "Show me monthly visits for netflix.com. Use Tako."
+        ],
+        "developerName": "Tako",
+        "displayName": "Tako",
+        "logo": "./assets/logo.png",
+        "logoDark": "./assets/logo-dark.png",
+        "longDescription": "Tako searches licensed and public datasets and the live web in one call, and returns current figures as citation-backed charts alongside web results. Use it for company financials and analyst estimates, stock prices and valuation, economic indicators such as inflation, unemployment, GDP, and interest rates, website and app traffic, prediction-market odds, sports statistics, demographics, energy, and real estate. Sources include S&P Global, Fiscal.ai, Visible Alpha, Xignite, FRED, BLS, OECD, BIS, IMF, World Bank, Census, and Polymarket.\n\nTako also fetches the full text of a web result or the data rows behind a chart, lists the data it holds on a company, country, or metric, and turns data you provide into a shareable chart.\n\nTako is for analysts, researchers, writers, and anyone who needs a sourced number. Sign in with a Tako account to use it. Charts you create from your own data are public: anyone with the link can open them. Coverage varies by metric and region.",
+        "privacyPolicyURL": "https://tako.com/privacy",
+        "shortDescription": "Live financial & economic data",
+        "supportURL": "https://tako.com/support/",
+        "termsOfServiceURL": "https://tako.com/tos",
+        "websiteURL": "https://tako.com"
+      }
+    }
+  }
+}
