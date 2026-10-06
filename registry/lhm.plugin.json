@@ -74,7 +74,7 @@
     },
     {
       "name": "tako_contents",
-      "description": "Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own.\n\nFetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to get back only the passages that match.\n\nBest for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.",
+      "description": "Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own.\n\nFetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.\n\nBest for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -96,15 +96,14 @@
             "maximum": 2000
           },
           "max_chars": {
-            "description": "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut.",
+            "description": "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default.",
             "type": "integer",
             "minimum": 1,
             "maximum": 1000000
           },
           "query": {
-            "description": "Web pages only: return the passages around matches of this phrase instead of the whole page. The full page is always scanned, so no match means the phrase isn't there.",
-            "type": "string",
-            "minLength": 1
+            "description": "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
+            "type": "string"
           }
         },
         "required": [

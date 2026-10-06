@@ -858,7 +858,7 @@ Description:
 
 Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to 10 urls in one call — each one is billed and fails on its own.
 
-Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to get back only the passages that match.
+Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.
 
 Best for: reading one source in full — a page you need to quote, or the rows behind a card you need to compute over.
 
@@ -868,15 +868,15 @@ Parameters:
 |---|---|---|---|---|
 | `urls` | array | yes |  | The urls to fetch: a Tako card url or a web result url. One call for 8 urls costs the same as 8 separate calls and saves 7 round trips. |
 | `max_rows` | integer | no |  | Tako cards only: how many rows to return. Omit it for the whole card, up to 2,000 rows. Every row delivered is billed, so lower it when the recent rows are enough. |
-| `max_chars` | integer | no |  | Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. |
-| `query` | string | no |  | Web pages only: return the passages around matches of this phrase instead of the whole page. The full page is always scanned, so no match means the phrase isn't there. |
+| `max_chars` | integer | no |  | Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default. |
+| `query` | string | no |  | Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page. |
 
 Fixed request inputs (the caller cannot change these):
 
 - `mode` = `"inline"` — The content comes back in the response to read. The API default is a presigned download link, which a model cannot use.
 - `content_format` = `"json_compact"` — One row serialization, projected to `rows`. CSV writes a missing cell as an empty field; positional JSON writes null.
-- `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for web text; 1,000,000 when `query` is set, so passages scan the whole page.
-- `query` = `(stripped from the request)` — Passage extraction runs in the Worker; the API has no such field.
+- `max_chars (when omitted)` = `min(100000, 250000 / batch size)` — Per-url character cap for web text. With `query`, the passages use the API's highlights budget instead: 4,000 characters.
+- `query` = `(sent as highlights.query)` — Web urls only. A blank `query` is dropped, a Tako url gets no `highlights`, and an account that can't get highlights receives the whole page.
 
 Annotations:
 
@@ -907,15 +907,14 @@ Annotations:
       "maximum": 2000
     },
     "max_chars": {
-      "description": "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut.",
+      "description": "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut. With `query`, it caps the passages instead: 100 to 20,000, and 4,000 by default.",
       "type": "integer",
       "minimum": 1,
       "maximum": 1000000
     },
     "query": {
-      "description": "Web pages only: return the passages around matches of this phrase instead of the whole page. The full page is always scanned, so no match means the phrase isn't there.",
-      "type": "string",
-      "minLength": 1
+      "description": "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
+      "type": "string"
     }
   },
   "required": [
@@ -942,7 +941,7 @@ Annotations:
             "description": "The url this entry is for."
           },
           "note": {
-            "description": "What the `query` match found.",
+            "description": "Whether `text` holds the passages for `query` or the whole page.",
             "type": "string"
           },
           "rows": {
@@ -976,7 +975,7 @@ Annotations:
             "additionalProperties": false
           },
           "text": {
-            "description": "Web pages only: the page text.",
+            "description": "Web pages only: the page text, or its passages when `query` is set.",
             "type": "string"
           },
           "error": {

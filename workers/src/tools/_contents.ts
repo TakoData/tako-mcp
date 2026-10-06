@@ -28,7 +28,6 @@
 import { z } from "zod";
 
 import { TakoDataset } from "../generated/schemas.js";
-import { extractPassages } from "./_passages.js";
 import {
   columnName,
   projectedRowsShape,
@@ -43,9 +42,9 @@ import {
  * failed on its own.
  *
  * `truncated` sits HERE rather than inside `rows` (where the spec's shape puts
- * it for search) because an item has exactly one payload: a row cap, a
- * `max_chars` cut and a passage extraction are the same fact about the same
- * item, and giving it two homes is what this pass removes everywhere else.
+ * it for search) because an item has exactly one payload: a row cap and a
+ * `max_chars` cut are the same fact about the same item, and giving it two
+ * homes is what this pass removes everywhere else.
  */
 const projectedContentsItemShape = z.looseObject({
   // Declaration order IS the shipped order. `contentsOutputShape.safeParse` in
@@ -54,9 +53,9 @@ const projectedContentsItemShape = z.looseObject({
   // Anchor, then the note that explains the payload, then the payload, then
   // the chrome; `cost` stays last so a cut tail loses it and never the rows.
   url: z.string().describe("The url this entry is for."),
-  note: z.string().optional().describe("What the `query` match found."),
+  note: z.string().optional().describe("Whether `text` holds the passages for `query` or the whole page."),
   rows: projectedRowsShape.optional().describe("Tako cards only: the card's data."),
-  text: z.string().optional().describe("Web pages only: the page text."),
+  text: z.string().optional().describe("Web pages only: the page text, or its passages when `query` is set."),
   error: z.string().optional().describe("Why this url alone failed; the others are unaffected."),
   truncated: z.boolean().optional().describe("Part of this payload was cut."),
   source_url: z.string().optional().describe("Where a redirect landed."),
@@ -118,7 +117,7 @@ export const EMPTY_PAYLOAD_ERROR =
 export function projectContentsItem(
   item: ContentsWireItem,
   url: string,
-  opts: { passageQuery?: string | undefined; effectiveMaxChars?: number | undefined },
+  opts: { note?: string | undefined; effectiveMaxChars?: number | undefined },
 ): ProjectedContentsItem {
   const isCard = item.content_format != null;
   let cut = item.truncated === true;
@@ -151,12 +150,7 @@ export function projectContentsItem(
     // change there needs a tolerance here, or `truncated` on the web route.
     const cap = opts.effectiveMaxChars;
     if (cap !== undefined && text.length >= cap) cut = true;
-    if (opts.passageQuery !== undefined) {
-      const extracted = extractPassages(text, opts.passageQuery);
-      text = extracted.data;
-      note = extracted.note;
-      cut = cut || extracted.truncated;
-    }
+    note = opts.note;
   }
 
   // An item carries exactly one payload, or an error saying why it does not.
