@@ -1797,9 +1797,9 @@ describe("stringified array arguments survive SDK input validation", () => {
     // The enum constraint that failed, and where. zod reports the allowed
     // values rather than the received one, so the option list is the specific
     // thing to pin; "sources" alone would also match an unrelated path.
-    expect(text).toContain("invalid_value");
-    expect(text).toContain('"sources"');
-    expect(text).toMatch(/"data",\s*"web"/);
+    expect(text).toContain("Invalid option");
+    expect(text).toContain("at sources[0]");
+    expect(text).toMatch(/"data"\s*\|\s*"web"/);
     // Rejection has to happen at validation. If coercion ever widened the enum,
     // this call would bill a live upstream request instead of failing.
     expect(fetchMock).not.toHaveBeenCalled();
