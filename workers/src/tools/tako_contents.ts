@@ -34,18 +34,28 @@
  */
 import { z } from "zod";
 
-import { DjangoError, DjangoHttpError, DjangoNotFoundError, djangoPost, extractErrorDetail } from "../django.js";
-import { ContentsRequest, ContentsResponse } from "../generated/schemas.js";
+import {
+  DjangoBadRequestError,
+  DjangoError,
+  DjangoHttpError,
+  DjangoNotFoundError,
+  DjangoTimeoutError,
+  djangoPost,
+  extractErrorDetail,
+} from "../django.js";
+import { ContentsHighlights, ContentsRequest, ContentsResponse } from "../generated/schemas.js";
 import {
   contentsOutputShape,
   contentsUsage,
   projectContentsItem,
   type ContentsOutput,
+  type ContentsWireItem,
   type ProjectedContentsItem,
 } from "./_contents.js";
 import { looseArray } from "./_loose_array.js";
 import { logWireGuardFailure } from "./_log.js";
 import { renderContentsText } from "./_render_markdown.js";
+import { PASSAGE_BREAK_DESCRIBE } from "./_shared_prose.js";
 import type { ToolContext, ToolModule } from "./types.js";
 
 /** Max urls per call. The backend takes one url per request, so a batch fans
@@ -73,8 +83,8 @@ export const MAX_CONTENTS_ROWS = 2000;
  * chosen to hold the total roughly FLAT against the single-url default rather
  * than scale it up. A 10-url batch lands at 25k chars/page (~6k tokens) —
  * plenty for a news page, tight for a dense filing, which is exactly the case
- * where a caller should fetch that url alone, set `query` (passages bypass
- * this split entirely — see `fetchOne`), or set `max_chars` explicitly.
+ * where a caller should fetch that url alone, set `query` (passages carry
+ * their own budget, so this split never applies), or set `max_chars` explicitly.
  *
  * It did NOT move when both channels started carrying the payload, and the
  * reasoning matters to whoever revisits it: duplication doubles WIRE bytes,
@@ -93,6 +103,45 @@ export const MAX_CONTENTS_ROWS = 2000;
  * the caller's informed choice, not a default any url count should override.
  */
 export const BATCH_CHAR_BUDGET = 250_000;
+
+const highlightsBudget = ContentsHighlights.shape.max_characters;
+const HIGHLIGHTS_DEFAULT_CHARS = highlightsBudget.def.defaultValue;
+const HIGHLIGHTS_MIN_CHARS = highlightsBudget.unwrap().minValue ?? 1;
+const HIGHLIGHTS_MAX_CHARS = highlightsBudget.unwrap().maxValue ?? HIGHLIGHTS_DEFAULT_CHARS;
+
+const TAKO_DOMAINS = ["tako.com", "trytako.com"];
+
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+
+const textlessAsAbsent = (value: unknown): unknown =>
+  typeof value === "string" && !LETTER_OR_DIGIT.test(value) ? undefined : value;
+
+function isTakoHostUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return TAKO_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+export const PASSAGES_NOTE = `These are the passages of the page that answer \`query\`, not the whole page. ${PASSAGE_BREAK_DESCRIBE} Omit \`query\` to get the whole page.`;
+
+export const HIGHLIGHTS_UNAVAILABLE_NOTE =
+  "This account can't get passages, so this is the whole page. Omit `query` on later calls.";
+
+export const NO_PASSAGES_NOTE = "Tako couldn't get passages from this page, so this is the whole page.";
+
+export const TAKO_URL_QUERY_NOTE = "`query` doesn't apply to a Tako url, so this is the whole page.";
+
+function wholePageNoteAfter(err: unknown): string | undefined {
+  if (err instanceof DjangoBadRequestError) return HIGHLIGHTS_UNAVAILABLE_NOTE;
+  if (err instanceof DjangoNotFoundError) return NO_PASSAGES_NOTE;
+  if (err instanceof DjangoTimeoutError) return NO_PASSAGES_NOTE;
+  if (err instanceof DjangoHttpError && err.status !== undefined && err.status >= 500) return NO_PASSAGES_NOTE;
+  return undefined;
+}
 
 // No mention of `include_contents` here, and it cannot be reintroduced: no tool
 // on either of this tool's surfaces accepts it. D4 removed it from
@@ -125,7 +174,7 @@ export const BATCH_CHAR_BUDGET = 250_000;
 const DESCRIPTION = [
   `Fetch the full content behind a url: a web page's text, or an exportable Tako card's data rows. Batch up to ${MAX_CONTENTS_URLS} urls in one call — each one is billed and fails on its own.`,
   "",
-  "Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to get back only the passages that match.",
+  "Fetch only cards that `tako_search` marked `exportable: true`. Rows bill per 1,000 delivered, so set `max_rows` when the recent rows are enough. If a page is long, such as a filing or an annual report, set `query` to a question to get back only the passages that answer it.",
   "",
   // `Best for:` last, the shape the other four default tools use (AGENTS.md's
   // tool-description rule; compare `tako_search`).
@@ -185,7 +234,7 @@ const inputSchema = z.object({
     ),
   // Kept `.optional()` with NO zod default so `fetchOne` can tell "caller asked
   // for this cap" from "caller said nothing" — only the second is split across
-  // a batch, and only the second is pinned to the ceiling when `query` is set.
+  // a batch, and only the first becomes the passage budget when `query` is set.
   max_chars: z
     .number()
     .int()
@@ -193,18 +242,12 @@ const inputSchema = z.object({
     .lte(1_000_000)
     .optional()
     .describe(
-      "Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; `truncated` reports a cut.",
+      `Web pages only: character cap on the extracted text. Inline fetches default to 100,000 per url, less across a batch. Raise it for a long document; \`truncated\` reports a cut. With \`query\`, it caps the passages instead: ${HIGHLIGHTS_MIN_CHARS} to ${HIGHLIGHTS_MAX_CHARS.toLocaleString("en-US")}, and ${HIGHLIGHTS_DEFAULT_CHARS.toLocaleString("en-US")} by default.`,
     ),
-  // An MCP-layer feature, deliberately NOT a wire field (`fetchOne` strips it):
-  // the Worker fetches the page text and slices out the passages around the
-  // matches, so a long-document read is one wave, not
-  // fetch → cover page → refetch.
   query: z
-    .string()
-    .min(1)
-    .optional()
+    .preprocess(textlessAsAbsent, z.string().min(1).optional())
     .describe(
-      "Web pages only: return the passages around matches of this phrase instead of the whole page. The full page is always scanned, so no match means the phrase isn't there.",
+      "Web pages only: a question the passages should answer. The result holds those passages instead of the page. Omit it to get the whole page.",
     ),
 });
 
@@ -266,26 +309,21 @@ export class ContentsFetchError extends Error {}
  * what the handler sends — the declaration is hand-written and nothing else
  * links it to the body.
  *
- * `query` never goes on the wire (the backend's extra="forbid" would 400 it);
- * `mode` and `content_format` always do, because the backend defaults to "url"
- * and "csv" and this tool serves neither.
+ * `query` never goes on the wire as itself; a web url carries it as
+ * `highlights.query`, and a Tako url carries no `highlights`, because the
+ * backend rejects them on a card. `mode` and `content_format` always go,
+ * because the backend defaults to "url" and "csv" and this tool serves neither.
  *
- * The effective character cap: `query` pins the ceiling so passages scan the
- * whole page — a capped scan turns "term at char 300k" into a false
- * "deterministic miss" — and the batch split does not apply there, since
- * `extractPassages` trims the output far below whatever was fetched. A plain
- * fetch with no caller cap defaults to 100k, split across the batch. An
- * EXPLICIT `max_chars` is left untouched at any batch size.
+ * The effective character cap: a plain fetch with no caller cap defaults to
+ * 100k, split across the batch. An EXPLICIT `max_chars` is left untouched at
+ * any batch size, and with `highlights` it also becomes the passage budget.
  */
 export function buildContentsBody(
   url: string,
   input: Input,
   batchSize: number,
 ): z.input<typeof ContentsRequest> & { max_chars: number } {
-  const maxChars =
-    input.query !== undefined
-      ? 1_000_000
-      : input.max_chars ?? defaultMaxChars(batchSize);
+  const highlights = highlightsFor(url, input);
   // `satisfies` sits on the LITERAL, not on the variable. Object-literal
   // freshness is lost on assignment, so `const body = {…}; return body
   // satisfies T` type-checks a key the target no longer declares — which is
@@ -297,10 +335,18 @@ export function buildContentsBody(
     url,
     mode: "inline" as const,
     content_format: "json_compact" as const,
-    max_chars: maxChars,
+    max_chars: input.max_chars ?? defaultMaxChars(batchSize),
     max_rows: input.max_rows ?? MAX_CONTENTS_ROWS,
+    ...(highlights !== undefined ? { highlights } : {}),
   } satisfies z.input<typeof ContentsRequest>; // ← build-time guard: backend request drift breaks here
   return body;
+}
+
+function highlightsFor(url: string, input: Input): z.input<typeof ContentsHighlights> | undefined {
+  if (input.query === undefined || isTakoHostUrl(url)) return undefined;
+  if (input.max_chars === undefined) return { query: input.query };
+  const passageBudget = Math.min(HIGHLIGHTS_MAX_CHARS, Math.max(HIGHLIGHTS_MIN_CHARS, input.max_chars));
+  return { query: input.query, max_characters: passageBudget };
 }
 
 /** Fetch ONE url. Throws on failure so the caller can decide whether a single
@@ -312,7 +358,56 @@ async function fetchOne(
   batchSize: number,
 ): Promise<ProjectedContentsItem> {
   const body = buildContentsBody(url, input, batchSize);
-  const maxChars = body.max_chars;
+  if (body.highlights === undefined) {
+    const queryDropped = input.query !== undefined && isTakoHostUrl(url);
+    return fetchPage(url, body, input, ctx, batchSize, queryDropped ? TAKO_URL_QUERY_NOTE : undefined);
+  }
+  let wholePageNote: string | undefined;
+  try {
+    return projectContentsItem(await postContents(body, ctx), url, { note: PASSAGES_NOTE });
+  } catch (err) {
+    wholePageNote = wholePageNoteAfter(err);
+    if (wholePageNote === undefined || !(err instanceof DjangoError)) throw err;
+    console.warn(`[tako] tako_contents highlights fallback tool=tako_contents status=${err.status ?? "timeout"}`);
+  }
+  const { highlights: _unavailable, ...pageBody } = body;
+  return fetchPage(url, pageBody, input, ctx, batchSize, wholePageNote);
+}
+
+async function fetchPage(
+  url: string,
+  body: z.input<typeof ContentsRequest> & { max_chars: number },
+  input: Input,
+  ctx: ToolContext,
+  batchSize: number,
+  note?: string,
+): Promise<ProjectedContentsItem> {
+  const projected = projectContentsItem(await postContents(body, ctx), url, {
+    effectiveMaxChars: body.max_chars,
+    ...(note !== undefined ? { note } : {}),
+  });
+  // Observability for tuning BATCH_CHAR_BUDGET (a guessed starting number —
+  // see its doc comment): only when the DERIVED default actually bit, i.e.
+  // batching drove the per-url cap below the single-url 100k default AND the
+  // page was long enough to reach it. An explicit caller cap getting cut is
+  // normal and not logged.
+  if (
+    projected.truncated === true &&
+    projected.text !== undefined &&
+    input.max_chars === undefined &&
+    defaultMaxChars(batchSize) < DEFAULT_MAX_CHARS
+  ) {
+    console.warn(
+      `[tako] tako_contents batch max_chars cap bit tool=tako_contents batch_size=${batchSize} per_url_cap=${perUrlCharCap(batchSize)}`,
+    );
+  }
+  return projected;
+}
+
+async function postContents(
+  body: z.input<typeof ContentsRequest>,
+  ctx: ToolContext,
+): Promise<ContentsWireItem> {
   let raw: unknown;
   try {
     raw = await djangoPost<unknown>(ctx.env, ctx.token, "/api/v1/contents/", body, {
@@ -372,27 +467,7 @@ async function fetchOne(
     logWireGuardFailure("tako_contents", "empty-contents", undefined, raw);
     throw new ContentsFetchError("Tako contents endpoint returned no downloadable content for that url.");
   }
-  const projected = projectContentsItem(item, url, {
-    ...(input.query !== undefined ? { passageQuery: input.query } : {}),
-    effectiveMaxChars: maxChars,
-  });
-  // Observability for tuning BATCH_CHAR_BUDGET (a guessed starting number —
-  // see its doc comment): only when the DERIVED default actually bit, i.e.
-  // batching drove the per-url cap below the single-url 100k default AND the
-  // page was long enough to reach it. An explicit caller cap getting cut is
-  // normal and not logged.
-  if (
-    projected.truncated === true &&
-    projected.text !== undefined &&
-    input.max_chars === undefined &&
-    input.query === undefined &&
-    defaultMaxChars(batchSize) < DEFAULT_MAX_CHARS
-  ) {
-    console.warn(
-      `[tako] tako_contents batch max_chars cap bit tool=tako_contents batch_size=${batchSize} per_url_cap=${perUrlCharCap(batchSize)}`,
-    );
-  }
-  return projected;
+  return item;
 }
 
 const takoContents = {
@@ -431,12 +506,12 @@ const takoContents = {
     {
       field: "max_chars (when omitted)",
       value: `min(${DEFAULT_MAX_CHARS}, ${BATCH_CHAR_BUDGET} / batch size)`,
-      note: "Per-url character cap for web text; 1,000,000 when `query` is set, so passages scan the whole page.",
+      note: `Per-url character cap for web text. With \`query\`, the passages use the API's highlights budget instead: ${HIGHLIGHTS_DEFAULT_CHARS.toLocaleString("en-US")} characters.`,
     },
     {
       field: "query",
-      value: "(stripped from the request)",
-      note: "Passage extraction runs in the Worker; the API has no such field.",
+      value: "(sent as highlights.query)",
+      note: "Web urls only. The tool drops a `query` with no letter or digit and sends no `highlights` for a Tako url. If the API can't return passages, the tool returns the whole page.",
     },
   ],
   async handler(input, ctx): Promise<ContentsOutput> {

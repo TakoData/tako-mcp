@@ -23,3 +23,6 @@
  */
 export const SOURCES_DESCRIBE =
   'Which corpora to search; default is both. Narrow to ["data"] once `tako_available_data` confirms coverage; narrow to ["web"] only for news or page text — website traffic is in the data graph.';
+
+export const PASSAGE_BREAK_DESCRIBE =
+  "A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence.";

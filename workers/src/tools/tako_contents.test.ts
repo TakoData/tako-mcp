@@ -1,4 +1,5 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
+import { z } from "zod";
 
 // Preserve the real module (error classes — the handler's `instanceof
 // DjangoHttpError` 403 branch needs the genuine class) and stub only the
@@ -9,9 +10,16 @@ vi.mock("../django.js", async (importOriginal) => ({
   djangoGet: vi.fn(),
 }));
 
-import { DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoUnauthorizedError, djangoPost } from "../django.js";
+import { DjangoBadRequestError, DjangoError, DjangoHttpError, DjangoNotFoundError, DjangoTimeoutError, DjangoUnauthorizedError, djangoPost } from "../django.js";
 import { djangoErrorToToolResult } from "../mcp.js";
-import tool, { BATCH_CHAR_BUDGET, MAX_CONTENTS_URLS } from "./tako_contents.js";
+import tool, {
+  BATCH_CHAR_BUDGET,
+  HIGHLIGHTS_UNAVAILABLE_NOTE,
+  MAX_CONTENTS_URLS,
+  NO_PASSAGES_NOTE,
+  PASSAGES_NOTE,
+  TAKO_URL_QUERY_NOTE,
+} from "./tako_contents.js";
 
 const ctx = { token: "t", env: {} as never, surface: "generic" as const, sendProgress: vi.fn() };
 
@@ -335,17 +343,6 @@ describe("tako_contents wire body", () => {
     }
   });
 
-  it("query: pins max_chars to the 1M ceiling so passages scan the full text", async () => {
-    vi.mocked(djangoPost).mockResolvedValue(page("RevPAR was here"));
-    // Even an explicit cap is overridden — a capped scan would turn a late
-    // match into a false deterministic miss.
-    await tool.handler(
-      tool.inputSchema.parse({ urls: ["https://example.com/a"], query: "RevPAR", max_chars: 5000 }),
-      ctx,
-    );
-    expect((vi.mocked(djangoPost).mock.calls[0]![3] as { max_chars?: number }).max_chars).toBe(1_000_000);
-  });
-
   it("logs when the derived batch cap actually cuts a page (observability for tuning BATCH_CHAR_BUDGET)", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const batchSize = Math.ceil(BATCH_CHAR_BUDGET / 100_000) + 1;
@@ -514,52 +511,154 @@ describe("tako_contents projected output", () => {
   });
 });
 
-describe("tako_contents query passages", () => {
-  it("extracts matching passages from web text and STRIPS query from the wire body", async () => {
-    const filler = "lorem ipsum dolor sit amet ".repeat(400); // ~10.8k chars
-    const body = `${filler}RevPAR reached $142.11 in Q3.${filler}`;
-    vi.mocked(djangoPost).mockResolvedValue({
-      contents: [{ content_format: null, data: body, cost: 1, source_url: "https://example.com/a" }],
-      request_id: "r-passages",
+describe("tako_contents query highlights", () => {
+  const wireBody = (call = 0) => vi.mocked(djangoPost).mock.calls[call]![3] as Record<string, unknown>;
+  const highlightsUnavailable = () =>
+    new DjangoBadRequestError({
+      path: "/api/v1/contents/",
+      method: "POST",
+      body: JSON.stringify({
+        error_message:
+          "highlights isn't available for this account's web provider. Omit highlights to receive the page's full text.",
+      }),
     });
+
+  it("sends query as highlights.query and returns the passages as text", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(page("RevPAR reached $142.11 in Q3. … Occupancy was 81%."));
+    const out = await tool.handler(
+      tool.inputSchema.parse({ urls: ["https://example.com/a"], query: "What was RevPAR in Q3?" }),
+      ctx,
+    );
+    expect(wireBody().highlights).toEqual({ query: "What was RevPAR in Q3?" });
+    expect(wireBody()).not.toHaveProperty("query");
+    expect(out.results[0]?.text).toBe("RevPAR reached $142.11 in Q3. … Occupancy was 81%.");
+    expect(out.results[0]?.note).toBe(PASSAGES_NOTE);
+    expect(out.results[0]?.note).toContain("never quote across it");
+    expect(out.results[0]).not.toHaveProperty("truncated");
+  });
+
+  it.each([
+    [50, 100],
+    [8000, 8000],
+    [50_000, 20_000],
+  ])("sends max_chars %i as highlights.max_characters %i", async (maxChars, maxCharacters) => {
+    vi.mocked(djangoPost).mockResolvedValue(page("passage"));
+    await tool.handler(
+      tool.inputSchema.parse({ urls: ["https://example.com/a"], query: "RevPAR", max_chars: maxChars }),
+      ctx,
+    );
+    expect(wireBody().highlights).toEqual({ query: "RevPAR", max_characters: maxCharacters });
+  });
+
+  it.each(["", " ", "  \n\t ", ". ", ")}", ":)", "\u200c", ".\u0cc3"])(
+    "treats the query %j, which has no letter or digit, as absent and returns the whole page",
+    async (query) => {
+      vi.mocked(djangoPost).mockResolvedValue(page("the whole page"));
+      const input = tool.inputSchema.parse({ urls: ["https://example.com/a"], query });
+      const out = await tool.handler(input, ctx);
+      expect(input.query).toBeUndefined();
+      expect(wireBody()).not.toHaveProperty("highlights");
+      expect(wireBody().max_chars).toBe(100_000);
+      expect(out.results[0]?.text).toBe("the whole page");
+      expect(out.results[0]).not.toHaveProperty("note");
+    },
+  );
+
+  it.each(["2019", "Q3", "失业率"])("sends the query %j, which has a letter or digit, as highlights", async (query) => {
+    vi.mocked(djangoPost).mockResolvedValue(page("passage"));
+    await tool.handler(tool.inputSchema.parse({ urls: ["https://example.com/a"], query }), ctx);
+    expect(wireBody().highlights).toEqual({ query });
+  });
+
+  it("publishes query as optional with minLength 1", () => {
+    const published = z.toJSONSchema(tool.inputSchema, { io: "input" }) as {
+      properties: Record<string, { minLength?: number }>;
+      required?: string[];
+    };
+    expect(published.properties.query?.minLength).toBe(1);
+    expect(published.required ?? []).not.toContain("query");
+  });
+
+  it("says query didn't apply when a Tako url returns a page instead of a card", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(page("the blog post"));
+    const out = await tool.handler(
+      tool.inputSchema.parse({ urls: ["https://tako.com/blog/post"], query: "RevPAR" }),
+      ctx,
+    );
+    expect(wireBody()).not.toHaveProperty("highlights");
+    expect(out.results[0]?.text).toBe("the blog post");
+    expect(out.results[0]?.note).toBe(TAKO_URL_QUERY_NOTE);
+  });
+
+  it.each(["https://tako.com/card/abc", "https://www.tako.com/card/abc", "https://staging.trytako.com/embed/abc/"])(
+    "sends no highlights for the Tako url %s, so a card returns its rows",
+    async (url) => {
+      vi.mocked(djangoPost).mockResolvedValue(card());
+      const out = await tool.handler(tool.inputSchema.parse({ urls: [url], query: "RevPAR" }), ctx);
+      expect(wireBody()).not.toHaveProperty("highlights");
+      expect(out.results[0]?.rows?.rows).toHaveLength(2);
+      expect(out.results[0]).not.toHaveProperty("note");
+    },
+  );
+
+  it("sends highlights to a host that only ends in a Tako domain name", async () => {
+    vi.mocked(djangoPost).mockResolvedValue(page("passage"));
+    await tool.handler(tool.inputSchema.parse({ urls: ["https://nottako.com/a"], query: "RevPAR" }), ctx);
+    expect(wireBody().highlights).toEqual({ query: "RevPAR" });
+  });
+
+  it.each([
+    ["the account can't get them (400)", highlightsUnavailable, HIGHLIGHTS_UNAVAILABLE_NOTE, 400],
+    [
+      "the highlights provider finds nothing on the page (404)",
+      () => new DjangoNotFoundError({ path: "/api/v1/contents/", method: "POST", body: "{}" }),
+      NO_PASSAGES_NOTE,
+      404,
+    ],
+    [
+      "the highlights provider fails (502)",
+      () => new DjangoHttpError({ path: "/api/v1/contents/", method: "POST", status: 502, body: "{}" }),
+      NO_PASSAGES_NOTE,
+      502,
+    ],
+    [
+      "the highlights request times out",
+      () => new DjangoTimeoutError({ path: "/api/v1/contents/", method: "POST", timeoutMs: 60_000 }),
+      NO_PASSAGES_NOTE,
+      "timeout",
+    ],
+  ])("refetches without highlights when %s, and says so", async (_case, failure, note, status) => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.mocked(djangoPost)
+      .mockRejectedValueOnce(failure())
+      .mockResolvedValueOnce(page("the whole page"));
     const out = await tool.handler(
       tool.inputSchema.parse({ urls: ["https://example.com/a"], query: "RevPAR" }),
       ctx,
     );
-    // Passages, not the full dump — `text` is PURE page text; the match summary
-    // rides separately in `note`.
-    expect(out.results[0]?.text).toContain("$142.11");
-    expect(out.results[0]?.text).not.toContain("match(es)");
-    expect(out.results[0]?.note).toContain("match(es)");
-    expect((out.results[0]?.text as string).length).toBeLessThan(body.length / 2);
-    expect(out.results[0]?.truncated).toBe(true);
-    // `query` is an MCP-layer knob: the backend body must not carry it
-    // (extra="forbid" would 400 the request).
-    expect(vi.mocked(djangoPost).mock.calls[0]![3]).not.toHaveProperty("query");
+    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(2);
+    expect(wireBody(0)).toHaveProperty("highlights");
+    expect(wireBody(1)).not.toHaveProperty("highlights");
+    expect(wireBody(1).max_chars).toBe(100_000);
+    expect(out.results[0]?.text).toBe("the whole page");
+    expect(out.results[0]?.note).toBe(note);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`highlights fallback tool=tako_contents status=${status}`));
   });
 
-  it("is ignored for a Tako card payload", async () => {
-    vi.mocked(djangoPost).mockResolvedValue(card());
-    const out = await tool.handler(
-      tool.inputSchema.parse({ urls: ["https://tako.com/card/abc"], query: "RevPAR" }),
-      ctx,
+  it("doesn't retry a highlights request that the export gate refused (403)", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(
+      new DjangoHttpError({ path: "/api/v1/contents/", method: "POST", status: 403, body: "{}" }),
     );
-    // Rows pass through untouched — no passage note injected onto a card.
-    expect(out.results[0]?.rows?.rows).toHaveLength(2);
-    expect(out.results[0]).not.toHaveProperty("note");
+    await expect(
+      tool.handler(tool.inputSchema.parse({ urls: ["https://example.com/a"], query: "RevPAR" }), ctx),
+    ).rejects.toBeInstanceOf(DjangoHttpError);
+    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(1);
   });
 
-  it("no match: a deterministic NOT FOUND notice instead of silence", async () => {
-    vi.mocked(djangoPost).mockResolvedValue({
-      contents: [{ content_format: null, data: "a page about something else entirely", cost: 1, source_url: "https://example.com/a" }],
-      request_id: "r-miss",
-    });
-    const out = await tool.handler(
-      tool.inputSchema.parse({ urls: ["https://example.com/a"], query: "zebra unicorn" }),
-      ctx,
-    );
-    expect(out.results[0]?.note).toContain("NOT FOUND");
-    expect(out.results[0]?.text).toContain("a page about something else"); // head kept for orientation
+  it("doesn't retry a 400 for a request that sent no highlights", async () => {
+    vi.mocked(djangoPost).mockRejectedValue(highlightsUnavailable());
+    await expect(tool.handler({ urls: ["https://example.com/a"] }, ctx)).rejects.toBeInstanceOf(DjangoBadRequestError);
+    expect(vi.mocked(djangoPost)).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -291,7 +291,7 @@ The full reference — every description and parameter exactly as the model sees
 | ---- | ------------- |
 | `tako_search` | **Find the data.** Fast search over Tako's curated graph and the live web. Four parameters — `query`, `sources`, `country_code`, `locale` — and no defaults of its own, so an omitted field takes the API's. Cards carry headline values, node ids and chart links; `tako_contents` reads the rows. The top result renders inline as a chart with an **Open in Tako** link. Parallelize broad questions into narrow single entity+metric searches. |
 | `tako_available_data` | **Find what structured data exists** on an entity or metric in one free call — the exact metric name to search on, an `id` for graph traversal, and a ready-to-run `next_call`. Ambiguous names come back as candidates with a `kind`; `metric` doubles as the substring browse filter; `limit` widens the candidate list. |
-| `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows (billed per 1k rows) or a web page's text — pass `query` for only the matching passages. Requires a signed-in connection. |
+| `tako_contents` | Fetch what's behind result URLs (1-10 per call): a card's rows (billed per 1k rows) or a web page's text — set `query` to a question to get only the passages that answer it. Requires a signed-in connection. |
 | `tako_graph_related` | Explore a graph node: a map (each relation's key, total, first three names) or one paged relation — metrics, the entities a metric covers, competitors (`rel:competes_with`), memberships, sources. `q` is a substring filter. Free. |
 
 **Anonymous connections (no credentials):** the tool list is the same — it never changes with auth state. `tako_search` runs anonymously (rate-limited, on shared capacity); the others answer with sign-in instructions.
@@ -325,7 +325,7 @@ Two tools, one step apart — `tako_search` finds, `tako_contents` fetches:
 |---|---|---|
 | **To see what exists** — recon, fan-outs, a chart to embed | `tako_search` | Cards with headline values, node ids, and chart links, plus web results. Cheap; safe to parallelize widely. |
 | **The values themselves** — rows to compute over or quote | `tako_contents` on the card's url | Up to 2,000 rows of an `exportable: true` card, billed per 1k delivered. |
-| **A web page's text** | `tako_contents` on the web result's url | The page's extracted text (`query` narrows it to matching passages). |
+| **A web page's text** | `tako_contents` on the web result's url | The page's extracted text (set `query` to a question to get only the passages that answer it). |
 | **More search options** — per-source counts, graph pins, domain filters, `effort: deep` | `tako_search_advanced` (opt-in, `?tools=search_advanced`) | The same structured payload as `tako_search`. No inline chart render — the response still carries `embed_url`. |
 
 - **Broad or multi-part questions → parallel narrow searches.** Decompose into single entity+metric queries fired concurrently — e.g. *"US CPI inflation"*, *"US core CPI inflation"*, *"US PCE inflation"* — then synthesize yourself.
