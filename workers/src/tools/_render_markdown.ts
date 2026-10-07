@@ -103,7 +103,7 @@ const searchCoreFields = {
   guidance: z
     .string()
     .optional()
-    .describe("Zero-card responses only: what this response is evidence about, and the one next action."),
+    .describe("Zero-card verdict and next action, or how a keyless caller unlocks a placeholder card."),
   metric_definitions: z
     .record(z.string(), z.string())
     .optional()

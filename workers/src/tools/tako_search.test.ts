@@ -28,6 +28,7 @@ import { SearchRequest } from "../generated/schemas.js";
 import type { AnyToolModule, ToolContext } from "./types.js";
 import tako_search, { buildSearchBody } from "./tako_search.js";
 import tako_search_advanced from "./tako_search_advanced.js";
+import { GENERIC_SIGN_IN_HINT } from "./_shared_prose.js";
 import {
   bodyOf,
   jsonResponse,
@@ -349,6 +350,28 @@ describe("tako_search response mapping", () => {
     expect(g).not.toMatch(/node_id/);
     expect(g).not.toMatch(/strict/);
     expect(g).not.toMatch(/hard filter/);
+  });
+
+  it("tells a keyless caller that signing in gets a placeholder card's data, and says nothing to a signed-in one", async () => {
+    const placeholderResponse = () =>
+      mockFetchSequence([
+        jsonResponse(200, {
+          cards: [
+            { card_id: "nflx-traffic", title: "netflix.com traffic", webpage_url: "u", placeholder: { withheld_source: "Semrush" } },
+          ],
+          web_results: [],
+          request_id: "req-ph",
+        }),
+      ]);
+
+    placeholderResponse();
+    const keyless = await tako_search.handler({ query: "netflix.com traffic", ...DEFAULTS }, { ...CTX, tier: "free" });
+    expect(keyless.guidance).toContain("Semrush");
+    expect(keyless.guidance).toContain(GENERIC_SIGN_IN_HINT);
+
+    placeholderResponse();
+    const signedIn = await tako_search.handler({ query: "netflix.com traffic", ...DEFAULTS }, CTX);
+    expect(signedIn.guidance).toBeUndefined();
   });
 
   it("populates auto-chain widget fields when the top card has card_id", async () => {

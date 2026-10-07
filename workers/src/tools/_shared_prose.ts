@@ -26,3 +26,16 @@ export const SOURCES_DESCRIBE =
 
 export const PASSAGE_BREAK_DESCRIBE =
   "A ' … ' marks a discontinuity — joined passages or the page's own ellipsis — so never quote across it as one sentence.";
+
+/**
+ * The one sign-in sentence for a keyless connection on the generic surface
+ * (spec D17): appended to `authRequiredToolResult` by the free-tier dispatch
+ * gate in `mcp.ts`, and to the search guidance when a keyless search returns a
+ * card whose data is withheld. One generic sentence for every client — the
+ * per-UA hint variants died with the User-Agent classifier. Hosts with a
+ * linking UI (claude.ai, Claude Code, any OAuth-capable client) sign in;
+ * config-file clients connect with an API key. No URLs, no UI deep paths
+ * — copy rots (see PAYMENT_REQUIRED_REMEDY_FALLBACK).
+ */
+export const GENERIC_SIGN_IN_HINT =
+  "Sign in with your client's MCP authentication, or connect with a Tako API key.";

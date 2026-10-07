@@ -18,12 +18,12 @@ import { FREE_TIER_TOOL_NAMES, resolveToolSet } from "./tools/_surface.js";
 import {
   SERVER_INSTRUCTIONS,
 } from "./instructions.js";
+import { GENERIC_SIGN_IN_HINT } from "./tools/_shared_prose.js";
 import {
   AUTH_INVALID_MESSAGE,
   authModeFor,
   createMcpServer,
   djangoErrorToToolResult,
-  GENERIC_SIGN_IN_HINT,
   logSdkValidationRejections,
   PAYMENT_REQUIRED_MESSAGE,
   PAYMENT_REQUIRED_REMEDY_FALLBACK,
