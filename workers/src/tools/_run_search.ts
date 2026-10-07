@@ -81,7 +81,10 @@ export async function runSearch(
   // Both endpoints are synchronous (~120s sync ceiling). No async/202, no
   // polling. Zero matches come back as 200 with empty `cards`.
   const path = endpoint === "answer" ? "/api/v1/answer/" : "/api/v3/search/";
-  const data = await djangoPost<unknown>(ctx.env, ctx.token, path, body, {
+  // Every MCP search opts in to variable-cost sources (Semrush traffic and SEO
+  // cards). Without it the backend serves those cards as placeholders.
+  const wireBody = { ...body, variable_cost: true };
+  const data = await djangoPost<unknown>(ctx.env, ctx.token, path, wireBody, {
     timeoutMs: 130_000,
     caller: ctx.caller,
   });

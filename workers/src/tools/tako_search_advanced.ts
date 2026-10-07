@@ -229,11 +229,12 @@ const webBlock = z.object(optionalWithoutDefaults(WebSourceSettings.shape, WEB_D
 
 /**
  * Top level: every `SearchRequest` field except `sources` (replaced by the two
- * blocks), optional and default-free. Three keep a hand-written `.describe()`
+ * blocks) and `variable_cost` (`runSearch` always sends it), optional and
+ * default-free. Three keep a hand-written `.describe()`
  * that names the server default in words — the generated text for
  * `country_code` and `locale` does not, and this tool's description promises it.
  */
-const topLevel = optionalWithoutDefaults(SearchRequest.omit({ query: true, sources: true }).shape);
+const topLevel = optionalWithoutDefaults(SearchRequest.omit({ query: true, sources: true, variable_cost: true }).shape);
 
 /**
  * `output_settings` rebuilt from `OutputSettings` with its INNER defaults

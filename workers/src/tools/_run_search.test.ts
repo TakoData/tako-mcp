@@ -178,6 +178,18 @@ describe("runSearch on the search endpoint", () => {
     expect(out).not.toHaveProperty("answer");
   });
 
+  it.each(["search", "answer"] as const)(
+    "opts every %s call in to variable-cost sources, so Semrush cards aren't placeholders",
+    async (endpoint) => {
+      const fetchMock = mockFetchSequence([
+        jsonResponse(200, { answer: "a", cards: [], web_results: [], request_id: "r" }),
+      ]);
+      await runSearch({ endpoint, body: { query: "netflix.com traffic" } }, ["data", "web"], null, CTX, "tako_search");
+      const sent = JSON.parse(await requestFrom(fetchMock.mock.calls[0]).text()) as Record<string, unknown>;
+      expect(sent).toMatchObject({ query: "netflix.com traffic", variable_cost: true });
+    },
+  );
+
   it("flat mode empties the two lists runSearch reads", async () => {
     // THE REASON `output_settings.flat_results` IS WITHHELD from
     // tako_search_advanced's input schema. Not a behavior anyone wants — a

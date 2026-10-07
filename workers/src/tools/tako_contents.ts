@@ -337,6 +337,8 @@ export function buildContentsBody(
     content_format: "json_compact" as const,
     max_chars: input.max_chars ?? defaultMaxChars(batchSize),
     max_rows: input.max_rows ?? MAX_CONTENTS_ROWS,
+    // Without it the backend refuses a Semrush card's export with a 422.
+    variable_cost: true,
     ...(highlights !== undefined ? { highlights } : {}),
   } satisfies z.input<typeof ContentsRequest>; // ← build-time guard: backend request drift breaks here
   return body;

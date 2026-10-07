@@ -111,7 +111,8 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
     // never decided — six appear in no spec and no plan. Derived from the
     // generated shape, "mirrors the API" is checked rather than asserted in a
     // header.
-    const expected = Object.keys(AnswerRequest.shape).filter((k) => k !== "sources");
+    // `variable_cost` isn't a tool input: runSearch always sends it as true.
+    const expected = Object.keys(AnswerRequest.shape).filter((k) => k !== "sources" && k !== "variable_cost");
     expect(Object.keys(tako_search_advanced.inputSchema.shape).sort()).toEqual(
       [...expected, "data", "web", "include_answer"].sort(),
     );
@@ -204,7 +205,11 @@ describe("tako_search_advanced mirrors the v3 SearchRequest", () => {
       web: { published_after: "2026-01-01", published_before: "2026-06-30" },
     });
     const body = buildAdvancedSearchBody(input);
-    expect(Object.keys(body).sort()).toEqual(Object.keys(AnswerRequest.shape).sort());
+    expect(Object.keys(body).sort()).toEqual(
+      Object.keys(AnswerRequest.shape)
+        .filter((k) => k !== "variable_cost")
+        .sort(),
+    );
     expect(body.location).toEqual({ latitude: 51.5, longitude: -0.1 });
     expect(body.timezone).toBe("Europe/London");
     expect(body.output_settings).toEqual({ image_dark_mode: true });
